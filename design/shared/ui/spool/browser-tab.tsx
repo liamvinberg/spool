@@ -34,7 +34,7 @@ export function PlayedTab({
 			<div className="flex h-[38px] shrink-0 items-end gap-1 px-2">
 				<Tab label={sibling} />
 				<Tab label={title} active />
-				<span className="mb-[9px] ml-1.5 text-[#6E6E73] text-md leading-none">+</span>
+				<span className="mb-[9px] ml-1.5 text-[#6E6E73] type-title">+</span>
 			</div>
 			<div className="flex h-10 shrink-0 items-center gap-2.5 border-[#2A2A2E] border-b bg-[#202024] px-3">
 				<Chevron className="text-[#4E4E54]" />
@@ -42,7 +42,7 @@ export function PlayedTab({
 				<Reload />
 				<span className="ml-1 flex h-[26px] min-w-0 flex-1 items-center gap-2 rounded-md bg-[#161619] px-3">
 					<Lock />
-					<span className="truncate font-mono text-[#9A9AA0] text-xs leading-none">{url}</span>
+					<span className="truncate text-[#9A9AA0] type-value">{url}</span>
 				</span>
 				<span className="flex items-center gap-[3px] pl-1">
 					{[0, 1, 2].map((dot) => (
@@ -64,7 +64,7 @@ function Tab({ label, active = false }: { label: string; active?: boolean }) {
 			)}
 		>
 			<span className="h-2 w-[3px] shrink-0 bg-thread" />
-			<span className="truncate text-[#C8C8CC] text-xs leading-none">{label}</span>
+			<span className="truncate text-[#C8C8CC] type-label">{label}</span>
 			<svg viewBox="0 0 10 10" className="h-2 w-2 shrink-0 text-[#7A7A80]" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
 				<path d="M2 2 8 8M8 2 2 8" />
 			</svg>

@@ -119,14 +119,11 @@ export function PagePicker({
 						onClose();
 					}
 				}}
-				className="h-[34px] shrink-0 border-border border-b bg-transparent px-2.5 font-mono text-sm text-text leading-sm caret-thread outline-none placeholder:text-muted/40"
+				className="h-[34px] shrink-0 border-border border-b bg-transparent px-2.5 text-text caret-thread outline-none placeholder:text-muted type-value"
 			/>
 			<div ref={list} className="min-h-0 flex-1 overflow-y-auto p-unit" style={{ height: rows * ROW + PAD }}>
 				{hits.length === 0 ? (
-					<div
-						className="flex items-center px-1.5 font-mono text-muted/60 text-xs leading-xs"
-						style={{ height: ROW }}
-					>
+					<div className="flex items-center px-1.5 text-muted type-value" style={{ height: ROW }}>
 						no page answers to that
 					</div>
 				) : (
@@ -146,7 +143,7 @@ export function PagePicker({
 							style={{ height: ROW }}
 						>
 							<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
-							<span className="min-w-0 flex-1 truncate font-mono text-xs leading-xs">{pagePathLabel(page)}</span>
+							<span className="min-w-0 flex-1 truncate type-value">{pagePathLabel(page)}</span>
 						</button>
 					))
 				)}

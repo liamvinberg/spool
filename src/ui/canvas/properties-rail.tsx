@@ -461,7 +461,7 @@ function Body({
 function Empty({ says }: { says: string }) {
 	return (
 		<div className="flex h-9 items-center px-2.5">
-			<span className={cn("text-muted/50", VALUE)}>{says}</span>
+			<span className={cn("text-muted", VALUE)}>{says}</span>
 		</div>
 	);
 }
@@ -512,7 +512,7 @@ function Head({
 			<div className="relative flex h-9 items-center gap-2 px-2.5">
 				{steps.length === 0 ? (
 					<span data-properties-crumbs="" className={cn("flex min-w-0 flex-1 items-center gap-1", VALUE)}>
-						<span className={cn("text-muted/50", VALUE)}>properties</span>
+						<span className={cn("text-muted", VALUE)}>properties</span>
 					</span>
 				) : (
 					<Trail steps={steps} />
@@ -706,7 +706,7 @@ function Crumb({
 			>
 				{name}
 			</button>
-			{last ? null : <span className="shrink-0 text-muted/30">/</span>}
+			{last ? null : <span className="shrink-0 text-muted">/</span>}
 		</span>
 	);
 }
@@ -732,7 +732,7 @@ function Elision({ ref, open, onToggle }: { ref?: React.Ref<HTMLButtonElement>; 
 			>
 				…
 			</button>
-			<span className="shrink-0 text-muted/30">/</span>
+			<span className="shrink-0 text-muted">/</span>
 		</span>
 	);
 }
@@ -1155,7 +1155,7 @@ function SourceLine({
 					{read.refusal?.expression !== undefined ? (
 						<span className="text-muted">{read.refusal.expression}</span>
 					) : tokens.length === 0 ? (
-						<span className="text-muted/50">null</span>
+						<span className="text-muted">null</span>
 					) : (
 						tokens.map(({ token, at }, index) => {
 							const ink = INK[tokenState(token, scope, original)];

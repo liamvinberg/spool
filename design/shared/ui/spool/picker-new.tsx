@@ -80,9 +80,9 @@ export function useNewProject(seed: NewSeed = {}): NewProject {
 export function Target({ parent, name }: { parent: string; name: string }) {
 	const typed = name.trim();
 	return (
-		<span className="min-w-0 truncate font-mono text-md leading-md">
-			<span className="text-muted/45">{`${shortPath(parent)}/`}</span>
-			<span className={typed === "" ? "text-muted/45" : "text-text"}>{typed === "" ? "" : typed}</span>
+		<span className="min-w-0 truncate type-code-input">
+			<span className="text-muted">{`${shortPath(parent)}/`}</span>
+			<span className={typed === "" ? "text-muted" : "text-text"}>{typed === "" ? "" : typed}</span>
 		</span>
 	);
 }
@@ -109,7 +109,7 @@ export function NamingField({ np }: { np: NewProject }) {
 				aria-label="Project name"
 				onChange={(event) => np.setName(event.target.value)}
 				onKeyDown={np.onNameKeyDown}
-				className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/35"
+				className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted type-code-input"
 			/>
 		</label>
 	);
@@ -124,7 +124,7 @@ export function NameLine({ np }: { np: NewProject }) {
 				<FolderIcon className="h-3 w-3 shrink-0 text-thread/70" />
 				<Target parent={np.picker.path} name={np.name} />
 				<span className="flex-1" />
-				<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">↵ creates</span>
+				<span className="shrink-0 text-muted type-detail">↵ creates</span>
 			</div>
 		</div>
 	);
@@ -142,14 +142,14 @@ export function InitLine() {
 	return (
 		<div
 			style={{ height: ROW }}
-			className="flex w-full items-center gap-2.5 px-4 font-mono text-2xs leading-3"
+			className="flex w-full items-center gap-2.5 px-4 type-detail"
 		>
 			<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-			<span className="shrink-0 text-muted/55">not a spool project</span>
-			<span className="text-muted/25">·</span>
+			<span className="shrink-0 text-muted">not a spool project</span>
+			<span className="text-muted">·</span>
 			<span className="shrink-0 text-muted">↵ initializes design/ here</span>
-			<span className="text-muted/25">·</span>
-			<span className="shrink-0 text-muted/55">esc goes back</span>
+			<span className="text-muted">·</span>
+			<span className="shrink-0 text-muted">esc goes back</span>
 		</div>
 	);
 }

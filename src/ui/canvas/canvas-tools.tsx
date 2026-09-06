@@ -61,7 +61,7 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 							)}
 						>
 							<meta.Icon className="h-[18px] w-[18px]" />
-							<span className="pointer-events-none absolute -top-8 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border-raised bg-bg px-2 py-1 font-mono text-2xs text-muted leading-3 opacity-0 transition-opacity group-hover:opacity-100">
+							<span className="pointer-events-none absolute -top-8 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border-raised bg-bg px-2 py-1 text-muted opacity-0 transition-opacity group-hover:opacity-100 type-detail">
 								{meta.label}
 								{meta.key === null ? null : <Kbd>{meta.key}</Kbd>}
 								{meta.hold === null ? null : <span>· {meta.hold}</span>}
@@ -76,7 +76,7 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 
 function Kbd({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-border-raised bg-surface px-1 font-mono text-[9px] text-muted leading-none">
+		<span className="flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-border-raised bg-surface px-1 text-muted type-detail">
 			{children}
 		</span>
 	);

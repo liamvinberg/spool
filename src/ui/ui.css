@@ -3,14 +3,10 @@
  * meaning is. Hairlines never shadows. Everything on the 4px grid. */
 
 @import "tailwindcss";
-@import "@fontsource-variable/familjen-grotesk";
-/* the italic axis, which the package's own entry point does not carry: `index.css`
- * declares `font-style: normal` and nothing else, so with `font-synthesis: none`
- * below, emphasis in an agent's message rendered as no change at all. The face
- * ships in the same package; it was only ever unimported. A real oblique over a
- * synthesized one for the same reason the mono is a real mono */
-@import "@fontsource-variable/familjen-grotesk/wght-italic.css";
+@import "@fontsource-variable/instrument-sans/wght.css";
+@import "@fontsource-variable/instrument-sans/wght-italic.css";
 @import "@fontsource/fragment-mono";
+@import "./typography.css";
 
 @theme {
 	/* every colour is light-dark(light, dark): `color-scheme` on :root picks the
@@ -25,39 +21,11 @@
 	--color-border: light-dark(#dcdad5, #262626);
 	--color-border-raised: light-dark(#c2c0ba, #363636);
 	--color-text: light-dark(#1a1917, #f0efed);
-	--color-muted: light-dark(#6f6c68, #8e8c88);
+	--color-muted: light-dark(#696662, #94918d);
 	--color-thread: light-dark(#f5391a, #f5391a);
 	/* the ribbon mark alone; a development daemon paints it blue and nothing else */
 	--color-mark: var(--color-thread);
 	--color-on-thread: light-dark(#ffffff, #ffffff);
-
-	--font-sans: "Familjen Grotesk Variable", system-ui, sans-serif;
-	--font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, monospace;
-	/* Fragment Mono ships coding ligatures under `calt`, so `--` set in the mono
-	 * face became one dash and a variant name (checkout--empty) read as an em
-	 * dash (#272). Names are not code: the contextual alternates are off on
-	 * every font-mono utility. */
-	--font-mono--font-feature-settings: "calt" 0;
-
-	--text-2xs: 10px;
-	--text-xs: 11px;
-	--text-sm: 12px;
-	--text-base: 13px;
-	--text-md: 14px;
-	--text-lg: 18px;
-
-	--font-weight-regular: 400;
-	--font-weight-medium: 500;
-	--font-weight-semibold: 600;
-
-	--tracking-tight: -0.01em;
-	--tracking-normal: 0em;
-
-	--leading-xs: 16px;
-	--leading-sm: 18px;
-	--leading-base: 20px;
-	--leading-md: 22px;
-	--leading-lg: 26px;
 
 	--breakpoint-app: 1280px;
 	--container-artboard: 1360px;
@@ -643,7 +611,7 @@ html {
 body {
 	background: var(--color-bg);
 	color: var(--color-text);
-	font-family: var(--font-sans);
+	font: var(--type-control);
 	font-synthesis: none;
 	-webkit-font-smoothing: antialiased;
 	overflow: hidden;

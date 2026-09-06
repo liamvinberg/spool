@@ -377,8 +377,8 @@ export function Said({
 						<code
 							key={key}
 							className={cn(
-								"rounded-xs bg-surface px-[3px] py-px font-mono text-2xs",
-								span.bold === true ? "text-text" : "text-text/85",
+								"rounded-xs bg-surface px-[3px] py-px type-value",
+								"text-text",
 							)}
 						>
 							{run(span.text)}
@@ -396,7 +396,7 @@ export function Said({
 	);
 
 	return (
-		<div className="flex flex-col gap-2 text-base text-text/90 leading-base">
+		<div className="flex flex-col gap-2 text-text type-body">
 			{chunks.map((chunk, at) => {
 				const key = `${at}-${chunk.kind}`;
 				const end = at === chunks.length - 1 ? caret : null;
@@ -404,7 +404,7 @@ export function Said({
 					return (
 						<pre
 							key={key}
-							className="pages-scrollbar overflow-x-auto rounded-sm border border-border bg-surface px-2.5 py-2 font-mono text-2xs text-text/80 leading-4"
+							className="pages-scrollbar overflow-x-auto rounded-sm border border-border bg-surface px-2.5 py-2 text-text type-value"
 						>
 							{run(chunk.text)}
 							{end}
@@ -412,7 +412,7 @@ export function Said({
 					);
 				if (chunk.kind === "quote")
 					return (
-						<p key={key} className="border-border-raised border-l-2 pl-2.5 text-text/70">
+						<p key={key} className="border-border-raised border-l-2 pl-2.5 text-text">
 							{spans(chunk.spans)}
 							{end}
 						</p>
@@ -422,7 +422,7 @@ export function Said({
 						<p key={key} className="flex gap-2 pl-0.5">
 							{/* the one glyph in the block that is the renderer's rather than the agent's, and
 								marked as such: a word count over this prose has to skip it */}
-							<span data-marker="" className="shrink-0 text-muted/70 tabular-nums">
+							<span data-marker="" className="shrink-0 text-muted tabular-nums">
 								{chunk.marker}
 							</span>
 							<span>

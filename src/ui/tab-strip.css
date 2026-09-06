@@ -57,7 +57,7 @@
 	min-width: 0;
 	height: 100%;
 	padding: 0 38px 0 12px;
-	font-size: 13px;
+	font: var(--type-control);
 	color: var(--color-muted);
 	cursor: default;
 }

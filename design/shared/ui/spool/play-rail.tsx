@@ -205,8 +205,8 @@ function StopButton({ where, onStop }: { where: Exclude<StopWhere, "none">; onSt
 			)}
 		>
 			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
-			<span className="font-mono text-2xs text-text leading-3">stop</span>
-			<span className="font-mono text-2xs text-muted/60 leading-3">⎋</span>
+			<span className="text-text type-detail">stop</span>
+			<span className="text-muted type-detail">⎋</span>
 		</button>
 	);
 }
@@ -847,9 +847,9 @@ function Entry({
 		return (
 			<div className="relative flex flex-col gap-1.5 pl-3.5">
 				<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-				<p className="whitespace-pre-wrap text-base text-text leading-base">{entry.text}</p>
+				<p className="whitespace-pre-wrap text-text type-body">{entry.text}</p>
 				{entry.context === undefined ? null : (
-					<span className="truncate font-mono text-2xs text-muted/55 leading-3">{entry.context}</span>
+					<span className="truncate text-muted type-detail">{entry.context}</span>
 				)}
 			</div>
 		);
@@ -862,7 +862,7 @@ function Entry({
 			return (
 				<div className="flex items-center gap-2.5 py-0.5">
 					<span className="h-px flex-1 bg-border" />
-					<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{entry.text}</span>
+					<span className="shrink-0 text-muted type-detail">{entry.text}</span>
 					<span className="h-px flex-1 bg-border" />
 				</div>
 			);
@@ -870,9 +870,9 @@ function Entry({
 		return (
 			<div className="flex flex-col gap-0.5">
 				{entry.said === undefined ? null : (
-					<p className="font-mono text-2xs text-text/70 leading-4">{entry.said}</p>
+					<p className="text-text type-detail">{entry.said}</p>
 				)}
-				<p className="whitespace-pre-wrap font-mono text-2xs text-muted/55 leading-4">{entry.text}</p>
+				<p className="whitespace-pre-wrap text-muted type-detail">{entry.text}</p>
 			</div>
 		);
 	}
@@ -902,9 +902,9 @@ function QueuedRow({ message, onDrop }: { message: Queued; onDrop: (() => void) 
 			    are, and that is settled the moment they are typed. What is provisional is
 			    only whether they have gone out, which the text and the marker carry */}
 			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-			<p className="whitespace-pre-wrap text-base text-text/45 leading-base">{message.text}</p>
+			<p className="whitespace-pre-wrap text-muted type-body">{message.text}</p>
 			<span className="flex h-3.5 items-center gap-1.5">
-				<span className="font-mono text-2xs text-muted/55 leading-3">queued</span>
+				<span className="text-muted type-detail">queued</span>
 				{onDrop === undefined ? null : (
 					<button
 						type="button"
@@ -1058,8 +1058,8 @@ function QueueStrip({ queued, onUnqueue }: { queued: readonly Queued[]; onUnqueu
 				onClick={() => setOpen(!open)}
 				className="flex h-[34px] w-full items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
 			>
-				<span className="shrink-0 font-mono text-muted text-sm leading-4">queued</span>
-				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">{queued.length}</span>
+				<span className="shrink-0 text-muted type-value">queued</span>
+				<span className="shrink-0 text-muted tabular-nums type-value">{queued.length}</span>
 				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
 			</button>
 			<AnimatePresence initial={false}>
@@ -1132,7 +1132,7 @@ function Prose({ entry, mode }: { entry: Extract<PlayEntry, { kind: "prose" }>; 
 
 	if (mode === "raw")
 		return (
-			<p className="relative text-base text-text/90 leading-base">
+			<p className="relative text-text type-body">
 				<span className="invisible" aria-hidden="true">
 					{entry.full}
 				</span>
@@ -1231,7 +1231,7 @@ function Prose({ entry, mode }: { entry: Extract<PlayEntry, { kind: "prose" }>; 
 				<button
 					type="button"
 					onClick={() => setOpen(!open)}
-					className="flex w-fit items-center gap-1.5 text-left font-mono text-2xs text-muted/60 leading-4 transition-colors duration-150 hover:text-text/70"
+					className="flex w-fit items-center gap-1.5 text-left text-muted transition-colors duration-150 hover:text-text type-detail"
 				>
 					<ChevronIcon open={open} className="h-2.5 w-2.5 shrink-0 text-muted/35" />
 					{open ? "less" : `${rest} more`}
@@ -1255,7 +1255,7 @@ function Prose({ entry, mode }: { entry: Extract<PlayEntry, { kind: "prose" }>; 
 				<button
 					type="button"
 					onClick={() => setOpen(!open)}
-					className="flex w-fit items-center gap-1.5 text-left font-mono text-2xs text-muted/60 leading-4 transition-colors duration-150 hover:text-text/70"
+					className="flex w-fit items-center gap-1.5 text-left text-muted transition-colors duration-150 hover:text-text type-detail"
 				>
 					<ChevronIcon open={open} className="h-2.5 w-2.5 shrink-0 text-muted/35" />
 					{open ? "less" : "show all"}
@@ -1353,7 +1353,7 @@ function Line({
 		shown === undefined ? null : (
 			<motion.span
 				className={cn(
-					"min-w-0 truncate font-mono text-sm leading-4",
+					"min-w-0 truncate type-value",
 					entry.quiet === true ? "text-muted/60 tabular-nums" : "text-text/85",
 					// struck through and dimmed, in the words the connections tab already uses
 					// for a name nothing answers to
@@ -1374,7 +1374,7 @@ function Line({
 
 	/** the run's count, outside whatever the name became */
 	const tail = counted ? (
-		<span className={cn("shrink-0 font-mono text-sm tabular-nums leading-4", gone ? "text-muted/45" : "text-text/85")}>
+		<span className={cn("shrink-0 tabular-nums type-detail", gone ? "text-muted" : "text-text")}>
 			×{entry.count}
 		</span>
 	) : null;
@@ -1382,8 +1382,8 @@ function Line({
 	const verb = (
 		<span
 			className={cn(
-				"font-mono text-sm leading-4",
-				entry.quiet === true ? "text-muted/70" : "text-muted",
+				"type-value",
+				"text-muted",
 				// the wire name is the one verb long enough to need the room, and it needs all
 				// of it: truncating on the left would hide which server it went to
 				outside !== undefined && mcp === "raw" ? "min-w-0 truncate" : "shrink-0",
@@ -1524,7 +1524,7 @@ function Line({
 							{held !== undefined ? (
 								<Picture shot={held} view={shot === "open" ? shotView : undefined} />
 							) : entry.children === undefined ? (
-								<span className="block truncate font-mono text-2xs text-muted/55 leading-4">
+								<span className="block truncate text-muted type-detail">
 									{entry.detail}
 								</span>
 							) : (
@@ -1537,7 +1537,7 @@ function Line({
 										<Arrive key={child.id} gap={0}>
 											<span className="flex h-[22px] items-center gap-2 pl-2.5">
 												<StateMark state={child.state} className="h-3 w-3" />
-												<span className="truncate font-mono text-2xs text-muted leading-3">
+												<span className="truncate text-muted type-detail">
 													{child.name}
 												</span>
 											</span>
@@ -1580,8 +1580,8 @@ function Picture({ shot, view }: { shot: ShotRef; view: ((shot: ShotRef, width?:
 			<span className="flex items-start gap-2.5 pt-0.5">
 				<span className="h-[74px] w-[34px] shrink-0 rounded-xs border border-border-raised bg-surface" />
 				<span className="flex min-w-0 flex-col gap-1 pt-px">
-					<span className="truncate font-mono text-2xs text-muted/55 leading-4">{shot.path}</span>
-					<span className="font-mono text-2xs text-muted/35 leading-4">{shot.media}</span>
+					<span className="truncate text-muted type-detail">{shot.path}</span>
+					<span className="text-muted type-detail">{shot.media}</span>
 				</span>
 			</span>
 		);
@@ -1596,7 +1596,7 @@ function Picture({ shot, view }: { shot: ShotRef; view: ((shot: ShotRef, width?:
 			<button type="button" onClick={() => setBig(true)} className="w-fit cursor-zoom-in">
 				<Frame>{view(shot)}</Frame>
 			</button>
-			<span className="truncate font-mono text-2xs text-muted/45 leading-4">{shot.frame ?? shot.path}</span>
+			<span className="truncate text-muted type-detail">{shot.frame ?? shot.path}</span>
 			<Lightbox open={big} onClose={() => setBig(false)} caption={shot.frame ?? shot.path}>
 				{view(shot, BIG_W)}
 			</Lightbox>
@@ -1631,12 +1631,12 @@ export function PlanStrip({ plan }: { plan: Plan }) {
 				onClick={() => setOpen(!open)}
 				className="flex h-[34px] w-full items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
 			>
-				<span className="shrink-0 font-mono text-muted text-sm leading-4">plan</span>
-				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">
+				<span className="shrink-0 text-muted type-value">plan</span>
+				<span className="shrink-0 text-muted tabular-nums type-value">
 					{plan.done}/{plan.total}
 				</span>
 				{plan.running === null ? null : (
-					<span className="min-w-0 flex-1 truncate font-mono text-sm text-text/85 leading-4">{plan.running}</span>
+					<span className="min-w-0 flex-1 truncate text-text type-value">{plan.running}</span>
 				)}
 				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
 			</button>
@@ -1654,7 +1654,7 @@ export function PlanStrip({ plan }: { plan: Plan }) {
 							{plan.children.map((child) => (
 								<span key={child.id} className="flex h-[22px] items-center gap-2 pl-2.5">
 									<StateMark state={child.state} className="h-3 w-3" />
-									<span className="truncate font-mono text-2xs text-muted leading-3">{child.name}</span>
+									<span className="truncate text-muted type-detail">{child.name}</span>
 								</span>
 							))}
 						</div>
@@ -1691,11 +1691,11 @@ function EstateStrip({ connectors }: { connectors: readonly Connector[] }) {
 				onClick={() => setOpen(!open)}
 				className="flex h-[34px] w-full items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
 			>
-				<span className="shrink-0 font-mono text-muted text-sm leading-4">connectors</span>
-				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">
+				<span className="shrink-0 text-muted type-value">connectors</span>
+				<span className="shrink-0 text-muted tabular-nums type-value">
 					{live}/{connectors.length}
 				</span>
-				<span className="min-w-0 flex-1 truncate font-mono text-sm text-text/85 leading-4">
+				<span className="min-w-0 flex-1 truncate text-text type-value">
 					{connectors.length - live} need you in a terminal
 				</span>
 				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
@@ -1717,10 +1717,10 @@ function EstateStrip({ connectors }: { connectors: readonly Connector[] }) {
 										state={connector.status === "connected" ? "done" : connector.status === "pending" ? "pending" : "failed"}
 										className="h-3 w-3"
 									/>
-									<span className="min-w-0 shrink truncate font-mono text-2xs text-muted leading-3">
+									<span className="min-w-0 shrink truncate text-muted type-detail">
 										{connector.name}
 									</span>
-									<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">{connector.status}</span>
+									<span className="shrink-0 text-muted type-detail">{connector.status}</span>
 								</span>
 							))}
 						</div>
@@ -1763,7 +1763,7 @@ function Ask({
 		<div className="flex flex-col gap-3">
 			{/* the agent's own sentence, held at full height from the first character the
 			    way every other streaming block is, so the options below do not walk */}
-			<p className="relative text-base text-text/90 leading-base">
+			<p className="relative text-text type-body">
 				<span className="invisible" aria-hidden="true">
 					{entry.ask.question}
 				</span>
@@ -1787,9 +1787,9 @@ function Ask({
 							onClick={() => onPick(option.label)}
 							className="group flex flex-col gap-1 rounded-md border border-border-raised bg-surface px-3 py-2.5 text-left transition-colors duration-150 hover:border-muted/45"
 						>
-							<span className="text-base text-text leading-base">{option.label}</span>
+							<span className="text-text type-body">{option.label}</span>
 							{option.description === "" ? null : (
-								<span className="text-2xs text-muted/70 leading-4">{option.description}</span>
+								<span className="text-muted type-caption">{option.description}</span>
 							)}
 						</button>
 					))}
@@ -1803,7 +1803,7 @@ function Ask({
 						<button
 							type="button"
 							onClick={onDeny}
-							className="w-fit pt-0.5 font-mono text-2xs text-muted/45 leading-3 transition-colors duration-150 hover:text-muted"
+							className="w-fit pt-0.5 text-muted transition-colors duration-150 hover:text-muted type-detail"
 						>
 							dismiss
 						</button>
@@ -1826,7 +1826,7 @@ function Answered({ label }: { label: string }) {
 	return (
 		<div className="relative flex flex-col gap-1.5 pl-3.5">
 			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-			<p className="text-base text-text leading-base">{label}</p>
+			<p className="text-text type-body">{label}</p>
 		</div>
 	);
 }
@@ -1844,7 +1844,7 @@ function Dropped() {
 	return (
 		<div className="flex items-center gap-2.5">
 			<StateMark state="failed" />
-			<span className="font-mono text-2xs text-muted/55 leading-3">nobody answered</span>
+			<span className="text-muted type-detail">nobody answered</span>
 		</div>
 	);
 }
@@ -1863,7 +1863,7 @@ function Dismissed() {
 	return (
 		<div className="flex items-center gap-2.5">
 			<StateMark state="stopped" />
-			<span className="font-mono text-2xs text-muted/55 leading-3">dismissed</span>
+			<span className="text-muted type-detail">dismissed</span>
 		</div>
 	);
 }
@@ -1881,8 +1881,8 @@ function AskShelf({ ask, onPick }: { ask: Question; onPick: (label: string) => v
 	return (
 		<div className="flex shrink-0 flex-col gap-2 border-border border-b px-3.5 py-2.5">
 			<div className="flex items-baseline justify-between gap-2">
-				<span className="truncate font-mono text-2xs text-text/70 leading-3">{ask.header}</span>
-				<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">waiting on you</span>
+				<span className="truncate text-text type-detail">{ask.header}</span>
+				<span className="shrink-0 text-muted type-detail">waiting on you</span>
 			</div>
 			<div className="flex flex-wrap gap-1.5">
 				{ask.options.map((option) => (
@@ -1890,7 +1890,7 @@ function AskShelf({ ask, onPick }: { ask: Question; onPick: (label: string) => v
 						key={option.label}
 						type="button"
 						onClick={() => onPick(option.label)}
-						className="rounded border border-border-raised bg-surface px-2 py-1 text-2xs text-text leading-4 transition-colors duration-150 hover:border-muted/45"
+						className="rounded border border-border-raised bg-surface px-2 py-1 text-text transition-colors duration-150 hover:border-muted/45 type-caption"
 					>
 						{option.label}
 					</button>
@@ -1916,7 +1916,7 @@ function AskChips({ ask, onPick }: { ask: Question; onPick: (label: string) => v
 		<div className="relative flex flex-col gap-1.5">
 			{shown === undefined || shown.description === "" ? null : (
 				<div className="absolute inset-x-0 bottom-full mb-2 rounded-md border border-border-raised bg-surface px-3 py-2">
-					<p className="text-2xs text-muted/70 leading-4">{shown.description}</p>
+					<p className="text-muted type-caption">{shown.description}</p>
 				</div>
 			)}
 			<div className="flex flex-wrap gap-1.5">
@@ -1927,7 +1927,7 @@ function AskChips({ ask, onPick }: { ask: Question; onPick: (label: string) => v
 						onClick={() => onPick(option.label)}
 						onMouseEnter={() => setOver(option.label)}
 						onMouseLeave={() => setOver(null)}
-						className="rounded border border-border-raised bg-surface px-2 py-1 text-2xs text-text leading-4 transition-colors duration-150 hover:border-muted/45"
+						className="rounded border border-border-raised bg-surface px-2 py-1 text-text transition-colors duration-150 hover:border-muted/45 type-caption"
 					>
 						{option.label}
 					</button>
@@ -2074,7 +2074,7 @@ function Composer({
 						else if (answering) onPick(text);
 						else onSend(text);
 					}}
-					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50 disabled:text-muted/40"
+					className="w-full resize-none bg-transparent text-text outline-none placeholder:text-muted disabled:text-muted type-body"
 					style={{ height: MIN_H }}
 				/>
 					{stop === "field" ? <StopButton where="field" onStop={onStop} /> : null}
@@ -2092,7 +2092,7 @@ function Composer({
 				{/* the hint is the only thing saying Enter is not being thrown away, so it changes
 				    word while a turn runs rather than going quiet the way it did before #170 */}
 				{model ?? (
-					<span className="font-mono text-2xs text-muted/45 leading-3">
+					<span className="text-muted type-detail">
 						{busy ? (onQueue === undefined ? "" : "enter to queue") : "enter to send"}
 					</span>
 				)}
@@ -2110,7 +2110,7 @@ function Composer({
 					<button
 						type="button"
 						onClick={onReplay}
-						className="font-mono text-2xs text-muted/45 leading-3 transition-colors duration-150 hover:text-muted"
+						className="text-muted transition-colors duration-150 hover:text-muted type-detail"
 					>
 						replay
 					</button>
@@ -2226,10 +2226,10 @@ function SelectionStrip({
 												lit === chip.id ? "bg-thread" : "bg-thread/40",
 											)}
 										/>
-										<span className="min-w-0 flex-1 truncate font-mono text-text/80 text-xs leading-4">
+										<span className="min-w-0 flex-1 truncate text-text type-value">
 											{chip.label}
 										</span>
-										<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted/60">
+										<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted">
 											<CloseIcon className="h-2 w-2" />
 										</span>
 									</button>
@@ -2276,7 +2276,7 @@ function Chip({
 				)}
 			/>
 			<span
-				className={cn("min-w-0 truncate font-mono text-xs leading-4", weak ? "text-muted" : "text-text/85")}
+				className={cn("min-w-0 truncate type-value", weak ? "text-muted" : "text-text")}
 			>
 				{label}
 			</span>

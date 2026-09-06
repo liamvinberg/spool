@@ -97,8 +97,8 @@ export function ThreadStrip({
 								<ThreadMark life={thread.life} />
 								<span
 									className={cn(
-										"min-w-0 truncate font-mono text-sm leading-4 transition-colors duration-150",
-										on ? "text-text" : "text-muted/70 group-hover:text-muted",
+										"min-w-0 truncate transition-colors duration-150 type-value",
+										on ? "text-text" : "text-muted group-hover:text-muted",
 									)}
 								>
 									{thread.ask}

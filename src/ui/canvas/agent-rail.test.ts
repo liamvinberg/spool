@@ -2891,7 +2891,7 @@ describe("the queue", () => {
 		// it stacks inside the composer, dimmed, with a mono `queued` and a take-back
 		expect(queuedRows(canvas.host)).toEqual(["hold off on add-habit until i've seen home"]);
 		const row = canvas.host.querySelector("[data-agent-queued]");
-		expect(row?.querySelector("p")?.className).toContain("text-text/45");
+		expect(row?.querySelector("p")?.className).toContain("text-muted");
 		expect(row?.textContent).toContain("queued");
 		expect(row?.querySelector('button[aria-label^="take back"]')).not.toBeNull();
 		// and the field is empty again, because the message has been taken

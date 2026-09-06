@@ -77,7 +77,7 @@ export function SpoolShell({
 								>
 									<ThreadIcon className="h-3.5 w-3.5" />
 								</button>
-								<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{zoom}</span>
+								<span className="min-w-9 text-right text-muted type-detail">{zoom}</span>
 							</>
 						) : null}
 						{headerAccessory}

@@ -34,7 +34,7 @@
 	gap: 9px;
 	height: 32px;
 	padding: 0 4px 0 6px;
-	font-size: 13px;
+	font: var(--type-control);
 	color: var(--color-muted);
 	cursor: pointer;
 }

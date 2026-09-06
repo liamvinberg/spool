@@ -70,18 +70,11 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 					span.italic === true && "italic",
 					// struck text is over, so it is dimmed as well as ruled: a line alone at full
 					// strength reads as emphasis at a glance
-					span.strike === true && "text-text/50 line-through",
+					span.strike === true && "text-muted line-through",
 				);
 				if (span.code === true) {
 					return (
-						<code
-							key={key}
-							className={cn(
-								"rounded-xs bg-surface px-[3px] py-px font-mono text-2xs",
-								span.bold === true ? "text-text" : "text-text/85",
-								face,
-							)}
-						>
+						<code key={key} className={cn("rounded-xs bg-surface px-[3px] py-px type-value", "text-text", face)}>
 							{span.text}
 						</code>
 					);
@@ -130,7 +123,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 	);
 
 	return (
-		<div className="flex flex-col gap-2 text-base text-text/90 leading-base">
+		<div className="flex flex-col gap-2 text-text type-body">
 			{chunks.map((chunk: Chunk, at) => {
 				const key = `${at}-${chunk.kind}`;
 				/*
@@ -144,7 +137,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 					return (
 						<pre
 							key={key}
-							className="pages-scrollbar overflow-x-auto rounded-sm border border-border bg-surface px-2.5 py-2 font-mono text-2xs text-text/80 leading-4"
+							className="pages-scrollbar overflow-x-auto rounded-sm border border-border bg-surface px-2.5 py-2 text-text type-value"
 						>
 							{chunk.text}
 							{end}
@@ -153,7 +146,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 				}
 				if (chunk.kind === "quote") {
 					return (
-						<p key={key} className="border-border-raised border-l-2 pl-2.5 text-text/70">
+						<p key={key} className="border-border-raised border-l-2 pl-2.5 text-text">
 							{spans(chunk.spans)}
 							{end}
 						</p>
@@ -170,10 +163,10 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 							{/* the one glyph in the block that is the renderer's rather than the
 							    agent's, and marked as such: a word count over this prose has to
 							    skip it */}
-							<span data-marker="" className="shrink-0 text-muted/70 tabular-nums">
+							<span data-marker="" className="shrink-0 text-muted tabular-nums">
 								{chunk.done === undefined ? chunk.marker : chunk.done ? "☑" : "☐"}
 							</span>
-							<span className={chunk.done === true ? "text-text/50" : undefined}>
+							<span className={chunk.done === true ? "text-muted" : undefined}>
 								{spans(chunk.spans)}
 								{end}
 							</span>

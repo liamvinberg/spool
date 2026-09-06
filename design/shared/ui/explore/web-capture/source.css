@@ -1,0 +1,209 @@
+.sund {
+	color: #263c34;
+	background: #f6f5ee;
+	font:
+		14px / 1.5 "Instrument Sans",
+		sans-serif;
+}
+.sund-document {
+	width: 1440px;
+	height: 1350px;
+	overflow: hidden;
+}
+.sund-nav {
+	height: 90px;
+	display: flex;
+	align-items: center;
+	margin: 0 120px;
+	border-bottom: 1px solid #d5d9cd;
+	gap: 80px;
+}
+.sund-wordmark {
+	font:
+		42px / 1 Georgia,
+		serif;
+	letter-spacing: -3px;
+}
+.sund-nav nav {
+	display: flex;
+	gap: 36px;
+	flex: 1;
+}
+.sund-nav > span:last-child {
+	display: flex;
+	gap: 20px;
+}
+.sund-document main {
+	padding: 0 120px;
+}
+.sund-intro {
+	height: 236px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.sund-intro h1 {
+	font:
+		58px / 1.03 Georgia,
+		serif;
+	letter-spacing: -2px;
+}
+.sund-intro p {
+	font-size: 18px;
+	line-height: 1.55;
+	width: 340px;
+}
+.sund-intro p span {
+	display: block;
+	margin-top: 16px;
+	font-size: 13px;
+	color: #7a8378;
+}
+.sund-section-label {
+	display: flex;
+	justify-content: space-between;
+	padding-bottom: 20px;
+	font-size: 15px;
+}
+.sund-section-label > span:last-child {
+	font-size: 13px;
+}
+.sund-stays {
+	width: 1200px;
+	height: 424px;
+	display: grid;
+	grid-template-columns: repeat(3, 384px);
+	gap: 24px;
+}
+.sund-card {
+	width: 384px;
+	height: 424px;
+	background: #efefe5;
+	overflow: hidden;
+}
+.sund-card > img,
+.sund-photo,
+.sund-missing {
+	width: 384px;
+	height: 230px;
+	object-fit: cover;
+	display: block;
+}
+.sund-photo {
+	object-position: 45% 55%;
+}
+.sund-missing {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #e4e5db;
+	color: #7a8378;
+	font-size: 13px;
+}
+.sund-card-copy {
+	padding: 20px 24px 0;
+}
+.sund-place {
+	display: flex;
+	justify-content: space-between;
+	color: #6e7b6f;
+	font-size: 12px;
+}
+.sund-place span:last-child {
+	font-size: 18px;
+	line-height: 18px;
+}
+.sund-card h2 {
+	font:
+		26px / 1.15 Georgia,
+		serif;
+	letter-spacing: -0.6px;
+	margin: 12px 0 6px;
+}
+.sund-card p {
+	font-size: 13px;
+	color: #6e7b6f;
+}
+.sund-book {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	border-top: 1px solid #d5d9cd;
+	margin-top: 18px;
+	padding-top: 14px;
+	font-size: 12px;
+}
+.sund-book strong {
+	font-weight: 500;
+}
+.sund-book button {
+	display: flex;
+	gap: 15px;
+	padding: 6px 10px;
+	margin: -6px -10px -6px 0;
+	cursor: pointer;
+	transition:
+		background 160ms ease-out,
+		color 160ms ease-out;
+}
+.sund-book button:hover,
+.sund-book button:focus-visible {
+	color: #f6f5ee;
+	background: #263c34;
+	outline: none;
+}
+.sund-journal {
+	display: grid;
+	grid-template-columns: 588px 1fr;
+	gap: 70px;
+	align-items: center;
+	padding: 80px 0;
+}
+.sund-film {
+	height: 280px;
+	position: relative;
+}
+.sund-film img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.sund-film > span {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-content: center;
+	color: #fff;
+	font-size: 44px;
+}
+.sund-journal h2 {
+	font:
+		42px / 1.05 Georgia,
+		serif;
+	letter-spacing: -1px;
+}
+.sund-journal p {
+	font-size: 16px;
+	margin: 20px 0;
+	color: #6e7b6f;
+}
+.sund-journal > div > span {
+	font-size: 13px;
+}
+.sund-footer {
+	display: flex;
+	gap: 32px;
+	align-items: center;
+	margin: 0 120px;
+	height: 112px;
+	border-top: 1px solid #d5d9cd;
+	font-size: 13px;
+}
+.sund-footer > span:nth-child(2) {
+	flex: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+	.sund-book button {
+		transition: none;
+	}
+}

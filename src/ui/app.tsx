@@ -531,7 +531,7 @@ export function App() {
 								<EdgeIcon />
 							</button>
 						)}
-						<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{chrome.zoomPct}%</span>
+						<span className="min-w-9 text-right text-muted type-detail">{chrome.zoomPct}%</span>
 					</div>
 				)}
 			</header>

@@ -49,15 +49,15 @@ export function HotkeySheet({
 					className="pointer-events-auto flex max-h-[calc(100%-128px)] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
 				>
 					<header className="flex h-12 shrink-0 items-center justify-between border-border border-b px-6">
-						<span className="font-semibold text-md text-text tracking-tight leading-md">Shortcuts</span>
-						<span className="font-mono text-2xs text-muted leading-3">esc closes</span>
+						<span className="font-semibold text-text tracking-tight type-title">Shortcuts</span>
+						<span className="text-muted type-detail">esc closes</span>
 					</header>
 					<div className="overflow-y-auto px-6 py-5">
 						<div className="columns-2 gap-x-12">
 							{groups.map(({ group, rows }) =>
 								rows.length === 0 ? null : (
 									<section key={group} className="mb-5 break-inside-avoid">
-										<h3 className="mb-1.5 text-muted text-sm leading-sm">{group}</h3>
+										<h3 className="mb-1.5 text-muted type-label">{group}</h3>
 										{rows.map((row) => (
 											<Row key={row.id} row={row} />
 										))}
@@ -75,18 +75,18 @@ export function HotkeySheet({
 function Row({ row }: { row: HotkeyRow }) {
 	return (
 		<div className="flex h-7 items-center justify-between gap-4">
-			<span className="truncate text-base text-text leading-base">{row.label}</span>
+			<span className="truncate text-text type-control">{row.label}</span>
 			<span className="flex shrink-0 items-center gap-1.5">
 				{row.keys.map((face) => (
 					<kbd
 						key={face}
-						className="flex h-5 min-w-5 items-center justify-center rounded-xs border border-border-raised bg-raised px-1.5 font-mono text-2xs text-muted leading-none"
+						className="flex h-5 min-w-5 items-center justify-center rounded-xs border border-border-raised bg-raised px-1.5 text-muted type-detail"
 					>
 						{face}
 					</kbd>
 				))}
 				{row.gesture === undefined ? null : (
-					<span className="font-mono text-2xs text-muted/70 leading-3">{row.gesture}</span>
+					<span className="text-muted type-detail">{row.gesture}</span>
 				)}
 			</span>
 		</div>

@@ -256,7 +256,7 @@ export const FrameShell = memo(function FrameShell({
 						/>
 					) : (
 						<div className="absolute inset-0 flex items-center justify-center bg-surface">
-							<span className="font-mono text-sm text-muted">{name}</span>
+							<span className="text-muted type-value">{name}</span>
 						</div>
 					)}
 					{plan.badge && (
@@ -264,7 +264,7 @@ export const FrameShell = memo(function FrameShell({
 							{/* boot cover per the system page: bg veil at 55%, mono "booting" */}
 							<div className="absolute inset-0 bg-bg opacity-55" />
 							<div className="absolute inset-0 flex items-center justify-center">
-								<span className="font-mono text-xs text-text">booting</span>
+								<span className="text-text type-value">booting</span>
 							</div>
 						</>
 					)}

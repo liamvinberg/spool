@@ -97,7 +97,8 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 		expect(m.y + m.height).toBeLessThan(t.y);
 		expect(Math.abs(t.x + t.width - (r.x + r.width - 14))).toBeLessThan(2);
 		expect(e.x + e.width).toBeLessThan(t.x);
-		expect(await trigger.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
+		// The rotating chevron temporarily extends beyond its settled 8px box.
+		await expect.poll(() => trigger.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
 		expect(await model.getAttribute("title")).toContain(" · ");
 	};
 	await says("ask");

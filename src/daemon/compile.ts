@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbuild";
 import { isSafeName } from "../page-path";
-import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes } from "./assets";
+import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
 import {
 	assertDesignFile,
 	DesignBoundaryError,
@@ -158,6 +158,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		jsx: "automatic",
 		jsxDev: true,
 		jsxImportSource: "spool",
+		loader: TEXT_LOADERS,
 		packages: "external",
 		define: { "process.env.NODE_ENV": '"production"' },
 		metafile: true,
