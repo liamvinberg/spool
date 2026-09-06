@@ -88,21 +88,7 @@ export type AgentLoginProgress =
 	  }
 	| { readonly kind: "connected" }
 	| { readonly kind: "cancelled" }
-	| { readonly kind: "error"; readonly message: string }
-	| {
-			readonly kind: "waiting";
-			readonly id: string;
-			readonly message: string;
-			readonly url?: string;
-			readonly code?: string;
-	  }
-	| {
-			readonly kind: "input";
-			readonly id: string;
-			readonly label: string;
-			readonly secret: boolean;
-			readonly choices?: readonly string[];
-	  };
+	| { readonly kind: "error"; readonly message: string };
 
 /** External authentication stays external; managed engines own the entire login flow. */
 export type AgentAuthentication =
