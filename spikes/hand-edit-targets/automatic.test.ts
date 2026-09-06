@@ -379,6 +379,21 @@ describe("automatic mounted selection to source", () => {
 			stylesheet: "shared/palette.css",
 			newHigherPriorityImportInvalidates: true,
 		};
+		const aliasRoot = project();
+		writeDesignFile(aliasRoot, "shared/tokens.css", `@import './palette.css';\n${tokens}`);
+		writeDesignFile(aliasRoot, "shared/first-palette.css", ":root { --extra: red }");
+		writeDesignFile(aliasRoot, "shared/second-palette.css", ":root { --extra: blue }");
+		const aliasPath = join(aliasRoot, "design/shared/palette.css");
+		symlinkSync(join(aliasRoot, "design/shared/first-palette.css"), aliasPath);
+		const aliased = await mount(browser, aliasRoot, "first");
+		const aliasPick = await select(aliased, "h1");
+		expect(await stillSelected(aliased, aliasPick)).toBe(true);
+		unlinkSync(aliasPath);
+		symlinkSync(join(aliasRoot, "design/shared/second-palette.css"), aliasPath);
+		expect(await stillSelected(aliased, aliasPick)).toBe(false);
+		evidence.stylesheetAlias =
+			"retargeting an import symlink invalidates even when the old canonical file is unchanged";
+		await aliased.page.close();
 		await mounted.page.close();
 		await fallback.page.close();
 	});

@@ -55,8 +55,11 @@ export async function mount(browser: Browser, root: string, frame: string, instr
 		loadStylesheet: async (id, base) => {
 			const loaded = await sheets.loadStylesheet(id, base);
 			if (sheets.stylesheets.has(loaded.path)) {
-				const held = sources.retain(relative(designDir, loaded.path));
-				if (held.revision !== fingerprintOf(loaded.content))
+				const authoredPath = id.startsWith(".")
+					? relative(designDir, resolve(base, id))
+					: relative(designDir, loaded.path);
+				const held = sources.retain(authoredPath);
+				if (held.file !== loaded.path || held.revision !== fingerprintOf(loaded.content))
 					throw new Error("stylesheet changed while compilation read it");
 			}
 			return loaded;
