@@ -20,13 +20,13 @@ import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../reg
 import { appearanceOf, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
+import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
+import { createClaudeEngine } from "./agent-engine-claude";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
-import { type AgentAsk, askAgentOffer, askFrom, isEffortShaped, isModelShaped } from "./agent-offer";
-import { agentInstalled, askAgentLogin, type Look } from "./agent-preflight";
-import { agentPromptContent } from "./agent-spawn";
-import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
-import { startAgentTurn } from "./agent-turn";
+import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
+import type { Look } from "./agent-preflight";
+import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
@@ -154,6 +154,8 @@ export interface DaemonOptions {
 	upgrade?: () => { ok: true } | { ok: false; error: string };
 	/** The agent spawn (#191) — swapped for a capture replayer so CI never runs a real agent. */
 	agentExecutor?: AgentExecutor;
+	/** Engine integrations, replaced as a whole by independent fixture engines in tests. */
+	agentEngines?: readonly AgentEngine[];
 	/**
 	 * The `which` behind the install wall (#201) — swapped so a test says what this
 	 * machine has rather than inheriting whatever the machine running it happens to have.
@@ -347,6 +349,7 @@ export function createDaemonApp({
 	fetchLatest,
 	upgrade,
 	agentExecutor,
+	agentEngines,
 	agentLook,
 	machineStateWatchAdapter,
 	onMachineStateWatchError,
@@ -641,7 +644,26 @@ export function createDaemonApp({
 	// #191's ADR: the daemon spawns the developer's own agent when the hands ask
 	// for it. Project code never reaches this — it is a control-plane route
 	// behind the control token, the same boundary #41 drew.
-	const spawnAgent = agentExecutor ?? claudeExecutor();
+	const engines = new Map<AgentEngineId, AgentEngine>(
+		(agentEngines ?? [createClaudeEngine(agentExecutor ?? claudeExecutor(), agentLook)]).map((engine) => [
+			engine.id,
+			engine,
+		]),
+	);
+
+	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
+		if (thread !== undefined && !isThreadId(thread))
+			return { response: c.text("a thread is named by its uuid", 400) };
+		if (requested !== undefined && !isAgentEngineId(requested)) return { response: c.text("unknown engine", 400) };
+		const saved = thread === undefined ? undefined : readThread(spoolDir, root, thread);
+		if (saved !== undefined && requested !== undefined && requested !== saved.engine) {
+			return { response: c.text("a thread's engine cannot change", 409) };
+		}
+		const id = saved?.engine ?? requested ?? "claude";
+		const engine = engines.get(id);
+		if (engine === undefined) return { response: c.text(`engine "${id}" is unavailable`, 503) };
+		return { engine, session: saved?.session ?? { id: thread ?? "" } };
+	}
 	/**
 	 * Every turn this daemon is holding, by the conversation it belongs to (#211).
 	 *
@@ -1378,7 +1400,9 @@ export function createDaemonApp({
 		.get("/api/p/:project/agent/installed", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json({ installed: agentInstalled(process.env, agentLook) });
+			const selected = engineFor(c, project.root, c.req.query("thread"));
+			if ("response" in selected) return selected.response;
+			return c.json({ installed: selected.engine.installed() });
 		})
 		.get("/api/p/:project/agent/login", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
@@ -1386,14 +1410,9 @@ export function createDaemonApp({
 			// the probe is this request's process and nobody else's, so it goes when the
 			// request does: a page navigated off mid-check would otherwise leave a whole
 			// binary running for the length of its own timeout with nobody to hear it
-			return c.json(
-				await askAgentLogin({
-					executor: spawnAgent,
-					root: project.root,
-					env: process.env,
-					signal: c.req.raw.signal,
-				}),
-			);
+			const selected = engineFor(c, project.root, c.req.query("thread"));
+			if ("response" in selected) return selected.response;
+			return c.json(await selected.engine.account(project.root, c.req.raw.signal));
 		})
 		.post(
 			"/api/p/:project/agent/turn",
@@ -1402,6 +1421,8 @@ export function createDaemonApp({
 					said?: unknown;
 					turn?: unknown;
 					thread?: unknown;
+					engine?: unknown;
+					session?: unknown;
 				};
 				// a turn is what the human said, which is one message when they pressed Enter
 				// against a quiet rail and several when a queue fired as one turn (#170)
@@ -1416,6 +1437,9 @@ export function createDaemonApp({
 				// never anything but the uuid shape the binary takes
 				if (!isThreadId(body.thread)) {
 					return c.text('"thread" is the uuid this conversation runs under', 400);
+				}
+				if (body.session !== undefined || (body.engine !== undefined && !isAgentEngineId(body.engine))) {
+					return c.text("choose an engine; session references belong to the daemon", 400);
 				}
 				const said: { prompt: string; selection?: SelectionEntry[]; attachment?: Attachment }[] = [];
 				for (const raw of body.said) {
@@ -1448,7 +1472,12 @@ export function createDaemonApp({
 						...(attached === undefined ? {} : { attachment: attached }),
 					});
 				}
-				return { said, thread: body.thread, turn: typeof body.turn === "string" ? body.turn : undefined };
+				return {
+					said,
+					thread: body.thread,
+					...(body.engine === undefined ? {} : { engine: body.engine as AgentEngineId }),
+					turn: typeof body.turn === "string" ? body.turn : undefined,
+				};
 			}),
 			(c) => {
 				// one turn, streamed as it arrives (#191): the prompt goes down the
@@ -1456,7 +1485,7 @@ export function createDaemonApp({
 				// order the wire sent them
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
-				const { said, thread, turn: named } = c.req.valid("json");
+				const { said, thread, engine: requested, turn: named } = c.req.valid("json");
 				/*
 				 * One turn per conversation, refused rather than replaced (#211).
 				 *
@@ -1472,34 +1501,31 @@ export function createDaemonApp({
 						409,
 					);
 				}
-				const turn = startAgentTurn({
-					executor: spawnAgent,
+				const selected = engineFor(c, project.root, thread, requested);
+				if ("response" in selected) return selected.response;
+				// Claim ownership before starting: a picture save may race the first turn.
+				if (readThread(spoolDir, project.root, thread) === undefined) {
+					putThread(spoolDir, project.root, thread, {
+						engine: selected.engine.id,
+						ask: said[0]?.prompt ?? "",
+						life: "running",
+						at: Date.now(),
+						entries: [],
+						kept: 0,
+						plan: null,
+						queued: [],
+						draft: "",
+					});
+				}
+				const turn = selected.engine.start({
 					root: project.root,
+					session: selected.session,
 					permissions: settings.agentPermissions(project.root),
-					/*
-					 * The thread, in the binary's own vocabulary for one (#120, #200).
-					 *
-					 * Resume when the session file is there and start it under the same id when it
-					 * is not, because the two flags are exclusive and the file is the fact: the
-					 * binary deletes its own sessions after thirty days, so a thread that outlived
-					 * one carries on under its own id rather than failing a resume. The rail has
-					 * already stopped offering it as continuable by then — this is the honest
-					 * floor under that, not a second opinion about it.
-					 */
-					session: { id: thread, resume: sessionExists(project.root, thread, process.env) },
-					// what the hands are pointing at rides with the words, in the bytes
-					// `spool selection` prints for this same moment (#116) — or, for a
-					// message the queue held, for the moment it was said (#170)
-					content: agentPromptContent(
-						said.map((one) => ({
-							prompt: one.prompt,
-							selection: selectionBlock(one.selection ?? selections.get(project.root)),
-							...(one.attachment === undefined ? {} : { attachment: one.attachment }),
-						})),
-					),
-					// the machine this thread chose, handed to the process that will answer: a
-					// resume restores the conversation, and the flag is what makes the choice a
-					// property of the thread rather than of whichever turn last said so
+					said: said.map((one) => ({
+						prompt: one.prompt,
+						selection: selectionBlock(one.selection ?? selections.get(project.root)),
+						...(one.attachment === undefined ? {} : { attachment: one.attachment }),
+					})),
 					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
 				});
 				const held = liveTurns.hold({
@@ -1629,10 +1655,23 @@ export function createDaemonApp({
 		 * thread's process was taken by a restart, and whether the agent's own session is
 		 * still there to continue.
 		 */
-		.get("/api/p/:project/agent/threads", (c) => {
+		.get("/api/p/:project/agent/threads", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json({ threads: serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }) });
+			const threads = await Promise.all(
+				serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }).map(async (thread) => {
+					const engine = engines.get(thread.engine);
+					let continuable = false;
+					try {
+						continuable =
+							engine?.installed() === true && (await engine.continuable(project.root, thread.session));
+					} catch {
+						/* A missing session or host never hides saved history. */
+					}
+					return { ...thread, continuable };
+				}),
+			);
+			return c.json({ threads });
 		})
 		.put(
 			"/api/p/:project/agent/threads/:thread",
@@ -1650,7 +1689,9 @@ export function createDaemonApp({
 				if (!isThreadId(thread)) {
 					return c.text("a thread is named by the uuid its session runs under", 400);
 				}
-				putThread(spoolDir, project.root, thread, c.req.valid("json"));
+				if (!putThread(spoolDir, project.root, thread, c.req.valid("json"))) {
+					return c.text("a thread's engine cannot change", 409);
+				}
 				return c.body(null, 204);
 			},
 		)
@@ -1695,14 +1736,13 @@ export function createDaemonApp({
 			if (!isThreadId(thread)) {
 				return c.text("a thread is named by the uuid its session runs under", 400);
 			}
+			const selected = engineFor(c, project.root, thread);
+			if ("response" in selected) return selected.response;
 			return c.json(
-				await askAgentOffer({
-					executor: spawnAgent,
+				await selected.engine.offer({
 					root: project.root,
-					env: process.env,
+					session: selected.session,
 					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
-					// a menu that was opened and closed again is nobody waiting: the spawn
-					// this read costs goes with the request that asked for it
 					signal: c.req.raw.signal,
 				}),
 			);
@@ -1753,14 +1793,15 @@ export function createDaemonApp({
 				const wanted = c.req.valid("json");
 				const key = askKey(project.root, thread);
 				const held = agentAsks.get(key) ?? {};
-				const offer = await askAgentOffer({
-					executor: spawnAgent,
+				const selected = engineFor(c, project.root, thread);
+				if ("response" in selected) return selected.response;
+				const offer = await selected.engine.offer({
+					session: selected.session,
 					root: project.root,
-					env: process.env,
 					ask: held,
 					choose: wanted,
 				});
-				agentAsks.set(key, askFrom(offer, wanted, held));
+				agentAsks.set(key, selected.engine.choice(offer, wanted, held));
 				return c.json(offer);
 			},
 		)

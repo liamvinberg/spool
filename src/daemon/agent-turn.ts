@@ -63,6 +63,11 @@ export interface AgentTurnOptions {
 
 export interface AgentTurn {
 	readonly events: AsyncIterable<AgentEvent>;
+	/** Present only when an engine can report and change the mode on this live turn. */
+	readonly permissions?: {
+		readonly applied: AgentPermissions;
+		apply(mode: AgentPermissions): Promise<AgentPermissions>;
+	};
 	/**
 	 * Answer a request this turn is parked on, and say whether it was this turn's to
 	 * answer (#121, #145).

@@ -1,6 +1,6 @@
-import type { Attachment } from "../attachment";
 import type { AgentPermissions } from "../settings/registry";
 import { skillText } from "../skill";
+import type { AgentMessage } from "./agent-engine";
 
 /**
  * What spool spawns, and what it tells the thing it spawned (#115, #121, #126,
@@ -339,12 +339,7 @@ export function agentPromptLine(content: readonly unknown[]): string {
  * rather than being looked up here because a queued message carries the block
  * from its own Enter rather than from the moment the queue fires.
  */
-export interface AgentSaid {
-	readonly prompt: string;
-	/** the selection block that rode with these words; empty where nothing was pointed at */
-	readonly selection: string;
-	readonly attachment?: Attachment;
-}
+export type AgentSaid = AgentMessage;
 
 /**
  * The content blocks one turn sends: what the hands are pointing at, what they

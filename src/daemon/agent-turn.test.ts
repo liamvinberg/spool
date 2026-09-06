@@ -14,9 +14,9 @@ import {
 	writeFrame,
 } from "../test-helpers";
 import { readSelection } from "../verbs";
+import { sessionFile } from "./agent-claude-session";
 import type { AgentEvent } from "./agent-events";
 import { agentFraming } from "./agent-spawn";
-import { sessionFile } from "./agent-threads";
 import { startAgentTurn } from "./agent-turn";
 
 /** Every event of one turn, read off the stream the way a client would. */

@@ -3125,6 +3125,8 @@ function storedThread({
 	...over
 }: Partial<ServedThread> & { id: string; ask: string; frame?: string }): ServedThread {
 	return {
+		engine: "claude",
+		session: { id: over.id },
 		life: "read",
 		at: 1_700_000_000_000,
 		entries: [
