@@ -3,6 +3,9 @@ import { SleeveModern } from "shared/landing/ui/site/sleeve-guide/modern";
 import { cn } from "shared/lib/utils";
 import { BOX, Row, Section, VALUE } from "shared/ui/spool/properties-fields";
 import { ColorField } from "./color-field";
+import { gapProperty } from "./gap";
+import { GapField } from "./gap-field";
+import { type GapAnchor, GapOverlay } from "./gap-overlay";
 import { Selection } from "./selection";
 import { useViewport } from "./viewport";
 import "./playground.css";
@@ -84,6 +87,7 @@ export default function EditingPlayground() {
 	);
 	const [hovered, setHovered] = useState<HTMLElement | null>(null);
 	const [measuring, setMeasuring] = useState(false);
+	const [gapAnchor, setGapAnchor] = useState<GapAnchor | null>(null);
 	const [padding, setPadding] = useState<string | null>(null);
 	const paint = useRef<number | null>(null);
 	const pointer = useRef<{ x: number; y: number } | null>(null);
@@ -142,6 +146,7 @@ export default function EditingPlayground() {
 	};
 	const choose = (node: HTMLElement, reveal = false) => {
 		stopInline();
+		setGapAnchor(null);
 		active.current = node;
 		setSelected(node);
 		const box = node.getBoundingClientRect();
@@ -435,6 +440,17 @@ export default function EditingPlayground() {
 			(["gap", "letter-spacing"].includes(property) && numeric(property) !== 0) ||
 			(property === "max-width" && value(property) !== "none"),
 	);
+	const gap = computed ? gapProperty(computed) : null;
+	const gapPixels = gap && (value(gap) === "normal" || value(gap).endsWith("px"));
+	const beginGap = () => {
+		cancelled.current = false;
+		setHovered(null);
+		begin("gap");
+	};
+	const openGap = (anchor: GapAnchor) => {
+		cancelled.current = false;
+		setGapAnchor(anchor);
+	};
 	const numberRow = (
 		property: string,
 		unit = "px",
@@ -633,6 +649,29 @@ export default function EditingPlayground() {
 							<Landing />
 						</div>
 					</div>
+					{selected && gap && gapPixels && (
+						<GapOverlay
+							key={selected.dataset.editNode}
+							node={selected}
+							property={gap}
+							value={numeric(gap)}
+							stage={stage}
+							zoom={viewport.zoom}
+							revision={revision}
+							disabled={measuring || inline.current !== null || viewport.panning}
+							cancelled={cancelled}
+							onOpen={openGap}
+							onBegin={() => {
+								finish();
+								setGapAnchor(null);
+								beginGap();
+							}}
+							onChange={(v) => css(gap, v)}
+							onFinish={finish}
+							onCancel={cancel}
+							onHint={setHint}
+						/>
+					)}
 					<Selection
 						selected={selected}
 						zoom={viewport.zoom}
@@ -772,8 +811,29 @@ export default function EditingPlayground() {
 									),
 								)}
 								{NUMBERS.map((property) => numberRow(property))}
+								{selected && gap && gapPixels && (
+									<GapField
+										node={selected}
+										property={gap}
+										value={numeric(gap)}
+										anchor={gapAnchor}
+										onOpen={openGap}
+										onClose={() => setGapAnchor(null)}
+										onBegin={beginGap}
+										onChange={(v) => css(gap, v)}
+										onFinish={finish}
+										onCancel={cancel}
+										cancelled={cancelled}
+										revision={revision}
+									/>
+								)}
+								{gap && !gapPixels && (
+									<Row name="gap" ok={false}>
+										<span title="Relative gap; source editing is outside this playground">{value(gap)}</span>
+									</Row>
+								)}
 								{visibleOptional
-									.filter((property) => property !== "letter-spacing")
+									.filter((property) => property !== "letter-spacing" && !(gap && property === "gap"))
 									.map((property) =>
 										numberRow(property, "px", property.startsWith("margin-") ? Number.NEGATIVE_INFINITY : 0),
 									)}
@@ -823,15 +883,17 @@ export default function EditingPlayground() {
 									<option value="" disabled>
 										+ Add property
 									</option>
-									{OPTIONAL.filter((property) => !visibleOptional.includes(property)).map((property) => (
+									{OPTIONAL.filter(
+										(property) => !visibleOptional.includes(property) && !(gap && property === "gap"),
+									).map((property) => (
 										<option key={property}>{property}</option>
 									))}
 								</select>
 							</div>
 						</div>
 						<p className="ep-note">
-							Color tokens can be applied here. Source writes, other token bindings and responsive rules are
-							still outside this playground.
+							Color and gap tokens can be applied here. Source writes, other token bindings and responsive rules
+							are still outside this playground.
 						</p>
 					</div>
 					<div className="ep-hint" role="status">

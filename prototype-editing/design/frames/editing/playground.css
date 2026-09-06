@@ -541,3 +541,87 @@
 	text-align: center;
 	font: 10px var(--font-mono);
 }
+
+.ep-gap-band {
+	position: absolute;
+	pointer-events: auto;
+	touch-action: none;
+	cursor: ew-resize;
+	padding: 0;
+}
+.ep-gap-band[data-axis="y"] {
+	cursor: ns-resize;
+}
+.ep-gaps[data-active] .ep-gap-band {
+	background: color-mix(in srgb, var(--color-thread) 10%, transparent);
+}
+.ep-gap-mark {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 3px;
+	height: 14px;
+	border-radius: 2px;
+	background: var(--color-thread);
+	transform: translate(-50%, -50%);
+	opacity: 0;
+}
+.ep-gap-band[data-axis="y"] .ep-gap-mark {
+	width: 14px;
+	height: 3px;
+}
+.ep-gap-value {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	padding: 3px 5px;
+	border-radius: 3px;
+	font: 10px var(--font-mono);
+	line-height: 16px;
+	white-space: nowrap;
+	background: var(--color-thread);
+	color: var(--color-on-thread);
+	opacity: 0;
+	pointer-events: none;
+}
+.ep-gaps[data-active] .ep-gap-mark,
+.ep-gap-band[data-active] .ep-gap-value {
+	opacity: 1;
+}
+.ep-gap-band:focus-visible {
+	outline: 1px solid var(--color-thread);
+	outline-offset: -1px;
+}
+.ep-gap-trigger > span:first-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ep-gap-heading {
+	display: flex;
+	justify-content: space-between;
+	font-size: 12px;
+}
+.ep-gap-heading > :last-child {
+	color: var(--color-muted);
+	font: 11px var(--font-mono);
+}
+.ep-gap-custom {
+	border-top: 0;
+	margin-top: 0;
+	padding: 8px 0 12px;
+}
+.ep-gap-menu .ep-color-options {
+	max-height: 252px;
+	overflow: auto;
+}
+.ep-spacing-mark {
+	width: 12px;
+	height: 8px;
+	border-inline: 1px solid var(--color-muted);
+}
+
+.ep-gap-band[data-compact] .ep-gap-value {
+	display: none;
+}
