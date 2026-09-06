@@ -1129,6 +1129,7 @@ function sayTurn(
 		readonly thread: string;
 		readonly turn: string;
 		readonly saying: readonly AgentSaying[];
+		readonly recovery?: string;
 		readonly engine?: AgentEngineId;
 	},
 	signal: AbortSignal,
@@ -1142,6 +1143,7 @@ function sayTurn(
 				thread: said.thread,
 				...(said.engine === undefined ? {} : { engine: said.engine }),
 				turn: said.turn,
+				...(said.recovery === undefined ? {} : { recovery: said.recovery }),
 				said: said.saying.map((one) => ({
 					prompt: one.prompt,
 					...(one.selection === undefined ? {} : { selection: [...one.selection] }),
@@ -1201,6 +1203,7 @@ export function followAgentTurn(
 					readonly engine?: AgentEngineId;
 					/** one message, or the several a queue fired as one turn (#170) */
 					readonly saying: readonly AgentSaying[];
+					readonly recovery?: string;
 				};
 		  }
 		| { readonly attach: { readonly thread: string } },

@@ -37,6 +37,7 @@ export interface EngineOfferOptions {
 }
 
 export interface EngineTurnOptions {
+	readonly recovery?: string;
 	readonly root: string;
 	readonly session: AgentSessionRef;
 	readonly said: readonly AgentMessage[];

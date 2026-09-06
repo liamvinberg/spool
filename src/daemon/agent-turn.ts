@@ -9,8 +9,9 @@ import {
 	interruptRequestLine,
 	wordsOf,
 } from "./agent-control";
-import type { AgentAsking, AgentEvent } from "./agent-events";
+import type { AgentAsking, AgentEvent, AgentLimit, AgentRecovery } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
+import { providerRecovery } from "./agent-recovery";
 import { type AgentAsk, type AgentSession, agentPromptLine, PERMISSION_MODES, planAgentSpawn } from "./agent-spawn";
 
 /**
@@ -59,6 +60,8 @@ export interface AgentTurnOptions {
 	readonly ask?: AgentAsk;
 	/** the fence this project has on this machine (#281); absent is the fence as built */
 	readonly permissions?: AgentPermissions;
+	/** An earlier attempt already completed tools in this pending request. */
+	readonly continuing?: boolean;
 }
 
 export interface AgentTurn {
@@ -102,7 +105,15 @@ export interface AgentTurn {
 	abandon(): void;
 }
 
-export function startAgentTurn({ executor, root, content, session, ask, permissions }: AgentTurnOptions): AgentTurn {
+export function startAgentTurn({
+	executor,
+	root,
+	content,
+	session,
+	ask,
+	permissions,
+	continuing,
+}: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
 	const queue: AgentEvent[] = [];
 	let waiting: (() => void) | undefined;
@@ -152,6 +163,8 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 		}
 		pending.resolve(applied);
 	}
+	let completed = continuing === true;
+	let limit: AgentLimit | undefined;
 	/**
 	 * The requests nobody has answered yet, by the id an answer names.
 	 *
@@ -204,6 +217,34 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 		waiting = undefined;
 	}
 
+	function recoveryFor(words: string): AgentRecovery | undefined {
+		const recovery =
+			providerRecovery(words, "Claude Code", ask?.value) ??
+			(limit?.status === "rejected"
+				? {
+						kind: "limit" as const,
+						account: "Claude Code",
+						scope: "unknown" as const,
+						...(ask?.value ? { offer: ask.value } : {}),
+					}
+				: undefined);
+		if (!recovery) return undefined;
+		const scope =
+			recovery.kind === "limit" && limit?.window
+				? ["seven_day_opus", "seven_day_sonnet", "seven_day_overage_included"].includes(limit.window)
+					? "model"
+					: ["five_hour", "seven_day", "overage"].includes(limit.window)
+						? "account"
+						: recovery.scope
+				: recovery.scope;
+		return {
+			...recovery,
+			scope,
+			token: completed ? "claude-continue" : "claude-retry",
+			...(recovery.kind === "limit" && limit?.resetsAt ? { resetsAt: limit.resetsAt } : {}),
+		};
+	}
+
 	void (async () => {
 		let started: AgentProcess;
 		try {
@@ -241,7 +282,21 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 					if (mode === "ask" || mode === "edits" || mode === "bypass") applied = mode;
 				}
 				if (event.kind === "asking") asking.set(event.request, event);
-				push(event);
+				if (event.kind === "result" && !event.nonExecution) completed = true;
+				if (event.kind === "limit") limit = event.limit;
+				const recovery =
+					event.kind === "ended" && event.ending === "failed" ? recoveryFor(event.reason ?? "") : undefined;
+				if (recovery && event.kind === "ended")
+					push({
+						...event,
+						recovery,
+						reason:
+							recovery.kind === "login"
+								? "Sign in to Claude Code to continue."
+								: "Claude Code rate limit reached.",
+						stopReason: null,
+					});
+				else push(event);
 				// the turn is over: no more input is coming, so stdin closes and the
 				// binary is left to exit on its own rather than being killed
 				if (event.kind === "ended" && event.parent === null) {
@@ -262,7 +317,22 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 		started.onExit((code, message) => {
 			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
-			push({ kind: "closed", code, ...(message === undefined ? {} : { message }), parent: null });
+			const recovery = code === 0 ? undefined : recoveryFor(message ?? "");
+			push({
+				kind: "closed",
+				code,
+				...(message === undefined ? {} : { message }),
+				parent: null,
+				...(recovery
+					? {
+							recovery,
+							message:
+								recovery.kind === "login"
+									? "Sign in to Claude Code to continue."
+									: "Claude Code rate limit reached.",
+						}
+					: {}),
+			});
 			finish();
 		});
 		started.write(agentPromptLine(content));

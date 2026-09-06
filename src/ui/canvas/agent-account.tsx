@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentLoginProgress } from "../../daemon/agent-engine";
+import type { AgentRecovery } from "../../daemon/agent-events";
 import type { AgentLogin } from "../../daemon/agent-preflight";
 import { BUNDLED_CONNECTIONS } from "../../daemon/bundled-connections";
 import { accountOperation, fetchAgentLogin } from "../api";
@@ -13,22 +14,40 @@ export function AgentAccountDialog({
 	project,
 	onClose,
 	onConnected,
+	onAuthenticated,
+	renewal,
 }: {
 	project: string;
 	onClose: () => void;
 	onConnected: () => void;
+	onAuthenticated?: (provider: string, method: string) => void;
+	renewal?: AgentRecovery | undefined;
 }) {
-	const [view, setView] = useState<AgentLoginProgress | null>(null);
+	const [view, setView] = useState<AgentLoginProgress | null>(
+		renewal?.offer
+			? {
+					kind: "error",
+					message: `${renewal.account} refused the request. Sign in again to continue this thread. Your messages and draft are still here.`,
+				}
+			: null,
+	);
 	const [connections, setConnections] = useState<NonNullable<AgentLogin["connections"]>>([]);
-	const [selected, setSelected] = useState<(typeof BUNDLED_CONNECTIONS)[number]>(BUNDLED_CONNECTIONS[0]);
+	const [selected, setSelected] = useState<(typeof BUNDLED_CONNECTIONS)[number]>(
+		BUNDLED_CONNECTIONS.find((connection) =>
+			renewal?.offer?.startsWith(`spool/${connection.provider}/${connection.method}/`),
+		) ?? BUNDLED_CONNECTIONS[0],
+	);
 	const [opened, setOpened] = useState(false);
 	const [manual, setManual] = useState(false);
 	const [actionTarget, setActionTarget] = useState<HTMLSpanElement | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
 	const active = useRef<string | undefined>(undefined);
 	const generation = useRef(0);
-	const title =
-		view === null
+	const completed = useRef(-1);
+	const [renew, setRenew] = useState(Boolean(renewal?.offer));
+	const title = renew
+		? `Reconnect ${selected.name}`
+		: view === null
 			? "Connect an account"
 			: view.kind === "connected"
 				? `${selected.name} connected`
@@ -51,12 +70,14 @@ export function AgentAccountDialog({
 					return previous;
 				return JSON.stringify(previous) === JSON.stringify(result) ? previous : result;
 			});
-			if (result.kind === "connected") {
+			if (result.kind === "connected" && completed.current !== generation.current) {
+				completed.current = generation.current;
+				onAuthenticated?.(selected.provider, selected.method);
 				refresh();
 				onConnected();
 			}
 		},
-		[refresh, onConnected],
+		[refresh, onConnected, onAuthenticated, selected],
 	);
 	useEffect(() => {
 		const previous = document.activeElement;
@@ -97,6 +118,7 @@ export function AgentAccountDialog({
 		setView({ kind: "cancelled" });
 	};
 	const begin = async (connection = selected) => {
+		setRenew(false);
 		cancel();
 		setSelected(connection);
 		setOpened(false);
@@ -133,6 +155,8 @@ export function AgentAccountDialog({
 		if (url && /^https?:\/\//i.test(url)) {
 			window.open(url, "_blank", "noopener,noreferrer");
 			setOpened(true);
+			// The SDK has already requested this next step; its callback remains live.
+			if (view?.kind === "step" && view.browser && view.step.type === "manual_code") setManual(true);
 		}
 	};
 	return createPortal(
@@ -224,27 +248,16 @@ export function AgentAccountDialog({
 							<>
 								<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
 									{step ? (
-										<>
-											<LoginStepView
-												key={view.kind === "step" ? `${view.id}/${view.revision}/${manual}` : ""}
-												step={step}
-												opened={opened}
-												onOpen={open}
-												onAnswer={(value) => {
-													void submit(value);
-												}}
-												actionTarget={actionTarget}
-											/>
-											{view.kind === "step" && view.browser && !manual ? (
-												<button
-													type="button"
-													className="mt-3 text-sm text-muted hover:text-text"
-													onClick={() => setManual(true)}
-												>
-													Paste a code instead
-												</button>
-											) : null}
-										</>
+										<LoginStepView
+											key={view.kind === "step" ? `${view.id}/${view.revision}/${manual}` : ""}
+											step={step}
+											opened={opened}
+											onOpen={open}
+											onAnswer={(value) => {
+												void submit(value);
+											}}
+											actionTarget={actionTarget}
+										/>
 									) : (
 										<p role="status" className="text-base text-muted leading-base">
 											{view.kind === "connected"
@@ -310,7 +323,7 @@ export function AgentAccountDialog({
 															void begin();
 														}}
 													>
-														Try again
+														{renew ? "Sign in again" : "Try again"}
 													</AccountButton>
 												</>
 											)}

@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { type AgentEngineId, type AgentOwnership, isAgentEngineId } from "./agent-engine";
+import type { AgentRecovery } from "./agent-events";
 
 /**
  * The threads of one project, on disk, where a daemon restart cannot reach them
@@ -89,6 +90,8 @@ export interface StoredThread extends AgentOwnership {
 	 * holding for something nobody has sent.
 	 */
 	readonly draft: string;
+	readonly pending?: ThreadPicture;
+	readonly recovery?: AgentRecovery | null;
 	/** a restart caught this thread mid-turn: it stopped, and it is never resumed */
 	readonly stopped: boolean;
 	/** closing a tab tidies it out of the strip and deletes nothing */
@@ -185,6 +188,8 @@ function parseEnvelope(value: unknown): ThreadPut | undefined {
 		queued: Array.isArray(record.queued) ? record.queued : [],
 		// a file written before #234 held nothing unsent, which is the same fact as an empty box
 		draft: typeof record.draft === "string" ? record.draft : "",
+		...(Array.isArray(record.pending) ? { pending: record.pending } : {}),
+		...(record.recovery === undefined ? {} : { recovery: parseRecovery(record.recovery) }),
 	};
 }
 
@@ -328,7 +333,7 @@ export function serveThreads(
 		 * one, and what is left here means what it always claimed to — the daemon went away.
 		 */
 		const held = live.has(thread.id);
-		const cut = WORKING.has(thread.life) && !held;
+		const cut = WORKING.has(thread.life) && !held && !thread.recovery;
 		const stopped = thread.stopped || cut;
 		return {
 			...thread,
@@ -347,4 +352,23 @@ export function closeThread(spoolDir: string, root: string, id: string): boolean
 	if (thread === undefined) return false;
 	writeThread(spoolDir, root, { ...thread, closed: true });
 	return true;
+}
+
+function parseRecovery(value: unknown): AgentRecovery | null {
+	if (typeof value !== "object" || value === null) return null;
+	const data = value as Record<string, unknown>;
+	if (
+		(data.kind !== "login" && data.kind !== "limit") ||
+		typeof data.account !== "string" ||
+		(data.scope !== "account" && data.scope !== "model" && data.scope !== "unknown")
+	)
+		return null;
+	return {
+		kind: data.kind,
+		account: data.account,
+		scope: data.scope,
+		...(typeof data.token === "string" ? { token: data.token } : {}),
+		...(typeof data.offer === "string" ? { offer: data.offer } : {}),
+		...(typeof data.resetsAt === "number" && Number.isFinite(data.resetsAt) ? { resetsAt: data.resetsAt } : {}),
+	};
 }

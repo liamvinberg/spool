@@ -883,3 +883,67 @@ describe("the threads door", () => {
 		expect((await app.request(`/api/p/${name}/agent/threads/${THREAD}/close`, { method: "POST" })).status).toBe(404);
 	});
 });
+
+it("keeps completed Claude work held through repeated authentication failures", async () => {
+	const { createClaudeEngine } = await import("./agent-engine-claude");
+	const root = makeTempDir();
+	const path = sessionFile(root, THREAD, process.env);
+	mkdirSync(join(path, ".."), { recursive: true });
+	writeFileSync(path, "{}");
+	const agent = fixtureAgentExecutor((proc) => proc.exit(1, "Not logged in. Please run /login"));
+	const engine = createClaudeEngine(agent.executor);
+	try {
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const events: AgentEvent[] = [];
+			const turn = engine.start({
+				root,
+				session: { id: THREAD },
+				said: [{ prompt: "edit the file once", selection: "captured selection" }],
+				ask: { value: "sonnet" },
+				recovery: "claude-continue",
+				permissions: "ask",
+			});
+			for await (const event of turn.events) events.push(event);
+			expect(events.at(-1)).toMatchObject({ kind: "closed", recovery: { kind: "login", token: "claude-continue" } });
+			const proc = agent.spawned[attempt];
+			expect(proc?.spawn.args).toContain("--resume");
+			expect(proc?.spawn.args).toContain(THREAD);
+			expect(sentText(proc?.inputs[0])).toContain("Continue the pending request from the completed tool results");
+			expect(sentText(proc?.inputs[0])).not.toContain("edit the file once");
+		}
+	} finally {
+		const { rmSync } = await import("node:fs");
+		rmSync(path, { force: true });
+	}
+});
+
+it.each([
+	["seven_day", "account"],
+	["seven_day_sonnet", "model"],
+	["future_window", "unknown"],
+])("uses Claude's %s limit window without guessing another model can recover it", async (window, scope) => {
+	const agent = fixtureAgentExecutor((proc) => {
+		proc.emit(
+			JSON.stringify({
+				type: "rate_limit_event",
+				rate_limit_info: { status: "rejected", rateLimitType: window, resetsAt: 2000000000 },
+			}),
+		);
+		proc.exit(1, "429 private-token");
+	});
+	const turn = startAgentTurn({
+		executor: agent.executor,
+		root: makeTempDir(),
+		session: { id: THREAD, resume: true },
+		content: [],
+		ask: { value: "sonnet" },
+		continuing: true,
+	});
+	const events: AgentEvent[] = [];
+	for await (const event of turn.events) events.push(event);
+	expect(events.at(-1)).toMatchObject({
+		kind: "closed",
+		recovery: { kind: "limit", scope, resetsAt: 2000000000, offer: "sonnet", token: "claude-continue" },
+	});
+	expect(JSON.stringify(events)).not.toContain("private-token");
+});

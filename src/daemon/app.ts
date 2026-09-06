@@ -1494,6 +1494,7 @@ export function createDaemonApp({
 			validator("json", (value, c) => {
 				const body = (typeof value === "object" && value !== null ? value : {}) as {
 					said?: unknown;
+					recovery?: unknown;
 					turn?: unknown;
 					thread?: unknown;
 					engine?: unknown;
@@ -1547,7 +1548,10 @@ export function createDaemonApp({
 						...(attached === undefined ? {} : { attachment: attached }),
 					});
 				}
+				if (body.recovery !== undefined && typeof body.recovery !== "string")
+					return c.text("Invalid recovery", 400);
 				return {
+					...(typeof body.recovery === "string" ? { recovery: body.recovery } : {}),
 					said,
 					thread: body.thread,
 					...(body.engine === undefined ? {} : { engine: body.engine as AgentEngineId }),
@@ -1560,7 +1564,7 @@ export function createDaemonApp({
 				// order the wire sent them
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
-				const { said, thread, engine: requested, turn: named } = c.req.valid("json");
+				const { said, thread, engine: requested, turn: named, recovery } = c.req.valid("json");
 				/*
 				 * One turn per conversation, refused rather than replaced (#211).
 				 *
@@ -1593,6 +1597,7 @@ export function createDaemonApp({
 					});
 				}
 				const turn = selected.engine.start({
+					...(recovery === undefined ? {} : { recovery }),
 					root: project.root,
 					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
 					permissions: settings.agentPermissions(project.root),

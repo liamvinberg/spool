@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
+import type { AgentRecovery } from "../../daemon/agent-events";
 import { fetchAgentInstalled } from "../api";
 
 /**
@@ -43,32 +44,6 @@ export function signedOut(words: string): boolean {
 	return REFUSALS.some((refusal) => words.includes(refusal));
 }
 
-/**
- * The one line spool writes for itself, and the reason it has to.
- *
- * `/login` is a slash command inside the interactive TUI. Spool spawns `--print`, where
- * there is no session to type it into, so quoting the binary's remedy verbatim would be
- * quoting an instruction that cannot be followed from here. The translation is the whole
- * of spool's addition: name the terminal, then hand back the binary's own command.
- */
-export const LOGIN_REMEDY = "run `claude` in a terminal, then /login";
-
-/**
- * The promise about keys, said in the one place it belongs.
- *
- * Somebody looking at a signed-out agent is exactly the person about to go hunting for a
- * field to paste a key into. It rides under the remedy rather than in the standing strip
- * because it is a sentence you need once, at the moment you are deciding what to do,
- * rather than for as long as the state lasts.
- *
- * It is also the whole of what spool says about keys. The API-key state was cut on
- * purpose: *keys: none, ever* is a promise about what spool asks for and stores, and
- * somebody's own CLI configured with a key breaks none of it — spool asks for nothing,
- * stores nothing, and the key is never in this path. A warning would be spool holding an
- * opinion about somebody's billing arrangement.
- */
-export const NO_KEY = "spool uses that login; it never asks for a key";
-
 /** spool's own word for a check that came back with the same answer */
 export const STILL_OUT = "still signed out";
 
@@ -86,6 +61,8 @@ export function signedInAs(account: string | null): string {
 export interface LoginDeck {
 	/** the turn that ran bounced off a login */
 	readonly out: boolean;
+	readonly recovery?: AgentRecovery | null;
+	readonly retry?: () => void;
 	/** true while the check is out */
 	readonly checking: boolean;
 	/** ask again; on a yes the held prompt goes where it was always going */

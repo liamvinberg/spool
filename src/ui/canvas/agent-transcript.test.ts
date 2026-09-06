@@ -511,27 +511,13 @@ describe("a turn that ends", () => {
 		expect(entries.at(-1)).toMatchObject({ kind: "note", text: "spawn claude ENOENT" });
 	});
 
-	/**
-	 * The refusal is the binary's and the remedy is spool's, and the split is the rule
-	 * (#201). Its own remedy is `/login`, a slash command inside an interactive session,
-	 * and spool spawns print mode — so quoting it verbatim would be quoting an instruction
-	 * that cannot be followed from here. Naming the terminal is the whole of the addition.
-	 */
-	it("adds one sentence of its own under a refusal it did not write", () => {
+	it("keeps the refusal in history while recovery owns its actions", () => {
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
 			stamp([{ kind: "closed", code: 1, message: "Not logged in · Please run /login", parent: null }]),
 		);
-
-		expect(entries.slice(-2)).toMatchObject([
-			{ kind: "note", text: "Not logged in · Please run /login" },
-			{
-				kind: "note",
-				rule: false,
-				said: "run `claude` in a terminal, then /login",
-				text: "spool uses that login; it never asks for a key",
-			},
-		]);
+		expect(entries.at(-1)).toMatchObject({ kind: "note", text: "Not logged in · Please run /login" });
+		expect(entries).toHaveLength(2);
 	});
 
 	/** every other reason a turn gives up is spool's to quote and never to advise on */
