@@ -53,6 +53,7 @@ import { RibbonMark } from "../icons";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
+import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
@@ -479,6 +480,7 @@ export function ProjectCanvas({
 	}, [project]);
 	const deck = useAgentThreads(project, preferredEngine);
 	const turn = deck.turn;
+	const permissions = useAgentPermissions(project, deck.open, deck.engine, turn.phase);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
@@ -4938,7 +4940,7 @@ export function ProjectCanvas({
 				)}
 				agent={(width, shut) => (
 					<AgentRail
-						onPermissions={onSettings}
+						permissions={permissions}
 						width={width}
 						onCollapse={shut}
 						entries={turn.entries}

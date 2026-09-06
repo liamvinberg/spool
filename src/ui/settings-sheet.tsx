@@ -146,9 +146,7 @@ function General({
 	entries: readonly SettingReading[];
 	write: Write;
 }) {
-	const general = entries.filter(
-		(entry) => entry.key !== "agent.engine" && (entry.group === "general" || entry.group === "agent"),
-	);
+	const general = entries.filter((entry) => entry.group === "general");
 	return (
 		<div className="flex flex-col gap-8">
 			{BANDS.map((band) => {

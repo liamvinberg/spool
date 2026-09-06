@@ -1502,3 +1502,28 @@ export async function accountOperation(
 		return { kind: "error", message: "Could not reach the bundled engine. Try again." };
 	}
 }
+
+export async function agentPermissions(
+	project: string,
+	thread: string,
+	engine: AgentEngineId,
+	mode?: "ask" | "edits" | "bypass",
+): Promise<{ mode: "ask" | "edits" | "bypass" } | { reason: string }> {
+	try {
+		const route = client.api.p[":project"].agent.threads[":thread"].permissions;
+		const args = { param: { project, thread }, query: { engine } };
+		const res = mode === undefined ? await route.$get(args) : await route.$put({ ...args, json: { mode } });
+		if (!res.ok) return { reason: await res.text() };
+		const body: unknown = await res.json();
+		if (
+			typeof body === "object" &&
+			body !== null &&
+			"mode" in body &&
+			(body.mode === "ask" || body.mode === "edits" || body.mode === "bypass")
+		)
+			return { mode: body.mode };
+		return { reason: "The engine did not report its permissions." };
+	} catch {
+		return { reason: "Could not reach the engine." };
+	}
+}
