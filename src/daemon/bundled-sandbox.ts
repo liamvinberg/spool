@@ -34,25 +34,40 @@ export async function sandboxCommand(
 			// before the user's command, whose partial effects must never be retried.
 			stage = "probe wrapping";
 			const probe = await SandboxManager.wrapWithSandboxArgv("true", "/bin/bash");
-			stage = "probe execution";
-			const result = await runCommand(
-				probe.argv,
-				process.cwd(),
-				{ PATH: process.env.PATH, ...probe.env },
-				new AbortController().signal,
-				10,
-			);
-			// Only the fixed startup probe's bounded output belongs in diagnostics.
-			// Never record a user's command, its environment, or the generated sandbox argv.
-			if (result.code !== 0) throw new Error(`Startup probe exited ${result.code}: ${result.text.slice(-4096)}`);
+			try {
+				stage = "probe execution";
+				const result = await runCommand(
+					probe.argv,
+					process.cwd(),
+					{ PATH: process.env.PATH, ...probe.env },
+					new AbortController().signal,
+					10,
+				);
+				// Only the fixed startup probe's bounded output belongs in diagnostics.
+				// Never record a user's command, its environment, or the generated sandbox argv.
+				if (result.code !== 0) throw new Error(`Startup probe exited ${result.code}: ${result.text.slice(-4096)}`);
+			} finally {
+				SandboxManager.cleanupAfterCommand();
+			}
 		} catch (error) {
 			throw new Error(`Command isolation is unavailable (${stage})`, { cause: error });
 		}
 	})();
 	await ready;
-	return SandboxManager.wrapWithSandboxArgv(command, "/bin/bash", { filesystem }, signal, root, {
+	const wrapped = await SandboxManager.wrapWithSandboxArgv(command, "/bin/bash", { filesystem }, signal, root, {
 		commandId: randomUUID(),
 	});
+	let released = false;
+	return {
+		...wrapped,
+		// Release only after execution settles. The runtime defers removing Linux
+		// mount points until every prepared command has released its ownership.
+		cleanup: () => {
+			if (released) return;
+			released = true;
+			SandboxManager.cleanupAfterCommand();
+		},
+	};
 }
 
 /** Commands own a process group, including browser children. Completion retires that group too. */
@@ -71,7 +86,14 @@ export async function runCommand(
 		const outputFd = outputFile === undefined ? undefined : openSync(outputFile, "wx", 0o600);
 		let total = 0;
 		let outputError: unknown;
-		const child = spawn(executable, argv.slice(1), { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(executable, argv.slice(1), { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+		} catch (error) {
+			if (outputFd !== undefined) closeSync(outputFd);
+			throw error;
+		}
+		let spawnError: Error | undefined;
 		let text = "";
 		let stdout = "";
 		let stopped = false;
@@ -105,16 +127,28 @@ export async function runCommand(
 			text = (text + chunk).slice(-200_000);
 			if (output) stdout = (stdout + chunk).slice(-200_000);
 		};
-		child.stdout.on("data", (data: Buffer) => collect(data, true));
-		child.stderr.on("data", (data: Buffer) => collect(data, false));
-		child.on("error", reject);
+		child.stdout?.on("data", (data: Buffer) => collect(data, true));
+		child.stderr?.on("data", (data: Buffer) => collect(data, false));
+		// Even a failed spawn emits close. Settle there so callers can safely
+		// release sandbox ownership and all per-process resources together.
+		child.on("error", (error) => {
+			spawnError = error;
+			kill();
+		});
 		child.on("exit", kill);
 		child.on("close", (code) => {
 			clearTimeout(timer);
-			if (outputFd !== undefined) closeSync(outputFd);
+			if (outputFd !== undefined) {
+				try {
+					closeSync(outputFd);
+				} catch (error) {
+					outputError ??= error;
+				}
+			}
 			if (total > 200_000) text = `[Output truncated; full output: ${outputFile ?? "not saved"}]\n${text}`;
 			signal.removeEventListener("abort", stop);
-			if (outputError !== undefined) reject(new Error("Could not save command output", { cause: outputError }));
+			if (spawnError) reject(spawnError);
+			else if (outputError !== undefined) reject(new Error("Could not save command output", { cause: outputError }));
 			else if (stopped) reject(new Error(signal.aborted ? "Command stopped" : "Command timed out"));
 			else resolve({ code, text, stdout });
 		});
