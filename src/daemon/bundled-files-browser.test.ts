@@ -181,4 +181,16 @@ it("runs file tools through the real host and served canvas, maps every changed 
 	await settled();
 	expect(children).toHaveLength(2);
 	expect(existsSync(join(project.root, "src/ui/restarted.css"))).toBe(false);
+	for (const mode of ["edits", "bypass"] as const) {
+		const changed = await fetch(`${project.url}/api/settings`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json", "X-Spool-Control": project.controlToken },
+			body: JSON.stringify({ key: "agent.permissions", value: mode, project: project.name }),
+		});
+		expect(changed.ok).toBe(true);
+		await send([write(`outside-${mode}`)]);
+		await expect.poll(() => existsSync(join(project.root, `outside-${mode}`))).toBe(true);
+		await settled();
+		expect(await open.count()).toBe(0);
+	}
 });
