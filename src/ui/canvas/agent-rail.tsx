@@ -1,13 +1,15 @@
-import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
-import type { SelectionEntry } from "../api";
+import { fetchAgentInstalled, type SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
+import { AgentAccountDialog } from "./agent-account";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
-import { limitReadout } from "./agent-limit";
+import { limitReadout, resetsIn } from "./agent-limit";
 import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
+import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
 import { Caret, Paragraphs } from "./agent-said";
@@ -22,7 +24,9 @@ import {
 	duration,
 	type RowState,
 } from "./agent-transcript";
+import { MenuItem } from "./context-menu";
 import { ageOf } from "./frame-find";
+import { favoriteModels, ModelFavorite, ModelSearch, useModelFavorites } from "./model-favorites";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 import { useStillness } from "./stillness";
 
@@ -159,9 +163,12 @@ interface Holding {
 	readonly attached: Attachment | null;
 }
 
+const PermissionAction = createContext<(() => void) | undefined>(undefined);
+
 export function AgentRail({
 	width,
 	onCollapse,
+	permissions,
 	entries,
 	plan,
 	phase,
@@ -193,6 +200,7 @@ export function AgentRail({
 	 * measures its chip strip against it.
 	 */
 	width: number;
+	permissions?: PermissionDeck;
 	/** the carets inside the rail: they shut the column, which is the dock's state */
 	onCollapse: () => void;
 	entries: readonly AgentEntry[];
@@ -241,6 +249,7 @@ export function AgentRail({
 }) {
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
+	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | null>(null);
 	/** the clock read when the thread list was dropped over the log, or null while it is shut */
 	const [listing, setListing] = useState<number | null>(null);
 	/**
@@ -316,93 +325,115 @@ export function AgentRail({
 		(entry): entry is Extract<AgentEntry, { kind: "wait" }> =>
 			entry.kind === "wait" && entry.state === "running" && entry.ms === null,
 	);
+	const [modelRequest, requestModel] = useState(0);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<section
-			aria-label="Agent"
-			data-agent-rail=""
-			style={{ width }}
-			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
-		>
-			{install.missing ? (
-				/*
-				 * There is nothing to spawn, and spool knew it before anybody typed (#201).
-				 *
-				 * The wall takes the transcript's place and the composer stays, dead. The rest of
-				 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
-				 * conversation you cannot continue on a machine with no agent on it.
-				 */
-				<div className="flex h-full min-w-[200px] flex-col">
-					<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-						<InstallWall install={install} />
-						{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
-						<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
-					</div>
-					<DeadComposer />
-				</div>
-			) : (
-				/*
-				 * The rail is one panel, and the plate over it is where the other conversations
-				 * live (#205). The panel is everything one conversation is; the list the plate
-				 * drops is every conversation there is, and a press on it changes only the panel.
-				 */
-				<div className="flex h-full min-w-[200px] flex-col">
-					{/* the plate leads the shelf, because it says which thread everything under it
+		<RecoveryActions value={{ login, modelRequest }}>
+			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
+				<section
+					aria-label="Agent"
+					data-agent-rail=""
+					style={{ width }}
+					className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
+				>
+					{install.missing && model.engine === undefined ? (
+						/*
+						 * There is nothing to spawn, and spool knew it before anybody typed (#201).
+						 *
+						 * The wall takes the transcript's place and the composer stays, dead. The rest of
+						 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
+						 * conversation you cannot continue on a machine with no agent on it.
+						 */
+						<div className="flex h-full min-w-[200px] flex-col">
+							<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+								<InstallWall install={install} />
+								{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
+								<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
+							</div>
+							<DeadComposer />
+						</div>
+					) : (
+						/*
+						 * The rail is one panel, and the plate over it is where the other conversations
+						 * live (#205). The panel is everything one conversation is; the list the plate
+						 * drops is every conversation there is, and a press on it changes only the panel.
+						 */
+						<div className="flex h-full min-w-[200px] flex-col">
+							{/* the plate leads the shelf, because it says which thread everything under it
 					    belongs to, and it is where the others are reached from */}
-					<ThreadPlate threads={threads} listing={listing} onList={setListing} />
-					{/* the list drops over the shelf and the log together, so it hangs off the plate
+							<ThreadPlate threads={threads} listing={listing} onList={setListing} />
+							{/* the list drops over the shelf and the log together, so it hangs off the plate
 					    whatever the shelf is carrying */}
-					<div className="relative flex min-h-0 flex-1 flex-col">
-						{/* the standing half of being signed out, on the shelf the plan would take —
+							<div className="relative flex min-h-0 flex-1 flex-col">
+								{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
-						{login.out ? <LoginStrip login={login} /> : null}
-						{plan === null ? null : <PlanStrip plan={plan} />}
-						<Transcript
-							entries={entries}
-							live={phase === "playing"}
-							spoke={spoke}
-							elapsed={elapsed}
-							jump={jump}
-							onAnswer={onAnswer}
-						/>
-						{listing === null ? null : (
-							<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
-						)}
-					</div>
-					{/* the strip is measured against the composer's own inner width: the same three
+								{model.engine === undefined && login.out ? <LoginStrip login={login} /> : null}
+								{plan === null ? null : <PlanStrip plan={plan} />}
+								<Transcript
+									entries={entries}
+									afterLog={
+										model.engine === undefined || !(install.missing || login.out || login.recovery) ? null : (
+											<RecoveryView
+												install={install}
+												login={login}
+												model={model}
+												onModels={() => {
+													setFooterMenu("models");
+													requestModel((value) => value + 1);
+												}}
+											/>
+										)
+									}
+									live={phase === "playing"}
+									spoke={spoke}
+									elapsed={elapsed}
+									jump={jump}
+									onAnswer={onAnswer}
+								/>
+								{listing === null ? null : (
+									<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
+								)}
+							</div>
+							{/* the strip is measured against the composer's own inner width: the same three
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
 					    rather than one width */}
-					<Composer
-						phase={phase}
-						waited={waited}
-						finished={threads.finished}
-						answering={asking?.kind === "ask" ? asking.request : null}
-						strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
-						pointing={pointing}
-						draft={holding.draft}
-						onDraft={writeDraft}
-						attached={holding.attached}
-						onAttach={(attached) => write((was) => ({ ...was, attached }))}
-						queued={queued}
-						model={model}
-						limit={limit}
-						onSend={(text, sent) => {
-							const took = onSend(text, sent);
-							// the log follows the live edge again because something was said, so a press
-							// that said nothing must not move it
-							if (took) setSpoke((count) => count + 1);
-							return took;
-						}}
-						running={running}
-						onQueue={onQueue}
-						onUnqueue={onUnqueue}
-						onStop={onStop}
-						onAnswer={onAnswer}
-					/>
-				</div>
-			)}
-		</section>
+							<Composer
+								permissions={permissions}
+								menu={footerMenu}
+								onMenu={setFooterMenu}
+								phase={phase}
+								waited={waited}
+								finished={threads.finished}
+								answering={asking?.kind === "ask" ? asking.request : null}
+								strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
+								pointing={pointing}
+								draft={holding.draft}
+								onDraft={writeDraft}
+								attached={holding.attached}
+								onAttach={(attached) => write((was) => ({ ...was, attached }))}
+								queued={queued}
+								model={model}
+								limit={limit}
+								onSend={(text, sent) => {
+									if (install.missing || login.recovery) return false;
+									const took = onSend(text, sent);
+									// the log follows the live edge again because something was said, so a press
+									// that said nothing must not move it
+									if (took) setSpoke((count) => count + 1);
+									return took;
+								}}
+								running={running}
+								onQueue={onQueue}
+								onUnqueue={onUnqueue}
+								onStop={onStop}
+								onAnswer={onAnswer}
+							/>
+						</div>
+					)}
+				</section>
+			</PermissionAction>
+		</RecoveryActions>
 	);
 }
 
@@ -747,9 +778,9 @@ function InstallWall({ install }: { install: InstallDeck }) {
 	return (
 		<div data-agent-wall="" className="flex min-h-0 flex-1 flex-col justify-center px-3.5">
 			<div className="animate-agent-entry flex flex-col gap-3">
-				<p className="text-text type-body">no claude on this machine</p>
+				<p className="text-text type-body">Claude Code is not installed</p>
 				<p className="text-muted type-body">
-					Spool runs the agent you already have, with the login you already made. There is nothing here to run yet.
+					Install Claude Code to continue with this engine, or start a new thread with spool.
 				</p>
 				<div className="flex flex-col gap-1.5 pt-1">
 					<div className="flex items-center justify-between">
@@ -904,6 +935,7 @@ export function followTo(box: { readonly scrollHeight: number; readonly clientHe
 }
 
 function Transcript({
+	afterLog,
 	entries,
 	live,
 	spoke,
@@ -911,6 +943,7 @@ function Transcript({
 	jump,
 	onAnswer,
 }: {
+	afterLog?: ReactNode;
 	entries: readonly AgentEntry[];
 	/** whether the turn is still writing, which is the word the chip picks for what is below */
 	live: boolean;
@@ -1101,6 +1134,7 @@ function Transcript({
 							<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
 						</Arrive>
 					))}
+					{afterLog ? <div className="mt-5">{afterLog}</div> : null}
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
@@ -1420,6 +1454,9 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 						{shot === null ? null : (
 							<Shot shot={shot} of={entry.frame ?? entry.detail} quiet={entry.frame === entry.subject} />
 						)}
+						{entry.slices?.map((slice) => (
+							<Shot key={slice.id} shot={slice} of={entry.frame ?? entry.detail} quiet />
+						))}
 						{shot === null && entry.detail !== null ? (
 							<span data-agent-detail="" className="block truncate text-muted type-detail">
 								{entry.detail}
@@ -1589,6 +1626,7 @@ function Ask({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const request = entry.request;
+	const permissions = useContext(PermissionAction);
 	const open = entry.state === "open" && request !== null;
 	const answer = (reply: AgentReply) => {
 		if (request !== null) onAnswer(request, reply);
@@ -1608,6 +1646,11 @@ function Ask({
 	};
 	return (
 		<div data-agent-ask={entry.state} className="flex flex-col gap-3">
+			{open && entry.access?.unavailable ? (
+				<p className="text-base text-text leading-base">
+					spool can’t restrict commands to design/ on this computer.
+				</p>
+			) : null}
 			{/* the sentences, drawn where the agent's sentences are drawn. A question still
 			    arriving shows a caret, because it is typing itself in the way every tool
 			    call's subject does */}
@@ -1644,7 +1687,7 @@ function Ask({
 						</div>
 					);
 				})
-			) : entry.asked === null ? null : (
+			) : entry.asked === null || (entry.access !== undefined && !open) ? null : (
 				// nothing where the agent wrote nothing: the row above already named the call,
 				// and a block that repeated it would be the rail saying one thing twice
 				<p className="text-text type-body">
@@ -1652,10 +1695,26 @@ function Ask({
 					{entry.state === "arriving" ? <Caret /> : null}
 				</p>
 			)}
+			{open && entry.access?.command ? (
+				<code className="break-words font-mono text-xs text-muted leading-4">{entry.access.command}</code>
+			) : null}
 			{entry.state === "answered" ? <Answered words={entry.words} /> : null}
 			{entry.state === "dropped" ? <AskOutcome state="failed" text="nobody answered" /> : null}
-			{entry.state === "allowed" ? <AskOutcome state="done" text="allowed" /> : null}
-			{entry.state === "always" ? <AskOutcome state="done" text="allowed for this thread" /> : null}
+			{entry.state === "allowed" ? <AskOutcome state="done" text="allowed once" /> : null}
+			{entry.state === "always" ? (
+				<AskOutcome
+					state="done"
+					text={
+						entry.access === undefined
+							? "allowed for this thread"
+							: entry.access.kind === "command"
+								? entry.access.scope === "commands"
+									? "commands allowed for this thread"
+									: `commands in ${entry.access.scope} allowed for this thread`
+								: `edits in ${entry.access.scope} allowed for this thread`
+					}
+				/>
+			) : null}
 			{/* a deny and a dismiss are one wire and two acts: for an approval the person
 			    answered no, and for a question they refused to answer at all */}
 			{entry.state === "denied" ? (
@@ -1675,29 +1734,41 @@ function Ask({
 				</button>
 			) : null}
 			{open && !entry.question ? (
-				<div className="flex flex-col gap-1.5">
-					<AskAction label="allow" onPick={() => answer({ kind: "allow" })} />
+				<div className="flex flex-wrap gap-1.5">
+					<AskAction compact label="allow once" onPick={() => answer({ kind: "allow" })} />
 					{/* absent rather than dead where the request suggested no rule: spool never
 					    composes one of its own to fill the gap. Where it is offered it lasts the
 					    thread and is written to no file, because the complaint is repetition */}
 					{entry.always ? (
-						<AskAction label="always, for this thread" onPick={() => answer({ kind: "always" })} />
+						<AskAction compact label="for this thread" onPick={() => answer({ kind: "always" })} />
 					) : null}
-					<AskAction label="deny" onPick={() => answer({ kind: "deny" })} />
+					<AskAction compact label="deny" onPick={() => answer({ kind: "deny" })} />
 				</div>
+			) : null}
+			{open && !entry.question && permissions !== undefined ? (
+				<button
+					type="button"
+					onClick={permissions}
+					className="w-fit py-1 font-mono text-2xs text-muted leading-4 transition-colors hover:text-text"
+				>
+					change permissions…
+				</button>
 			) : null}
 		</div>
 	);
 }
 
 /** one of spool's own answers to an approval, in the same row an option gets */
-function AskAction({ label, onPick }: { label: string; onPick: () => void }) {
+function AskAction({ label, onPick, compact = false }: { label: string; onPick: () => void; compact?: boolean }) {
 	return (
 		<button
 			type="button"
 			data-agent-option={label}
 			onClick={onPick}
-			className="w-full rounded-md border border-border-raised bg-surface px-3 py-2 text-left transition-colors duration-150 hover:border-muted/45"
+			className={cn(
+				"rounded-md border border-border-raised bg-surface px-3 py-2 text-left transition-colors duration-150 hover:border-muted/45",
+				!compact && "w-full",
+			)}
 		>
 			<span className="text-text type-value">{label}</span>
 		</button>
@@ -1990,6 +2061,9 @@ function fieldSays(answering: string | null, finished: boolean): string {
 }
 
 function Composer({
+	permissions,
+	menu,
+	onMenu,
 	phase,
 	waited,
 	finished,
@@ -2010,6 +2084,9 @@ function Composer({
 	onStop,
 	onAnswer,
 }: {
+	permissions: PermissionDeck | undefined;
+	menu: "models" | "permissions" | null;
+	onMenu: (menu: "models" | "permissions" | null) => void;
 	phase: TurnPhase;
 	/** how long the request now out has been silent, which is all the stroke reads (#231) */
 	waited: number;
@@ -2056,6 +2133,7 @@ function Composer({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const field = useRef<HTMLTextAreaElement>(null);
+	const permissionTrigger = useRef<HTMLButtonElement>(null);
 	/*
 	 * A stop is offered against every turn that is still a process (#165, #180, #234).
 	 *
@@ -2081,6 +2159,10 @@ function Composer({
 	}, [draft]);
 
 	const take = (text: string) => {
+		if (!running() && model.engine === "spool" && model.offer.models.length === 0) {
+			model.connect?.();
+			return false;
+		}
 		// captured here rather than read later: the chips that were up are the bytes
 		// that went out, and the line under the words has to say so afterwards. For a
 		// message the queue holds that is the whole contract, because it fires against a
@@ -2193,28 +2275,68 @@ function Composer({
 					style={{ height: MIN_H }}
 				/>
 			</div>
-			{/*
-			 * The footer holds the model and the stop, and nothing else (#184).
-			 *
-			 * 243 wanted at every width — the model's 160, the stop's 73 and the gap between
-			 * them — with no threshold and no ladder across the rail's whole 200–480 range.
-			 * The three occupants #118, #122 and #165 each put here wanted 432 against 391 of
-			 * box at 420, which wrapped the model to 24px inside an 18px line and elided the
-			 * limit's reset time; the limit went to the menu on #122's own reasoning, and the
-			 * send hint went because which machine is answering outranks a keyboard hint you
-			 * learn once. #200's own word about a finished thread went with it, into the
-			 * placeholder of the field it is a fact about.
-			 *
-			 * The model is the one thing here allowed to give way, and it truncates rather
-			 * than shortening. The stop is `shrink-0`, because a cut name is still readable
-			 * and half a stop button is not.
-			 */}
-			{/* the row is what the menu above it is measured against, not the trigger: a panel
-			    anchored to a trigger that shrinks with its own text would move with the text,
-			    and it has to be clamped to the composer's width rather than to a word's */}
-			<div className="relative flex h-[18px] items-center justify-between gap-2.5">
-				<ModelMenu model={model} limit={limit} />
-				{cutting ? <StopButton onStop={onStop} /> : null}
+			{permissions?.reason ? (
+				<p role="status" className="text-2xs text-muted leading-4">
+					{permissions.reason}
+				</p>
+			) : null}
+			<div className="relative flex h-[18px] min-w-0 items-center justify-between gap-2.5">
+				<div className="relative flex min-w-0 flex-1 items-center gap-4">
+					<ModelMenu
+						model={model}
+						limit={limit}
+						open={menu === "models"}
+						onOpen={(next) => onMenu(next ? "models" : null)}
+					/>
+					{cutting ? <StopButton onStop={onStop} /> : null}
+					{permissions === undefined ? null : (
+						<button
+							ref={permissionTrigger}
+							type="button"
+							data-permission-trigger=""
+							aria-label={`Agent permissions: ${permissions.mode}`}
+							aria-haspopup="menu"
+							aria-expanded={menu === "permissions"}
+							title={`Agent permissions: ${permissions.mode}`}
+							aria-busy={permissions.pending}
+							onClick={() => onMenu(menu === "permissions" ? null : "permissions")}
+							onKeyDown={(event) => {
+								if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+									event.preventDefault();
+									onMenu("permissions");
+								}
+							}}
+							className={cn(
+								QUIET,
+								"relative z-30 flex shrink-0 items-center gap-1 py-1 text-muted hover:text-text",
+							)}
+						>
+							{permissions.mode}
+							<ChevronIcon open={menu === "permissions"} className="h-2 w-2 shrink-0" />
+						</button>
+					)}
+					{permissions !== undefined && menu === "permissions" ? (
+						<>
+							<button
+								type="button"
+								tabIndex={-1}
+								aria-label="close the permission menu"
+								className="fixed inset-0 z-10 cursor-default"
+								onClick={() => onMenu(null)}
+							/>
+							<PermissionMenu
+								mode={permissions.mode}
+								engine={model.engine ?? "claude"}
+								trigger={permissionTrigger}
+								onChange={(next) => {
+									onMenu(null);
+									permissions.choose(next);
+								}}
+								onClose={() => onMenu(null)}
+							/>
+						</>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);
@@ -2249,8 +2371,35 @@ const QUIET = "type-detail";
  */
 const MENU_W = 300;
 
-function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit | null }) {
-	const [open, setOpen] = useState(false);
+function ModelMenu({
+	model,
+	limit,
+	open,
+	onOpen,
+}: {
+	model: AgentModelDeck;
+	limit: AgentLimit | null;
+	open: boolean;
+	onOpen: (open: boolean) => void;
+}) {
+	const recoveryActions = useContext(RecoveryActions);
+	const [claudeInstalled, setClaudeInstalled] = useState<boolean | null>(null);
+	useEffect(() => {
+		if (!recoveryActions?.modelRequest) return;
+		setAll(true);
+	}, [recoveryActions?.modelRequest]);
+	useEffect(() => {
+		let gone = false;
+		if (open && model.project)
+			void fetchAgentInstalled(model.project, "claude").then((installed) => {
+				if (!gone) setClaudeInstalled(installed);
+			});
+		return () => {
+			gone = true;
+		};
+	}, [open, model.project]);
+	const trigger = useRef<HTMLButtonElement>(null);
+	const panel = useRef<HTMLDivElement>(null);
 	/**
 	 * What the one slot is describing, which is one piece of state rather than two.
 	 *
@@ -2260,25 +2409,72 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 	 */
 	const [over, setOver] = useState<string | null>(null);
 	const { offer, levels } = model;
+	const favorites = useModelFavorites(model.project ?? "", model.engine ?? "claude");
+	const [all, setAll] = useState(false);
+	const [query, setQuery] = useState("");
+	const compact = model.engine === "spool";
+	const visible = compact
+		? favoriteModels(offer.models, offer.current.value, favorites.values, all, query)
+		: offer.models;
 	const pin = offer.current.pin;
-	const says = menuSays(offer, over);
-	const longest = menuLongest(offer);
+	const name =
+		offer.models.find((entry) => entry.value === offer.current.value)?.displayName ??
+		offer.current.name ??
+		offer.current.resolved ??
+		"Connect account";
+	const readout =
+		model.engine === undefined ? model.readout : `${model.engine === "spool" ? "spool" : "Claude Code"} · ${name}`;
+	const says =
+		model.engine === "spool"
+			? (offer.models.find((entry) => entry.value === (over ?? offer.current.value))?.description ?? "")
+			: menuSays(offer, over);
+	const longest =
+		model.engine === "spool"
+			? offer.models.reduce(
+					(longest, entry) => (entry.description.length > longest.length ? entry.description : longest),
+					"",
+				)
+			: menuLongest(offer);
+	useEffect(() => {
+		if (open) panel.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+	}, [open]);
 	// read at draw time rather than held: the reset is a clock time inside a day and a
 	// weekday past that, so what it says depends on when it is being read
-	const usage = limit === null ? null : limitReadout(limit, Date.now());
+	const recovery = recoveryActions?.login.recovery;
+	const reset = resetsIn(recovery?.resetsAt, Date.now());
+	const usage =
+		recovery?.kind === "limit"
+			? `${recovery.account} limit reached${reset ? ` · resets ${reset}` : ""}`
+			: limit === null
+				? null
+				: limitReadout(limit, Date.now());
 
 	const show = (next: boolean) => {
-		setOpen(next);
+		onOpen(next);
 		setOver(null);
 		// the answer is the installed binary's, so opening asks again rather than drawing
 		// whatever was true when the rail mounted
 		if (next) model.refresh();
+		else trigger.current?.focus();
 	};
 
 	return (
 		// no `relative` of its own: the panel is positioned against the footer row, so its
 		// width is clamped to the composer rather than to however long the name happens to be
-		<span data-agent-model={model.readout} className="flex min-w-0">
+		<span data-agent-model={model.readout} className="flex min-w-0 flex-1">
+			{model.accountOpen && model.project !== undefined ? (
+				<AgentAccountDialog
+					project={model.project}
+					onClose={() => model.closeAccount?.()}
+					onConnected={model.refresh}
+					renewal={recoveryActions?.login.recovery?.kind === "login" ? recoveryActions.login.recovery : undefined}
+					onAuthenticated={(provider, method) => {
+						const held = recoveryActions?.login.recovery;
+						if (held?.kind === "login" && (!held.offer || held.offer.startsWith(`spool/${provider}/${method}/`)))
+							recoveryActions?.login.retry?.();
+					}}
+				/>
+			) : null}
 			{open ? (
 				<button
 					type="button"
@@ -2289,12 +2485,20 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 			) : null}
 			<button
 				type="button"
-				aria-label="model"
+				ref={trigger}
+				aria-label={model.engine === undefined ? "model" : "Choose engine and model"}
+				title={readout}
 				aria-expanded={open}
 				onClick={() => show(!open)}
+				onKeyDown={(event) => {
+					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+						event.preventDefault();
+						show(true);
+					}
+				}}
 				className={cn(
 					QUIET,
-					"flex min-w-0 items-center gap-1 transition-colors duration-150",
+					"relative z-30 flex min-w-0 items-center gap-1 transition-colors duration-150",
 					open ? "text-muted" : "text-muted/45 hover:text-muted",
 				)}
 			>
@@ -2313,13 +2517,32 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 				 * An ellipsis is not that. `Opus (1M cont…` is visibly cut and reads as cut, the
 				 * whole string stays in the DOM, and the full name is one press up in the menu.
 				 */}
-				<span className="min-w-0 truncate">{model.readout}</span>
+				<span className="min-w-0 truncate">{readout}</span>
 				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
 			</button>
 			{open ? (
 				// biome-ignore lint/a11y/noStaticElementInteractions: leaving the panel only puts the slot back to describing the model that is set, and a keyboard reader never has a pointed row for it to return from
 				<div
+					ref={panel}
 					data-agent-model-menu=""
+					data-combined-menu={model.engine === undefined ? undefined : ""}
+					onKeyDown={(event) => {
+						if (event.key === "Escape" || event.key === "Tab") {
+							event.preventDefault();
+							event.stopPropagation();
+							show(false);
+							trigger.current?.focus();
+						}
+						if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+							event.preventDefault();
+							const controls = [
+								...(panel.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input") ?? []),
+							];
+							const at =
+								document.activeElement instanceof HTMLElement ? controls.indexOf(document.activeElement) : -1;
+							controls[(at + (event.key === "ArrowDown" ? 1 : controls.length - 1)) % controls.length]?.focus();
+						}
+					}}
 					style={{ width: MENU_W }}
 					// `max-w-full` against the footer row, which is the composer's own width: the
 					// rail drags to a 200 floor with 171px of box, and a fixed 300 would be cut off
@@ -2346,7 +2569,7 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					 * into the sentence slot. It is absent outright until the binary warns — below
 					 * that the payload carries no utilization at all, so there is no gauge to draw.
 					 */}
-					{usage === null ? null : (
+					{usage === null || compact ? null : (
 						<>
 							<span
 								data-agent-usage=""
@@ -2378,19 +2601,68 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					 * It is not a new idea: the effort row already worked this way and was the only
 					 * part of the menu nobody objected to.
 					 */}
-					{offer.models.map((entry) => (
-						<MenuRow
-							key={entry.value}
-							label={entry.displayName}
-							on={offer.current.value === entry.value}
-							onOver={() => setOver(entry.value)}
-							onPick={() => {
-								model.choose({ value: entry.value });
-								show(false);
-							}}
-						/>
-					))}
-					{levels.length === 0 ? null : (
+					{model.engine === undefined ? null : (
+						<>
+							{(["spool", "claude"] as const).map((engine) => (
+								<div key={engine} data-combined-engine={engine}>
+									{model.started && engine !== model.engine ? (
+										<MenuItem
+											label={`New thread with ${engine === "spool" ? "spool" : "Claude Code"}`}
+											onClick={() => {
+												model.onEngine?.(engine);
+												show(false);
+											}}
+										/>
+									) : (
+										<MenuRow
+											label={engine === "spool" ? "spool" : "Claude Code"}
+											via={engine === "claude" && claudeInstalled === false ? "not installed" : undefined}
+											on={engine === model.engine}
+											onOver={() => setOver(null)}
+											onPick={() => {
+												model.onEngine?.(engine);
+												show(false);
+											}}
+										/>
+									)}
+								</div>
+							))}
+							<MenuRule />
+						</>
+					)}
+					{compact ? <ModelSearch query={query} all={all} onQuery={setQuery} onAll={setAll} /> : null}
+					<div className={cn("max-h-[216px] overflow-y-auto", compact && "mt-1")}>
+						{visible.map((entry) => (
+							<div key={entry.value} data-model-offer={entry.value} className="flex items-center gap-0.5">
+								<MenuRow
+									label={entry.displayName}
+									via={entry.connection}
+									on={offer.current.value === entry.value}
+									onOver={() => setOver(entry.value)}
+									onPick={() => {
+										model.choose({ value: entry.value });
+										show(false);
+									}}
+								/>
+								{compact ? (
+									<ModelFavorite
+										model={entry}
+										on={favorites.values.includes(entry.value)}
+										toggle={() => favorites.toggle(entry.value)}
+									/>
+								) : null}
+							</div>
+						))}
+						{compact && visible.length === 0 ? (
+							<p className="px-1.5 py-3 text-base text-muted leading-base">
+								{all ? "No matching models." : "No matching favorites."}
+							</p>
+						) : null}
+					</div>
+					{compact && !all && query.trim() ? (
+						<MenuItem label="Search all models…" onClick={() => setAll(true)} />
+					) : null}
+					{levels.length === 0 || (compact && query.trim()) ? null : (
 						// the block reports the pointer as well as its rows do, because a row the
 						// environment killed reports nothing: a disabled control fires no mouse event,
 						// so the one row you would hover to ask why it is dead had no way to answer
@@ -2427,12 +2699,31 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					 * absent rather than greyed. Its sentence is not.
 					 */}
 
-					<p data-agent-model-says={says} className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted")}>
-						<span className="invisible" aria-hidden="true">
-							{longest}
-						</span>
-						<span className="absolute inset-x-1.5 top-1.5">{says}</span>
-					</p>
+					{compact ? null : (
+						<p data-agent-model-says={says} className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted")}>
+							<span className="invisible" aria-hidden="true">
+								{longest}
+							</span>
+							<span className="absolute inset-x-1.5 top-1.5">{says}</span>
+						</p>
+					)}
+					{compact && usage !== null ? (
+						<p data-agent-usage="" className="px-1.5 py-2 font-mono text-2xs text-muted leading-4">
+							{usage}
+						</p>
+					) : null}
+					{model.engine === "spool" ? (
+						<>
+							<MenuRule />
+							<MenuItem
+								label="Connect account…"
+								onClick={() => {
+									show(false);
+									model.connect?.();
+								}}
+							/>
+						</>
+					) : null}
 				</div>
 			) : null}
 		</span>
@@ -2449,12 +2740,14 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
  */
 function MenuRow({
 	label,
+	via,
 	on,
 	dead = false,
 	onOver,
 	onPick,
 }: {
 	label: string;
+	via?: string | undefined;
 	on: boolean;
 	dead?: boolean;
 	/** the row reports the cursor; the menu owns the one slot that answers it (#186) */
@@ -2474,7 +2767,10 @@ function MenuRow({
 				dead ? "text-muted/30" : on ? "bg-surface text-text" : "text-text/70 hover:bg-surface/60",
 			)}
 		>
-			<span className="min-w-0 truncate type-value">{label}</span>
+			<span className="flex w-full min-w-0 items-center gap-2">
+				<span className="min-w-0 flex-1 truncate type-value">{label}</span>
+				{via === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted")}>{via}</span>}
+			</span>
 		</button>
 	);
 }
@@ -2864,5 +3160,108 @@ function Chip({
 				</button>
 			)}
 		</span>
+	);
+}
+
+const RecoveryActions = createContext<{ login: LoginDeck; modelRequest: number } | null>(null);
+
+function RecoveryView({
+	install,
+	login,
+	model,
+	onModels,
+}: {
+	install: InstallDeck;
+	login: LoginDeck;
+	model: AgentModelDeck;
+	onModels: () => void;
+}) {
+	const recovery = login.recovery;
+	const claude = model.engine === "claude";
+	const action = "font-mono text-2xs leading-3 text-muted hover:text-text disabled:opacity-50";
+	const changed = recovery?.offer && model.offer.current.value !== recovery.offer;
+	const originalAccount = recovery?.offer?.split("/").slice(0, 3).join("/");
+	const sameAccount = claude || model.offer.current.value?.startsWith(`${originalAccount}/`);
+	if (claude && (install.missing || login.out))
+		return (
+			<div data-recovery="claude" className="flex flex-col gap-3">
+				<p className="text-base text-text leading-base">
+					{install.missing ? "Claude Code isn’t installed." : "Sign in to Claude Code to continue."}
+				</p>
+				{install.missing ? (
+					<a
+						href="https://code.claude.com/docs/en/quickstart"
+						target="_blank"
+						rel="noreferrer"
+						className="w-fit text-base text-muted underline underline-offset-4 hover:text-text"
+					>
+						Install Claude Code
+					</a>
+				) : (
+					<p className="text-base text-muted leading-base">
+						Run <code className="font-mono text-xs">claude</code> in a terminal, then{" "}
+						<code className="font-mono text-xs">/login</code>.
+					</p>
+				)}
+				<div className="flex flex-wrap items-center gap-3">
+					<button
+						type="button"
+						data-agent-check=""
+						className={action}
+						disabled={install.checking || login.checking}
+						onClick={install.missing ? install.look : login.check}
+					>
+						{install.checking || login.checking ? "checking…" : "check again"}
+					</button>
+					<button type="button" className={action} onClick={() => model.onEngine?.("spool")}>
+						new thread with spool
+					</button>
+				</div>
+				{install.foundNothing ? (
+					<p data-agent-looked="" className="font-mono text-2xs text-muted">
+						Claude Code is still not installed.
+					</p>
+				) : null}
+			</div>
+		);
+	if (!recovery) return null;
+	if (changed && (!sameAccount || recovery.scope === "model"))
+		return (
+			<button type="button" className={action} onClick={login.retry}>
+				continue with this model
+			</button>
+		);
+	if (recovery.kind === "login")
+		return (
+			<div data-recovery="login" className="flex flex-col gap-3">
+				<p className="text-base text-text leading-base">Sign in to {recovery.account} to continue.</p>
+				<button type="button" className={`${action} w-fit`} onClick={model.connect}>
+					sign in again
+				</button>
+			</div>
+		);
+	const reset =
+		recovery.resetsAt === undefined
+			? null
+			: new Date(recovery.resetsAt * 1000).toLocaleTimeString("en-GB", {
+					hour: "2-digit",
+					minute: "2-digit",
+					...(recovery.resetsAt * 1000 - Date.now() >= 24 * 3600 * 1000
+						? ({ day: "numeric", month: "short" } as const)
+						: {}),
+				});
+	return (
+		<div data-recovery="limit" className="flex flex-col gap-3">
+			<p className="text-base text-text leading-base">{recovery.account} rate limit reached.</p>
+			{reset === null ? null : <p className="text-base text-muted leading-base">Try again at {reset}.</p>}
+			<div className="flex items-center gap-3">
+				<button type="button" className={action} onClick={login.retry}>
+					retry
+				</button>
+				<button type="button" className={action} onClick={onModels}>
+					choose model
+				</button>
+			</div>
+		</div>
 	);
 }

@@ -98,6 +98,7 @@ describe("the spawn", () => {
 		expect(args).not.toContain("--tools");
 		expect(args).not.toContain("--disallowedTools");
 		expect(args).not.toContain("--dangerously-skip-permissions");
+		expect(args).toContain("--allow-dangerously-skip-permissions");
 		expect(args).not.toContain("--permission-mode=bypassPermissions");
 	});
 

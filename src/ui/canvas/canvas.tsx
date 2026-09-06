@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
+import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { Unseen } from "../../daemon/seen";
 import { pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
@@ -23,6 +24,7 @@ import {
 	applyPatch,
 	beaconTrash,
 	fetchCanvasState,
+	fetchEnginePreference,
 	fetchFlows,
 	fetchProjection,
 	fileAsAsset,
@@ -37,6 +39,7 @@ import {
 	putGeometry,
 	putPlaces,
 	putSelection,
+	putSetting,
 	readRungs,
 	resolveFlows,
 	revertPatch,
@@ -49,6 +52,7 @@ import { ProjectEmpty } from "../project-empty";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
+import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
@@ -469,16 +473,39 @@ export function ProjectCanvas({
 	// the agent rail's one turn (#192). It owns the stream and nothing else here has
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
-	const deck = useAgentThreads(project);
+	const [preferredEngine, setPreferredEngine] = useState<AgentEngineId>("spool");
+	useEffect(() => {
+		let live = true;
+		void fetchEnginePreference(project).then((engine) => {
+			if (live) setPreferredEngine(engine);
+		});
+		return () => {
+			live = false;
+		};
+	}, [project]);
+	const deck = useAgentThreads(project, preferredEngine);
 	const turn = deck.turn;
+	const permissions = useAgentPermissions(project, deck.open, deck.engine, turn.phase);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
-	const install = useAgentInstall(project);
+	const install = useAgentInstall(project, deck.engine, deck.open);
 	// which machine is answering, asked of that machine rather than shipped (#118, #199).
 	// Keyed on the open thread, because that is what the answer is about: the rows are the
 	// binary's and the same for every thread, and which of them is answering is not.
-	const model = useAgentModel(project, deck.open);
+	const offeredModel = useAgentModel(project, deck.open, deck.engine);
+	const model = {
+		...offeredModel,
+		started: turn.entries.length > 0,
+		onEngine: (engine: AgentEngineId) => {
+			void putSetting("agent.engine", engine, project).then((result) => {
+				if (result.ok) {
+					setPreferredEngine(engine);
+					deck.chooseEngine(engine);
+				}
+			});
+		},
+	};
 	/**
 	 * The running turn, for the one hotkey handler that can stop it (#165).
 	 *
@@ -4883,6 +4910,7 @@ export function ProjectCanvas({
 				)}
 				agent={(width, shut) => (
 					<AgentRail
+						permissions={permissions}
 						width={width}
 						onCollapse={shut}
 						entries={turn.entries}

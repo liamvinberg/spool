@@ -428,6 +428,8 @@ describe("a turn picked back up", () => {
 	/** the picture a turn in flight wrote down: the conversation, and the turn so far */
 	const midTurn = (over: Partial<ServedThread> = {}): ServedThread => ({
 		id: THREAD,
+		engine: "claude",
+		session: { id: THREAD },
 		ask: "make the header tighter",
 		life: "running",
 		at: 1_700_000_000_000,

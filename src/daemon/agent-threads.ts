@@ -1,18 +1,16 @@
-import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { type AgentEngineId, type AgentOwnership, isAgentEngineId } from "./agent-engine";
+import type { AgentRecovery } from "./agent-events";
 
 /**
  * The threads of one project, on disk, where a daemon restart cannot reach them
  * (#120, #136, #200).
  *
- * Spool keeps a picture of the rail and the picture is the whole of it. The session
- * id is the thread, the picture is only a picture, and the id wins whenever they
- * disagree — which is why a thread's id is a uuid spool minted before the first
- * process existed, handed to the binary as its session id and used to resume it
- * afterwards.
+ * Each thread keeps immutable engine ownership and an engine-owned session reference,
+ * separately from the picture the rail draws. Legacy threads keep their Claude session id.
  *
  * Why disk rather than daemon memory: `spool upgrade` stops and restarts the daemon
  * on purpose, and launchd restarts it on crash and on login. A daemon restart is
@@ -42,8 +40,8 @@ export type ThreadPicture = readonly unknown[];
  * conversation with a side call to a cheap model is silent spend on somebody's own
  * subscription for a label.
  */
-export interface StoredThread {
-	/** the uuid spool minted, which is also the agent's session id */
+export interface StoredThread extends AgentOwnership {
+	/** the uuid spool minted for the rail thread */
 	readonly id: string;
 	/** what the human asked, in the human's words */
 	readonly ask: string;
@@ -92,6 +90,8 @@ export interface StoredThread {
 	 * holding for something nobody has sent.
 	 */
 	readonly draft: string;
+	readonly pending?: ThreadPicture;
+	readonly recovery?: AgentRecovery | null;
 	/** a restart caught this thread mid-turn: it stopped, and it is never resumed */
 	readonly stopped: boolean;
 	/** closing a tab tidies it out of the strip and deletes nothing */
@@ -152,7 +152,9 @@ export function isThreadId(value: unknown): value is string {
 }
 
 /** what a client may say about a thread, which is the envelope minus spool's own flags */
-export type ThreadPut = Omit<StoredThread, "id" | "stopped" | "closed">;
+export type ThreadPut = Omit<StoredThread, "id" | "stopped" | "closed" | "engine" | "session"> & {
+	readonly engine?: AgentEngineId;
+};
 
 /**
  * The envelope, wherever it came from.
@@ -186,6 +188,8 @@ function parseEnvelope(value: unknown): ThreadPut | undefined {
 		queued: Array.isArray(record.queued) ? record.queued : [],
 		// a file written before #234 held nothing unsent, which is the same fact as an empty box
 		draft: typeof record.draft === "string" ? record.draft : "",
+		...(Array.isArray(record.pending) ? { pending: record.pending } : {}),
+		...(record.recovery === undefined ? {} : { recovery: parseRecovery(record.recovery) }),
 	};
 }
 
@@ -196,7 +200,19 @@ function parseThread(value: unknown): StoredThread | undefined {
 	const record = value as Record<string, unknown>;
 	if (!isThreadId(record.id)) return undefined;
 	if (typeof record.stopped !== "boolean" || typeof record.closed !== "boolean") return undefined;
-	return { id: record.id, ...envelope, stopped: record.stopped, closed: record.closed };
+	const engine = record.engine === undefined ? "claude" : record.engine;
+	if (!isAgentEngineId(engine)) return undefined;
+	const session = record.session === undefined && record.engine === undefined ? { id: record.id } : record.session;
+	if (typeof session !== "object" || session === null || !("id" in session) || !isThreadId(session.id))
+		return undefined;
+	return {
+		id: record.id,
+		...envelope,
+		engine,
+		session: { id: session.id },
+		stopped: record.stopped,
+		closed: record.closed,
+	};
 }
 
 /**
@@ -206,7 +222,11 @@ function parseThread(value: unknown): StoredThread | undefined {
  * does to a thread and the second is its own door.
  */
 export function parseThreadPut(value: unknown): ThreadPut | undefined {
-	return parseEnvelope(value);
+	const envelope = parseEnvelope(value);
+	if (envelope === undefined) return undefined;
+	const record = value as Record<string, unknown>;
+	if ("session" in record || (record.engine !== undefined && !isAgentEngineId(record.engine))) return undefined;
+	return { ...envelope, ...(record.engine === undefined ? {} : { engine: record.engine as AgentEngineId }) };
 }
 
 /**
@@ -220,16 +240,21 @@ export function parseThreadPut(value: unknown): ThreadPut | undefined {
  * said about it has been answered by the next turn. A tab that was put away stays put away:
  * nothing a client draws is a request to bring it back.
  */
-export function putThread(spoolDir: string, root: string, id: string, put: ThreadPut): void {
+export function putThread(spoolDir: string, root: string, id: string, put: ThreadPut): boolean {
+	if (!isThreadId(id)) return false;
 	const had = readThread(spoolDir, root, id);
+	if (had !== undefined && put.engine !== undefined && put.engine !== had.engine) return false;
 	writeThread(spoolDir, root, {
 		id,
 		...put,
+		engine: had?.engine ?? put.engine ?? "claude",
+		session: had?.session ?? { id: put.engine === "spool" ? randomUUID() : id },
 		// a thread the hands are sending into is a thread that is running again, so a new
 		// turn is what clears the mark a restart left on it
 		stopped: false,
 		closed: had?.closed ?? false,
 	});
+	return true;
 }
 
 function threadFile(spoolDir: string, root: string, id: string): string {
@@ -239,7 +264,16 @@ function threadFile(spoolDir: string, root: string, id: string): string {
 export function readThread(spoolDir: string, root: string, id: string): StoredThread | undefined {
 	if (!isThreadId(id)) return undefined;
 	try {
-		return parseThread(JSON.parse(readFileSync(threadFile(spoolDir, root, id), "utf8")));
+		const raw: unknown = JSON.parse(readFileSync(threadFile(spoolDir, root, id), "utf8"));
+		const thread = parseThread(raw);
+		if (thread !== undefined && typeof raw === "object" && raw !== null && !("engine" in raw)) {
+			try {
+				writeThread(spoolDir, root, thread);
+			} catch {
+				/* Keep a readable legacy record available when migration cannot be saved. */
+			}
+		}
+		return thread;
 	} catch {
 		// a thread nobody can read is one thread, and the strip still holds the rest
 		return undefined;
@@ -257,7 +291,7 @@ export function writeThread(spoolDir: string, root: string, thread: StoredThread
  * and deletes neither the agent's session nor spool's picture, on #120's grounds: spool
  * does not throw away a readable record because a tab was put away.
  */
-export function readThreads(spoolDir: string, root: string): StoredThread[] {
+export function readThreads(spoolDir: string, root: string, includeClosed = false): StoredThread[] {
 	let names: string[];
 	try {
 		names = readdirSync(threadsDir(spoolDir, root));
@@ -268,23 +302,20 @@ export function readThreads(spoolDir: string, root: string): StoredThread[] {
 	for (const name of names) {
 		if (!name.endsWith(".json")) continue;
 		const thread = readThread(spoolDir, root, name.slice(0, -".json".length));
-		if (thread !== undefined && !thread.closed) threads.push(thread);
+		if (thread !== undefined && (includeClosed || !thread.closed)) threads.push(thread);
 	}
 	return threads.sort((one, two) => one.at - two.at);
 }
 
 /**
- * A thread's picture, and whether the agent's own session is still there to continue.
- *
- * The two are separate facts and the answer keeps them separate. A thread whose session
- * has aged out reads as finished: its transcript is intact, and the composer says a new
- * thread starts here rather than offering a resume that would fail.
+ * Restore the rail picture against the turns this daemon still holds. The caller asks
+ * each owning engine for continuability separately; a failed engine cannot hide history.
  */
 export function serveThreads(
 	spoolDir: string,
 	root: string,
-	{ live, env = process.env }: { live: ReadonlySet<string>; env?: Readonly<Record<string, string | undefined>> },
-): ServedThread[] {
+	{ live }: { live: ReadonlySet<string> },
+): Omit<ServedThread, "continuable">[] {
 	return readThreads(spoolDir, root).map((thread) => {
 		/*
 		 * A restart marks a thread stopped and never resumes it, because a reboot is not a
@@ -302,7 +333,7 @@ export function serveThreads(
 		 * one, and what is left here means what it always claimed to — the daemon went away.
 		 */
 		const held = live.has(thread.id);
-		const cut = WORKING.has(thread.life) && !held;
+		const cut = WORKING.has(thread.life) && !held && !thread.recovery;
 		const stopped = thread.stopped || cut;
 		return {
 			...thread,
@@ -311,7 +342,6 @@ export function serveThreads(
 			// looked at it, and the change is that it stopped
 			life: cut ? "unread" : thread.life,
 			live: held,
-			continuable: sessionExists(root, thread.id, env),
 		};
 	});
 }
@@ -324,28 +354,21 @@ export function closeThread(spoolDir: string, root: string, id: string): boolean
 	return true;
 }
 
-/**
- * Where the binary keeps a session, and the only thing spool reads about one.
- *
- * Existence and nothing else. The file is the binary's own transcript in a shape spool
- * deliberately does not parse — #120 read it and found `user`, `assistant`,
- * `attachment`, `queue-operation`, `mode` and `last-prompt`, which is not the
- * `stream-json` union the adapter speaks — so this is a question about whether a resume
- * can work, never a second source of history.
- *
- * `CLAUDE_CONFIG_DIR` is honoured because the spawn inherits the environment whole: an
- * agent whose config lives elsewhere keeps its sessions there too, and a check against
- * the default would call every one of its threads dead.
- */
-export function sessionFile(root: string, id: string, env: Readonly<Record<string, string | undefined>>): string {
-	// empty reads as unset, which is the convention the rest of spool's env reading uses
-	const set = (name: string) => ((env[name] ?? "") === "" ? undefined : env[name]);
-	const config = set("CLAUDE_CONFIG_DIR") ?? join(set("HOME") ?? homedir(), ".claude");
-	// the binary's own slug for a working directory: every character that is not a letter
-	// or a digit becomes a dash, leading separator included
-	return join(config, "projects", root.replace(/[^a-zA-Z0-9]/g, "-"), `${id}.jsonl`);
-}
-
-export function sessionExists(root: string, id: string, env: Readonly<Record<string, string | undefined>>): boolean {
-	return existsSync(sessionFile(root, id, env));
+function parseRecovery(value: unknown): AgentRecovery | null {
+	if (typeof value !== "object" || value === null) return null;
+	const data = value as Record<string, unknown>;
+	if (
+		(data.kind !== "login" && data.kind !== "limit") ||
+		typeof data.account !== "string" ||
+		(data.scope !== "account" && data.scope !== "model" && data.scope !== "unknown")
+	)
+		return null;
+	return {
+		kind: data.kind,
+		account: data.account,
+		scope: data.scope,
+		...(typeof data.token === "string" ? { token: data.token } : {}),
+		...(typeof data.offer === "string" ? { offer: data.offer } : {}),
+		...(typeof data.resetsAt === "number" && Number.isFinite(data.resetsAt) ? { resetsAt: data.resetsAt } : {}),
+	};
 }

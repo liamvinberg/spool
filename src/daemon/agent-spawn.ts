@@ -1,6 +1,6 @@
-import type { Attachment } from "../attachment";
 import type { AgentPermissions } from "../settings/registry";
 import { skillText } from "../skill";
+import type { AgentMessage } from "./agent-engine";
 
 /**
  * What spool spawns, and what it tells the thing it spawned (#115, #121, #126,
@@ -118,7 +118,7 @@ const AGENT_PERMISSION_MODE = "default";
  * sandbox decide nothing. The choice never rides the repo: it is read off the
  * project's registry entry on this machine at every spawn.
  */
-const PERMISSION_MODES: Record<AgentPermissions, string> = {
+export const PERMISSION_MODES: Record<AgentPermissions, string> = {
 	ask: AGENT_PERMISSION_MODE,
 	edits: "acceptEdits",
 	bypass: "bypassPermissions",
@@ -281,6 +281,8 @@ export function planAgentSpawn(
 			...(session === null ? [] : [session.resume ? "--resume" : "--session-id", session.id]),
 			"--setting-sources",
 			AGENT_SETTING_SOURCES,
+			// Makes a later explicit bypass choice available; it does not select that mode.
+			"--allow-dangerously-skip-permissions",
 			"--permission-mode",
 			PERMISSION_MODES[permissions],
 			"--permission-prompt-tool",
@@ -339,12 +341,7 @@ export function agentPromptLine(content: readonly unknown[]): string {
  * rather than being looked up here because a queued message carries the block
  * from its own Enter rather than from the moment the queue fires.
  */
-export interface AgentSaid {
-	readonly prompt: string;
-	/** the selection block that rode with these words; empty where nothing was pointed at */
-	readonly selection: string;
-	readonly attachment?: Attachment;
-}
+export type AgentSaid = AgentMessage;
 
 /**
  * The content blocks one turn sends: what the hands are pointing at, what they

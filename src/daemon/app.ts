@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
@@ -18,16 +18,25 @@ import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
-import { appearanceOf, themeInline } from "../settings/registry";
+import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
+import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
+import { createClaudeEngine } from "./agent-engine-claude";
+import { createSpoolEngine } from "./agent-engine-spool";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
-import { type AgentAsk, askAgentOffer, askFrom, isEffortShaped, isModelShaped } from "./agent-offer";
-import { agentInstalled, askAgentLogin, type Look } from "./agent-preflight";
-import { agentPromptContent } from "./agent-spawn";
-import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
-import { startAgentTurn } from "./agent-turn";
+import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
+import type { Look } from "./agent-preflight";
+import {
+	closeThread,
+	isThreadId,
+	parseThreadPut,
+	putThread,
+	readThread,
+	readThreads,
+	serveThreads,
+} from "./agent-threads";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
@@ -155,6 +164,8 @@ export interface DaemonOptions {
 	upgrade?: () => { ok: true } | { ok: false; error: string };
 	/** The agent spawn (#191) — swapped for a capture replayer so CI never runs a real agent. */
 	agentExecutor?: AgentExecutor;
+	/** Engine integrations, replaced as a whole by independent fixture engines in tests. */
+	agentEngines?: readonly AgentEngine[];
 	/**
 	 * The `which` behind the install wall (#201) — swapped so a test says what this
 	 * machine has rather than inheriting whatever the machine running it happens to have.
@@ -348,6 +359,7 @@ export function createDaemonApp({
 	fetchLatest,
 	upgrade,
 	agentExecutor,
+	agentEngines,
 	agentLook,
 	machineStateWatchAdapter,
 	onMachineStateWatchError,
@@ -643,7 +655,28 @@ export function createDaemonApp({
 	// #191's ADR: the daemon spawns the developer's own agent when the hands ask
 	// for it. Project code never reaches this — it is a control-plane route
 	// behind the control token, the same boundary #41 drew.
-	const spawnAgent = agentExecutor ?? claudeExecutor();
+	const engines = new Map<AgentEngineId, AgentEngine>(
+		(
+			agentEngines ?? [createClaudeEngine(agentExecutor ?? claudeExecutor(), agentLook), createSpoolEngine(spoolDir)]
+		).map((engine) => [engine.id, engine]),
+	);
+
+	const permissionChanges = new Set<string>();
+	const projectRenames = new Set<string>();
+
+	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
+		if (thread !== undefined && !isThreadId(thread))
+			return { response: c.text("a thread is named by its uuid", 400) };
+		if (requested !== undefined && !isAgentEngineId(requested)) return { response: c.text("unknown engine", 400) };
+		const saved = thread === undefined ? undefined : readThread(spoolDir, root, thread);
+		if (saved !== undefined && requested !== undefined && requested !== saved.engine) {
+			return { response: c.text("a thread's engine cannot change", 409) };
+		}
+		const id = saved?.engine ?? requested ?? "claude";
+		const engine = engines.get(id);
+		if (engine === undefined) return { response: c.text(`engine "${id}" is unavailable`, 503) };
+		return { engine, session: saved?.session ?? { id: thread ?? "" } };
+	}
 	/**
 	 * Every turn this daemon is holding, by the conversation it belongs to (#211).
 	 *
@@ -688,6 +721,7 @@ export function createDaemonApp({
 				),
 			};
 		}
+		if (projectRenames.has(lookup.root)) return { response: c.text("Project rename is in progress.", 409) };
 		if (trashingProjects.has(lookup.root)) {
 			return { response: c.json({ error: "This project is moving to the trash." }, 409) };
 		}
@@ -1096,22 +1130,67 @@ export function createDaemonApp({
 				const parsed = z.object({ root: z.string(), name: z.string() }).safeParse(value);
 				return parsed.success ? parsed.data : c.json({ error: "Expected a project root and name." }, 400);
 			}),
-			(c) => {
+			async (c) => {
 				const { root, name } = c.req.valid("json");
+				const target = join(dirname(root), name.trim());
+				if (projectRenames.has(root) || projectRenames.has(target) || permissionChanges.has(root))
+					return c.json({ error: "Project change is in progress." }, 409);
 				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
 				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
 					return c.json({ error: "Let the agent finish or stop its turn before renaming this project." }, 409);
 				}
+				projectRenames.add(root);
+				projectRenames.add(target);
+				let prepared: Awaited<ReturnType<NonNullable<AgentEngine["prepareRename"]>>> | undefined;
+				let committed = false;
 				try {
-					const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
-					if (result.root !== root) hub.forget(root);
+					if (target !== root && isSafeName(name.trim())) {
+						const sessions = readThreads(spoolDir, root, true)
+							.filter((thread) => thread.engine === "spool")
+							.map((thread) => thread.session);
+						if (sessions.length) {
+							const engine = engines.get("spool");
+							if (!engine?.prepareRename)
+								throw new SpoolError("The bundled engine cannot prepare this project rename.");
+							try {
+								prepared = await engine.prepareRename(root, target, sessions);
+							} catch (error) {
+								throw new SpoolError(
+									error instanceof Error ? error.message : "Could not prepare the project rename.",
+								);
+							}
+						}
+					}
+					const result = mutateMachineState(spoolDir, {
+						kind: "rename-project",
+						root,
+						name,
+						...(prepared ? { bundled: prepared.token } : {}),
+					});
+					committed = true;
+					if (result.root !== root) {
+						hub.forget(root);
+						liveTurns.relocate(root, result.root);
+						selections.relocate(root, result.root);
+						for (const [key, ask] of agentAsks)
+							if (key.startsWith(`${root}\x00`)) {
+								agentAsks.set(`${result.root}${key.slice(root.length)}`, ask);
+								agentAsks.delete(key);
+							}
+					}
 					machineStateWatch.acknowledgeRegistry(result.registry);
 					machineStateWatch.acknowledgeSession(result.session);
+					await prepared?.finish(true);
+					prepared = undefined;
 					emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
 					return c.json({ root: result.root, name: result.name });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
 					return c.json({ error: error.message }, 409);
+				} finally {
+					await prepared?.finish(committed);
+					projectRenames.delete(root);
+					projectRenames.delete(target);
 				}
 			},
 		)
@@ -1164,6 +1243,7 @@ export function createDaemonApp({
 				const { root } = c.req.valid("json");
 				const roots = registeredRoots();
 				if (!roots.includes(root)) return c.json({ error: "This project is no longer registered." }, 404);
+				if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
 				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
 				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
 					return c.json({ error: "Let the agent finish or stop its turn before trashing this project." }, 409);
@@ -1478,33 +1558,96 @@ export function createDaemonApp({
 		 * and the login costs a process inside somebody else's product, so it is only ever
 		 * opened by a hand on `check again`.
 		 */
-		.get("/api/p/:project/agent/installed", (c) => {
+
+		.get("/api/p/:project/agent/engines", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json({ installed: agentInstalled(process.env, agentLook) });
+			return c.json({
+				preferred:
+					settings.read(project.root).entries.find((entry) => entry.key === "agent.engine")?.value ?? "spool",
+				engines: [...engines.values()].map((engine) => ({ id: engine.id, installed: engine.installed() })),
+			});
 		})
-		.get("/api/p/:project/agent/login", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			// the probe is this request's process and nobody else's, so it goes when the
-			// request does: a page navigated off mid-check would otherwise leave a whole
-			// binary running for the length of its own timeout with nobody to hear it
-			return c.json(
-				await askAgentLogin({
-					executor: spawnAgent,
-					root: project.root,
-					env: process.env,
-					signal: c.req.raw.signal,
-				}),
-			);
-		})
+		.post(
+			"/api/p/:project/agent/account",
+			validator("json", (value, c) => {
+				const body = z
+					.discriminatedUnion("action", [
+						z.object({ action: z.literal("start"), provider: z.string(), method: z.string() }),
+						z.object({
+							action: z.literal("input"),
+							id: z.string(),
+							value: z.string().max(16384),
+							revision: z.number().int().optional(),
+						}),
+						z.object({ action: z.literal("poll"), id: z.string() }),
+						z.object({ action: z.literal("cancel"), id: z.string() }),
+						z.object({ action: z.literal("disconnect"), provider: z.string() }),
+					])
+					.safeParse(value);
+				return body.success ? body.data : c.text("Invalid account operation", 400);
+			}),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const auth = engines.get("spool")?.authentication;
+				if (auth?.kind !== "managed") return c.text("Bundled accounts are unavailable", 503);
+				const operation = c.req.valid("json");
+				switch (operation.action) {
+					case "start":
+						return c.json(await auth.start(operation.provider, operation.method));
+					case "input":
+						return c.json(await auth.input(operation.id, operation.value, operation.revision));
+					case "poll":
+						return c.json(await auth.poll(operation.id));
+					case "cancel":
+						await auth.cancel(operation.id);
+						return c.json({ kind: "cancelled" as const });
+					case "disconnect":
+						await auth.logout(operation.provider);
+						return c.json({ kind: "cancelled" as const });
+				}
+			},
+		)
+		.get(
+			"/api/p/:project/agent/installed",
+			validator("query", (value) =>
+				z.object({ engine: z.string().optional(), thread: z.string().optional() }).parse(value),
+			),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const selected = engineFor(c, project.root, c.req.query("thread"));
+				if ("response" in selected) return selected.response;
+				return c.json({ installed: selected.engine.installed() });
+			},
+		)
+		.get(
+			"/api/p/:project/agent/login",
+			validator("query", (value) =>
+				z.object({ engine: z.string().optional(), thread: z.string().optional() }).parse(value),
+			),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				// the probe is this request's process and nobody else's, so it goes when the
+				// request does: a page navigated off mid-check would otherwise leave a whole
+				// binary running for the length of its own timeout with nobody to hear it
+				const selected = engineFor(c, project.root, c.req.query("thread"));
+				if ("response" in selected) return selected.response;
+				return c.json(await selected.engine.account(project.root, c.req.raw.signal));
+			},
+		)
 		.post(
 			"/api/p/:project/agent/turn",
 			validator("json", (value, c) => {
 				const body = (typeof value === "object" && value !== null ? value : {}) as {
 					said?: unknown;
+					recovery?: unknown;
 					turn?: unknown;
 					thread?: unknown;
+					engine?: unknown;
+					session?: unknown;
 				};
 				// a turn is what the human said, which is one message when they pressed Enter
 				// against a quiet rail and several when a queue fired as one turn (#170)
@@ -1519,6 +1662,9 @@ export function createDaemonApp({
 				// never anything but the uuid shape the binary takes
 				if (!isThreadId(body.thread)) {
 					return c.text('"thread" is the uuid this conversation runs under', 400);
+				}
+				if (body.session !== undefined || (body.engine !== undefined && !isAgentEngineId(body.engine))) {
+					return c.text("choose an engine; session references belong to the daemon", 400);
 				}
 				const said: { prompt: string; selection?: SelectionEntry[]; attachment?: Attachment }[] = [];
 				for (const raw of body.said) {
@@ -1551,7 +1697,15 @@ export function createDaemonApp({
 						...(attached === undefined ? {} : { attachment: attached }),
 					});
 				}
-				return { said, thread: body.thread, turn: typeof body.turn === "string" ? body.turn : undefined };
+				if (body.recovery !== undefined && typeof body.recovery !== "string")
+					return c.text("Invalid recovery", 400);
+				return {
+					...(typeof body.recovery === "string" ? { recovery: body.recovery } : {}),
+					said,
+					thread: body.thread,
+					...(body.engine === undefined ? {} : { engine: body.engine as AgentEngineId }),
+					turn: typeof body.turn === "string" ? body.turn : undefined,
+				};
 			}),
 			(c) => {
 				// one turn, streamed as it arrives (#191): the prompt goes down the
@@ -1559,7 +1713,7 @@ export function createDaemonApp({
 				// order the wire sent them
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
-				const { said, thread, turn: named } = c.req.valid("json");
+				const { said, thread, engine: requested, turn: named, recovery } = c.req.valid("json");
 				/*
 				 * One turn per conversation, refused rather than replaced (#211).
 				 *
@@ -1575,34 +1729,32 @@ export function createDaemonApp({
 						409,
 					);
 				}
-				const turn = startAgentTurn({
-					executor: spawnAgent,
+				const selected = engineFor(c, project.root, thread, requested);
+				if ("response" in selected) return selected.response;
+				// Claim ownership before starting: a picture save may race the first turn.
+				if (readThread(spoolDir, project.root, thread) === undefined) {
+					putThread(spoolDir, project.root, thread, {
+						engine: selected.engine.id,
+						ask: said[0]?.prompt ?? "",
+						life: "running",
+						at: Date.now(),
+						entries: [],
+						kept: 0,
+						plan: null,
+						queued: [],
+						draft: "",
+					});
+				}
+				const turn = selected.engine.start({
+					...(recovery === undefined ? {} : { recovery }),
 					root: project.root,
+					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
 					permissions: settings.agentPermissions(project.root),
-					/*
-					 * The thread, in the binary's own vocabulary for one (#120, #200).
-					 *
-					 * Resume when the session file is there and start it under the same id when it
-					 * is not, because the two flags are exclusive and the file is the fact: the
-					 * binary deletes its own sessions after thirty days, so a thread that outlived
-					 * one carries on under its own id rather than failing a resume. The rail has
-					 * already stopped offering it as continuable by then — this is the honest
-					 * floor under that, not a second opinion about it.
-					 */
-					session: { id: thread, resume: sessionExists(project.root, thread, process.env) },
-					// what the hands are pointing at rides with the words, in the bytes
-					// `spool selection` prints for this same moment (#116) — or, for a
-					// message the queue held, for the moment it was said (#170)
-					content: agentPromptContent(
-						said.map((one) => ({
-							prompt: one.prompt,
-							selection: selectionBlock(one.selection ?? selections.get(project.root)),
-							...(one.attachment === undefined ? {} : { attachment: one.attachment }),
-						})),
-					),
-					// the machine this thread chose, handed to the process that will answer: a
-					// resume restores the conversation, and the flag is what makes the choice a
-					// property of the thread rather than of whichever turn last said so
+					said: said.map((one) => ({
+						prompt: one.prompt,
+						selection: selectionBlock(one.selection ?? selections.get(project.root)),
+						...(one.attachment === undefined ? {} : { attachment: one.attachment }),
+					})),
 					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
 				});
 				const held = liveTurns.hold({
@@ -1651,6 +1803,56 @@ export function createDaemonApp({
 				// picture on disk is the whole of what the rail can draw for one of them
 				if (held === undefined) return c.text(`no turn to read in thread "${thread}"`, 404);
 				return attachTurn(c, held, c.req.valid("query").from);
+			},
+		)
+		.get("/api/p/:project/agent/threads/:thread/permissions", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const thread = c.req.param("thread");
+			const selected = engineFor(c, project.root, thread);
+			if ("response" in selected) return selected.response;
+			const held = liveTurns.get(project.root, thread);
+			return c.json({
+				mode: held?.running
+					? (held.permissions?.applied ?? settings.agentPermissions(project.root))
+					: settings.agentPermissions(project.root),
+			});
+		})
+		.put(
+			"/api/p/:project/agent/threads/:thread/permissions",
+			validator("json", (value, c) => {
+				const body = (typeof value === "object" && value !== null ? value : {}) as { mode?: unknown };
+				const parsed = parseSetting("agent.permissions", body.mode);
+				return parsed.ok ? { mode: parsed.value } : c.text(parsed.reason, 400);
+			}),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const thread = c.req.param("thread");
+				const selected = engineFor(c, project.root, thread);
+				if ("response" in selected) return selected.response;
+				if (permissionChanges.has(project.root))
+					return c.text("A permission change is already being applied.", 409);
+				permissionChanges.add(project.root);
+				try {
+					const held = liveTurns.get(project.root, thread);
+					const { mode } = c.req.valid("json");
+					if (held?.running) {
+						if (!held.permissions) return c.text("This engine cannot change permissions during a turn.", 409);
+						try {
+							const applied = await held.permissions.apply(mode);
+							if (applied !== mode) return c.text("The engine did not apply the requested permissions.", 409);
+						} catch (error) {
+							return c.text(error instanceof Error ? error.message : "Permissions were not applied.", 409);
+						}
+					}
+					const written = settings.write("agent.permissions", mode, project.root);
+					if (!written.ok) return c.text(written.reason, written.status);
+					emitAppEvent({ kind: "settings" });
+					return c.json({ mode });
+				} finally {
+					permissionChanges.delete(project.root);
+				}
 			},
 		)
 		.post(
@@ -1732,10 +1934,23 @@ export function createDaemonApp({
 		 * thread's process was taken by a restart, and whether the agent's own session is
 		 * still there to continue.
 		 */
-		.get("/api/p/:project/agent/threads", (c) => {
+		.get("/api/p/:project/agent/threads", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json({ threads: serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }) });
+			const threads = await Promise.all(
+				serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }).map(async (thread) => {
+					const engine = engines.get(thread.engine);
+					let continuable = false;
+					try {
+						continuable =
+							engine?.installed() === true && (await engine.continuable(project.root, thread.session));
+					} catch {
+						/* A missing session or host never hides saved history. */
+					}
+					return { ...thread, continuable };
+				}),
+			);
+			return c.json({ threads });
 		})
 		.put(
 			"/api/p/:project/agent/threads/:thread",
@@ -1753,7 +1968,9 @@ export function createDaemonApp({
 				if (!isThreadId(thread)) {
 					return c.text("a thread is named by the uuid its session runs under", 400);
 				}
-				putThread(spoolDir, project.root, thread, c.req.valid("json"));
+				if (!putThread(spoolDir, project.root, thread, c.req.valid("json"))) {
+					return c.text("a thread's engine cannot change", 409);
+				}
 				return c.body(null, 204);
 			},
 		)
@@ -1791,27 +2008,31 @@ export function createDaemonApp({
 		 * conversation: the rows are the binary's and the same for all of them, and which of
 		 * those rows is answering is not.
 		 */
-		.get("/api/p/:project/agent/threads/:thread/models", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const thread = c.req.param("thread");
-			if (!isThreadId(thread)) {
-				return c.text("a thread is named by the uuid its session runs under", 400);
-			}
-			return c.json(
-				await askAgentOffer({
-					executor: spawnAgent,
-					root: project.root,
-					env: process.env,
-					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
-					// a menu that was opened and closed again is nobody waiting: the spawn
-					// this read costs goes with the request that asked for it
-					signal: c.req.raw.signal,
-				}),
-			);
-		})
+		.get(
+			"/api/p/:project/agent/threads/:thread/models",
+			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const thread = c.req.param("thread");
+				if (!isThreadId(thread)) {
+					return c.text("a thread is named by the uuid its session runs under", 400);
+				}
+				const selected = engineFor(c, project.root, thread);
+				if ("response" in selected) return selected.response;
+				return c.json(
+					await selected.engine.offer({
+						root: project.root,
+						session: selected.session,
+						ask: agentAsks.get(askKey(project.root, thread)) ?? {},
+						signal: c.req.raw.signal,
+					}),
+				);
+			},
+		)
 		.post(
 			"/api/p/:project/agent/threads/:thread/model",
+			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
 			validator("json", (value, c) => {
 				const body = (typeof value === "object" && value !== null ? value : {}) as {
 					value?: unknown;
@@ -1856,14 +2077,20 @@ export function createDaemonApp({
 				const wanted = c.req.valid("json");
 				const key = askKey(project.root, thread);
 				const held = agentAsks.get(key) ?? {};
-				const offer = await askAgentOffer({
-					executor: spawnAgent,
+				const selected = engineFor(c, project.root, thread);
+				if ("response" in selected) return selected.response;
+				const offer = await selected.engine.offer({
+					session: selected.session,
 					root: project.root,
-					env: process.env,
 					ask: held,
 					choose: wanted,
 				});
-				agentAsks.set(key, askFrom(offer, wanted, held));
+				if (
+					projectRenames.has(project.root) ||
+					lookupProjectByName(spoolDir, c.req.param("project")).kind !== "found"
+				)
+					return c.text("Project changed while choosing a model.", 409);
+				agentAsks.set(key, selected.engine.choice(offer, wanted, held));
 				return c.json(offer);
 			},
 		)
@@ -2880,6 +3107,7 @@ export function createDaemonApp({
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();
+			for (const engine of engines.values()) engine.close?.();
 			agentAsks.clear();
 			hub.close();
 			updateChecker.stop();

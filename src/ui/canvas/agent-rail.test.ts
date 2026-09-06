@@ -259,6 +259,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			if (url.pathname.endsWith("/agent/engines"))
+				return Response.json({ preferred: "claude", engines: [{ id: "claude", installed: true }] });
 			// is there an agent on this machine at all: a `which`, asked when the rail opens
 			// and again on every press behind the wall (#201)
 			if (url.pathname.endsWith("/agent/installed")) {
@@ -331,6 +333,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				offered.offer = offered.reply(offered.offer, wanted);
 				return Response.json(offered.offer);
 			}
+			if (url.pathname.endsWith("/permissions")) return Response.json({ mode: "ask" });
 			if (url.pathname.includes("/agent/threads/")) {
 				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/close$/, "") ?? "";
 				if (url.pathname.endsWith("/close")) stored.closed.push(thread);
@@ -2618,10 +2621,10 @@ describe("an approval in the log", () => {
 		// the row above already says what the call is, so the block says why — and every
 		// one of the three is an answer, so all three are rows
 		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).toContain("which restarts the daemon");
-		expect(options(canvas.host)).toEqual(["allow", "always, for this thread", "deny"]);
+		expect(options(canvas.host)).toEqual(["allow once", "for this thread", "deny"]);
 		expect(canvas.host.querySelector("[data-agent-dismiss]")).toBeNull();
 
-		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="always, for this thread"]');
+		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="for this thread"]');
 		await act(async () => always?.click());
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-a", reply: { kind: "always" } });
 	});
@@ -2635,7 +2638,7 @@ describe("an approval in the log", () => {
 		await until(() => options(canvas.host).length > 0);
 
 		// absent rather than dead: spool never composes a rule of its own to fill it
-		expect(options(canvas.host)).toEqual(["allow", "deny"]);
+		expect(options(canvas.host)).toEqual(["allow once", "deny"]);
 	});
 
 	it("is never answered by typing, because no sentence answers may I run this", async () => {
@@ -3129,6 +3132,8 @@ function storedThread({
 	...over
 }: Partial<ServedThread> & { id: string; ask: string; frame?: string }): ServedThread {
 	return {
+		engine: "claude",
+		session: { id: over.id },
 		life: "read",
 		at: 1_700_000_000_000,
 		entries: [
@@ -3852,15 +3857,16 @@ describe("what the composer keeps", () => {
  * shipped, and a press is a shortcut for `/model haiku` rather than a second source of
  * truth — so what moves the readout is the reply and never the press. */
 
-const modelTrigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[aria-label="model"]');
+const modelTrigger = (host: HTMLElement) =>
+	host.querySelector<HTMLButtonElement>('[aria-label="Choose engine and model"]');
 
 const modelMenu = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-menu]");
 
 /** every row in the menu, in the order the reply listed them */
 const modelRows = (host: HTMLElement) =>
-	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")].map(
-		(row) => row.getAttribute("data-agent-model-row") ?? "",
-	);
+	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")]
+		.filter((row) => row.closest("[data-combined-engine]") === null)
+		.map((row) => row.getAttribute("data-agent-model-row") ?? "");
 
 const modelRow = (host: HTMLElement, label: string) =>
 	host.querySelector<HTMLButtonElement>(`[data-agent-model-row="${label}"]`);
@@ -3930,6 +3936,69 @@ const warned: AgentEvent = {
 };
 
 describe("the model menu", () => {
+	it("organizes spool favorites in place and waits for the accepted account-scoped model before changing the footer", async () => {
+		const canvas = mount();
+		canvas.stored.served = [storedThread({ id: ONE, ask: "saved thread", engine: "spool", draft: "keep my draft" })];
+		canvas.offered.offer = {
+			models: [
+				{
+					value: "spool/openai/api_key/opus",
+					resolvedModel: "opus",
+					displayName: "Opus",
+					connection: "OpenAI API key",
+					description: "unused description",
+					supportsEffort: true,
+					supportedEffortLevels: ["low", "high"],
+				},
+				{
+					value: "spool/google/api_key/opus",
+					resolvedModel: "opus",
+					displayName: "Opus",
+					connection: "Google API key",
+					description: "unused description",
+					supportsEffort: false,
+					supportedEffortLevels: [],
+				},
+			],
+			current: { value: "spool/openai/api_key/opus", resolved: "opus", name: "Opus", effort: "high", pin: null },
+		};
+		await canvas.render();
+		await openModelMenu(canvas);
+		expect(menuSlot(canvas.host)).toBeNull();
+		const click = async (label: string) => {
+			const button = [...canvas.host.querySelectorAll<HTMLButtonElement>("button")].find(
+				(button) => button.textContent === label || button.getAttribute("aria-label") === label,
+			);
+			if (!button) throw new Error(`Missing ${label}`);
+			await act(async () => button.click());
+		};
+		await click("Favorite Opus through OpenAI API key");
+		await click("All models");
+		await click("Favorite Opus through Google API key");
+		await click("Favorites");
+		await click("Unfavorite Opus through OpenAI API key");
+		expect(canvas.host.querySelectorAll("[data-model-offer]")).toHaveLength(2);
+		expect(canvas.offered.chose).toHaveLength(0);
+		let release: (() => void) | undefined;
+		canvas.offered.hold = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await act(async () =>
+			canvas.host
+				.querySelector<HTMLButtonElement>('[data-model-offer="spool/google/api_key/opus"] [data-agent-model-row]')
+				?.click(),
+		);
+		expect(modelMenu(canvas.host)).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model")).toBe("Opus · high");
+		await act(async () => release?.());
+		await until(() => canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model") === "Opus");
+		await openModelMenu(canvas);
+		expect(canvas.host.querySelectorAll("[data-model-offer]")).toHaveLength(1);
+		expect(modelRows(canvas.host)).toEqual(["Opus"]);
+		expect(field(canvas.host)?.value).toBe("keep my draft");
+		expect(canvas.offered.chose).toEqual([{ thread: ONE, value: "spool/google/api_key/opus" }]);
+	});
+
 	it("is populated by the binary rather than by a table spool ships", async () => {
 		const canvas = mount();
 		await canvas.render();
@@ -4026,7 +4095,7 @@ describe("the model menu", () => {
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 		// the menu closes on a model, because that was the decision
 		expect(modelMenu(canvas.host)).toBeNull();
 		// and it went to the thread that is open, because that is what the answer is about
@@ -4065,13 +4134,13 @@ describe("the model menu", () => {
 		// the reply is a spawn away — about a second on a cold binary — and nothing on
 		// screen waits for it. The level rides across because sonnet offers it
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 
 		canvas.offered.hold = null;
 		answer();
 		await settle(50);
 		// and what stays is the report, which here says the same thing the finger did
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 	});
 
 	it("takes the effort with it the moment a model reporting none is pressed", async () => {
@@ -4113,14 +4182,14 @@ describe("the model menu", () => {
 
 		await act(async () => modelRow(canvas.host, "Sonnet")?.click());
 		await settle(50);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 
 		canvas.offered.hold = null;
 		answer();
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
 	});
 
 	it("keeps the menu open on an effort level, because it refines the model above it", async () => {
@@ -4133,7 +4202,7 @@ describe("the model menu", () => {
 
 		expect(canvas.offered.chose.map((one) => one.effort)).toEqual(["xhigh"]);
 		expect(modelMenu(canvas.host)).not.toBeNull();
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · xhigh");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
 	});
 
 	it("says which variable holds the effort, and offers no level it cannot move", async () => {
@@ -4165,21 +4234,20 @@ describe("the model menu", () => {
 		);
 		expect(modelRow(canvas.host, "low")?.disabled).toBe(true);
 		expect(modelRow(canvas.host, "max")?.disabled).toBe(false);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · max");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
 	});
 });
 
 describe("the footer the model hangs off", () => {
-	it("holds the model and the stop and nothing else", async () => {
+	it("holds the model, stop and right-hand permission mode", async () => {
 		const canvas = mount();
 		await running(canvas);
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
 		const footer = footerRow(canvas.host);
 		if (footer === null) throw new Error("no footer");
 
-		// 243 wanted at every width: the model, the gap and the stop. The limit went to
-		// the menu and the send hint went with it (#184)
-		expect(footer.textContent).toBe("Opus (1M context) · highstop⎋");
+		// The effective permission mode stays rightmost; model text gives way first.
+		expect(footer.textContent).toBe("Claude Code · Opus (1M context)stop⎋ask");
 		expect(footer.textContent).not.toContain("weekly limit");
 		expect(footer.textContent).not.toContain("enter to");
 	});
@@ -4196,7 +4264,7 @@ describe("the footer the model hangs off", () => {
 			// `Opus (1M context)` cut to `Opus` would be the correct name of a *different*
 			// machine — `/model opus` resolves without the 1M window — so the string stays
 			// whole in the DOM and the layout is what gives way
-			expect(name?.textContent).toBe("Opus (1M context) · high");
+			expect(name?.textContent).toBe("Claude Code · Opus (1M context)");
 			expect(name?.className).toContain("truncate");
 			// and the model is the only thing that gives way: a cut name is still readable
 			// and half a stop button is not
@@ -4323,10 +4391,10 @@ describe("the usage window", () => {
  * and it is a strip over a log that still works. */
 
 /** the wall, in the transcript's place */
-const wall = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-wall]");
+const wall = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-recovery="claude"]');
 
 /** the standing half of being signed out, on the shelf */
-const outStrip = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-login]");
+const outStrip = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-recovery="claude"]');
 
 /** the one control either of these states offers, pressed and given time to answer */
 async function checkAgain(within: HTMLElement | null) {
@@ -4347,16 +4415,16 @@ const refused: AgentEvent = {
 };
 
 describe("no agent on this machine", () => {
-	it("draws a wall in the transcript's place before the first keystroke", async () => {
+	it("names the missing engine while keeping history and engine choice", async () => {
 		const canvas = mount();
 		canvas.preflight.installed = false;
 		await canvas.render();
 		await settle(50);
 
-		expect(wall(canvas.host)?.textContent).toContain("no claude on this machine");
-		expect(canvas.host.querySelector("[data-agent-log]")).toBeNull();
+		expect(wall(canvas.host)?.textContent).toContain("Claude Code isn’t installed.");
+		expect(canvas.host.querySelector("[data-agent-log]")).not.toBeNull();
 		// the docs root is the binary's own, and the sentence about why is spool's
-		expect(wall(canvas.host)?.textContent).toContain("code.claude.com/docs");
+		expect(wall(canvas.host)?.querySelector("a")?.href).toBe("https://code.claude.com/docs/en/quickstart");
 		// nothing was sent, and nothing was asked about a login either: this state is
 		// answered by looking, and looking is free
 		expect(canvas.turn.prompts).toEqual([]);
@@ -4367,14 +4435,16 @@ describe("no agent on this machine", () => {
 	 * The composer stays and it is dead: take it away and the rail is a sentence with no
 	 * evidence of what the rail is for, leave it live and it collects a prompt for nobody.
 	 */
-	it("keeps the composer, at its resting height and switched off", async () => {
+	it("keeps the draft and engine control while refusing sends", async () => {
 		const canvas = mount();
 		canvas.preflight.installed = false;
 		await canvas.render();
 		await settle(50);
 
-		expect(canvas.host.querySelector("[data-agent-dead]")?.textContent).toBe("say what to change");
-		expect(field(canvas.host)).toBeNull();
+		expect(modelTrigger(canvas.host)).not.toBeNull();
+		await send(canvas.host, "held while missing");
+		expect(canvas.turn.prompts).toEqual([]);
+		expect(field(canvas.host)).not.toBeNull();
 	});
 
 	/**
@@ -4389,13 +4459,13 @@ describe("no agent on this machine", () => {
 		expect(canvas.host.querySelector("[data-agent-looked]")).toBeNull();
 
 		await checkAgain(wall(canvas.host));
-		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("Claude Code is still not installed.");
 
 		await checkAgain(wall(canvas.host));
-		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
-		expect(canvas.preflight.looks).toBe(3);
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("Claude Code is still not installed.");
+		expect(canvas.preflight.looks).toBeGreaterThanOrEqual(3);
 		// and the wall is still the whole of the rail's body
-		expect(field(canvas.host)).toBeNull();
+		expect(field(canvas.host)).not.toBeNull();
 	});
 
 	it("goes the moment a check finds one, and the composer comes back", async () => {
@@ -4439,7 +4509,7 @@ describe("no agent on this machine", () => {
 
 		expect(wall(canvas.host)).not.toBeNull();
 		expect(canvas.host.querySelector("[data-agent-looked]")).not.toBeNull();
-		expect(field(canvas.host)).toBeNull();
+		expect(field(canvas.host)).not.toBeNull();
 	});
 });
 
@@ -4466,15 +4536,16 @@ describe("signed out", () => {
 		// the binary's own words, verbatim, and one sentence of spool's under them saying
 		// what to do about it from here
 		expect(rail(canvas.host)?.textContent).toContain("Not logged in · Please run /login");
-		expect(rail(canvas.host)?.textContent).toContain("run `claude` in a terminal, then /login");
-		expect(rail(canvas.host)?.textContent).toContain("spool uses that login; it never asks for a key");
-		expect(outStrip(canvas.host)?.textContent).toContain("signed out");
+		expect(rail(canvas.host)?.textContent).toContain("Run claude in a terminal, then /login.");
+		expect(rail(canvas.host)?.textContent).not.toContain("never asks for a key");
+		expect(outStrip(canvas.host)?.textContent).toContain("Sign in to Claude Code to continue.");
 		// nothing local knows any better than the last spawn did, so the composer stays live
 		// and the next send is a send: it would answer wrong the moment somebody signs in
 		// without telling it
 		expect(field(canvas.host)?.placeholder).toBe("say what to change");
 		await send(canvas.host, "again then");
-		expect(canvas.turn.prompts).toEqual(["shoot home", "again then"]);
+		expect(canvas.turn.prompts).toEqual(["shoot home"]);
+		expect(field(canvas.host)?.value).toBe("again then");
 	});
 
 	it("holds the prompt, and checking again runs it with no second copy of it", async () => {

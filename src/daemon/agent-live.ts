@@ -51,6 +51,7 @@ export interface AgentHeld {
 	readonly running: boolean;
 	/** how much has arrived, which is what a fresh viewer is told it is replaying */
 	readonly logged: number;
+	readonly permissions: AgentTurn["permissions"];
 	answer(request: string, reply: AgentReply): boolean;
 	interrupt(): boolean;
 	/** the blunt one: the daemon is closing, or this thread is being talked to again */
@@ -141,6 +142,9 @@ export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOpti
 		get logged() {
 			return log.length;
 		},
+		get permissions() {
+			return turn.permissions;
+		},
 		answer: (request, reply) => turn.answer(request, reply),
 		interrupt: () => turn.interrupt(),
 		abandon: () => {
@@ -155,6 +159,7 @@ export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOpti
 const KEPT_MS = 5 * 60_000;
 
 export interface AgentTurns {
+	relocate(root: string, target: string): void;
 	get(root: string, thread: string): AgentHeld | undefined;
 	hold(options: Omit<AgentHoldOptions, "onEnded">): AgentHeld;
 	/** the turns of one project, for the doors addressed by something other than a thread */
@@ -204,6 +209,19 @@ export function createAgentTurns(keptMs = KEPT_MS): AgentTurns {
 	}
 
 	return {
+		relocate: (root, target) => {
+			const moving = [...of(root)];
+			if (moving.some((turn) => turn.running)) throw new Error("Cannot rename a running project");
+			for (const turn of moving) {
+				const oldKey = keyOf(root, turn.thread);
+				clearTimeout(timers.get(oldKey));
+				timers.delete(oldKey);
+				held.delete(oldKey);
+				const key = keyOf(target, turn.thread);
+				held.set(key, { ...turn, root: target });
+				keep(key);
+			}
+		},
 		get: (root, thread) => held.get(keyOf(root, thread)),
 		/*
 		 * Take a turn, replacing whatever this thread was holding.

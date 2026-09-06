@@ -13,9 +13,8 @@ import {
 	readProse,
 	taskMoved,
 	taskWritten,
-	writeOf,
+	writesOf,
 } from "./agent-nouns";
-import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
 
 /**
  * The transcript, projected from the event union the daemon streams (#191, #192,
@@ -159,6 +158,8 @@ export interface AgentRow {
 	readonly step: string | null;
 	/** the picture this call handed back, which is the payload of its line (#117) */
 	readonly shot: AgentShot | null;
+	/** Additional top-to-bottom slices; old saved rows carry only shot. */
+	readonly slices?: readonly (AgentShot & { readonly id: string })[];
 	readonly foreign: RowForeign | null;
 	/** the delegating call this row came from, or null on the human's own thread */
 	readonly parent: string | null;
@@ -310,6 +311,13 @@ export type AgentEntry =
 	| {
 			readonly key: string;
 			readonly kind: "ask";
+			readonly access?: {
+				readonly scope: string;
+				readonly path: string;
+				readonly kind?: "command";
+				readonly command?: string;
+				readonly unavailable?: boolean;
+			};
 			/** the control request an answer names; null until the request itself lands */
 			readonly request: string | null;
 			/** the agent's own question rather than an approval to run something */
@@ -439,6 +447,13 @@ interface Prose {
 
 /** a waiting request, from the call that opens it to whatever ends it */
 interface Ask {
+	access?: {
+		readonly scope: string;
+		readonly path: string;
+		readonly kind?: "command";
+		readonly command?: string;
+		readonly unavailable?: boolean;
+	};
 	readonly key: string;
 	request: string | null;
 	question: boolean;
@@ -462,6 +477,7 @@ interface Row {
 	detail: string | null;
 	step: string | null;
 	shot: AgentShot | null;
+	slices?: readonly (AgentShot & { readonly id: string })[];
 	foreign: RowForeign | null;
 	parent: string | null;
 }
@@ -506,7 +522,7 @@ interface Block {
 	/** the last name spool had for it, which is what an empty search's row is built from */
 	named: CallName | null;
 	/** the block this call is about to change, held until its result says it landed (#214) */
-	wrote: AgentWrite | null;
+	wrote: readonly AgentWrite[];
 	/** it joined the open run, so the count is the whole of what it adds */
 	joined: boolean;
 	/** the whole call has landed, so a stray fragment cannot take its arguments back */
@@ -666,6 +682,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	let last = 0;
 	let over = false;
 	let ended = false;
+	let recovering = false;
 	/** the last usage window the binary said anything about, so a crossing can be seen */
 	let limit: AgentLimit | null = null;
 
@@ -898,7 +915,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			fragments: "",
 			row: null,
 			named: null,
-			wrote: null,
+			wrote: [],
 			joined: false,
 			settled: false,
 		};
@@ -1069,7 +1086,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 						: { server: event.foreign.server ?? null, tool: event.foreign.tool ?? null, raw: event.tool };
 				// the strings this write is made of, held rather than published: what the
 				// canvas can locate is a change that landed, and only the result says so (#214)
-				block.wrote = foreign === null ? writeOf(event.id, event.tool, event.input) : null;
+				block.wrote = foreign === null ? writesOf(event.id, event.tool, event.input) : [];
 				nameRow(block, event.input, true, foreign);
 				break;
 			}
@@ -1093,6 +1110,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				ask.request = event.request;
 				ask.state = "open";
 				ask.always = event.suggestions.length > 0;
+				if (event.access !== undefined) {
+					ask.access = event.access;
+					if (above !== null) above.subject = event.access.path;
+				}
 				/*
 				 * The agent's own written sentence, which is the whole of what an approval gives
 				 * somebody to decide on — and nothing where it wrote none.
@@ -1140,8 +1161,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				 * A failed one publishes nothing: a call that was denied, stopped or errored
 				 * changed no pixels, and a mark for it would be pointing at nothing.
 				 */
-				if (block.wrote !== null && !event.failed) writes.push(block.wrote);
-				block.wrote = null;
+				if (!event.failed) writes.push(...block.wrote);
+				block.wrote = [];
 				/*
 				 * A search that loaded no tool is the only place a connector nobody has signed
 				 * in to is visible at all: it offers no failing tool, it offers no tool. So the
@@ -1181,16 +1202,15 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				 * developer's own press back to them as an instruction to stop and wait.
 				 */
 				if (state === "failed" && event.text.trim() !== "") block.row.detail = event.text.trim();
-				/*
-				 * The picture the call handed back, which goes one field down rather than onto
-				 * the line: roughly 150 KB of base64 per screenshot, and the row above it
-				 * already said `look`.
-				 *
-				 * The first of them, because every image result in all seven captures carries
-				 * exactly one — a `spool shot` writes one PNG and the agent reads that one back.
-				 */
 				const picture = event.images[0];
-				if (picture !== undefined) block.row.shot = { media: picture.media, data: picture.data };
+				if (picture !== undefined) {
+					block.row.shot = picture;
+					if (event.images.length > 1)
+						block.row.slices = event.images
+							.slice(1)
+							.map((image, index) => ({ ...image, id: `${event.id}-${index + 1}` }));
+					if (block.row.verb === "shot") block.row.verb = "look";
+				}
 				break;
 			}
 			case "task-started":
@@ -1304,11 +1324,13 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			case "ended": {
 				over = true;
 				ended = true;
+				recovering = Boolean(event.recovery);
 				finish();
 				if (event.ending === "stopped") notes.push({ key: "end", kind: "note", text: "stopped" });
 				// the wire's own word for a failure, because spool is not the authority on
 				// why somebody else's process gave up
-				if (event.ending === "failed") notes.push({ key: "end", kind: "note", text: event.reason ?? "failed" });
+				if (event.ending === "failed" && !recovering)
+					notes.push({ key: "end", kind: "note", text: event.reason ?? "failed" });
 				break;
 			}
 			case "closed": {
@@ -1318,21 +1340,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// the one thing the rail must never swallow, because it is why nothing came
 				// back. The runner's own message is quoted verbatim — a missing binary
 				// reaches here as `spawn claude ENOENT` and spool does not improve on it.
-				if (event.message !== undefined) {
+				if (event.message !== undefined && !recovering) {
 					notes.push({ key: "closed", kind: "note", text: event.message });
-					/*
-					 * The one sentence spool adds to a refusal it did not write (#201).
-					 *
-					 * The words above are the binary's own and stay that way. What it cannot say
-					 * from here is what to do about it: its own remedy is `/login`, a slash command
-					 * inside an interactive session, and spool spawns print mode. So the remedy is
-					 * spool's, the promise about keys rides under it where somebody deciding what to
-					 * do will read it once, and neither of them is a boundary — nothing below them
-					 * is untrue, they are a thing to go and do.
-					 */
-					if (signedOut(event.message)) {
-						notes.push({ key: "closed-fix", kind: "note", rule: false, said: LOGIN_REMEDY, text: NO_KEY });
-					}
 				} else if (!ended) {
 					notes.push({
 						key: "closed",
@@ -1397,8 +1406,29 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			// a call that opened and never said what it was asking is not a question yet,
 			// but a request that arrived always draws: its controls are the block even
 			// where the row above already said everything there was to say
-			if (ask !== undefined && (ask.request !== null || ask.asked !== null || ask.questions.length > 0))
-				entries.push({ ...ask, kind: "ask" });
+			if (ask !== undefined && (ask.request !== null || ask.asked !== null || ask.questions.length > 0)) {
+				if (ask.access !== undefined && !unanswered(ask)) {
+					const row = entries.at(-1)?.kind === "row" ? entries.pop() : undefined;
+					entries.push({
+						key: ask.key,
+						kind: "note",
+						rule: false,
+						text:
+							ask.state === "always"
+								? ask.access.kind === "command"
+									? ask.access.scope === "commands"
+										? "commands allowed for this thread"
+										: `commands in ${ask.access.scope} allowed for this thread`
+									: `edits in ${ask.access.scope} allowed for this thread`
+								: ask.state === "allowed"
+									? "allowed once"
+									: ask.state === "denied"
+										? "denied"
+										: "action stopped",
+					});
+					if (row !== undefined) entries.push(row);
+				} else entries.push({ ...ask, kind: "ask" });
+			}
 			continue;
 		}
 		const block = prose.get(slot.key);

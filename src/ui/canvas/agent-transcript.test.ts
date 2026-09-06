@@ -511,27 +511,13 @@ describe("a turn that ends", () => {
 		expect(entries.at(-1)).toMatchObject({ kind: "note", text: "spawn claude ENOENT" });
 	});
 
-	/**
-	 * The refusal is the binary's and the remedy is spool's, and the split is the rule
-	 * (#201). Its own remedy is `/login`, a slash command inside an interactive session,
-	 * and spool spawns print mode — so quoting it verbatim would be quoting an instruction
-	 * that cannot be followed from here. Naming the terminal is the whole of the addition.
-	 */
-	it("adds one sentence of its own under a refusal it did not write", () => {
+	it("keeps the refusal in history while recovery owns its actions", () => {
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
 			stamp([{ kind: "closed", code: 1, message: "Not logged in · Please run /login", parent: null }]),
 		);
-
-		expect(entries.slice(-2)).toMatchObject([
-			{ kind: "note", text: "Not logged in · Please run /login" },
-			{
-				kind: "note",
-				rule: false,
-				said: "run `claude` in a terminal, then /login",
-				text: "spool uses that login; it never asks for a key",
-			},
-		]);
+		expect(entries.at(-1)).toMatchObject({ kind: "note", text: "Not logged in · Please run /login" });
+		expect(entries).toHaveLength(2);
 	});
 
 	/** every other reason a turn gives up is spool's to quote and never to advise on */
@@ -2017,6 +2003,24 @@ describe("the writes a turn lands (#214)", () => {
 		expect(writes).toEqual([{ key: "c1", path, find: ["<p>warm</p>", "<p>cold</p>"] }]);
 	});
 
+	it("keeps every disjoint pair on a landed multi-edit and none on a denied one", () => {
+		const path = `${ROOT}/design/frames/home/frame.tsx`;
+		const call = called("pairs", "MultiEdit", {
+			file_path: path,
+			edits: [
+				{ old_string: "old title", new_string: "new title" },
+				{ old_string: "old body", new_string: "new body" },
+			],
+		});
+		expect(transcriptOf([{ text: "change both" }], stamp([ready, call, result("pairs")])).writes).toEqual([
+			{ key: "pairs:0", path, find: ["new title", "old title"] },
+			{ key: "pairs:1", path, find: ["new body", "old body"] },
+		]);
+		expect(
+			transcriptOf([{ text: "change both" }], stamp([ready, call, result("pairs", { failed: true })])).writes,
+		).toEqual([]);
+	});
+
 	it("takes a Write whole, since there was nothing there to replace", () => {
 		const path = `${ROOT}/design/frames/home/frame.tsx`;
 		const { writes } = transcriptOf(
@@ -2051,7 +2055,7 @@ describe("the writes a turn lands (#214)", () => {
 		expect(cut.writes).toEqual([]);
 	});
 
-	it("says nothing about the two write tools whose arguments name no one block", () => {
+	it("carries no locator for an empty edit list", () => {
 		const path = `${ROOT}/design/frames/home/frame.tsx`;
 		const { writes, entries } = transcriptOf(
 			[{ text: "warm it up" }],

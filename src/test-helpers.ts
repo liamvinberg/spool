@@ -10,6 +10,7 @@ import { createDaemonApp } from "./daemon/app";
 import { renderOrigin } from "./daemon/lifecycle";
 import { CONTROL_HEADER, PROJECT_HEADER, RENDER_HOST } from "./daemon/security";
 import { serveDaemon } from "./daemon/server";
+import { createSettingsStore } from "./daemon/settings";
 import { initProject } from "./init";
 import { lookupProjectByName } from "./registry";
 import { canvasJson } from "./templates";
@@ -111,6 +112,8 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 export async function serveProject(options?: Partial<Parameters<typeof serveDaemon>[0]>) {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
+	// A Claude fixture names the engine this browser test intends to exercise.
+	if (options?.agentExecutor !== undefined) createSettingsStore(spoolDir).write("agent.engine", "claude", root);
 	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
 	onTestFinished(() => daemon.close());
 	return {

@@ -2,14 +2,13 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeTempDir } from "../test-helpers";
+import { sessionExists, sessionFile } from "./agent-claude-session";
 import {
 	closeThread,
 	parseThreadPut,
 	putThread,
 	readThreads,
 	serveThreads,
-	sessionExists,
-	sessionFile,
 	type ThreadPut,
 	writeThread,
 } from "./agent-threads";
@@ -42,15 +41,20 @@ const picture: ThreadPut = {
 	draft: "",
 };
 
-const noSessions = { HOME: "/nowhere" };
-
 describe("the store", () => {
 	it("hands a thread back the way it went down, drawing and all", () => {
 		const spoolDir = makeTempDir();
 		putThread(spoolDir, ROOT, ONE, picture);
 
 		const [back] = readThreads(spoolDir, ROOT);
-		expect(back).toEqual({ id: ONE, ...picture, stopped: false, closed: false });
+		expect(back).toEqual({
+			id: ONE,
+			...picture,
+			engine: "claude",
+			session: { id: ONE },
+			stopped: false,
+			closed: false,
+		});
 		// nothing is capped and nothing is elided, so live and restored are the same view
 		expect(back?.entries).toEqual(picture.entries);
 	});
@@ -107,7 +111,7 @@ describe("the store", () => {
 			const spoolDir = makeTempDir();
 			putThread(spoolDir, ROOT, ONE, { ...picture, life: "running" });
 
-			const [back] = serveThreads(spoolDir, ROOT, { live: new Set(), env: noSessions });
+			const [back] = serveThreads(spoolDir, ROOT, { live: new Set() });
 			expect(back?.stopped).toBe(true);
 			// it changed while nobody was looking at it, and the change is that it stopped
 			expect(back?.life).toBe("unread");
@@ -117,14 +121,14 @@ describe("the store", () => {
 			const spoolDir = makeTempDir();
 			putThread(spoolDir, ROOT, ONE, { ...picture, life: "waiting" });
 
-			expect(serveThreads(spoolDir, ROOT, { live: new Set(), env: noSessions })[0]?.stopped).toBe(true);
+			expect(serveThreads(spoolDir, ROOT, { live: new Set() })[0]?.stopped).toBe(true);
 		});
 
 		it("leaves a thread this daemon is still running alone", () => {
 			const spoolDir = makeTempDir();
 			putThread(spoolDir, ROOT, ONE, { ...picture, life: "running" });
 
-			const [back] = serveThreads(spoolDir, ROOT, { live: new Set([ONE]), env: noSessions });
+			const [back] = serveThreads(spoolDir, ROOT, { live: new Set([ONE]) });
 			expect(back?.stopped).toBe(false);
 			expect(back?.life).toBe("running");
 		});
@@ -133,7 +137,7 @@ describe("the store", () => {
 			const spoolDir = makeTempDir();
 			putThread(spoolDir, ROOT, ONE, { ...picture, life: "unread" });
 
-			const [back] = serveThreads(spoolDir, ROOT, { live: new Set(), env: noSessions });
+			const [back] = serveThreads(spoolDir, ROOT, { live: new Set() });
 			expect(back?.stopped).toBe(false);
 			expect(back?.life).toBe("unread");
 		});
@@ -141,7 +145,14 @@ describe("the store", () => {
 		/** a thread the hands send into is running again, so the mark a restart left clears */
 		it("is cleared by the next thing said in the thread", () => {
 			const spoolDir = makeTempDir();
-			writeThread(spoolDir, ROOT, { id: ONE, ...picture, stopped: true, closed: false });
+			writeThread(spoolDir, ROOT, {
+				id: ONE,
+				...picture,
+				engine: "claude",
+				session: { id: ONE },
+				stopped: true,
+				closed: false,
+			});
 			putThread(spoolDir, ROOT, ONE, { ...picture, life: "running" });
 
 			expect(readThreads(spoolDir, ROOT)[0]?.stopped).toBe(false);
@@ -201,18 +212,17 @@ describe("the store", () => {
 			const home = makeTempDir();
 			putThread(spoolDir, ROOT, ONE, picture);
 
-			expect(serveThreads(spoolDir, ROOT, { live: new Set(), env: { HOME: home } })[0]?.continuable).toBe(false);
+			expect(sessionExists(ROOT, ONE, { HOME: home })).toBe(false);
 
 			plantSession(home, ROOT, ONE);
-			expect(serveThreads(spoolDir, ROOT, { live: new Set(), env: { HOME: home } })[0]?.continuable).toBe(true);
+			expect(sessionExists(ROOT, ONE, { HOME: home })).toBe(true);
 		});
 
 		it("is never deleted by spool when the picture outlives it", () => {
 			const spoolDir = makeTempDir();
-			const home = makeTempDir();
 			putThread(spoolDir, ROOT, ONE, picture);
 
-			serveThreads(spoolDir, ROOT, { live: new Set(), env: { HOME: home } });
+			serveThreads(spoolDir, ROOT, { live: new Set() });
 
 			// the picture of a thread you cannot continue is still worth reading, and spool
 			// does not throw one away on a timer somebody else configured

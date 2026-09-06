@@ -141,6 +141,21 @@ export function writeOf(id: string, tool: string, input: CallInput): AgentWrite 
 	return find.length === 0 ? null : { key: id, path, find };
 }
 
+/** Every disjoint replacement has its own canvas locator. */
+export function writesOf(id: string, tool: string, input: CallInput): readonly AgentWrite[] {
+	if (tool !== "MultiEdit") {
+		const write = writeOf(id, tool, input);
+		return write === null ? [] : [write];
+	}
+	if (typeof input !== "object" || input === null || !("edits" in input) || !Array.isArray(input.edits)) return [];
+	const path = readField(input, "file_path", true);
+	return input.edits.flatMap((pair: unknown, index: number) => {
+		if (typeof pair !== "object" || pair === null) return [];
+		const write = writeOf(`${id}:${index}`, "Edit", { ...pair, file_path: path });
+		return write === null ? [] : [write];
+	});
+}
+
 /**
  * Whether this call gets a row of its own.
  *
@@ -368,10 +383,11 @@ export function nameCall(call: {
 		const verb = spool[1] ?? "run";
 		// a redirection is shell rather than subject: `spool shot home 2>&1` looked at home
 		const subject = (spool[2] ?? "").split(/\s*\d*>/)[0]?.trim() ?? "";
-		const frame = TAKES_FRAME.has(verb) && /^[\w-]+$/.test(subject) ? subject : null;
+		const target = subject.split(/\s+/)[0] ?? "";
+		const frame = TAKES_FRAME.has(verb) && /^[\w-]+$/.test(target) ? target : null;
 		// `spool skill` and `spool selection` take no argument at all, so the verb is the
 		// whole row rather than a verb with an empty slot after it
-		return { ...plain, verb, subject: subject === "" ? null : subject, frame, detail: command };
+		return { ...plain, verb, subject: frame ?? (subject === "" ? null : subject), frame, detail: command };
 	}
 
 	if (tool === "Agent") return { ...plain, verb: "delegate", subject: readField(input, "description", whole) };

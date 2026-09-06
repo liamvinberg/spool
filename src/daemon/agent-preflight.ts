@@ -92,6 +92,7 @@ export function agentInstalled(env: Readonly<Record<string, string | undefined>>
  */
 export interface AgentLogin {
 	readonly signedIn: boolean;
+	readonly connections?: readonly { provider: string; method: "oauth" | "api_key"; label: string }[];
 	readonly account: string | null;
 }
 
