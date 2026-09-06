@@ -274,7 +274,10 @@ it("completes a deterministic journey through the clean installed host and deliv
 	else daemonChild = spawn(executable, [cli, "serve", "--foreground"], { cwd: project, env, stdio: "ignore" });
 	let daemonPid = 0;
 	let hostPid = 0;
+	let activeCommandPid = 0;
 	onTestFinished(async () => {
+		if (activeCommandPid && alive(activeCommandPid)) process.kill(activeCommandPid, "SIGKILL");
+		if (activeCommandPid) await expect.poll(() => alive(activeCommandPid), { timeout: 15_000 }).toBe(false);
 		await electron?.close();
 		daemonChild?.kill("SIGTERM");
 		if (daemonPid) await expect.poll(() => alive(daemonPid), { timeout: 15_000 }).toBe(false);
@@ -576,6 +579,47 @@ try {
 	await settled();
 	expect(await field.inputValue()).toBe("");
 	expect(readFileSync(join(project, "crash-effect"), "utf8")).toBe("effect");
+	// A command still executing when its host dies must retire, not merely lose its rail row.
+	await send([
+		{
+			name: "write",
+			arguments: {
+				path: "design/active-command.mjs",
+				content:
+					'import { writeFileSync, appendFileSync } from "node:fs"; writeFileSync("design/active-pid", String(process.pid)); setInterval(() => appendFileSync("design/active-ticks", "x"), 30);',
+			},
+		},
+	]);
+	await settled();
+	await send([bash(`${appPath ? "ELECTRON_RUN_AS_NODE=1 " : ""}'${executable}' design/active-command.mjs`)]);
+	await expect
+		.poll(() =>
+			existsSync(join(project, "design/active-pid"))
+				? Number(readFileSync(join(project, "design/active-pid"), "utf8"))
+				: 0,
+		)
+		.toBeGreaterThan(1);
+	activeCommandPid = Number(readFileSync(join(project, "design/active-pid"), "utf8"));
+	expect(alive(activeCommandPid)).toBe(true);
+	await expect
+		.poll(() =>
+			existsSync(join(project, "design/active-ticks"))
+				? readFileSync(join(project, "design/active-ticks"), "utf8").length
+				: 0,
+		)
+		.toBeGreaterThan(0);
+	process.kill(hostPid, "SIGKILL");
+	await settled();
+	await expect.poll(() => alive(activeCommandPid), { timeout: 15_000 }).toBe(false);
+	const stoppedTicks = readFileSync(join(project, "design/active-ticks"), "utf8");
+	const beforeActiveRestart = calls();
+	await page.reload();
+	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
+	hostPid = childHost(daemonPid) ?? 0;
+	await attachTransport(hostPid);
+	expect(calls()).toBe(beforeActiveRestart);
+	expect(readFileSync(join(project, "design/active-ticks"), "utf8")).toBe(stoppedTicks);
+	evidence.activeCommand = { pid: activeCommandPid, stopped: true, replayed: false };
 	// Refresh model data through the native catalog HTTP parser without replacing code.
 	const headers = { "Content-Type": "application/json", "X-Spool-Control": daemon.controlToken };
 	const account = async (operation: unknown) => {
