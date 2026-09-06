@@ -8,6 +8,8 @@ import type { BundledQuestions } from "./bundled-questions";
 
 export type BundledRequest =
 	| { kind: "account" }
+	| { kind: "rename-prepare"; root: string; target: string; sessions: readonly { id: string }[] }
+	| { kind: "rename-finish"; token: string; committed: boolean }
 	| { kind: "login"; provider: string; method: string }
 	| { kind: "login-poll"; id: string }
 	| { kind: "login-input"; id: string; value: string; revision?: number }
@@ -20,7 +22,7 @@ export type BundledRequest =
 	| { kind: "permissions"; turn: string; mode: AgentPermissions }
 	| { kind: "stop"; turn: string }
 	| { kind: "close" };
-export type BundledReply = AgentLogin | AgentOffer | AgentLoginProgress | AgentPermissions | boolean | null;
+export type BundledReply = AgentLogin | AgentOffer | AgentLoginProgress | AgentPermissions | boolean | string | null;
 export type HostInput = { id: string; request: BundledRequest };
 export type HostOutput =
 	| { kind: "reply"; id: string; value: BundledReply }

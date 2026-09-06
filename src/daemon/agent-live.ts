@@ -159,6 +159,7 @@ export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOpti
 const KEPT_MS = 5 * 60_000;
 
 export interface AgentTurns {
+	relocate(root: string, target: string): void;
 	get(root: string, thread: string): AgentHeld | undefined;
 	hold(options: Omit<AgentHoldOptions, "onEnded">): AgentHeld;
 	/** the turns of one project, for the doors addressed by something other than a thread */
@@ -208,6 +209,19 @@ export function createAgentTurns(keptMs = KEPT_MS): AgentTurns {
 	}
 
 	return {
+		relocate: (root, target) => {
+			const moving = [...of(root)];
+			if (moving.some((turn) => turn.running)) throw new Error("Cannot rename a running project");
+			for (const turn of moving) {
+				const oldKey = keyOf(root, turn.thread);
+				clearTimeout(timers.get(oldKey));
+				timers.delete(oldKey);
+				held.delete(oldKey);
+				const key = keyOf(target, turn.thread);
+				held.set(key, { ...turn, root: target });
+				keep(key);
+			}
+		},
 		get: (root, thread) => held.get(keyOf(root, thread)),
 		/*
 		 * Take a turn, replacing whatever this thread was holding.

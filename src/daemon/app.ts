@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
@@ -28,7 +28,15 @@ import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import type { Look } from "./agent-preflight";
-import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
+import {
+	closeThread,
+	isThreadId,
+	parseThreadPut,
+	putThread,
+	readThread,
+	readThreads,
+	serveThreads,
+} from "./agent-threads";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
@@ -653,6 +661,7 @@ export function createDaemonApp({
 	);
 
 	const permissionChanges = new Set<string>();
+	const projectRenames = new Set<string>();
 
 	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
 		if (thread !== undefined && !isThreadId(thread))
@@ -711,6 +720,7 @@ export function createDaemonApp({
 				),
 			};
 		}
+		if (projectRenames.has(lookup.root)) return { response: c.text("Project rename is in progress.", 409) };
 		return { root: lookup.root };
 	}
 
@@ -1116,21 +1126,66 @@ export function createDaemonApp({
 				const parsed = z.object({ root: z.string(), name: z.string() }).safeParse(value);
 				return parsed.success ? parsed.data : c.json({ error: "Expected a project root and name." }, 400);
 			}),
-			(c) => {
+			async (c) => {
 				const { root, name } = c.req.valid("json");
+				const target = join(dirname(root), name.trim());
+				if (projectRenames.has(root) || projectRenames.has(target) || permissionChanges.has(root))
+					return c.json({ error: "Project change is in progress." }, 409);
 				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
 					return c.json({ error: "Let the agent finish or stop its turn before renaming this project." }, 409);
 				}
+				projectRenames.add(root);
+				projectRenames.add(target);
+				let prepared: Awaited<ReturnType<NonNullable<AgentEngine["prepareRename"]>>> | undefined;
+				let committed = false;
 				try {
-					const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
-					if (result.root !== root) hub.forget(root);
+					if (target !== root && isSafeName(name.trim())) {
+						const sessions = readThreads(spoolDir, root, true)
+							.filter((thread) => thread.engine === "spool")
+							.map((thread) => thread.session);
+						if (sessions.length) {
+							const engine = engines.get("spool");
+							if (!engine?.prepareRename)
+								throw new SpoolError("The bundled engine cannot prepare this project rename.");
+							try {
+								prepared = await engine.prepareRename(root, target, sessions);
+							} catch (error) {
+								throw new SpoolError(
+									error instanceof Error ? error.message : "Could not prepare the project rename.",
+								);
+							}
+						}
+					}
+					const result = mutateMachineState(spoolDir, {
+						kind: "rename-project",
+						root,
+						name,
+						...(prepared ? { bundled: prepared.token } : {}),
+					});
+					committed = true;
+					if (result.root !== root) {
+						hub.forget(root);
+						liveTurns.relocate(root, result.root);
+						selections.relocate(root, result.root);
+						for (const [key, ask] of agentAsks)
+							if (key.startsWith(`${root}\x00`)) {
+								agentAsks.set(`${result.root}${key.slice(root.length)}`, ask);
+								agentAsks.delete(key);
+							}
+					}
 					machineStateWatch.acknowledgeRegistry(result.registry);
 					machineStateWatch.acknowledgeSession(result.session);
+					await prepared?.finish(true);
+					prepared = undefined;
 					emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
 					return c.json({ root: result.root, name: result.name });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
 					return c.json({ error: error.message }, 409);
+				} finally {
+					await prepared?.finish(committed);
+					projectRenames.delete(root);
+					projectRenames.delete(target);
 				}
 			},
 		)
@@ -1961,6 +2016,11 @@ export function createDaemonApp({
 					ask: held,
 					choose: wanted,
 				});
+				if (
+					projectRenames.has(project.root) ||
+					lookupProjectByName(spoolDir, c.req.param("project")).kind !== "found"
+				)
+					return c.text("Project changed while choosing a model.", 409);
 				agentAsks.set(key, selected.engine.choice(offer, wanted, held));
 				return c.json(offer);
 			},
