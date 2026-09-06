@@ -29,7 +29,10 @@ const snapshot = (values: Partial<Record<SettingKey, unknown>> = {}): SettingsSn
 	}),
 });
 
-async function mount(daemon: (init: RequestInit | undefined) => Response) {
+async function mount(
+	daemon: (init: RequestInit | undefined) => Response,
+	options: { project: string | undefined } = { project: "demo" },
+) {
 	vi.resetModules();
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	Object.defineProperty(window, "__SPOOL_CONTROL__", { configurable: true, value: "control-test-token" });
@@ -40,7 +43,7 @@ async function mount(daemon: (init: RequestInit | undefined) => Response) {
 	document.body.append(host);
 	const root = createRoot(host);
 	const onClose = vi.fn();
-	await act(async () => root.render(createElement(SettingsSheet, { project: "demo", onClose })));
+	await act(async () => root.render(createElement(SettingsSheet, { ...options, onClose })));
 	// the first read lands on the next tick
 	await act(async () => {
 		await Promise.resolve();
@@ -100,6 +103,37 @@ it("writes the row's own key and shows the daemon's reading back", async () => {
 	});
 	expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit)?.method === "PUT")).toBe(true);
 	expect(toggle?.getAttribute("aria-checked")).toBe("true");
+	unmount();
+});
+
+it("shows only machine settings without a project and keeps Appearance available", async () => {
+	const writes: unknown[] = [];
+	const { host, fetchMock, unmount } = await mount(
+		(init) => {
+			if (reads(init)) return Response.json({ ...snapshot(), project: null });
+			writes.push(JSON.parse(String(init?.body)));
+			return Response.json({});
+		},
+		{ project: undefined },
+	);
+	const text = host.querySelector('[role="dialog"]')?.textContent ?? "";
+	expect(text).toContain("Save projects in");
+	expect(text).toContain("Check for updates");
+	expect(text).not.toContain("This project");
+	expect(text).not.toContain("Open a project");
+	expect(text).not.toContain("History");
+	expect(text).not.toContain("Agent permissions");
+	expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("project="))).toBe(true);
+	await act(async () =>
+		host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Check for updates"]')?.click(),
+	);
+	expect(writes).toEqual([{ key: "updateCheck", value: false }]);
+	const tab = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+		(button) => button.textContent === "Appearance",
+	);
+	await act(async () => tab?.click());
+	expect(host.textContent).toContain("Catppuccin Mocha");
+	expect(host.textContent).toContain("Nord");
 	unmount();
 });
 

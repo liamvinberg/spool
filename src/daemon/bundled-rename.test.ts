@@ -264,7 +264,7 @@ it("rolls back session bytes, recovery, registry, threads and folder on a late p
 	).toMatchObject({ ending: "done" });
 });
 
-it("blocks turn starts and a second rename throughout asynchronous preparation and completion", {
+it("blocks turn starts, trash and a second rename throughout asynchronous preparation and completion", {
 	timeout: 30_000,
 }, async () => {
 	const f = await fixture();
@@ -300,9 +300,11 @@ it("blocks turn starts and a second rename throughout asynchronous preparation a
 		f.request(`/api/p/${name}/agent/turn`, { thread: randomUUID(), engine: "spool", said: [{ prompt: "racing" }] });
 	expect((await start("before")).status).toBe(409);
 	expect((await f.rename("other")).status).toBe(409);
+	expect((await f.request("/api/projects/trash", { root: f.root })).status).toBe(409);
 	releasePrepare();
 	await expect.poll(() => finishing).toBe(true);
 	expect((await start("after")).status).toBe(409);
+	expect((await f.request("/api/projects/trash", { root: join(f.parent, "after") })).status).toBe(409);
 	releaseFinish();
 	expect((await renaming).status).toBe(200);
 	expect(readRegistry(f.spoolDir).projects[0]?.root).toBe(join(f.parent, "after"));

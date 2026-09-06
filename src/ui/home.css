@@ -211,7 +211,7 @@
 	width: 14px;
 }
 .pj-start-choices > button:hover {
-	background: var(--color-raised);
+	background: var(--color-control);
 }
 .pj-welcome-main {
 	display: flex;
@@ -275,7 +275,7 @@
 	color: var(--color-muted);
 }
 .pj-welcome > :where(.spool-empty-actions) > button:hover {
-	background: var(--color-raised);
+	background: var(--color-control);
 	border-color: var(--color-muted);
 }
 .pj-project-location {
@@ -359,7 +359,12 @@
 	padding: 0 13px;
 	margin-bottom: 30px;
 }
-.pj-navigation :where(nav) > button {
+.pj-navigation nav {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.pj-navigation-item {
 	display: flex;
 	align-items: center;
 	gap: 12px;
@@ -367,30 +372,25 @@
 	height: 38px;
 	padding: 0 12px;
 	border-radius: 7px;
-	color: var(--color-text);
-	background: var(--color-surface);
+	color: var(--color-muted);
 	text-align: left;
 	font: var(--type-control);
+}
+.pj-navigation-item:hover,
+.pj-navigation-item[aria-current="page"] {
+	color: var(--color-text);
+	background: var(--color-surface);
 }
 .pj-navigation :where(nav) > button > svg {
 	width: 16px;
 	height: 16px;
+	flex-shrink: 0;
 }
 .pj-navigation-foot {
 	margin-top: auto;
 	display: flex;
 	flex-direction: column;
-	align-items: flex-start;
 	gap: 22px;
-}
-.pj-navigation-foot > button {
-	display: flex;
-	align-items: center;
-	gap: 11px;
-	padding: 9px 12px;
-	color: var(--color-muted);
-	border-radius: 6px;
-	font: var(--type-label);
 }
 .pj-navigation-foot > span {
 	padding-left: 12px;
@@ -460,7 +460,7 @@
 		color: var(--color-text);
 	}
 	.home-action:not(.home-action-primary):hover {
-		background: var(--color-raised);
+		background: var(--color-control);
 	}
 }
 @media (max-width: 1050px) {

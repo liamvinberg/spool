@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
@@ -182,6 +182,7 @@ it("completes a deterministic journey through the clean installed host and deliv
 	for (const asset of [
 		"dist/cli.js",
 		"dist/bundled-host.js",
+		"dist/bundled-oauth-native.js",
 		"dist/ui/index.html",
 		"dist/frame-runtime.js",
 		"dist/spool-public.d.ts",
@@ -189,6 +190,13 @@ it("completes a deterministic journey through the clean installed host and deliv
 		"THIRD_PARTY_NOTICES.md",
 	])
 		expect(existsSync(join(install, asset)), asset).toBe(true);
+	for (const face of ["latin-wght-normal", "latin-wght-italic", "latin-ext-wght-normal", "latin-ext-wght-italic"])
+		expect(
+			readdirSync(join(install, "dist/ui/assets")).some(
+				(asset) => asset.startsWith(`instrument-sans-${face}-`) && asset.endsWith(".woff2"),
+			),
+			face,
+		).toBe(true);
 	const requireFromInstall = createRequire(join(install, "package.json"));
 	const packageRoot = (name: string) => {
 		const directory = requireFromInstall.resolve
@@ -206,10 +214,12 @@ it("completes a deterministic journey through the clean installed host and deliv
 	])
 		expect(existsSync(join(sandbox, asset)), asset).toBe(true);
 	expect(readFileSync(join(install, "THIRD_PARTY_NOTICES.md"), "utf8")).toContain("Copyright (c) 2025 Mario Zechner");
+	expect(readFileSync(join(install, "THIRD_PARTY_NOTICES.md"), "utf8")).toContain("Instrument Sans Project Authors");
 	expect(readFileSync(join(packageRoot("typebox"), "license"), "utf8")).toContain("Haydn Paterson");
 	const pinnedPaths = [
 		join(install, "dist/cli.js"),
 		join(install, "dist/bundled-host.js"),
+		join(install, "dist/bundled-oauth-native.js"),
 		...Object.keys(manifest.dependencies)
 			.filter((name) => name.includes("pi-") || name.includes("sandbox-runtime") || name === "typebox")
 			.map((name) => join(packageRoot(name), "package.json")),
@@ -264,7 +274,10 @@ it("completes a deterministic journey through the clean installed host and deliv
 	else daemonChild = spawn(executable, [cli, "serve", "--foreground"], { cwd: project, env, stdio: "ignore" });
 	let daemonPid = 0;
 	let hostPid = 0;
+	let activeCommandPid = 0;
 	onTestFinished(async () => {
+		if (activeCommandPid && alive(activeCommandPid)) process.kill(activeCommandPid, "SIGKILL");
+		if (activeCommandPid) await expect.poll(() => alive(activeCommandPid), { timeout: 15_000 }).toBe(false);
 		await electron?.close();
 		daemonChild?.kill("SIGTERM");
 		if (daemonPid) await expect.poll(() => alive(daemonPid), { timeout: 15_000 }).toBe(false);
@@ -301,11 +314,16 @@ it("completes a deterministic journey through the clean installed host and deliv
 		? await electron.firstWindow()
 		: await browser?.newPage({ viewport: { width: 1400, height: 900 } });
 	if (!page) throw new Error("Missing delivered canvas");
+	let observedPage = page;
 	if (electron) await page.waitForURL((address) => address.protocol === "http:", { timeout: 30_000 });
 	await page.goto(`${url}/p/${basename(project)}`);
 	onTestFinished(async () => {
-		if (!page.isClosed())
-			console.info("last canvas", page.url(), (await page.locator("body").textContent())?.slice(0, 1200));
+		if (!observedPage.isClosed())
+			console.info(
+				"last canvas",
+				observedPage.url(),
+				(await observedPage.locator("body").textContent())?.slice(0, 1200),
+			);
 	});
 	await page.locator('[data-dock-glyph="agent"]').click();
 	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
@@ -561,6 +579,47 @@ try {
 	await settled();
 	expect(await field.inputValue()).toBe("");
 	expect(readFileSync(join(project, "crash-effect"), "utf8")).toBe("effect");
+	// A command still executing when its host dies must retire, not merely lose its rail row.
+	await send([
+		{
+			name: "write",
+			arguments: {
+				path: "design/active-command.mjs",
+				content:
+					'import { writeFileSync, appendFileSync } from "node:fs"; writeFileSync("design/active-pid", String(process.pid)); setInterval(() => appendFileSync("design/active-ticks", "x"), 30);',
+			},
+		},
+	]);
+	await settled();
+	await send([bash(`${appPath ? "ELECTRON_RUN_AS_NODE=1 " : ""}'${executable}' design/active-command.mjs`)]);
+	await expect
+		.poll(() =>
+			existsSync(join(project, "design/active-pid"))
+				? Number(readFileSync(join(project, "design/active-pid"), "utf8"))
+				: 0,
+		)
+		.toBeGreaterThan(1);
+	activeCommandPid = Number(readFileSync(join(project, "design/active-pid"), "utf8"));
+	expect(alive(activeCommandPid)).toBe(true);
+	await expect
+		.poll(() =>
+			existsSync(join(project, "design/active-ticks"))
+				? readFileSync(join(project, "design/active-ticks"), "utf8").length
+				: 0,
+		)
+		.toBeGreaterThan(0);
+	process.kill(hostPid, "SIGKILL");
+	await settled();
+	await expect.poll(() => alive(activeCommandPid), { timeout: 15_000 }).toBe(false);
+	const stoppedTicks = readFileSync(join(project, "design/active-ticks"), "utf8");
+	const beforeActiveRestart = calls();
+	await page.reload();
+	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
+	hostPid = childHost(daemonPid) ?? 0;
+	await attachTransport(hostPid);
+	expect(calls()).toBe(beforeActiveRestart);
+	expect(readFileSync(join(project, "design/active-ticks"), "utf8")).toBe(stoppedTicks);
+	evidence.activeCommand = { pid: activeCommandPid, stopped: true, replayed: false };
 	// Refresh model data through the native catalog HTTP parser without replacing code.
 	const headers = { "Content-Type": "application/json", "X-Spool-Control": daemon.controlToken };
 	const account = async (operation: unknown) => {
@@ -648,9 +707,15 @@ try {
 	expect(daemonPid).not.toBe(previousDaemon);
 	const reopened = electron ? await electron.firstWindow() : await browser?.newPage();
 	if (!reopened) throw new Error("Missing reopened installed canvas");
+	observedPage = reopened;
 	if (electron) await reopened.waitForURL((address) => address.protocol === "http:", { timeout: 30_000 });
 	await reopened.goto(`${url}/p/${basename(project)}`);
-	await reopened.locator('[data-dock-glyph="agent"]').click();
+	const agentGlyph = reopened.locator('[data-dock-glyph="agent"]');
+	await agentGlyph.waitFor();
+	const dockWasOpen = (await agentGlyph.getAttribute("aria-pressed")) === "true";
+	// Electron restores this profile's dock state; a fresh browser context does not.
+	if (electron) expect(dockWasOpen).toBe(true);
+	if (!dockWasOpen) await agentGlyph.click();
 	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
 	hostPid = childHost(daemonPid) ?? 0;
 	expect(hostPid).not.toBe(previousHost);
@@ -665,7 +730,7 @@ try {
 	expect(readFileSync(join(project, "outside.txt"), "utf8")).toBe("reused file grant");
 	expect(readFileSync(join(claudeConfig, "settings.json"), "utf8")).toBe('{"fixture":"preserve this configuration"}');
 	expect(existsSync(join(prefix, "unexpected-harness"))).toBe(false);
-	evidence.reopen = { previousDaemon, previousHost, daemonPid, hostPid, runtime: reopenedRuntime };
+	evidence.reopen = { previousDaemon, previousHost, daemonPid, hostPid, dockWasOpen, runtime: reopenedRuntime };
 	if (process.env.SPOOL_TEST_SHOTS) {
 		mkdirSync(process.env.SPOOL_TEST_SHOTS, { recursive: true });
 		await reopened.screenshot({

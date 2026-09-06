@@ -45,7 +45,7 @@
 	pointer-events: auto;
 }
 .project-empty-copy:hover {
-	background: var(--color-raised);
+	background: var(--color-control);
 }
 .project-empty-copy > svg {
 	width: 14px;
@@ -75,7 +75,7 @@
 	pointer-events: auto;
 }
 .project-empty-title > input:focus {
-	background: var(--color-raised);
+	background: var(--color-control);
 }
 .project-empty-title > span {
 	color: var(--color-muted);

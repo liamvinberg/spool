@@ -212,7 +212,7 @@ it("walks the ladder from the keyboard and goes inside on a double-click, out on
 	await page.mouse.click(at.x, at.y);
 	// one click on the body takes the frame, exactly as it always has
 	await expect.poll(held).toBe("frame");
-	expect(await page.locator('[data-frame-label="cart"] .text-thread').count()).toBe(1);
+	expect(await page.locator('[data-frame-label="cart"] .text-thread-strong').count()).toBe(1);
 
 	// and now down the ladder by kinship: ⌘⏎ takes the first child, Tab the
 	// next sibling — root element, heading, the list beside it, its first row

@@ -53,7 +53,7 @@ const LIST_MAX = 476;
 
 const TONE: Record<Weight, string> = {
 	runup: "text-muted/45",
-	hit: "text-thread",
+	hit: "text-thread-strong",
 	plain: "text-text",
 };
 
@@ -405,7 +405,7 @@ export function FolderPicker({
 							</button>
 						</div>
 						{startNotice && (
-							<p role="alert" className="px-5 pb-4 text-thread type-label">
+							<p role="alert" className="px-5 pb-4 text-thread-strong type-label">
 								{startNotice}
 							</p>
 						)}
@@ -413,7 +413,7 @@ export function FolderPicker({
 					</>
 				) : naming ? (
 					<label className="flex h-[52px] shrink-0 items-center px-4">
-						<FolderIcon className="mr-2 h-3 w-3 shrink-0 text-thread" />
+						<FolderIcon className="mr-2 h-3 w-3 shrink-0 text-thread-strong" />
 						<Prefix crumbs={crumbs} />
 						<input
 							ref={nameRef}
@@ -457,7 +457,7 @@ export function FolderPicker({
 								disabled={listing === null}
 								title="new project ⌘N"
 								aria-label="New project"
-								className="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
+								className="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-control hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
 							>
 								<PlusIcon />
 							</button>
@@ -468,9 +468,9 @@ export function FolderPicker({
 				<div className="relative" hidden={mode === "start"}>
 					<div ref={listRef} className="overflow-y-auto py-1.5" style={{ maxHeight: LIST_MAX }}>
 						{naming ? (
-							<div style={{ height: ROW }} className="relative flex w-full items-center gap-3 bg-raised px-4">
+							<div style={{ height: ROW }} className="relative flex w-full items-center gap-3 bg-control px-4">
 								<span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" />
-								<FolderIcon className="h-3 w-3 shrink-0 text-thread/70" />
+								<FolderIcon className="h-3 w-3 shrink-0 text-thread-strong/70" />
 								<span className="min-w-0 truncate type-code-input">
 									<span className="text-muted">
 										{home === null || listing === null ? "" : `${shortPath(listing.path, home)}/`}
@@ -511,10 +511,10 @@ export function FolderPicker({
 								) : null}
 								{notice !== null ? (
 									<div
-										className="flex items-center gap-2.5 px-4 text-thread type-detail"
+										className="flex items-center gap-2.5 px-4 text-thread-strong type-detail"
 										style={{ height: ROW }}
 									>
-										<FolderIcon className="h-3 w-3 shrink-0 text-thread/50" />
+										<FolderIcon className="h-3 w-3 shrink-0 text-thread-strong/50" />
 										<span className="truncate">{notice}</span>
 									</div>
 								) : offerInit ? (
@@ -536,7 +536,7 @@ export function FolderPicker({
 					) : null}
 				</div>
 				{naming && notice !== null && (
-					<p role="alert" className="px-4 pt-2 text-sm text-thread">
+					<p role="alert" className="px-4 pt-2 text-sm text-thread-strong">
 						{notice}
 					</p>
 				)}
@@ -642,13 +642,13 @@ function Row({
 			onClick={onEnter}
 			style={{ height: ROW }}
 			className={cn(
-				"relative flex w-full items-center gap-3 px-4 text-left transition-colors duration-100 hover:bg-raised",
-				picked && "bg-raised",
+				"relative flex w-full items-center gap-3 px-4 text-left transition-colors duration-100 hover:bg-control",
+				picked && "bg-control",
 			)}
 		>
 			{picked ? <span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" /> : null}
 			{/* the glyph, thread-coloured on a project: the whole chip, and cheaper to spot than a word */}
-			<FolderIcon className={cn("h-3 w-3 shrink-0", row.isProject ? "text-thread/70" : "text-muted/30")} />
+			<FolderIcon className={cn("h-3 w-3 shrink-0", row.isProject ? "text-thread-strong/70" : "text-muted/30")} />
 			<span className="min-w-0 shrink truncate type-control">
 				{row.matched.length === 0
 					? row.name

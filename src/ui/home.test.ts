@@ -31,9 +31,11 @@ const project = (name: string, openedAt: string): ProjectCard => ({
 const actions = () => ({
 	onOpenProject: vi.fn(),
 	onForgetProject: vi.fn(),
+	onTrashProject: vi.fn(),
 	onRenameProject: vi.fn(),
 	onStart: vi.fn(),
 	onFolder: vi.fn(),
+	onSettings: vi.fn(),
 	onChangeLocation: vi.fn(),
 	location: "~/spool",
 });
@@ -50,6 +52,8 @@ it("opens the two real first-launch actions and exposes the saved location", () 
 	});
 	expect(callbacks.onStart).toHaveBeenCalledOnce();
 	expect(callbacks.onFolder).toHaveBeenCalledOnce();
+	act(() => button(host, "Settings").click());
+	expect(callbacks.onSettings).toHaveBeenCalledOnce();
 });
 
 it("sorts real projects, opens a selected root, and retains removal actions", () => {
@@ -72,10 +76,11 @@ it("sorts real projects, opens a selected root, and retains removal actions", ()
 	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage beta"]')?.click());
 	act(() =>
 		Array.from(host.querySelectorAll("button"))
-			.find((button) => button.textContent === "Remove from spool")
+			.find((button) => button.textContent === "Hide from Spool")
 			?.click(),
 	);
 	expect(callbacks.onForgetProject).toHaveBeenCalledWith(beta);
+	expect(callbacks.onTrashProject).not.toHaveBeenCalled();
 });
 
 it("offers rename for a project that already has frames", () => {
@@ -233,4 +238,144 @@ it("does not claim first launch while the registry is still loading", () => {
 	expect(host.querySelector('main[aria-busy="true"]')).not.toBeNull();
 	expect(host.textContent).not.toContain("Start with an idea.");
 	expect(host.querySelector(".pj-navigation")).not.toBeNull();
+});
+
+it.each([204, 503])(
+	"keeps a project hidden until its write finishes, restoring it only on failure (%s)",
+	async (status) => {
+		vi.resetModules();
+		vi.useFakeTimers();
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const coffee = project("coffee", "2026-09-01T00:00:00Z");
+		let forgotten = false;
+		let finish: ((response: Response) => void) | undefined;
+		let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+		let holdRead = false;
+		let finishOldRead: (() => void) | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const path = new URL(input instanceof Request ? input.url : String(input), window.location.href).pathname;
+				if (path === "/api/projects/forget") {
+					expect(init?.keepalive).toBe(true);
+					expect(JSON.parse(String(init?.body))).toEqual({ root: coffee.root });
+					return new Promise<Response>((resolve) => {
+						finish = resolve;
+					});
+				}
+				if (path.endsWith("/events"))
+					return new Response(
+						new ReadableStream<Uint8Array>({
+							start: (controller) => {
+								stream = controller;
+							},
+						}),
+						{
+							headers: { "content-type": "text/event-stream" },
+						},
+					);
+				if (path === "/api/projects") {
+					const response = Response.json({ projects: forgotten ? [] : [coffee] });
+					if (holdRead) {
+						holdRead = false;
+						return new Promise<Response>((resolve) => {
+							finishOldRead = () => resolve(response);
+						});
+					}
+					return response;
+				}
+				if (path === "/api/session") return Response.json({ open: forgotten ? [] : [coffee.root] });
+				if (path === "/api/settings") return Response.json({ project: null, entries: [] });
+				return Response.json({});
+			}),
+		);
+		const { App } = await import("./app");
+		const host = mount(createElement(App));
+		await act(async () => {});
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage coffee"]')?.click());
+		act(() => button(host, "Hide from Spool").click());
+		expect(host.querySelector('[aria-label="Open coffee"]')).toBeNull();
+		expect(finish).toBeDefined();
+		expect(host.textContent).not.toContain("Undo");
+		expect(host.textContent).not.toContain("Hidden coffee");
+		await act(async () => vi.advanceTimersByTimeAsync(5000));
+		expect(host.querySelector('[aria-label="Open coffee"]')).toBeNull();
+		expect(host.querySelector('[aria-label="Close coffee"]')).toBeNull();
+		holdRead = true;
+		await act(async () => stream?.enqueue(new TextEncoder().encode('event: app\ndata: {"kind":"registry"}\n\n')));
+		expect(finishOldRead).toBeDefined();
+		forgotten = status === 204;
+		await act(async () => finish?.(new Response(null, { status })));
+		await act(async () => finishOldRead?.());
+		expect(host.querySelector('[aria-label="Open coffee"]') === null).toBe(forgotten);
+		expect(host.querySelector('[aria-label="Close coffee"]') === null).toBe(forgotten);
+	},
+);
+
+it("confirms trashing the whole folder, supports cancellation and retries failures before removing the card", async () => {
+	vi.resetModules();
+	const coffee = project("coffee", "2026-09-01T00:00:00Z");
+	let trashed = false;
+	let requests = 0;
+	let finish: ((response: Response) => void) | undefined;
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const path = new URL(input instanceof Request ? input.url : String(input), window.location.href).pathname;
+			if (path === "/api/projects/trash") {
+				requests++;
+				expect(JSON.parse(String(init?.body))).toEqual({ root: coffee.root });
+				return new Promise<Response>((resolve) => {
+					finish = resolve;
+				});
+			}
+			if (path.endsWith("/events"))
+				return new Response(new ReadableStream<Uint8Array>({ start: () => {} }), {
+					headers: { "content-type": "text/event-stream" },
+				});
+			if (path === "/api/projects") return Response.json({ projects: trashed ? [] : [coffee] });
+			if (path === "/api/session") return Response.json({ open: trashed ? [] : [coffee.root] });
+			if (path === "/api/settings") return Response.json({ project: null, entries: [] });
+			return Response.json({});
+		}),
+	);
+	const { App } = await import("./app");
+	const host = mount(createElement(App));
+	await act(async () => {});
+	const openDialog = () => {
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage coffee"]')?.click());
+		act(() => button(host, "Move to Trash…").click());
+	};
+	expect(host.querySelector('[aria-label="Close coffee"]')).not.toBeNull();
+	openDialog();
+	expect(requests).toBe(0);
+	expect(host.querySelector("dialog")?.textContent).toContain("entire project folder and everything inside it");
+	expect(host.querySelector("dialog code")?.textContent).toBe(coffee.root);
+	expect(document.activeElement?.textContent).toBe("Cancel");
+	expect(button(host, "Move to Trash").classList.contains("home-action-danger")).toBe(true);
+	act(() => button(host, "Cancel").click());
+	expect(host.querySelector("dialog")).toBeNull();
+	expect(document.activeElement?.getAttribute("aria-label")).toBe("Manage coffee");
+	expect(requests).toBe(0);
+	openDialog();
+	const submit = () =>
+		host.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+	await act(async () => {
+		submit();
+		submit();
+	});
+	expect(requests).toBe(1);
+	expect(host.querySelector("fieldset")?.disabled).toBe(true);
+	await act(async () => finish?.(Response.json({ error: "Trash unavailable" }, { status: 409 })));
+	expect(host.querySelector('[role="alert"]')?.textContent).toBe("Trash unavailable");
+	expect(host.querySelector('[aria-label="Open coffee"]')).not.toBeNull();
+	await act(async () => submit());
+	expect(requests).toBe(2);
+	trashed = true;
+	await act(async () => finish?.(new Response(null, { status: 204 })));
+	expect(host.querySelector("dialog")).toBeNull();
+	expect(host.querySelector('[aria-label="Open coffee"]')).toBeNull();
+	expect(host.querySelector('[aria-label="Close coffee"]')).toBeNull();
 });

@@ -31,17 +31,17 @@ export function HandNotice({ said, onDismiss }: { said: HandSaid; onDismiss: () 
 		>
 			{said.kind === "uncaught" ? (
 				<>
-					<span className="text-thread">no history here</span>
+					<span className="text-thread-strong">no history here</span>
 					<span className="text-muted">: nothing is catching hand edits</span>
 				</>
 			) : said.kind === "clamped" ? (
 				<>
-					<span className="text-thread">the size did not take</span>
+					<span className="text-thread-strong">the size did not take</span>
 					<span className="text-muted">: something else decides it, so {said.frame} was put back</span>
 				</>
 			) : (
 				<>
-					<span className="text-thread">the edit did not land</span>
+					<span className="text-thread-strong">the edit did not land</span>
 					<span className="text-muted">: {said.says ?? `${said.frame} is unchanged`}</span>
 				</>
 			)}

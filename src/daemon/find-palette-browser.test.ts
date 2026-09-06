@@ -27,7 +27,7 @@ it("lands on a finder row when clicked and still accepts keyboard navigation", {
 	await page.keyboard.press("/");
 	await input.fill("frame-0");
 	await input.press("ArrowDown");
-	const picked = await finder.locator("[data-at].bg-raised").innerText();
+	const picked = await finder.locator("[data-at].bg-control").innerText();
 	await input.press("Enter");
 	await expect.poll(() => finder.count()).toBe(0);
 	const selected = await page.locator('[role="treeitem"][aria-selected="true"]').innerText();
