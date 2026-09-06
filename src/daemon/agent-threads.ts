@@ -142,7 +142,7 @@ export interface ServedThread extends StoredThread {
  * hold anything a filesystem allows, so slugging it would be a second encoding to get
  * right and a collision to answer for.
  */
-function threadsDir(spoolDir: string, root: string): string {
+export function threadsDir(spoolDir: string, root: string): string {
 	return join(spoolDir, "threads", createHash("sha256").update(root).digest("hex").slice(0, 16));
 }
 

@@ -89,6 +89,21 @@ describe("canvas boot", () => {
 		expect(host.querySelector('[aria-label="canvas tools"]')).toBeNull();
 	});
 
+	it("offers the project's editable name without handing its pointer to the canvas", async () => {
+		stubEmptyProject();
+		const host = mountCanvas("/tmp/test");
+		await flush();
+		const viewport = host.querySelector<HTMLElement>('[aria-label="test canvas"]');
+		const capture = vi.fn();
+		if (viewport) viewport.setPointerCapture = capture;
+		const name = host.querySelector<HTMLInputElement>('input[aria-label="Rename project"]');
+		expect(name?.value).toBe("test");
+		await act(async () =>
+			name?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1 })),
+		);
+		expect(capture).not.toHaveBeenCalled();
+	});
+
 	it("lists both surfaces in the column, and stands neither until one is pressed", async () => {
 		stubEmptyProject();
 		const host = mountCanvas();

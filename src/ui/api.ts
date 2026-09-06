@@ -203,6 +203,12 @@ export async function startProject(): Promise<OpenOutcome> {
 	}
 }
 
+export async function renameProject(root: string, name: string): Promise<{ root: string; name: string }> {
+	const res = await client.api.projects.rename.$post({ json: { root, name } });
+	if (!res.ok) throw new Error(await errorText(res));
+	return (await res.json()) as { root: string; name: string };
+}
+
 export type UpgradeStart = { ok: true } | { ok: false; error: string };
 
 /** The toast door (#30): ask the daemon to spawn the upgrader and stand back. */

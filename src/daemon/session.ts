@@ -18,6 +18,7 @@ const DEBOUNCE_MS = 40;
 export type AppEvent =
 	| { kind: "registry" }
 	| { kind: "session" }
+	| { kind: "project-renamed"; from: string; root: string; name: string }
 	| { kind: "update"; latest: string }
 	/** a setting moved (#281): every page re-reads, and a theme lands without a reload */
 	| { kind: "settings" }
