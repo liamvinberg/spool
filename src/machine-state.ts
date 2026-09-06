@@ -93,7 +93,7 @@ export type MachineStateMutation =
 	| { kind: "update-session"; root: string; open: boolean }
 	| { kind: "order-session"; order: readonly string[] }
 	| { kind: "remove-project"; root: string }
-	| { kind: "rename-project"; root: string; name: string }
+	| { kind: "rename-project"; root: string; name: string; bundled?: string }
 	/** one local setting on a registered project (#281); `undefined` takes the key out */
 	| { kind: "set-project-setting"; root: string; path: readonly string[]; value: unknown };
 
@@ -169,7 +169,7 @@ function executeMachineStateMutation(spoolDir: string, mutation: MachineStateMut
 		case "remove-project":
 			return removeProjectUnlocked(spoolDir, mutation.root);
 		case "rename-project":
-			return renameProjectUnlocked(spoolDir, mutation.root, mutation.name);
+			return renameProjectUnlocked(spoolDir, mutation.root, mutation.name, mutation.bundled);
 		case "set-project-setting":
 			return setProjectSettingUnlocked(spoolDir, mutation.root, mutation.path, mutation.value);
 	}
@@ -342,10 +342,19 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 			return typeof root === "string" && typeof open === "boolean" ? { kind, root, open } : undefined;
 		}
 		case "rename-project": {
-			if (!hasExactDataKeys(mutation, ["kind", "name", "root"])) return undefined;
+			if (
+				!hasExactDataKeys(mutation, ["kind", "name", "root"]) &&
+				!hasExactDataKeys(mutation, ["kind", "name", "root", "bundled"])
+			)
+				return undefined;
+			const bundled = dataValue(mutation, "bundled");
+			if (bundled !== undefined && (typeof bundled !== "string" || !/^[0-9a-f-]{36}$/i.test(bundled)))
+				return undefined;
 			const root = dataValue(mutation, "root");
 			const name = dataValue(mutation, "name");
-			return typeof root === "string" && typeof name === "string" ? { kind, root, name } : undefined;
+			return typeof root === "string" && typeof name === "string"
+				? { kind, root, name, ...(typeof bundled === "string" ? { bundled } : {}) }
+				: undefined;
 		}
 		case "order-session": {
 			if (!hasExactDataKeys(mutation, ["kind", "order"])) return undefined;

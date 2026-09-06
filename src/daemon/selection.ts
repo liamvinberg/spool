@@ -135,7 +135,15 @@ export function createSelectionStore() {
 		return byRoot.get(root) ?? [];
 	}
 
-	return { set, get };
+	return {
+		set,
+		get,
+		relocate: (root: string, target: string) => {
+			const selection = byRoot.get(root);
+			if (selection) byRoot.set(target, selection);
+			byRoot.delete(root);
+		},
+	};
 }
 
 export type SelectionStore = ReturnType<typeof createSelectionStore>;
