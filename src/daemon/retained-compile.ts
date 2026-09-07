@@ -9,6 +9,7 @@ import { LITERAL_ATTRIBUTES_BY_TAG, LITERAL_ATTRIBUTES_EVERY } from "../literal-
 import type { RetainedValues } from "../source-edit";
 import { TEXT_LOADERS } from "./assets";
 import { assertDesignFile } from "./design-path";
+import { observeCacheSource } from "./source-cache-compile";
 import { observeLazySource } from "./source-lazy-compile";
 
 export interface SourceInput {
@@ -655,7 +656,8 @@ export function retainedPlugin(
 					return { contents: input.bytes, loader, resolveDir: dirname(args.path) };
 				}
 
-				const observed = observeLazySource(file, input.bytes.toString("utf8"), lowered.code);
+				const original = input.bytes.toString("utf8");
+				const observed = observeLazySource(file, original, observeCacheSource(file, original, lowered.code));
 				const locations: string[] = [];
 				walk(
 					parse(lowered.code, { sourceType: "module", plugins: ["jsx", "typescript", "decorators-legacy"] })
