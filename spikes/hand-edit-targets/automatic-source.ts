@@ -14,6 +14,7 @@ import {
 import { realDesignDir, resolveDesignPath } from "../../src/daemon/design-path";
 import { fingerprintOf } from "../../src/daemon/hand-write";
 import { walkNodes } from "../../src/daemon/jsx-walk";
+import type { LazyChoice } from "./lazy-witness";
 import { type Binding, ModuleBindings } from "./module-bindings";
 import { elementAt, sourceTarget } from "./targets";
 
@@ -45,6 +46,7 @@ export interface Call {
 	retainedProps?: boolean;
 	renderedSource?: string;
 	lazyResolved?: boolean;
+	lazyChoice?: LazyChoice;
 }
 export interface Selection {
 	generation: string;
@@ -210,14 +212,14 @@ export class Sources {
 		const unit = this.read(path);
 		return { unit, ...elementAt(unit.text, source), source };
 	}
-	private component(unit: Unit, node: Node, seen: Set<string>): Definition {
+	private component(unit: Unit, node: Node, seen: Set<string>, choice?: LazyChoice): Definition {
 		if (
 			node.type === "FunctionDeclaration" ||
 			node.type === "FunctionExpression" ||
 			node.type === "ArrowFunctionExpression"
 		)
 			return { unit, fn: node };
-		if (node.type === "Identifier") return this.local(unit, node.name, seen);
+		if (node.type === "Identifier") return this.local(unit, node.name, seen, choice);
 		if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
 			const method = node.body.body.find(
 				(n) => n.type === "ClassMethod" && n.key.type === "Identifier" && n.key.name === "render" && !n.static,
@@ -239,10 +241,23 @@ export class Sources {
 						binding.type === "ImportSpecifier" && binding.importKind !== "type" && binding.local.name === name,
 				);
 			if (imported?.type === "ImportSpecifier" && imported.imported.type === "Identifier" && node.arguments[0]) {
-				if (imported.imported.name === "lazy")
+				if (imported.imported.name === "lazy") {
+					if (choice) {
+						if (
+							choice.loader.file !== unit.path ||
+							choice.loader.start !== node.start ||
+							choice.loader.end !== node.end
+						)
+							throw new Error("executed loader witness belongs to another source binding");
+						if (!this.units.has(sourceTarget(this.root, choice.module).file))
+							throw new Error("executed module is outside the admitted compiler inputs");
+						const module = this.read(choice.module);
+						return { ...this.exported(module, choice.export, seen), lazy: true };
+					}
 					return { ...this.lazyDefinition(unit, node.arguments[0], seen), lazy: true };
+				}
 				if (["memo", "forwardRef"].includes(imported.imported.name))
-					return this.component(unit, node.arguments[0], seen);
+					return this.component(unit, node.arguments[0], seen, choice);
 			}
 		}
 		throw new Error("wrapped, lazy or indirect definition is unproven");
@@ -312,7 +327,7 @@ export class Sources {
 		}
 		throw new Error("conditional, dynamic or transformed lazy loader is unproven");
 	}
-	private local(unit: Unit, name: string, seen: Set<string>): Definition {
+	private local(unit: Unit, name: string, seen: Set<string>, choice?: LazyChoice): Definition {
 		const key = `${unit.file}:local:${name}`;
 		if (seen.has(key)) throw new Error("cyclic component binding");
 		seen.add(key);
@@ -334,13 +349,13 @@ export class Sources {
 				(declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") &&
 				declaration.id?.name === name
 			)
-				return this.component(unit, declaration, seen);
+				return this.component(unit, declaration, seen, choice);
 			if (declaration?.type === "VariableDeclaration") {
 				const variable = declaration.declarations.find((n) => n.id.type === "Identifier" && n.id.name === name);
 				if (variable) {
 					if (declaration.kind !== "const" || !variable.init)
 						throw new Error("component variable is not immutable");
-					return this.component(unit, variable.init, seen);
+					return this.component(unit, variable.init, seen, choice);
 				}
 			}
 			if (statement.type !== "ImportDeclaration") continue;
@@ -354,20 +369,20 @@ export class Sources {
 					: binding.imported.type === "Identifier"
 						? binding.imported.name
 						: binding.imported.value;
-			return this.exported(this.resolve(unit, statement.source.value), exported, seen);
+			return this.exported(this.resolve(unit, statement.source.value), exported, seen, choice);
 		}
 		throw new Error("component binding is unresolved");
 	}
-	private definition(binding: Binding<Unit>, seen = new Set<string>()): Definition {
+	private definition(binding: Binding<Unit>, seen = new Set<string>(), choice?: LazyChoice): Definition {
 		if (binding.kind === "namespace") throw new Error("namespace is not a component definition");
 		return binding.kind === "default"
-			? this.component(binding.unit, binding.node, seen)
-			: this.local(binding.unit, binding.name, seen);
+			? this.component(binding.unit, binding.node, seen, choice)
+			: this.local(binding.unit, binding.name, seen, choice);
 	}
-	private exported(unit: Unit, name: string, seen = new Set<string>()): Definition {
-		return this.definition(this.bindings.require(this.bindings.exported(unit, name)), seen);
+	private exported(unit: Unit, name: string, seen = new Set<string>(), choice?: LazyChoice): Definition {
+		return this.definition(this.bindings.require(this.bindings.exported(unit, name)), seen, choice);
 	}
-	callee(site: Site): Definition {
+	callee(site: Site, choice?: LazyChoice): Definition {
 		const tag = site.node.openingElement.name;
 		const members: string[] = [];
 		let base = tag;
@@ -395,9 +410,9 @@ export class Sources {
 				if (binding.kind !== "namespace") throw new Error("member is not a verified namespace import");
 				binding = this.bindings.require(this.bindings.exported(binding.unit, member));
 			}
-			return this.definition(binding);
+			return this.definition(binding, new Set(), choice);
 		}
-		return this.local(site.unit, name, new Set());
+		return this.local(site.unit, name, new Set(), choice);
 	}
 	chain(selection: Selection): Site[] {
 		if (selection.refusal) throw new Error(selection.refusal);
@@ -407,7 +422,7 @@ export class Sources {
 		const sites: Site[] = [leaf];
 		for (const call of [...selection.chain].reverse()) {
 			const site = this.site(call.source);
-			const actual = this.callee(site);
+			const actual = this.callee(site, call.lazyChoice);
 			if (actual.lazy && !call.lazyResolved) throw new Error("lazy export lacks a committed resolved-type witness");
 			if (actual.unit.file !== current.unit.file || actual.fn.start !== owner(current).start) {
 				// Transport is separate from authorship. Prove both the exact

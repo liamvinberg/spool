@@ -41,7 +41,7 @@ A dynamic import pattern also retains a conservative design-directory membership
 snapshot, so a new matching file retires the read. This is temporary compile
 input evidence, not a persistent document model. Its scan cost is unmeasured.
 
-The three bounded lazy forms are a literal `import()` default, a direct named
+In the original observation modes, the three bounded lazy forms are a literal `import()` default, a direct named
 export projection through `.then`, and `Promise.resolve` of a verified imported
 namespace. Conditional modules, dynamic specifiers, transformed projections,
 and arbitrary loader functions still refuse attribution. Glob discovery proves
@@ -50,3 +50,10 @@ chosen component. Stateful parameter text and cloning retain their source-reader
 the original observation mode still refuses memo. The separate reconciled
 renderer mode and its committed-call tests remain intact. A successful source read is not a writer,
 inverse, live handover, complete reach count, or production admission proof.
+
+`lazy-choices.test.ts` adds the opt-in `lazy-observed` and `lazy-reconciled`
+compiler probes. Run it with the same commands above; `LAZY_CHOICE_EVIDENCE`
+retains its observations. These modes keep executed module/export records for
+conditional and computed loaders. They do not change the original observation
+or reconciled-renderer tests or their support boundaries. Neither mode is
+imported by production code.

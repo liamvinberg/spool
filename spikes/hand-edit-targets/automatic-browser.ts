@@ -13,6 +13,7 @@ import { walkNodes } from "../../src/daemon/jsx-walk";
 import { designStylesheets, ROOT_CSS } from "../../src/daemon/tailwind";
 import { ROWS } from "../../src/ui/canvas/properties-rows";
 import { type Operation, type Revision, type Selection, Sources, sourceRead, witnesses } from "./automatic-source";
+import { buildLazyEntry } from "./lazy-compile";
 import type {} from "./observer";
 import { reconciledRenderer } from "./reconciled-renderer";
 
@@ -65,10 +66,12 @@ export async function mount(
 	browser: Browser,
 	root: string,
 	frame: string,
-	instrumented: boolean | "observed" | "reconciled" = true,
+	instrumented: boolean | "observed" | "reconciled" | "lazy-observed" | "lazy-reconciled" = true,
 	authority?: ReadAuthority,
 ): Promise<Mounted> {
-	const observed = instrumented === "observed" || instrumented === "reconciled";
+	const lazyChoices = instrumented === "lazy-observed" || instrumented === "lazy-reconciled";
+	const reconciled = instrumented === "reconciled" || instrumented === "lazy-reconciled";
+	const observed = instrumented === "observed" || reconciled || lazyChoices;
 	const toolchain = compilerRevision();
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
@@ -116,7 +119,11 @@ export async function mount(
 			visit(sources.resolve(unit, statement.source.value).path);
 		}
 		walkNodes(unit.ast, [], (node) => {
-			if (node.type === "CallExpression" && node.callee.type === "Import" && node.arguments[0]?.type !== "StringLiteral")
+			if (
+				node.type === "CallExpression" &&
+				node.callee.type === "Import" &&
+				node.arguments[0]?.type !== "StringLiteral"
+			)
 				sources.retainDirectory();
 			if (
 				node.type === "CallExpression" &&
@@ -169,7 +176,7 @@ export async function mount(
 		if (round > 3) throw new Error("module discovery did not stabilize before admitted compilation");
 		const captured = [...sources.revisions.values(), ...sources.assets.values()];
 		lease = await authority?.capture(captured);
-		compiled = await buildDesignEntry({
+		compiled = await (lazyChoices ? buildLazyEntry : buildDesignEntry)({
 			designDir,
 			resolveDir: join(designDir, "frames", frame),
 			sourcefile: "<automatic-read>",
@@ -208,8 +215,9 @@ export async function mount(
 		format: "iife",
 		write: false,
 		define: { "process.env.NODE_ENV": '"production"' },
-		plugins: instrumented === "reconciled" ? [reconciledRenderer()] : [],
+		plugins: reconciled ? [reconciledRenderer()] : [],
 		alias: {
+			"hand-edit-probe/lazy-witness": resolve("spikes/hand-edit-targets/lazy-runtime.ts"),
 			"spool/jsx-dev-runtime": resolve(
 				observed
 					? "spikes/hand-edit-targets/observed-runtime.tsx"
@@ -234,7 +242,7 @@ export async function mount(
 	if (observed) {
 		const hook = await build({
 			stdin: {
-				contents: `import {installObserver} from './spikes/hand-edit-targets/observer'; installObserver(${instrumented === "reconciled"});`,
+				contents: `import {installObserver} from './spikes/hand-edit-targets/observer'; installObserver(${reconciled}, ${lazyChoices});`,
 				resolveDir: process.cwd(),
 			},
 			bundle: true,

@@ -1,3 +1,5 @@
+import { installLazyWitness, type LazyChoice } from "./lazy-witness";
+
 // Disposable adapter for the pinned React 19.2.7 renderer. This uses private
 // Fiber fields behind the DevTools hook; it is evidence, not a stable React API.
 // Neither the hook nor the observer writes to React elements, props or Fibers.
@@ -29,6 +31,7 @@ export interface Observation {
 		occurrence: string;
 		passedChild?: boolean;
 		lazyResolved?: boolean;
+		lazyChoice?: LazyChoice;
 		element?: number;
 		retainedProps?: boolean;
 		renderedSource?: string;
@@ -50,7 +53,8 @@ declare global {
 	};
 }
 
-export function installObserver(reconciled = false): void {
+export function installObserver(reconciled = false, lazyChoices = false): void {
+	if (lazyChoices) installLazyWitness();
 	const global = globalThis as typeof globalThis & { __REACT_DEVTOOLS_GLOBAL_HOOK__?: unknown };
 	const elements = new WeakMap<object, Authored>();
 	const bindings = new WeakMap<Fiber, Authored["element"]>();
@@ -111,22 +115,33 @@ export function installObserver(reconciled = false): void {
 			throw new Error("element type relationship is unproven");
 		return value;
 	};
-	const lazyResolved = (fiber: Fiber, value: Authored): boolean => {
-		if (value.type === null || typeof value.type !== "object") return false;
+	const lazyResolved = (fiber: Fiber, value: Authored): { lazyResolved: boolean; lazyChoice?: LazyChoice } => {
+		if (value.type === null || typeof value.type !== "object") return { lazyResolved: false };
 		const own = (object: object, key: string): unknown => Object.getOwnPropertyDescriptor(object, key)?.value;
-		if (own(value.type, "$$typeof") !== Symbol.for("react.lazy")) return false;
+		if (own(value.type, "$$typeof") !== Symbol.for("react.lazy")) return { lazyResolved: false };
 		const payload = own(value.type, "_payload");
 		if (!payload || typeof payload !== "object" || own(payload, "_status") !== 1)
 			throw new Error("lazy payload is not resolved in the committed tree");
 		const resolved = own(payload, "_result");
+		if (lazyChoices) {
+			if (!resolved || typeof resolved !== "object" || value.type !== fiber.elementType)
+				throw new Error("lazy export and committed definition disagree");
+			return { lazyResolved: true, lazyChoice: globalThis.__handLazy.choice(value.type, resolved, fiber.type) };
+		}
 		// The pinned renderer stores resolveLazy(elementType) in Fiber.type.
 		// Never re-read a namespace getter: doing so would execute application
 		// code outside React. Data properties can additionally be checked here.
 		const exported =
 			resolved && typeof resolved === "object" ? Object.getOwnPropertyDescriptor(resolved, "default") : undefined;
-		if (!exported || ("value" in exported && exported.value !== fiber.type) || value.type !== fiber.elementType)
+		if (
+			!resolved ||
+			typeof resolved !== "object" ||
+			!exported ||
+			("value" in exported && exported.value !== fiber.type) ||
+			value.type !== fiber.elementType
+		)
 			throw new Error("lazy export and committed definition disagree");
-		return true;
+		return { lazyResolved: true };
 	};
 	const observe = (fiber: Fiber, parents: readonly Fiber[]): Observation => {
 		const result: Observation = { occurrence: identity(fiber), source: "", chain: [] };
@@ -164,7 +179,7 @@ export function installObserver(reconciled = false): void {
 				const children = Reflect.get(value.element.props as object, "children") as unknown;
 				chain.push({
 					source: value.source,
-					lazyResolved: lazyResolved(parent, value),
+					...lazyResolved(parent, value),
 					occurrence: identity(parent),
 					passedChild: children === child.element || (Array.isArray(children) && children.includes(child.element)),
 					...(reconciled
