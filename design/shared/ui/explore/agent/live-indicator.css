@@ -4,16 +4,31 @@
 .live-thread { display: inline-flex; align-items: center; height: 12px; margin-left: 6px; }
 .live-thread-track { display: inline-block; position: relative; width: 24px; height: 2px; overflow: hidden; border-radius: 2px; background: color-mix(in srgb, var(--color-text) 12%, transparent); }
 .live-thread-track > span { position: absolute; width: 8px; height: 2px; border-radius: 2px; background: var(--color-text); animation: live-thread 1500ms cubic-bezier(.45,0,.55,1) infinite; }
-.live-writing { display: inline-flex; align-items: center; gap: 7px; font: var(--type-value); }
+.live-writing { display: inline-flex; align-items: center; gap: 7px; margin-left: 6px; font: var(--type-value); }
 .live-writing-ring { width: 12px; height: 12px; animation: live-writing 1800ms linear infinite; }
-.live-paragraph-arrive { animation: live-paragraph-arrive 340ms cubic-bezier(.22,.61,.36,1) both; }
+.live-wind, .live-trail, .live-loop, .live-stitch, .live-wave { display: inline-flex; align-items: center; height: 12px; margin-left: 6px; }
+.live-wind-track { position: relative; display: inline-block; width: 30px; height: 2px; overflow: hidden; }
+.live-wind-track > span { position: absolute; inset: 0; transform-origin: left; border-radius: 2px; background: var(--color-text); }
+.live-trail-track { position: relative; display: inline-block; width: 36px; height: 2px; overflow: hidden; mask-image: linear-gradient(90deg, transparent, black 15%, black 85%, transparent); }
+.live-trail-track > span { position: absolute; width: 26px; height: 2px; border-radius: 2px; background: linear-gradient(90deg, transparent, #f0efed44 40%, #f0efed 92%, #f0efed); animation: live-trail 1800ms cubic-bezier(.35,0,.5,1) infinite; }
+.live-loop-track { width: 28px; height: 14px; overflow: visible; stroke: var(--color-text); stroke-width: 1.25; }
+.live-loop-guide { opacity: .1; }
+.live-loop-strand { stroke-dasharray: .19 .81; stroke-linecap: round; animation: live-loop 2300ms linear infinite; }
+.live-stitch-track { display: inline-flex; align-items: center; gap: 3px; height: 12px; }
+.live-stitch-track > span { width: 4px; height: 2px; border-radius: 1px; background: var(--color-text); transform-origin: center; animation: live-stitch 1700ms cubic-bezier(.4,0,.4,1) infinite; }
+.live-wave-track { width: 30px; height: 14px; overflow: hidden; mask-image: linear-gradient(90deg, transparent, black 18%, black 82%, transparent); }
+.live-wave-track g { animation: live-wave 2000ms linear infinite; }
+.live-wave-track path { stroke: var(--color-text); stroke-opacity: .8; stroke-width: 1.35; stroke-linecap: round; }
 .preview-button { color: var(--color-muted); transition: color 150ms; }
 .preview-button:hover { color: var(--color-text); }
 .preview-button:focus-visible { outline: 1px solid var(--color-muted); outline-offset: 4px; border-radius: 2px; }
 @keyframes live-pulse { 0%, 100% { opacity: .3; } 50% { opacity: .85; } }
 @keyframes live-thread { 0%, 100% { transform: translateX(0); opacity: .35; } 50% { transform: translateX(16px); opacity: .85; } }
 @keyframes live-writing { to { transform: rotate(360deg); } }
-@keyframes live-paragraph-arrive { from { opacity: 0; transform: translateY(6px); } }
+@keyframes live-trail { from { transform: translateX(-27px); } to { transform: translateX(37px); } }
+@keyframes live-loop { to { stroke-dashoffset: -1; } }
+@keyframes live-stitch { 0%, 60%, 100% { opacity: .2; transform: scaleX(.65) translateY(0); } 25% { opacity: .9; transform: scaleX(1.1) translateY(-2px); } }
+@keyframes live-wave { to { transform: translateX(-24px); } }
 @media (prefers-reduced-motion: reduce) {
-	.live-preview *, .live-preview *::before, .live-preview *::after { animation: none !important; transition: none !important; }
+	.live-indicator *, .live-indicator *::before, .live-indicator *::after { animation: none !important; transition: none !important; }
 }

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useStillness } from "shared/lib/spool/stillness";
+import { Paragraphs } from "shared/ui/spool/agent-said";
 import { ChevronIcon, PlusIcon } from "shared/ui/spool/icons";
 import "./live-indicator.css";
 
-/** Throwaway: three live-end directions, each a separate frame. Endings are simulated. */
-export type Indicator = "pulse" | "thread" | "writing";
+/** Throwaway indicators over the app's paragraph renderer, mirrored into design/. */
+export type Indicator = "pulse" | "thread" | "writing" | "wind" | "trail" | "loop" | "stitch" | "wave";
 type Ending = "live" | "done" | "stopped" | "disconnected";
 type Playback = { started: number; held: number; ending: Ending; loop: boolean };
 
@@ -11,6 +13,13 @@ const PERIOD = 18_000;
 const COMPLETE = 12_000;
 const FIRST = "The tab bar has more room now. The active tab stays clear without adding another border.";
 const SECOND = "I kept the close button quiet until you hover, and aligned the icons with the labels.";
+
+/** Only the incoming text is scripted. Paragraphs owns its release and arrival. */
+function textAt(elapsed: number): string {
+	if (elapsed < 4200) return FIRST.slice(0, Math.max(1, Math.floor((elapsed / 4200) * FIRST.length)));
+	const next = SECOND.slice(0, Math.max(1, Math.floor(((elapsed - 4200) / 7200) * SECOND.length)));
+	return `${FIRST}\n\n${next}`;
+}
 
 function Check() {
 	return <svg viewBox="0 0 14 14" className="h-3.5 w-3.5 shrink-0" fill="none" aria-hidden="true"><path d="m3.4 7.2 2.4 2.4 4.8-5.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -21,12 +30,18 @@ function IndicatorMark({ take }: { take: Indicator }) {
 		<span data-live-indicator={take} className={`live-indicator live-${take}`} role="status" aria-label="Writing">
 			{take === "pulse" ? <span className="live-pulse-bar" aria-hidden="true" /> : null}
 			{take === "thread" ? <span className="live-thread-track" aria-hidden="true"><span /></span> : null}
+			{take === "wind" ? <span className="live-wind-track" aria-hidden="true"><span className="animate-agent-wind" /></span> : null}
+			{take === "trail" ? <span className="live-trail-track" aria-hidden="true"><span /></span> : null}
+			{take === "loop" ? <svg className="live-loop-track" viewBox="0 0 28 14" fill="none" aria-hidden="true"><path d="M14 7C10 1 2 1 2 7s8 6 12 0S26 1 26 7s-8 6-12 0" pathLength="1" className="live-loop-guide" /><path d="M14 7C10 1 2 1 2 7s8 6 12 0S26 1 26 7s-8 6-12 0" pathLength="1" className="live-loop-strand" /></svg> : null}
+			{take === "stitch" ? <span className="live-stitch-track" aria-hidden="true">{[0, 1, 2, 3].map(at => <span key={at} style={{ animationDelay: `${at * 160}ms` }} />)}</span> : null}
+			{take === "wave" ? <svg className="live-wave-track" viewBox="0 0 30 14" fill="none" aria-hidden="true"><g><path d="M-24 7q6-6 12 0t12 0t12 0t12 0t12 0t12 0t12 0t12 0" /></g></svg> : null}
 			{take === "writing" ? <><svg className="live-writing-ring" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4" stroke="currentColor" strokeOpacity=".2" /><path d="M6 2a4 4 0 0 1 4 4" stroke="currentColor" strokeLinecap="round" /></svg><span>writing</span></> : null}
 		</span>
 	);
 }
 
 export function LiveIndicator({ take, history = false }: { take: Indicator; history?: boolean }) {
+	const reduced = useStillness();
 	const [now, setNow] = useState(() => Date.now());
 	const [playback, setPlayback] = useState<Playback>(() => ({ started: 0, held: COMPLETE, ending: history ? "done" : "live", loop: !history }));
 	useEffect(() => {
@@ -37,14 +52,15 @@ export function LiveIndicator({ take, history = false }: { take: Indicator; hist
 	const elapsed = playback.ending === "live" ? (playback.loop ? now % PERIOD : now - playback.started) : playback.held;
 	const ending = playback.ending === "live" && elapsed >= COMPLETE ? "done" : playback.ending;
 	const live = ending === "live";
-	const first = elapsed >= 4200 || ending === "done";
-	const second = elapsed >= 8500 || ending === "done";
-	const partial = ending === "stopped" || ending === "disconnected";
-	const marker = live ? <IndicatorMark take={take} /> : null;
+	const text = ending === "done" ? `${FIRST}\n\n${SECOND}` : textAt(elapsed);
 	const finish = (next: Ending) => {
-		const at = Date.now();
-		setNow(at);
-		setPlayback(next === "live" ? { started: at, held: 0, ending: "live", loop: false } : { started: at, held: next === "done" ? COMPLETE : Math.min(elapsed, COMPLETE - 1), ending: next, loop: false });
+		if (next === "live") {
+			const at = Date.now();
+			setNow(at);
+			setPlayback({ started: at, held: 0, ending: "live", loop: false });
+			return;
+		}
+		setPlayback(was => ({ ...was, held: next === "done" ? COMPLETE : Math.min(elapsed, COMPLETE - 1), ending: next }));
 	};
 
 	return (
@@ -61,10 +77,7 @@ export function LiveIndicator({ take, history = false }: { take: Indicator; hist
 					<p className="mb-4 type-body">I’ll check the tab bar and adjust the spacing.</p>
 					<div className="mb-5 flex items-center gap-2 text-muted type-value"><Check /><span>read</span><span className="text-text">tabbar.tsx</span><ChevronIcon className="ml-0.5 h-3 w-3 text-muted/50" /></div>
 					<div className="live-preview-prose type-body" key={playback.loop ? Math.floor(now / PERIOD) : playback.started}>
-						{first ? <p className={history || partial ? undefined : "live-paragraph-arrive"}>{FIRST}{!second && take !== "writing" ? marker : null}</p> : null}
-						{second ? <p className={history || partial ? "mt-2" : "live-paragraph-arrive mt-2"}>{SECOND}{take !== "writing" ? marker : null}</p> : null}
-						{live && (!first || take === "writing") ? <div className={first ? "mt-3 flex h-5 items-center" : "flex h-5 items-center"}>{marker}</div> : null}
-						{partial ? <p className={first ? "mt-2" : undefined}>{second ? "The updated frame" : first ? "I kept the close button" : "The tab bar has more room"}</p> : null}
+						<Paragraphs text={text} finished={!live} still={reduced} caret={live ? <IndicatorMark take={take} /> : undefined} />
 						{ending === "stopped" ? <div className="mt-4 text-muted type-value">stopped</div> : null}
 						{ending === "disconnected" ? <div role="status" className="mt-4 text-muted type-value">connection lost · reconnecting</div> : null}
 					</div>
