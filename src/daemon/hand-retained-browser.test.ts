@@ -262,12 +262,14 @@ it("lets an authored effect reset state exactly as an ordinary React update does
 	for (const f of [retained, ordinary]) {
 		await expect.poll(() => f.frame.locator("#count").textContent()).toBe("0");
 		expect(await f.frame.locator("#draft").inputValue()).toBe("unsaved");
-		expect(
-			await f.frame.locator("#label").evaluate(() => ({
-				effects: (window as unknown as { effects: string[] }).effects,
-				mounts: (window as unknown as { mounts: number }).mounts,
-			})),
-		).toEqual({ effects: ["Hello world", "Effect saved"], mounts: 1 });
+		await expect
+			.poll(() =>
+				f.frame.locator("#label").evaluate(() => ({
+					effects: (window as unknown as { effects: string[] }).effects,
+					mounts: (window as unknown as { mounts: number }).mounts,
+				})),
+			)
+			.toEqual({ effects: ["Hello world", "Effect saved"], mounts: 1 });
 	}
 });
 
