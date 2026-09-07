@@ -275,32 +275,32 @@
 			"y": 80
 		},
 		"explore/booting": {
-			"x": 3805,
+			"x": 6381,
 			"y": 80
 		},
 		"explore/components": {
-			"x": 5781,
+			"x": 8357,
 			"y": 80
 		},
 		"explore/directing": {
-			"x": 8722,
+			"x": 11487,
 			"y": 80
 		},
 		"explore/explorer": {
-			"x": 80,
+			"x": 7671,
 			"y": 3566
 		},
 		"explore/manipulate": {
-			"x": 1894,
+			"x": 11461,
 			"y": 3566
 		},
 		"explore/play-app": {
-			"x": 4323,
-			"y": 3566
+			"x": 3524,
+			"y": 7216
 		},
 		"explore/variants": {
 			"x": 80,
-			"y": 6755
+			"y": 10744
 		},
 		"explore/booting/ambient": {
 			"x": 80,
@@ -551,8 +551,8 @@
 			"y": 80
 		},
 		"explore/threads": {
-			"x": 7624,
-			"y": 3566
+			"x": 13263,
+			"y": 7216
 		},
 		"explore/agent/log": {
 			"x": 13080,
@@ -603,16 +603,168 @@
 			"y": 80
 		},
 		"explore/settings": {
-			"x": 5806,
+			"x": 7006,
+			"y": 7216
+		},
+		"explore/engines": {
+			"x": 3687,
 			"y": 3566
+		},
+		"explore/properties-map": {
+			"x": 5007,
+			"y": 7216
+		},
+		"explore/components/reconsider": {
+			"x": 5025,
+			"y": 80
+		},
+		"explore/components/reconsider/library": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/components/reconsider/properties": {
+			"x": 1340,
+			"y": 80
+		},
+		"explore/engines/choice": {
+			"x": 3253,
+			"y": 80
+		},
+		"explore/engines/dialog": {
+			"x": 80,
+			"y": 2420
+		},
+		"explore/engines/login": {
+			"x": 4635,
+			"y": 2420
+		},
+		"explore/engines/models": {
+			"x": 80,
+			"y": 4906
+		},
+		"explore/properties-map/combined": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/properties-map/gestures": {
+			"x": 1526,
+			"y": 80
+		},
+		"explore/properties-map/panels": {
+			"x": 2791,
+			"y": 80
+		},
+		"explore/properties-map/semantics": {
+			"x": 4003,
+			"y": 80
+		},
+		"explore/share": {
+			"x": 11017,
+			"y": 7216
+		},
+		"explore/properties-map/shared": {
+			"x": 5449,
+			"y": 80
+		},
+		"explore/settings/appearance": {
+			"x": 4640,
+			"y": 80
+		},
+		"explore/engines/access": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/engines/claude": {
+			"x": 5622,
+			"y": 80
+		},
+		"explore/engines/limits": {
+			"x": 2817,
+			"y": 2420
+		},
+		"explore/mac-header": {
+			"x": 80,
+			"y": 3730
+		},
+		"explore/mac-header/width": {
+			"x": 4640,
+			"y": 80
+		},
+		"explore/mac-header/navigation": {
+			"x": 6514,
+			"y": 80
 		},
 		"app/mac-window": {
 			"x": 14600,
 			"y": 80
 		},
+		"explore/home": {
+			"x": 9485,
+			"y": 3566
+		},
+		"explore/home/projects": {
+			"x": 3120,
+			"y": 80
+		},
+		"explore/shaders": {
+			"x": 9199,
+			"y": 7216
+		},
+		"explore/typography": {
+			"x": 15707,
+			"y": 3730
+		},
+		"explore/web-capture": {
+			"x": 2482,
+			"y": 10744
+		},
+		"explore/web-capture/toolbar": {
+			"x": 7840,
+			"y": 80
+		},
+		"explore/engines/picker": {
+			"x": 2596,
+			"y": 4906
+		},
+		"explore/engines/picker/effort": {
+			"x": 9200,
+			"y": 80
+		},
 		"app/model-picker": {
 			"x": 15860,
 			"y": 80
+		},
+		"explore/agent/live": {
+			"x": 16886,
+			"y": 1224
+		},
+		"explore/onboarding": {
+			"x": 80,
+			"y": 7216
+		},
+		"explore/onboarding/first-visit": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/onboarding/later-changes": {
+			"x": 2120,
+			"y": 80
+		},
+		"explore/agent/live/receiving": {
+			"x": 1160,
+			"y": 0
+		},
+		"explore/project-entry": {
+			"x": 11226,
+			"y": 3730
+		},
+		"explore/project-entry/picker": {
+			"x": 4400,
+			"y": -600
+		},
+		"explore/onboarding/context": {
+			"x": 3882,
+			"y": -1191
 		},
 		"explore/agent/live/receiving/directions": {
 			"x": 1160,
@@ -622,12 +774,20 @@
 			"x": 17555,
 			"y": 80
 		},
+		"explore/editing-interface": {
+			"x": 80,
+			"y": 3566
+		},
 		"site/shaders": {
 			"x": 3099,
 			"y": 5432
 		},
 		"site/shaders/bloom": {
 			"x": 18320,
+			"y": 80
+		},
+		"explore/arrange": {
+			"x": 4843,
 			"y": 80
 		}
 	}
