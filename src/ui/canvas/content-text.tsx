@@ -14,15 +14,17 @@ export function ContentText({
 	selector,
 	html,
 	actions,
+	scope,
 }: {
 	frame: string;
 	selector: string;
 	html: string;
 	actions: TextActions;
+	scope?: string | undefined;
 }) {
 	const initial = new DOMParser().parseFromString(html, "text/html").body.textContent ?? "";
 	return (
-		<Section name="Content" reason="this use">
+		<Section name="Content" reason={scope ?? "checking source"}>
 			<Row name="Text" tall>
 				<LiteralField frame={frame} selector={selector} initial={initial} actions={actions} />
 			</Row>

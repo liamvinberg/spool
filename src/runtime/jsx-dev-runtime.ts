@@ -20,7 +20,8 @@ interface JsxSource {
 
 export { Fragment };
 
-installValueFlow({});
+const sourceLocations: Record<string, string> = {};
+installValueFlow(sourceLocations);
 installObserver();
 export const sourceLazy = globalThis.__SPOOL_LAZY__;
 export const sourceConsumed = globalThis.__SPOOL_CONSUMED__;
@@ -46,7 +47,7 @@ export function jsxDEV(
 	const create = isStaticChildren ? jsxs : jsx;
 	const element = (create as (type: unknown, props: unknown, key: unknown) => unknown)(type, stamped, key);
 	if (typeof element === "object" && element !== null && "props" in element && "type" in element) {
-		const original = (site ? sourcePacket?.locations?.[site] : undefined) ?? generated;
+		const original = site ?? generated;
 		globalThis.__SPOOL_VALUES__?.jsx(element, original);
 		globalThis.__SPOOL_OBSERVER__.register(element, original);
 	}
@@ -158,21 +159,33 @@ const subscription = (owner: string) => {
 export function configureSource(packet: RetainedValues): void {
 	initialStamps = packet.stamps ?? {};
 	sourcePacket = packet;
+	Object.assign(sourceLocations, packet.locations);
 	sequence = packet.sequence;
 }
 export function sourceTypeFrom(element: Parameters<NonNullable<typeof globalThis.__SPOOL_VALUES__>["typeFrom"]>[0]) {
 	return globalThis.__SPOOL_VALUES__!.typeFrom(element);
 }
 export function observeFactory<T>(site: string, action: () => T): T {
-	return globalThis.__SPOOL_VALUES__!.at(sourcePacket?.locations?.[site] ?? site, action);
+	return globalThis.__SPOOL_VALUES__!.at(site, action);
 }
 export function sourceValue(cell: string, initial: string): string {
 	return sourcePacket?.values[cell] ?? initial;
 }
-export function useSourceValues(owner: string, component: unknown): void {
+const anonymousOwners = new WeakMap<object, string>();
+export function sourceComponent<T extends object>(owner: string, component: T): T {
+	anonymousOwners.set(component, owner);
+	return component;
+}
+export function useSourceValues(owner: string, component?: unknown): void {
 	// Only React's actual component invocation owns the extra store hook.
 	// Calling the same authored function as a helper remains ordinary JavaScript.
-	if (activeComponent !== component || activeOwner !== undefined) return;
+	if (
+		component === undefined &&
+		typeof activeComponent === "function" &&
+		anonymousOwners.get(activeComponent) === owner
+	)
+		component = activeComponent;
+	if (component === undefined || activeComponent !== component || activeOwner !== undefined) return;
 	activeOwner = owner;
 	if (
 		typeof component === "object" &&
@@ -522,6 +535,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 					.map((cell) => publication.packet.owners[cell]),
 			);
 			sourcePacket = publication.packet;
+			Object.assign(sourceLocations, publication.packet.locations);
 			sequence = publication.packet.sequence;
 			const css = document.getElementById("spool-compiled-css"),
 				bundled = document.getElementById("spool-bundled-css");

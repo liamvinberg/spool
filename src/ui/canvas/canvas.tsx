@@ -768,11 +768,15 @@ export function ProjectCanvas({
 	// pointing at anything (#172).
 	const hoveredFrame = hovered?.visible === true ? hovered.frame : null;
 
+	const sourceTargets = useMemo(
+		() => new Set([...selectionTargets, ...sourceDelivery.liveFrames]),
+		[selectionTargets, sourceDelivery.liveFrames],
+	);
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		allFramesRef,
 		entered,
-		selectionTargets,
+		selectionTargets: sourceTargets,
 		resizing: resizingFrame,
 		selected,
 		hovered: hoveredFrame,
@@ -5191,6 +5195,7 @@ export function ProjectCanvas({
 						acts={{
 							ownership: {
 								describe: sourceDelivery.describe,
+								release: sourceDelivery.releaseDescription,
 								highlight: sourceDelivery.highlight,
 								reveal: revealSourceUse,
 							},
