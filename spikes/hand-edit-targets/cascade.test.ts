@@ -422,40 +422,70 @@ it("keeps source conditions with missing context and refuses selectors that move
 	await mounted.page.close();
 });
 
-it("retains exact unequal-selector and unsupported container counterexamples", { timeout: 30_000 }, async () => {
-	for (const scenario of [
-		{
-			classes: "p-4 conditional-pad",
-			css: "@utility conditional-pad { &:where([data-open=true]) {padding-top:32px;} }",
-			scope: "",
-			reason: "unequal-selector",
-		},
-		{
-			classes: "p-4 custom-container:pt-8",
-			css: "@custom-variant custom-container { @container style(--wide: true) { @slot; } }",
-			scope: "custom-container:",
-			reason: "container query",
-		},
-	]) {
-		const { mounted } = await setup(scenario.classes, scenario.css);
+it("keeps embedded padding predicates separate from the base read", async () => {
+	const { mounted } = await setup(
+		"p-4 conditional-pad",
+		"@utility conditional-pad { &:where([data-open=true]) {padding-top:32px;} }",
+	);
+	const selection = await select(mounted, "#subject");
+	const before = supported(await read(mounted, selection, { kind: "property", property: "padding-top", scope: "" }));
+	expect(before.property.owner?.token).toBe("p-4");
+	const condition = before.property.conditionTargets.find((row) => row.reason === "embedded utility predicate");
+	expect(condition?.scope).toContain("conditional-pad");
+	if (!condition) throw new Error("no condition");
+	const inactive = supported(
+		await read(mounted, selection, { kind: "property", property: "padding-top", scope: condition.scope }),
+	);
+	expect(inactive.property.scopeActivity[0]?.active).toBe(false);
+	await mounted.page.locator("#subject").evaluate((el) => el.setAttribute("data-open", "true"));
+	const active = supported(
+		await read(mounted, selection, { kind: "property", property: "padding-top", scope: condition.scope }),
+	);
+	expect(active.property.scopeActivity[0]?.active).toBe(true);
+	expect(active.property.renderedEffects[0]?.values["padding-top"]).toBe("32px");
+	expect(await validPropertyRead(mounted, inactive)).toBe(false);
+	evidence.push({ embeddedPredicate: { before, inactive, active } });
+	await mounted.page.close();
+});
+
+it("executes the recorded style-container query and named combined variants, retaining unsupported forms", {
+	timeout: 60_000,
+}, async () => {
+	for (const named of [false, true]) {
+		const scope = named ? "custom-container:group-hover/card:data-[open=true]:" : "custom-container:";
+		const { mounted } = await setup(
+			`p-4 ${scope}pt-8`,
+			`@custom-variant custom-container { @container ${named ? "card " : ""}style(--wide: true) { @slot; } }`,
+			'data-open="true"',
+			'<main id="parent" className="group/card" style={{containerName:"card"}}>',
+		);
+		const selection = await select(mounted, "#subject");
+		const results = [];
+		for (const value of ["false", "true", "false"]) {
+			await mounted.page
+				.locator("#parent")
+				.evaluate((el, value) => (el as HTMLElement).style.setProperty("--wide", value), value);
+			if (named) await mounted.page.locator("#subject").hover();
+			const result = supported(await read(mounted, selection, { kind: "property", property: "padding-top", scope }));
+			expect(result.property.owner?.active).toBe(value === "true");
+			expect(result.property.renderedEffects[0]?.values["padding-top"]).toBe(value === "true" ? "32px" : "16px");
+			results.push({ value, result });
+		}
+		evidence.push({ styleContainer: { named, results } });
+		await mounted.page.close();
+	}
+	for (const query of ["style(--wide)", "style(--wide: true) or style(--other: true)", "(height > 200px)"]) {
+		const { mounted } = await setup(
+			"p-4 custom-container:pt-8",
+			`@custom-variant custom-container { @container ${query} { @slot; } }`,
+		);
 		const result = await read(mounted, await select(mounted, "#subject"), {
 			kind: "property",
 			property: "padding-top",
-			scope: scenario.scope,
+			scope: "custom-container:",
 		});
 		expect(result.kind).toBe("refused");
-		if (result.kind === "refused") expect(result.reason).toContain(scenario.reason);
-		const css = mounted.css;
-		const before = await mounted.page.locator("#subject").evaluate((el) => getComputedStyle(el).paddingTop);
-		await mounted.page.locator("#subject").evaluate((el) => el.setAttribute("data-open", "true"));
-		const after = await mounted.page.locator("#subject").evaluate((el) => getComputedStyle(el).paddingTop);
-		const active = await read(mounted, await select(mounted, "#subject"), {
-			kind: "property",
-			property: "padding-top",
-			scope: scenario.scope,
-		});
-		expect(active.kind).toBe("refused");
-		evidence.push({ scenario, result, active, css, before, after });
+		evidence.push({ unprovedContainer: { query, result } });
 		await mounted.page.close();
 	}
 });

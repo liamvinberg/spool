@@ -348,8 +348,8 @@ export async function stillSelected(mounted: Mounted, selection: Selection): Pro
 	}, selection);
 }
 
-// Bounded same-scope cascade: exact emitted rules, equal selector structure,
-// importance then stylesheet order. No rendered-value ownership inference.
+// Bounded same-predicate cascade. Embedded conditions remain separate from
+// a token prefix; no rendered-value ownership inference.
 async function propertyRead(
 	mounted: Mounted,
 	selection: Selection,
@@ -378,6 +378,16 @@ async function propertyRead(
 		compiled.map(async (n) => ({
 			token: n.token,
 			rawCss: n.css,
+			prefixCss: (
+				await compile(
+					mounted.themeCss +
+						(system.candidatesToCss([
+							`${anatomyOf(n.token)
+								.variants.map((v) => `${v}:`)
+								.join("")}[--spool-scope-probe:1]`,
+						])[0] ?? ""),
+				)
+			).build([]),
 			css: (await compile(mounted.themeCss + n.css)).build([]),
 			scope: anatomyOf(n.token)
 				.variants.map((v) => `${v}:`)
@@ -534,6 +544,25 @@ async function propertyRead(
 			// bounded evaluator accepts emitted Tailwind inline-size ranges only.
 			const containerMatches = (rule: CSSContainerRule): boolean => {
 				const query = rule.containerQuery;
+				// Literal true/false custom-property equality on the nearest named/unnamed
+				// ancestor. Registered, boolean and compound queries remain refused.
+				const styleQuery = /^style\((--[\w-]+):\s*(true|false)\)$/.exec(query);
+				if (styleQuery) {
+					if (expectedCss.includes(`@property ${styleQuery[1]}`))
+						throw new Error("registered style-query property needs typed comparison");
+					let container = el.parentElement;
+					while (
+						container &&
+						rule.containerName &&
+						!getComputedStyle(container).containerName.split(/\s+/).includes(rule.containerName)
+					)
+						container = container.parentElement;
+					if (!container) return false;
+					const value = getComputedStyle(container).getPropertyValue(styleQuery[1]!).trim();
+					if (value && value !== "true" && value !== "false")
+						throw new Error("style-query value needs typed or token-stream comparison");
+					return value === styleQuery[2];
+				}
 				const tests = [...query.matchAll(/\(width\s*(>=|>|<=|<)\s*([\d.]+)(px|rem|em)\)/g)];
 				if (
 					!tests.length ||
@@ -639,13 +668,36 @@ async function propertyRead(
 					let nextConditions = conditions;
 					let nextActive = active;
 					let nextFeatureSupported = featureSupported;
-					if (rule instanceof CSSStyleRule)
-						selector = rule.selectorText.includes("&")
-							? rule.selectorText.replaceAll("&", parent)
-							: rule.selectorText;
+					if (rule instanceof CSSStyleRule) {
+						let nestedSelector = false;
+						let escaped = false,
+							quote = "";
+						selector = "";
+						for (const char of rule.selectorText) {
+							if (escaped) {
+								escaped = false;
+								selector += char;
+								continue;
+							}
+							if (char === "\\") {
+								escaped = true;
+								selector += char;
+								continue;
+							}
+							if (quote) {
+								if (char === quote) quote = "";
+								selector += char;
+								continue;
+							}
+							if (char === "'" || char === '"') quote = char;
+							if (char === "&") nestedSelector = true;
+							selector += char === "&" ? parent : char;
+						}
+						if (parent && !nestedSelector) throw new Error("implicit CSS nesting needs selected-subject proof");
+					}
 					if (rule instanceof CSSLayerBlockRule) nextLayer = rule.name;
 					if (rule instanceof CSSMediaRule) {
-						nextConditions = [...conditions, rule.conditionText];
+						nextConditions = [...conditions, `@media ${rule.conditionText}`];
 						nextActive = active && matchMedia(rule.conditionText).matches;
 					}
 					if (rule instanceof CSSContainerRule) {
@@ -655,7 +707,7 @@ async function propertyRead(
 					if (rule instanceof CSSSupportsRule) {
 						// Keep inactive feature branches in the declaration account too.
 						// Activity and source existence are separate facts.
-						nextConditions = [...conditions, rule.conditionText];
+						nextConditions = [...conditions, `@supports ${rule.conditionText}`];
 						nextFeatureSupported = featureSupported && CSS.supports(rule.conditionText);
 						nextActive = active && nextFeatureSupported;
 					}
@@ -782,8 +834,34 @@ async function propertyRead(
 				)
 			)
 				throw new Error("missing or duplicated utility declaration");
+			const scopeSheet = new CSSStyleSheet();
+			scopeSheet.replaceSync(scopeProbe.css);
+			const scopeRules = collect(scopeSheet.cssRules, "", "", [], true, false).filter(
+				(r) => r.declaration === "--spool-scope-probe",
+			);
+			if (!scopeRules.length || scopeRules.some((row) => !anchored(row.selector, scopeProbe.token)))
+				throw new Error("scope changes the selected subject; no proved explicit override target");
+			const predicate = (row: Rule, token: string) =>
+				JSON.stringify([row.selector.replaceAll(`.${CSS.escape(token)}`, ".SOURCE"), row.conditions]);
+			const inScope = (row: Rule, token: string) =>
+				scopeRules.some((probe) => predicate(row, token) === predicate(probe, scopeProbe.token));
+			// A custom utility can hide additional conditions inside a base token.
+			// It is a separate source rule, never a base owner to flatten on write.
+			const embedded = sourceRules.filter((row) => {
+				if (nested || placeholder || !affects(row.declaration)) return false;
+				const candidate = candidates.find((candidate) => candidate.token === row.token)!;
+				const prefixSheet = new CSSStyleSheet();
+				prefixSheet.replaceSync(candidate.prefixCss);
+				const prefixToken = `${row.scope}[--spool-scope-probe:1]`;
+				return !collect(prefixSheet.cssRules, "", "", [], true, false)
+					.filter((probe) => probe.declaration === "--spool-scope-probe")
+					.some((probe) => predicate(row, row.token) === predicate(probe, prefixToken));
+			});
 			const contenders = sourceRules
-				.filter((row) => row.scope === scope && affects(row.declaration))
+				.filter(
+					(row) =>
+						row.scope === scope && affects(row.declaration) && (nested || placeholder || inScope(row, row.token)),
+				)
 				.map((row) => ({
 					...row,
 					order: all.find((actual) => actual.layer === "utilities" && same(actual, row))!.order,
@@ -808,59 +886,93 @@ async function propertyRead(
 				return effects[0] ? [{ key, owner: effects[0], shadowed: effects.slice(1) }] : [];
 			});
 			const owned = [...new Set(winners.map((winner) => winner.owner))];
-			const scopeSheet = new CSSStyleSheet();
-			scopeSheet.replaceSync(scopeProbe.css);
-			const scopeRules = collect(scopeSheet.cssRules, "", "", [], true, false).filter(
-				(r) => r.declaration === "--spool-scope-probe",
-			);
-			if (!scopeRules.length || scopeRules.some((row) => !anchored(row.selector, scopeProbe.token)))
-				throw new Error("scope changes the selected subject; no proved explicit override target");
 
 			if (
 				!owned.length &&
 				candidates.some((candidate) => {
-					if (candidate.scope !== scope) return false;
+					if (candidate.scope !== scope || embedded.some((row) => row.token === candidate.token)) return false;
 					const sheet = new CSSStyleSheet();
 					sheet.replaceSync(candidate.css);
 					return collect(sheet.cssRules, "", "", [], true, false).some((row) => affects(row.declaration));
 				})
 			)
 				throw new Error("source condition has no proven selected-subject attribution; not an absent property");
-			const authorRules = all.filter(fromImport);
+			// Imported conditions remain dependencies even when their selector cannot
+			// currently match. Identity never comes from imported class/node naming.
+			const authorRules = sheetDeclarations.filter((row) => row.featureSupported && fromImport(row));
+			const exactScope = (selector: string, conditions: string[] = []): string => {
+				// Single quotes fit the existing double-quoted JSX writer. Reject
+				// selector escapes/underscores and child combinators pending a writer
+				// round-trip proof; do not silently change selector meaning.
+				if (/[\\_'<>]/.test(selector)) throw new Error("exact selector needs a proved source literal encoding");
+				const atRules = conditions
+					.map((condition) => {
+						if (!/^@(media|supports|container) /.test(condition) || /[\\_'<>]/.test(condition))
+							throw new Error("at-rule needs a proved scope and source literal encoding");
+						return `[${condition.replaceAll('"', "'").replaceAll(" ", "_")}]:`;
+					})
+					.join("");
+				return `${atRules}[&:is(${selector.replaceAll('"', "'").replaceAll(" ", "_")})]:`;
+			};
 			const authorScope = (row: Rule): string => {
-				if (row.conditions.length) throw new Error("imported author condition requires a separate scope proof");
-				// Retained direct state selectors, including :is(tag, context tag).
-				// An ancestor state is not silently relabelled as a direct state.
+				if (row.conditions.length || !matches(row)) return exactScope(row.selector, row.conditions);
 				const states = [
 					...row.selector.matchAll(
 						/:(hover|focus-visible|focus-within|focus|active|checked|disabled|enabled|target)\b/g,
 					),
 				];
+				if (row.important || !["base", ""].includes(row.layer)) return exactScope(row.selector, row.conditions);
 				if (!states.length) return "";
-				if (states.length !== 1 || !row.selector.endsWith(states[0]![0]))
-					throw new Error(`imported ancestor/combined state needs an explicit scope proof: ${row.selector}`);
-				return `${states[0]![1]}:`;
+				if (states.length === 1 && row.selector.endsWith(states[0]![0])) return `${states[0]![1]}:`;
+				return exactScope(row.selector);
 			};
+			const embeddedEffects = embedded.map((row) => ({
+				...row,
+				layer: "utilities",
+				scope: exactScope(row.selector, row.conditions),
+			}));
 			const authorEffects = authorRules
 				.filter((row) => affects(row.declaration))
 				.map((row) => ({ ...row, scope: authorScope(row) }));
-			if (authorEffects.some((row) => row.important || !["base", ""].includes(row.layer)))
+			if (authorEffects.some((row) => row.important && row.layer !== "" && row.layer !== "utilities"))
 				throw new Error("imported important/layer competition has no proved override");
-			const inAuthorScope = authorEffects.filter((row) => row.scope === scope);
-			const requiresImportant = inAuthorScope.some((row) => row.layer === "");
+			const inAuthorScope = [...authorEffects, ...embeddedEffects].filter(
+				(row) => row.scope === scope || exactScope(row.selector, row.conditions) === scope,
+			);
+			const requiresImportant = inAuthorScope.some((row) => row.layer !== "base" || row.important);
+			if (requiresImportant && scope.startsWith("[")) {
+				const selectedEmbedded = embeddedEffects.some(
+					(source) =>
+						inAuthorScope.some((selected) => same(source, selected)) && anchored(source.selector, source.token),
+				);
+				const unprovedUtility = sourceRules.some(
+					(row) =>
+						row.important &&
+						affects(row.declaration) &&
+						!inScope(row, row.token) &&
+						!(selectedEmbedded && row.selector === `.${CSS.escape(row.token)}`) &&
+						!inAuthorScope.some((source) => same(row, source)),
+				);
+				const unprovedImport = authorEffects.some(
+					(row) => row.important && row.layer === "utilities" && !inAuthorScope.includes(row),
+				);
+				if (unprovedUtility || unprovedImport)
+					throw new Error("other important utility predicates need a complete priority proof");
+			}
 			if (requiresImportant && scope === "")
 				throw new Error("unlayered resting author rule would require a cross-state override proof");
-			const explicitOverride = authorEffects.length
-				? {
-						scope,
-						important: requiresImportant,
-						target: "verified selected source class slot",
-						declarations: inAuthorScope,
-						rationale: requiresImportant
-							? "scoped important utility outranks normal unlayered state CSS"
-							: "normal utility outranks normal base-layer CSS; unlayered state rules keep their precedence",
-					}
-				: null;
+			const explicitOverride =
+				authorEffects.length || embeddedEffects.length
+					? {
+							scope,
+							important: requiresImportant,
+							target: "verified selected source class slot",
+							declarations: inAuthorScope,
+							rationale: requiresImportant
+								? "important utility outranks normal author rules and unlayered important rules; the exact :is predicate adds one class of specificity over its original utility-layer rule"
+								: "normal utility outranks normal base-layer CSS; unlayered state rules keep their precedence",
+						}
+					: null;
 
 			const owner = owned[0] ?? null;
 			if (owner?.value === "") throw new Error("browser did not expose the authored declaration value");
@@ -869,6 +981,18 @@ async function propertyRead(
 			ownerSheet.replaceSync(ownerCandidate?.css ?? "");
 			return {
 				owner,
+				conditionTargets: [
+					...embeddedEffects.map((row) => ({
+						source: row,
+						scope: row.scope,
+						reason: "embedded utility predicate",
+					})),
+					...authorEffects.map((row) => ({
+						source: row,
+						scope: exactScope(row.selector, row.conditions),
+						reason: "imported source predicate",
+					})),
+				],
 				explicitOverride,
 				authorEffects,
 				owners: owned,
