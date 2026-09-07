@@ -1,4 +1,6 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import { installObserver } from "./source-observer";
+import { installValueFlow } from "./source-values";
 
 /**
  * The stamping JSX runtime (#23): frames compile with jsxDev pointed here
@@ -18,6 +20,10 @@ interface JsxSource {
 
 export { Fragment };
 
+installValueFlow({});
+installObserver();
+export const sourceLazy = globalThis.__SPOOL_LAZY__;
+
 export function jsxDEV(
 	type: unknown,
 	props: Record<string, unknown> | null,
@@ -32,7 +38,19 @@ export function jsxDEV(
 			? { ...props, "data-spool-source": (site ? sourcePacket?.locations?.[site] : undefined) ?? generated }
 			: props;
 	const create = isStaticChildren ? jsxs : jsx;
-	return (create as (type: unknown, props: unknown, key: unknown) => unknown)(type, stamped, key);
+	const element = (create as (type: unknown, props: unknown, key: unknown) => unknown)(type, stamped, key);
+	if (typeof element === "object" && element !== null && "props" in element && "type" in element) {
+		const original = (site ? sourcePacket?.locations?.[site] : undefined) ?? generated;
+		globalThis.__SPOOL_VALUES__?.jsx(element, original);
+		globalThis.__SPOOL_OBSERVER__.register(element, original);
+	}
+	return element;
+}
+
+export function observeEntry<T>(element: T): T {
+	if (typeof element === "object" && element !== null && "props" in element && "type" in element)
+		globalThis.__SPOOL_OBSERVER__.register(element, "spool-entry", true);
+	return element;
 }
 
 // One module instance is pinned by the frame import map. Its cells are compiler
@@ -40,7 +58,9 @@ export function jsxDEV(
 import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import {
+	combineUseOutcomes,
 	type RetainedValues,
+	type SourceInventory,
 	type SourceOccurrence,
 	type SourcePublication,
 	sameSourceOccurrence,
@@ -134,6 +154,9 @@ export function configureSource(packet: RetainedValues): void {
 	sourcePacket = packet;
 	sequence = packet.sequence;
 }
+export function observeFactory<T>(site: string, action: () => T): T {
+	return globalThis.__SPOOL_VALUES__!.at(sourcePacket?.locations?.[site] ?? site, action);
+}
 export function sourceValue(cell: string, initial: string): string {
 	return sourcePacket?.values[cell] ?? initial;
 }
@@ -198,17 +221,121 @@ function sourceContext(element: Element): string {
 function inspectSource(element: HTMLElement): SourceOccurrence | undefined {
 	if (!element.isConnected) return;
 	const fiber = committedFiber(element);
-	const origin = fiber && origins.get(fiber.memoizedProps);
+	let origin = fiber && origins.get(fiber.memoizedProps);
+	let provenance: string | undefined;
+	try {
+		const observed = globalThis.__SPOOL_OBSERVER__.observe(element);
+		if (!observed.refusal) {
+			provenance = JSON.stringify(observed);
+			if (
+				!origin &&
+				sourcePacket &&
+				fiber &&
+				"children" in fiber.memoizedProps &&
+				typeof fiber.memoizedProps.children === "string"
+			)
+				origin = {
+					cell: observed.source,
+					publication: sourcePacket.id,
+					invocation: JSON.stringify(
+						observed.chain.map((call) => [call.occurrence, call.invocation?.id, call.element]),
+					),
+					value: fiber.memoizedProps.children,
+				};
+		}
+	} catch {}
 	if (!origin) return;
 	let id = nodes.get(element);
 	if (!id) {
 		id = String(++occurrence);
 		nodes.set(element, id);
 	}
-	return { ...origin, occurrence: id, context: sourceContext(element) };
+	return {
+		...origin,
+		occurrence: id,
+		context: sourceContext(element),
+		...(provenance === undefined ? {} : { provenance }),
+	};
 }
 function textOf(element: HTMLElement): string {
 	return element.innerText ?? element.textContent ?? "";
+}
+
+const sharedPreviews = new Map<number, { element: HTMLElement; original: SourceOccurrence; preview: string }[]>();
+let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+function clearSourceFeedback(): void {
+	clearTimeout(feedbackTimer);
+	for (const element of document.querySelectorAll("[data-spool-shared-use]"))
+		element.removeAttribute("data-spool-shared-use");
+}
+function inventorySource(): Omit<SourceInventory, "frame"> {
+	const uses: SourceInventory["uses"] = [];
+	let unknown = 0;
+	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-source]")) {
+		if (element.children.length > 0 || !element.textContent) continue;
+		const original = inspectSource(element);
+		if (!original) {
+			unknown++;
+			continue;
+		}
+		const rect = element.getBoundingClientRect();
+		uses.push({
+			original,
+			visible:
+				rect.width > 0 &&
+				rect.height > 0 &&
+				rect.bottom > 0 &&
+				rect.right > 0 &&
+				rect.top < innerHeight &&
+				rect.left < innerWidth,
+		});
+	}
+	return { publication: sourcePacket?.id ?? "", uses, unknown };
+}
+function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolean {
+	clearSourceFeedback();
+	for (const previous of sharedPreviews.keys()) cancelSourceUses(previous);
+	const prepared: { element: HTMLElement; original: SourceOccurrence; preview: string }[] = [];
+	for (const original of uses) {
+		const element = [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
+			const current = inspectSource(element);
+			return current && sameSourceOccurrence(current, original);
+		});
+		if (element) prepared.push({ element, original, preview: original.value });
+	}
+	sharedPreviews.set(generation, prepared);
+	if (uses.length && !document.getElementById("spool-shared-use-outline")) {
+		const style = document.createElement("style");
+		style.id = "spool-shared-use-outline";
+		style.textContent =
+			"[data-spool-shared-use]{outline:1px solid rgba(245,57,26,.55)!important;outline-offset:3px!important;}";
+		document.head.append(style);
+	}
+	return prepared.length === uses.length;
+}
+function previewSourceUses(generation: number, value: string): void {
+	for (const held of sharedPreviews.get(generation) ?? []) {
+		const current = inspectSource(held.element);
+		if (!current || !sameSourceOccurrence(current, held.original)) continue;
+		held.preview = value;
+		if (textOf(held.element) !== value) held.element.textContent = value;
+		if (leases.get(generation)?.element !== held.element) held.element.setAttribute("data-spool-shared-use", "");
+	}
+}
+function cancelSourceUses(generation: number, feedback = true): void {
+	const held = sharedPreviews.get(generation);
+	sharedPreviews.delete(generation);
+	for (const use of held ?? []) {
+		const current = inspectSource(use.element);
+		if (
+			current &&
+			sameSourceOccurrence(current, use.original) &&
+			textOf(use.element) === use.preview &&
+			use.preview !== use.original.value
+		)
+			use.element.textContent = use.original.value;
+	}
+	if (feedback) clearSourceFeedback();
 }
 function sourceRead(element: HTMLElement, generation: number): SourceOccurrence | undefined {
 	if (generation <= intent) return;
@@ -227,14 +354,20 @@ function validLease(generation: number): boolean {
 }
 function previewSource(generation: number, value: string): boolean {
 	const held = leases.get(generation);
-	if (!held || !validLease(generation)) return false;
+	if (!held) {
+		previewSourceUses(generation, value);
+		return sharedPreviews.has(generation);
+	}
+	if (!validLease(generation)) return false;
 	held.preview = value;
-	held.element.textContent = value;
+	if (textOf(held.element) !== value) held.element.textContent = value;
+	previewSourceUses(generation, value);
 	return true;
 }
 function cancelSource(generation: number): void {
 	const held = leases.get(generation);
 	leases.delete(generation);
+	cancelSourceUses(generation);
 	if (!held) return;
 	if (held.element.isConnected && inspectSource(held.element)?.invocation === held.original.invocation)
 		held.element.textContent = held.original.value;
@@ -254,7 +387,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	const element =
 		held?.element ??
 		[...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find(
-			(el) => inspectSource(el)?.cell === original.cell,
+			(el) => nodes.get(el) === original.occurrence,
 		);
 	const refused = (reason: string): UseOutcome => {
 		revokeSource(publication);
@@ -288,12 +421,31 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 		publication.packet.sequence <= sequence
 	)
 		return refused("the running source generation changed");
-	if (!undo && (!held || !validLease(publication.generation)))
+
+	const prepared = sharedPreviews.get(publication.generation);
+	const secondary =
+		publication.targets &&
+		prepared?.some((use) => {
+			const current = inspectSource(use.element);
+			return current && sameSourceOccurrence(use.original, original) && sameSourceOccurrence(current, use.original);
+		});
+	if (!undo && !((held && validLease(publication.generation)) || secondary))
 		return refused("the original element changed while saving");
+	const targets = (publication.targets ?? [original]).map((original) => ({
+		original,
+		element:
+			original.occurrence === publication.original.occurrence
+				? element
+				: [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find(
+						(element) => nodes.get(element) === original.occurrence,
+					),
+	}));
 	if (undo && leases.size > 0) return refused("another edit is in progress");
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
 	if (held) held.element.textContent = held.original.value;
+	cancelSourceUses(publication.generation, false);
+	feedbackTimer = setTimeout(clearSourceFeedback, 450);
 	leases.delete(publication.generation);
 	let failed = false;
 	const onError = () => {
@@ -327,25 +479,31 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 				}
 		});
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
-		const expected = publication.packet.values[original.cell];
-		const observed = element?.textContent ?? undefined;
-		const rendered = failed
-			? "failed"
-			: !element?.isConnected
-				? "unmounted"
-				: pendingIn(element)
-					? "pending"
-					: expected === undefined
-						? "unverified"
-						: observed === expected
-							? "verified"
-							: "mismatching";
-		return {
-			occurrence: original.occurrence,
-			installation: "installed",
-			rendered,
-			...(observed === undefined ? {} : { observed }),
-		};
+
+		const expected = publication.packet.values[publication.cell ?? original.cell];
+		return combineUseOutcomes(
+			targets.map(({ original, element }) => {
+				const observed = element?.textContent ?? undefined;
+				const rendered = failed
+					? "failed"
+					: !element?.isConnected
+						? "unmounted"
+						: pendingIn(element)
+							? "pending"
+							: expected === undefined
+								? "unverified"
+								: observed === expected
+									? "verified"
+									: "mismatching";
+				return {
+					occurrence: original.occurrence,
+					installation: "installed",
+					rendered,
+					...(observed === undefined ? {} : { observed }),
+				};
+			}),
+			original.occurrence,
+		);
 	} catch {
 		return {
 			occurrence: original.occurrence,
@@ -362,6 +520,9 @@ declare global {
 	interface Window {
 		__SPOOL_SOURCE__?: {
 			read: typeof sourceRead;
+			inventory: typeof inventorySource;
+			prepare: typeof prepareSourceUses;
+			clearFeedback: typeof clearSourceFeedback;
 			valid: typeof validLease;
 			preview: typeof previewSource;
 			complete: typeof completeSource;
@@ -374,6 +535,9 @@ declare global {
 if (typeof window !== "undefined")
 	window.__SPOOL_SOURCE__ = {
 		read: sourceRead,
+		inventory: inventorySource,
+		prepare: prepareSourceUses,
+		clearFeedback: clearSourceFeedback,
 		valid: validLease,
 		preview: previewSource,
 		complete: completeSource,

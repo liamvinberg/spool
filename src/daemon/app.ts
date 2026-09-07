@@ -426,7 +426,10 @@ export function createDaemonApp({
 	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
 	const sourceObservers = createSourceObservers();
-	const sourceOwner = createSourceOwner(compiler, sourceObservers.verify);
+	const sourceOwner = createSourceOwner(compiler, sourceObservers.verify, async (root, file) => {
+		const graphs = await flowGraph.sources(root);
+		return [...graphs].filter(([, graph]) => graph.files.includes(file)).map(([frame]) => frame);
+	});
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
@@ -2242,6 +2245,7 @@ export function createDaemonApp({
 						cell: z.string(),
 						occurrence: z.string(),
 						invocation: z.string(),
+						provenance: z.string().optional(),
 						value: z.string().max(100_000),
 						context: z.string().max(100_000),
 					})
@@ -2281,6 +2285,22 @@ export function createDaemonApp({
 								original: occurrence.optional(),
 							})
 							.strict(),
+						z
+							.object({
+								action: z.literal("reach"),
+								handle: z.string(),
+								inventories: z.array(
+									z
+										.object({
+											frame: z.string(),
+											publication: z.string(),
+											unknown: z.number().int().nonnegative(),
+											uses: z.array(z.object({ original: occurrence, visible: z.boolean() }).strict()),
+										})
+										.strict(),
+								),
+							})
+							.strict(),
 						z.object({ action: z.literal("cancel"), handle: z.string() }).strict(),
 						z.object({ action: z.literal("current"), publication: z.string() }).strict(),
 						z.object({ action: z.literal("delivered"), publication: z.string() }).strict(),
@@ -2297,6 +2317,8 @@ export function createDaemonApp({
 						return c.json(
 							await sourceOwner.read(project.root, body.frame, body.original, body.generation, body.observer),
 						);
+					case "reach":
+						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories));
 					case "observed":
 						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
 						return c.json({ ok: true });

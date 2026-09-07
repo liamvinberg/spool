@@ -6,6 +6,7 @@ export interface SourceOccurrence {
 	invocation: string;
 	value: string;
 	context: string;
+	provenance?: string | undefined;
 }
 
 export function sameSourceOccurrence(a: SourceOccurrence, b: SourceOccurrence): boolean {
@@ -15,8 +16,26 @@ export function sameSourceOccurrence(a: SourceOccurrence, b: SourceOccurrence): 
 		a.occurrence === b.occurrence &&
 		a.invocation === b.invocation &&
 		a.value === b.value &&
-		a.context === b.context
+		a.context === b.context &&
+		a.provenance === b.provenance
 	);
+}
+
+export interface SourceUse {
+	frame: string;
+	original: SourceOccurrence;
+	visible: boolean;
+}
+export interface SourceInventory {
+	frame: string;
+	publication: string;
+	uses: { original: SourceOccurrence; visible: boolean }[];
+	unknown: number;
+}
+export interface SourceReach {
+	uses: SourceUse[];
+	unmounted: string[];
+	unknown: string[];
 }
 
 export interface SourceRead {
@@ -25,7 +44,12 @@ export interface SourceRead {
 	generation: number;
 	original: SourceOccurrence;
 	source: string;
-	role: "literal-child";
+	role: "literal-child" | "literal-attribute" | "factory-literal";
+	cell?: string;
+	field?: string;
+	scope?: "definition" | "call-site";
+	repeated?: boolean;
+	reach?: SourceReach;
 	value: string;
 }
 
@@ -50,6 +74,10 @@ export interface SourcePublication {
 	admission: { token: string; expires: number };
 	owner: string;
 	frame: string;
+	cell?: string;
+	targets?: SourceOccurrence[];
+	related?: SourcePublication[];
+	failures?: UseOutcome[];
 	before: string;
 	packet: RetainedValues;
 	generation: number;
@@ -59,11 +87,13 @@ export interface SourcePublication {
 
 export type RenderOutcome = "verified" | "mismatching" | "pending" | "failed" | "unverified" | "unmounted";
 export interface UseOutcome {
+	frame?: string;
 	occurrence: string;
 	installation: "installed" | "refused";
 	rendered: RenderOutcome;
 	observed?: string;
 	reason?: string;
+	uses?: UseOutcome[];
 }
 
 export type SourceResult =
@@ -75,3 +105,10 @@ export type SourceResult =
 			reason?: string;
 	  }
 	| { ok: false; reason: string };
+
+/** A successful occurrence cannot conceal another occurrence's delivery result. */
+export function combineUseOutcomes(uses: UseOutcome[], occurrence = ""): UseOutcome {
+	const order: RenderOutcome[] = ["failed", "mismatching", "pending", "unverified", "unmounted", "verified"];
+	const worst = order.map((state) => uses.find((use) => use.rendered === state)).find((use) => use !== undefined);
+	return { ...(worst ?? { occurrence, installation: "refused", rendered: "unverified" }), uses };
+}

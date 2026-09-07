@@ -1796,13 +1796,23 @@ export function ProjectCanvas({
 				});
 				return;
 			}
-			retainedPublications.current.set(frame, result.publication.packet.id);
-			unappliedSource.current.add(frame);
+
+			for (const publication of [result.publication, ...(result.publication.related ?? [])]) {
+				retainedPublications.current.set(publication.frame, publication.packet.id);
+				unappliedSource.current.add(publication.frame);
+			}
+
 			const admitted = await sourceIsCurrent(project, result.publication.packet.id);
 			if (!admitted) await sourceDelivery.revoke(result.publication);
 			const outcome = admitted ? await sourceDelivery.install(result.publication, undo) : undefined;
 			await sourceDelivered(project, result.publication.packet.id);
 			setSourceRevision((value) => value + 1);
+
+			for (const name of new Set(
+				outcome?.uses?.map((use) => use.frame).filter((name): name is string => !!name) ?? [],
+			))
+				if (outcome?.uses?.filter((use) => use.frame === name).every((use) => use.rendered === "verified"))
+					unappliedSource.current.delete(name);
 			if (outcome?.rendered === "verified") {
 				unappliedSource.current.delete(frame);
 				setSaid(null);
@@ -2355,7 +2365,13 @@ export function ProjectCanvas({
 					});
 					return;
 				}
-				setEdit({ ...asking, read: asked.read });
+				const ready = await sourceDelivery.prepare(pick.frame, asked.read);
+				if (editingRef.current?.id !== id) {
+					void cancelSource(project, ready.handle);
+					void sourceDelivery.cancel(pick.frame, id);
+					return;
+				}
+				setEdit({ ...asking, read: ready });
 				retainedPublications.current.set(pick.frame, original.publication);
 				iframes.current
 					.get(pick.frame)
@@ -2661,7 +2677,7 @@ export function ProjectCanvas({
 				return;
 			}
 			retainedPublications.current.set(frame, original.publication);
-			return result.read;
+			return await sourceDelivery.prepare(frame, result.read);
 		},
 		[project, sourceDelivery, showRefusal],
 	);
@@ -2973,6 +2989,22 @@ export function ProjectCanvas({
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
+		const refreshSource = (frame: string) => {
+			void (pendingSource.current.get(frame) ?? Promise.resolve()).then(async () => {
+				if (
+					unappliedSource.current.has(frame) ||
+					editingRef.current?.frame === frame ||
+					sourceDelivery.holds(frame)
+				)
+					return;
+				const publication = retainedPublications.current.get(frame);
+				if (publication && (await sourceIsCurrent(project, publication))) return;
+				if (pendingSource.current.has(frame) || editingRef.current?.frame === frame || sourceDelivery.holds(frame))
+					return;
+				retainedPublications.current.delete(frame);
+				reloadFrameDocument(frame);
+			});
+		};
 		return subscribeSse(
 			`/api/p/${encodeURIComponent(project)}/events`,
 			{
@@ -2980,14 +3012,7 @@ export function ProjectCanvas({
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
-						void (pendingSource.current.get(frame) ?? Promise.resolve()).then(async () => {
-							if (unappliedSource.current.has(frame)) return;
-							const publication = retainedPublications.current.get(frame);
-							if (publication && (await sourceIsCurrent(project, publication))) return;
-							if (editingRef.current?.frame === frame) return;
-							retainedPublications.current.delete(frame);
-							reloadFrameDocument(frame);
-						});
+						refreshSource(frame);
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -2999,19 +3024,8 @@ export function ProjectCanvas({
 					} else if (event.kind === "shared") {
 						// a shared file the link graph has read names its own readers (#109);
 						// anything it could not name can stale every document
-						const staled = event.frames;
-						if (staled === undefined) {
-							setDocNonces((current) => {
-								const next: Record<string, number> = { ...current };
-								for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
-								return next;
-							});
-							setWalkArrivals((current) => (current.size === 0 ? current : new Set<string>()));
-							setPicked([]);
-							holdChain(null);
-						} else {
-							for (const frame of staled) reloadFrameDocument(frame);
-						}
+						const staled = event.frames ?? framesRef.current.map((frame) => frame.name);
+						for (const frame of staled) refreshSource(frame);
 						void refetchFrames();
 						// a shared source file moves the graph as surely as a frame's own
 						void refetchFlows();
@@ -3034,7 +3048,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [holdChain, noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync]);
+	}, [noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync, sourceDelivery.holds]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost

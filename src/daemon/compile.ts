@@ -406,6 +406,7 @@ async function compileFrame({
  */
 function bootEntry(frame: string): string {
 	return `import "spool";
+import {observeEntry} from "spool/jsx-dev-runtime";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import Frame from "./frame.tsx";
@@ -420,7 +421,7 @@ function Ready() {
 	return null;
 }
 createRoot(document.getElementById("root")).render(
-	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
+	createElement(Fragment, null, observeEntry(createElement(Frame)), createElement(Ready)),
 );
 `;
 }

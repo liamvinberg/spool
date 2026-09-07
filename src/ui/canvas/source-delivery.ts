@@ -1,11 +1,19 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef } from "react";
-import type { SourceOccurrence, SourcePublication, UseOutcome } from "../../source-edit";
-import { respondSourceObservation, subscribeSse } from "../api";
+import {
+	combineUseOutcomes,
+	type SourceInventory,
+	type SourceOccurrence,
+	type SourcePublication,
+	type SourceRead,
+	type UseOutcome,
+} from "../../source-edit";
+import { respondSourceObservation, sourceReach, subscribeSse } from "../api";
 
 /** Calls belong to the original iframe WindowProxy, never just a frame name. */
 export function useSourceDelivery(project: string, iframes: RefObject<Map<string, HTMLIFrameElement>>) {
 	const observer = useRef(crypto.randomUUID());
+	const prepared = useRef(new Map<number, { initiator: string; frames: string[] }>());
 	const pending = useRef(
 		new Map<string, { window: Window; resolve: (value: unknown) => void; timer: ReturnType<typeof setTimeout> }>(),
 	);
@@ -13,6 +21,36 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		const waiting = pending.current;
 		const listener = (event: MessageEvent) => {
 			const data: unknown = event.data;
+			if (
+				typeof data === "object" &&
+				data !== null &&
+				"spool" in data &&
+				data.spool === "source-preview" &&
+				"generation" in data &&
+				typeof data.generation === "number" &&
+				"frame" in data &&
+				typeof data.frame === "string" &&
+				"text" in data &&
+				typeof data.text === "string"
+			) {
+				const held = prepared.current.get(data.generation);
+				if (held?.initiator !== data.frame || event.source !== iframes.current.get(data.frame)?.contentWindow)
+					return;
+				for (const frame of held.frames)
+					iframes.current
+						.get(frame)
+						?.contentWindow?.postMessage(
+							{
+								spool: "source-request",
+								id: crypto.randomUUID(),
+								action: "preview",
+								generation: data.generation,
+								text: data.text,
+							},
+							"*",
+						);
+				return;
+			}
 			if (
 				typeof data !== "object" ||
 				data === null ||
@@ -37,7 +75,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			}
 			waiting.clear();
 		};
-	}, []);
+	}, [iframes]);
 	const request = useCallback(
 		<T>(frame: string, message: Record<string, unknown>): Promise<T | undefined> => {
 			const window = iframes.current.get(frame)?.contentWindow;
@@ -68,9 +106,55 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		[project, request],
 	);
 	return {
+		prepare: useCallback(
+			async (frame: string, read: SourceRead): Promise<SourceRead> => {
+				const inventories = await Promise.all(
+					[...iframes.current].map(async ([name, iframe]): Promise<SourceInventory> => {
+						const inventory = await request<Omit<SourceInventory, "frame">>(name, { action: "inventory" });
+						const rect = iframe.getBoundingClientRect();
+						const visible = rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
+						return inventory
+							? {
+									...inventory,
+									frame: name,
+									uses: inventory.uses.map((use) => ({ ...use, visible: use.visible && visible })),
+								}
+							: { frame: name, publication: "", uses: [], unknown: 1 };
+					}),
+				);
+				const result = await sourceReach(project, read.handle, inventories);
+				if (!result?.ok) return read;
+				const amended = result.read;
+				const frames = [...new Set(amended.reach?.uses.map((use) => use.frame) ?? [frame])];
+				prepared.current.set(read.generation, { initiator: frame, frames });
+				await Promise.all(
+					frames.map((name) =>
+						request<boolean>(name, {
+							action: "prepare",
+							generation: read.generation,
+							uses: amended.reach?.uses.filter((use) => use.frame === name).map((use) => use.original) ?? [],
+						}),
+					),
+				);
+				return amended;
+			},
+			[iframes, project, request],
+		),
+		holds: useCallback(
+			(frame: string) => [...prepared.current.values()].some((value) => value.frames.includes(frame)),
+			[],
+		),
+		clearFeedback: useCallback(() => {
+			for (const frame of iframes.current.keys()) void request<boolean>(frame, { action: "clear-feedback" });
+		}, [iframes, request]),
 		observer: observer.current,
 		revoke: useCallback(
-			(publication: SourcePublication) => request<boolean>(publication.frame, { action: "revoke", publication }),
+			(publication: SourcePublication) =>
+				Promise.all(
+					[publication, ...(publication.related ?? [])].map((packet) =>
+						request<boolean>(packet.frame, { action: "revoke", publication: packet }),
+					),
+				),
 			[request],
 		),
 		read: useCallback(
@@ -80,21 +164,51 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		),
 		install: useCallback(
 			async (publication: SourcePublication, undo = false) => {
-				const result = await request<UseOutcome>(publication.frame, { action: "install", publication, undo });
-				// Revoke in the runtime before the canvas releases the source owner's
-				// hold. A delayed install message cannot outlive a timed-out request.
-				if (!result) await request<boolean>(publication.frame, { action: "revoke", publication });
-				return result;
+				const results = await Promise.all(
+					[publication, ...(publication.related ?? [])].map(async (packet) => {
+						const result = await request<UseOutcome>(packet.frame, {
+							action: "install",
+							publication: packet,
+							undo,
+						});
+						if (!result) await request<boolean>(packet.frame, { action: "revoke", publication: packet });
+						const uses =
+							result?.uses ??
+							(result
+								? [result]
+								: (packet.targets ?? [packet.original]).map((original) => ({
+										occurrence: original.occurrence,
+										installation: "refused" as const,
+										rendered: "unverified" as const,
+									})));
+						return uses.map((use) => ({ ...use, frame: packet.frame }));
+					}),
+				);
+				prepared.current.delete(publication.generation);
+				return combineUseOutcomes(
+					[...results.flat(), ...(publication.failures ?? [])],
+					publication.original.occurrence,
+				);
 			},
 			[request],
 		),
 		preview: useCallback(
-			(frame: string, generation: number, text: string) =>
-				request<boolean>(frame, { action: "preview", generation, text }),
+			async (frame: string, generation: number, text: string) => {
+				const targets = prepared.current.get(generation)?.frames ?? [frame];
+				return (
+					await Promise.all(
+						targets.map((frame) => request<boolean>(frame, { action: "preview", generation, text })),
+					)
+				).every(Boolean);
+			},
 			[request],
 		),
 		cancel: useCallback(
-			(frame: string, generation: number) => request<void>(frame, { action: "cancel", generation }),
+			async (frame: string, generation: number) => {
+				const targets = prepared.current.get(generation)?.frames ?? [frame];
+				prepared.current.delete(generation);
+				await Promise.all(targets.map((frame) => request<void>(frame, { action: "cancel", generation })));
+			},
 			[request],
 		),
 		complete: useCallback(

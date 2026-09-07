@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "@babel/parser";
 import { expect, it } from "vitest";
 import type { RetainedValues, SourceOccurrence, SourceRead } from "../source-edit";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
@@ -246,9 +247,26 @@ it("preserves the ordinary compiler's configured class-field assignment semantic
 	};
 	const ordinary = await buildDesignEntry(options),
 		retained = await buildDesignEntry({ ...options, retained: emptyCompilation() });
+
+	const runtime = await import("../runtime/jsx-dev-runtime");
 	const evaluate = (code: string) => {
-		const target = { result: undefined };
-		Function("globalThis", code.replace(/^import .*spool\/jsx-dev-runtime.*;\n/gm, ""))(target);
+		const target = { result: undefined, __SPOOL_CONSUMED__: globalThis.__SPOOL_CONSUMED__ };
+		const names: string[] = [],
+			values: unknown[] = [];
+		const imports = parse(code, { sourceType: "module" }).program.body.filter(
+			(statement) => statement.type === "ImportDeclaration" && statement.source.value === "spool/jsx-dev-runtime",
+		);
+		for (const statement of imports) {
+			if (statement.type !== "ImportDeclaration") continue;
+			for (const spec of statement.specifiers) {
+				if (spec.type !== "ImportSpecifier") throw new Error("unexpected runtime import");
+				const name = spec.imported.type === "Identifier" ? spec.imported.name : spec.imported.value;
+				names.push(spec.local.name);
+				values.push(Reflect.get(runtime, name));
+			}
+		}
+		for (const statement of imports.reverse()) code = code.slice(0, statement.start!) + code.slice(statement.end!);
+		Function("globalThis", ...names, code)(target, ...values);
 		return target.result;
 	};
 	expect(evaluate(ordinary.bootJs)).toBe("set");

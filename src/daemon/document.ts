@@ -1242,6 +1242,10 @@ const canvasShimJs = `(() => {
 		if (!editing) return;
 		event.stopImmediatePropagation();
 		if (kind === "submit") event.preventDefault();
+if(kind === "input" && editing.sourceGeneration) {
+const config=window.__SPOOL__ || {};
+parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing.sourceGeneration,text:editing.el.innerText ?? editing.el.textContent ?? ""},"*");
+}
 	}, true);
 
 	// Swallow the release half too. Relay modifier releases explicitly because
@@ -1514,7 +1518,10 @@ const canvasShimJs = `(() => {
 			const reply = (result) => parent.postMessage({ spool: "source-reply", frame: config.frame, id: m.id, result }, "*");
 			if (!source) { reply(undefined); return; }
 			try {
-				if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation) : undefined); }
+				if (m.action === "inventory") reply(source.inventory());
+else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses));
+else if(m.action === "clear-feedback") {source.clearFeedback();reply(true);}
+else if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation) : undefined); }
 				else if (m.action === "complete") reply(source.complete(m.generation));
 				else if (m.action === "cancel") { source.cancel(m.generation); reply(true); }
 				else if (m.action === "preview") reply(source.preview(m.generation, m.text));

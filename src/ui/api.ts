@@ -23,7 +23,7 @@ import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "..
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
-import type { SourceOccurrence, SourceRead, SourceReceipt, SourceResult } from "../source-edit";
+import type { SourceInventory, SourceOccurrence, SourceRead, SourceReceipt, SourceResult } from "../source-edit";
 
 declare global {
 	interface Window {
@@ -1548,6 +1548,24 @@ export async function readSource(
 		return undefined;
 	}
 }
+export async function sourceReach(
+	project: string,
+	handle: string,
+	inventories: SourceInventory[],
+): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: { action: "reach", handle, inventories },
+		});
+		return res.ok
+			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export async function commitSource(project: string, read: SourceRead, text: string): Promise<SourceResult | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
