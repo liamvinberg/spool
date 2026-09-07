@@ -121,14 +121,14 @@ program
 	.command("check")
 	.description("check every HTML frame offline without starting spool")
 	.argument("[path]", "where the walk-up starts", ".")
-	.action((path: string) => {
+	.action(async (path: string) => {
 		const root = resolveProjectRoot(path);
 		if (root === undefined) {
 			throw new SpoolError(
 				`not inside a spool project — no design/canvas.json here or above; \`spool init\` starts one`,
 			);
 		}
-		const diagnostics = checkDesign(root);
+		const diagnostics = await checkDesign(root);
 		for (const diagnostic of diagnostics) {
 			process.stderr.write(
 				`${diagnostic.path}:${diagnostic.line}:${diagnostic.column} TS${diagnostic.code}: ${diagnostic.message}\n`,
