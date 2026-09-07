@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import type { ChangeEvent } from "./events";
+import type { ChangeEvent, SourceObservation } from "./events";
 import type { watchTree } from "./watch-tree";
 
 /**
@@ -206,4 +206,40 @@ describe("how long a watcher outlives its last subscriber", () => {
 		await vi.advanceTimersByTimeAsync(20_000);
 		expect(watcher.close).toHaveBeenCalledTimes(1);
 	});
+});
+
+it("keeps ordered source hints and known coverage loss beyond viewer linger", async () => {
+	vi.useFakeTimers();
+	const root = project();
+	const hub = createChangeHub();
+	const seen: SourceObservation[] = [];
+	const release = hub.observeSource(root, (event) => seen.push(event));
+	hub.subscribe(root, () => {})();
+	await vi.advanceTimersByTimeAsync(11_000);
+	expect(watcher.close).not.toHaveBeenCalled();
+	onChange?.("frames/hello/frame.tsx");
+	onChange?.("shared/tokens.css");
+	onChange?.(null);
+	onChange?.("frames/hello/frame.json");
+	expect(seen).toEqual([
+		{ kind: "named", path: join(root, "design/frames/hello/frame.tsx") },
+		{ kind: "named", path: join(root, "design/shared/tokens.css") },
+		{ kind: "unknown" },
+	]);
+	hub.forget(root);
+	expect(seen.at(-1)).toEqual({ kind: "lost" });
+	release();
+	hub.close();
+});
+it("reports a failed tree handle immediately and permits a new observation subscription", () => {
+	const root = project();
+	const hub = createChangeHub();
+	const seen: SourceObservation[] = [];
+	hub.observeSource(root, (event) => seen.push(event));
+	const fail = tree.watchTree.mock.calls.at(-1)?.[2] as (() => void) | undefined;
+	fail?.();
+	expect(seen).toEqual([{ kind: "lost" }]);
+	hub.observeSource(root, (event) => seen.push(event));
+	expect(tree.watchTree).toHaveBeenCalledTimes(2);
+	hub.close();
 });

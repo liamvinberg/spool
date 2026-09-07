@@ -1,0 +1,275 @@
+import { type ChildProcess, fork } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
+import { build as buildUi } from "vite";
+import { expect, it, onTestFinished } from "vitest";
+import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
+
+async function served(source: string, client: BundledHostClient, directory: string) {
+	const uiDir = join(makeTempDir(), "ui");
+	const project = await serveProject({ uiDir, agentEngines: [createSpoolEngine(directory, client)] });
+	writeFrame(project.root, "home", source);
+	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":700,"h":500}');
+	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
+	await buildUi({
+		configFile: join(process.cwd(), "vite.config.ts"),
+		logLevel: "silent",
+		build: { outDir: uiDir, emptyOutDir: true },
+	});
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	await page.goto(`${project.url}/p/${project.name}`);
+	const frame = page.frameLocator('iframe[title="home"]');
+	await expect.poll(() => frame.locator("#label").count(), { timeout: 30_000 }).toBe(1);
+	const file = join(project.root, "design/frames/home/frame.tsx");
+	const select = async () => {
+		await expect.poll(() => page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+		const box = await frame.locator("#label").boundingBox();
+		if (!box) throw new Error("label has no native box");
+		await page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
+		await page.mouse.click(box.x + 40, box.y + box.height / 2);
+		await page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
+		await expect
+			.poll(
+				async () => {
+					const response = await fetch(`${project.url}/api/p/${project.name}/selection`, {
+						headers: { "X-Spool-Control": project.controlToken },
+					});
+					const body = (await response.json()) as { selection?: { selector?: string }[] };
+					return body.selection?.[0]?.selector;
+				},
+				{ timeout: 15_000 },
+			)
+			.toBe("#label");
+		return box;
+	};
+	const edit = async () => {
+		const box = await select();
+		await page.mouse.click(box.x + 40, box.y + box.height / 2);
+		await expect.poll(() => frame.locator("#label").getAttribute("contenteditable")).toBe("plaintext-only");
+	};
+	return { page, frame, file, select, edit, project };
+}
+for (const order of ["agent first", "hand first"] as const) {
+	it(`preserves actual bundled HTTP edits and hand Undo/Redo through the served canvas: ${order}`, {
+		timeout: 180_000,
+	}, async () => {
+		const directory = makeTempDir();
+		const children: ChildProcess[] = [];
+		const client = new BundledHostClient(directory, (state) => {
+			const child = fork(fileURLToPath(new URL("./fixtures/bundled-provider-host.ts", import.meta.url)), [], {
+				cwd: state,
+				env: bundledEnvironment(state),
+				execArgv: ["--import", import.meta.resolve("tsx")],
+				stdio: ["ignore", "ignore", "ignore", "ipc"],
+			});
+			children.push(child);
+			return child;
+		});
+		onTestFinished(async () => {
+			for (const child of children)
+				if (child.exitCode === null && child.signalCode === null) {
+					const exited = once(child, "exit");
+					child.kill();
+					await exited;
+				}
+		});
+		await client.request({ kind: "connect", provider: "openai", key: "fixture-key" });
+		const f = await served(
+			'export default function Frame(){return <main style={{padding:40}}><h1 id="label">Hello world</h1><p id="body">Original body</p><input id="draft" defaultValue="keep" /></main>}',
+			client,
+			directory,
+		);
+		const supervisor = client.source;
+		if (!supervisor) throw new Error("daemon did not attach the source owner");
+		let readDone = false,
+			release = () => {};
+		const resumed = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		client.source = {
+			open: (options, generation) => {
+				const authority = supervisor.open(options, generation);
+				return {
+					revoke: () => authority.revoke(),
+					request: async (request) => {
+						const reply = await authority.request(request);
+						if (request.kind === "read-complete") {
+							readDone = true;
+							await resumed;
+						}
+						return reply;
+					},
+				};
+			},
+		};
+		await f.edit();
+		await f.page.keyboard.press("ControlOrMeta+a");
+		await f.page.keyboard.insertText("My words");
+		const turn = fetch(`${f.project.url}/api/p/${f.project.name}/agent/turn`, {
+			method: "POST",
+			headers: { "X-Spool-Control": f.project.controlToken, "content-type": "application/json" },
+			body: JSON.stringify({
+				engine: "spool",
+				thread: randomUUID(),
+				said: [
+					{
+						prompt: `file tools: ${JSON.stringify([
+							{ name: "read", arguments: { path: f.file } },
+							{
+								name: "edit",
+								arguments: { path: f.file, edits: [{ oldText: "Original body", newText: "Agent body" }] },
+							},
+						])}`,
+						selection: [],
+					},
+				],
+			}),
+		}).then(async (response) => {
+			expect(response.ok).toBe(true);
+			return response.text();
+		});
+		await expect.poll(() => readDone, { timeout: 20_000 }).toBe(true);
+		if (order === "agent first") {
+			release();
+			await turn;
+			expect(readFileSync(f.file, "utf8")).toContain("Agent body");
+			expect(readFileSync(f.file, "utf8")).toContain("Hello world");
+		}
+		await f.page.keyboard.press("Enter");
+		await expect
+			.poll(
+				async () => ({
+					source: readFileSync(f.file, "utf8"),
+					notice: await f.page.locator("[data-hand-notice]").allTextContents(),
+					editing: await f.frame.locator("#label").getAttribute("contenteditable"),
+				}),
+				{ timeout: 20_000 },
+			)
+			.toEqual({ source: expect.stringContaining("My words"), notice: [], editing: null });
+		await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+		if (order === "hand first") {
+			release();
+			await turn;
+		}
+		await expect.poll(() => f.frame.locator("#body").textContent(), { timeout: 20_000 }).toBe("Agent body");
+		await expect
+			.poll(async () => ({
+				text: await f.frame.locator("#label").textContent(),
+				notice: await f.page.locator("[data-hand-notice]").allTextContents(),
+			}))
+			.toMatchObject({ text: "My words" });
+		await f.page.keyboard.press("ControlOrMeta+z");
+		await expect.poll(() => readFileSync(f.file, "utf8")).toContain("Hello world");
+		await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Hello world");
+		expect(await f.frame.locator("#body").textContent()).toBe("Agent body");
+		await f.page.keyboard.press("ControlOrMeta+Shift+z");
+		await expect.poll(() => f.frame.locator("#label").textContent()).toBe("My words");
+		expect(readFileSync(f.file, "utf8")).toContain("Agent body");
+		const source = readFileSync(f.file, "utf8");
+		await f.edit();
+		await f.page.keyboard.press("ControlOrMeta+a");
+		await f.page.keyboard.insertText("cancelled intent");
+		await f.page.keyboard.press("Escape");
+		expect(readFileSync(f.file, "utf8")).toBe(source);
+		if (order === "agent first") {
+			await f.edit();
+			await f.page.keyboard.press("ControlOrMeta+a");
+			await f.page.keyboard.insertText("keep my conflict intent");
+			const conflict = await fetch(`${f.project.url}/api/p/${f.project.name}/agent/turn`, {
+				method: "POST",
+				headers: { "X-Spool-Control": f.project.controlToken, "content-type": "application/json" },
+				body: JSON.stringify({
+					engine: "spool",
+					thread: randomUUID(),
+					said: [
+						{
+							selection: [],
+							prompt: `file tools: ${JSON.stringify([
+								{ name: "read", arguments: { path: f.file } },
+								{
+									name: "edit",
+									arguments: { path: f.file, edits: [{ oldText: "My words", newText: "Agent words" }] },
+								},
+							])}`,
+						},
+					],
+				}),
+			});
+			expect(conflict.ok).toBe(true);
+			await conflict.text();
+			await f.page.keyboard.press("Enter");
+			await expect
+				.poll(() => f.page.locator('[data-hand-notice="blocked"]').textContent())
+				.toContain("keep my conflict intent");
+			expect(readFileSync(f.file, "utf8")).toContain("Agent words");
+			await f.page.getByRole("button", { name: "Dismiss notice" }).click();
+			await f.page.keyboard.press("ControlOrMeta+z");
+			await expect.poll(() => f.page.locator('[data-hand-notice="blocked"]').textContent()).toContain("touched");
+			await f.page.keyboard.press("ControlOrMeta+z");
+			expect(readFileSync(f.file, "utf8")).toContain("Agent words");
+		} else {
+			let prepared = false,
+				continuePrepare = () => {};
+			const gate = new Promise<void>((resolve) => {
+				continuePrepare = resolve;
+			});
+			client.source = {
+				open: (options, generation) => {
+					const authority = supervisor.open(options, generation);
+					return {
+						revoke: () => authority.revoke(),
+						request: async (request) => {
+							const response = await authority.request(request);
+							if (request.kind === "prepare") {
+								prepared = true;
+								await gate;
+							}
+							return response;
+						},
+					};
+				},
+			};
+			const namedTurn = randomUUID();
+			const cancelled = fetch(`${f.project.url}/api/p/${f.project.name}/agent/turn`, {
+				method: "POST",
+				headers: { "X-Spool-Control": f.project.controlToken, "content-type": "application/json" },
+				body: JSON.stringify({
+					engine: "spool",
+					thread: randomUUID(),
+					turn: namedTurn,
+					said: [
+						{
+							selection: [],
+							prompt: `file tools: ${JSON.stringify([
+								{ name: "read", arguments: { path: f.file } },
+								{
+									name: "edit",
+									arguments: { path: f.file, edits: [{ oldText: "My words", newText: "cancelled agent" }] },
+								},
+							])}`,
+						},
+					],
+				}),
+			}).then((response) => response.text());
+			await expect.poll(() => prepared).toBe(true);
+			const stopped = await fetch(`${f.project.url}/api/p/${f.project.name}/agent/interrupt`, {
+				method: "POST",
+				headers: { "X-Spool-Control": f.project.controlToken, "content-type": "application/json" },
+				body: JSON.stringify({ turn: namedTurn }),
+			});
+			expect(stopped.status).toBe(204);
+			continuePrepare();
+			await cancelled;
+			expect(readFileSync(f.file, "utf8")).toBe(source);
+		}
+
+		expect(readFileSync(join(directory, "provider-calls.jsonl"), "utf8")).not.toContain('"handle"');
+	});
+}
