@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { OffprintLanding } from "shared/ui/site/demo-apps/landing";
 import { ShaderField } from "./field";
 import breathe from "./shaders/breathe.glsl";
@@ -32,28 +31,15 @@ const directions = {
 export type ShaderTake = keyof typeof directions;
 
 function HeroArt({ take }: { take: ShaderTake }) {
-	const [paused, setPaused] = useState(false);
 	const direction = directions[take];
 	return (
-		<>
-			<div className="ss-field" data-direction={take} aria-hidden="true">
-				<ShaderField fragment={direction.fragment} paused={paused} />
-			</div>
-			<aside className="ss-study" aria-label="Shader study controls">
-				<div className="ss-study-heading">
-					<span>{direction.n} / {direction.name}</span>
-					<button type="button" aria-label={paused ? "Play shader motion" : "Pause shader motion"} aria-pressed={paused} onClick={() => setPaused(!paused)}>
-						{paused ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 3 8 5-8 5Z" fill="currentColor" /></svg> : <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 4v8m6-8v8" stroke="currentColor" strokeWidth="1.5" /></svg>}
-					</button>
-				</div>
-				<p>{direction.note}</p>
-				<small>{paused ? "paused" : direction.input}</small>
-			</aside>
-		</>
+		<div className="ss-field" data-direction={take} aria-hidden="true">
+			<ShaderField fragment={direction.fragment} paused={false} />
+		</div>
 	);
 }
 
-/** The selected landing, unchanged below its hero. Controls belong only to the study. */
+/** The selected landing, unchanged below its hero. */
 export function ShaderLanding({ take }: { take: ShaderTake }) {
 	return <div className="ss-page" data-shader={take}><OffprintLanding take="play" heroArt={<HeroArt take={take} />} /></div>;
 }
