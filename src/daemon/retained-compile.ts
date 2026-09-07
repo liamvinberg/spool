@@ -218,8 +218,9 @@ export function lowerLiterals(
 					: undefined;
 		if (
 			fn.type !== "ClassMethod" &&
-			!(name && /^[A-Z]/.test(name)) &&
-			declaration?.type !== "ExportDefaultDeclaration"
+			!name &&
+			declaration?.type !== "ExportDefaultDeclaration" &&
+			declaration?.type !== "CallExpression"
 		)
 			return;
 
@@ -356,7 +357,7 @@ export function lowerLiterals(
 					spec.type === "ImportSpecifier" &&
 					spec.importKind !== "type" &&
 					spec.imported.type === "Identifier" &&
-					["createElement", "cloneElement"].includes(spec.imported.name)
+					["createElement", "cloneElement", "Children"].includes(spec.imported.name)
 				)
 					factories.set(spec.local.name, spec.imported.name);
 				if (spec.type === "ImportNamespaceSpecifier" || spec.type === "ImportDefaultSpecifier")
@@ -376,11 +377,11 @@ export function lowerLiterals(
 				: callee.type === "MemberExpression" &&
 						!callee.computed &&
 						callee.object.type === "Identifier" &&
-						factories.get(callee.object.name) === "namespace" &&
+						["namespace", "Children"].includes(factories.get(callee.object.name) ?? "") &&
 						callee.property.type === "Identifier"
 					? callee.property.name
 					: undefined;
-		if (!api || !["createElement", "cloneElement"].includes(api)) return;
+		if (!api || !["createElement", "cloneElement", "toArray"].includes(api)) return;
 		let unsafe = false;
 		walk(node, (part) => {
 			if (["AwaitExpression", "YieldExpression", "Super"].includes(part.type)) unsafe = true;
@@ -394,6 +395,7 @@ export function lowerLiterals(
 			text: `${prefix}Factory(${JSON.stringify(id)},()=>`,
 		});
 		patches.push({ start: position(node).end, end: position(node).end, text: ")", order: 2 });
+		if (api === "toArray") return;
 		const type = node.arguments[0];
 		if (
 			api === "createElement" &&
@@ -420,8 +422,9 @@ export function lowerLiterals(
 					? declaration.id.name
 					: undefined;
 		if (
-			!(name && /^[A-Z]/.test(name)) &&
+			!name &&
 			declaration?.type !== "ExportDefaultDeclaration" &&
+			declaration?.type !== "CallExpression" &&
 			fn.type !== "ClassMethod"
 		)
 			return;
@@ -515,8 +518,15 @@ export function lowerLiterals(
 				});
 			}
 		}
-		if (!name) throw new Error("retained component has no stable local binding");
-		const use = `${prefix}Use(${JSON.stringify(owner)},${name});`;
+		if (!name) {
+			patches.push({
+				start: position(fn).start,
+				end: position(fn).start,
+				text: `${prefix}Component(${JSON.stringify(owner)},`,
+			});
+			patches.unshift({ start: position(fn).end, end: position(fn).end, text: ")", order: 0 });
+		}
+		const use = `${prefix}Use(${JSON.stringify(owner)}${name ? `,${name}` : ""});`;
 		const body = fn.body;
 		if (body.type === "BlockStatement")
 			patches.push({ start: position(body).start + 1, end: position(body).start + 1, text: use });
@@ -563,7 +573,7 @@ export function lowerLiterals(
 	);
 	const imports =
 		functions.size || factory > 0
-			? `\nimport {sourceValue as ${prefix}Value,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom} from "spool/jsx-dev-runtime";`
+			? `\nimport {sourceValue as ${prefix}Value,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom} from "spool/jsx-dev-runtime";`
 			: "";
 	return { code: transformed + imports, cells, shape, stamps, locations };
 }

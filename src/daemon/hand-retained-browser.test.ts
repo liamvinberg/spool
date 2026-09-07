@@ -6,6 +6,28 @@ import { expect, it, onTestFinished } from "vitest";
 import type { SourcePublication, UseOutcome } from "../source-edit";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
+it.each([
+	["memo arrow", "memo(()=>"],
+	["memo function", "memo(function(){return "],
+	["forwarded arrow", "forwardRef((props,ref)=>"],
+])("retains an anonymous %s without changing its name or native input", { timeout: 120000 }, async (name, start) => {
+	const source = `import {memo,forwardRef,useRef} from 'react';const Label=${start}<h1 id="label">Before</h1>${name === "memo function" ? "}" : ""});globalThis.componentName=Label.type?.name??Label.render?.name;export default function Frame(){return <main style={{padding:40}}><Label/><input id="draft" defaultValue="initial"/></main>}`;
+	const f = await served(source);
+	expect(await f.frame.locator("#label").evaluate(() => Reflect.get(globalThis, "componentName"))).toBe("");
+	await f.frame.locator("#draft").fill("kept");
+	await f.edit();
+	await replace(f.page, "After");
+	await f.page.keyboard.press("Enter");
+	await expect.poll(() => readFileSync(f.file, "utf8")).toContain("After");
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	expect(await f.frame.locator("#draft").inputValue()).toBe("kept");
+	await f.page.mouse.click(5, 5);
+	await f.page.keyboard.press("ControlOrMeta+z");
+	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
+	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Before");
+	expect(await f.frame.locator("#draft").inputValue()).toBe("kept");
+});
+
 const APP = `import {useEffect,useMemo,useState} from "react";
 export default function Frame(){
  const [count,setCount]=useState(0);

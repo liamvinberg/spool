@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	combineUseOutcomes,
 	type SourceInventory,
@@ -15,6 +15,8 @@ import type { PickedHit } from "./protocol";
 /** Calls belong to the original iframe WindowProxy, never just a frame name. */
 export function useSourceDelivery(project: string, iframes: RefObject<Map<string, HTMLIFrameElement>>) {
 	const observer = useRef(crypto.randomUUID());
+	const [liveFrames, setLiveFrames] = useState<ReadonlySet<string>>(new Set());
+	const descriptionVersion = useRef(0);
 	const inverseHolds = useRef(new Map<string, string[]>());
 	const prepared = useRef(new Map<number, { initiator: string; frames: string[] }>());
 	const pending = useRef(
@@ -130,13 +132,25 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	);
 	const describe = useCallback(
 		async (frame: string, selector: string) => {
+			const version = ++descriptionVersion.current;
+			setLiveFrames(new Set(iframes.current.keys()));
 			const original = await request<SourceOccurrence>(frame, { action: "inspect", selector });
-			return original ? describeSource(project, frame, original, await inventory(original.field)) : undefined;
+			const description = original
+				? await describeSource(project, frame, original, await inventory(original.field))
+				: undefined;
+			if (version === descriptionVersion.current)
+				setLiveFrames(new Set(description?.reach?.uses.map((use) => use.frame) ?? []));
+			return description;
 		},
-		[project, request, inventory],
+		[project, request, inventory, iframes],
 	);
 
 	return {
+		liveFrames,
+		releaseDescription: useCallback(() => {
+			descriptionVersion.current++;
+			setLiveFrames(new Set());
+		}, []),
 		holdInverse: useCallback((key: string, frames: string[]) => {
 			inverseHolds.current.set(key, frames);
 		}, []),

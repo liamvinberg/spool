@@ -290,7 +290,13 @@ export function installObserver(reconciled = true, lazyChoices = true): void {
 			if (this.failure) throw new Error(this.failure);
 			const result = hosts.get(node);
 			if (!result || !node.isConnected) throw new Error("not a committed observed host");
-			return result;
+			return JSON.parse(
+				JSON.stringify(result, (key, value: unknown) =>
+					(key === "source" || key === "renderedSource") && typeof value === "string"
+						? (globalThis.__SPOOL_VALUES__?.remap(value) ?? value)
+						: value,
+				),
+			) as Observation;
 		},
 		node(occurrence) {
 			return nodes.get(occurrence);
@@ -309,7 +315,10 @@ export function installObserver(reconciled = true, lazyChoices = true): void {
 					const observation = observe(fiber, parents);
 					hosts.set(fiber.stateNode, observation);
 					if (!observation.refusal && observation.source)
-						fiber.stateNode.setAttribute("data-spool-source", observation.source);
+						fiber.stateNode.setAttribute(
+							"data-spool-source",
+							globalThis.__SPOOL_VALUES__?.remap(observation.source) ?? observation.source,
+						);
 					nodes.set(observation.occurrence, fiber.stateNode);
 				}
 				walk(fiber.child, [...parents, fiber]);

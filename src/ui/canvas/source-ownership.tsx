@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 import type { SourceDescription, SourceUse } from "../../source-edit";
 import { FAINT, VALUE } from "./properties-fields";
 
+function ownershipLabel(description: SourceDescription, frame: string): string {
+	const multiple = (description.reach?.uses.length ?? 0) > 1 || !!description.reach?.unmounted.length;
+	if (description.scope === "definition" && (!description.source.startsWith(`frames/${frame}/`) || multiple))
+		return "shared definition";
+	return description.repeated || multiple ? "repeated call site" : "this use";
+}
+
 export interface OwnershipActions {
 	describe(frame: string, selector: string): Promise<SourceDescription | undefined>;
+	release(): void;
 	highlight(uses: SourceUse[]): void;
 	reveal(frame: string, use?: SourceUse): void;
 }
@@ -20,18 +28,18 @@ export function SourceOwnership({
 	name: string;
 	revision: number;
 	actions: OwnershipActions;
-	onSupport(identity: string | undefined): void;
+	onSupport(value: { identity: string; label: string } | undefined): void;
 }) {
 	const [description, setDescription] = useState<SourceDescription>();
 	const [open, setOpen] = useState(false);
-	const { describe, highlight, reveal } = actions;
+	const { describe, highlight, reveal, release } = actions;
 	// biome-ignore lint/correctness/useExhaustiveDependencies(revision): refresh disclosure after acknowledged source changes.
 	useEffect(() => {
 		let live = true;
 		void describe(frame, selector).then((value) => {
 			if (live) {
 				setDescription(value);
-				onSupport(value ? `${frame} ${selector}` : undefined);
+				onSupport(value ? { identity: `${frame} ${selector}`, label: ownershipLabel(value, frame) } : undefined);
 			}
 		});
 		return () => {
@@ -39,6 +47,7 @@ export function SourceOwnership({
 		};
 	}, [describe, frame, selector, revision, onSupport]);
 	useEffect(() => () => highlight([]), [highlight]);
+	useEffect(() => () => release(), [release]);
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
@@ -64,10 +73,7 @@ export function SourceOwnership({
 	if (!description) return null;
 	const reach = description.reach;
 	const uses = reach?.uses ?? [];
-	const shared =
-		description.scope === "definition" &&
-		(!description.source.startsWith(`frames/${frame}/`) || uses.length > 1 || !!reach?.unmounted.length);
-	const label = shared ? "shared definition" : description.repeated ? "repeated call site" : "this use";
+	const label = ownershipLabel(description, frame);
 	return (
 		<div data-source-ownership="" className="shrink-0 border-border border-b">
 			<div className="flex min-h-[42px] items-center gap-2 px-3 py-2">

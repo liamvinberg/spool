@@ -268,7 +268,7 @@ function Body({
 	const [opened, setOpened] = useState<Scope[]>([]);
 
 	const element = held?.kind === "element" ? held : null;
-	const [sourceSupported, setSourceSupported] = useState<string>();
+	const [sourceSupported, setSourceSupported] = useState<{ identity: string; label: string }>();
 	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const filed = read?.className ?? "";
@@ -375,7 +375,7 @@ function Body({
 				rungs={rungs}
 				acts={acts}
 				onCollapse={onCollapse}
-				sourceSupported={sourceSupported === identity}
+				sourceSupported={sourceSupported?.identity === identity}
 			/>
 			{element && acts.ownership ? (
 				<SourceOwnership
@@ -426,6 +426,7 @@ function Body({
 				    same rung, so an edit does not close what you opened */}
 				{element && acts.text ? (
 					<ContentText
+						scope={sourceSupported?.identity === identity ? sourceSupported.label : undefined}
 						key={`${identity}:${revision}`}
 						frame={element.frame}
 						selector={element.selector}
