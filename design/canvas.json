@@ -613,6 +613,10 @@
 		"site/shaders": {
 			"x": 3099,
 			"y": 5432
+		},
+		"site/shaders/bloom": {
+			"x": 18320,
+			"y": 80
 		}
 	}
 }
