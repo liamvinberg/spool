@@ -126,7 +126,7 @@ export function ShaderField({ fragment, paused }: { fragment: string; paused: bo
 		const observer = new ResizeObserver(resize);
 		observer.observe(container);
 		const intersection = new IntersectionObserver(([entry]) => {
-			visible = entry.isIntersecting;
+			visible = entry?.isIntersecting ?? false;
 			sync();
 		});
 		intersection.observe(container);

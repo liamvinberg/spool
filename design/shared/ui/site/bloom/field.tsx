@@ -162,7 +162,7 @@ export function BloomField({ take, paused }: { take: BloomTake; paused: boolean 
 		resize.observe(holder);
 		resize.observe(main);
 		const intersection = new IntersectionObserver(([entry]) => {
-			visible = entry.isIntersecting;
+			visible = entry?.isIntersecting ?? false;
 			sync();
 		});
 		intersection.observe(holder);
