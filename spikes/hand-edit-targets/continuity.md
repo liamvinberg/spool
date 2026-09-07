@@ -20,8 +20,9 @@ The memo counterexample walks the committed root, not the host's possibly old
 Fiber. React DOM 19.2.7 production can retain both old props fields after an
 equal-prop call switch. Both default and custom comparators refuse attribution.
 Clones, cached children, indirect/named slots and unobserved ordinary element
-creation retain named refusals. Lazy bindings, multiple export-star branches
-and nested namespace re-exports remain unproved. These refusals are mechanism
+creation retain named refusals. The original lazy and composite-binding gaps are now exercised further in
+[the module-binding probes](modules.md). Conditional or transformed lazy
+loaders still have no source-origin proof. These refusals are mechanism
 limits, not a revised product support boundary.
 
 `plain-runtime.tsx` is the independent ordinary-JSX comparison baseline. It
