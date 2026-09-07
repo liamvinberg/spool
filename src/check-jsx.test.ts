@@ -6,7 +6,7 @@ import { messages } from "./check-test-harness";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 
 describe("design JSX runtimes", () => {
-	it("treats a prefix-mapped JSX import source as a permissive external", () => {
+	it("treats a prefix-mapped JSX import source as a permissive external", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/importmap.json", '{ "imports": { "mapped/": "https://example.test/mapped/" } }\n');
@@ -16,10 +16,10 @@ describe("design JSX runtimes", () => {
 			"/** @jsxImportSource mapped */\nexport default function Home() { return <mapped-widget runtimeOnly />; }\n",
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("only applies the last active leading JSX import source pragma", () => {
+	it("only applies the last active leading JSX import source pragma", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/superseded-jsx-runtime-secret.ts";
@@ -30,10 +30,10 @@ describe("design JSX runtimes", () => {
 			`/** @jsxImportSource ${secret} */\n/** @jsxImportSource mapped */\nexport default function Home() { return <mapped-widget runtimeOnly />; }\n`,
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("checks the local JSX development runtime used by the live compiler", () => {
+	it("checks the local JSX development runtime used by the live compiler", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(
@@ -47,10 +47,10 @@ describe("design JSX runtimes", () => {
 			'/** @jsxImportSource ../../shared/custom */\nexport default function Home() { return <dev-only selected="yes" />; }\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("does not accept a production-only JSX runtime that the live compiler cannot load", () => {
+	it("does not accept a production-only JSX runtime that the live compiler cannot load", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(
@@ -64,36 +64,39 @@ describe("design JSX runtimes", () => {
 			"/** @jsxImportSource ../../shared/custom */\nexport default function Home() { return <main />; }\n",
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).not.toEqual([]);
 		expect(result.join("\n")).toContain("jsx-dev-runtime");
 	});
 
-	it.each(["ts", "tsx"] as const)("preflights a confined JSX development runtime implemented in %s", (extension) => {
-		const root = makeTempDir();
-		markProject(root);
-		const secret = `/private/transitive-jsx-dev-runtime-${extension}-secret.ts`;
-		writeDesignFile(
-			root,
-			`shared/custom/jsx-dev-runtime.${extension}`,
-			`import ${JSON.stringify(secret)};\nexport function jsxDEV(): unknown { return undefined; }\nexport namespace JSX { export interface IntrinsicElements { [element: string]: unknown } }\n`,
-		);
-		writeFrame(
-			root,
-			"home",
-			"/** @jsxImportSource ../../shared/custom */\nexport default function Home() { return <section>custom</section>; }\n",
-		);
+	it.each(["ts", "tsx"] as const)(
+		"preflights a confined JSX development runtime implemented in %s",
+		async (extension) => {
+			const root = makeTempDir();
+			markProject(root);
+			const secret = `/private/transitive-jsx-dev-runtime-${extension}-secret.ts`;
+			writeDesignFile(
+				root,
+				`shared/custom/jsx-dev-runtime.${extension}`,
+				`import ${JSON.stringify(secret)};\nexport function jsxDEV(): unknown { return undefined; }\nexport namespace JSX { export interface IntrinsicElements { [element: string]: unknown } }\n`,
+			);
+			writeFrame(
+				root,
+				"home",
+				"/** @jsxImportSource ../../shared/custom */\nexport default function Home() { return <section>custom</section>; }\n",
+			);
 
-		const result = messages(root);
+			const result = await messages(root);
 
-		expect(result).toEqual([
-			`design/shared/custom/jsx-dev-runtime.${extension}:1:8 TS2307: Absolute local imports are outside design/`,
-		]);
-		expect(result.join("\n")).not.toContain(secret);
-	});
+			expect(result).toEqual([
+				`design/shared/custom/jsx-dev-runtime.${extension}:1:8 TS2307: Absolute local imports are outside design/`,
+			]);
+			expect(result.join("\n")).not.toContain(secret);
+		},
+	);
 
-	it("pins the runtime-selected TSX JSX development runtime when its adjacent TS runtime is explicitly reachable", () => {
+	it("pins the runtime-selected TSX JSX development runtime when its adjacent TS runtime is explicitly reachable", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(
@@ -112,10 +115,10 @@ describe("design JSX runtimes", () => {
 			'/** @jsxImportSource ../../shared/custom */\nimport { explicitRuntime } from "../../shared/custom/jsx-dev-runtime.ts";\nexport default function Home() { return <runtime-only selected={explicitRuntime} />; }\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("preflights a JSX development runtime reached through a backslash-spelled JSX import source", () => {
+	it("preflights a JSX development runtime reached through a backslash-spelled JSX import source", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/transitive-backslash-jsx-dev-runtime-secret.ts";
@@ -131,7 +134,7 @@ describe("design JSX runtimes", () => {
 			`/** @jsxImportSource ${importSource} */\nexport default function Home() { return <section>custom</section>; }\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual([
 			"design/shared/custom/jsx-dev-runtime.ts:1:8 TS2307: Absolute local imports are outside design/",
@@ -139,7 +142,7 @@ describe("design JSX runtimes", () => {
 		expect(result.join("\n")).not.toContain(secret);
 	});
 
-	it("blocks a confined JSX development runtime that escapes through a symlink", () => {
+	it("blocks a confined JSX development runtime that escapes through a symlink", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -151,13 +154,13 @@ describe("design JSX runtimes", () => {
 			"/** @jsxImportSource ../../shared/custom */\nexport default function Home() { return <section>custom</section>; }\n",
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:22 TS2307: Relative imports outside design/"]);
 		expect(result.join("\n")).not.toContain(trusted);
 	});
 
-	it("reports a source-local diagnostic for an overlong confined JSX import source", () => {
+	it("reports a source-local diagnostic for an overlong confined JSX import source", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/keep.ts", "export const keep = true;\n");
@@ -168,14 +171,14 @@ describe("design JSX runtimes", () => {
 			`/** @jsxImportSource ../../shared/${segment} */\nexport default function Home() { return <section>custom</section>; }\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:22 TS2307: Filesystem read failed (ENAMETOOLONG)"]);
 		expect(result.join("\n")).not.toContain(root);
 		expect(result.join("\n")).not.toContain(segment);
 	});
 
-	it("blocks an absolute JSX import source without leaking it", () => {
+	it("blocks an absolute JSX import source without leaking it", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -185,7 +188,7 @@ describe("design JSX runtimes", () => {
 			`/** @jsxImportSource ${trusted} */\nexport default function Home() { return <section>blocked</section>; }\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("design/frames/home/frame.tsx:1:");
