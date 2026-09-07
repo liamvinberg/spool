@@ -194,7 +194,9 @@ it.each(positives)(
 		const frozen = JSON.stringify(original);
 		expect(original.value).toBe("Before");
 		expect(original.scope).toBe(name === "primitive" ? "call-site" : "definition");
-		expect(original.source).toMatch(/^shared\/flow\.tsx:1:\d+$/);
+		expect(original.source).toBe(
+			`shared/flow.tsx:1:${source.indexOf(name === "primitive" ? "<Child label=" : '<span id="label"') + 1}`,
+		);
 		expect(original.original.occurrence).not.toBe("");
 		expect(original.original.context).not.toBe("");
 		expect(original.role).toBe(name === "primitive" ? "literal-attribute" : "literal-child");
@@ -207,7 +209,6 @@ it.each(positives)(
 			const action: unknown = route.request().postDataJSON()?.action;
 			if (action !== "commit" && action !== "inverse") return route.continue();
 			const response = await route.fetch();
-
 			await f.frame.locator("#draft").evaluate((el) => {
 				if (!(el instanceof HTMLInputElement)) throw new Error("no input");
 				el.value = "Kept independent";
