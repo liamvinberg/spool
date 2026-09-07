@@ -39,7 +39,7 @@ export function rewriteConsumed(code: string): string {
 			n.type === "ImportDeclaration" &&
 			n.importKind !== "type" &&
 			n.source.value !== "react" &&
-			!n.source.value.includes("runtime")
+			!["react/jsx-runtime", "react/jsx-dev-runtime", "spool/jsx-dev-runtime"].includes(n.source.value)
 		) {
 			let namespace = `__consumedImport${prefixes.length}`;
 			while (identifiers.has(namespace)) namespace += "_";
