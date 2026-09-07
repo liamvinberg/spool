@@ -273,3 +273,91 @@ for (const order of ["agent first", "hand first"] as const) {
 		expect(readFileSync(join(directory, "provider-calls.jsonl"), "utf8")).not.toContain('"handle"');
 	});
 }
+it("shows a real lost agent write acknowledgment in the canvas without replaying and keeps the next draft", {
+	timeout: 180_000,
+}, async () => {
+	const directory = makeTempDir();
+	const children: ChildProcess[] = [];
+	const client = new BundledHostClient(directory, (state) => {
+		const child = fork(fileURLToPath(new URL("./fixtures/bundled-provider-host.ts", import.meta.url)), [], {
+			cwd: state,
+			env: bundledEnvironment(state),
+			execArgv: ["--import", import.meta.resolve("tsx")],
+			stdio: ["ignore", "ignore", "ignore", "ipc"],
+		});
+		children.push(child);
+		return child;
+	});
+	onTestFinished(async () => {
+		for (const child of children)
+			if (child.exitCode === null && child.signalCode === null) {
+				const exited = once(child, "exit");
+				child.kill();
+				await exited;
+			}
+	});
+	await client.request({ kind: "connect", provider: "openai", key: "fixture-key" });
+	const f = await served(
+		'export default () => <main><h1 id="label">Hello world</h1><p id="body">Original body</p></main>',
+		client,
+		directory,
+	);
+	const supervisor = client.source;
+	if (!supervisor) throw new Error("missing actual source owner");
+	let replaced = false,
+		release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	client.source = {
+		open: (options, generation) => {
+			const authority = supervisor.open(options, generation);
+			return {
+				revoke: () => authority.revoke(),
+				unknown: () => authority.unknown?.() ?? false,
+				request: async (request) => {
+					const response = await authority.request(request);
+					if (request.kind === "replace") {
+						replaced = true;
+						await held;
+					}
+					return response;
+				},
+			};
+		},
+	};
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	const rail = f.page.locator("[data-agent-rail]");
+	const draft = rail.locator("textarea");
+	const send = async (from: string, to: string) => {
+		await draft.fill(
+			`file tools: ${JSON.stringify([
+				{ name: "read", arguments: { path: f.file } },
+				{ name: "edit", arguments: { path: f.file, edits: [{ oldText: from, newText: to }] } },
+			])}`,
+		);
+		await draft.press("Enter");
+	};
+	await send("Original body", "Agent body");
+	await expect.poll(() => replaced, { timeout: 20_000 }).toBe(true);
+	expect(readFileSync(f.file, "utf8")).toContain("Agent body");
+	await draft.fill("Keep this separate next request.");
+	const host = children.at(-1);
+	if (!host) throw new Error("missing real host");
+	const exited = once(host, "exit");
+	host.kill("SIGKILL");
+	await exited;
+	release();
+	await expect.poll(() => rail.textContent()).toContain("may have saved and has not been retried");
+	expect(await draft.inputValue()).toBe("Keep this separate next request.");
+	const calls = readFileSync(join(directory, "provider-calls.jsonl"), "utf8");
+	await f.page.reload();
+	await expect.poll(() => rail.textContent()).toContain("may have saved and has not been retried");
+	expect(await draft.inputValue()).toBe("Keep this separate next request.");
+	expect(readFileSync(join(directory, "provider-calls.jsonl"), "utf8")).toBe(calls);
+	expect(readFileSync(f.file, "utf8")).toContain("Agent body");
+	client.source = supervisor;
+	await send("Agent body", "Explicit retry");
+	await expect.poll(() => readFileSync(f.file, "utf8"), { timeout: 20_000 }).toContain("Explicit retry");
+	await expect.poll(() => f.frame.locator("#body").textContent()).toBe("Explicit retry");
+});
