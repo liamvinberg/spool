@@ -29,6 +29,7 @@ interface OriginalRead {
 	file: string;
 }
 interface Receipt {
+	operation: symbol;
 	coverage: number;
 	root: string;
 	frame: string;
@@ -230,7 +231,12 @@ export function createSourceOwner(
 			return { ok: false, reason: reason(error) };
 		}
 	}
-	async function publish(held: OriginalRead, next: string, executed?: SpanPatch): Promise<SourceResult> {
+	async function publish(
+		held: OriginalRead,
+		next: string,
+		executed?: SpanPatch,
+		inverseOf?: symbol,
+	): Promise<SourceResult> {
 		valid(held.root, held.compilation);
 		if (held.coverage !== (coverage.get(held.root) ?? 0))
 			throw new Error("source observation was lost before saving");
@@ -269,12 +275,19 @@ export function createSourceOwner(
 		writeAtomic(held.file, next);
 		const after = readInput(held.file);
 		const forward = executed ?? spanBetween(next, before);
-		journal.record(held.file, input, after, [{ ...forward, before: before.slice(forward.start, forward.end) }]);
+		const operation = journal.record(
+			held.file,
+			input,
+			after,
+			[{ ...forward, before: before.slice(forward.start, forward.end) }],
+			inverseOf,
+		);
 		frozen.set(held.file, after);
 		for (const [file, input] of frozen) continuity.set(file, input);
 		const receipt: SourceReceipt = { owner, handle: randomUUID() };
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
+			operation,
 			coverage: held.coverage,
 			root: held.root,
 			frame: held.frame,
@@ -304,27 +317,6 @@ export function createSourceOwner(
 			if (retained.packet.shape !== held.compilation.packet.shape)
 				throw new Error("saved source has a different executable shape");
 			inverse.compilation = retained;
-			// A coordinated inverse can restore an earlier receipt's complete input
-			// bytes. Advance that live receipt to this publication and file identity.
-			for (const receipt of receipts.values()) {
-				if (receipt.retired || receipt.root !== held.root || receipt.frame !== held.frame) continue;
-				if (receipt.compilation.inputs.size !== retained.inputs.size) continue;
-				if (
-					[...receipt.compilation.configuration].some(([file, input]) => {
-						const current = retained.configuration.get(file);
-						return !current || !sameInput(input, current);
-					})
-				) {
-					receipt.retired = true;
-					continue;
-				}
-				if (
-					[...receipt.compilation.inputs].every(([file, input]) =>
-						retained.inputs.get(file)?.bytes.equals(input.bytes),
-					)
-				)
-					receipt.compilation = retained;
-			}
 			let release = () => {};
 			const done = new Promise<void>((resolve) => {
 				release = resolve;
@@ -438,6 +430,7 @@ export function createSourceOwner(
 					},
 					applySpan(journal.current(held.file, input).bytes.toString("utf8"), transformed),
 					transformed,
+					held.operation,
 				);
 			} catch (error) {
 				if (held) held.retired = true;
@@ -470,6 +463,9 @@ export function createSourceOwner(
 		const canonicalRoot = realpathSync(root);
 		const rootStat = lstatSync(canonicalRoot);
 		const rootIdentity = `${rootStat.dev}:${rootStat.ino}`;
+		const canonicalDesign = realDesignDir(root);
+		const designStat = lstatSync(canonicalDesign);
+		const designIdentity = `${designStat.dev}:${designStat.ino}`;
 		function ancestors(path: string): string {
 			const identities: string[] = [];
 			for (let directory = dirname(path); ; directory = dirname(directory)) {
@@ -522,12 +518,15 @@ export function createSourceOwner(
 		function check(): void {
 			try {
 				const stat = lstatSync(root);
+				const design = lstatSync(canonicalDesign);
 				if (
 					closed ||
 					unobserved.has(root) ||
 					!active ||
 					!alive() ||
 					realpathSync(root) !== canonicalRoot ||
+					realDesignDir(root) !== canonicalDesign ||
+					`${design.dev}:${design.ino}` !== designIdentity ||
 					`${stat.dev}:${stat.ino}` !== rootIdentity
 				)
 					throw new Error("the source session is no longer available");
@@ -539,7 +538,7 @@ export function createSourceOwner(
 
 		function target(path: string): boolean {
 			check();
-			const part = relative(join(canonicalRoot, "design"), path);
+			const part = relative(canonicalDesign, path);
 			if (/(^|\/)frame\.json$/.test(part)) return false;
 			if (isAbsolute(part) || part === ".." || part.startsWith("../")) return false;
 			const design = realDesignDir(root);

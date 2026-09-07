@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import type { RetainedValues, SourceOccurrence, SourceRead, SourceResult } from "../source-edit";
@@ -565,5 +565,65 @@ it("retires authority on project loss and daemon close without allowing a late r
 	await expect(authority.request({ kind: "read-complete", handle: read.handle, complete: true })).rejects.toThrow();
 	f.owner.close();
 	expect(await f.commit(f.read, "late")).toMatchObject({ ok: false });
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
+
+it("two hand undos preserve an independent actual agent edit", async () => {
+	const f = await fixture((root) => writeFrame(root, "home", SOURCE.replace("<input", '<p>{"Other"}</p><input')));
+	const first = await f.commit(f.read, "One");
+	if (!first.ok || !first.publication) throw new Error("first save failed");
+	f.owner.delivered(first.publication.packet.id);
+	f.observation.current = {
+		...f.read.original,
+		publication: first.publication.packet.id,
+		value: "One",
+		invocation: "second committed call",
+	};
+	const asked = await f.owner.read(f.root, "home", f.observation.current, 2, "canvas");
+	if (!asked.ok) throw new Error(asked.reason);
+	const second = await f.commit(asked.read, "Two");
+	if (!second.ok || !second.publication) throw new Error("second save failed");
+	f.owner.delivered(second.publication.packet.id);
+	const agent = await actualAgent(f);
+	expect((await agent.run([agentRead(f.file), agentEdit(f.file, "Other", "Agent")])).map((r) => r.failed)).toEqual([
+		false,
+		false,
+	]);
+	const undoSecond = await f.owner.inverse(f.root, second.publication.receipt);
+	if (!undoSecond.ok || !undoSecond.publication) throw new Error("second undo failed");
+	f.owner.delivered(undoSecond.publication.packet.id);
+	const undoFirst = await f.owner.inverse(f.root, first.publication.receipt);
+	if (!undoFirst.ok || !undoFirst.publication) throw new Error(`first undo failed: ${JSON.stringify(undoFirst)}`);
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE.replace("<input", '<p>{"Agent"}</p><input'));
+	f.owner.delivered(undoFirst.publication.packet.id);
+	const redoFirst = await f.owner.inverse(f.root, undoFirst.publication.receipt);
+	if (!redoFirst.ok || !redoFirst.publication) throw new Error("first redo failed");
+	f.owner.delivered(redoFirst.publication.packet.id);
+	const redoSecond = await f.owner.inverse(f.root, undoSecond.publication.receipt);
+	if (!redoSecond.ok || !redoSecond.publication) throw new Error("second redo failed");
+	expect(readFileSync(f.file, "utf8")).toContain('{"Two"}</h1>');
+	f.owner.delivered(redoSecond.publication.packet.id);
+});
+
+it("coordinates a design folder symlink inside the project and revokes it when its identity changes", async () => {
+	const f = await fixture((root) => {
+		renameSync(join(root, "design"), join(root, "actual-design"));
+		symlinkSync("actual-design", join(root, "design"));
+	});
+	const agent = await actualAgent(f);
+	expect(
+		(await agent.run([agentRead(f.file), agentEdit(f.file, "Hello", "Agent")])).map((result) => result.failed),
+	).toEqual([false, false]);
+	expect(await f.commit(f.read, "Mine")).toMatchObject({ ok: false, reason: expect.stringContaining("touched") });
+	const second = await actualAgent(f, async (request) => {
+		if (request.kind === "prepare") {
+			renameSync(join(f.root, "actual-design"), join(f.root, "old-design"));
+			renameSync(join(f.root, "old-design"), join(f.root, "replacement-design"));
+			// A different directory at the canonical path cannot inherit the authority.
+			mkdirSync(join(f.root, "actual-design"));
+			writeFrame(f.root, "home", SOURCE);
+		}
+	});
+	expect((await second.run([agentRead(f.file), agentEdit(f.file, "Agent", "Wrong")])).at(-1)?.failed).toBe(true);
 	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
 });
