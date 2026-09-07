@@ -3,12 +3,13 @@ import { cn } from "shared/lib/utils";
 import { CoffeeScreen } from "shared/ui/demo/coffee-screens";
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
 import { SpoolShell } from "shared/ui/spool/shell";
+import { RefinedControls, type RefinementTake } from "./refined-controls";
 import { arranged, bounds, clamp, fit, fixture, INITIAL, type Box, type Camera, type Layout, type Settings, type Tile } from "./layout";
 import "./prototype.css";
 
 // Three separate frames ask whether arranging belongs to a toolbar, a gesture,
 // or the selection's edge. All state stays in this playground.
-export type ArrangeTake = "toolbar" | "pull" | "wrap";
+export type ArrangeTake = "toolbar" | "pull" | "wrap" | RefinementTake;
 interface Snapshot { tiles: Tile[]; settings: Settings; camera: Camera }
 interface Preview extends Snapshot { label: string }
 type Gesture = {
@@ -17,16 +18,20 @@ type Gesture = {
 	axis: "x" | "y"; previousColumns: number; previousLayout: Layout;
 };
 
-const TITLE: Record<ArrangeTake, string> = { toolbar: "Arrange from the selection", pull: "Pull a layout into place", wrap: "Shape the space it takes" };
+const TITLE: Record<ArrangeTake, string> = { toolbar: "Arrange from the selection", pull: "Pull a layout into place", wrap: "Shape the space it takes", press: "Choose it, then pull it", rail: "Give the layout a track", pad: "Shape the layout directly" };
 const HINT: Record<ArrangeTake, string> = {
 	toolbar: "Hover to preview. Click to place. Drag a gap to adjust the spacing.",
 	pull: "Pull the handle right for a row, down for a column, or diagonally for a grid.",
 	wrap: "Drag the right edge to wrap the frames. Drag a gap to spread them out.",
+	press: "Row, column, or grid. Hold its button and pull sideways to change only the spacing.",
+	rail: "Slide between one column and one row. Each stop is an exact column count.",
+	pad: "Left and right set the columns. Up and down set the spacing.",
 };
 
-export function ArrangePrototype({ take }: { take: ArrangeTake }) {
+export function ArrangePrototype({ take, controlsOpen = false }: { take: ArrangeTake; controlsOpen?: boolean }) {
+	const refined = take === "press" || take === "rail" || take === "pad";
 	const initialTiles = fixture(false);
-	const initialSettings = take === "wrap" ? { ...INITIAL, layout: "grid" as const } : INITIAL;
+	const initialSettings = take === "wrap" || take === "rail" ? { ...INITIAL, layout: "grid" as const } : INITIAL;
 	const [tiles, setTiles] = useState(() => arranged(initialTiles, initialTiles.map((tile) => tile.id), initialSettings));
 	const [settings, setSettings] = useState<Settings>(initialSettings);
 	const [selected, setSelected] = useState(initialTiles.map((tile) => tile.id));
@@ -39,13 +44,18 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 	const [menu, setMenu] = useState(false);
 	const [notice, setNotice] = useState("");
 	const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
+	const [refineDirect, setRefineDirect] = useState(false);
+	const refinement = useRef<{ start: Snapshot; key: string; zoom: number } | null>(null);
 	const stage = useRef<HTMLDivElement>(null);
 	const gesture = useRef<Gesture | null>(null);
 	const previewRef = useRef<Preview | null>(null);
 	const space = useRef(false);
 	const size = useRef({ width: 1308, height: 956 });
 	const snapshot = (): Snapshot => ({ tiles, settings, camera });
-	const fitted = (next: Tile[]) => fit(next, size.current.width, size.current.height);
+	const fitted = (next: Tile[]) => {
+		const view = fit(next, size.current.width, size.current.height - (refined ? 200 : 0));
+		return refined ? { ...view, y: view.y + 160 } : view;
+	};
 	const show = (next: Preview | null) => { previewRef.current = next; setPreview(next); };
 	const commit = (next: Snapshot) => {
 		setHistory((items) => [...items, snapshot()]);
@@ -60,11 +70,12 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 	};
 	const cancel = () => {
 		if (gesture.current?.kind === "marquee") setSelected(gesture.current.selected);
+		refinement.current = null; setRefineDirect(false);
 		gesture.current = null; show(null); setDragging(null); setMarquee(null); setMenu(false); setPointer(null);
 	};
 	const reset = (nextMixed = mixed) => {
 		const next = fixture(nextMixed);
-		const nextSettings: Settings = take === "wrap" ? { ...INITIAL, layout: "grid" } : INITIAL;
+		const nextSettings: Settings = take === "wrap" || take === "rail" ? { ...INITIAL, layout: "grid" } : INITIAL;
 		const laid = arranged(next, next.map((tile) => tile.id), nextSettings);
 		cancel(); setTiles(laid); setSettings(nextSettings); setSelected(next.map((tile) => tile.id));
 		setCamera(fitted(laid)); setHistory([]); setNotice("");
@@ -75,7 +86,7 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 		const observer = new ResizeObserver(([entry]) => {
 			if (!entry) return;
 			size.current = { width: entry.contentRect.width, height: entry.contentRect.height };
-			setCamera(fit(tiles, entry.contentRect.width, entry.contentRect.height));
+			setCamera(fitted(tiles));
 		});
 		observer.observe(element);
 		return () => observer.disconnect();
@@ -180,6 +191,31 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 		else event.stopPropagation();
 	};
 	const changeGap = (value: number) => propose({ ...settings, gap: clamp(value, 24, 320) }, "gap", true);
+	const refinementScene = (next: Settings): Snapshot => {
+		const session = refinement.current ?? { start: snapshot(), key: "", zoom: camera.zoom };
+		const count = next.layout === "row" ? selected.length : next.layout === "column" ? 1 : next.columns;
+		const key = `${next.layout}:${count}`;
+		const nextTiles = arranged(session.start.tiles, selected, next);
+		// Reserve the spacing range once per shape. A spacing drag never changes zoom.
+		if (session.key !== key) {
+			const reserved = bounds(arranged(session.start.tiles, selected, { ...next, gap: 240 }));
+			session.zoom = Math.min(.72, (size.current.width - 170) / reserved.w, (size.current.height - 430) / reserved.h);
+			session.key = key;
+		}
+		refinement.current = session;
+		const area = bounds(nextTiles);
+		const zoom = session.zoom;
+		return { tiles: nextTiles, settings: next, camera: { zoom, x: (size.current.width - area.w * zoom) / 2 - area.x * zoom, y: 290 + (size.current.height - 430 - area.h * zoom) / 2 - area.y * zoom } };
+	};
+	const refinePreview = (next: Settings, direct: boolean) => {
+		const first = refinement.current === null;
+		const result = refinementScene(next);
+		setRefineDirect(direct && !first); show({ ...result, label: "refinement" });
+	};
+	const refinePlace = (next: Settings) => {
+		const result = refinementScene(next);
+		commit(result); refinement.current = null; setRefineDirect(false); setNotice("Placed. ⌘Z to undo.");
+	};
 	const zoomBy = (factor: number) => {
 		const zoom = clamp(camera.zoom * factor, 0.08, 1.2);
 		const center = { x: size.current.width / 2, y: size.current.height / 2 };
@@ -189,7 +225,7 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 	return (
 		<SpoolShell activeTab="spool" tabs={["spool"]} zoom={`${Math.round(display.camera.zoom * 100)}%`} arrowsOn={false}>
 			<CanvasChrome pages={[{ name: "app", frames: tiles.map((tile) => tile.id), active: true, open: true }, { name: "site", frames: [] }, { name: "library", frames: [] }]} rail={null} tool="select">
-				<div ref={stage} className="arrange-stage" data-take={take} data-layout={display.settings.layout} data-gap={display.settings.gap} data-columns={columns} data-selected={selected.length} data-preview={Boolean(preview)} data-dragging={dragging ?? "none"}
+				<div ref={stage} className="arrange-stage" data-take={take} data-layout={display.settings.layout} data-gap={display.settings.gap} data-columns={columns} data-selected={selected.length} data-preview={Boolean(preview)} data-dragging={dragging ?? "none"} data-refine-direct={refineDirect} data-zoom={display.camera.zoom}
 					onPointerMove={move} onPointerUp={end} onPointerCancel={cancel}
 					onPointerDown={(event) => { setMenu(false); if (event.target === event.currentTarget) { if (space.current || event.button === 1) begin(event, "pan"); else { setSelected([]); begin(event, "marquee"); } } }}>
 					<div className="arrange-intro">
@@ -216,6 +252,7 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 						</div>;
 					})}
 					{many ? <>
+						{refined ? <RefinedControls key={`${take}:${mixed}:${selected.join(",")}`} take={take} count={selected.length} value={display.settings} startOpen={controlsOpen} onPreview={refinePreview} onPlace={refinePlace} onCancel={cancel} /> : null}
 						<div className="arrange-bounds" style={{ transform: `translate(${box.x - 12}px, ${box.y - 30}px)`, width: box.w + 24, height: box.h + 42 }} />
 						{take === "toolbar" ? <div className="arrange-toolbar-position" style={{ top: 122 }}>
 							<div className="arrange-toolbar" role="toolbar" aria-label="Arrange selection" onPointerLeave={() => { if (!gesture.current) show(null); }}>
@@ -228,7 +265,7 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 								<Divider /><Tool label="Alignment" active={menu} onClick={() => setMenu(!menu)}><AlignIcon /></Tool>
 								{menu ? <div className="arrange-align-menu">{(["start", "center", "end"] as const).map((align) => <button key={align} type="button" aria-pressed={settings.align === align} onClick={() => { propose({ ...settings, align }, "alignment", true); setMenu(false); }}>{align === "start" ? "Align to start" : align === "center" ? "Align to center" : "Align to end"}<span>{settings.align === align ? "✓" : ""}</span></button>)}</div> : null}
 							</div>
-						</div> : <div className="arrange-small-label" style={{ left: box.x - 12, top: box.y - 55 }}><span>{selected.length} frames</span><span>{layoutLabel}</span></div>}
+						</div> : refined ? null : <div className="arrange-small-label" style={{ left: box.x - 12, top: box.y - 55 }}><span>{selected.length} frames</span><span>{layoutLabel}</span></div>}
 						{take === "pull" ? <>
 							<button type="button" className="arrange-pull" aria-label="Pull to arrange" style={{ left: dragging === "pull" && pointer ? pointer.x - 14 : clamp(box.x + box.w / 2 - 43, 42, size.current.width - 110), top: dragging === "pull" && pointer ? pointer.y - 14 : Math.min(box.y + box.h + 22, size.current.height - 140) }} onPointerDown={(event) => begin(event, "pull")} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); propose({ ...settings, layout: event.key === "ArrowRight" ? "row" : "column" }, "pull", true); } }}><GripIcon /><span>arrange</span></button>
 							{dragging === "pull" ? <div className="arrange-pull-readout"><LayoutIcon layout={display.settings.layout === "free" ? "grid" : display.settings.layout} /><span>{layoutLabel}</span><span>{display.settings.gap} gap</span><kbd>esc</kbd></div> : null}
@@ -237,7 +274,7 @@ export function ArrangePrototype({ take }: { take: ArrangeTake }) {
 						{canHandle && !preview || canHandle && dragging === "gap" || canHandle && dragging === "wrap" ? <GapHandles tiles={held} settings={display.settings} camera={display.camera} onBegin={begin} onChange={changeGap} /> : null}
 					</> : null}
 					{marquee ? <div className="arrange-marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} /> : null}
-					<div className="arrange-bottom-copy" aria-live="polite">{dragging && dragging !== "marquee" ? "release to place · esc cancels" : preview ? `preview · ${layoutLabel} · click to place` : notice || (selected.length ? `${selected.length} selected · shift-click to change selection` : "Drag across frames to select them.")}</div>
+					<div className="arrange-bottom-copy" aria-live="polite">{refinement.current || dragging && dragging !== "marquee" ? "release to place · esc cancels" : preview ? `preview · ${layoutLabel} · click to place` : notice || (selected.length ? `${selected.length} selected · shift-click to change selection` : "Drag across frames to select them.")}</div>
 					<div className="arrange-zoom"><button type="button" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>−</button><button type="button" onClick={() => setCamera(fitted(tiles))}>Fit</button><button type="button" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>+</button></div>
 					<div className="arrange-pan-hint">space + drag to pan</div>
 				</div>
@@ -254,7 +291,7 @@ function GapHandles({ tiles, settings, camera, onBegin, onChange }: { tiles: Til
 	const handle = (axis: "x" | "y", x: number, y: number) => <button key={axis} type="button" className={cn("arrange-gap-handle", axis === "y" && "is-vertical")} aria-label={axis === "x" ? "Drag horizontal gap" : "Drag vertical gap"}
 		style={{ left: x * camera.zoom + camera.x, top: y * camera.zoom + camera.y }} onPointerDown={(event) => onBegin(event, "gap", axis)}
 		onKeyDown={(event) => { if (["ArrowRight", "ArrowUp", "ArrowLeft", "ArrowDown"].includes(event.key)) { event.preventDefault(); onChange(settings.gap + (["ArrowRight", "ArrowUp"].includes(event.key) ? 4 : -4)); } }}><span /><b>{settings.gap}</b></button>;
-	return <>{columns > 1 ? handle("x", box.x + width + settings.gap / 2, box.y + height / 2) : null}{tiles.length > columns ? handle("y", box.x + width / 2, box.y + height + (settings.gap + 36) / 2) : null}</>;
+	return <>{columns > 1 ? handle("x", box.x + width + settings.gap / 2, box.y + height / 2) : null}{tiles.length > columns && (settings.gap + 36) * camera.zoom > 28 ? handle("y", box.x + width / 2, box.y + height + (settings.gap + 36) / 2 - 10 / camera.zoom) : null}</>;
 }
 
 function Tool({ label, active = false, onClick, onPreview, onEndPreview, children }: { label: string; active?: boolean; onClick: () => void; onPreview?: () => void; onEndPreview?: () => void; children: ReactNode }) {
