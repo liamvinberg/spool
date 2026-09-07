@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.18.0
+
+### Minor Changes
+
+- 0636e87: Chat with the bundled spool agent directly on the canvas, using your own provider account. It can edit frames, run checks, and ask design questions, with scoped approvals for broader file and command access. Choose models and effort in the rail, or keep using Claude Code. The bundled agent is included in the npm package and Mac app, with no separate agent CLI to install.
+- a3e3851: Connect a Fireworks AI API key to use its image-capable models in Spool chats.
+- b4b5afe: Selected frames stay live at every zoom while you move, resize, or edit them. Thumbnails refresh in the background after resizing. Resize handles snap to the page's content height, and dragging farther lets you leave extra space.
+- 99e82de: Connect an OpenRouter API key to use its image-capable models in Spool. Find models with search and keep the ones you use in favorites.
+
+### Patch Changes
+
+- 9d0c70b: Fixed agent thinking timers after switching projects. Finished replies are now saved while you are away, and retrying a rate-limited request no longer leaves the conversation stuck on an expired recovery.
+- db6f9b1: Replaced the agent's static prose cursor with Seed: a small wind stroke that gathers into a dot as paragraphs arrive. Its pace follows received text, eases to rest during pauses, and clears as soon as the message ends.
+- b421c86: Fixed the bundled agent refusing `spool check`. It can now type-check frames and receive diagnostics before finishing a design.
+- 3976cfc: Double-clicking a frame near its fitted size now centers it without zooming out. Entering a close-up still keeps your zoom and position.
+- a1a89dc: Escape no longer stops the agent from the canvas or chat composer. Use the Stop button to interrupt a turn.
+- 53ff17a: Model favorites are now shared across projects and stay in sync between open tabs in the same browser. Star your models once to start the shared list.
+- fbb1216: Simplified the model picker with a favorite shortlist, search across connected models, and a separate effort page that resizes smoothly. Use + to start a chat immediately with your last chosen agent. Switch agents above the conversation before the first message; permissions stay at the bottom right.
+- 0fe62a3: Fixed agent paragraphs occasionally staying hidden until another message arrived.
+- 5ca0a9e: New chats inherit the last model and effort chosen in their project. Each chat keeps its own selection when you switch chats or restart Spool, for both Spool and Claude Code.
+- 1a1d7ad: New project opens a compact picker with an optional name, setup inside an existing codebase, and opening an existing spool project. Folder selection keeps the plus for new projects, shows the exact action before confirming once, and uses the back arrow to go up one folder. Folder search regains focus after navigation. Save locations use the same picker on Mac and in the browser.
+- 86d56bf: Fixed content snapping when a landing page scrolls inside a full-height column. Resizing now catches where that content stops scrolling, including its bottom padding, even when shrinking back from a taller frame.
+
 ## 0.17.0
 
 ### Minor Changes
