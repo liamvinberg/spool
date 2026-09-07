@@ -40,11 +40,15 @@ export interface Call {
 	source: string;
 	occurrence: string;
 	passedChild?: boolean;
+	element?: number;
+	retainedProps?: boolean;
+	renderedSource?: string;
 }
 export interface Selection {
 	generation: string;
 	occurrence: string;
 	source: string;
+	element?: number;
 	chain: Call[];
 	refusal?: string;
 }
@@ -505,6 +509,8 @@ export function sourceRead(sources: Sources, selection: Selection, operation: Op
 	if (operation.kind === "text") {
 		let value = literal(site);
 		for (let i = 1; value === undefined && i < sites.length; i++) {
+			if (selection.chain.some((call) => call.source === sites[i]!.source && call.retainedProps))
+				throw new Error("committed call is known but retained render props need a per-value origin proof");
 			const parameter = directBinding(site, name);
 			if (!parameter) throw new Error("text is not a direct immutable parameter or literal");
 			site = sites[i]!;

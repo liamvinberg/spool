@@ -587,7 +587,7 @@ it("disables attribution for an unpinned renderer without replacing an existing 
 	const outcomes = [];
 	for (const renderer of cases) {
 		const page = await browser.newPage();
-		await page.evaluate(installObserver);
+		await page.evaluate(installObserver, false);
 		const failure = await page.evaluate((value) => {
 			const hook = Reflect.get(globalThis, "__REACT_DEVTOOLS_GLOBAL_HOOK__") as {
 				inject(renderer: unknown): number;

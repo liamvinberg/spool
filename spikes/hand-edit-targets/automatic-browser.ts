@@ -14,6 +14,7 @@ import { compileClasses } from "../../src/daemon/theme";
 import { ROWS } from "../../src/ui/canvas/properties-rows";
 import { type Operation, type Revision, type Selection, Sources, sourceRead, witnesses } from "./automatic-source";
 import type {} from "./observer";
+import { reconciledRenderer } from "./reconciled-renderer";
 
 // The lock identifies the installation; compiler/package bytes and bundled
 // CSS defaults also retire a read if replaced without a lockfile update.
@@ -57,9 +58,10 @@ export async function mount(
 	browser: Browser,
 	root: string,
 	frame: string,
-	instrumented: boolean | "observed" = true,
+	instrumented: boolean | "observed" | "reconciled" = true,
 	authority?: ReadAuthority,
 ): Promise<Mounted> {
+	const observed = instrumented === "observed" || instrumented === "reconciled";
 	const toolchain = compilerRevision();
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
@@ -126,7 +128,7 @@ export async function mount(
 		resolveDir: join(designDir, "frames", frame),
 		sourcefile: "<automatic-read>",
 		label: "automatic target probe",
-		contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => {const entry=createElement(Frame); ${instrumented === "observed" ? "globalThis.__handObserver.register(entry, '<entry>', true);" : ""} root.render(entry)}; globalThis.unmount = () => root.unmount(); globalThis.rerender();`,
+		contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => {const entry=createElement(Frame); ${observed ? "globalThis.__handObserver.register(entry, '<entry>', true);" : ""} root.render(entry)}; globalThis.unmount = () => root.unmount(); globalThis.rerender();`,
 	});
 	const scanner = new Scanner({ sources: [] });
 	const candidates = scanner.scanFiles(
@@ -141,9 +143,10 @@ export async function mount(
 		format: "iife",
 		write: false,
 		define: { "process.env.NODE_ENV": '"production"' },
+		plugins: instrumented === "reconciled" ? [reconciledRenderer()] : [],
 		alias: {
 			"spool/jsx-dev-runtime": resolve(
-				instrumented === "observed"
+				observed
 					? "spikes/hand-edit-targets/observed-runtime.tsx"
 					: instrumented
 						? "spikes/hand-edit-targets/runtime.tsx"
@@ -161,10 +164,10 @@ export async function mount(
 	await page.setContent('<div id="root"></div><div id="portal"></div>');
 	const generation = crypto.randomUUID();
 	await page.addStyleTag({ content: css });
-	if (instrumented === "observed") {
+	if (observed) {
 		const hook = await build({
 			stdin: {
-				contents: "import {installObserver} from './spikes/hand-edit-targets/observer'; installObserver();",
+				contents: `import {installObserver} from './spikes/hand-edit-targets/observer'; installObserver(${instrumented === "reconciled"});`,
 				resolveDir: process.cwd(),
 			},
 			bundle: true,
@@ -182,7 +185,7 @@ export async function mount(
 		css,
 		toolchain,
 		selectedNodes: new Map(),
-		observed: instrumented === "observed",
+		observed,
 		authority,
 		lease,
 		themeCss,
@@ -229,6 +232,7 @@ export async function stillSelected(mounted: Mounted, selection: Selection): Pro
 				return (
 					current.occurrence === pick.occurrence &&
 					current.source === pick.source &&
+					current.element === pick.element &&
 					JSON.stringify(current.chain) === JSON.stringify(pick.chain) &&
 					current.refusal === pick.refusal
 				);

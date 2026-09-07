@@ -379,7 +379,7 @@ it("leaves an existing DevTools hook intact and disables attribution rather than
 	await page.evaluate(() => {
 		Reflect.set(globalThis, "__REACT_DEVTOOLS_GLOBAL_HOOK__", { sentinel: true });
 	});
-	await page.evaluate(installObserver);
+	await page.evaluate(installObserver, false);
 	const state = await page.evaluate(() => ({
 		hook: Reflect.get(globalThis, "__REACT_DEVTOOLS_GLOBAL_HOOK__") as unknown,
 		failure: globalThis.__handObserver.failure,

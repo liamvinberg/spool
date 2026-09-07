@@ -18,11 +18,20 @@ interface Authored {
 	type: unknown;
 	entry: boolean;
 	element: { props: unknown; type: unknown };
+	id: number;
 }
 export interface Observation {
 	occurrence: string;
 	source: string;
-	chain: { source: string; occurrence: string; passedChild?: boolean }[];
+	element?: number;
+	chain: {
+		source: string;
+		occurrence: string;
+		passedChild?: boolean;
+		element?: number;
+		retainedProps?: boolean;
+		renderedSource?: string;
+	}[];
 	refusal?: string;
 }
 export interface Observer {
@@ -34,10 +43,27 @@ export interface Observer {
 }
 declare global {
 	var __handObserver: Observer;
+	var __handReconcile: {
+		bind(fiber: Fiber, element: Authored["element"]): void;
+		copy(current: Fiber | null, work: Fiber): void;
+	};
 }
 
-export function installObserver(): void {
+export function installObserver(reconciled = false): void {
 	const global = globalThis as typeof globalThis & { __REACT_DEVTOOLS_GLOBAL_HOOK__?: unknown };
+	const elements = new WeakMap<object, Authored>();
+	const bindings = new WeakMap<Fiber, Authored["element"]>();
+	// Speculation writes only a side table. Only the commit walk publishes picks.
+	global.__handReconcile = {
+		bind(fiber, element) {
+			bindings.set(fiber, element);
+		},
+		copy(current, work) {
+			const held = current ? bindings.get(current) : undefined;
+			if (held) bindings.set(work, held);
+			else bindings.delete(work);
+		},
+	};
 	if (global.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
 		global.__handObserver = {
 			commits: 0,
@@ -58,6 +84,7 @@ export function installObserver(): void {
 	let hosts = new WeakMap<Element, Observation>();
 	let nodes = new Map<string, Element>();
 	let next = 0;
+	let nextElement = 0;
 	const identity = (fiber: Fiber): string => {
 		const held = ids.get(fiber) ?? (fiber.alternate ? ids.get(fiber.alternate) : undefined) ?? `mounted-${++next}`;
 		ids.set(fiber, held);
@@ -66,6 +93,14 @@ export function installObserver(): void {
 	};
 	const record = (props: unknown) => (props !== null && typeof props === "object" ? authored.get(props) : undefined);
 	const at = (fiber: Fiber): Authored => {
+		if (reconciled) {
+			const element = bindings.get(fiber);
+			const value = element ? elements.get(element) : undefined;
+			if (!value) throw new Error("reconciled element has no observed creation source; value origin is unproven");
+			if (value.type !== fiber.elementType && value.type !== fiber.type)
+				throw new Error("reconciled element type relationship is unproven");
+			return value;
+		}
 		const value = record(fiber.memoizedProps);
 		const pending = record(fiber.pendingProps);
 		if (!value || !pending) throw new Error("unobserved or cloned component props");
@@ -79,16 +114,30 @@ export function installObserver(): void {
 		const result: Observation = { occurrence: identity(fiber), source: "", chain: [] };
 		try {
 			result.source = at(fiber).source;
+			if (reconciled) result.element = at(fiber).id;
 			let child = at(fiber);
 			const chain: Observation["chain"] = [];
 			let foundEntry = false;
-			if (parents.some((parent) => [14, 15].includes(parent.tag)))
+			if (!reconciled && parents.some((parent) => [14, 15].includes(parent.tag)))
 				throw new Error("memo source continuity is unproven across equal-prop bailouts");
 			for (const parent of [...parents].reverse()) {
 				// Host/text/root, fragments, mode, context, profiler, suspense,
 				// offscreen and host resource nodes are not authored component calls.
 				if ([3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 19, 22, 26, 27].includes(parent.tag)) continue;
 				if (![0, 1, 11, 14, 15, 16].includes(parent.tag)) throw new Error(`unproven React fiber tag ${parent.tag}`);
+				// Custom memo creates an internal component Fiber without a JSX
+				// element. Prove that specific renderer edge, not a missing call.
+				const above = parents[parents.indexOf(parent) - 1];
+				if (
+					reconciled &&
+					!bindings.has(parent) &&
+					above?.tag === 14 &&
+					above.child === parent &&
+					above.type !== null &&
+					typeof above.type === "object" &&
+					Reflect.get(above.type, "type") === parent.elementType
+				)
+					continue;
 				const value = at(parent);
 				if (value.entry) {
 					foundEntry = true;
@@ -99,6 +148,18 @@ export function installObserver(): void {
 					source: value.source,
 					occurrence: identity(parent),
 					passedChild: children === child.element || (Array.isArray(children) && children.includes(child.element)),
+					...(reconciled
+						? {
+								element: value.id,
+								retainedProps:
+									[14, 15].includes(parent.tag) &&
+									(parent.tag === 14 ? parent.child?.memoizedProps : parent.memoizedProps) !==
+										value.element.props,
+								renderedSource:
+									record(parent.tag === 14 ? parent.child?.memoizedProps : parent.memoizedProps)?.source ??
+									"unobserved render props",
+							}
+						: {}),
 				});
 				child = value;
 			}
@@ -117,7 +178,9 @@ export function installObserver(): void {
 				this.failure = "unexpected React props shape";
 				return;
 			}
-			authored.set(element.props, { source, type: element.type, entry, element });
+			const value = { source, type: element.type, entry, element, id: ++nextElement };
+			authored.set(element.props, value);
+			elements.set(element, value);
 		},
 		observe(node) {
 			if (this.failure) throw new Error(this.failure);
