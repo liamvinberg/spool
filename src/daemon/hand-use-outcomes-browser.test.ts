@@ -198,12 +198,20 @@ it.each(["finish", "fail"] as const)(
 			expect(event?.data.result?.rendered).toBe(frame === "second" && ending === "fail" ? "failed" : "verified");
 			const receipt = f.sourceResults[0];
 			expect(receipt?.ok).toBe(true);
-			if (receipt?.ok && receipt.publication)
+			if (receipt?.ok && receipt.publication) {
+				const accepted = [receipt.publication, ...(receipt.publication.related ?? [])].find(
+					(publication) => publication.frame === frame,
+				);
+				expect(accepted).toBeDefined();
 				expect(event?.data).toMatchObject({
-					publication: receipt.publication.packet.id,
-					owner: receipt.publication.owner,
-					generation: receipt.publication.generation,
+					publication: accepted?.packet.id,
+					owner: accepted?.owner,
+					generation: accepted?.generation,
 				});
+				expect(event?.data.result?.uses?.map((use) => use.rendered).sort()).toEqual(
+					frame === "second" && ending === "fail" ? ["failed", "verified"] : ["verified", "verified"],
+				);
+			}
 		}
 		expect(f.writes).toEqual(["commit"]);
 		expect(f.bytes()["shared/outcomes.tsx"]).toBe(changed(f.source, "After"));
