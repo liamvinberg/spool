@@ -223,7 +223,7 @@ describe("project creation and folder selection", () => {
 		);
 		await act(async () => {});
 		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Choose project location"]')?.click());
-		expect(host.querySelector('[aria-label="Search folders or paste a path"]')).not.toBeNull();
+		expect(document.activeElement).toBe(host.querySelector('[aria-label="Search folders or paste a path"]'));
 		expect(chooseDirectory).not.toHaveBeenCalled();
 	});
 	it("allows unnamed creation, prevents concurrent submits, and retains a failed draft", async () => {

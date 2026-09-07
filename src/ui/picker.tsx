@@ -75,10 +75,10 @@ export function ProjectPicker({
 	}, []);
 	useEffect(() => attachHotkeyLayer({ scope: "picker", handlers: {} }), []);
 	useEffect(() => {
-		if (busy) return;
+		if (busy || (browsing && folder.browsing)) return;
 		if (browsing) folder.input.current?.focus();
 		else nameInput.current?.focus();
-	}, [browsing, busy, folder.input]);
+	}, [browsing, busy, folder.browsing, folder.input]);
 
 	async function run(action: () => Promise<void>) {
 		if (working.current) return;

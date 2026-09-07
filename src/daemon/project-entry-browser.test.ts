@@ -51,6 +51,9 @@ it("walks all three project jobs through the compact picker with one explicit co
 	await creation.getByRole("button", { name: "Choose project location" }).click();
 	const location = page.getByRole("dialog", { name: "Choose a save location", exact: true });
 	await expect.poll(() => location.locator(".picker-footer code").getAttribute("title")).toBe(parent);
+	await expect
+		.poll(() => page.locator("input:focus").getAttribute("aria-label"))
+		.toBe("Search folders or paste a path");
 	await location.press("Escape");
 	expect(await projectName.inputValue()).toBe("coffee");
 	await creation.press("Escape");
