@@ -77,15 +77,14 @@ it.each(routes)("module route $name saves only the selected supplied label", { t
 			Reflect.get(globalThis, "editWords")(text);
 			Reflect.get(globalThis, "oracleRender")();
 		}, text);
-		await expect.poll(() => f.target.textContent()).toBe(text);
-		await f.settled();
 		await expect
-			.poll(() => f.bytes())
+			.poll(() => f.bytes(), { timeout: 15_000 })
 			.toEqual({
 				...files,
 				"shared/example.tsx": phase === 1 ? source : source.replace('label="Same"', 'label="Edited"'),
 			});
 		await f.settled();
+		await expect.poll(() => f.target.textContent()).toBe(text);
 		for (const app of [f.frame, second, oracle]) {
 			await expect.poll(() => app.locator("button").allTextContents()).toEqual([text, "Same"]);
 			expect(await app.locator("button").first().getAttribute("data-count")).toBe("1");

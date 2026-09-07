@@ -92,14 +92,12 @@ it.each(fixtures)(
 		const oracle = await originOracle(f, sample.files, "shared/case.tsx");
 		for (const app of [f.frame, oracle]) await app.locator("#draft").fill("Typed input");
 		const display = async (app: typeof f.frame | typeof oracle) =>
-			app
-				.locator("main")
-				.evaluate((el) => ({
-					text: el.querySelector("button")?.textContent,
-					title: el.querySelector("button")?.getAttribute("title"),
-					input: (el.querySelector("input") as HTMLInputElement).value,
-					reads: Reflect.get(globalThis, "reads") ?? 0,
-				}));
+			app.locator("main").evaluate((el) => ({
+				text: el.querySelector("button")?.textContent,
+				title: el.querySelector("button")?.getAttribute("title"),
+				input: (el.querySelector("input") as HTMLInputElement).value,
+				reads: Reflect.get(globalThis, "reads") ?? 0,
+			}));
 		const ordinary = await display(oracle);
 		expect(await display(f.frame)).toEqual(ordinary);
 		const commits = await f.target.evaluate(() => globalThis.__SPOOL_OBSERVER__.commits);

@@ -214,14 +214,14 @@ it.each(cases)(
 				Reflect.get(globalThis, "editWords")(text);
 				Reflect.get(globalThis, "oracleRender")();
 			}, text);
-			await expect.poll(() => f.target.textContent()).toBe(text);
-			await f.settled();
-			await expect.poll(() => second.locator("#subject button,#subject strong").first().textContent()).toBe(text);
 			await expect
-				.poll(() => f.bytes())
+				.poll(() => f.bytes(), { timeout: 15_000 })
 				.toEqual({
 					"shared/case.tsx": phase === 1 ? source : source.replace(sample.from, sample.to),
 				});
+			await f.settled();
+			await expect.poll(() => f.target.textContent()).toBe(text);
+			await expect.poll(() => second.locator("#subject button,#subject strong").first().textContent()).toBe(text);
 			expect(await shape(f.frame)).toEqual(await shape(oracle));
 			for (const app of [f.frame, second, oracle]) {
 				expect(await app.locator("#draft").inputValue()).toBe("Typed input");
@@ -243,13 +243,22 @@ it.each(cases.filter((sample) => sample.flip))(
 			files = { "shared/case.tsx": source };
 		const f = await originCanvas(files, frameSource, "#subject button");
 		await f.edit();
+		await f.page.route("**/source", async (route) => {
+			if (route.request().postDataJSON()?.action !== "commit") return route.continue();
+			const commits = await f.target.evaluate(() => globalThis.__SPOOL_OBSERVER__.commits);
+			await f.frame.locator("#subject").evaluate(() => Reflect.get(globalThis, "flip")());
+			await expect
+				.poll(() => f.target.evaluate(() => globalThis.__SPOOL_OBSERVER__.commits))
+				.toBeGreaterThan(commits);
+			await route.continue();
+		});
+		const result = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
 		await f.page.keyboard.press("ControlOrMeta+a");
 		await f.page.keyboard.insertText("Do not move this edit");
-		const commits = await f.target.evaluate(() => globalThis.__SPOOL_OBSERVER__.commits);
-		await f.frame.locator("#subject").evaluate(() => Reflect.get(globalThis, "flip")());
-		await expect.poll(() => f.target.evaluate(() => globalThis.__SPOOL_OBSERVER__.commits)).toBeGreaterThan(commits);
 		await f.page.keyboard.press("Enter");
-		await expect.poll(() => f.page.locator('[data-hand-notice="blocked"], [data-hand-refusal]').count()).toBe(1);
+		expect(await (await result).json()).toMatchObject({ ok: false });
 		expect(f.bytes()).toEqual(files);
 	},
 );

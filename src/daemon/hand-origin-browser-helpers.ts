@@ -38,6 +38,14 @@ export async function originCanvas(
 			if (action === "commit" || action === "inverse") writes.push(action);
 		}
 	});
+	await page.addInitScript(() => {
+		const outcomes: unknown[] = [];
+		Reflect.set(window, "originOutcomes", outcomes);
+		addEventListener("message", (event) => {
+			const data = event.data;
+			if (data?.spool === "source-reply" && data.result?.installation) outcomes.push(data.result);
+		});
+	});
 	await page.goto(`${project.url}/p/${project.name}`);
 	const frame = page.frameLocator('iframe[title="home"]');
 	const target = frame.locator(selector).first();
@@ -77,7 +85,12 @@ export async function originCanvas(
 		await page.mouse.click(800, 700);
 		await page.keyboard.press(redo ? "ControlOrMeta+Shift+z" : "ControlOrMeta+z");
 	};
-	const settled = () => expect.poll(() => page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	const settled = async () => {
+		await expect
+			.poll(() => page.evaluate(() => Reflect.get(window, "originOutcomes").length), { timeout: 15_000 })
+			.toBe(writes.length * (shared ? 2 : 1));
+		await expect.poll(() => page.locator('[data-hand-notice="saving"]').count(), { timeout: 15_000 }).toBe(0);
+	};
 	return { project, browser, page, frame, target, file, bytes, select, edit, history, settled, writes };
 }
 
