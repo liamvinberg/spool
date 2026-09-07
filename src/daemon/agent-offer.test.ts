@@ -535,6 +535,41 @@ describe("the doors", () => {
 			body: JSON.stringify(body),
 		});
 
+	it("new threads inherit the project's last model and effort", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const binary = fakeBinary();
+		const app = makeApp(spoolDir, { agentExecutor: binary.executor });
+		expect((await post(app, name, { value: "sonnet", effort: "xhigh" })).status).toBe(200);
+		const response = await app.request(`/api/p/${name}/agent/threads/${OTHER}/models`);
+		expect(response.status).toBe(200);
+		const args = binary.spawned.at(-1)?.spawn.args ?? [];
+		expect(args[args.indexOf("--model") + 1]).toBe("sonnet");
+		expect(args[args.indexOf("--effort") + 1]).toBe("xhigh");
+		expect(await response.json()).toMatchObject({ current: { value: "sonnet", effort: "xhigh" } });
+
+		await post(app, name, { value: "haiku" });
+		const cold = fakeBinary();
+		const restarted = makeApp(spoolDir, { agentExecutor: cold.executor });
+		const restored = await restarted.request(`/api/p/${name}/agent/threads/${OTHER}/models`);
+		expect(await restored.json()).toMatchObject({ current: { value: "sonnet", effort: "xhigh" } });
+		const third = "3a1b3c4d-5e6f-4788-9900-aabbccddeeff";
+		const fresh = await restarted.request(`/api/p/${name}/agent/threads/${third}/models`);
+		expect(await fresh.json()).toMatchObject({ current: { value: "haiku" } });
+		expect(cold.spawned.at(-1)?.spawn.args).not.toContain("--effort");
+
+		const spawns = cold.spawned.length;
+		void restarted.request(`/api/p/${name}/agent/turn`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ thread: OTHER, said: [{ prompt: "use my saved model" }] }),
+		});
+		await until(() => cold.spawned.length > spawns);
+		const turnArgs = cold.spawned.at(-1)?.spawn.args ?? [];
+		expect(turnArgs[turnArgs.indexOf("--model") + 1]).toBe("sonnet");
+		expect(turnArgs[turnArgs.indexOf("--effort") + 1]).toBe("xhigh");
+	});
+
 	it("answers the offer on a read", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
@@ -636,6 +671,7 @@ describe("the doors", () => {
 		const binary = fakeBinary();
 		const app = makeApp(spoolDir, { agentExecutor: binary.executor });
 
+		await app.request(`/api/p/${name}/agent/threads/${OTHER}/models`);
 		await post(app, name, { value: "haiku" });
 		const spawns = binary.spawned.length;
 		// a project runs one thread on Opus and another on Haiku, so a project-wide ask
@@ -647,7 +683,8 @@ describe("the doors", () => {
 		});
 		await until(() => binary.spawned.length > spawns);
 
-		expect(binary.spawned.at(-1)?.spawn.args).not.toContain("--model");
+		const args = binary.spawned.at(-1)?.spawn.args ?? [];
+		expect(args[args.indexOf("--model") + 1]).toBe("claude-fable-5[1m]");
 	});
 
 	it("refuses a thread that is not named by a session's own uuid", async () => {
@@ -683,15 +720,7 @@ describe("the doors", () => {
 		expect(binary.spawned.at(-1)?.spawn.args).not.toContain("--model");
 	});
 
-	/**
-	 * The choice is a fact about a conversation, so it goes when the conversation does.
-	 *
-	 * The ask is the one thing about a thread the daemon keeps in memory rather than on
-	 * disk, and nothing else forgets it: a thread closed out of the strip would otherwise
-	 * leave its entry behind for as long as the daemon runs, and a daemon that has been
-	 * open for a week has one for every thread anybody opened in it.
-	 */
-	it("forgets a closed thread's choice rather than holding it for the life of the daemon", async () => {
+	it("keeps a closed thread's choice with its saved conversation", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
 		const binary = fakeBinary();
@@ -715,6 +744,7 @@ describe("the doors", () => {
 		const spawns = binary.spawned.length;
 		await app.request(`/api/p/${name}/agent/threads/${THREAD}/models`);
 		expect(binary.spawned.length).toBeGreaterThan(spawns);
-		expect(binary.spawned.at(-1)?.spawn.args).not.toContain("--model");
+		const args = binary.spawned.at(-1)?.spawn.args ?? [];
+		expect(args[args.indexOf("--model") + 1]).toBe("haiku");
 	});
 });

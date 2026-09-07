@@ -111,10 +111,25 @@ function setup(engines: readonly AgentEngine[]) {
 }
 
 describe("engine ownership through the daemon", () => {
+	it("keeps the last accepted model when an engine cannot report a new choice", async () => {
+		const spool = fakeEngine("spool");
+		const { app, path, send } = setup([spool.engine]);
+		await send(`threads/${ONE}/model?engine=spool`, { value: "spool" });
+		const offer = spool.engine.offer;
+		spool.engine.offer = async () => ({
+			models: [],
+			current: { value: null, resolved: null, name: null, effort: null, pin: null },
+		});
+		await send(`threads/${ONE}/model?engine=spool`, { effort: "high" });
+		spool.engine.offer = offer;
+		await app.request(`${path}/threads/${TWO}/models?engine=spool`);
+		expect(spool.offers.at(-1)?.ask).toEqual({ value: "spool" });
+	});
+
 	it("keeps each agent's model choices separate before a chat's first message", async () => {
 		const claude = fakeEngine("claude");
 		const spool = fakeEngine("spool");
-		const { app, path, send } = setup([claude.engine, spool.engine]);
+		const { app, path, send, spoolDir } = setup([claude.engine, spool.engine]);
 		await send(`threads/${ONE}/model?engine=claude`, { value: "claude" });
 		await app.request(`${path}/threads/${ONE}/models?engine=spool`);
 		expect(spool.offers.at(-1)?.ask).toEqual({});
@@ -128,6 +143,11 @@ describe("engine ownership through the daemon", () => {
 		expect(spool.starts[0]?.ask).toEqual({ value: "spool" });
 		await send("interrupt", { turn: "one" });
 		await view.cancel();
+		const restarted = makeApp(spoolDir, { agentEngines: [claude.engine, spool.engine] });
+		await restarted.request(`${path}/threads/${TWO}/models?engine=claude`);
+		expect(claude.offers.at(-1)?.ask).toEqual({ value: "claude" });
+		await restarted.request(`${path}/threads/${TWO}/models?engine=spool`);
+		expect(spool.offers.at(-1)?.ask).toEqual({ value: "spool" });
 	});
 
 	it("routes independent turns, offers, accounts, answers and Stop while replay survives a departing viewer", async () => {

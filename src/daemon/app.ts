@@ -26,6 +26,7 @@ import { createClaudeEngine } from "./agent-engine-claude";
 import { createSpoolEngine } from "./agent-engine-spool";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
+import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-preferences";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import type { Look } from "./agent-preflight";
 import {
@@ -688,23 +689,7 @@ export function createDaemonApp({
 	 * and names the turn instead (#165).
 	 */
 	const liveTurns = createAgentTurns();
-	/**
-	 * Which machine each thread chose, and how hard it should think (#199).
-	 *
-	 * It is the ask and never the readout: what is drawn comes back off the binary's own
-	 * report, and this is only what the next spawn is asked to carry.
-	 *
-	 * Per thread rather than per project, because which machine is answering is a fact
-	 * about a conversation: a project runs one thread on Opus and another on Haiku, and a
-	 * project-wide ask would carry the open thread's choice into the one you switched to.
-	 * Each agent has its own choice while the draft can still switch agents.
-	 * It dies with the daemon, because a preference nobody has said is durable is not a
-	 * file to write — a restarted thread reads its model off the next turn's own report.
-	 * It dies with the thread too: a conversation that was closed is not one anything is
-	 * going to spawn for again, and a map only ever written to is a map that only grows.
-	 */
-	const agentAsks = new Map<string, Partial<Record<AgentEngineId, AgentAsk>>>();
-	const askKey = (root: string, thread: string) => `${root}\x00${thread}`;
+	const modelPreferences = createAgentModelPreferences(spoolDir);
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -1173,11 +1158,6 @@ export function createDaemonApp({
 						hub.forget(root);
 						liveTurns.relocate(root, result.root);
 						selections.relocate(root, result.root);
-						for (const [key, ask] of agentAsks)
-							if (key.startsWith(`${root}\x00`)) {
-								agentAsks.set(`${result.root}${key.slice(root.length)}`, ask);
-								agentAsks.delete(key);
-							}
 					}
 					machineStateWatch.acknowledgeRegistry(result.registry);
 					machineStateWatch.acknowledgeSession(result.session);
@@ -1732,6 +1712,8 @@ export function createDaemonApp({
 				}
 				const selected = engineFor(c, project.root, thread, requested);
 				if ("response" in selected) return selected.response;
+				const ask = modelPreferences.read(project.root, thread, selected.engine.id);
+				modelPreferences.keep(project.root, thread, selected.engine.id, ask);
 				// Claim ownership before starting: a picture save may race the first turn.
 				if (readThread(spoolDir, project.root, thread) === undefined) {
 					putThread(spoolDir, project.root, thread, {
@@ -1756,7 +1738,7 @@ export function createDaemonApp({
 						selection: selectionBlock(one.selection ?? selections.get(project.root)),
 						...(one.attachment === undefined ? {} : { attachment: one.attachment }),
 					})),
-					ask: agentAsks.get(askKey(project.root, thread))?.[selected.engine.id] ?? {},
+					ask,
 				});
 				const held = liveTurns.hold({
 					root: project.root,
@@ -1989,11 +1971,6 @@ export function createDaemonApp({
 			if (!closeThread(spoolDir, project.root, thread)) {
 				return c.text(`no thread "${thread}" to close`, 404);
 			}
-			// the ask goes with the conversation it was a fact about. It is the one thing
-			// here that is spool's own memory rather than a byte on disk, so nothing else
-			// forgets it: a daemon left open for a week would otherwise hold an entry for
-			// every thread anybody ever opened in it
-			agentAsks.delete(askKey(project.root, thread));
 			return c.body(null, 204);
 		})
 		/*
@@ -2021,14 +1998,27 @@ export function createDaemonApp({
 				}
 				const selected = engineFor(c, project.root, thread);
 				if ("response" in selected) return selected.response;
-				return c.json(
-					await selected.engine.offer({
-						root: project.root,
-						session: selected.session,
-						ask: agentAsks.get(askKey(project.root, thread))?.[selected.engine.id] ?? {},
-						signal: c.req.raw.signal,
-					}),
-				);
+				const held = modelPreferences.read(project.root, thread, selected.engine.id);
+				const offer = await selected.engine.offer({
+					root: project.root,
+					session: selected.session,
+					ask: held,
+					signal: c.req.raw.signal,
+				});
+				if (
+					projectRenames.has(project.root) ||
+					lookupProjectByName(spoolDir, c.req.param("project")).kind !== "found"
+				)
+					return c.text("Project changed while reading models.", 409);
+				if (offer.current.value !== null) {
+					modelPreferences.keep(
+						project.root,
+						thread,
+						selected.engine.id,
+						acceptedModelChoice(selected.engine, offer, held),
+					);
+				}
+				return c.json(offer);
 			},
 		)
 		.post(
@@ -2076,10 +2066,9 @@ export function createDaemonApp({
 					return c.text("a thread is named by the uuid its session runs under", 400);
 				}
 				const wanted = c.req.valid("json");
-				const key = askKey(project.root, thread);
 				const selected = engineFor(c, project.root, thread);
 				if ("response" in selected) return selected.response;
-				const held = agentAsks.get(key)?.[selected.engine.id] ?? {};
+				const held = modelPreferences.read(project.root, thread, selected.engine.id);
 				const offer = await selected.engine.offer({
 					session: selected.session,
 					root: project.root,
@@ -2091,10 +2080,15 @@ export function createDaemonApp({
 					lookupProjectByName(spoolDir, c.req.param("project")).kind !== "found"
 				)
 					return c.text("Project changed while choosing a model.", 409);
-				agentAsks.set(key, {
-					...agentAsks.get(key),
-					[selected.engine.id]: selected.engine.choice(offer, wanted, held),
-				});
+				if (offer.current.value !== null) {
+					modelPreferences.keep(
+						project.root,
+						thread,
+						selected.engine.id,
+						acceptedModelChoice(selected.engine, offer, held),
+						true,
+					);
+				}
 				return c.json(offer);
 			},
 		)
@@ -3112,7 +3106,6 @@ export function createDaemonApp({
 			history.close();
 			liveTurns.close();
 			for (const engine of engines.values()) engine.close?.();
-			agentAsks.clear();
 			hub.close();
 			updateChecker.stop();
 			void shots.close();

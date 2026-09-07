@@ -159,6 +159,11 @@ it.each([false, true])(
 		expect(JSON.parse(readFileSync(file, "utf8").split("\n")[0] ?? "").cwd).toBe(moved);
 		if (restart) await f.restart();
 		expect(f.calls()).toBe(calls);
+		expect(
+			await (
+				await f.request(`/api/p/after/agent/threads/${randomUUID()}/models?engine=spool`, undefined, "GET")
+			).json(),
+		).toMatchObject({ current: { value: "spool/openai/api_key/second-test", effort: "high" } });
 		writeFileSync(join(moved, "AGENTS.md"), "Renamed project instruction.");
 		const next = await f.turn(
 			"after",
