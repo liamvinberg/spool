@@ -20,6 +20,7 @@
 		"skipLibCheck": true
 	},
 	"include": [
+		".agents/skills/*/scripts",
 		".github/scripts",
 		"src",
 		"bench",
