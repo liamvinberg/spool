@@ -85,9 +85,8 @@ export function Shot({
 /**
  * The picture, held over everything until you put it down.
  *
- * The way out is the way out of everything else: esc leaves an entered frame and stops
- * a running turn, so it leaves this, and the hint says so in the same mono the canvas
- * uses for `live · esc exits`. A press on the backdrop does the same, because clicking
+ * Escape closes the picture, as it leaves an entered frame. The hint uses the same
+ * mono the canvas uses for `live · esc exits`. A press on the backdrop does the same, because clicking
  * away from a thing is how you put it down. There is no ✕ — it would be a third way to
  * do what the first two do, sitting on top of the one thing here worth looking at.
  *

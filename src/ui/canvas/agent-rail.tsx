@@ -241,7 +241,7 @@ export function AgentRail({
 	/** Enter against a running turn: the words are taken and held rather than sent */
 	onQueue: (text: string, sent: AgentSent) => boolean;
 	onUnqueue: (id: string) => void;
-	/** the press in the footer and the escape in the field, which are one act (#165) */
+	/** the Stop button in the footer */
 	onStop: () => void;
 	/** what the person said to a waiting request, on its own way back up (#145) */
 	onAnswer: (request: string, reply: AgentReply) => void;
@@ -2168,8 +2168,7 @@ function Composer({
 	 * Parked included. A turn held at a question is spending nothing and moving nowhere,
 	 * which is why the stroke stops there — but it is a live process standing in the repo
 	 * with a queue behind it, and the question's own dismiss answers the question rather
-	 * than ending the turn. That left a queue behind an unanswered ask with no way out at
-	 * all: no bulk exit, and escape returning before it reached anything.
+	 * than ending the turn. The Stop button ends the turn and hands the queue back.
 	 */
 	const cutting = phase === "playing" || phase === "asking";
 
@@ -2279,19 +2278,6 @@ function Composer({
 						void readAttachment(file).then(onAttach);
 					}}
 					onKeyDown={(event) => {
-						/*
-						 * The canvas never sees this press: the hotkey dispatch returns on any
-						 * keydown whose target is a textarea, and the composer is one. Enter sends
-						 * and leaves focus here, so escape has been going nowhere at the exact
-						 * moment a turn is running — which is why a turn in flight can have it
-						 * without taking a rung off the ladder out there (#165).
-						 */
-						if (event.key === "Escape") {
-							if (!cutting) return;
-							event.preventDefault();
-							onStop();
-							return;
-						}
 						if (event.key !== "Enter" || event.shiftKey) return;
 						event.preventDefault();
 						const text = draft.trim();
@@ -2403,12 +2389,7 @@ function ModelMenu(props: {
  * The live edge loses because it travels, fastest exactly when rows are piling up,
  * and scrolls away the moment you read back.
  *
- * The press is not a convenience beside the key. Escape works while focus is in the
- * field, and clicking out to the canvas to watch a frame repaint — which is the state
- * this whole thing is built for — gives the ladder out there its key back. The press
- * is the exit that works from wherever the eyes are.
- *
- * The glyph says which key, quietly, because that is where the key is learned.
+ * Stopping requires this button. Escape only dismisses or leaves UI surfaces.
  */
 function StopButton({ onStop }: { onStop: () => void }) {
 	return (
@@ -2419,7 +2400,6 @@ function StopButton({ onStop }: { onStop: () => void }) {
 		>
 			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
 			<span className="text-text type-detail">stop</span>
-			<span className="text-muted type-detail">⎋</span>
 		</button>
 	);
 }

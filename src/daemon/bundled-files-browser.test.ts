@@ -83,7 +83,7 @@ it("runs file tools through the real host and served canvas, maps every changed 
 	};
 	const write = (path: string, content = "written") => ({ name: "write", arguments: { path, content } });
 	const settled = async () => {
-		await expect.poll(() => page.getByRole("button", { name: /stop.*⎋/ }).count()).toBe(0);
+		await expect.poll(() => page.getByRole("button", { name: "stop", exact: true }).count()).toBe(0);
 	};
 	await send([
 		{ name: "read", arguments: { path: "design/frames/home/frame.tsx" } },
@@ -166,7 +166,7 @@ it("runs file tools through the real host and served canvas, maps every changed 
 	await shot("access-result-denied");
 	await send([write("other/stopped")]);
 	await open.waitFor();
-	await page.getByRole("button", { name: /stop.*⎋/ }).click();
+	await page.getByRole("button", { name: "stop", exact: true }).click();
 	await settled();
 	expect(await open.count()).toBe(0);
 	expect(existsSync(join(project.root, "other/stopped"))).toBe(false);

@@ -138,8 +138,8 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 		.poll(() => page.locator("[data-agent-rail]").textContent(), { timeout: 15_000 })
 		.toContain("Saved reply 1.");
 	expect(calls()).toHaveLength(1);
-	await page.getByRole("button", { name: /stop.*⎋/ }).click();
-	await expect.poll(() => page.getByRole("button", { name: /stop.*⎋/ }).count()).toBe(0);
+	await page.getByRole("button", { name: "stop", exact: true }).click();
+	await expect.poll(() => page.getByRole("button", { name: "stop", exact: true }).count()).toBe(0);
 	await expect.poll(() => readThreads(project.spoolDir, project.root)[0]?.queued.length).toBe(0);
 	await field.fill("continue the same thread");
 	await field.press("Enter");

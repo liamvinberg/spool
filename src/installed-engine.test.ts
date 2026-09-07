@@ -369,7 +369,9 @@ it("completes a deterministic journey through the clean installed host and deliv
 		await field.press("Enter");
 	};
 	const settled = async () => {
-		await expect.poll(() => page.getByRole("button", { name: /stop.*⎋/ }).count(), { timeout: 60_000 }).toBe(0);
+		await expect
+			.poll(() => page.getByRole("button", { name: "stop", exact: true }).count(), { timeout: 60_000 })
+			.toBe(0);
 	};
 	const bash = (command: string, extra: Record<string, unknown> = {}) => ({
 		name: "bash",
@@ -472,7 +474,7 @@ try {
 	expect(existsSync(join(project, "denied"))).toBe(false);
 	await send([bash("printf stopped > stopped", { unsandboxed: !restricted })]);
 	await open.waitFor();
-	await page.getByRole("button", { name: /stop.*⎋/ }).click();
+	await page.getByRole("button", { name: "stop", exact: true }).click();
 	await settled();
 	expect(existsSync(join(project, "stopped"))).toBe(false);
 	await send([bash("printf once >> once", { unsandboxed: !restricted })]);
@@ -548,7 +550,7 @@ try {
 	expect(await open.count()).toBe(0);
 	await send([question]);
 	await open.waitFor();
-	await page.getByRole("button", { name: /stop.*⎋/ }).click();
+	await page.getByRole("button", { name: "stop", exact: true }).click();
 	await settled();
 	// A host crash retires an active model response without repeating a completed command.
 	await field.fill(`hold installed turn\ninstalled tools: ${JSON.stringify([bash("printf effect >> crash-effect")])}`);

@@ -60,7 +60,7 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	const model = rail.getByRole("button", { name: "Choose model", exact: true });
 	const menu = rail.getByRole("menu", { name: "Agent permissions", exact: true });
 	const open = rail.locator('[data-agent-ask="open"]');
-	const stop = rail.getByRole("button", { name: /stop.*⎋/ });
+	const stop = rail.getByRole("button", { name: "stop", exact: true });
 	const stored = () => readThreads(project.spoolDir, project.root);
 	const shot = async (name: string) => {
 		const shots = process.env.SPOOL_TEST_SHOTS;

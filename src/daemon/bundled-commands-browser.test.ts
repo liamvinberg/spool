@@ -77,7 +77,9 @@ it.each([false, true])(
 			await field.press("Enter");
 		};
 		const settled = async () => {
-			await expect.poll(() => page.getByRole("button", { name: /stop.*⎋/ }).count(), { timeout: 30_000 }).toBe(0);
+			await expect
+				.poll(() => page.getByRole("button", { name: "stop", exact: true }).count(), { timeout: 30_000 })
+				.toBe(0);
 		};
 		const shot = async (name: string) => {
 			if (!process.env.SPOOL_TEST_SHOTS) return;

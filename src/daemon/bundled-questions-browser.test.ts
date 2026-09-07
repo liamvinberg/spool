@@ -46,7 +46,7 @@ it("answers the accepted question in the served rail, preserves draft/history on
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	const open = page.locator('[data-agent-ask="open"]');
-	const stop = page.getByRole("button", { name: /stop.*⎋/ });
+	const stop = page.getByRole("button", { name: "stop", exact: true });
 	const send = async (text: string) => {
 		await field.fill(text);
 		await field.press("Enter");

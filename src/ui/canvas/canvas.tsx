@@ -510,14 +510,6 @@ export function ProjectCanvas({
 		},
 	};
 	/**
-	 * The running turn, for the one hotkey handler that can stop it (#165).
-	 *
-	 * A ref because the handlers are installed once and read state when a key lands,
-	 * the way every other rung of the ladder does.
-	 */
-	const turnRef = useRef(turn);
-	turnRef.current = turn;
-	/**
 	 * What a row in the rail can do about the frame it names (#143, #194).
 	 *
 	 * `have` is what the project has, so a name outside it is not a place to go. `gone`
@@ -4362,20 +4354,7 @@ export function ProjectCanvas({
 				else if (menuOpenRef.current) setMenu(null);
 				else if (enteredRef.current !== null) exitEntered(true);
 				// Esc leaves first, then climbs the same rungs ⇧⏎ climbs
-				else if (climbRung()) return;
-				else if (turnRef.current.phase === "playing") {
-					/*
-					 * The bottom rung, and the only one this ticket adds (#165).
-					 *
-					 * Escape in the composer stops a running turn because focus in a text field
-					 * is where this ladder never looks. Click onto the canvas to watch a frame
-					 * repaint and the key belongs to the ladder again — so it is spent here only
-					 * once every rung above it has passed, which is exactly when the press was
-					 * going nowhere anyway. Nothing above it moves, and the footer's own press is
-					 * the exit that works with a frame still selected.
-					 */
-					turnRef.current.stop();
-				}
+				else climbRung();
 			},
 		} satisfies Record<HotkeyIdFor<"canvas">, HotkeyHandler>;
 		const detachDialog = attachHotkeyLayer({

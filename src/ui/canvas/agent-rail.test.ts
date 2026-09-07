@@ -2752,7 +2752,7 @@ async function pressEscape(host: HTMLElement, where: "composer" | "canvas") {
 	});
 }
 
-/** a turn in flight, which is the only state either of these controls exists in */
+/** a turn in flight, which is when the Stop button is offered */
 async function running(canvas: ReturnType<typeof mount>, prompt = "start a habit tracker") {
 	await canvas.render();
 	await send(canvas.host, prompt);
@@ -2773,15 +2773,13 @@ describe("stopping a turn", () => {
 		expect(canvas.turn.stops).toHaveLength(1);
 	});
 
-	it("stops it on escape from the composer, where the key was going nowhere", async () => {
+	it("keeps the turn running on escape from the composer", async () => {
 		const canvas = mount();
 		await running(canvas);
 
-		// the canvas ignores every key while focus is in a text field, and Enter leaves
-		// focus here — so escape has been thrown away at the exact moment a turn runs
 		await pressEscape(canvas.host, "composer");
 
-		expect(canvas.turn.stops).toHaveLength(1);
+		expect(canvas.turn.stops).toHaveLength(0);
 	});
 
 	it("draws what it caught as stopped, and never echoes the notice back at you", async () => {
@@ -2820,7 +2818,7 @@ describe("stopping a turn", () => {
 		expect(log).not.toContain("[Request interrupted by user]");
 	});
 
-	it("stops it on escape from the canvas, once the ladder out there has nothing to say", async () => {
+	it("keeps the turn running on repeated escape from the canvas", async () => {
 		const canvas = mount();
 		await running(canvas);
 		// clicking out to watch a frame repaint is the state this whole rail is built
@@ -2833,7 +2831,8 @@ describe("stopping a turn", () => {
 		expect(canvas.turn.stops).toHaveLength(0);
 
 		await pressEscape(canvas.host, "canvas");
-		expect(canvas.turn.stops).toHaveLength(1);
+		await pressEscape(canvas.host, "canvas");
+		expect(canvas.turn.stops).toHaveLength(0);
 	});
 
 	it("is offered against a turn that is still a process, and against nothing else", async () => {
@@ -2874,13 +2873,6 @@ describe("stopping a turn", () => {
 		expect(stopPress(canvas.host)).toBeNull();
 	});
 
-	/**
-	 * A queue behind an unanswered question had no bulk exit at all (#170, #234).
-	 *
-	 * The press was not drawn and escape returned before it reached anything, so the only
-	 * way out was answering a question you had parked precisely because you did not want to
-	 * — or taking the messages back one ✕ at a time.
-	 */
 	it("stops a turn parked on a question, and hands its queue back", async () => {
 		const canvas = mount();
 		await running(canvas);
@@ -2901,6 +2893,9 @@ describe("stopping a turn", () => {
 		await until(() => canvas.host.querySelector("[data-agent-ask]") !== null);
 
 		await pressEscape(canvas.host, "composer");
+		expect(canvas.turn.stops).toHaveLength(0);
+		expect(queuedRows(canvas.host)).toEqual(["hold off on add-habit"]);
+		await act(async () => stopPress(canvas.host)?.click());
 
 		expect(canvas.turn.stops).toHaveLength(1);
 		expect(field(canvas.host)?.value).toBe("hold off on add-habit");
@@ -4314,7 +4309,7 @@ describe("the footer the model hangs off", () => {
 		if (footer === null) throw new Error("no footer");
 
 		// The effective permission mode stays rightmost; model text gives way first.
-		expect(footer.textContent).toBe("Opus (1M context)stop⎋ask");
+		expect(footer.textContent).toBe("Opus (1M context)stopask");
 		expect(footer.textContent).not.toContain("weekly limit");
 		expect(footer.textContent).not.toContain("enter to");
 	});
