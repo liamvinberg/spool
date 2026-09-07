@@ -1,0 +1,65 @@
+{
+  "source": "fixtures/captures/claude-mcp.json, message beginning at row 753",
+  "model": "Claude · recorded excerpt",
+  "timing": "estimated",
+  "prompt": null,
+  "finishedAt": 6876,
+  "arrivals": [
+    {
+      "at": 0,
+      "text": "Fonts check out: HTTP 200, both families served"
+    },
+    {
+      "at": 276,
+      "text": ", all three Inter Tight weights present. That removes the font-miss risk.\n\n**"
+    },
+    {
+      "at": 729,
+      "text": "Where this stands.**\n\nDone and on disk:\n- `design/frames/receipt/frame.tsx` — one frame, live"
+    },
+    {
+      "at": 1276,
+      "text": " on the canvas by virtue of existing\n- `design/shared/tokens.css` — six kaffe colours pl"
+    },
+    {
+      "at": 1794,
+      "text": "us two font tokens under `@theme`\n- `design/shared/fonts.css` — the verified Instrument Serif + Inter Tight import\n\nI"
+    },
+    {
+      "at": 2482,
+      "text": " wrote nothing to `design/canvas.json` or `design/.spool/`.\n\nStill unverified: the lay"
+    },
+    {
+      "at": 2988,
+      "text": "out. My arithmetic puts the content near 806px inside 844, with `m"
+    },
+    {
+      "at": 3376,
+      "text": "t-auto` absorbing the slack, but that is a calculation and not a render. If it is off"
+    },
+    {
+      "at": 3876,
+      "text": ", the symptom would be the footer meta and the `Klar` button pushed past the bottom ed"
+    },
+    {
+      "at": 4382,
+      "text": "ge. `spool shot receipt` remains the only way to know, and it stays blocked on the v0.3.0 CLI against"
+    },
+    {
+      "at": 4976,
+      "text": " the v0.4.0 daemon until you decide how to close that gap — say the word and I'll shoot it."
+    },
+    {
+      "at": 5511,
+      "text": "\n\nTwo things I'd flag as yours to act on, not mine: the Drive connector emitting `Skip Dr"
+    },
+    {
+      "at": 6035,
+      "text": "ive — use Notion only.` in place of a result, and the Figma connector being unauthorized so the pal"
+    },
+    {
+      "at": 6617,
+      "text": "ette is my invention rather than your brand."
+    }
+  ]
+}
