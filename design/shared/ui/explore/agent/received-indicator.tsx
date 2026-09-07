@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TextRecording } from "shared/lib/explore/agent/received-text";
 import { receivedAt } from "shared/lib/explore/agent/received-text";
 import { useStillness } from "shared/lib/spool/stillness";
@@ -10,17 +10,17 @@ type Take = "trail" | "wind" | "words";
 const recording: TextRecording = { ...recordingData, timing: recordingData.timing === "recorded" ? "recorded" : "estimated" };
 const HOLD = 5000;
 
-/** Decorative distance follows received characters. A sweep is 64 characters, not a token. */
-function ReceivedMark({ take, text }: { take: Take; text: string }) {
+interface ReceivedMotion {
+	time: number;
+	speed: number;
+	target: number;
+}
+
+/** Keep the sweep's phase when Paragraphs moves the marker into the next paragraph. */
+function ReceivedMark({ take, text, motion }: { take: Take; text: string; motion: ReceivedMotion }) {
 	const strand = useRef<HTMLSpanElement>(null);
 	const mark = useRef<HTMLSpanElement>(null);
-	const signal = useRef({ target: text.length, drawn: text.length, changed: performance.now() });
-	useEffect(() => {
-		if (signal.current.target === text.length) return;
-		signal.current.target = text.length;
-		signal.current.changed = performance.now();
-	}, [text]);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const node = strand.current;
 		if (!node) return;
 		const wind = take === "wind";
@@ -30,40 +30,44 @@ function ReceivedMark({ take, text }: { take: Take; text: string }) {
 			{ duration, easing: "cubic-bezier(.35,0,.5,1)", iterations: Infinity },
 		);
 		if (!animation) return;
-		animation.pause();
+		animation.currentTime = motion.time;
+		animation.playbackRate = motion.speed;
+		animation.play();
 		let frame = 0;
 		let before = performance.now();
 		const paint = () => {
 			const now = performance.now();
-			const state = signal.current;
 			const dt = Math.min(64, now - before);
 			before = now;
-			state.drawn += (state.target - state.drawn) * (1 - Math.exp(-dt / 45));
-			if (state.target - state.drawn < .05) state.drawn = state.target;
-			animation.currentTime = state.drawn / 64 * duration;
-			const idle = now - state.changed > 350;
+			// Change velocity, never seek ahead to catch up with a burst of characters.
+			const ease = motion.target === 0 ? 150 : 280;
+			motion.speed += (motion.target - motion.speed) * (1 - Math.exp(-dt / ease));
+			if (motion.target === 0 && motion.speed < .01) motion.speed = 0;
+			animation.updatePlaybackRate(motion.speed);
 			if (mark.current) {
-				mark.current.dataset.receiving = idle ? "false" : "true";
-				mark.current.style.opacity = idle ? ".32" : ".9";
-				mark.current.dataset.drawn = state.drawn.toFixed(2);
-				mark.current.dataset.received = String(state.target);
+				mark.current.dataset.receiving = motion.target > 0 ? "true" : "false";
+				mark.current.style.opacity = motion.target > 0 ? ".9" : ".32";
 			}
 			frame = requestAnimationFrame(paint);
 		};
 		paint();
-		return () => { cancelAnimationFrame(frame); animation.cancel(); };
-	}, [take]);
+		return () => {
+			cancelAnimationFrame(frame);
+			motion.time = Number(animation.currentTime ?? motion.time);
+			animation.cancel();
+		};
+	}, [take, motion]);
 	const pending = paragraphsOf(text).at(-1) ?? "";
 	const words = pending.slice(-48).replace(/^\S*\s/, "").replace(/[*`#]/g, "");
 	return (
-		<span ref={mark} data-received-marker={take} className={`received-marker received-${take}`} aria-hidden="true">
+		<span ref={mark} data-received-marker={take} className={`received-marker received-${take}`} style={{ opacity: motion.target > 0 ? .9 : .32 }} aria-hidden="true">
 			{take === "words" ? <span className="received-phrase">{words}</span> : null}
 			<span className="received-track"><span ref={strand} className={take === "wind" ? "received-strand animate-agent-wind" : "received-strand"} /></span>
 		</span>
 	);
 }
 
-/** Only this frame's replay clock is synthetic; recorded chunk spacing stays untouched. */
+/** Replays saved chunks, labelled with whether their arrival times were recorded or estimated. */
 export function ReceivedIndicator({ take, history = false }: { take: Take; history?: boolean }) {
 	const still = useStillness();
 	const [wall, setWall] = useState(() => Date.now());
@@ -84,6 +88,11 @@ export function ReceivedIndicator({ take, history = false }: { take: Take; histo
 	}
 	const speed = rate.current.arrivals.filter(a => wall - a.at < 1000).reduce((sum, a) => sum + a.count, 0);
 	const quiet = wall - rate.current.at > 750;
+	const sweep = useRef({ run, motion: { time: 400, speed: 0, target: 0 } });
+	if (sweep.current.run !== run) sweep.current = { run, motion: { time: 400, speed: 0, target: 0 } };
+	// The readout reports exact received characters; the wind gently reflects activity.
+	sweep.current.motion.target = ended || play.mode === "pause" || quiet || text.length === 0
+		? 0 : Math.max(.55, Math.min(1.15, speed / 170));
 	const box = useRef<HTMLDivElement>(null);
 	const body = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -115,7 +124,7 @@ export function ReceivedIndicator({ take, history = false }: { take: Take; histo
 				<div ref={body} className="flex min-h-full flex-col justify-end px-4 pt-5 pb-5">
 					{recording.prompt ? <p className="mb-6 ml-8 rounded-sm bg-surface px-3 py-2.5 type-body">{recording.prompt}</p> : null}
 					<div key={run}>
-						<Paragraphs text={text} finished={ended} still={still} caret={ended ? undefined : <ReceivedMark take={take} text={text} />} />
+						<Paragraphs text={text} finished={ended} still={still} caret={ended ? undefined : <ReceivedMark take={take} text={text} motion={sweep.current.motion} />} />
 					</div>
 					{play.mode === "stopped" ? <span className="mt-4 text-muted type-value">stopped</span> : null}
 				</div>
