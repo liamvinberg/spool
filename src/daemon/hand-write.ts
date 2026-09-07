@@ -70,6 +70,8 @@ export type Planned =
 			ok: true;
 			/** the file after the ops, byte-identical outside what they touched */
 			text: string;
+			/** Exact planner spans, including identical bytes inside the authored value. */
+			patches: readonly SpanPatch[];
 			/** the ops landed on an element inside a `map`, so every row moved */
 			mapped: boolean;
 	  }
@@ -276,7 +278,7 @@ export function planOps(source: string, ops: readonly HandOp[], theme?: ClassThe
 	}
 	let text = source;
 	for (const patch of [...ordered].reverse()) text = applySpan(text, patch);
-	return { ok: true, text, mapped };
+	return { ok: true, text, mapped, patches: ordered };
 }
 
 /** The stamp names a position the file no longer has anything at. */

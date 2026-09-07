@@ -5,6 +5,7 @@ import type { AgentAsking, AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
 import type { AgentLogin } from "./agent-preflight";
 import type { BundledQuestions } from "./bundled-questions";
+import type { SourceAgentReply, SourceAgentRequest } from "./source-agent";
 
 export type BundledRequest =
 	| { kind: "account" }
@@ -23,8 +24,11 @@ export type BundledRequest =
 	| { kind: "stop"; turn: string }
 	| { kind: "close" };
 export type BundledReply = AgentLogin | AgentOffer | AgentLoginProgress | AgentPermissions | boolean | string | null;
-export type HostInput = { id: string; request: BundledRequest };
+export type HostInput =
+	| { id: string; request: BundledRequest }
+	| { kind: "source-reply"; id: string; value?: SourceAgentReply; error?: string };
 export type HostOutput =
+	| { kind: "source"; id: string; turn: string; request: SourceAgentRequest }
 	| { kind: "reply"; id: string; value: BundledReply }
 	| { kind: "error"; id: string; message: string }
 	| { kind: "event"; id: string; event: AgentEvent };

@@ -3,7 +3,7 @@ import { messages } from "./check-test-harness";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 
 describe("design CommonJS checking", () => {
-	it("preflights nested static CommonJS requires with the live local source priority", () => {
+	it("preflights nested static CommonJS requires with the live local source priority", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/entry.cts", 'const next = require("./next");\nvoid next;\n');
@@ -12,13 +12,13 @@ describe("design CommonJS checking", () => {
 		writeDesignFile(root, "shared/dep.tsx", "export const value: string = 1;\n");
 		writeFrame(root, "home", 'import "../../shared/entry.cjs";\n');
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/shared/dep.tsx:1:14 TS2322: Type 'number' is not assignable to type 'string'."]);
 		expect(result.join("\n")).not.toContain("TS2591");
 	});
 
-	it("classifies mapped and unmapped bare static requires like imports", () => {
+	it("classifies mapped and unmapped bare static requires like imports", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/importmap.json", '{ "imports": { "mapped": "https://example.test/mapped.js" } }\n');
@@ -28,7 +28,7 @@ describe("design CommonJS checking", () => {
 			'const mapped = require("mapped");\nconst missing = require("unmapped");\nmapped.runtimeOnly();\nvoid missing;\n',
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual([
 			"design/frames/home/frame.tsx:2:25 TS2307: Cannot find module 'unmapped' or its corresponding type declarations.",
@@ -36,12 +36,12 @@ describe("design CommonJS checking", () => {
 		expect(result.join("\n")).not.toContain("TS2591");
 	});
 
-	it("reports a missing local static require at its authored specifier", () => {
+	it("reports a missing local static require at its authored specifier", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(root, "home", 'const missing = require("./missing");\nvoid missing;\n');
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual([
 			"design/frames/home/frame.tsx:1:25 TS2307: Cannot find module './missing' or its corresponding type declarations.",
@@ -49,7 +49,7 @@ describe("design CommonJS checking", () => {
 		expect(result.join("\n")).not.toContain("TS2591");
 	});
 
-	it("leaves dynamic require calls unrecognized and does not preflight their possible target", () => {
+	it("leaves dynamic require calls unrecognized and does not preflight their possible target", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/dep.ts", "export const broken: string = 1;\n");
@@ -59,7 +59,7 @@ describe("design CommonJS checking", () => {
 			'const specifier = "../../shared/dep";\nconst dynamic = require(specifier);\nvoid dynamic;\n',
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("design/frames/home/frame.tsx:2:17 TS2591: Cannot find name 'require'.");
@@ -72,14 +72,14 @@ describe("design CommonJS checking", () => {
 			"const binding",
 			'const require = (specifier: string): unknown => specifier;\nexport const value = require("./dep");\n',
 		],
-	] as const)("does not treat a shadowed $name as CommonJS", (_name, source) => {
+	] as const)("does not treat a shadowed $name as CommonJS", async (_name, source) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/entry.ts", source);
 		writeDesignFile(root, "shared/dep.ts", "export const broken: string = 1;\n");
 		writeFrame(root, "home", 'import "../../shared/entry";\n');
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
@@ -91,13 +91,13 @@ describe("design CommonJS checking", () => {
 		["type-only default import", 'import type require from "react";\n'],
 		["type-only named import", 'import { type Component as require } from "react";\n'],
 		["type-only import equals", 'import type require = require("react");\n'],
-	] as const)("preflights a runtime require despite an erased $name binding", (_name, binding) => {
+	] as const)("preflights a runtime require despite an erased $name binding", async (_name, binding) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/dep.ts", "export const broken: string = 1;\n");
 		writeFrame(root, "home", `${binding}const dependency = require("../../shared/dep");\nvoid dependency;\n`);
 
-		expect(messages(root).filter((message) => !message.includes("TS1202:"))).toEqual([
+		expect((await messages(root)).filter((message) => !message.includes("TS1202:"))).toEqual([
 			"design/shared/dep.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.",
 		]);
 	});
@@ -109,7 +109,7 @@ describe("design CommonJS checking", () => {
 		["enum", "enum require { value }\n"],
 		["value import", 'import require from "../../shared/live";\n'],
 		["value import equals", 'import require = require("../../shared/live-export");\n'],
-	] as const)("keeps a live $name binding ahead of global CommonJS", (_name, binding) => {
+	] as const)("keeps a live $name binding ahead of global CommonJS", async (_name, binding) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/dep.ts", "export const broken: string = 1;\n");
@@ -125,10 +125,10 @@ describe("design CommonJS checking", () => {
 		);
 		writeFrame(root, "home", `${binding}const dependency = require("../../shared/dep");\nvoid dependency;\n`);
 
-		expect(messages(root).join("\n")).not.toContain("design/shared/dep.ts");
+		expect((await messages(root)).join("\n")).not.toContain("design/shared/dep.ts");
 	});
 
-	it("does not treat a named class-expression binding as CommonJS", () => {
+	it("does not treat a named class-expression binding as CommonJS", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(
@@ -139,7 +139,7 @@ describe("design CommonJS checking", () => {
 		writeDesignFile(root, "shared/dep.ts", "export const broken: string = 1;\n");
 		writeFrame(root, "home", 'import { loader } from "../../shared/entry";\nvoid loader;\n');
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("design/shared/entry.ts");
@@ -159,13 +159,13 @@ describe("design CommonJS checking", () => {
 			"method decorator",
 			'class Subject { @require("../../shared/dep") method(require: (specifier: string) => unknown) { return require("./ignored"); } }\nvoid Subject;\n',
 		],
-	] as const)("checks a static require in a $name outside its parameter scope", (_name, source) => {
+	] as const)("checks a static require in a $name outside its parameter scope", async (_name, source) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/dep.ts", "export const broken: string = 1;\n");
 		writeFrame(root, "home", source);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/shared/dep.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.",
 		]);
 	});
@@ -179,18 +179,18 @@ describe("design CommonJS checking", () => {
 			"TypeScript namespace block",
 			'namespace Subject { var require = (specifier: string): unknown => specifier; export const ignored = require("./ignored"); }\nvoid Subject;\n',
 		],
-	] as const)("keeps a var require inside its $name", (_name, scopedBinding) => {
+	] as const)("keeps a var require inside its $name", async (_name, scopedBinding) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/dep.ts", "export const broken: string = 1;\n");
 		writeFrame(root, "home", `${scopedBinding}const dependency = require("../../shared/dep");\nvoid dependency;\n`);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/shared/dep.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.",
 		]);
 	});
 
-	it("keeps the static require helper distinct from authored bindings", () => {
+	it("keeps the static require helper distinct from authored bindings", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/dep.ts", "export const value = true;\n");
@@ -200,7 +200,7 @@ describe("design CommonJS checking", () => {
 			'const $$$$$$$ = 1;\nconst _______ = 2;\nconst _$$$$$$ = 3;\nconst dep = require("../../shared/dep");\nvoid [$$$$$$$, _______, _$$$$$$, dep];\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
@@ -208,7 +208,7 @@ describe("design CommonJS checking", () => {
 		["d.cts", ".cjs"],
 	] as const)(
 		"does not substitute a design-local .%s declaration for missing %s runtime source",
-		(declarationExtension, importExtension) => {
+		async (declarationExtension, importExtension) => {
 			const root = makeTempDir();
 			markProject(root);
 			writeDesignFile(
@@ -218,20 +218,23 @@ describe("design CommonJS checking", () => {
 			);
 			writeFrame(root, "home", `import "../../shared/contract${importExtension}";\n`);
 
-			expect(messages(root)).toEqual([
+			expect(await messages(root)).toEqual([
 				`design/frames/home/frame.tsx:1:8 TS2307: Cannot find module '../../shared/contract${importExtension}' or its corresponding type declarations.`,
 			]);
 		},
 	);
 
-	it.each(["d.mts", "d.cts"] as const)("checks an explicitly imported design-local .%s declaration", (extension) => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, `shared/contract.${extension}`, "export type Broken = MissingType;\n");
-		writeFrame(root, "home", `import "../../shared/contract.${extension}";\n`);
+	it.each(["d.mts", "d.cts"] as const)(
+		"checks an explicitly imported design-local .%s declaration",
+		async (extension) => {
+			const root = makeTempDir();
+			markProject(root);
+			writeDesignFile(root, `shared/contract.${extension}`, "export type Broken = MissingType;\n");
+			writeFrame(root, "home", `import "../../shared/contract.${extension}";\n`);
 
-		expect(messages(root)).toEqual([
-			`design/shared/contract.${extension}:1:22 TS2304: Cannot find name 'MissingType'.`,
-		]);
-	});
+			expect(await messages(root)).toEqual([
+				`design/shared/contract.${extension}:1:22 TS2304: Cannot find name 'MissingType'.`,
+			]);
+		},
+	);
 });

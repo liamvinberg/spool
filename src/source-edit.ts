@@ -86,6 +86,7 @@ export interface SourcePublication {
 	related?: SourcePublication[];
 	failures?: UseOutcome[];
 	before: string;
+	compatibleBefore?: string[];
 	packet: RetainedValues;
 	generation: number;
 	original: SourceOccurrence;

@@ -3026,7 +3026,12 @@ export function ProjectCanvas({
 					return;
 				const publication = retainedPublications.current.get(frame);
 				if (publication && (await sourceIsCurrent(project, publication))) return;
-				if (pendingSource.current.has(frame) || editingRef.current?.frame === frame || sourceDelivery.holds(frame))
+				if (
+					pendingSource.current.has(frame) ||
+					editingRef.current?.frame === frame ||
+					sourceDelivery.holds(frame) ||
+					unappliedSource.current.has(frame)
+				)
 					return;
 				retainedPublications.current.delete(frame);
 				reloadFrameDocument(frame);

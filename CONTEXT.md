@@ -98,7 +98,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Span patch**: The characters an operation replaces, leaving source outside that range intact. Source-owned operations retain the inverse on the daemon and expose an opaque undo receipt; client-provided spans are not authority for those operations. _Avoid_: source mirror
 
-**Fingerprint**: A content hash used to compare source bytes. Matching hashes do not prove that no outside writer touched a file. Source-owned reads also retain compiler inputs, canonical file identities and their owner lifetime. _Avoid_: outside-write guarantee
+**Fingerprint**: A content hash used to compare source bytes. Matching hashes do not prove that no writer touched a file. Independent hand and bundled-agent changes can coexist only while their complete original reads, recorded operations and source observation remain available. An opaque replacement or a recorded competing touch retires that evidence even when the bytes return. _Avoid_: outside-write guarantee
 
 ### Flows
 

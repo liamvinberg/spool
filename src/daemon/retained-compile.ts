@@ -228,6 +228,7 @@ export function lowerLiterals(
 			for (const attribute of open.attributes) {
 				if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") continue;
 				const field = attribute.name.name;
+				if (/^(?:on[A-Z]|data-spool-)/.test(field)) continue;
 				if (["key", "ref", "data-go", "src", "className", "style"].includes(field)) continue;
 				if (
 					open.attributes.filter(
