@@ -5205,6 +5205,7 @@ export function ProjectCanvas({
 							onGeometryCommit: commitFrameGeometry,
 							onWrite: writeOps,
 							text: {
+								describe: sourceDelivery.describeField,
 								begin: beginRailText,
 								preview: (frame, read, text) => {
 									void sourceDelivery.preview(frame, read.generation, text);

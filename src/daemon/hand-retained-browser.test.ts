@@ -594,3 +594,33 @@ it("undoes a shared source after normal page navigation and deletion of its init
 	await f.page.keyboard.press("ControlOrMeta+Shift+z");
 	await expect.poll(() => cold.locator("#label").textContent()).toBe("Saved shared");
 });
+
+it.each(["primary", "secondary"])(
+	"preserves an outside mutation when the %s shared preview is cancelled",
+	{ timeout: 120000 },
+	async (target) => {
+		const shared = 'export function Label(){return <h1 id="label" style={{margin:0,fontSize:30}}>Before</h1>}';
+		const source =
+			'import {Label} from "shared/label"; export default function Frame(){return <main style={{padding:40}}><Label/></main>}';
+		const f = await served(source, (root) => {
+			writeDesignFile(root, "shared/label.tsx", shared);
+			writeFrame(root, "second", source);
+			writeDesignFile(root, "frames/home/frame.json", '{"x":0,"y":0,"w":450,"h":400}');
+			writeDesignFile(root, "frames/second/frame.json", '{"x":500,"y":0,"w":450,"h":400}');
+		});
+		const second = f.page.frameLocator('iframe[title="second"]');
+		await second.locator("#label").waitFor();
+		await f.edit();
+		await replace(f.page, "Preview");
+		await expect.poll(() => second.locator("#label").textContent()).toBe("Preview");
+		const changed = target === "primary" ? f.frame : second;
+		const restored = target === "primary" ? second : f.frame;
+		await changed.locator("#label").evaluate((el) => {
+			el.textContent = "Outside";
+		});
+		await f.page.keyboard.press("Escape");
+		expect(readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
+		await expect.poll(() => restored.locator("#label").textContent()).toBe("Before");
+		expect(await changed.locator("#label").textContent()).toBe("Outside");
+	},
+);

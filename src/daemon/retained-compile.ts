@@ -16,6 +16,7 @@ export interface SourceInput {
 	identity: string;
 }
 export interface LiteralCell {
+	childValue?: string | readonly string[] | null;
 	absent?: true;
 	source: string;
 	file: string;
@@ -304,12 +305,6 @@ export function lowerLiterals(
 			)
 		)
 			return;
-		const meaningful = node.children.filter(
-			(child) =>
-				!(child.type === "JSXText" && /^\s*\n\s*$/.test(child.value)) &&
-				!(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression"),
-		);
-		if (meaningful.length > 1) return;
 		// Ask the same JSX lowerer for the value of only this literal child. No
 		// application expression or TypeScript declaration passes through this step.
 		const contentStart = position(open).end,
@@ -318,24 +313,37 @@ export function lowerLiterals(
 			loader: "jsx",
 			jsx: "automatic",
 			jsxDev: true,
+			supported: { "template-literal": false },
 		}).code;
 		let value = "";
+		let childValue: LiteralCell["childValue"] = null;
 		walk(parse(literal, { sourceType: "module" }).program, (n) => {
-			if (
-				n.type === "ObjectProperty" &&
-				n.key.type === "Identifier" &&
-				n.key.name === "children" &&
-				n.value.type === "StringLiteral"
-			)
-				value = n.value.value;
+			if (n.type === "ObjectProperty" && n.key.type === "Identifier" && n.key.name === "children") {
+				if (n.value.type === "StringLiteral") childValue = value = n.value.value;
+				else if (n.value.type === "ArrayExpression") {
+					const values = n.value.elements.map((element) => {
+						if (element?.type !== "StringLiteral")
+							throw new Error("literal children changed during JSX lowering");
+						return element.value;
+					});
+					childValue = values;
+					value = values.join("");
+				}
+			}
 		});
 		retainOwner();
 		eligible.add(node);
-		cells[id] = { file, source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`, value, owner };
+		cells[id] = {
+			file,
+			source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`,
+			value,
+			childValue,
+			owner,
+		};
 		patches.push({
 			start: contentStart,
 			end: contentEnd,
-			text: `{${prefix}Value(${JSON.stringify(id)},${JSON.stringify(value)})}`,
+			text: `{${prefix}Children(${JSON.stringify(id)},${JSON.stringify(childValue)})}`,
 		});
 		const jsxChild = ["JSXElement", "JSXFragment"].includes(ancestors.at(-1)?.type ?? "");
 		patches.push({
@@ -573,7 +581,7 @@ export function lowerLiterals(
 	);
 	const imports =
 		functions.size || factory > 0
-			? `\nimport {sourceValue as ${prefix}Value,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom} from "spool/jsx-dev-runtime";`
+			? `\nimport {sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom} from "spool/jsx-dev-runtime";`
 			: "";
 	return { code: transformed + imports, cells, shape, stamps, locations };
 }

@@ -107,8 +107,10 @@ it("preserves executable shape across empty and escaped literal writes and leave
 	const second = lowerLiterals("frame.tsx", SOURCE.replace('{"Hello"}', '{""}'));
 	expect(first.shape).toBe(second.shape);
 	const adjacent = lowerLiterals("frame.tsx", 'export default function Frame(){return <p>{"one"}{"two"}</p>}');
-	expect(Object.values(adjacent.cells).filter((cell) => !cell.field)).toEqual([]);
-	expect(adjacent.code).toContain('<p>{"one"}{"two"}</p>');
+	expect(Object.values(adjacent.cells).filter((cell) => !cell.field)).toMatchObject([
+		{ value: "onetwo", childValue: ["one", "two"] },
+	]);
+	expect(adjacent.code).toContain('["one","two"]');
 });
 
 it("keeps two coordinated source edits reversible through two undos and two redos", async () => {

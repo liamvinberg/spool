@@ -66,6 +66,7 @@ export interface SourceReceipt {
 }
 
 export interface RetainedValues {
+	childValues?: Record<string, string | readonly string[] | null>;
 	attributes?: Record<string, Record<string, { cell: string; absent: boolean }>>;
 	stamps?: Record<string, string>;
 	locations?: Record<string, string>;
@@ -79,6 +80,7 @@ export interface RetainedValues {
 }
 
 export interface SourcePublication {
+	expected: { value: string; absent: boolean };
 	admission: { token: string; expires: number };
 	owner: string;
 	frame: string;
