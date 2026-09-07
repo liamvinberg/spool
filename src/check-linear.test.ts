@@ -20,7 +20,7 @@ beforeEach(() => {
 	parserMetrics.count = 0;
 });
 
-it("indexes each source once across a long permissive star-export chain", () => {
+it("indexes each source once across a long permissive star-export chain", async () => {
 	const root = makeTempDir();
 	markProject(root);
 	const chainLength = 80;
@@ -35,6 +35,6 @@ it("indexes each source once across a long permissive star-export chain", () => 
 		'import { remoteOnly } from "../../shared/barrel-0";\nexport default function Home() { return <main>{String(remoteOnly)}</main>; }\n',
 	);
 
-	expect(checkDesign(root)).toEqual([]);
+	expect(await checkDesign(root)).toEqual([]);
 	expect(parserMetrics.count).toBe(chainLength + 1);
 });

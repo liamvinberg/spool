@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -79,10 +79,42 @@ child.send({ id: "probe", request: { kind: "account" } });
 			"home",
 			'import { ui } from "spool";\nconst copied: Promise<void> = ui.copy("packed declaration");\nvoid copied;\n',
 		);
+		const checkerExit = join(makeTempDir(), "checker-exit.json");
+		const checkerProbe = join(makeTempDir(), "checker-probe.mjs");
+		writeFileSync(
+			checkerProbe,
+			`
+import childProcess from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const spawn = childProcess.spawn;
+childProcess.spawn = (...args) => {
+	const child = spawn(...args);
+	if (!Array.isArray(args[1]) || !args[1].includes("--api")) return child;
+	const signals = [];
+	const kill = child.kill.bind(child);
+	child.kill = (signal) => { signals.push(signal ?? "SIGTERM"); return kill(signal); };
+	// Keep the probe alive to observe the real compiler's exit, even if its API unrefs it.
+	const timeout = setTimeout(() => child.kill("SIGKILL"), 15000);
+	child.once("exit", (code, signal) => {
+		clearTimeout(timeout);
+		writeFileSync(${JSON.stringify(checkerExit)}, JSON.stringify({ signals, code, signal }));
+	});
+	return child;
+};
+syncBuiltinESMExports();
+`,
+		);
+		const checkerEnv = {
+			...process.env,
+			SPOOL_DIR: "",
+			NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${JSON.stringify(checkerProbe)}`,
+		};
 		const clipboardCheck = spawnSync(spoolBin, ["check", clipboardProject], {
 			encoding: "utf8",
-			env: { ...process.env, SPOOL_DIR: "" },
+			env: checkerEnv,
 		});
+		expect(JSON.parse(readFileSync(checkerExit, "utf8"))).toEqual({ signals: [], code: 0, signal: null });
 		expect(clipboardCheck.status).toBe(0);
 		expect(clipboardCheck.stdout).toBe("");
 		expect(clipboardCheck.stderr).toBe("");
@@ -92,10 +124,12 @@ child.send({ id: "probe", request: { kind: "account" } });
 		writeDesignFile(project, "shared/entry.cts", 'const dep = require("./dep");\nvoid dep;\n');
 		writeDesignFile(project, "shared/dep.ts", "export const broken: string = 1;\n");
 		writeFrame(project, "home", 'import "../../shared/entry.cjs";\n');
+		unlinkSync(checkerExit);
 		const check = spawnSync(spoolBin, ["check", project], {
 			encoding: "utf8",
-			env: { ...process.env, SPOOL_DIR: "" },
+			env: checkerEnv,
 		});
+		expect(JSON.parse(readFileSync(checkerExit, "utf8"))).toEqual({ signals: [], code: 0, signal: null });
 		expect(check.status).toBe(1);
 		expect(check.stdout).toBe("");
 		expect(check.stderr).toBe(

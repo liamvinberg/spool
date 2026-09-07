@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ParserPlugin, parse } from "@babel/parser";
-import { API, type Diagnostic } from "typescript/unstable/sync";
+import { API, type Diagnostic } from "typescript/unstable/async";
 import { CheckerAliasAllocator } from "./check-alias";
 import { CheckSourceBudget, CheckSourceLimitError, checkSourceLimitMessage } from "./check-budget";
 import { BoundedFileTooLargeError, readBoundedRegularFile, UnsafeFileReadError } from "./check-file";
@@ -161,9 +161,9 @@ class NonRegularDesignFileError extends Error {
 }
 
 /** Check every HTML frame without registering, compiling, or writing a project. */
-export function checkDesign(root: string): CheckDiagnostic[] {
+export async function checkDesign(root: string): Promise<CheckDiagnostic[]> {
 	try {
-		return runCheckDesign(root);
+		return await runCheckDesign(root);
 	} catch (error) {
 		if (error instanceof NonRegularDesignFileError) {
 			return [{ path: error.path, line: 1, column: 1, code: 5083, message: nonRegularFileMessage }];
@@ -187,7 +187,7 @@ export function checkDesign(root: string): CheckDiagnostic[] {
 	}
 }
 
-function runCheckDesign(root: string): CheckDiagnostic[] {
+async function runCheckDesign(root: string): Promise<CheckDiagnostic[]> {
 	const designDir = realDesignDir(root);
 	const sourceBudget = new CheckSourceBudget();
 	const entries = discoverHtmlFrames(designDir);
@@ -406,14 +406,14 @@ function runCheckDesign(root: string): CheckDiagnostic[] {
 		},
 	});
 	try {
-		const snapshot = api.updateSnapshot({ openProjects: [configFile] });
+		const snapshot = await api.updateSnapshot({ openProjects: [configFile] });
 		try {
 			const project = snapshot.getProject(configFile);
 			if (project === undefined) return dedupe(boundaries);
 			const diagnostics: CheckDiagnostic[] = [];
 			for (const diagnostic of [
-				...project.program.getConfigFileParsingDiagnostics(),
-				...project.program.getProgramDiagnostics(),
+				...(await project.program.getConfigFileParsingDiagnostics()),
+				...(await project.program.getProgramDiagnostics()),
 			]) {
 				diagnostics.push(
 					formatDiagnostic(
@@ -430,9 +430,9 @@ function runCheckDesign(root: string): CheckDiagnostic[] {
 				);
 			}
 			for (const diagnostic of [
-				...project.program.getSyntacticDiagnostics(),
-				...project.program.getBindDiagnostics(),
-				...project.program.getSemanticDiagnostics(),
+				...(await project.program.getSyntacticDiagnostics()),
+				...(await project.program.getBindDiagnostics()),
+				...(await project.program.getSemanticDiagnostics()),
 			]) {
 				if (
 					isBoundaryDependencyDiagnostic(designDir, diagnostic, boundaryDependencies.moduleUses) ||
@@ -468,10 +468,10 @@ function runCheckDesign(root: string): CheckDiagnostic[] {
 			}
 			return dedupe([...diagnostics, ...boundaries]);
 		} finally {
-			snapshot.dispose();
+			await snapshot.dispose();
 		}
 	} finally {
-		api.close();
+		await api.close();
 	}
 }
 

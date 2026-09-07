@@ -5,7 +5,7 @@ import { messages } from "./check-test-harness";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 
 describe("design asset checking", () => {
-	it("resolves a design-relative shared/ import from any depth (#273)", () => {
+	it("resolves a design-relative shared/ import from any depth (#273)", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/lib/utils.ts", "export function cn(value: string): string {\n\treturn value;\n}\n");
@@ -15,10 +15,10 @@ describe("design asset checking", () => {
 			'import { cn } from "shared/lib/utils";\nexport default function Cart() {\n\treturn <p>{cn("cart")}</p>;\n}\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("still reports a shared/ import that resolves to nothing, and type errors through one that does", () => {
+	it("still reports a shared/ import that resolves to nothing, and type errors through one that does", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/lib/utils.ts", "export function cn(value: string): string {\n\treturn value;\n}\n");
@@ -28,13 +28,13 @@ describe("design asset checking", () => {
 			'import { gone } from "shared/lib/nope";\nimport { cn } from "shared/lib/utils";\nexport default function Cart() {\n\treturn <p>{cn(gone) + cn(1)}</p>;\n}\n',
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 		expect(result.some((line) => line.includes("TS2307") && line.includes("shared/lib/nope"))).toBe(true);
 		// the resolved shared file's own types hold: cn(1) is a real mistake
 		expect(result.some((line) => line.includes("TS2345"))).toBe(true);
 	});
 
-	it("supports explicit TypeScript and JSON imports while excluding CSS and JavaScript semantics", () => {
+	it("supports explicit TypeScript and JSON imports while excluding CSS and JavaScript semantics", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/value.ts", "export const value = 1;\n");
@@ -47,10 +47,10 @@ describe("design asset checking", () => {
 			'import "../../shared/theme.css";\nimport code from "../../shared/code.js";\nimport { value } from "../../shared/value.ts";\nimport data from "../../shared/data.json";\nexport default function Home() { return <p>{value + data.label.length + Number(code)}</p>; }\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("checks an authored design/.spool-check.json as ordinary imported JSON", () => {
+	it("checks an authored design/.spool-check.json as ordinary imported JSON", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, ".spool-check.json", '{ "label": "authored" }\n');
@@ -60,7 +60,7 @@ describe("design asset checking", () => {
 			'import config from "../../.spool-check.json";\nconst label: string = config.label;\nvoid label;\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
@@ -74,7 +74,7 @@ describe("design asset checking", () => {
 			".spool-check-jsx-runtime.d.ts",
 			"/** @jsxImportSource mapped */\nexport default function Home() { return <main />; }\n",
 		],
-	] as const)("preserves an authored file sharing the former $name path", (_name, file, trigger) => {
+	] as const)("preserves an authored file sharing the former $name path", async (_name, file, trigger) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, file, "export interface Authored { label: string }\n");
@@ -86,14 +86,14 @@ describe("design asset checking", () => {
 			`import type { Authored } from "../../${file.slice(0, -".d.ts".length)}";\nconst authored: Authored = {};\nvoid authored;\n${trigger}`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("TS2741: Property 'label' is missing");
 		expect(result[0]).not.toContain("TS2305:");
 	});
 
-	it("checks an authored declaration adjacent to a CSS module", () => {
+	it("checks an authored declaration adjacent to a CSS module", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/theme.css", ".root { color: red; }\n");
@@ -108,12 +108,12 @@ describe("design asset checking", () => {
 			'import theme from "../../shared/theme.css?module";\nconst color: number = theme.color;\nvoid color;\n',
 		);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:2:7 TS2322: Type 'string' is not assignable to type 'number'.",
 		]);
 	});
 
-	it("restores the authored CSS name in diagnostics from an adjacent declaration", () => {
+	it("restores the authored CSS name in diagnostics from an adjacent declaration", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/theme.css", ".root { color: red; }\n");
@@ -124,7 +124,7 @@ describe("design asset checking", () => {
 		);
 		writeFrame(root, "home", 'import { missing } from "../../shared/theme.css?module";\nvoid missing;\n');
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("Module '\"../../shared/theme.css?module\"'");
@@ -144,13 +144,13 @@ describe("design asset checking", () => {
 			'import styles from "../../shared/theme.module.css?inline";\nstyles.runtimeClass;\n',
 		],
 		["CSS fragment import", "shared/theme.css", 'import "../../shared/theme.css#dark";\n'],
-	] as const)("keeps an existing $name permissive without an authored declaration", (_name, file, frame) => {
+	] as const)("keeps an existing $name permissive without an authored declaration", async (_name, file, frame) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, file, ".root { color: red; }\n");
 		writeFrame(root, "home", frame);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
@@ -163,7 +163,7 @@ describe("design asset checking", () => {
 		["txt", "frames/home/copy.txt"],
 		["glsl", "frames/home/effect.glsl"],
 		["wgsl", "shared/shaders/effect.wgsl"],
-	] as const)("types an imported %s asset as the string a frame receives", (_kind, file) => {
+	] as const)("types an imported %s asset as the string a frame receives", async (_kind, file) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, file, "pretend bytes\n");
@@ -174,7 +174,7 @@ describe("design asset checking", () => {
 			`import asset from "${specifier}";\nconst value: string = asset;\nexport default function Home() { return <p>{value}</p>; }\n`,
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
@@ -182,39 +182,41 @@ describe("design asset checking", () => {
 		["text file", "frames/home/copy.txt", "./copy.txt"],
 		["GLSL shader", "frames/home/effect.glsl", "./effect.glsl"],
 		["WGSL shader", "shared/shaders/effect.wgsl", "shared/shaders/effect.wgsl"],
-	] as const)("holds an imported %s to being a string and nothing looser", (_kind, file, specifier) => {
+	] as const)("holds an imported %s to being a string and nothing looser", async (_kind, file, specifier) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, file, "pretend bytes\n");
 		writeFrame(root, "home", `import value from "${specifier}";\nconst width: number = value;\nvoid width;\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("TS2322");
 		expect(result[0]).toContain("Type 'string' is not assignable to type 'number'");
 	});
 
-	it.each(["png", "glsl", "wgsl"])("reports a missing .%s import", (extension) => {
+	it.each(["png", "glsl", "wgsl"])("reports a missing .%s import", async (extension) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(root, "home", `import hero from "./hero.${extension}";\nvoid hero;\n`);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			`design/frames/home/frame.tsx:1:18 TS2307: Cannot find module './hero.${extension}' or its corresponding type declarations.`,
 		]);
 	});
 
-	it("keeps an asset import that leaves design/ a boundary failure", () => {
+	it("keeps an asset import that leaves design/ a boundary failure", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFileSync(join(root, "hero.png"), "pretend bytes\n");
 		writeFrame(root, "home", 'import hero from "../../../hero.png";\nvoid hero;\n');
 
-		expect(messages(root)).toEqual(["design/frames/home/frame.tsx:1:18 TS2307: Relative imports outside design/"]);
+		expect(await messages(root)).toEqual([
+			"design/frames/home/frame.tsx:1:18 TS2307: Relative imports outside design/",
+		]);
 	});
 
-	it("does not let a CSS import satisfy a missing authored declaration reference", () => {
+	it("does not let a CSS import satisfy a missing authored declaration reference", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/theme.css", ".root { color: red; }\n");
@@ -224,12 +226,12 @@ describe("design asset checking", () => {
 			'/// <reference path="../../shared/theme.d.css.ts" />\nimport "../../shared/theme.css";\n',
 		);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:1:22 TS6053: File '../../shared/theme.d.css.ts' not found.",
 		]);
 	});
 
-	it("does not let a CSS import satisfy a missing authored declaration type import", () => {
+	it("does not let a CSS import satisfy a missing authored declaration type import", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/theme.css", ".root { color: red; }\n");
@@ -239,7 +241,7 @@ describe("design asset checking", () => {
 			'import "../../shared/theme.css";\ntype Theme = typeof import("../../shared/theme.d.css.ts");\nvoid (undefined as unknown as Theme);\n',
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain(
@@ -253,7 +255,7 @@ describe("design asset checking", () => {
 		["cts", ".cts"],
 		["mts", ".mjs"],
 		["cts", ".cjs"],
-	] as const)("preflights a design-local .%s module imported through %s", (sourceExtension, importExtension) => {
+	] as const)("preflights a design-local .%s module imported through %s", async (sourceExtension, importExtension) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, `shared/value.${sourceExtension}`, "export const value: string = 1;\n");
@@ -263,7 +265,7 @@ describe("design asset checking", () => {
 			`import { value } from "../../shared/value${importExtension}";\nexport default function Home() { return <main>{value}</main>; }\n`,
 		);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			`design/shared/value.${sourceExtension}:1:14 TS2322: Type 'number' is not assignable to type 'string'.`,
 		]);
 	});
@@ -295,47 +297,52 @@ describe("design asset checking", () => {
 			specifier: "../../shared/opaque.ts?../../../outside.ts",
 			selected: "shared/opaque.ts",
 		},
-	] as const)("preflights the live local target behind an $name suffix", ({ specifier, selected, ...fixture }) => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, selected, "export const broken: string = 1;\n");
-		if ("ignored" in fixture) writeDesignFile(root, fixture.ignored, "export const clean = true;\n");
-		writeFrame(root, "home", `import ${JSON.stringify(specifier)};\n`);
+	] as const)(
+		"preflights the live local target behind an $name suffix",
+		async ({ specifier, selected, ...fixture }) => {
+			const root = makeTempDir();
+			markProject(root);
+			writeDesignFile(root, selected, "export const broken: string = 1;\n");
+			if ("ignored" in fixture) writeDesignFile(root, fixture.ignored, "export const clean = true;\n");
+			writeFrame(root, "home", `import ${JSON.stringify(specifier)};\n`);
 
-		expect(messages(root)).toEqual([
-			`design/${selected}:1:14 TS2322: Type 'number' is not assignable to type 'string'.`,
-		]);
-	});
+			expect(await messages(root)).toEqual([
+				`design/${selected}:1:14 TS2322: Type 'number' is not assignable to type 'string'.`,
+			]);
+		},
+	);
 
-	it("preserves a missing local query suffix in its diagnostic", () => {
+	it("preserves a missing local query suffix in its diagnostic", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(root, "home", 'import "../../shared/missing.ts?raw";\n');
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:1:8 TS2882: Cannot find module or type declarations for side-effect import of '../../shared/missing.ts?raw'.",
 		]);
 	});
 
-	it("still blocks an outside local target carrying a query suffix", () => {
+	it("still blocks an outside local target carrying a query suffix", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "../outside.ts", "export const secret = true;\n");
 		writeFrame(root, "home", 'import "../../../outside.ts?raw";\n');
 
-		expect(messages(root)).toEqual(["design/frames/home/frame.tsx:1:8 TS2307: Relative imports outside design/"]);
+		expect(await messages(root)).toEqual([
+			"design/frames/home/frame.tsx:1:8 TS2307: Relative imports outside design/",
+		]);
 	});
 
-	it("resolves an implicit CSS extension selected by the live compiler", () => {
+	it("resolves an implicit CSS extension selected by the live compiler", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/theme.css", ".root { color: red; }\n");
 		writeFrame(root, "home", 'import styles from "../../shared/theme?inline";\nstyles.runtimeClass;\n');
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("preserves an authored declaration for an implicit CSS extension", () => {
+	it("preserves an authored declaration for an implicit CSS extension", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/theme.css", ".root { color: red; }\n");
@@ -350,12 +357,12 @@ describe("design asset checking", () => {
 			'import theme from "../../shared/theme?module";\nconst color: number = theme.color;\nvoid color;\n',
 		);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:2:7 TS2322: Type 'string' is not assignable to type 'number'.",
 		]);
 	});
 
-	it("checks an implicit JSON extension selected by the live compiler", () => {
+	it("checks an implicit JSON extension selected by the live compiler", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/data.json", '{ "label": "live" }\n');
@@ -365,23 +372,23 @@ describe("design asset checking", () => {
 			'import data from "../../shared/data#preview";\nconst label: number = data.label;\nvoid label;\n',
 		);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:2:7 TS2322: Type 'string' is not assignable to type 'number'.",
 		]);
 	});
 
-	it("preserves the strict TypeScript diagnostic for deprecated import assertions", () => {
+	it("preserves the strict TypeScript diagnostic for deprecated import assertions", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/data.json", '{ "label": "live" }\n');
 		writeFrame(root, "home", 'import data from "../../shared/data.json" assert { type: "json" };\nvoid data;\n');
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:1:43 TS2880: Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'.",
 		]);
 	});
 
-	it("accepts current import attributes while keeping JSON semantics", () => {
+	it("accepts current import attributes while keeping JSON semantics", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/data.json", '{ "label": "live" }\n');
@@ -391,19 +398,19 @@ describe("design asset checking", () => {
 			'import data from "../../shared/data.json" with { type: "json" };\nconst label: string = data.label;\nvoid label;\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("resolves an implicit CSS index selected by the live compiler", () => {
+	it("resolves an implicit CSS index selected by the live compiler", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/theme/index.css", ".root { color: red; }\n");
 		writeFrame(root, "home", 'import styles from "../../shared/theme?inline";\nstyles.runtimeClass;\n');
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("checks an implicit JSON index selected by the live compiler", () => {
+	it("checks an implicit JSON index selected by the live compiler", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/data/index.json", '{ "label": "live" }\n');
@@ -413,7 +420,7 @@ describe("design asset checking", () => {
 			'import data from "../../shared/data/#preview";\nconst label: number = data.label;\nvoid label;\n',
 		);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:2:7 TS2322: Type 'string' is not assignable to type 'number'.",
 		]);
 	});
