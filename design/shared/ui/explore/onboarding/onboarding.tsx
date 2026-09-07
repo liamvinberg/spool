@@ -83,7 +83,9 @@ function Demo({ take, scene, onReplay }: { take: Take; scene: Scene; onReplay: (
 	const [step, setStep] = useState(
 		scene === "done" ? 4 : scene === "selection" ? 2 : scene === "opened" ? (take === "practice" ? 2 : 1) : 0,
 	);
-	const [dismissed, setDismissed] = useState(scene === "done" || (take === "labels" && scene === "opened"));
+	const [dismissed, setDismissed] = useState(
+		(scene === "done" && take !== "practice") || (take === "labels" && scene === "opened"),
+	);
 	const [used, setUsed] = useState<readonly Panel[]>(["properties"]);
 	const [guide, setGuide] = useState(take === "guide" && scene === "arrival");
 	const [lesson, setLesson] = useState<string | null>(take === "guide" && scene === "opened" ? "agent" : null);
