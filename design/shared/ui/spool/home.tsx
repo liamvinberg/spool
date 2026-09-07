@@ -69,10 +69,6 @@ export function Home({
 						</button>
 					</nav>
 					<div className="pj-navigation-foot">
-						<button type="button" onClick={onFolder}>
-							<FolderIcon />
-							<span>Open a folder</span>
-						</button>
 						<span>On this Mac</span>
 					</div>
 				</aside>
@@ -141,6 +137,9 @@ export function Home({
 										<kbd>/</kbd>
 									)}
 								</label>
+								<button type="button" className="home-action" onClick={onFolder}>
+									Open…
+								</button>
 								<button
 									type="button"
 									className="home-action home-action-primary"
@@ -148,7 +147,7 @@ export function Home({
 									onClick={onStart}
 								>
 									<PlusIcon className="h-[10px] w-[10px] shrink-0" />
-									{starting ? "Starting…" : "New project"}
+									{starting ? "Starting…" : "New project…"}
 								</button>
 							</div>
 						</header>

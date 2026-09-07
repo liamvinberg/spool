@@ -5,26 +5,47 @@ import { ProjectPicker, type ProjectPickerMode } from "shared/ui/spool/project-p
 import { SpoolShell } from "shared/ui/spool/shell";
 
 /** The app's empty canvas, with a local rename standing in for the folder operation. */
-export function SpoolEmptyScreen({ homeTarget, project = "untitled" }: {
+export function SpoolEmptyScreen({
+	homeTarget,
+	project = "untitled",
+}: {
 	homeTarget?: string | undefined;
 	project?: string | undefined;
 }) {
 	const [name, setName] = useState(project);
 	const [picker, setPicker] = useState<ProjectPickerMode | null>(null);
 	const [location, setLocation] = useState("~/spool");
-	const open = (next: string) => { setName(next); setPicker(null); };
+	const open = (next: string) => {
+		setName(next);
+		setPicker(null);
+	};
 	return (
 		<SpoolShell activeTab={name} tabs={[name]} homeTarget={homeTarget} zoom="100%">
 			<CanvasChrome pages={[]} tool="none">
-				<ProjectEmpty key={name} project={name} root={`${location}/${name}`} onFolder={() => setPicker("folder")} onRename={async (next) => {
-					if (!next || next.startsWith(".") || next.includes("/") || next.includes("\\")) throw new Error("Use a folder name without slashes or a leading dot.");
-					setName(next);
-				}} />
+				<ProjectEmpty
+					key={name}
+					project={name}
+					root={`${location}/${name}`}
+					onFolder={() => setPicker("folder")}
+					onRename={async (next) => {
+						if (!next || next.startsWith(".") || next.includes("/") || next.includes("\\"))
+							throw new Error("Use a folder name without slashes or a leading dot.");
+						setName(next);
+					}}
+				/>
 			</CanvasChrome>
-			{picker && <ProjectPicker key={picker} initial={picker} projectLocation={location} onClose={() => setPicker(null)}
-				onOpen={(project) => open(project.name)} onCreate={(next, parent) => { setLocation(parent); open(next); }}
-				onScratch={() => open("untitled")} onChangeLocation={() => setPicker("location")}
-				onLocation={(path) => { setLocation(path); setPicker(null); }} />}
+			{picker && (
+				<ProjectPicker
+					key={picker}
+					initial={picker}
+					location={location}
+					onClose={() => setPicker(null)}
+					onOpened={(project) => {
+						setLocation(project.root.slice(0, project.root.lastIndexOf("/")));
+						open(project.name);
+					}}
+				/>
+			)}
 		</SpoolShell>
 	);
 }
