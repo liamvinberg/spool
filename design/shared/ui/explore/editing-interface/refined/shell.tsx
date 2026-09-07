@@ -27,6 +27,7 @@ const WIDTH = { properties: 300, agent: 420 };
 // The current canvas-chrome and src/ui/canvas/dock presentation, with local
 // selection and handoff state. The existing PlayRail owns the composer itself.
 export function EditingShell({
+	detail = false,
 	canvas,
 	properties,
 	diagnostics,
@@ -40,6 +41,7 @@ export function EditingShell({
 	onZoom,
 	onFit,
 }: {
+	detail?: boolean;
 	canvas: ReactNode;
 	properties: ReactNode;
 	diagnostics: ReactNode;
@@ -163,6 +165,68 @@ export function EditingShell({
 			/>
 		</div>
 	);
+	const dock = (
+		<aside aria-label="Dock" data-dock="" className="relative z-20 flex h-full shrink-0">
+			<div data-dock-panel="" className="ei-dock-panel" style={{ width: surface ? WIDTH[surface] : 0 }}>
+				{(["properties", "agent"] as const).map((candidate) => (
+					<div
+						key={candidate}
+						inert={surface !== candidate}
+						aria-hidden={surface !== candidate}
+						className="ei-dock-surface"
+						data-visible={surface === candidate || undefined}
+						style={{
+							width: WIDTH[candidate],
+							visibility: surface === candidate || leaving === candidate ? "visible" : "hidden",
+						}}
+					>
+						{candidate === "properties" ? properties : agent}
+					</div>
+				))}
+			</div>
+			<div
+				data-dock-strip=""
+				className="flex h-full w-11 shrink-0 flex-col items-center gap-1 border-border border-l bg-bg pt-1.5"
+			>
+				{(["properties", "agent"] as const).map((candidate) => (
+					<button
+						type="button"
+						key={candidate}
+						data-dock-glyph={candidate}
+						aria-label={`${surface === candidate ? "Shut" : "Expand"} ${candidate}`}
+						aria-pressed={surface === candidate}
+						onClick={() => setSurface(surface === candidate ? null : candidate)}
+						className={cn(
+							"relative flex h-8 w-8 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-90 motion-reduce:transition-none",
+							surface === candidate ? "bg-control text-text" : "text-muted/70 hover:text-text",
+						)}
+					>
+						{candidate === "properties" ? <PropertiesIcon className="h-4 w-4" /> : <AgentIcon className="h-4 w-4" />}
+					</button>
+				))}
+				<span title="Settings" className="mt-auto mb-1.5 flex h-8 w-8 items-center justify-center text-muted/70">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+						<path
+							d="M13.23 6.66 14.93 7.01v1.98l-1.7.35-.58 1.41.95 1.45-1.4 1.4-1.45-.95-1.41.58-.35 1.7H7.01l-.35-1.7-1.41-.58-1.45.95-1.4-1.4.95-1.45-.58-1.41-1.7-.35V7.01l1.7-.35.58-1.41-.95-1.45 1.4-1.4 1.45.95 1.41-.58.35-1.7h1.98l.35 1.7 1.41.58 1.45-.95 1.4 1.4-.95 1.45.58 1.41Z"
+							stroke="currentColor"
+							strokeWidth="1.4"
+							strokeLinejoin="round"
+						/>
+						<circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.4" />
+					</svg>
+				</span>
+			</div>
+		</aside>
+	);
+	if (detail)
+		return (
+			<div ref={host} className="ei-detail">
+				<div className="ei-detail-canvas" aria-hidden="true" inert>
+					{canvas}
+				</div>
+				{dock}
+			</div>
+		);
 	return (
 		<div ref={host} className="h-full">
 			<SpoolShell
@@ -269,61 +333,7 @@ export function EditingShell({
 						{canvas}
 						<CanvasTools tool="edit" />
 					</div>
-					<aside aria-label="Dock" data-dock="" className="relative z-20 flex h-full shrink-0">
-						<div data-dock-panel="" className="ei-dock-panel" style={{ width: surface ? WIDTH[surface] : 0 }}>
-							{(["properties", "agent"] as const).map((candidate) => (
-								<div
-									key={candidate}
-									inert={surface !== candidate}
-									aria-hidden={surface !== candidate}
-									className="ei-dock-surface"
-									data-visible={surface === candidate || undefined}
-									style={{
-										width: WIDTH[candidate],
-										visibility: surface === candidate || leaving === candidate ? "visible" : "hidden",
-									}}
-								>
-									{candidate === "properties" ? properties : agent}
-								</div>
-							))}
-						</div>
-						<div
-							data-dock-strip=""
-							className="flex h-full w-11 shrink-0 flex-col items-center gap-1 border-border border-l bg-bg pt-1.5"
-						>
-							{(["properties", "agent"] as const).map((candidate) => (
-								<button
-									type="button"
-									key={candidate}
-									data-dock-glyph={candidate}
-									aria-label={`${surface === candidate ? "Shut" : "Expand"} ${candidate}`}
-									aria-pressed={surface === candidate}
-									onClick={() => setSurface(surface === candidate ? null : candidate)}
-									className={cn(
-										"relative flex h-8 w-8 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-90 motion-reduce:transition-none",
-										surface === candidate ? "bg-control text-text" : "text-muted/70 hover:text-text",
-									)}
-								>
-									{candidate === "properties" ? (
-										<PropertiesIcon className="h-4 w-4" />
-									) : (
-										<AgentIcon className="h-4 w-4" />
-									)}
-								</button>
-							))}
-							<span title="Settings" className="mt-auto mb-1.5 flex h-8 w-8 items-center justify-center text-muted/70">
-								<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-									<path
-										d="M13.23 6.66 14.93 7.01v1.98l-1.7.35-.58 1.41.95 1.45-1.4 1.4-1.45-.95-1.41.58-.35 1.7H7.01l-.35-1.7-1.41-.58-1.45.95-1.4-1.4.95-1.45-.58-1.41-1.7-.35V7.01l1.7-.35.58-1.41-.95-1.45 1.4-1.4 1.45.95 1.41-.58.35-1.7h1.98l.35 1.7 1.41.58 1.45-.95 1.4 1.4-.95 1.45.58 1.41Z"
-										stroke="currentColor"
-										strokeWidth="1.4"
-										strokeLinejoin="round"
-									/>
-									<circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.4" />
-								</svg>
-							</span>
-						</div>
-					</aside>
+					{dock}
 				</div>
 			</SpoolShell>
 		</div>

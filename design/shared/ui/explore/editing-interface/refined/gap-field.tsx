@@ -109,6 +109,7 @@ export function GapField({
 		: `${value}`;
 	const numeric = Number(draft);
 	const valid = draft === null || (draft.trim() !== "" && Number.isFinite(numeric) && numeric >= 0);
+	const rail = open ? trigger.current?.closest(".ep-rail")?.getBoundingClientRect() : null;
 	return (
 		<div className="ep-gap-field">
 			<Row
@@ -158,7 +159,10 @@ export function GapField({
 					style={{
 						left: Math.max(
 							8,
-							Math.min(anchor.rect.left - (anchor.element === trigger.current ? 270 : 0), window.innerWidth - 272),
+							Math.min(
+								anchor.element === trigger.current && rail ? rail.left - 272 : anchor.rect.left,
+								window.innerWidth - 272,
+							),
 						),
 						top: Math.max(8, Math.min(anchor.rect.bottom + 8, window.innerHeight - 448)),
 					}}

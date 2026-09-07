@@ -89,7 +89,7 @@ export function Section({
 	children: ReactNode;
 }) {
 	return (
-		<div className="border-border-raised border-t">
+		<div data-properties-section={name} className="border-border-raised border-t">
 			<div className="flex h-6 items-center gap-2 px-2.5">
 				<span className={cn("shrink-0 text-muted/70", LABEL)}>{name}</span>
 				{aside}

@@ -377,3 +377,73 @@
 .ei-app .ev-screen {
 	font-family: "Familjen Grotesk", system-ui, sans-serif;
 }
+
+.ei-status-heading {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+.ei-status-heading strong {
+	flex: 1;
+	min-width: 0;
+}
+.ei-dismiss {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	flex: 0 0 24px;
+	margin: -3px -4px 0 0;
+	border-radius: 4px;
+	color: var(--color-muted);
+	transition:
+		color 140ms,
+		background-color 140ms;
+}
+.ei-dismiss:hover {
+	color: var(--color-text);
+	background: var(--color-surface);
+}
+@media (prefers-reduced-motion: reduce) {
+	.ei-dismiss {
+		transition: none;
+	}
+}
+/* Component views mount the same controls and agent dock as the full prototype.
+   Keep the demo laid out offscreen so computed values remain real. */
+.ei-detail {
+	display: flex;
+	justify-content: flex-end;
+	height: 100%;
+	padding-top: 24px;
+}
+.ei-detail-canvas {
+	position: fixed;
+	left: -12000px;
+	top: 0;
+	width: 1104px;
+	height: 960px;
+}
+.ei-app[data-specimen] .ep-rail {
+	height: auto;
+}
+.ei-app[data-specimen] .ep-hint,
+.ei-app[data-specimen] .ep-add,
+.ei-app[data-specimen] .ev-status[data-quiet] {
+	display: none;
+}
+.ei-app:is([data-specimen="header"], [data-specimen="scope"], [data-specimen="actions"]) .ep-fields {
+	display: none;
+}
+.ei-app[data-specimen="spacing"] [data-properties-section]:not([data-properties-section="Layout"]),
+.ei-app[data-specimen="color"] [data-properties-section]:not([data-properties-section="Appearance"]) {
+	display: none;
+}
+.ei-app[data-specimen="spacing"]
+	[data-properties-row]:not([data-properties-row^="padding-"]):not([data-properties-row="gap"]) {
+	display: none;
+}
+.ei-app[data-specimen="notice"] .ep-rail > :not(.ev-status) {
+	display: none;
+}

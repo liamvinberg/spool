@@ -14,7 +14,7 @@ import { move, type Snapshot, same, snapshot, type Transaction } from "../refere
 import "../reference/frames/everyday/everyday.css";
 import { Choice } from "./choice";
 import "./interface.css";
-import { ChevronIcon, DotsIcon } from "shared/ui/spool/icons";
+import { ChevronIcon, CloseIcon, DotsIcon } from "shared/ui/spool/icons";
 import { EditingShell } from "./shell";
 import {
 	type AgentHelp,
@@ -87,10 +87,12 @@ export default function EditingInterface({
 	initial = "none",
 	treatment = "inline",
 	state = "idle",
+	specimen,
 }: {
 	initial?: Fault;
 	treatment?: "inline" | "line";
-	state?: "idle" | "uses" | "tokens" | "agent" | "blocked" | "prepared";
+	state?: "idle" | "uses" | "tokens" | "agent" | "blocked" | "prepared" | "scope" | "actions" | "color";
+	specimen?: "header" | "scope" | "actions" | "spacing" | "color" | "notice";
 }) {
 	const root = useRef<HTMLDivElement>(null);
 	const stage = useRef<HTMLDivElement>(null);
@@ -123,6 +125,7 @@ export default function EditingInterface({
 		title: "Ready to edit",
 		detail: "Changes preview immediately and save when you finish.",
 	});
+	const [dismissedNotice, setDismissedNotice] = useState<Notice | null>(null);
 	const [firstUse, setFirstUse] = useState(false);
 	const [faultName, setFaultName] = useState<Fault>(initial);
 	const fault = useRef<Fault>(initial);
@@ -765,12 +768,19 @@ export default function EditingInterface({
 		}
 	}, [affected, reach, uses, sharedKey, selected, hoverUse, revision]);
 
-	const tokenStateOpened = useRef(false);
+	const disclosureStateOpened = useRef(false);
 	useEffect(() => {
-		if (state !== "tokens" || !selected || tokenStateOpened.current) return;
-		tokenStateOpened.current = true;
+		const triggers: Partial<Record<typeof state, string>> = {
+			tokens: "Choose gap",
+			scope: "Editing scope",
+			actions: "Element actions",
+			color: "Choose background-color",
+		};
+		const label = triggers[state];
+		if (!label || !selected || disclosureStateOpened.current) return;
+		disclosureStateOpened.current = true;
 		const id = window.setTimeout(() => {
-			const button = document.querySelector<HTMLButtonElement>('[aria-label="Choose gap"]');
+			const button = document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
 			button?.scrollIntoView({ block: "center" });
 			requestAnimationFrame(() => requestAnimationFrame(() => button?.click()));
 		}, 80);
@@ -1349,7 +1359,7 @@ export default function EditingInterface({
 									askAgent(
 										prepareHelp(
 											targetOf(selected),
-										`Help me change the ${name(selected)} text generated from ${selected.dataset.expression}. Spool cannot edit it directly. Find the source that controls it and ask me what value or wording I want before changing it.\n\nCurrent text: “${selected.textContent?.trim()}”`,
+											`Help me change the ${name(selected)} text generated from ${selected.dataset.expression}. Spool cannot edit it directly. Find the source that controls it and ask me what value or wording I want before changing it.\n\nCurrent text: “${selected.textContent?.trim()}”`,
 										),
 									)
 								}
@@ -1500,66 +1510,85 @@ export default function EditingInterface({
 				</div>
 			</div>
 
-			<div
-				className="ev-status"
-				role="status"
-				data-attention={notice.attention || undefined}
-				data-quiet={!notice.attention || undefined}
-			>
-				<strong>{notice.title}</strong>
-				<p>{notice.detail}</p>
-				<div className="ev-actions">
-					{notice.recovery === "retry" && (
-						<button type="button" onClick={retry}>
-							Retry this edit
-						</button>
-					)}
-					{notice.recovery === "reload" && (
-						<button type="button" onClick={() => showRendered(true)}>
-							Reload confirmation · resets state
-						</button>
-					)}
-					{notice.recovery === "render" && (
-						<button type="button" onClick={() => showRendered(false)}>
-							Finish simulated render
-						</button>
-					)}
-					{notice.recovery === "rollback" && (
-						<button type="button" onClick={() => history(false)}>
-							Try Undo again
-						</button>
-					)}
-					{notice.recovery === "unknown" && (
-						<button
-							type="button"
-							onClick={() => {
-								retained.current = null;
-								setNotice({
-									title: "Current source read again",
-									detail:
-										"The requested value is present in this simulated case. The missing undo entry cannot be recovered. Select again for a fresh edit.",
-								});
-							}}
-						>
-							Check current source
-						</button>
-					)}
-					{(notice.attention || retained.current) && (
-						<button type="button" onClick={() => askAgent(notice.help ?? retained.current?.help)}>
-							Ask agent
-						</button>
-					)}
+			{dismissedNotice !== notice && (
+				<div
+					className="ev-status"
+					role="status"
+					data-attention={notice.attention || undefined}
+					data-quiet={!notice.attention || undefined}
+				>
+					<div className="ei-status-heading">
+						<strong>{notice.title}</strong>
+						{notice.attention && (
+							<button
+								type="button"
+								aria-label="Dismiss notice"
+								className="ei-dismiss"
+								onClick={() => {
+									setDismissedNotice(notice);
+									if (specimen) document.querySelector<HTMLButtonElement>('[data-dock-glyph="properties"]')?.focus();
+									else stage.current?.focus({ preventScroll: true });
+								}}
+							>
+								<CloseIcon className="h-3 w-3" />
+							</button>
+						)}
+					</div>
+					<p>{notice.detail}</p>
+					<div className="ev-actions">
+						{notice.recovery === "retry" && (
+							<button type="button" onClick={retry}>
+								Retry this edit
+							</button>
+						)}
+						{notice.recovery === "reload" && (
+							<button type="button" onClick={() => showRendered(true)}>
+								Reload confirmation · resets state
+							</button>
+						)}
+						{notice.recovery === "render" && (
+							<button type="button" onClick={() => showRendered(false)}>
+								Finish simulated render
+							</button>
+						)}
+						{notice.recovery === "rollback" && (
+							<button type="button" onClick={() => history(false)}>
+								Try Undo again
+							</button>
+						)}
+						{notice.recovery === "unknown" && (
+							<button
+								type="button"
+								onClick={() => {
+									retained.current = null;
+									setNotice({
+										title: "Current source read again",
+										detail:
+											"The requested value is present in this simulated case. The missing undo entry cannot be recovered. Select again for a fresh edit.",
+									});
+								}}
+							>
+								Check current source
+							</button>
+						)}
+						{(notice.attention || retained.current) && (
+							<button type="button" onClick={() => askAgent(notice.help ?? retained.current?.help)}>
+								Ask agent
+							</button>
+						)}
+					</div>
 				</div>
-			</div>
+			)}
 			<div className="ep-hint" role="status">
 				{hint}
 			</div>
 		</aside>
 	);
 	return (
-		<div className="ep-app ev-app ei-app" data-treatment={treatment}>
+		<div className="ep-app ev-app ei-app" data-treatment={treatment} data-specimen={specimen}>
 			<style ref={projected} />
 			<EditingShell
+				detail={Boolean(specimen)}
 				canvas={canvas}
 				properties={properties}
 				request={request}
