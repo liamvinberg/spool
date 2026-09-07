@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { SourcePublication, SourceResult, UseOutcome } from "../source-edit";
+import type { SourcePublication, SourceRead, SourceResult, UseOutcome } from "../source-edit";
 import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
 
 const frameSource = 'import Group from "shared/outcomes";export default function Frame(){return <Group/>}';
@@ -66,6 +66,7 @@ async function observed(
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await expect.poll(() => second.locator("#good span").count()).toBe(1);
 	const sourceResults: SourceResult[] = [];
+	const sourceReads: SourceRead[] = [];
 	f.page.on("response", async (response) => {
 		if (
 			response.url().endsWith("/source") &&
@@ -91,14 +92,14 @@ async function observed(
 	};
 	const events = async () => f.page.evaluate(() => Reflect.get(window, "outcomeEvents")) as Promise<Evidence[]>;
 	const save = async () => {
-		await f.edit();
+		sourceReads.push(await f.edit());
 		await f.page.keyboard.press("ControlOrMeta+a");
 		await f.page.keyboard.insertText("After");
 		await f.page.keyboard.press("Enter");
 		await expect.poll(() => f.bytes()["shared/outcomes.tsx"], { timeout: 15_000 }).toBe(changed(source, "After"));
 		return initial();
 	};
-	return { ...f, second, sourceResults, events, save, source };
+	return { ...f, second, sourceResults, sourceReads, events, save, source };
 }
 async function warm(f: Awaited<ReturnType<typeof observed>>) {
 	for (const app of [f.frame, f.second]) {
@@ -153,7 +154,7 @@ it.each(["finish", "fail"] as const)(
 	"reports independent pending uses then authored %s without a second save",
 	{ timeout: 120_000 },
 	async (ending) => {
-		const f = await observed(group(waiting, gate, undefined, true));
+		const f = await observed(group(waiting, gate));
 		await warm(f);
 		const normal = await oracle(f);
 		const errors: string[] = [];
@@ -182,9 +183,8 @@ it.each(["finish", "fail"] as const)(
 			await expect.poll(() => normal.locator("#special span").textContent()).toBe("After");
 			await expect.poll(() => f.page.locator('[data-hand-notice="pending"]').count(), { timeout: 15_000 }).toBe(0);
 		} else {
-			await expect.poll(() => normal.evaluate(() => Reflect.get(globalThis, "caught"))).toBe(1);
-			expect(await f.second.locator("#good span").textContent()).toBe("After");
-			await expect.poll(() => f.second.locator("#special b").textContent()).toBe("Failed");
+			await expect.poll(() => errors.length).toBeGreaterThan(0);
+			await expect.poll(() => f.second.locator("#good span").count()).toBe(0);
 			await expect.poll(() => f.page.locator('[data-hand-notice="failed"]').count(), { timeout: 15_000 }).toBe(1);
 		}
 		await expect
@@ -208,20 +208,27 @@ it.each(["finish", "fail"] as const)(
 					owner: accepted?.owner,
 					generation: accepted?.generation,
 				});
-				expect(event?.data.result?.uses?.map((use) => use.rendered).sort()).toEqual(
-					frame === "second" && ending === "fail" ? ["failed", "verified"] : ["verified", "verified"],
-				);
+				if (frame === "second" && ending === "fail") {
+					expect(event?.data.result?.uses?.some((use) => use.rendered === "failed")).toBe(true);
+					expect(event?.data.result?.uses?.some((use) => use.rendered === "verified")).toBe(false);
+				} else expect(event?.data.result?.uses?.map((use) => use.rendered)).toEqual(["verified", "verified"]);
 			}
 		}
 		expect(f.writes).toEqual(["commit"]);
 		expect(f.bytes()["shared/outcomes.tsx"]).toBe(changed(f.source, "After"));
-		if (ending === "finish")
-			for (const redo of [false, true]) {
-				await f.history(redo);
-				await expect.poll(() => f.frame.locator("#good span").textContent()).toBe(redo ? "After" : "Before");
+		for (const redo of [false, true]) {
+			await f.history(redo);
+			await expect.poll(() => f.bytes()["shared/outcomes.tsx"]).toBe(changed(f.source, redo ? "After" : "Before"));
+			await expect.poll(() => f.frame.locator("#good span").textContent()).toBe(redo ? "After" : "Before");
+			if (ending === "finish") {
 				await f.settled();
 				expect(await f.second.locator("#draft").inputValue()).toBe("Typed independent");
+			} else {
+				await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+				expect(await f.second.locator("#good span").count()).toBe(0);
 			}
+		}
+		expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
 	},
 );
 
@@ -464,7 +471,7 @@ it("does not let a real older completion erase the latest pending publication", 
 	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
 });
 
-it("keeps a caught failed use separate from its verified sibling in the same frame", { timeout: 120_000 }, async () => {
+it("does not conceal unknown class-boundary coverage behind its verified sibling", { timeout: 120_000 }, async () => {
 	const body = "if(hold&&label==='After')throw Error('authored caught failure');return <span>{label}</span>";
 	const f = await observed(group(body, "", undefined, true));
 	await warm(f);
@@ -480,11 +487,9 @@ it("keeps a caught failed use separate from its verified sibling in the same fra
 		expect(await app.locator("#special b").textContent()).toBe("Failed");
 		expect(await app.locator("#draft").inputValue()).toBe("Typed independent");
 	}
-	for (const item of results) {
-		expect(item.result.rendered).toBe("failed");
-		expect(item.result.uses?.map((use) => use.rendered).sort()).toEqual(["failed", "verified"]);
-	}
-	await expect.poll(() => f.page.locator('[data-hand-notice="failed"]').count()).toBe(1);
+	expect(f.sourceReads[0]?.reach?.unknown.length).toBeGreaterThan(0);
+	expect(results.every((item) => item.result.uses?.some((use) => use.rendered === "verified"))).toBe(true);
+	await expect.poll(() => f.page.locator('[data-hand-notice="unverified"]').count()).toBe(1);
 	for (const redo of [false, true]) {
 		await f.history(redo);
 		await expect.poll(() => f.bytes()["shared/outcomes.tsx"]).toBe(changed(f.source, redo ? "After" : "Before"));
