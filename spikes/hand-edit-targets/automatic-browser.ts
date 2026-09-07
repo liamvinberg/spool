@@ -9,6 +9,7 @@ import { anatomyOf } from "../../src/daemon/class-write";
 import { buildDesignEntry } from "../../src/daemon/compile";
 import { realDesignDir } from "../../src/daemon/design-path";
 import { fingerprintOf } from "../../src/daemon/hand-write";
+import { walkNodes } from "../../src/daemon/jsx-walk";
 import { designStylesheets, ROOT_CSS } from "../../src/daemon/tailwind";
 import { compileClasses } from "../../src/daemon/theme";
 import { ROWS } from "../../src/ui/canvas/properties-rows";
@@ -50,6 +51,7 @@ export interface Mounted {
 	observed: boolean;
 	authority: ReadAuthority | undefined;
 	lease: ReadLease | undefined;
+	admission: { round: number; captured: string[]; discovered: string[] }[];
 	themeCss: string;
 	themeBindings: { name: string; value: string; from: "default" | "project" }[];
 }
@@ -66,8 +68,11 @@ export async function mount(
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
 	// Capture inputs before compilation, including imports pruned by the bundle.
+	const visited = new Set<string>();
 	const visit = (path: string): void => {
 		const unit = sources.read(path);
+		if (visited.has(unit.file)) return;
+		visited.add(unit.file);
 		for (const statement of unit.ast.program.body) {
 			if (
 				!["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(statement.type) ||
@@ -84,10 +89,21 @@ export async function mount(
 				);
 				continue;
 			}
-			const count = sources.units.size;
-			const dependency = sources.resolve(unit, statement.source.value);
-			if (sources.units.size > count) visit(dependency.path);
+			visit(sources.resolve(unit, statement.source.value).path);
 		}
+		walkNodes(unit.ast, [], (node) => {
+			if (node.type === "CallExpression" && node.callee.type === "Import" && node.arguments[0]?.type !== "StringLiteral")
+				sources.retainDirectory();
+			if (
+				node.type === "CallExpression" &&
+				node.callee.type === "Import" &&
+				node.arguments[0]?.type === "StringLiteral"
+			) {
+				const specifier = node.arguments[0].value;
+				if (specifier.startsWith(".") || specifier.startsWith("shared/"))
+					visit(sources.resolve(unit, specifier).path);
+			}
+		});
 	};
 	visit(`frames/${frame}/frame.tsx`);
 	sources.retain("shared/tokens.css");
@@ -122,14 +138,34 @@ export async function mount(
 	const themeCss = `@theme reference {${themeBindings.map((binding) => `${binding.name}:${binding.value};`).join("")}}`;
 	// Capture owner revisions before the TSX compile. Stylesheet compilation
 	// has only discovered/read dependencies; its snapshots are checked here too.
-	const lease = await authority?.capture([...sources.revisions.values(), ...sources.assets.values()]);
-	const compiled = await buildDesignEntry({
-		designDir,
-		resolveDir: join(designDir, "frames", frame),
-		sourcefile: "<automatic-read>",
-		label: "automatic target probe",
-		contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => {const entry=createElement(Frame); ${observed ? "globalThis.__handObserver.register(entry, '<entry>', true);" : ""} root.render(entry)}; globalThis.unmount = () => root.unmount(); globalThis.rerender();`,
-	});
+	let lease: ReadLease | undefined;
+	const admission: Mounted["admission"] = [];
+	let compiled: Awaited<ReturnType<typeof buildDesignEntry>>;
+	for (let round = 1; ; round++) {
+		if (round > 3) throw new Error("module discovery did not stabilize before admitted compilation");
+		const captured = [...sources.revisions.values(), ...sources.assets.values()];
+		lease = await authority?.capture(captured);
+		compiled = await buildDesignEntry({
+			designDir,
+			resolveDir: join(designDir, "frames", frame),
+			sourcefile: "<automatic-read>",
+			label: "automatic target probe",
+			contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => {const entry=createElement(Frame); ${observed ? "globalThis.__handObserver.register(entry, '<entry>', true);" : ""} root.render(entry)}; globalThis.unmount = () => root.unmount(); globalThis.rerender();`,
+		});
+		const discovered = compiled.sourceFiles.filter((file) => /\.[jt]sx?$/.test(file) && !sources.units.has(file));
+		admission.push({
+			round,
+			captured: captured.map((revision) => revision.path),
+			discovered: discovered.map((file) => relative(designDir, file)),
+		});
+		if (!discovered.length) break;
+		// This compile only discovers inputs. Discard it, capture the enlarged
+		// source-owner lease, then compile again before creating any document.
+		if (!sources.valid() || (authority && lease && !(await authority.valid(lease, captured))))
+			throw new Error("discovery inputs or source-owner lease changed");
+		for (const file of discovered) visit(relative(designDir, file));
+	}
+
 	const scanner = new Scanner({ sources: [] });
 	const candidates = scanner.scanFiles(
 		compiled.sourceFiles
@@ -157,7 +193,9 @@ export async function mount(
 	if (
 		!sources.valid() ||
 		toolchain !== compilerRevision() ||
-		(authority && lease && !(await authority.valid(lease, [...sources.revisions.values(), ...sources.assets.values()])))
+		(authority &&
+			lease &&
+			!(await authority.valid(lease, [...sources.revisions.values(), ...sources.assets.values()])))
 	)
 		throw new Error("compile inputs or source-owner lease changed");
 	const page = await browser.newPage({ viewport: { width: 700, height: 700 } });
@@ -188,6 +226,7 @@ export async function mount(
 		observed,
 		authority,
 		lease,
+		admission,
 		themeCss,
 		themeBindings,
 	};
@@ -796,8 +835,10 @@ export async function read(mounted: Mounted, selection: Selection, operation: Op
 				resolutions: [...mounted.sources.resolutions],
 				witnesses: witnesses(mounted.sources, target),
 				absentResolutionCandidates: [...mounted.sources.missing],
+				dynamicImportDirectory: mounted.sources.directoryEntries ?? null,
 				toolchain: mounted.toolchain,
 				owner: mounted.lease ?? null,
+				admission: mounted.admission,
 				continuity: mounted.lease
 					? "owner epoch and complete dependency revisions admitted before compile; no rebasing or outside-write exclusion"
 					: "exact compiled snapshot only; no continuity across replacement or source edits",

@@ -393,14 +393,14 @@ it("resolves namespace and single export-star chains by binding and keeps ambigu
 			barrel: `export * from './leaf';export * from './renamed';`,
 			importer: `import {Button} from 'shared/ui/barrel';`,
 			call: `<Button label="Same"/>`,
-			kind: "refused",
+			kind: "supported",
 		},
 		{
 			name: "nested namespace re-export",
 			barrel: `export * as UI from './leaf';`,
 			importer: `import {UI} from 'shared/ui/barrel';`,
 			call: `<UI.Button label="Same"/>`,
-			kind: "refused",
+			kind: "supported",
 		},
 		{
 			name: "object member is not a namespace",
@@ -421,21 +421,21 @@ it("resolves namespace and single export-star chains by binding and keeps ambigu
 			barrel: `export {Button as default} from './leaf';`,
 			importer: `import {lazy,Suspense} from 'react';const Pick=lazy(()=>import('shared/ui/barrel'));`,
 			call: `<Suspense fallback={<i>Waiting</i>}><Pick label="Same"/></Suspense>`,
-			kind: "refused",
+			kind: "supported",
 		},
 		{
 			name: "lazy resolved namespace default",
 			barrel: `export {Button as default} from './leaf';`,
 			importer: `import {lazy,Suspense} from 'react';import * as UI from 'shared/ui/barrel';const Pick=lazy(()=>Promise.resolve(UI));`,
 			call: `<Suspense fallback={<i>Waiting</i>}><Pick label="Same"/></Suspense>`,
-			kind: "refused",
+			kind: "supported",
 		},
 		{
 			name: "lazy named projection",
 			barrel: `export {Button} from './leaf';`,
 			importer: `import {lazy,Suspense} from 'react';const Pick=lazy(()=>import('shared/ui/barrel').then(mod=>({default:mod.Button})));`,
 			call: `<Suspense fallback={<i>Waiting</i>}><Pick label="Same"/></Suspense>`,
-			kind: "refused",
+			kind: "supported",
 		},
 	];
 	const outcomes = [];
@@ -470,7 +470,7 @@ it("resolves namespace and single export-star chains by binding and keeps ambigu
 			);
 			expect(context).toMatchObject({
 				references: expect.arrayContaining([expect.objectContaining({ repeated: false })]),
-				unknown: [],
+				unknown: sample.name.startsWith("lazy") ? [expect.any(String), expect.any(String)] : [],
 			});
 			expect(first.proof.revisions.map((revision) => revision.path)).toContain("shared/ui/barrel.ts");
 			writeDesignFile(root, "shared/ui/barrel.ts", `${sample.barrel}\n// changed binding route`);

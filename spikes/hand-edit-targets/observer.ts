@@ -28,6 +28,7 @@ export interface Observation {
 		source: string;
 		occurrence: string;
 		passedChild?: boolean;
+		lazyResolved?: boolean;
 		element?: number;
 		retainedProps?: boolean;
 		renderedSource?: string;
@@ -110,6 +111,23 @@ export function installObserver(reconciled = false): void {
 			throw new Error("element type relationship is unproven");
 		return value;
 	};
+	const lazyResolved = (fiber: Fiber, value: Authored): boolean => {
+		if (value.type === null || typeof value.type !== "object") return false;
+		const own = (object: object, key: string): unknown => Object.getOwnPropertyDescriptor(object, key)?.value;
+		if (own(value.type, "$$typeof") !== Symbol.for("react.lazy")) return false;
+		const payload = own(value.type, "_payload");
+		if (!payload || typeof payload !== "object" || own(payload, "_status") !== 1)
+			throw new Error("lazy payload is not resolved in the committed tree");
+		const resolved = own(payload, "_result");
+		// The pinned renderer stores resolveLazy(elementType) in Fiber.type.
+		// Never re-read a namespace getter: doing so would execute application
+		// code outside React. Data properties can additionally be checked here.
+		const exported =
+			resolved && typeof resolved === "object" ? Object.getOwnPropertyDescriptor(resolved, "default") : undefined;
+		if (!exported || ("value" in exported && exported.value !== fiber.type) || value.type !== fiber.elementType)
+			throw new Error("lazy export and committed definition disagree");
+		return true;
+	};
 	const observe = (fiber: Fiber, parents: readonly Fiber[]): Observation => {
 		const result: Observation = { occurrence: identity(fiber), source: "", chain: [] };
 		try {
@@ -146,6 +164,7 @@ export function installObserver(reconciled = false): void {
 				const children = Reflect.get(value.element.props as object, "children") as unknown;
 				chain.push({
 					source: value.source,
+					lazyResolved: lazyResolved(parent, value),
 					occurrence: identity(parent),
 					passedChild: children === child.element || (Array.isArray(children) && children.includes(child.element)),
 					...(reconciled

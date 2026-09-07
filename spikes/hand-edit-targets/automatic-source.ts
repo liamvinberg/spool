@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
 import { parse } from "@babel/parser";
 import {
@@ -14,6 +14,7 @@ import {
 import { realDesignDir, resolveDesignPath } from "../../src/daemon/design-path";
 import { fingerprintOf } from "../../src/daemon/hand-write";
 import { walkNodes } from "../../src/daemon/jsx-walk";
+import { type Binding, ModuleBindings } from "./module-bindings";
 import { elementAt, sourceTarget } from "./targets";
 
 export interface Revision {
@@ -43,6 +44,7 @@ export interface Call {
 	element?: number;
 	retainedProps?: boolean;
 	renderedSource?: string;
+	lazyResolved?: boolean;
 }
 export interface Selection {
 	generation: string;
@@ -72,6 +74,7 @@ export function address(site: Site): Address {
 	return { file: site.unit.file, start: site.node.start!, end: site.node.end! };
 }
 type Component = FunctionDeclaration | FunctionExpression | ArrowFunctionExpression | ClassMethod;
+type Definition = { unit: Unit; fn: Component; lazy?: boolean };
 function owner(site: Site): Component {
 	for (let i = site.ancestors.length - 1; i >= 0; i--) {
 		const node = site.ancestors[i]!;
@@ -131,6 +134,14 @@ export class Sources {
 	readonly resolutions = new Map<string, string>();
 	readonly missing = new Set<string>();
 	readonly assets = new Map<string, Revision>();
+	directoryEntries: string[] | undefined;
+	retainDirectory(): void {
+		const entries = readdirSync(realDesignDir(this.root), { recursive: true }).map(String).sort();
+		if (this.directoryEntries && JSON.stringify(this.directoryEntries) !== JSON.stringify(entries))
+			throw new Error("dynamic import directory membership changed");
+		this.directoryEntries = entries;
+	}
+	readonly bindings = new ModuleBindings<Unit>((unit, specifier) => this.resolve(unit, specifier));
 	constructor(readonly root: string) {}
 	asset(path: string): Revision {
 		const dir = realDesignDir(this.root);
@@ -199,7 +210,7 @@ export class Sources {
 		const unit = this.read(path);
 		return { unit, ...elementAt(unit.text, source), source };
 	}
-	private component(unit: Unit, node: Node, seen: Set<string>): { unit: Unit; fn: Component } {
+	private component(unit: Unit, node: Node, seen: Set<string>): Definition {
 		if (
 			node.type === "FunctionDeclaration" ||
 			node.type === "FunctionExpression" ||
@@ -215,23 +226,93 @@ export class Sources {
 		}
 		if (node.type === "CallExpression" && node.callee.type === "Identifier") {
 			const name = node.callee.name;
-			const imported = unit.ast.program.body.some(
-				(n) =>
-					n.type === "ImportDeclaration" &&
-					n.source.value === "react" &&
-					n.specifiers.some(
-						(s) =>
-							s.type === "ImportSpecifier" &&
-							s.local.name === name &&
-							s.imported.type === "Identifier" &&
-							["memo", "forwardRef"].includes(s.imported.name),
-					),
-			);
-			if (imported && node.arguments[0]) return this.component(unit, node.arguments[0], seen);
+			const imported = unit.ast.program.body
+				.flatMap((statement) =>
+					statement.type === "ImportDeclaration" &&
+					statement.source.value === "react" &&
+					statement.importKind !== "type"
+						? statement.specifiers
+						: [],
+				)
+				.find(
+					(binding) =>
+						binding.type === "ImportSpecifier" && binding.importKind !== "type" && binding.local.name === name,
+				);
+			if (imported?.type === "ImportSpecifier" && imported.imported.type === "Identifier" && node.arguments[0]) {
+				if (imported.imported.name === "lazy")
+					return { ...this.lazyDefinition(unit, node.arguments[0], seen), lazy: true };
+				if (["memo", "forwardRef"].includes(imported.imported.name))
+					return this.component(unit, node.arguments[0], seen);
+			}
 		}
 		throw new Error("wrapped, lazy or indirect definition is unproven");
 	}
-	private local(unit: Unit, name: string, seen: Set<string>): { unit: Unit; fn: Component } {
+	private lazyDefinition(unit: Unit, loader: Node, seen: Set<string>): Definition {
+		if (loader.type !== "ArrowFunctionExpression" || loader.params.length || loader.async)
+			throw new Error("lazy loader must be a verified zero-argument expression");
+		let body: Node = loader.body;
+		let member = "default";
+		if (
+			body.type === "CallExpression" &&
+			body.callee.type === "MemberExpression" &&
+			!body.callee.computed &&
+			body.callee.property.type === "Identifier" &&
+			body.callee.property.name === "then"
+		) {
+			const projection = body.arguments[0];
+			if (
+				body.arguments.length !== 1 ||
+				projection?.type !== "ArrowFunctionExpression" ||
+				projection.async ||
+				projection.params.length !== 1 ||
+				projection.params[0]?.type !== "Identifier" ||
+				projection.body.type !== "ObjectExpression" ||
+				projection.body.properties.length !== 1
+			)
+				throw new Error("lazy export projection is unproven");
+			const property = projection.body.properties[0];
+			if (
+				property?.type !== "ObjectProperty" ||
+				property.computed ||
+				property.key.type !== "Identifier" ||
+				property.key.name !== "default" ||
+				property.value.type !== "MemberExpression" ||
+				property.value.computed ||
+				property.value.object.type !== "Identifier" ||
+				property.value.object.name !== projection.params[0].name ||
+				property.value.property.type !== "Identifier"
+			)
+				throw new Error("lazy export projection is unproven");
+			member = property.value.property.name;
+			body = body.callee.object;
+		}
+		if (
+			body.type === "CallExpression" &&
+			body.callee.type === "Import" &&
+			body.arguments.length === 1 &&
+			body.arguments[0]?.type === "StringLiteral"
+		)
+			return this.exported(this.resolve(unit, body.arguments[0].value), member, seen);
+		if (
+			body.type === "CallExpression" &&
+			body.callee.type === "MemberExpression" &&
+			!body.callee.computed &&
+			body.callee.object.type === "Identifier" &&
+			body.callee.object.name === "Promise" &&
+			body.callee.property.type === "Identifier" &&
+			body.callee.property.name === "resolve" &&
+			body.arguments.length === 1 &&
+			body.arguments[0]?.type === "Identifier"
+		) {
+			if (unit.ast.program.body.some((statement) => getBindingIdentifiers(statement).Promise))
+				throw new Error("lazy Promise binding is shadowed");
+			const binding = this.bindings.require(this.bindings.local(unit, body.arguments[0].name));
+			if (binding.kind !== "namespace") throw new Error("lazy resolved value is not a verified namespace");
+			return this.exported(binding.unit, member, seen);
+		}
+		throw new Error("conditional, dynamic or transformed lazy loader is unproven");
+	}
+	private local(unit: Unit, name: string, seen: Set<string>): Definition {
 		const key = `${unit.file}:local:${name}`;
 		if (seen.has(key)) throw new Error("cyclic component binding");
 		seen.add(key);
@@ -277,40 +358,24 @@ export class Sources {
 		}
 		throw new Error("component binding is unresolved");
 	}
-	private exported(unit: Unit, name: string, seen = new Set<string>()): { unit: Unit; fn: Component } {
-		const key = `${unit.file}:export:${name}`;
-		if (seen.has(key)) throw new Error("cyclic export binding");
-		seen.add(key);
-		for (const statement of unit.ast.program.body) {
-			if (statement.type === "ExportDefaultDeclaration" && name === "default")
-				return this.component(unit, statement.declaration, seen);
-			if (statement.type !== "ExportNamedDeclaration") continue;
-			if (statement.declaration && getBindingIdentifiers(statement.declaration)[name])
-				return this.local(unit, name, seen);
-			for (const specifier of statement.specifiers) {
-				const exported =
-					specifier.exported.type === "Identifier" ? specifier.exported.name : specifier.exported.value;
-				if (exported !== name || specifier.type !== "ExportSpecifier") continue;
-				return statement.source
-					? this.exported(this.resolve(unit, statement.source.value), specifier.local.name, seen)
-					: this.local(unit, specifier.local.name, seen);
-			}
-		}
-		const stars = unit.ast.program.body.filter((statement) => statement.type === "ExportAllDeclaration");
-		if (name === "default") throw new Error("export star does not forward default");
-		if (stars.length > 1) throw new Error("multiple export-star branches are unproven");
-		if (stars[0]) return this.exported(this.resolve(unit, stars[0].source.value), name, seen);
-		throw new Error("unresolved export binding");
+	private definition(binding: Binding<Unit>, seen = new Set<string>()): Definition {
+		if (binding.kind === "namespace") throw new Error("namespace is not a component definition");
+		return binding.kind === "default"
+			? this.component(binding.unit, binding.node, seen)
+			: this.local(binding.unit, binding.name, seen);
 	}
-	callee(site: Site): { unit: Unit; fn: Component } {
+	private exported(unit: Unit, name: string, seen = new Set<string>()): Definition {
+		return this.definition(this.bindings.require(this.bindings.exported(unit, name)), seen);
+	}
+	callee(site: Site): Definition {
 		const tag = site.node.openingElement.name;
-		const namespace = tag.type === "JSXMemberExpression" && tag.object.type === "JSXIdentifier" ? tag : undefined;
-		const name =
-			namespace?.object.type === "JSXIdentifier"
-				? namespace.object.name
-				: tag.type === "JSXIdentifier"
-					? tag.name
-					: undefined;
+		const members: string[] = [];
+		let base = tag;
+		while (base.type === "JSXMemberExpression") {
+			members.unshift(base.property.name);
+			base = base.object;
+		}
+		const name = base.type === "JSXIdentifier" ? base.name : undefined;
 		if (!name || !/^[A-Z]/.test(name)) throw new Error("not a direct component binding");
 		let shadowed = false;
 		walkNodes(site.unit.ast, [], (node, ancestors) => {
@@ -324,17 +389,13 @@ export class Sources {
 		for (const ancestor of site.ancestors)
 			if (/Function|Method/.test(ancestor.type) && getBindingIdentifiers(ancestor)[name]) shadowed = true;
 		if (shadowed) throw new Error("component binding may be shadowed");
-		if (namespace) {
-			const imported = site.unit.ast.program.body.find(
-				(statement) =>
-					statement.type === "ImportDeclaration" &&
-					statement.importKind !== "type" &&
-					statement.specifiers.some(
-						(binding) => binding.type === "ImportNamespaceSpecifier" && binding.local.name === name,
-					),
-			);
-			if (imported?.type !== "ImportDeclaration") throw new Error("member is not a verified namespace import");
-			return this.exported(this.resolve(site.unit, imported.source.value), namespace.property.name);
+		if (members.length) {
+			let binding = this.bindings.require(this.bindings.local(site.unit, name));
+			for (const member of members) {
+				if (binding.kind !== "namespace") throw new Error("member is not a verified namespace import");
+				binding = this.bindings.require(this.bindings.exported(binding.unit, member));
+			}
+			return this.definition(binding);
 		}
 		return this.local(site.unit, name, new Set());
 	}
@@ -347,6 +408,7 @@ export class Sources {
 		for (const call of [...selection.chain].reverse()) {
 			const site = this.site(call.source);
 			const actual = this.callee(site);
+			if (actual.lazy && !call.lazyResolved) throw new Error("lazy export lacks a committed resolved-type witness");
 			if (actual.unit.file !== current.unit.file || actual.fn.start !== owner(current).start) {
 				// Transport is separate from authorship. Prove both the exact
 				// incoming element identity and the bounded source forwarding form.
@@ -375,6 +437,7 @@ export class Sources {
 	}
 	valid(): boolean {
 		try {
+			if (this.directoryEntries) this.retainDirectory();
 			for (const held of this.assets.values()) this.asset(held.path);
 			for (const held of this.revisions.values()) {
 				const fresh = sourceTarget(this.root, held.path);
