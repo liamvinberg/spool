@@ -6,7 +6,7 @@ import { build } from "esbuild";
 import type { Browser, ElementHandle, Page } from "playwright-core";
 import { __unstable__loadDesignSystem, compile } from "tailwindcss";
 import { anatomyOf, splitClass } from "../../src/daemon/class-write";
-import { buildDesignEntry } from "../../src/daemon/compile";
+import { buildDesignEntry, designBuildOptions, designEntryKey } from "../../src/daemon/compile";
 import { realDesignDir } from "../../src/daemon/design-path";
 import { fingerprintOf } from "../../src/daemon/hand-write";
 import { walkNodes } from "../../src/daemon/jsx-walk";
@@ -15,6 +15,7 @@ import { ROWS } from "../../src/ui/canvas/properties-rows";
 import { type Operation, type Revision, type Selection, Sources, sourceRead, witnesses } from "./automatic-source";
 import type {} from "./observer";
 import { reconciledRenderer } from "./reconciled-renderer";
+import { valueCalls, valueReact } from "./value-flow-build";
 
 // The lock identifies the installation; compiler/package bytes and bundled
 // CSS defaults also retire a read if replaced without a lockfile update.
@@ -65,10 +66,12 @@ export async function mount(
 	browser: Browser,
 	root: string,
 	frame: string,
-	instrumented: boolean | "observed" | "reconciled" = true,
+	instrumented: boolean | "observed" | "reconciled" | "values" = true,
 	authority?: ReadAuthority,
 ): Promise<Mounted> {
-	const observed = instrumented === "observed" || instrumented === "reconciled";
+	const values = instrumented === "values";
+	const observed = instrumented === "observed" || instrumented === "reconciled" || values;
+	const sourceMapping: Record<string, string> = {};
 	const toolchain = compilerRevision();
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
@@ -116,7 +119,11 @@ export async function mount(
 			visit(sources.resolve(unit, statement.source.value).path);
 		}
 		walkNodes(unit.ast, [], (node) => {
-			if (node.type === "CallExpression" && node.callee.type === "Import" && node.arguments[0]?.type !== "StringLiteral")
+			if (
+				node.type === "CallExpression" &&
+				node.callee.type === "Import" &&
+				node.arguments[0]?.type !== "StringLiteral"
+			)
 				sources.retainDirectory();
 			if (
 				node.type === "CallExpression" &&
@@ -169,13 +176,28 @@ export async function mount(
 		if (round > 3) throw new Error("module discovery did not stabilize before admitted compilation");
 		const captured = [...sources.revisions.values(), ...sources.assets.values()];
 		lease = await authority?.capture(captured);
-		compiled = await buildDesignEntry({
+		const entryOptions = {
 			designDir,
 			resolveDir: join(designDir, "frames", frame),
 			sourcefile: "<automatic-read>",
 			label: "automatic target probe",
 			contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => {const entry=createElement(Frame); ${observed ? "globalThis.__handObserver.register(entry, '<entry>', true);" : ""} root.render(entry)}; globalThis.unmount = () => root.unmount(); globalThis.rerender();`,
-		});
+		};
+		if (values) {
+			const options = designBuildOptions(entryOptions);
+			const result = await build({
+				...options,
+				plugins: [...options.plugins!, valueCalls(designDir, sourceMapping)],
+			});
+			const bootJs = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
+			if (!bootJs) throw new Error("value probe compiled to no module");
+			compiled = {
+				bootJs,
+				sourceFiles: Object.keys(result.metafile.inputs)
+					.filter((input) => input !== designEntryKey(entryOptions))
+					.map((input) => resolve(designDir, input)),
+			};
+		} else compiled = await buildDesignEntry(entryOptions);
 		const discovered = compiled.sourceFiles.filter((file) => /\.[jt]sx?$/.test(file) && !sources.units.has(file));
 		admission.push({
 			round,
@@ -208,7 +230,11 @@ export async function mount(
 		format: "iife",
 		write: false,
 		define: { "process.env.NODE_ENV": '"production"' },
-		plugins: instrumented === "reconciled" ? [reconciledRenderer()] : [],
+		plugins: values
+			? [reconciledRenderer(), valueReact()]
+			: instrumented === "reconciled"
+				? [reconciledRenderer()]
+				: [],
 		alias: {
 			"spool/jsx-dev-runtime": resolve(
 				observed
@@ -234,7 +260,7 @@ export async function mount(
 	if (observed) {
 		const hook = await build({
 			stdin: {
-				contents: `import {installObserver} from './spikes/hand-edit-targets/observer'; installObserver(${instrumented === "reconciled"});`,
+				contents: `import {installObserver} from './spikes/hand-edit-targets/observer'; import {installValueFlow} from './spikes/hand-edit-targets/value-flow'; ${values ? `installValueFlow(${JSON.stringify(sourceMapping)});` : ""} installObserver(${instrumented === "reconciled" || values});`,
 				resolveDir: process.cwd(),
 			},
 			bundle: true,
@@ -302,6 +328,7 @@ export async function stillSelected(mounted: Mounted, selection: Selection): Pro
 					current.occurrence === pick.occurrence &&
 					current.source === pick.source &&
 					current.element === pick.element &&
+					JSON.stringify(current.values) === JSON.stringify(pick.values) &&
 					JSON.stringify(current.chain) === JSON.stringify(pick.chain) &&
 					current.refusal === pick.refusal
 				);
