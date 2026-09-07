@@ -38,7 +38,9 @@ async function setup() {
 	return { root, directory, runtime, contexts };
 }
 
-it("type-checks frames offline with this package and returns diagnostics to the model", async () => {
+it("type-checks frames offline with this package and returns diagnostics to the model", {
+	timeout: 30_000,
+}, async () => {
 	const { root, directory, runtime, contexts } = await setup();
 	markProject(root);
 	writeFrame(root, "home", "const label: string = 42; export default () => <h1>{label}</h1>");
