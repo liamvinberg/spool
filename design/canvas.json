@@ -605,6 +605,10 @@
 		"explore/settings": {
 			"x": 5806,
 			"y": 3566
+		},
+		"explore/agent/live/receiving/directions": {
+			"x": 1160,
+			"y": 0
 		}
 	}
 }
