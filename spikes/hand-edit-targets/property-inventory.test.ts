@@ -52,7 +52,7 @@ function samples(row: Row): readonly [string, string] | null {
 	}
 }
 let browser: Browser;
-const evidence: unknown[] = [];
+const evidence: { status: string; [key: string]: unknown }[] = [];
 const roots: string[] = [];
 beforeAll(async () => {
 	browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
@@ -65,9 +65,7 @@ afterAll(async () => {
 			JSON.stringify(
 				{ date: new Date().toISOString(), browser: browser.version(), rows: evidence },
 				(_key, value: unknown) =>
-					typeof value === "string"
-						? roots.reduce((text, root) => text.replaceAll(root, "<project>"), value)
-						: value,
+					typeof value === "string" ? roots.reduce((text, root) => text.replaceAll(root, "<project>"), value) : value,
 				2,
 			),
 		);
@@ -144,5 +142,6 @@ it("accounts for every retained property through the automatic join with named u
 		});
 	}
 	expect(evidence).toHaveLength(ROWS.length);
+	expect(evidence.filter((row) => row.status === "unproven")).toEqual([]);
 	await mounted.page.close();
 });

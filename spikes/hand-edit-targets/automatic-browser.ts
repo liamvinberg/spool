@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Scanner } from "@tailwindcss/oxide";
@@ -14,6 +14,21 @@ import { compileClasses } from "../../src/daemon/theme";
 import { ROWS } from "../../src/ui/canvas/properties-rows";
 import { type Operation, type Revision, type Selection, Sources, sourceRead, witnesses } from "./automatic-source";
 import type {} from "./observer";
+
+// The lock identifies the installation; compiler/package bytes and bundled
+// CSS defaults also retire a read if replaced without a lockfile update.
+function compilerRevision(): string {
+	const packageDir = dirname(dirname(fileURLToPath(import.meta.resolve("tailwindcss"))));
+	const files = readdirSync(packageDir, { recursive: true })
+		.filter((path): path is string => typeof path === "string" && /\.(?:m?js|css|json)$/.test(path))
+		.sort();
+	return fingerprintOf(
+		JSON.stringify([
+			readFileSync("pnpm-lock.yaml", "utf8"),
+			...files.map((path) => [path, fingerprintOf(readFileSync(join(packageDir, path), "utf8"))]),
+		]),
+	);
+}
 
 export interface ReadLease {
 	epoch: string;
@@ -45,7 +60,7 @@ export async function mount(
 	instrumented: boolean | "observed" = true,
 	authority?: ReadAuthority,
 ): Promise<Mounted> {
-	const toolchain = fingerprintOf(readFileSync("pnpm-lock.yaml", "utf8"));
+	const toolchain = compilerRevision();
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
 	// Capture inputs before compilation, including imports pruned by the bundle.
@@ -138,10 +153,8 @@ export async function mount(
 	});
 	if (
 		!sources.valid() ||
-		toolchain !== fingerprintOf(readFileSync("pnpm-lock.yaml", "utf8")) ||
-		(authority &&
-			lease &&
-			!(await authority.valid(lease, [...sources.revisions.values(), ...sources.assets.values()])))
+		toolchain !== compilerRevision() ||
+		(authority && lease && !(await authority.valid(lease, [...sources.revisions.values(), ...sources.assets.values()])))
 	)
 		throw new Error("compile inputs or source-owner lease changed");
 	const page = await browser.newPage({ viewport: { width: 700, height: 700 } });
@@ -206,7 +219,7 @@ export async function stillSelected(mounted: Mounted, selection: Selection): Pro
 		]))
 	)
 		return false;
-	if (mounted.toolchain !== fingerprintOf(readFileSync("pnpm-lock.yaml", "utf8"))) return false;
+	if (mounted.toolchain !== compilerRevision()) return false;
 	const node = mounted.selectedNodes.get(selection.occurrence);
 	if (!node || !(await node.evaluate((el) => el.isConnected))) return false;
 	if (mounted.observed)
@@ -235,8 +248,8 @@ export async function stillSelected(mounted: Mounted, selection: Selection): Pro
 	}, selection);
 }
 
-// CSS ownership is proved only for one literal utility declaration in a chosen
-// scope. The browser inventories declarations; it never chooses by pixel value.
+// Bounded same-scope cascade: exact emitted rules, equal selector structure,
+// importance then stylesheet order. No rendered-value ownership inference.
 async function propertyRead(
 	mounted: Mounted,
 	selection: Selection,
@@ -246,6 +259,7 @@ async function propertyRead(
 	if (!ROWS.some((row) => row.property === operation.property && row.rule.kind !== "read"))
 		throw new Error("property is outside the retained operation inventory");
 	const tokens = (literal ?? "").split(/\s+/).filter(Boolean);
+	if (new Set(tokens).size !== tokens.length) throw new Error("duplicate source tokens need occurrence attribution");
 	const compiled = await compileClasses(mounted.sources.root, tokens);
 	const candidates = await Promise.all(
 		compiled
@@ -275,6 +289,8 @@ async function propertyRead(
 			if (
 				document.adoptedStyleSheets.length ||
 				document.styleSheets.length !== 1 ||
+				document.styleSheets[0]?.disabled ||
+				document.styleSheets[0]?.media.mediaText !== "" ||
 				document.styleSheets[0]?.ownerNode?.textContent !== expectedCss
 			)
 				throw new Error("stylesheet observation changed or is incomplete");
@@ -285,7 +301,7 @@ async function propertyRead(
 				[...expectedSheet.cssRules].map((rule) => rule.cssText).join("\n")
 			)
 				throw new Error("stylesheet CSSOM changed");
-			if (el.hasAttribute("style") || el.getAnimations().length)
+			if (el.hasAttribute("style") || document.getAnimations().length)
 				throw new Error("inline or animated property ownership is unknown");
 			const environment = getComputedStyle(el);
 			if (!["horizontal-tb", "vertical-rl", "vertical-lr"].includes(environment.writingMode))
@@ -307,6 +323,7 @@ async function propertyRead(
 				authoredDeclaration: string;
 				value: string;
 				important: boolean;
+				order: number;
 			};
 			const physical: Record<string, string> = {
 				"inline-start": inline[0]!,
@@ -357,8 +374,7 @@ async function propertyRead(
 			const nested = property.includes("between children");
 			const placeholder = property === "placeholder color";
 			const subjects = nested ? [...el.children] : [el];
-			if (nested && subjects.length < 2)
-				throw new Error("no observed pair of direct children for the nested effect");
+			if (nested && subjects.length < 2) throw new Error("no observed pair of direct children for the nested effect");
 			if (placeholder && !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement))
 				throw new Error("no observed input placeholder target");
 			const probe = document.createElement("div").style;
@@ -397,6 +413,7 @@ async function propertyRead(
 				conditions: string[] = [],
 				active = true,
 				onlyProperty = true,
+				sequence = { value: 0 },
 			): Rule[] => {
 				const rows: Rule[] = [];
 				for (const rule of rules) {
@@ -405,9 +422,7 @@ async function propertyRead(
 					let nextConditions = conditions;
 					let nextActive = active;
 					if (rule instanceof CSSStyleRule)
-						selector = rule.selectorText.includes("&")
-							? rule.selectorText.replaceAll("&", parent)
-							: rule.selectorText;
+						selector = rule.selectorText.includes("&") ? rule.selectorText.replaceAll("&", parent) : rule.selectorText;
 					if (rule instanceof CSSLayerBlockRule) nextLayer = rule.name;
 					if (rule instanceof CSSMediaRule) {
 						nextConditions = [...conditions, rule.conditionText];
@@ -443,6 +458,7 @@ async function propertyRead(
 							if (!onlyProperty || affects(name))
 								rows.push({
 									selector,
+									order: sequence.value++,
 									layer: nextLayer,
 									conditions: nextConditions,
 									active: nextActive,
@@ -462,6 +478,7 @@ async function propertyRead(
 								nextConditions,
 								nextActive,
 								onlyProperty,
+								sequence,
 							),
 						);
 				}
@@ -470,15 +487,17 @@ async function propertyRead(
 			const matches = (row: Rule) => {
 				try {
 					if (placeholder !== row.selector.includes("::placeholder")) return false;
-					const selector = (
-						placeholder ? row.selector.replaceAll("::placeholder", "") || "*" : row.selector
-					).replace(/:(hover|active|focus-visible|focus-within|focus|checked|disabled|enabled|target)\b/g, "");
+					const selector = (placeholder ? row.selector.replaceAll("::placeholder", "") || "*" : row.selector).replace(
+						/:(hover|active|focus-visible|focus-within|focus|checked|disabled|enabled|target)\b/g,
+						"",
+					);
 					return subjects.some((subject) => subject.matches(selector));
 				} catch {
 					throw new Error("unsupported selector");
 				}
 			};
-			const all = collect(document.styleSheets[0]!.cssRules, "", "", [], true, false).filter(matches);
+			const sheetDeclarations = collect(document.styleSheets[0]!.cssRules, "", "", [], true, false);
+			const all = sheetDeclarations.filter(matches);
 			if (all.some((row) => !["base", "utilities", "theme"].includes(row.layer)))
 				throw new Error(
 					`an author CSS declaration competes, including inactive or same-valued rules (${all.find((row) => !["base", "utilities", "theme"].includes(row.layer))?.layer})`,
@@ -504,9 +523,7 @@ async function propertyRead(
 			baseSheet.replaceSync(preflight);
 			const baseline = collect(baseSheet.cssRules, "", "", [], true, false);
 			if (
-				all.some(
-					(row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base))),
-				)
+				all.some((row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base))))
 			)
 				throw new Error(
 					`author rule in a baseline layer is not the pinned reset: ${JSON.stringify(all.find((row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base)))))}`,
@@ -516,15 +533,35 @@ async function propertyRead(
 					`utility rule has no verified source candidate: ${JSON.stringify(all.find((row) => row.layer === "utilities" && !sourceRules.some((source) => same(row, source))))}`,
 				);
 			if (
-				sourceRules.some(
-					(source) => all.filter((row) => row.layer === "utilities" && same(row, source)).length !== 1,
-				)
+				sourceRules.some((source) => all.filter((row) => row.layer === "utilities" && same(row, source)).length !== 1)
 			)
 				throw new Error("missing or duplicated utility declaration");
-			const owned = sourceRules.filter((row) => row.scope === scope && affects(row.declaration));
-			for (const key of keys)
-				if (new Set(owned.filter((row) => normalize(row.declaration) === key).map((row) => row.token)).size > 1)
-					throw new Error("competing declarations in the chosen scope; equality is not ownership");
+			const contenders = sourceRules
+				.filter((row) => row.scope === scope && affects(row.declaration))
+				.map((row) => ({
+					...row,
+					order: all.find((actual) => actual.layer === "utilities" && same(actual, row))!.order,
+					active:
+						row.active &&
+						subjects.some((subject) =>
+							subject.matches(placeholder ? row.selector.replaceAll("::placeholder", "") : row.selector),
+						),
+				}));
+			const winners = keys.flatMap((key) => {
+				const effects = contenders.filter((row) => normalize(row.declaration) === key);
+				// Replacing the exact escaped class anchor leaves selector structure,
+				// and therefore specificity, unchanged. Different structures refuse.
+				const shapes = new Set(
+					effects.map((row) =>
+						JSON.stringify([row.selector.replaceAll(`.${CSS.escape(row.token)}`, ".SOURCE"), row.conditions]),
+					),
+				);
+				if (shapes.size > 1 && new Set(effects.map((row) => row.token)).size > 1)
+					throw new Error("overlap needs unequal-selector cascade attribution");
+				effects.sort((a, b) => Number(b.important) - Number(a.important) || b.order - a.order);
+				return effects[0] ? [{ key, owner: effects[0], shadowed: effects.slice(1) }] : [];
+			});
+			const owned = [...new Set(winners.map((winner) => winner.owner))];
 			const variants = [
 				...themeBindings
 					.filter((binding) => binding.name.startsWith("--breakpoint-"))
@@ -539,6 +576,9 @@ async function propertyRead(
 				"disabled",
 				"enabled",
 				"target",
+				"group-hover",
+				"group-focus",
+				"peer-checked",
 			];
 			if (
 				(scope !== "" && !scope.endsWith(":")) ||
@@ -549,6 +589,18 @@ async function propertyRead(
 						.some((variant) => !variants.includes(variant)))
 			)
 				throw new Error("scope needs unproven ancestor, container or custom condition attribution");
+			if (/group-|peer-/.test(scope) && !candidates.some((candidate) => candidate.scope === scope))
+				throw new Error("ancestor scope needs an existing source candidate");
+			if (
+				!owned.length &&
+				candidates.some((candidate) => {
+					if (candidate.scope !== scope) return false;
+					const sheet = new CSSStyleSheet();
+					sheet.replaceSync(candidate.css);
+					return collect(sheet.cssRules, "", "", [], true, false).some((row) => affects(row.declaration));
+				})
+			)
+				throw new Error("source condition has no proven selected-subject attribution; not an absent property");
 			const owner = owned[0] ?? null;
 			if (owner?.value === "") throw new Error("browser did not expose the authored declaration value");
 			const ownerCandidate = candidates.find((candidate) => candidate.token === owner?.token);
@@ -557,6 +609,9 @@ async function propertyRead(
 			return {
 				owner,
 				owners: owned,
+				winners,
+				contenders,
+				ownership: "source owner per effect in the explicit write scope; not the cross-scope rendered winner",
 				effectKeys: keys,
 				writeScope: scope,
 				declaration: owner === null ? "absent in chosen scope; add explicit override" : "literal utility",
@@ -588,13 +643,22 @@ async function propertyRead(
 				ownerCandidateCss: ownerCandidate?.css ?? null,
 				allOwnerCandidateCss: candidates.filter((candidate) => owned.some((row) => row.token === candidate.token)),
 				ownerCandidateDeclarations: collect(ownerSheet.cssRules, "", "", [], true, false),
+				allOwnerCandidateDeclarations: candidates
+					.filter((candidate) => owned.some((row) => row.token === candidate.token))
+					.flatMap((candidate) => {
+						const sheet = new CSSStyleSheet();
+						sheet.replaceSync(candidate.css);
+						return collect(sheet.cssRules, "", "", [], true, false).map((row) => ({ ...row, token: candidate.token }));
+					}),
 				readSet: {
 					declarations: sourceRules,
+					sheetDeclarations,
+					stylesheet: expectedCss,
+					candidates,
+					compilerInputs: { preflight, themeBindings },
 					variables: [
 						...new Set(
-							sourceRules.flatMap((row) =>
-								[...row.value.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]!),
-							),
+							sourceRules.flatMap((row) => [...row.value.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]!)),
 						),
 					],
 					policy:
@@ -615,6 +679,64 @@ async function propertyRead(
 		},
 	);
 	return result;
+}
+
+// A bounded exact context snapshot, not a semantic rebase or event journal.
+async function renderedContext(mounted: Mounted, selection: Selection) {
+	const node = mounted.selectedNodes.get(selection.occurrence);
+	if (!node) throw new Error("selected node disappeared");
+	return node.evaluate((el) => {
+		const media: { query: string; matches: boolean }[] = [];
+		const visit = (rules: CSSRuleList): void => {
+			for (const rule of rules) {
+				if (rule instanceof CSSMediaRule)
+					media.push({ query: rule.conditionText, matches: matchMedia(rule.conditionText).matches });
+				if ("cssRules" in rule && rule.cssRules instanceof CSSRuleList) visit(rule.cssRules);
+			}
+		};
+		for (const sheet of document.styleSheets) visit(sheet.cssRules);
+		const ancestors: Element[] = [];
+		let parent = el.parentElement;
+		while (parent) {
+			ancestors.push(parent);
+			parent = parent.parentElement;
+		}
+		return {
+			viewport: [innerWidth, innerHeight],
+			media,
+			rootAttributes: [...document.documentElement.attributes].map((attr) => [attr.name, attr.value]),
+			document: [...document.body.children]
+				.filter((child) => child.tagName !== "SCRIPT")
+				.map((child) => child.outerHTML)
+				.join(""),
+			states: [...document.querySelectorAll("*")].map((element) => ({
+				states: [
+					"hover",
+					"active",
+					"focus",
+					"focus-visible",
+					"focus-within",
+					"checked",
+					"disabled",
+					"enabled",
+					"target",
+				].filter((state) => element.matches(`:${state}`)),
+				value:
+					element instanceof HTMLInputElement ||
+					element instanceof HTMLTextAreaElement ||
+					element instanceof HTMLSelectElement
+						? element.value
+						: null,
+			})),
+			environment: [...new Set([el, ...el.children, ...ancestors])].map((element) => {
+				const style = getComputedStyle(element);
+				return {
+					tag: element.tagName,
+					values: Object.fromEntries([...style].map((name) => [name, style.getPropertyValue(name)])),
+				};
+			}),
+		};
+	});
 }
 
 export async function read(mounted: Mounted, selection: Selection, operation: Operation) {
@@ -645,9 +767,12 @@ export async function read(mounted: Mounted, selection: Selection, operation: Op
 			if (fingerprintOf(bytes.toString("base64")) !== target.asset.revision)
 				throw new Error("rendered image differs from imported asset bytes");
 		}
+		const context = operation.kind === "property" ? await renderedContext(mounted, selection) : null;
 		const property =
 			operation.kind === "property" ? await propertyRead(mounted, selection, operation, target.expected) : null;
 		if (!(await stillSelected(mounted, selection))) throw new Error("read invalidated before completion");
+		if (context && JSON.stringify(context) !== JSON.stringify(await renderedContext(mounted, selection)))
+			throw new Error("rendered context changed during the property read");
 		if (
 			committedRender !== null &&
 			committedRender !== (await mounted.page.evaluate(() => globalThis.__handObserver.commits))
@@ -659,6 +784,8 @@ export async function read(mounted: Mounted, selection: Selection, operation: Op
 			property,
 			proof: {
 				selection,
+				operation,
+				context,
 				committedRender,
 				revisions: [...mounted.sources.revisions.values()],
 				assets: [...mounted.sources.assets.values()],
@@ -675,4 +802,23 @@ export async function read(mounted: Mounted, selection: Selection, operation: Op
 	} catch (error) {
 		return { kind: "refused" as const, reason: error instanceof Error ? error.message : String(error) };
 	}
+}
+
+// Reuse the same selection, source/owner lease and exact retained dependencies.
+// The actual coordinator and commit/undo lifecycle remain separate consumers.
+export async function validPropertyRead(
+	mounted: Mounted,
+	previous: Awaited<ReturnType<typeof read>>,
+): Promise<boolean> {
+	if (previous.kind !== "supported" || !previous.property || previous.proof.operation.kind !== "property") return false;
+	const current = await read(mounted, previous.proof.selection, {
+		kind: "property",
+		property: previous.proof.operation.property,
+		scope: previous.target.scope,
+	});
+	return (
+		current.kind === "supported" &&
+		JSON.stringify(current.property) === JSON.stringify(previous.property) &&
+		JSON.stringify(current.proof) === JSON.stringify(previous.proof)
+	);
 }

@@ -305,7 +305,7 @@ describe.each([true, "observed"] as const)("automatic mounted selection to sourc
 		expect(gap.property?.reference).toBe("--space-step");
 		const equal = await property("#equal", "padding-top");
 		const inline = await property("#inline", "padding-top");
-		expect(equal.kind).toBe("refused");
+		expect(supported(equal).property?.owner?.token).toBe("pt-4");
 		expect(inline.kind).toBe("refused");
 		evidence.properties = {
 			shared,

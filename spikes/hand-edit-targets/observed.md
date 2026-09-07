@@ -31,12 +31,19 @@ Set `AUTO_TARGET_EVIDENCE`, `OBSERVED_EVIDENCE` and `PROPERTY_READ_EVIDENCE` to
 JSON destinations to retain observations. Reporters can write partial results
 on failure; only a successful complete run establishes a passing artifact.
 
-Known limits remain executable: memo source continuity across equal-prop
-bailouts; cloned or unobserved calls; passthrough-slot ancestry; lazy, namespace
-and export-star binding; competing utility declarations; and custom/ancestor
-conditions. Refusal does not change how React renders. An existing DevTools
-hook is left intact and attribution becomes unavailable. There is no evidence
-for other React versions, development builds, SSR or general hook coexistence.
+The additional `cascade.test.ts` probes retain a winner per requested effect
+from exact emitted rule order and importance. Equal-selector overlaps, logical
+writing environments and selected ancestor states now have bounded examples.
+Full candidate CSS, shadowed declarations, compiler defaults and rendered
+context remain dependencies. `validPropertyRead` rechecks the same source,
+owner lease and context; it supplies no semantic rebase or joined lifecycle.
+
+Source-continuity coverage is recorded separately in `continuity.md`. CSS
+limits remain executable: unequal-selector competition and unproved
+custom/container conditions. Group hover/focus, peer checked and the tested
+breakpoint/group combination are finite examples, not approval of every
+variant combination. There is no general renderer or hook-coexistence claim.
+No performance claim is made.
 
 `ReadAuthority` is an optional admission seam. It captures source-owner handles
 before compilation and checks them alongside the mounted generation and source

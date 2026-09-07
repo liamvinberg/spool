@@ -437,7 +437,7 @@ it("retains basic breakpoint/state scopes and maps logical sides from the actual
 		property: "padding-top",
 		scope: "",
 	});
-	expect(mixed.kind).toBe("refused");
+	expect(supported(mixed).property?.owner?.token).toBe("p-4!");
 	const custom = await read(mounted, await select(mounted, "#important"), {
 		kind: "property",
 		property: "padding-left",
