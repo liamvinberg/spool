@@ -422,7 +422,8 @@ it("can copy after the canvas ignores an automatic walk from the same held frame
 	// there is `clipboardCopyAllowed` in `protocol.test.ts`; here the stronger
 	// fact is that there is no document left to try it from.
 	await expect.poll(() => page.locator('iframe[title="warm"]').count(), { timeout: 30_000 }).toBe(0);
-	await page.bringToFront();
+	// The walk removed the focused iframe; the native clipboard read needs a live focus target.
+	await page.getByRole("application").focus();
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("walked-away baseline");
 
 	// Going back in would boot it fresh (#5) — and this frame walks away on
