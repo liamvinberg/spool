@@ -112,10 +112,33 @@ it("resizes a tiny frame live, snaps to its content, and prepares the next pictu
 			'<section style="height:300px;overflow:auto"><div style="height:1200px">Scrollable</div></section>';
 	});
 	await drag("s", 0, -495, { width: 400, height: 300 });
+	// A full-height landing page scrolls in its main column beside a dock.
+	// Its snap is where that column stops scrolling, including its padding.
+	await main.evaluate((el) => {
+		el.style.cssText = "display:flex;height:100%";
+		el.innerHTML = `
+			<section style="position:relative;flex:1;overflow-y:auto">
+				<div style="position:absolute;top:0;bottom:0;width:1px"></div>
+				<div style="padding:20px 0"><article style="height:500px">Transcript</article></div>
+			</section>
+			<aside style="height:100%;display:flex;flex-direction:column">
+				<header>Install</header><footer style="margin-top:auto">Docs</footer>
+			</aside>`;
+		el.querySelector("section")?.scrollTo(0, 100);
+	});
+	await drag("s", 0, 245, { width: 400, height: 540 });
+	await drag("s", 0, 5, { width: 400, height: 540 });
+	await drag("s", 0, 150, { width: 400, height: 690 });
+	await drag("s", 0, -145, { width: 400, height: 540 });
 	// A viewport-filling app has no independent content bottom.
 	await main.evaluate((el) => {
 		el.replaceChildren();
 		el.style.height = "100%";
 	});
-	await drag("s", 0, 5, { width: 400, height: 305 });
+	await drag("s", 0, 5, { width: 400, height: 545 });
+	await main.evaluate((el) => {
+		el.style.overflowY = "auto";
+		el.innerHTML = '<div style="height:100%"></div>';
+	});
+	await drag("s", 0, 5, { width: 400, height: 550 });
 });
