@@ -532,7 +532,13 @@ it("external cached JSX refuses actual canvas source writes", { timeout: 120000 
 	const box = await f.select();
 	await f.page.mouse.click(box.x + 40, box.y + box.height / 2);
 	await expect
-		.poll(() => f.page.getByText("cache return has no committed invocation read witness", { exact: true }).count())
+		.poll(() =>
+			f.page
+				.getByText("committed cache read is known; external slot writes and props-field lifetime are not covered", {
+					exact: true,
+				})
+				.count(),
+		)
 		.toBe(1);
 	expect(await f.frame.locator("#label").getAttribute("contenteditable")).toBe(null);
 	expect(readFileSync(f.file, "utf8")).toBe(source);
