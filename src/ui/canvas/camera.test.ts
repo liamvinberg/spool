@@ -18,9 +18,32 @@ describe("entryCamera", () => {
 		expect(entryCamera(read, page, VW, VH)).toBe(read);
 	});
 
-	it("does not move at the fit itself, so there is no cliff either side of it", () => {
+	it("does not move when already centered at the fit", () => {
 		const fit = fitCamera(page, VW, VH);
-		expect(entryCamera(fit, page, VW, VH)).toBe(fit);
+		expect(entryCamera(fit, page, VW, VH)).toEqual(fit);
+	});
+
+	it.each([0.64, 0.68, VH / 1050])("centers a neighboring frame at zoom %s without zooming out", (k) => {
+		const neighbor: Box = { x: 1500, y: 0, w: 1400, h: 1050 };
+		const camera = { x: 0, y: 40, k };
+		const entered = entryCamera(camera, neighbor, VW, VH);
+		expect(entered.k).toBe(k);
+		expect((neighbor.x + neighbor.w / 2) * k + entered.x).toBeCloseTo(VW / 2);
+		expect((neighbor.y + neighbor.h / 2) * k + entered.y).toBeCloseTo(VH / 2);
+	});
+
+	it.each([
+		{ w: 1400, h: 1050, k: VH / 1050 + 0.01 },
+		{ w: 6000, h: 600, k: 0.3 },
+	])("keeps a close-up when the frame exceeds the viewport on either axis: %o", ({ w, h, k }) => {
+		const frame = { x: 0, y: 0, w, h };
+		const camera = { x: -100, y: -100, k };
+		expect(entryCamera(camera, frame, VW, VH)).toBe(camera);
+	});
+
+	it("centers a small frame at actual size without enlarging it", () => {
+		const chip: Box = { x: 900, y: 700, w: 120, h: 90 };
+		expect(entryCamera({ x: 0, y: 0, k: 1 }, chip, VW, VH)).toEqual({ x: -360, y: -345, k: 1 });
 	});
 
 	it("pans at the current zoom when the target is off screen entirely", () => {

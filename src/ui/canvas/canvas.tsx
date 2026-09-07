@@ -1348,10 +1348,8 @@ export function ProjectCanvas({
 			// the entered frame owns the keyboard from the first moment; a frame
 			// booting right now gets it at its loaded report instead
 			iframes.current.get(target)?.focus();
-			// Going inside brings the frame to you only when it is not already
-			// here: entering never takes you further away (`entryCamera`). The
-			// sidebar's flight still fits, because that one is a navigation and
-			// says so.
+			// Center a frame that still fits on screen, but preserve a close-up.
+			// Entering never zooms out; the sidebar's explicit flight still fits.
 			const viewport = viewportRef.current;
 			const cam = cameraRef.current;
 			if (viewport === null || cam === null) return;

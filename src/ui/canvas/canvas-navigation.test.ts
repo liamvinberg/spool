@@ -25,6 +25,68 @@ const openEventStream = () =>
 		headers: { "content-type": "text/event-stream" },
 	});
 
+it.each([0.64, 0.68])("double-clicking a neighboring frame at zoom %s pans into it at the same scale", async (k) => {
+	const entryFrames = [
+		{ name: "origin", x: 0, y: 0, w: 1400, h: 1050 },
+		{ name: "right", x: 1500, y: 0, w: 1400, h: 1050 },
+	];
+	const camera = { x: (1200 - 1400 * k) / 2, y: (800 - 1050 * k) / 2, k };
+	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
+	vi.spyOn(HTMLIFrameElement.prototype, "setAttribute").mockImplementation(function (
+		this: HTMLIFrameElement,
+		name,
+		value,
+	) {
+		setAttribute.call(this, name, name === "src" ? "about:blank" : value);
+	});
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL) => {
+			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			if (url.pathname.endsWith("/events")) return openEventStream();
+			if (url.pathname.endsWith("/state")) return Response.json({ camera });
+			if (url.pathname.endsWith("/frames")) {
+				return Response.json({ root: "/project", pages: [], frames: entryFrames, collisions: [] });
+			}
+			if (url.pathname.endsWith("/flows")) {
+				return Response.json({ frames: entryFrames.map(({ name }) => name), links: [], edges: [], unreadable: [] });
+			}
+			return Response.json({});
+		}),
+	);
+	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+		callback(performance.now() + 1000);
+		return 1;
+	});
+	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+	vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
+	vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+	await act(async () => root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} })));
+	await until(() => cameraTransform(host) === `translate(${camera.x}px, ${camera.y}px) scale(${k})`);
+	const canvas = host.querySelector<HTMLElement>('[role="application"]');
+	expect(canvas).not.toBeNull();
+	await act(async () => {
+		canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 600, clientY: 400 }));
+	});
+	expect(labelText(host, "origin")).toContain("live · esc exits");
+	await act(async () => {
+		// The neighboring frame is only a sliver at the viewport's right edge.
+		canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 1190, clientY: 400 }));
+	});
+	expect(labelText(host, "right")).toContain("live · esc exits");
+	expect(labelText(host, "origin")).not.toContain("live · esc exits");
+	expect(cameraTransform(host)).toBe(`translate(${600 - 2200 * k}px, ${camera.y}px) scale(${k})`);
+});
+
 describe("canvas keyboard navigation", () => {
 	it("returns from an entered frame, moves spatially, and enters the target without walking", async () => {
 		const requests: string[] = [];
@@ -205,15 +267,15 @@ describe("canvas keyboard navigation", () => {
 		const departed = cameraTransform(host);
 		const postMessage = vi.spyOn(source as Window, "postMessage");
 
-		// entering left the camera where it was, so origin still sits at the
-		// origin of the screen — pick inside the box it actually occupies
+		// Entry centered the 100px frame in the 800px viewport. Pick ten
+		// pixels inside its top-left corner at the position it now occupies.
 		await act(async () => {
 			canvas?.dispatchEvent(
 				new PointerEvent("pointerdown", {
 					bubbles: true,
 					button: 0,
-					clientX: 60,
-					clientY: 60,
+					clientX: 360,
+					clientY: 360,
 					pointerId: 1,
 					ctrlKey: true,
 				}),
