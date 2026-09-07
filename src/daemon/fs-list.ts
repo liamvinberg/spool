@@ -3,6 +3,7 @@ import { access, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { matchName } from "../name-match";
+import { expandHome } from "../paths";
 import { readRegistry } from "../registry";
 import { summarizeProject } from "./projection";
 
@@ -34,7 +35,7 @@ export interface FsListing {
 export function listDirectory(requested: string | undefined): FsListing | undefined {
 	let path: string;
 	try {
-		path = realpathSync(requested === undefined || requested === "" ? homedir() : requested);
+		path = realpathSync(requested === undefined || requested === "" ? homedir() : expandHome(requested));
 	} catch {
 		return undefined;
 	}

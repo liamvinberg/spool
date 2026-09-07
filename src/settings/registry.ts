@@ -161,8 +161,8 @@ export const SETTINGS = {
 		group: "general",
 		shape: { kind: "directory" },
 		fallback: "~/spool",
-		label: "Save projects in",
-		says: "The folder for projects you start in spool.",
+		label: "Default project location",
+		says: "Used for new projects. Existing projects stay where they are.",
 	},
 	history: {
 		scope: "project",

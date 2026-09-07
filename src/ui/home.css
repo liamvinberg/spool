@@ -173,46 +173,6 @@
 	flex-shrink: 0;
 	color: var(--color-thread);
 }
-.pj-start-choices {
-	padding: 6px;
-}
-.pj-start-choices > button {
-	display: flex;
-	align-items: center;
-	gap: 15px;
-	width: 100%;
-	padding: 17px 14px;
-	border-radius: var(--radius-sm);
-	text-align: left;
-}
-.pj-start-choices > button > svg {
-	width: 18px;
-	height: 18px;
-	color: var(--color-muted);
-	flex-shrink: 0;
-}
-.pj-start-choices > button:first-child > svg {
-	color: var(--color-thread);
-}
-.pj-start-choices > :where(button) > span {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-	flex: 1;
-}
-.pj-start-choices strong {
-	font: var(--type-title);
-}
-.pj-start-choices small {
-	color: var(--color-muted);
-	font: var(--type-label);
-}
-.pj-start-choices > button > .home-arrow {
-	width: 14px;
-}
-.pj-start-choices > button:hover {
-	background: var(--color-control);
-}
 .pj-welcome-main {
 	display: flex;
 	align-items: center;
@@ -297,11 +257,6 @@
 }
 .pj-project-location > button:hover {
 	color: var(--color-text);
-}
-:where(.pj-native-picker) > .pj-project-location {
-	margin: 0;
-	padding: 16px 20px;
-	border-top: 1px solid var(--color-border-raised);
 }
 .pj-location-footer {
 	display: flex;

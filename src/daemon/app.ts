@@ -775,7 +775,7 @@ export function createDaemonApp({
 	/** Body of the picker's create: { path, name } — the folder to make it in, and what to call it. */
 	function requestedNewProject(value: unknown, c: Context): { path: string; name: string } | Response {
 		const { path, name } = value as { path?: unknown; name?: unknown };
-		if (typeof path !== "string" || path === "" || typeof name !== "string" || name === "") {
+		if (typeof path !== "string" || path === "" || typeof name !== "string") {
 			return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
 		}
 		return { path, name };

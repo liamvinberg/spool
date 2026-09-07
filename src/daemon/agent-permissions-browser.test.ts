@@ -251,6 +251,6 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	const settings = page.getByRole("dialog", { name: "Settings", exact: true });
 	await settings.waitFor();
 	expect(await settings.textContent()).not.toContain("Agent permissions");
-	expect(await settings.textContent()).toContain("Save projects in");
+	expect(await settings.textContent()).toContain("Default project location");
 	await shot("access-design-settings");
 });

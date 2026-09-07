@@ -48,10 +48,13 @@ describe("native app commands", () => {
 		expect(command).toBeDefined();
 		expect(setCanvasActive).toHaveBeenLastCalledWith(false);
 
+		await act(async () => command?.("app.new-project"));
+		expect(host.querySelector("dialog h2")?.textContent).toBe("New project");
+		expect(document.activeElement?.getAttribute("placeholder")).toBe("Untitled");
 		await act(async () => command?.("app.open-project"));
-		expect(host.querySelector('dialog[aria-label="Open a folder"]')).not.toBeNull();
+		expect(host.querySelector('dialog[aria-label="Open a project or folder"]')).not.toBeNull();
 		await act(async () => command?.("app.settings"));
-		expect(host.querySelector('dialog[aria-label="Open a folder"]')).toBeNull();
+		expect(host.querySelector('dialog[aria-label="Open a project or folder"]')).toBeNull();
 		expect(host.querySelector('[role="dialog"][aria-label="Settings"]')).not.toBeNull();
 		await act(async () => command?.("app.help"));
 		expect(host.querySelector('[role="dialog"][aria-label="Settings"]')).toBeNull();

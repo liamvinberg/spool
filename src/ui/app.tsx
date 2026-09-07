@@ -10,7 +10,6 @@ import {
 	putSessionOrder,
 	reloadForNewBundle,
 	renameProject,
-	startProject,
 	subscribeSse,
 	trashProject,
 } from "./api";
@@ -22,9 +21,10 @@ import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-d
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, HomeIcon } from "./icons";
-import { FolderPicker, type ProjectPickerMode } from "./picker";
+import { NewProjectDialog } from "./new-project-dialog";
+import { FolderPicker } from "./picker";
 import { RenameProjectDialog } from "./rename-project-dialog";
-import { settingsMoved, useSetting, useSettings, useWriteSetting } from "./settings";
+import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
 import { TrashProjectDialog } from "./trash-project-dialog";
@@ -58,12 +58,8 @@ export function App() {
 	openRef.current = open;
 	const [focused, setFocused] = useState<string | null>(null);
 	const [booted, setBooted] = useState(false);
-	const [picking, setPicking] = useState<ProjectPickerMode | false>(false);
-	const location = useSetting("projects.location") ?? "~/spool";
-	const writeSetting = useWriteSetting();
-	const [starting, setStarting] = useState(false);
-	const startingRef = useRef(false);
-	const [namingRoot, setNamingRoot] = useState<string | null>(null);
+	const [picking, setPicking] = useState<"new" | "folder" | false>(false);
+	const location = useSetting("projects.location");
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
 	const [renameRequest, setRenameRequest] = useState<{
 		project: TabProject;
@@ -72,7 +68,6 @@ export function App() {
 	} | null>(null);
 	const requestRename = (project: TabProject, initialName = project.name) =>
 		new Promise<string | null>((resolve) => setRenameRequest({ project, initialName, resolve }));
-	const [startNotice, setStartNotice] = useState<string | null>(null);
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
 	const [forgetting, setForgetting] = useState<ReadonlySet<string>>(new Set());
 	const [keysOpen, setKeysOpen] = useState(false);
@@ -371,6 +366,14 @@ export function App() {
 		return attachHotkeyLayer({
 			scope: "app",
 			handlers: {
+				"app.new-project": (event) => {
+					event?.preventDefault();
+					setPicking("new");
+				},
+				"app.open-project": (event) => {
+					event?.preventDefault();
+					setPicking("folder");
+				},
 				"app.help": () => {
 					setSettingsOpen(false);
 					setKeysOpen(true);
@@ -386,6 +389,11 @@ export function App() {
 	useEffect(() => {
 		return appWindow?.onCommand((command) => {
 			switch (command) {
+				case "app.new-project":
+					setSettingsOpen(false);
+					setKeysOpen(false);
+					setPicking("new");
+					break;
 				case "app.open-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
@@ -405,24 +413,6 @@ export function App() {
 			}
 		});
 	}, [appWindow, openSettings]);
-
-	const startDesigning = async () => {
-		if (startingRef.current) return;
-		startingRef.current = true;
-		setStarting(true);
-		setStartNotice(null);
-		try {
-			const outcome = await startProject();
-			if (outcome.kind === "opened") {
-				setPicking(false);
-				setNamingRoot(outcome.root);
-				openTab(outcome);
-			} else if (outcome.kind === "error") setStartNotice(outcome.message);
-		} finally {
-			startingRef.current = false;
-			setStarting(false);
-		}
-	};
 
 	const canvasActive =
 		focusedTab !== undefined &&
@@ -460,7 +450,7 @@ export function App() {
 						onFocus={focusProject}
 						onClose={closeTab}
 						onReorder={reorderTabs}
-						onPick={() => setPicking("start")}
+						onPick={() => setPicking("new")}
 					/>
 				</div>
 
@@ -499,12 +489,8 @@ export function App() {
 					<Home
 						projects={projects.filter((project) => !forgetting.has(project.root))}
 						loading={!projectsLoaded}
-						location={location}
-						starting={starting}
-						notice={startNotice}
-						onStart={() => void startDesigning()}
+						onStart={() => setPicking("new")}
 						onFolder={() => setPicking("folder")}
-						onChangeLocation={() => setPicking("location")}
 						onSettings={openSettings}
 						onOpenProject={(project) => openTab(project)}
 						onForgetProject={(project) => void forgetProject(project)}
@@ -519,8 +505,6 @@ export function App() {
 						onChrome={setChrome}
 						onSettings={openSettings}
 						onFolder={() => setPicking("folder")}
-						focusName={namingRoot === focusedTab.root}
-						onNameFocused={() => setNamingRoot(null)}
 						onRename={(name) => requestRename(focusedTab, name)}
 					/>
 				)}
@@ -535,23 +519,24 @@ export function App() {
 				/>
 			)}
 
-			{picking && (
-				<div className="absolute inset-0">
-					<FolderPicker
-						key={picking}
-						initial={picking}
-						location={location}
-						starting={starting}
-						startNotice={startNotice}
-						onStart={() => void startDesigning()}
-						onLocation={(path) => writeSetting("projects.location", path)}
-						onOpened={(project) => {
-							setPicking(false);
-							openTab(project);
-						}}
-						onClose={() => setPicking(false)}
-					/>
-				</div>
+			{picking === "new" && (
+				<NewProjectDialog
+					location={location}
+					onOpened={(project) => {
+						setPicking(false);
+						openTab(project);
+					}}
+					onClose={() => setPicking(false)}
+				/>
+			)}
+			{picking === "folder" && (
+				<FolderPicker
+					onOpened={(project) => {
+						setPicking(false);
+						openTab(project);
+					}}
+					onClose={() => setPicking(false)}
+				/>
 			)}
 
 			{renameRequest !== null && (

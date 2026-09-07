@@ -1,0 +1,31 @@
+.new-project-fields {
+	margin-top: 20px;
+}
+.new-project-fields .pj-project-location {
+	margin-top: 20px;
+	gap: 8px;
+	font: var(--type-control);
+}
+.new-project-fields .pj-location-path {
+	flex: 1;
+}
+.new-project-fields code {
+	display: flex;
+	gap: 4px;
+	margin: 10px 0 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.new-project-parent {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.new-project-name {
+	max-width: 65%;
+	flex-shrink: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

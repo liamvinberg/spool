@@ -1,17 +1,29 @@
-export function ProjectLocation({ path, onChange }: { path: string; onChange: () => void }) {
-	const display = path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+export function ProjectLocation({
+	path,
+	onChange,
+	disabled = false,
+}: {
+	path: string;
+	onChange: () => void;
+	disabled?: boolean;
+}) {
 	return (
 		<div className="pj-project-location">
-			<span>Save projects in</span>
+			<span>Save in</span>
 			<span className="pj-location-path" title={path}>
-				{display
-					.replace(/^~(?=\/|$)/, "Home")
-					.split("/")
-					.join(" / ")}
+				{displayProjectPath(path)}
 			</span>
-			<button type="button" onClick={onChange}>
+			<button type="button" disabled={disabled} onClick={onChange}>
 				Change…
 			</button>
 		</div>
 	);
+}
+
+export function displayProjectPath(path: string): string {
+	return path
+		.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~")
+		.replace(/^~(?=\/|$)/, "Home")
+		.split("/")
+		.join(" / ");
 }

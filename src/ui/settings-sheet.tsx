@@ -201,6 +201,7 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 					{picking && (
 						<FolderPicker
 							initial="location"
+							location={String(entry.value)}
 							onOpened={() => {}}
 							onClose={() => setPicking(false)}
 							onLocation={(path) => write(entry.key, path)}

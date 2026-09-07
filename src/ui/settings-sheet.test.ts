@@ -117,7 +117,7 @@ it("shows only machine settings without a project and keeps Appearance available
 		{ project: undefined },
 	);
 	const text = host.querySelector('[role="dialog"]')?.textContent ?? "";
-	expect(text).toContain("Save projects in");
+	expect(text).toContain("Default project location");
 	expect(text).toContain("Check for updates");
 	expect(text).not.toContain("This project");
 	expect(text).not.toContain("Open a project");

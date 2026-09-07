@@ -1275,6 +1275,29 @@ describe("thumbnails", () => {
 });
 
 describe("start designing", () => {
+	it("creates named or unnamed projects at an explicit location without changing the default", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const parent = join(makeTempDir(), "new-location");
+		const defaultParent = makeTempDir();
+		const store = createSettingsStore(spoolDir);
+		store.write("projects.location", defaultParent);
+		const app = makeApp(spoolDir);
+		const create = (name: string) =>
+			app.request("/api/projects/create", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: parent, name }),
+			});
+		expect(existsSync(parent)).toBe(false);
+		expect(await (await create(" coffee ")).json()).toMatchObject({ name: "coffee" });
+		const anonymous = await Promise.all([create(""), create("   ")]);
+		expect(
+			await Promise.all(anonymous.map(async (response) => ((await response.json()) as { name: string }).name)),
+		).toEqual(["untitled", "untitled-2"]);
+		expect(existsSync(join(parent, "coffee", "design", "canvas.json"))).toBe(true);
+		expect(store.read().entries.find((entry) => entry.key === "projects.location")?.value).toBe(defaultParent);
+	});
+
 	it("creates lazily, preserves existing folders, and allocates distinct projects for simultaneous requests", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const parent = join(makeTempDir(), "projects");

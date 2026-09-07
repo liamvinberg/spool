@@ -14,7 +14,6 @@ import {
 	RibbonMark,
 	SearchIcon,
 } from "./icons";
-import { ProjectLocation } from "./project-location";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
 import "./home.css";
@@ -29,10 +28,6 @@ export function Home({
 	onStart,
 	onFolder,
 	onSettings,
-	onChangeLocation,
-	location,
-	starting = false,
-	notice,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -43,10 +38,6 @@ export function Home({
 	onStart: () => void;
 	onFolder: () => void;
 	onSettings: () => void;
-	onChangeLocation: () => void;
-	location: string;
-	starting?: boolean;
-	notice?: string | null;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
@@ -87,9 +78,6 @@ export function Home({
 					</nav>
 					<div className="pj-navigation-foot">
 						<nav aria-label="Home actions">
-							<NavigationButton icon={<FolderIcon />} onClick={onFolder}>
-								Open a folder
-							</NavigationButton>
 							<NavigationButton
 								icon={<CogIcon />}
 								onClick={onSettings}
@@ -113,10 +101,10 @@ export function Home({
 							description="Your next project can start here, or in a folder you already have."
 							actions={
 								<>
-									<button type="button" onClick={onStart} disabled={starting}>
+									<button type="button" onClick={onStart}>
 										<PlusIcon />
 										<strong>
-											{starting ? "Starting…" : "Start designing"}
+											New project
 											<ArrowRightIcon className="home-arrow" />
 										</strong>
 										<small>
@@ -128,7 +116,7 @@ export function Home({
 									<button type="button" onClick={onFolder}>
 										<FolderIcon />
 										<strong>
-											Open a folder
+											Open…
 											<ArrowRightIcon className="home-arrow" />
 										</strong>
 										<small>
@@ -139,10 +127,7 @@ export function Home({
 									</button>
 								</>
 							}
-						>
-							<ProjectLocation path={location} onChange={onChangeLocation} />
-							{notice && <p role="alert">{notice}</p>}
-						</EmptyState>
+						/>
 					</main>
 				) : (
 					<main className="pj-main">
@@ -166,25 +151,15 @@ export function Home({
 										<kbd>/</kbd>
 									)}
 								</label>
-								<button
-									type="button"
-									className="home-action home-action-primary"
-									disabled={starting}
-									onClick={onStart}
-								>
+								<button type="button" className="home-action" onClick={onFolder}>
+									Open…
+								</button>
+								<button type="button" className="home-action home-action-primary" onClick={onStart}>
 									<PlusIcon />
-									{starting ? "Starting…" : "New project"}
+									New project
 								</button>
 							</div>
 						</header>
-						{notice && (
-							<p role="alert" className="mb-4 text-thread-strong type-label">
-								{notice}{" "}
-								<button type="button" className="underline" onClick={onChangeLocation}>
-									Change save location…
-								</button>
-							</p>
-						)}
 						<div className="pj-toolbar">
 							<span>
 								{visible.length} {visible.length === 1 ? "project" : "projects"}

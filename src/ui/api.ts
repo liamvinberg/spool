@@ -183,17 +183,6 @@ export async function createProjectAt(path: string, name: string): Promise<OpenO
 	return { kind: "error", message: await errorText(res) };
 }
 
-/** Start a real, saved project in the machine's chosen location. */
-export async function startProject(): Promise<OpenOutcome> {
-	try {
-		const res = await client.api.projects.start.$post();
-		if (res.ok) return { kind: "opened", ...((await res.json()) as { root: string; name: string }) };
-		return { kind: "error", message: await errorText(res) };
-	} catch {
-		return { kind: "error", message: "The daemon is unreachable. Reconnect and try again." };
-	}
-}
-
 export async function renameProject(root: string, name: string): Promise<{ root: string; name: string }> {
 	const res = await client.api.projects.rename.$post({ json: { root, name } });
 	if (!res.ok) throw new Error(await errorText(res));

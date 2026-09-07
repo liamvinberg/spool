@@ -14,7 +14,7 @@ export function ConfirmDialog({
 	onClose,
 }: {
 	title: string;
-	description: string;
+	description?: string;
 	confirmLabel: string;
 	danger?: boolean;
 	disabled?: boolean;
@@ -51,7 +51,7 @@ export function ConfirmDialog({
 			className="confirm-dialog"
 			tabIndex={-1}
 			aria-labelledby={`${id}-title`}
-			aria-describedby={`${id}-description`}
+			aria-describedby={description === undefined ? undefined : `${id}-description`}
 			onCancel={(event) => {
 				event.preventDefault();
 				if (!submitting.current) onClose();
@@ -84,7 +84,7 @@ export function ConfirmDialog({
 				}}
 			>
 				<h2 id={`${id}-title`}>{title}</h2>
-				<p id={`${id}-description`}>{description}</p>
+				{description !== undefined && <p id={`${id}-description`}>{description}</p>}
 				<fieldset disabled={busy} onChange={() => setNotice(null)}>
 					{children}
 					{notice && <p role="alert">{notice}</p>}

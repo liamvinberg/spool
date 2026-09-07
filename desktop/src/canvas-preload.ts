@@ -53,4 +53,6 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 		return () => ipcRenderer.removeListener("spool:canvas-command", handler);
 	},
 	setCanvasActive: (active: boolean) => ipcRenderer.send("spool:canvas-active", active),
+	chooseDirectory: (options: { path: string; title: string; buttonLabel: string }) =>
+		ipcRenderer.invoke("spool:choose-directory", options),
 });

@@ -1,10 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { registerAndOpenProject } from "./daemon/session";
 import { SpoolError } from "./errors";
 import { isSafeName } from "./page-path";
-import { realDir } from "./paths";
+import { expandHome, realDir } from "./paths";
 import { readRegistry } from "./registry";
 import { scaffoldDirs, scaffoldFiles } from "./templates";
 
@@ -51,21 +50,27 @@ export function initProject(targetDir: string, spoolDir: string, options: InitOp
  * segment, never a path — the picker is where you choose where.
  */
 export function createProject(parentDir: string, name: string, spoolDir: string): { root: string } {
-	if (!isSafeName(name) || name === "." || name === "..") {
-		throw new SpoolError(`not a folder name: ${JSON.stringify(name)}`);
+	const trimmed = name.trim();
+	if (trimmed === "") return startProject(parentDir, spoolDir);
+	if (!isSafeName(trimmed)) throw new SpoolError(`Not a folder name: ${JSON.stringify(trimmed)}`);
+	const parent = expandHome(parentDir);
+	try {
+		mkdirSync(parent, { recursive: true });
+		const target = join(realDir(parent), trimmed);
+		if (existsSync(target)) throw new SpoolError(`${trimmed} already exists here. Choose another name.`);
+		mkdirSync(target);
+		return initProject(target, spoolDir);
+	} catch (error) {
+		if (error instanceof SpoolError) throw error;
+		throw new SpoolError(
+			`Could not create a project in ${parent}. Choose another folder or check that it is writable.`,
+		);
 	}
-	const target = join(realDir(parentDir), name);
-	if (existsSync(target)) {
-		throw new SpoolError(`${name} already exists here`);
-	}
-	mkdirSync(target);
-	return initProject(target, spoolDir);
 }
 
 /** Allocate with mkdir itself: another request or process may take any name before us. */
 export function startProject(location: string, spoolDir: string): { root: string } {
-	const parent =
-		location === "~" ? homedir() : location.startsWith("~/") ? join(homedir(), location.slice(2)) : location;
+	const parent = expandHome(location);
 	try {
 		mkdirSync(parent, { recursive: true });
 		const directory = realDir(parent);

@@ -437,6 +437,15 @@ export const HOTKEYS = [
 	{ id: "canvas.redo", scope: "canvas", group: "Undo", label: "Redo", keys: ["accel+shift+z"] },
 
 	// --- Home -------------------------------------------------------------------
+	{ id: "app.new-project", scope: "app", group: "Home", label: "New project", keys: ["accel+n"], repeats: false },
+	{
+		id: "app.open-project",
+		scope: "app",
+		group: "Home",
+		label: "Open a project or folder",
+		keys: ["accel+o"],
+		repeats: false,
+	},
 	{ id: "home.search", scope: "home", group: "Home", label: "Search your projects", keys: ["slash"] },
 	{ id: "home.close-menu", scope: "home", group: "Home", label: "", keys: ["escape"], listed: false },
 
