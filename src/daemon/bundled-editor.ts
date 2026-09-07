@@ -1,9 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { createEditToolDefinition } from "@earendil-works/pi-coding-agent";
 import { build } from "esbuild";
@@ -42,6 +41,24 @@ export async function buildBundledEditor(outfile: string, absoluteExternals = fa
 	for (const [file, hash] of expected)
 		if (createHash("sha256").update(readFileSync(file)).digest("hex") !== hash)
 			throw new Error("Bundled SDK editor changed; its source observation must be reviewed");
+	const entry = import.meta.resolve("@earendil-works/pi-coding-agent");
+	// Keep the SDK's actual queue, wrappers and renderers. Only the two pinned
+	// matcher modules are bundled; their imports resolve from the installed SDK,
+	// including transitive dependencies absent from Spool's own package exports.
+	const anchor = absoluteExternals ? JSON.stringify(entry) : 'import.meta.resolve("@earendil-works/pi-coding-agent")';
+	function externalImports(source: string, file: string): string {
+		return source.replace(
+			/^import (.+) from "([^"]+)";$/gm,
+			(declaration: string, bindings: string, specifier: string) => {
+				if (specifier === "./edit-diff.js") return declaration;
+				const address = specifier.startsWith(".")
+					? `new URL(${JSON.stringify(relative(dirname(fileURLToPath(entry)), resolve(dirname(file), specifier)))}, sdkEntry).href`
+					: `sdkRequire.resolve(${JSON.stringify(specifier)})`;
+				const pattern = bindings.startsWith("* as ") ? bindings.slice(5) : bindings.replaceAll(/\bas\b/g, ":");
+				return `const ${pattern} = await import(${address});`;
+			},
+		);
+	}
 	await build({
 		entryPoints: [editSource],
 		outfile,
@@ -49,16 +66,16 @@ export async function buildBundledEditor(outfile: string, absoluteExternals = fa
 		packages: "external",
 		platform: "node",
 		format: "esm",
+		banner: {
+			js: `import { createRequire as sdkCreateRequire } from "node:module"; const sdkEntry = ${anchor}; const sdkRequire = sdkCreateRequire(sdkEntry);`,
+		},
 		plugins: [
 			{
 				name: "observe-actual-matches",
 				setup(b) {
-					if (absoluteExternals)
-						b.onResolve({ filter: /^[^./]/ }, (args) => ({
-							path: createRequire(editSource).resolve(args.path),
-							external: true,
-						}));
-					b.onLoad({ filter: /\/edit-diff\.js$/ }, async (args) => {
+					b.onLoad({ filter: /\/edit(?:-diff)?\.js$/ }, async (args) => {
+						if (args.path === editSource)
+							return { contents: externalImports(readFileSync(args.path, "utf8"), args.path), loader: "js" };
 						let source = readFileSync(args.path, "utf8");
 						const markers = [
 							"return { baseContent, newContent };",
@@ -75,7 +92,7 @@ export async function buildBundledEditor(outfile: string, absoluteExternals = fa
 							`const replacedGroup = applyReplacements(baseContent.slice(groupStartOffset, groupEndOffset), group.replacements, groupStartOffset);
 				globalThis[Symbol.for('${traceKey}')]?.getStore()?.({kind:'line',start:originalLines.slice(0,group.startLine).join('').length,end:originalLines.slice(0,group.endLine).join('').length,text:replacedGroup}); result += replacedGroup;`,
 						);
-						return { contents: source, loader: "js" };
+						return { contents: externalImports(source, args.path), loader: "js" };
 					});
 				},
 			},
