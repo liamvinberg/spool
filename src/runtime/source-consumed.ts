@@ -18,7 +18,20 @@ export function installConsumed() {
 	let initialization = 0;
 	const attempts = new WeakMap<object, { initialization: number; attempt: number }>();
 	let last: Receipt | undefined;
+	const builtinGet = Reflect.get;
 	const api = {
+		reflect(receiver: { get: (...args: unknown[]) => unknown }) {
+			const get = receiver.get;
+			return (...args: unknown[]): Member => {
+				if (get === builtinGet && (args.length === 2 || args.length === 3))
+					return api.member(
+						args[0] as Record<PropertyKey, unknown>,
+						args[1] as PropertyKey,
+						args.length === 3 ? args[2] : args[0],
+					);
+				return { value: Reflect.apply(get, receiver, args), origin: undefined };
+			};
+		},
 		member(object: Record<PropertyKey, unknown>, key: PropertyKey, receiver: unknown = object): Member {
 			const parent = active;
 			const scope: { returned?: Member } = {};

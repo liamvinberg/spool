@@ -1,5 +1,6 @@
 import { ASSET_MEDIA_TYPES } from "../../daemon/assets";
 import { WALK_TARGET } from "../../daemon/hand-write";
+import { LITERAL_ATTRIBUTES_BY_TAG as BY_TAG, LITERAL_ATTRIBUTES_EVERY as EVERY } from "../../literal-attributes";
 import type { AttributeRead, PatchRefusal } from "../api";
 
 /**
@@ -20,35 +21,6 @@ import type { AttributeRead, PatchRefusal } from "../api";
  */
 
 /** What a hand writes on any element, because HTML defines them on any element. */
-const EVERY: readonly string[] = ["title", "aria-label"];
-
-/**
- * What each element is for, in the order the rail draws it.
- *
- * Only intrinsic tags: a component's props are the owner chain's question and
- * a component instance leaves no stamp of its own, so `<CartRow>` gets the
- * attributes it is actually written with and no map of its own.
- */
-const BY_TAG: Readonly<Record<string, readonly string[]>> = {
-	a: ["href", "target", "rel"],
-	area: ["href", "alt"],
-	audio: ["src"],
-	button: ["type", "name", "value"],
-	form: ["action", "method"],
-	iframe: ["src"],
-	img: ["src", "alt"],
-	input: ["type", "placeholder", "name", "value"],
-	label: ["htmlFor"],
-	option: ["value"],
-	select: ["name"],
-	source: ["src", "srcSet"],
-	td: ["colSpan", "rowSpan"],
-	textarea: ["placeholder", "name"],
-	th: ["scope", "colSpan", "rowSpan"],
-	time: ["dateTime"],
-	track: ["src", "label"],
-	video: ["src", "poster"],
-};
 
 /**
  * The elements a picture can be swapped on, which is `<img>` and nothing else.

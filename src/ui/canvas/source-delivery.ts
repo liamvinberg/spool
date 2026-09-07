@@ -6,9 +6,11 @@ import {
 	type SourceOccurrence,
 	type SourcePublication,
 	type SourceRead,
+	type SourceUse,
 	type UseOutcome,
 } from "../../source-edit";
-import { respondSourceObservation, sourceReach, subscribeSse } from "../api";
+import { describeSource, respondSourceObservation, sourceReach, subscribeSse } from "../api";
+import type { PickedHit } from "./protocol";
 
 /** Calls belong to the original iframe WindowProxy, never just a frame name. */
 export function useSourceDelivery(project: string, iframes: RefObject<Map<string, HTMLIFrameElement>>) {
@@ -37,18 +39,16 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				if (held?.initiator !== data.frame || event.source !== iframes.current.get(data.frame)?.contentWindow)
 					return;
 				for (const frame of held.frames)
-					iframes.current
-						.get(frame)
-						?.contentWindow?.postMessage(
-							{
-								spool: "source-request",
-								id: crypto.randomUUID(),
-								action: "preview",
-								generation: data.generation,
-								text: data.text,
-							},
-							"*",
-						);
+					iframes.current.get(frame)?.contentWindow?.postMessage(
+						{
+							spool: "source-request",
+							id: crypto.randomUUID(),
+							action: "preview",
+							generation: data.generation,
+							text: data.text,
+						},
+						"*",
+					);
 				return;
 			}
 			if (
@@ -105,23 +105,56 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			}),
 		[project, request],
 	);
+	const inventory = useCallback(
+		async (field?: string): Promise<SourceInventory[]> => {
+			return await Promise.all(
+				[...iframes.current].map(async ([name, iframe]): Promise<SourceInventory> => {
+					const inventory = await request<Omit<SourceInventory, "frame">>(name, {
+						action: "inventory",
+						field: field,
+					});
+					const rect = iframe.getBoundingClientRect();
+					const visible = rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
+					return inventory
+						? {
+								...inventory,
+								frame: name,
+								uses: inventory.uses.map((use) => ({ ...use, visible: use.visible && visible })),
+							}
+						: { frame: name, publication: "", uses: [], unknown: 1 };
+				}),
+			);
+		},
+		[iframes, request],
+	);
+	const describe = useCallback(
+		async (frame: string, selector: string) => {
+			const original = await request<SourceOccurrence>(frame, { action: "inspect", selector });
+			return original ? describeSource(project, frame, original, await inventory(original.field)) : undefined;
+		},
+		[project, request, inventory],
+	);
+
 	return {
+		highlight: useCallback(
+			(uses: SourceUse[]) => {
+				for (const frame of iframes.current.keys())
+					void request(frame, {
+						action: "highlight",
+						uses: uses.filter((use) => use.frame === frame).map((use) => use.original),
+					});
+			},
+			[iframes, request],
+		),
+		reveal: useCallback(
+			(frame: string, original: SourceOccurrence) => request<PickedHit[]>(frame, { action: "reveal", original }),
+			[request],
+		),
+		describe,
+		inventory,
 		prepare: useCallback(
 			async (frame: string, read: SourceRead): Promise<SourceRead> => {
-				const inventories = await Promise.all(
-					[...iframes.current].map(async ([name, iframe]): Promise<SourceInventory> => {
-						const inventory = await request<Omit<SourceInventory, "frame">>(name, { action: "inventory" });
-						const rect = iframe.getBoundingClientRect();
-						const visible = rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
-						return inventory
-							? {
-									...inventory,
-									frame: name,
-									uses: inventory.uses.map((use) => ({ ...use, visible: use.visible && visible })),
-								}
-							: { frame: name, publication: "", uses: [], unknown: 1 };
-					}),
-				);
+				const inventories = await inventory(read.original.field);
 				const result = await sourceReach(project, read.handle, inventories);
 				if (!result?.ok) return read;
 				const amended = result.read;
@@ -138,7 +171,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				);
 				return amended;
 			},
-			[iframes, project, request],
+			[inventory, project, request],
 		),
 		holds: useCallback(
 			(frame: string) => [...prepared.current.values()].some((value) => value.frames.includes(frame)),
@@ -158,8 +191,8 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[request],
 		),
 		read: useCallback(
-			(frame: string, selector: string, generation: number) =>
-				request<SourceOccurrence>(frame, { action: "read", selector, generation }),
+			(frame: string, selector: string, generation: number, field?: string) =>
+				request<SourceOccurrence>(frame, { action: "read", selector, generation, field }),
 			[request],
 		),
 		install: useCallback(

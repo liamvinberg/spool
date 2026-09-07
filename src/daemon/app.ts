@@ -2246,12 +2246,30 @@ export function createDaemonApp({
 						occurrence: z.string(),
 						invocation: z.string(),
 						provenance: z.string().optional(),
+						field: z.string().optional(),
+						absent: z.boolean().optional(),
 						value: z.string().max(100_000),
 						context: z.string().max(100_000),
 					})
 					.strict();
+				const inventory = z
+					.object({
+						frame: z.string(),
+						publication: z.string(),
+						unknown: z.number().int().nonnegative(),
+						uses: z.array(z.object({ original: occurrence, visible: z.boolean() }).strict()),
+					})
+					.strict();
 				const parsed = z
 					.discriminatedUnion("action", [
+						z
+							.object({
+								action: z.literal("describe"),
+								frame: z.string(),
+								original: occurrence,
+								inventories: z.array(inventory),
+							})
+							.strict(),
 						z
 							.object({
 								action: z.literal("read"),
@@ -2322,6 +2340,8 @@ export function createDaemonApp({
 					case "observed":
 						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
 						return c.json({ ok: true });
+					case "describe":
+						return c.json(await sourceOwner.describe(project.root, body.frame, body.original, body.inventories));
 					case "commit":
 						return c.json(
 							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, [

@@ -104,8 +104,8 @@ it("preserves executable shape across empty and escaped literal writes and leave
 	const second = lowerLiterals("frame.tsx", SOURCE.replace('{"Hello"}', '{""}'));
 	expect(first.shape).toBe(second.shape);
 	const adjacent = lowerLiterals("frame.tsx", 'export default function Frame(){return <p>{"one"}{"two"}</p>}');
-	expect(adjacent.cells).toEqual({});
-	expect(adjacent.code).toBe('export default function Frame(){return <p>{"one"}{"two"}</p>}');
+	expect(Object.values(adjacent.cells).filter((cell) => !cell.field)).toEqual([]);
+	expect(adjacent.code).toContain('<p>{"one"}{"two"}</p>');
 });
 
 it("keeps two coordinated source edits reversible through two undos and two redos", async () => {
@@ -293,3 +293,43 @@ it.each(["tsconfig.json", "base.json", "frames/home/package.json"])(
 		expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
 	},
 );
+
+it("secondary-only dependency changes revoke secondary publication admission", async () => {
+	const f = await fixture((root) => {
+		writeDesignFile(root, "shared/label.tsx", 'export function Label(){return <h1>{"Hello"}</h1>}');
+		writeFrame(root, "home", 'import {Label} from "shared/label"; export default function Frame(){return <Label/>}');
+		writeFrame(
+			root,
+			"second",
+			'import {Label} from "shared/label"; import "./only.css"; export default function Frame(){return <Label/>}',
+		);
+		writeDesignFile(root, "frames/second/only.css", "body{color:red}");
+	});
+	const document = await f.compiler.getDocument(f.root, "second", {
+		projectCapability: "test",
+		controlOrigin: "http://localhost",
+	});
+	if (document.kind !== "ok") throw new Error(document.message);
+	const id = /configureSource\(\{"id":"([^"]+)"/.exec(document.document)?.[1];
+	if (!id) throw new Error("no second publication");
+	const second = { ...f.read.original, publication: id, occurrence: "second-node" };
+	const reached = await f.owner.reach(f.root, f.read.handle, [
+		{
+			frame: "home",
+			publication: f.read.original.publication,
+			unknown: 0,
+			uses: [{ original: f.read.original, visible: true }],
+		},
+		{ frame: "second", publication: id, unknown: 0, uses: [{ original: second, visible: true }] },
+	]);
+	if (!reached.ok) throw new Error(reached.reason);
+	const saved = await f.commit(f.read, "After");
+	if (!saved.ok || !saved.publication) throw new Error("no saved publication");
+	const related = saved.publication.related?.[0];
+	if (!related) throw new Error("no secondary publication");
+	expect(f.owner.admit(related.admission.token)).toBe(true);
+	writeDesignFile(f.root, "frames/second/only.css", "body{color:blue}");
+	expect(f.owner.current(f.root, related.packet.id)).toBe(false);
+	expect(f.owner.admit(related.admission.token)).toBe(false);
+	f.owner.delivered(saved.publication.packet.id);
+});

@@ -3,9 +3,10 @@ import { getBindingIdentifiers, type Node } from "@babel/types";
 import { walkNodes } from "./jsx-walk";
 export function rewriteConsumed(code: string): string {
 	const ast = parse(code, { sourceType: "module", plugins: ["jsx", "typescript", "decorators-legacy"] });
-	const helper = "globalThis.__SPOOL_CONSUMED__";
+	let helper = "__spoolConsumed";
+	while (code.includes(helper)) helper += "_";
 	const imports = new Map<string, { namespace: string; key: string }>();
-	const prefixes: string[] = [];
+	const prefixes: string[] = [`import {sourceConsumed as ${helper}} from "spool/jsx-dev-runtime";`];
 	// A file-wide refusal is deliberate: spelling is not lexical binding identity.
 	// Keep execution intact and leave origin unknown when any local binds an import's name.
 	const localBindings = new Set<string>();
@@ -76,7 +77,7 @@ export function rewriteConsumed(code: string): string {
 			n.callee.property.name === "get" &&
 			(n.arguments.length === 2 || n.arguments.length === 3)
 		)
-			return `${helper}.member(${slice(n.arguments[0]!)},${slice(n.arguments[1]!)}${n.arguments[2] ? `,${slice(n.arguments[2])}` : ""})`;
+			return `${helper}.reflect(${slice(n.callee.object)})(${n.arguments.map(slice).join(",")})`;
 		return undefined;
 	};
 	const edits: { start: number; end: number; text: string }[] = [];

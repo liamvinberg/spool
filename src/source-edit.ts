@@ -1,5 +1,7 @@
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
+	absent?: boolean | undefined;
+	field?: string | undefined;
 	publication: string;
 	cell: string;
 	occurrence: string;
@@ -17,7 +19,9 @@ export function sameSourceOccurrence(a: SourceOccurrence, b: SourceOccurrence): 
 		a.invocation === b.invocation &&
 		a.value === b.value &&
 		a.context === b.context &&
-		a.provenance === b.provenance
+		a.provenance === b.provenance &&
+		a.field === b.field &&
+		a.absent === b.absent
 	);
 }
 
@@ -53,12 +57,15 @@ export interface SourceRead {
 	value: string;
 }
 
+export type SourceDescription = Omit<SourceRead, "handle" | "owner" | "generation">;
+
 export interface SourceReceipt {
 	handle: string;
 	owner: string;
 }
 
 export interface RetainedValues {
+	attributes?: Record<string, Record<string, { cell: string; absent: boolean }>>;
 	stamps?: Record<string, string>;
 	locations?: Record<string, string>;
 	id: string;

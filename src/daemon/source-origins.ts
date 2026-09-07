@@ -68,7 +68,7 @@ export interface Selection {
 }
 export type Operation =
 	| { kind: "text" | "delete" | "reorder" | "asset" }
-	| { kind: "attribute"; attribute: "alt" | "title" | "href" | "style" }
+	| { kind: "attribute"; attribute: string }
 	| { kind: "property"; property: string; scope: string };
 export interface Target {
 	address: Address;
@@ -169,7 +169,7 @@ function immutableFlow(fn: Component, local: string, unit: Unit, element: boolea
 				name === "Error" &&
 				ancestors.at(-1)?.type === "ThrowStatement" &&
 				node.arguments.every((a) => a.type === "StringLiteral") &&
-				!getBindingIdentifiers(fn)["Error"];
+				!getBindingIdentifiers(fn).Error;
 			if (!imports.has(name) && !setters.has(name) && !error) safe = false;
 			// Hook bindings must be the actual React import, never reassigned anywhere in this unit.
 			walkNodes(unit.ast, [], (part) => {
@@ -298,12 +298,49 @@ function sameFlowElement(call: Call, slot: string, selection: Selection): boolea
 	);
 }
 
-function owner(site: Pick<Site, "ancestors">): Component {
+function memoCallback(site: Pick<Site, "ancestors" | "unit">, node: Node, parent: Node | undefined): boolean {
+	if (
+		parent?.type !== "CallExpression" ||
+		parent.arguments[0] !== node ||
+		parent.arguments.length !== 2 ||
+		parent.arguments[1]?.type !== "ArrayExpression" ||
+		parent.arguments[1].elements.length !== 0 ||
+		parent.callee.type !== "Identifier"
+	)
+		return false;
+	const name = parent.callee.name;
+	const imported = site.unit.ast.program.body.some(
+		(statement) =>
+			statement.type === "ImportDeclaration" &&
+			statement.source.value === "react" &&
+			statement.importKind !== "type" &&
+			statement.specifiers.some(
+				(spec) =>
+					spec.type === "ImportSpecifier" &&
+					spec.importKind !== "type" &&
+					spec.local.name === name &&
+					spec.imported.type === "Identifier" &&
+					spec.imported.name === "useMemo",
+			),
+	);
+	if (!imported) return false;
+	let shadowed = false;
+	walkNodes(site.unit.ast, [], (part) => {
+		if (
+			(part.type === "VariableDeclarator" || /Function|Method/.test(part.type) || part.type === "CatchClause") &&
+			getBindingIdentifiers(part)[name]
+		)
+			shadowed = true;
+	});
+	return !shadowed;
+}
+function owner(site: Pick<Site, "ancestors" | "unit">): Component {
 	for (let i = site.ancestors.length - 1; i >= 0; i--) {
 		const node = site.ancestors[i]!;
 		if (node.type === "FunctionDeclaration") return node;
 		if (!/Function|Method/.test(node.type)) continue;
 		const parent = site.ancestors[i - 1];
+		if (memoCallback(site, node, parent)) continue;
 		if (
 			node.type === "ArrowFunctionExpression" &&
 			parent?.type === "CallExpression" &&

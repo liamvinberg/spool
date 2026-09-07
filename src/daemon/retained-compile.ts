@@ -5,6 +5,7 @@ import { dirname, extname, relative, resolve, sep } from "node:path";
 import { parse, parseExpression } from "@babel/parser";
 import { getBindingIdentifiers, type Node } from "@babel/types";
 import { type OnResolveResult, type Plugin, transformSync } from "esbuild";
+import { LITERAL_ATTRIBUTES_BY_TAG, LITERAL_ATTRIBUTES_EVERY } from "../literal-attributes";
 import type { RetainedValues } from "../source-edit";
 import { TEXT_LOADERS } from "./assets";
 import { assertDesignFile } from "./design-path";
@@ -15,6 +16,7 @@ export interface SourceInput {
 	identity: string;
 }
 export interface LiteralCell {
+	absent?: true;
 	source: string;
 	file: string;
 	value: string;
@@ -178,6 +180,8 @@ export function lowerLiterals(
 	const cells: Record<string, LiteralCell> = {};
 	const eligible = new Set<Node>();
 	const attributes = new Set<Node>();
+	const retainedAttributes = new Set<Node>();
+	const absentCells: Record<string, LiteralCell> = {};
 	const sites: { node: Extract<Node, { type: "JSXElement" | "CallExpression" }>; id: string }[] = [];
 	const functions = new Map<Node, string>();
 	const patches: Patch[] = [];
@@ -224,7 +228,7 @@ export function lowerLiterals(
 			for (const attribute of open.attributes) {
 				if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") continue;
 				const field = attribute.name.name;
-				if (["key", "ref", "type", "data-go", "src", "className", "style"].includes(field)) continue;
+				if (["key", "ref", "data-go", "src", "className", "style"].includes(field)) continue;
 				if (
 					open.attributes.filter(
 						(other) =>
@@ -251,10 +255,39 @@ export function lowerLiterals(
 				};
 				retainOwner();
 				attributes.add(value);
+				retainedAttributes.add(attribute);
 				patches.push({
 					...position(value),
 					text: `${attribute.value === value ? "{" : ""}${prefix}Value(${JSON.stringify(key)},${JSON.stringify(value.value)})${attribute.value === value ? "}" : ""}`,
 				});
+			}
+		}
+		if (
+			open.name.type === "JSXIdentifier" &&
+			/^[a-z]/.test(open.name.name) &&
+			!open.attributes.some((attr) => attr.type === "JSXSpreadAttribute")
+		) {
+			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[open.name.name] ?? []), ...LITERAL_ATTRIBUTES_EVERY].filter(
+				(name) => name !== "src",
+			);
+			for (const field of names) {
+				if (
+					open.attributes.some(
+						(attr) =>
+							attr.type === "JSXAttribute" && attr.name.type === "JSXIdentifier" && attr.name.name === field,
+					)
+				)
+					continue;
+				absentCells[`${id}@${field}`] = {
+					file,
+					source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`,
+					value: "",
+					owner,
+					field,
+					syntax: "jsx",
+					absent: true,
+				};
+				retainOwner();
 			}
 		}
 		if (
@@ -368,7 +401,7 @@ export function lowerLiterals(
 			type.property.type === "Identifier" &&
 			type.property.name === "type"
 		)
-			patches.push({ ...position(type), text: `globalThis.__SPOOL_VALUES__.typeFrom(${type.object.name})` });
+			patches.push({ ...position(type), text: `${prefix}TypeFrom(${type.object.name})` });
 		const fn = ancestors.find((part) =>
 			["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "ClassMethod"].includes(part.type),
 		);
@@ -392,10 +425,7 @@ export function lowerLiterals(
 			return;
 		const owner = functions.get(fn) ?? `${file}#component:${functions.size}`;
 		const retain = (literal: Node, field: string) => {
-			if (
-				literal.type !== "StringLiteral" ||
-				["key", "ref", "type", "data-go", "src", "className", "style"].includes(field)
-			)
+			if (literal.type !== "StringLiteral" || ["key", "ref", "data-go", "src", "className", "style"].includes(field))
 				return;
 			const key = `${id}@${field}`;
 			cells[key] = {
@@ -504,6 +534,7 @@ export function lowerLiterals(
 		stamps[`${file}:${before.length}:${(before.at(-1)?.length ?? 0) + 1}`] = id;
 		locations[id] = `${file}:${node.loc!.start.line}:${node.loc!.start.column + 1}`;
 	}
+	Object.assign(cells, absentCells);
 	const shape = digest(
 		JSON.stringify(ast, (key, value: unknown) => {
 			if (
@@ -519,6 +550,8 @@ export function lowerLiterals(
 				].includes(key)
 			)
 				return undefined;
+			if (key === "attributes" && Array.isArray(value))
+				return value.filter((attribute) => !retainedAttributes.has(attribute));
 			if (typeof value === "object" && value !== null && attributes.has(value as Node))
 				return { type: "RetainedAttribute" };
 			if (typeof value === "object" && value !== null && eligible.has(value as Node))
@@ -528,7 +561,7 @@ export function lowerLiterals(
 	);
 	const imports =
 		functions.size || factory > 0
-			? `\nimport {sourceValue as ${prefix}Value,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,observeFactory as ${prefix}Factory} from "spool/jsx-dev-runtime";`
+			? `\nimport {sourceValue as ${prefix}Value,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom} from "spool/jsx-dev-runtime";`
 			: "";
 	return { code: transformed + imports, cells, shape, stamps, locations };
 }

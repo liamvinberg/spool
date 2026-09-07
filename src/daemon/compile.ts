@@ -620,8 +620,17 @@ function finishCompilation(compilation: RetainedCompilation, sequence: number): 
 	compilation.packet.owners = Object.fromEntries(
 		Object.entries(compilation.cells).map(([id, cell]) => [id, cell.owner]),
 	);
+	compilation.packet.attributes = {};
+	for (const [cell, definition] of Object.entries(compilation.cells))
+		if (definition.field && definition.syntax === "jsx") {
+			const site = cell.slice(0, cell.lastIndexOf("@"));
+			compilation.packet.attributes[site] ??= {};
+			compilation.packet.attributes[site][definition.field] = { cell, absent: definition.absent === true };
+		}
 	compilation.packet.values = Object.fromEntries(
-		Object.entries(compilation.cells).map(([id, cell]) => [id, cell.value]),
+		Object.entries(compilation.cells)
+			.filter(([, cell]) => !cell.absent)
+			.map(([id, cell]) => [id, cell.value]),
 	);
 	compilation.packet.shape = digest(JSON.stringify(Object.entries(compilation.shapes).sort()));
 }

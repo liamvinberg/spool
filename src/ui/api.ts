@@ -23,7 +23,14 @@ import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "..
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
-import type { SourceInventory, SourceOccurrence, SourceRead, SourceReceipt, SourceResult } from "../source-edit";
+import type {
+	SourceDescription,
+	SourceInventory,
+	SourceOccurrence,
+	SourceRead,
+	SourceReceipt,
+	SourceResult,
+} from "../source-edit";
 
 declare global {
 	interface Window {
@@ -1636,5 +1643,23 @@ export async function respondSourceObservation(
 		});
 	} catch {
 		/* no observation cannot authorize source */
+	}
+}
+
+export async function describeSource(
+	project: string,
+	frame: string,
+	original: SourceOccurrence,
+	inventories: SourceInventory[],
+): Promise<SourceDescription | undefined> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: { action: "describe", frame, original, inventories },
+		});
+		const result = (await res.json()) as { ok: boolean; description?: SourceDescription };
+		return res.ok && result.ok ? result.description : undefined;
+	} catch {
+		return undefined;
 	}
 }

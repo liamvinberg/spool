@@ -8,6 +8,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
+import type { SourceUse } from "../../source-edit";
 import { type SourceRead, type SourceResult, sameSourceOccurrence } from "../../source-edit";
 import type {
 	Camera,
@@ -2660,10 +2661,10 @@ export function ProjectCanvas({
 	);
 
 	const beginRailText = useCallback(
-		async (frame: string, selector: string): Promise<SourceRead | undefined> => {
+		async (frame: string, selector: string, field?: string): Promise<SourceRead | undefined> => {
 			if (pendingSource.current.size > 0) return;
 			const generation = ++pickSeq.current;
-			const original = await sourceDelivery.read(frame, selector, generation);
+			const original = await sourceDelivery.read(frame, selector, generation, field);
 			if (!original) {
 				showRefusal(frame, selector, { code: "source", says: "these words have no editable local literal source" });
 				return;
@@ -2721,7 +2722,8 @@ export function ProjectCanvas({
 	// biome-ignore lint/correctness/useExhaustiveDependencies(pickedKeys): the selection moving is the whole trigger
 	useEffect(() => {
 		setRefused(null);
-	}, [pickedKeys]);
+		sourceDelivery.clearFeedback();
+	}, [pickedKeys, sourceDelivery.clearFeedback]);
 
 	// nothing holds a document, or an edit, past the window it was drawn in
 	useEffect(() => {
@@ -2849,6 +2851,31 @@ export function ProjectCanvas({
 		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation],
 	);
 	leavePage.current = switchToPage;
+	const revealSourceUse = useCallback(
+		async (frame: string, use?: SourceUse) => {
+			const target = allFramesRef.current.find((candidate) => candidate.name === frame);
+			if (!target) return;
+			recordDeparture();
+			if (pageOf(target) !== activePageRef.current) switchToPage(pageOf(target), arrivalAt(target));
+			else {
+				const arrival = arrivalAt(target);
+				if (arrival) animateCamera(arrival);
+			}
+			setTool("select");
+			setPicked([]);
+			holdChain(null);
+			setSelected([frame]);
+			if (!use) return;
+			const chain = await sourceDelivery.reveal(frame, use.original);
+			const hit = chain?.at(-1);
+			if (hit && chain && pageOf(target) === activePageRef.current) {
+				holdChain({ frame, chain });
+				setSelected([]);
+				setPicked([{ frame, ...hit }]);
+			}
+		},
+		[recordDeparture, switchToPage, arrivalAt, animateCamera, holdChain, sourceDelivery.reveal],
+	);
 
 	/** Page-folder clicks return selection to the page, even when it is already active. */
 	const activatePageFromTree = useCallback(
@@ -5142,6 +5169,11 @@ export function ProjectCanvas({
 						onCollapse={shut}
 						preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
 						acts={{
+							ownership: {
+								describe: sourceDelivery.describe,
+								highlight: sourceDelivery.highlight,
+								reveal: revealSourceUse,
+							},
 							onRung: takeRung,
 							onGeometry: setFrameGeometry,
 							onGeometryPreview: previewFrameGeometry,

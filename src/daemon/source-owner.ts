@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { writeAtomic } from "../atomic-write";
 import {
+	type SourceDescription,
 	type SourceInventory,
 	type SourceOccurrence,
 	type SourcePublication,
@@ -76,7 +77,11 @@ export function createSourceOwner(
 			timer: ReturnType<typeof setTimeout>;
 		}
 	>();
+	const deliveryGroups = new Map<string, string[]>();
 	function delivered(publication: string): void {
+		const children = deliveryGroups.get(publication);
+		deliveryGroups.delete(publication);
+		for (const child of children ?? []) delivered(child);
 		const held = deliveries.get(publication);
 		if (!held) return;
 		deliveries.delete(publication);
@@ -181,14 +186,63 @@ export function createSourceOwner(
 			return { ok: false, reason: reason(error) };
 		}
 	}
-	async function reach(
+	async function reach(root: string, handle: string, inventories: SourceInventory[]) {
+		const held = reads.get(handle);
+		if (!held || held.root !== root)
+			return { ok: false as const, reason: "the original source read is no longer available" };
+		return discover(root, held, inventories);
+	}
+	async function describe(
 		root: string,
-		handle: string,
+		frame: string,
+		original: SourceOccurrence,
+		inventories: SourceInventory[],
+	): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
+		try {
+			const publication = compiler.publication(original.publication);
+			if (!publication || publication.root !== root || publication.frame !== frame)
+				throw new Error("the source owner is no longer available");
+			valid(root, publication.compilation);
+			const { cellKey, cell, target } = resolveTextSource(root, publication.compilation, original, 0);
+			const read: SourceRead = {
+				handle: "",
+				owner,
+				generation: 0,
+				original,
+				source: cell.source,
+				cell: cellKey,
+				value: cell.value,
+				role:
+					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
+				scope: target?.role ?? "definition",
+				repeated: target?.repeated ?? false,
+				...(cell.field ? { field: cell.field } : {}),
+			};
+			const found = await discover(
+				root,
+				{
+					root,
+					frame,
+					read,
+					compilation: publication.compilation,
+					file: sourceTarget(root, cell.file, publication.compilation.inputs).file,
+					observer: "",
+				},
+				inventories,
+			);
+			if (!found.ok) return found;
+			const { handle: _handle, owner: _owner, generation: _generation, ...description } = found.read;
+			return { ok: true, description };
+		} catch (error) {
+			return { ok: false, reason: reason(error) };
+		}
+	}
+	async function discover(
+		root: string,
+		held: OriginalRead,
 		inventories: SourceInventory[],
 	): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string }> {
 		try {
-			const held = reads.get(handle);
-			if (!held || held.root !== root) throw new Error("the original source read is no longer available");
 			valid(root, held.compilation);
 			const uses: SourceUse[] = [];
 			const unknown = new Set<string>();
@@ -350,8 +404,26 @@ export function createSourceOwner(
 					);
 					if (next.packet.shape !== prior.compilation.packet.shape)
 						throw new Error("the affected frame changed executable shape");
+					const secondaryAdmission = { token: randomUUID(), expires: admission.expires };
+					const secondaryTimer = setTimeout(
+						() => delivered(next.packet.id),
+						Math.max(0, admission.expires - Date.now()),
+					);
+					secondaryTimer.unref();
+					deliveries.set(next.packet.id, {
+						...secondaryAdmission,
+						root: held.root,
+						compilation: next,
+						release: () => {},
+						done: Promise.resolve(),
+						timer: secondaryTimer,
+					});
+					deliveryGroups.set(retained.packet.id, [
+						...(deliveryGroups.get(retained.packet.id) ?? []),
+						next.packet.id,
+					]);
 					related.push({
-						admission,
+						admission: secondaryAdmission,
 						owner,
 						frame,
 						cell: held.read.cell ?? held.read.original.cell,
@@ -436,7 +508,7 @@ export function createSourceOwner(
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
 				const op = ops[0];
-				if (!op || op.kind !== "set-text") throw new Error("this read only authorizes text");
+				if (op?.kind !== "set-text") throw new Error("this read only authorizes text");
 				if (held.target?.syntax === "react-call")
 					return await publish(
 						held,
@@ -547,6 +619,7 @@ export function createSourceOwner(
 		admit,
 		read,
 		reach,
+		describe,
 		commit,
 		inverse,
 		current,

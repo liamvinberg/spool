@@ -11,14 +11,25 @@ export function resolveTextSource(
 	original: SourceOccurrence,
 	generation: number,
 ) {
+	if (
+		original.field &&
+		(!/^[A-Za-z][A-Za-z0-9:-]*$/.test(original.field) ||
+			/^(?:on[A-Z]|data-spool-)/.test(original.field) ||
+			["key", "ref", "children", "className", "style", "src", "data-go"].includes(original.field))
+	)
+		throw new Error("this field requires its dedicated source operation");
 	let cellKey = original.cell;
 	let target: ReturnType<typeof sourceRead> | undefined;
-	if (original.provenance && !compilation.cells[original.cell]) {
+	if (original.provenance) {
 		const sources = new Sources(root, compilation);
 		for (const input of compilation.inputs.keys())
 			if (/\.[cm]?[jt]sx?$/.test(input)) sources.read(relative(realDesignDir(root), input));
 		const selection = JSON.parse(original.provenance) as Selection;
-		target = sourceRead(sources, { ...selection, generation: String(generation) }, { kind: "text" });
+		target = sourceRead(
+			sources,
+			{ ...selection, generation: String(generation) },
+			original.field ? { kind: "attribute", attribute: original.field } : { kind: "text" },
+		);
 		for (const unit of sources.revisions.values())
 			if (!compilation.inputs.has(unit.file))
 				throw new Error("the committed origin is outside captured compiler inputs");

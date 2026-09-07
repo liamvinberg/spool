@@ -14,7 +14,7 @@ export default function Frame(){
  return <main style={{padding:40}}>{label}<button id="count" onClick={()=>setCount(n=>n+1)}>{count}</button><input id="draft" defaultValue="initial"/><div id="scroll" style={{height:100,overflow:"auto"}}><div style={{height:500}}>scroll content</div></div></main>
 }`;
 
-async function served(source = APP, configure?: (root: string) => void) {
+async function served(source = APP, configure?: (root: string) => void, devtools = false) {
 	const uiDir = join(makeTempDir(), "ui");
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "home", source);
@@ -29,6 +29,15 @@ async function served(source = APP, configure?: (root: string) => void) {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	if (devtools)
+		await page.addInitScript(() => {
+			Reflect.set(globalThis, "__REACT_DEVTOOLS_GLOBAL_HOOK__", {
+				supportsFiber: true,
+				inject: () => 1,
+				onCommitFiberRoot: () => {},
+				onCommitFiberUnmount: () => {},
+			});
+		});
 	await page.goto(`${project.url}/p/${project.name}`);
 	const frame = page.frameLocator('iframe[title="home"]');
 	await expect.poll(() => frame.locator("#label").count(), { timeout: 30_000 }).toBe(1);
@@ -123,6 +132,7 @@ it("saves native and Properties text without resetting source-unrelated state, a
 	await f.page.keyboard.press("ControlOrMeta+z");
 	await expect.poll(() => label.textContent()).toBe("Hello world");
 	expect(readFileSync(f.file, "utf8")).toBe(APP);
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	await f.page.keyboard.press("ControlOrMeta+Shift+z");
 	await expect.poll(() => label.textContent()).toBe("Saved & {literal}");
 	await f.edit();
@@ -360,6 +370,7 @@ it("writes one supplied literal label without aliasing an equal call and keeps i
 	await f.page.keyboard.press("ControlOrMeta+z");
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
 	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Before");
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	await f.page.keyboard.press("ControlOrMeta+Shift+z");
 	await expect.poll(() => f.frame.locator("#label").textContent()).toBe('Changed "label"');
 });
@@ -423,6 +434,18 @@ export default function Frame(){useEffect(()=>{window.mounts=(window.mounts||0)+
 	await expect.poll(() => second.locator("#second-label").count()).toBe(1);
 	await f.frame.locator("#draft").fill("unsaved first");
 	await second.locator("#draft").fill("unsaved second");
+	await f.select();
+	const disclosure = f.page.getByRole("button", { name: "Show affected uses", exact: true });
+	await expect.poll(() => disclosure.textContent()).toBe("3");
+	await disclosure.click();
+	const uses = f.page.locator("[data-source-uses]");
+	await expect.poll(() => uses.textContent()).toContain("2 visible · 1 off-screen");
+	expect(await uses.textContent()).toContain("1 unmounted source-dependent frame");
+	expect(await uses.textContent()).toContain("cold");
+	await disclosure.hover();
+	await expect.poll(() => second.locator("#second-label").getAttribute("data-spool-shared-use")).toBe("");
+	expect(await f.frame.locator("#unrelated").getAttribute("data-spool-shared-use")).toBe(null);
+	await f.page.mouse.move(5, 5);
 	await f.edit();
 	await replace(f.page, "Shared draft");
 	await expect.poll(() => second.locator("#second-label").textContent()).toBe("Shared draft");
@@ -442,4 +465,73 @@ export default function Frame(){useEffect(()=>{window.mounts=(window.mounts||0)+
 	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
 	await expect.poll(() => second.locator("#second-label").textContent()).toBe("Before");
 	expect(await f.frame.locator("#unrelated").textContent()).toBe("Before");
+});
+
+it("retains a literal attribute through the actual Properties field, preview, save and inverse", {
+	timeout: 120_000,
+}, async () => {
+	const source =
+		'export default function Frame(){return <main style={{padding:40}}><h1 id="label" title="Old title">Before</h1><input id="draft" defaultValue="keep"/></main>}';
+	const f = await served(source);
+	await f.frame.locator("#draft").fill("unsaved input");
+	await f.select();
+	const field = f.page.getByRole("textbox", { name: "title", exact: true });
+	await field.fill('A "quoted" & <literal>');
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe('A "quoted" & <literal>');
+	expect(await f.frame.locator("#label").textContent()).toBe("Before");
+	expect(readFileSync(f.file, "utf8")).toBe(source);
+	await field.press("Enter");
+	await expect.poll(() => readFileSync(f.file, "utf8")).not.toBe(source);
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	expect(await f.frame.locator("#draft").inputValue()).toBe("unsaved input");
+	expect(await f.frame.locator("#label").getAttribute("title")).toBe('A "quoted" & <literal>');
+	await f.page.keyboard.press("ControlOrMeta+z");
+	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe("Old title");
+});
+
+it("existing DevTools observer failure refuses a direct literal read", { timeout: 120000 }, async () => {
+	const f = await served(APP, undefined, true);
+	const read = await f.frame.locator("#label").evaluate((el) => ({
+		failure: globalThis.__SPOOL_OBSERVER__.failure,
+		read: window.__SPOOL_SOURCE__?.read(el as HTMLElement, 9999),
+	}));
+	expect(read.failure).toContain("DevTools");
+	expect(read.read).toBeUndefined();
+});
+it("external cached JSX refuses actual canvas source writes", { timeout: 120000 }, async () => {
+	const source = `function Cache({children}){globalThis.cached ??= children;return globalThis.cached;}
+ export default function Frame(){const label=<h1 id="label" style={{margin:0,fontSize:30}}>Before</h1>;return <main style={{padding:40}}><Cache>{label}</Cache></main>}`;
+	const f = await served(source);
+	const box = await f.select();
+	await f.page.mouse.click(box.x + 40, box.y + box.height / 2);
+	await expect
+		.poll(() => f.page.getByText("cache return has no committed invocation read witness", { exact: true }).count())
+		.toBe(1);
+	expect(await f.frame.locator("#label").getAttribute("contenteditable")).toBe(null);
+	expect(readFileSync(f.file, "utf8")).toBe(source);
+});
+
+it("adds a missing supported attribute with no initial prop change and removes it on source undo", {
+	timeout: 120_000,
+}, async () => {
+	const source =
+		'export default function Frame(){return <main style={{padding:40}}><h1 id="label">Before</h1><input id="draft" defaultValue="keep"/></main>}';
+	const f = await served(source);
+	await f.select();
+	const field = f.page.getByRole("textbox", { name: "title", exact: true });
+	expect(await f.frame.locator("#label").getAttribute("title")).toBe(null);
+	await field.fill("Canceled title");
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe("Canceled title");
+	await field.press("Escape");
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe(null);
+	expect(readFileSync(f.file, "utf8")).toBe(source);
+	await field.fill("New title");
+	await field.press("Enter");
+	await expect.poll(() => readFileSync(f.file, "utf8")).toContain('title="New title"');
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	expect(await f.frame.locator("#label").getAttribute("title")).toBe("New title");
+	await f.page.keyboard.press("ControlOrMeta+z");
+	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe(null);
 });

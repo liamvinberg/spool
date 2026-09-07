@@ -3,7 +3,7 @@ import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
-import { ContentText, type TextActions } from "./content-text";
+import { ContentText, LiteralField, type TextActions } from "./content-text";
 import { MenuItem } from "./context-menu";
 import { type AttributeField, fieldsFor, IMAGE_ACCEPT, swappable } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
@@ -39,6 +39,7 @@ import {
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
 import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
+import { type OwnershipActions, SourceOwnership } from "./source-ownership";
 
 /**
  * The properties rail (#256): the right column, back, and holding one thing.
@@ -99,6 +100,7 @@ export interface RailPreview {
 }
 
 export interface PropertiesActs {
+	ownership?: OwnershipActions;
 	text?: TextActions;
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
@@ -368,6 +370,16 @@ function Body({
 	return (
 		<>
 			<Head held={held} rungs={rungs} acts={acts} onCollapse={onCollapse} />
+			{element && acts.ownership ? (
+				<SourceOwnership
+					key={identity}
+					frame={element.frame}
+					selector={element.selector}
+					name={read?.name ?? rowElement.tag}
+					revision={revision}
+					actions={acts.ownership}
+				/>
+			) : null}
 			{element === null ? null : (
 				<ScopeBar
 					scopes={scopes}
@@ -420,7 +432,9 @@ function Body({
 						read={read}
 						tag={rowElement.tag}
 						assets={assets}
-						onWrite={(name, value) => write([{ kind: "set-attribute", source: read.source, name, value }])}
+						frame={element.frame}
+						selector={element.selector}
+						actions={acts.text}
 						onSwap={(put) => {
 							if (read.fingerprint === undefined) return;
 							acts.onSwap(
@@ -1010,16 +1024,24 @@ function Attributes({
 	read,
 	tag,
 	assets,
-	onWrite,
+	frame,
+	selector,
+	actions,
 	onSwap,
 }: {
 	read: RungRead;
 	tag: string;
 	assets: readonly ProjectAsset[];
-	onWrite: (name: string, value: string) => void;
+	frame: string;
+	selector: string;
+	actions: TextActions | undefined;
 	onSwap: (put: { file: File } | { asset: string }) => void;
 }) {
-	const fields = fieldsFor(tag, read.attributes ?? [], read.refusal);
+	const fields = fieldsFor(
+		tag,
+		read.attributes ?? [],
+		actions && read.refusal?.code === "shared-definition" ? undefined : read.refusal,
+	);
 	if (fields.length === 0) return null;
 	return (
 		<Section name="attributes" {...(read.mapped === true ? { reason: "all rows" } : {})}>
@@ -1027,12 +1049,20 @@ function Attributes({
 				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
 					{field.asset === true ? (
 						<AssetField field={field} assets={assets} onSwap={onSwap} />
+					) : field.reason === undefined && actions ? (
+						<LiteralField
+							frame={frame}
+							selector={selector}
+							field={field.name}
+							initial={field.value}
+							actions={actions}
+						/>
 					) : (
 						<TextField
 							value={field.expression ?? field.value}
 							ok={field.reason === undefined}
 							placeholder="none"
-							onCommit={(typed) => onWrite(field.name, typed)}
+							onCommit={() => {}}
 						/>
 					)}
 					{field.reason === undefined ? null : (
