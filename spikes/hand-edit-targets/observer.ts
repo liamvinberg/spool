@@ -1,4 +1,5 @@
 import { installLazyWitness, type LazyChoice } from "./lazy-witness";
+import type { ValueSnapshot } from "./value-flow";
 
 // Disposable adapter for the pinned React 19.2.7 renderer. This uses private
 // Fiber fields behind the DevTools hook; it is evidence, not a stable React API.
@@ -26,6 +27,7 @@ export interface Observation {
 	occurrence: string;
 	source: string;
 	element?: number;
+	values?: ValueSnapshot | undefined;
 	chain: {
 		source: string;
 		occurrence: string;
@@ -35,6 +37,9 @@ export interface Observation {
 		element?: number;
 		retainedProps?: boolean;
 		renderedSource?: string;
+		values?: ValueSnapshot | undefined;
+		renderedValues?: ValueSnapshot | undefined;
+		transportedFields?: string[];
 	}[];
 	refusal?: string;
 }
@@ -148,6 +153,7 @@ export function installObserver(reconciled = false, lazyChoices = false): void {
 		try {
 			result.source = at(fiber).source;
 			if (reconciled) result.element = at(fiber).id;
+			if (globalThis.__handValues) result.values = globalThis.__handValues.snapshot(at(fiber).element);
 			let child = at(fiber);
 			const chain: Observation["chain"] = [];
 			let foundEntry = false;
@@ -185,6 +191,17 @@ export function installObserver(reconciled = false, lazyChoices = false): void {
 					...(reconciled
 						? {
 								element: value.id,
+								...(globalThis.__handValues
+									? {
+											values: globalThis.__handValues.snapshot(value.element),
+											transportedFields: globalThis.__handValues.transports(value.element, child.element),
+											renderedValues: globalThis.__handValues.snapshot(
+												globalThis.__handValues.fromProps(
+													parent.tag === 14 ? parent.child?.memoizedProps : parent.memoizedProps,
+												),
+											),
+										}
+									: {}),
 								retainedProps:
 									[14, 15].includes(parent.tag) &&
 									(parent.tag === 14 ? parent.child?.memoizedProps : parent.memoizedProps) !==

@@ -11,7 +11,11 @@ export function jsxDEV(
 	source?: { fileName: string; lineNumber: number; columnNumber: number },
 ) {
 	const element = (isStaticChildren ? jsxs : jsx)(type, props, key);
-	if (source && globalThis.__handObserver)
-		globalThis.__handObserver.register(element, `${source.fileName}:${source.lineNumber}:${source.columnNumber}`);
+	if (source && globalThis.__handObserver) {
+		const original = `${source.fileName}:${source.lineNumber}:${source.columnNumber}`;
+		const stamp = globalThis.__handValues?.remap(original) ?? original;
+		globalThis.__handValues?.jsx(element, stamp);
+		globalThis.__handObserver.register(element, stamp);
+	}
 	return element;
 }

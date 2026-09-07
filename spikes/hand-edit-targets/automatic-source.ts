@@ -3,6 +3,7 @@ import { dirname, extname, join, relative } from "node:path";
 import { parse } from "@babel/parser";
 import {
 	type ArrowFunctionExpression,
+	type CallExpression,
 	type ClassMethod,
 	type File,
 	type FunctionDeclaration,
@@ -17,6 +18,7 @@ import { walkNodes } from "../../src/daemon/jsx-walk";
 import type { LazyChoice } from "./lazy-witness";
 import { type Binding, ModuleBindings } from "./module-bindings";
 import { elementAt, sourceTarget } from "./targets";
+import type { ValueSnapshot } from "./value-flow";
 
 export interface Revision {
 	path: string;
@@ -38,6 +40,9 @@ export interface Site {
 	ancestors: Node[];
 	source: string;
 }
+export interface Creation extends Omit<Site, "node"> {
+	node: JSXElement | CallExpression;
+}
 export interface Call {
 	source: string;
 	occurrence: string;
@@ -45,6 +50,9 @@ export interface Call {
 	element?: number;
 	retainedProps?: boolean;
 	renderedSource?: string;
+	values?: ValueSnapshot | undefined;
+	renderedValues?: ValueSnapshot | undefined;
+	transportedFields?: string[];
 	lazyResolved?: boolean;
 	lazyChoice?: LazyChoice;
 }
@@ -53,6 +61,7 @@ export interface Selection {
 	occurrence: string;
 	source: string;
 	element?: number;
+	values?: ValueSnapshot | undefined;
 	chain: Call[];
 	refusal?: string;
 }
@@ -69,6 +78,7 @@ export interface Target {
 	expected: string | null;
 	scope: string;
 	repeated: boolean;
+	syntax?: "react-call";
 	asset?: Revision & { identifier: string; specifier: string };
 }
 
@@ -77,7 +87,7 @@ export function address(site: Site): Address {
 }
 type Component = FunctionDeclaration | FunctionExpression | ArrowFunctionExpression | ClassMethod;
 type Definition = { unit: Unit; fn: Component; lazy?: boolean };
-function owner(site: Site): Component {
+function owner(site: Pick<Site, "ancestors">): Component {
 	for (let i = site.ancestors.length - 1; i >= 0; i--) {
 		const node = site.ancestors[i]!;
 		if (node.type === "FunctionDeclaration") return node;
@@ -211,6 +221,46 @@ export class Sources {
 			throw new Error("source stamp is outside the compiled module evidence");
 		const unit = this.read(path);
 		return { unit, ...elementAt(unit.text, source), source };
+	}
+	creation(source: string): Creation {
+		const path = source.replace(/:\d+:\d+$/, "");
+		if (!this.units.has(sourceTarget(this.root, path).file))
+			throw new Error("creation is outside compiled source evidence");
+		const unit = this.read(path);
+		let found: Creation | undefined;
+		walkNodes(unit.ast, [], (node, ancestors) => {
+			if (
+				(node.type === "JSXElement" || node.type === "CallExpression") &&
+				`${path}:${node.loc!.start.line}:${node.loc!.start.column + 1}` === source
+			)
+				found = { unit, node, ancestors: [...ancestors], source };
+		});
+		if (!found) throw new Error("authored creation site was not found");
+		return found;
+	}
+	valueCallee(source: string): Definition {
+		const site = this.creation(source);
+		if (site.node.type === "JSXElement") return this.callee({ ...site, node: site.node });
+		verifyFactory(site, "create");
+		const type = site.node.arguments[0];
+		if (type?.type !== "Identifier")
+			throw new Error("createElement type needs a verified authored component binding");
+		let shadowed = false;
+		walkNodes(site.unit.ast, [], (node, ancestors) => {
+			if (
+				ancestors.some((n) => /Function|Method/.test(n.type)) &&
+				(node.type === "VariableDeclarator" || /Function|Method/.test(node.type) || node.type === "CatchClause") &&
+				getBindingIdentifiers(node)[type.name]
+			)
+				shadowed = true;
+		});
+		if (shadowed) throw new Error("created component binding may be shadowed");
+		return this.component(site.unit, type, new Set());
+	}
+	assertEntry(site: Creation): void {
+		const entry = this.exported(site.unit, "default");
+		if (entry.unit.file !== site.unit.file || entry.fn.start !== owner(site).start)
+			throw new Error("factory ancestry does not reach the authored entry");
 	}
 	private component(unit: Unit, node: Node, seen: Set<string>, choice?: LazyChoice): Definition {
 		if (
@@ -427,14 +477,19 @@ export class Sources {
 			if (actual.unit.file !== current.unit.file || actual.fn.start !== owner(current).start) {
 				// Transport is separate from authorship. Prove both the exact
 				// incoming element identity and the bounded source forwarding form.
-				if (
-					!call.passedChild ||
-					site.unit.file !== transported.unit.file ||
-					!site.node.children.some(
+				const direct =
+					call.passedChild &&
+					site.node.children.some(
 						(child) => child.start === transported.node.start && child.end === transported.node.end,
-					) ||
-					!passesChildren(actual.fn)
-				)
+					) &&
+					passesChildren(actual.fn);
+				const slot = call.transportedFields?.length === 1 ? call.transportedFields[0] : undefined;
+				const indirect =
+					slot !== undefined &&
+					!call.retainedProps &&
+					passesSlot(actual.fn, slot) &&
+					containsSlot(site, transported, slot);
+				if (site.unit.file !== transported.unit.file || (!direct && !indirect))
 					throw new Error("mounted call relationship is not a verified children passthrough");
 				transported = site;
 				continue;
@@ -469,12 +524,15 @@ export class Sources {
 // wrappers. Calls, callbacks, aliases, cached elements and named slots need a
 // separate value-flow proof. A matching lexical owner alone is insufficient.
 function passesChildren(fn: Component): boolean {
+	return passesSlot(fn, "children", false);
+}
+function passesSlot(fn: Component, slot: string, conditional = true): boolean {
 	if (fn.type === "ClassMethod" || fn.params.length !== 1) return false;
 	const param = fn.params[0];
 	let local: string | undefined;
 	if (param?.type === "ObjectPattern") {
 		const child = param.properties.find(
-			(p) => p.type === "ObjectProperty" && !p.computed && p.key.type === "Identifier" && p.key.name === "children",
+			(p) => p.type === "ObjectProperty" && !p.computed && p.key.type === "Identifier" && p.key.name === slot,
 		);
 		if (child?.type === "ObjectProperty" && child.value.type === "Identifier") local = child.value.name;
 	}
@@ -494,10 +552,42 @@ function passesChildren(fn: Component): boolean {
 				node.object.type === "Identifier" &&
 				node.object.name === param.name &&
 				node.property.type === "Identifier" &&
-				node.property.name === "children")
+				node.property.name === slot)
 		) {
 			count++;
 			return true;
+		}
+		if (conditional && node.type === "ConditionalExpression") {
+			// Only inspect the branches for slot transport. Conditions may read a
+			// parameter, but cannot call code or mutate the transported inputs.
+			const parameterField = (part: Node): boolean =>
+				param?.type === "ObjectPattern"
+					? part.type === "Identifier" &&
+						param.properties.some(
+							(p) =>
+								p.type === "ObjectProperty" &&
+								!p.computed &&
+								p.value.type === "Identifier" &&
+								p.value.name === part.name,
+						)
+					: param?.type === "Identifier" &&
+						part.type === "MemberExpression" &&
+						!part.computed &&
+						part.object.type === "Identifier" &&
+						part.object.name === param.name &&
+						part.property.type === "Identifier";
+			const safe = parameterField(node.test) && parameterField(node.consequent) && parameterField(node.alternate);
+			const before = count;
+			const matches = visit(node.consequent);
+			const firstCount = count;
+			count = before;
+			const other = visit(node.alternate);
+			count = Math.max(firstCount, count);
+			return (
+				safe &&
+				(matches || other) &&
+				[node.consequent, node.alternate].every((n) => n.type === "Identifier" || n.type === "MemberExpression")
+			);
 		}
 		if (node.type === "JSXText") return node.value.trim() === "";
 		if (node.type === "JSXExpressionContainer") return visit(node.expression);
@@ -517,6 +607,36 @@ function passesChildren(fn: Component): boolean {
 		return node.children.every(visit);
 	};
 	return !!body && visit(body) && count === 1;
+}
+
+function containsSlot(call: Site, transported: Site, slot: string): boolean {
+	const matches = (node: Node): boolean => {
+		if (node.start === transported.node.start && node.end === transported.node.end) return true;
+		if (node.type === "JSXExpressionContainer") return matches(node.expression);
+		if (node.type === "ConditionalExpression") return matches(node.consequent) || matches(node.alternate);
+		return false;
+	};
+	if (slot === "children") return call.node.children.some(matches);
+	const attr = attribute(call, slot);
+	return attr?.value?.type === "JSXExpressionContainer" && matches(attr.value.expression);
+}
+
+function retainedLiteral(call: Call | undefined, field: string, site: Site): boolean {
+	if (!call?.retainedProps) return true;
+	const current = call.values?.fields[field];
+	const rendered = call.renderedValues?.fields[field];
+	const text = literal(site, field === "children" ? undefined : field);
+	// Same expression in the same admitted source snapshot, plus exact render
+	// input ancestry. A different equal-valued call never passes this proof.
+	return (
+		text !== undefined &&
+		current?.origin.kind === "jsx" &&
+		rendered?.origin.kind === "jsx" &&
+		current.origin.source === site.source &&
+		rendered.origin.source === site.source &&
+		current.value === text &&
+		rendered.value === text
+	);
 }
 
 function directBinding(site: Site, name?: string): string | undefined {
@@ -576,7 +696,205 @@ function directBinding(site: Site, name?: string): string | undefined {
 	return undefined;
 }
 
+function verifyFactory(site: Creation, kind: "clone" | "create" | "key"): void {
+	if (site.node.type !== "CallExpression") throw new Error("React factory witness does not name a call expression");
+	const callee = site.node.callee;
+	const name =
+		callee.type === "Identifier"
+			? callee.name
+			: callee.type === "MemberExpression" &&
+					!callee.computed &&
+					callee.object.type === "Identifier" &&
+					callee.property.type === "Identifier" &&
+					callee.property.name === "toArray"
+				? callee.object.name
+				: undefined;
+	const expected = kind === "clone" ? "cloneElement" : kind === "create" ? "createElement" : "Children";
+	const imported = site.unit.ast.program.body.some(
+		(n) =>
+			n.type === "ImportDeclaration" &&
+			n.source.value === "react" &&
+			n.specifiers.some(
+				(s) =>
+					s.type === "ImportSpecifier" &&
+					s.local.name === name &&
+					s.imported.type === "Identifier" &&
+					s.imported.name === expected,
+			),
+	);
+	if (!imported) throw new Error("React factory source binding is unproved");
+	let shadowed = false;
+	walkNodes(site.unit.ast, [], (node) => {
+		if (
+			name &&
+			(node.type === "VariableDeclarator" || /Function|Method/.test(node.type) || node.type === "CatchClause") &&
+			getBindingIdentifiers(node)[name]
+		)
+			shadowed = true;
+	});
+	if (shadowed) throw new Error("React factory binding may be shadowed");
+}
+
+function verifyCopiedInput(sources: Sources, value: ValueSnapshot, carrier: Call | undefined): void {
+	if (value.kind !== "clone" && value.kind !== "key") return;
+	const site = sources.creation(value.source);
+	verifyFactory(site, value.kind);
+	if (site.node.type !== "CallExpression") throw new Error("copy is not an authored factory call");
+	const input = site.node.arguments[0];
+	const typeSource = value.type?.origin.source;
+	if (!input || !typeSource) throw new Error("copy has no authored input relationship");
+	const original = sources.creation(typeSource);
+	if (input.type === "JSXElement" && original.node.start === input.start && original.unit.file === site.unit.file)
+		return;
+	const fn = owner(site);
+	const body =
+		fn.body.type === "BlockStatement"
+			? fn.body.body.length === 1 && fn.body.body[0]?.type === "ReturnStatement"
+				? fn.body.body[0].argument
+				: undefined
+			: fn.body;
+	if (body?.type !== "CallExpression" || body.start !== site.node.start || input.type !== "Identifier")
+		throw new Error("copied input needs an immutable direct carrier proof");
+	let effect = false;
+	walkNodes(body, [], (node) => {
+		if (
+			["AssignmentExpression", "UpdateExpression", "NewExpression", "AwaitExpression", "YieldExpression"].includes(
+				node.type,
+			) ||
+			(node.type === "CallExpression" && node.start !== body.start)
+		)
+			effect = true;
+	});
+	if (effect) throw new Error("copy arguments may mutate or replace the incoming field");
+	const param = fn.params[0];
+	if (param?.type !== "ObjectPattern") throw new Error("copied input is not a direct carrier parameter");
+	const binding = param.properties.find(
+		(p) => p.type === "ObjectProperty" && !p.computed && p.value.type === "Identifier" && p.value.name === input.name,
+	);
+	const field = binding?.type === "ObjectProperty" && binding.key.type === "Identifier" ? binding.key.name : undefined;
+	if (!field || !carrier?.transportedFields?.includes(field) || carrier.retainedProps)
+		throw new Error("copy has no committed incoming-slot relationship");
+	const call = sources.creation(carrier.source);
+	if (
+		call.node.type !== "JSXElement" ||
+		original.node.type !== "JSXElement" ||
+		!containsSlot({ ...call, node: call.node }, { ...original, node: original.node }, field) ||
+		call.unit.file !== original.unit.file
+	)
+		throw new Error("copy input author is not the verified authored slot child");
+}
+
+function factoryLiteral(site: Creation, field: string, kind: "clone" | "create"): string | undefined {
+	verifyFactory(site, kind);
+	if (site.node.type !== "CallExpression") return undefined;
+	const args = site.node.arguments;
+	if (args.some((arg) => arg.type === "SpreadElement"))
+		throw new Error("spread factory arguments need evaluated slot evidence");
+	if (field === "children" && args.length > 2)
+		return args.length === 3 && args[2]?.type === "StringLiteral" ? args[2].value : undefined;
+	const config = args[1];
+	if (!config || config.type === "NullLiteral") return undefined;
+	if (config.type !== "ObjectExpression")
+		throw new Error("indirect factory config needs an authored field transport proof");
+	if (config.properties.some((p) => p.type !== "ObjectProperty" || p.computed))
+		throw new Error("factory spread, method or computed property needs an authored field transport proof");
+	const fields = config.properties.filter(
+		(p) =>
+			p.type === "ObjectProperty" &&
+			((p.key.type === "Identifier" && p.key.name === field) ||
+				(p.key.type === "StringLiteral" && p.key.value === field)),
+	);
+	if (fields.length !== 1) throw new Error("factory field is absent or duplicated");
+	const value = fields[0];
+	return value?.type === "ObjectProperty" && value.value.type === "StringLiteral" ? value.value.value : undefined;
+}
+
+function factoryRead(sources: Sources, selection: Selection, operation: Operation): Target {
+	if (selection.refusal) throw new Error(selection.refusal);
+	const leaf = selection.values!;
+	const calls = [...selection.chain].reverse();
+	verifyCopiedInput(sources, leaf, calls[0]);
+	calls.forEach((call, index) => {
+		if (call.values) verifyCopiedInput(sources, call.values, calls[index + 1]);
+	});
+	let current = sources.creation(leaf.source);
+	// Validate the creation's mounted owner separately from each field's author.
+	// cloneElement preserves type; its creation lives in the carrier, while a
+	// preserved field can still live at the original JSX in a different caller.
+	for (const call of calls) {
+		const value = call.values;
+		if (!value) throw new Error("mounted creation has no per-field record");
+		const type = value.type?.origin;
+		if (!type?.source) throw new Error("mounted type has no authored creation relationship");
+		const definition = sources.valueCallee(type.source);
+		if (definition.unit.file !== current.unit.file || definition.fn.start !== owner(current).start)
+			throw new Error("factory output needs a verified slot or cache transport relationship");
+		current = sources.creation(value.source);
+		if (value.kind === "clone" || value.kind === "create" || value.kind === "key") verifyFactory(current, value.kind);
+	}
+	sources.assertEntry(current);
+	if (operation.kind === "delete" || operation.kind === "reorder")
+		throw new Error("factory structure needs an authored removal/reorder proof; removing a clone input can throw");
+	if (operation.kind === "asset") throw new Error("factory assets need an imported-value source proof");
+	let field =
+		operation.kind === "text" ? "children" : operation.kind === "attribute" ? operation.attribute : "className";
+	let cell = leaf.fields[field];
+	let role: Target["role"] = "definition";
+	// A direct immutable component parameter is the sole demonstrated bridge
+	// from a rendered host field to that component's committed render inputs.
+	const leafSite = sources.creation(leaf.source);
+	if (
+		operation.kind === "text" &&
+		leafSite.node.type === "JSXElement" &&
+		literal({ ...leafSite, node: leafSite.node }) === undefined
+	) {
+		const parameter = directBinding({ ...leafSite, node: leafSite.node });
+		if (!parameter) throw new Error("text is not a direct immutable parameter or literal");
+		const call = calls[0];
+		if (!call) throw new Error("text has no committed input call");
+		if (call.retainedProps) throw new Error("retained factory inputs need same-expression per-field admission");
+		field = parameter;
+		cell = call.renderedValues?.fields[field];
+		role = "call-site";
+	}
+	if (!cell?.origin.source || cell.origin.kind === "unknown")
+		throw new Error("selected field has no authored value origin");
+	// Validate every actual replacement along this field's path, even when the
+	// final source is JSX. No equality-based copy inference enters this path.
+	for (const edge of cell.origin.via)
+		if (edge.kind === "clone" || edge.kind === "create" || edge.kind === "key")
+			verifyFactory(sources.creation(edge.source), edge.kind);
+	const origin = sources.creation(cell.origin.source);
+	let expected: string | undefined;
+	if (origin.node.type === "JSXElement")
+		expected = literal({ ...origin, node: origin.node }, field === "children" ? undefined : field);
+	else if (cell.origin.kind === "clone" || cell.origin.kind === "create")
+		expected = factoryLiteral(origin, field, cell.origin.kind);
+	if (expected === undefined)
+		throw new Error("authored field is not a supported literal; expression and inline-style ownership is preserved");
+	if (cell.value !== expected) throw new Error("committed input differs from the authored field literal");
+	// An overriding clone field belongs to the carrier definition; a preserved
+	// JSX prop stays at its own authored call site.
+	if (cell.origin.kind === "clone") role = "definition";
+	return {
+		address: { file: origin.unit.file, start: origin.node.start!, end: origin.node.end! },
+		source: origin.source,
+		role,
+		slot: operation.kind === "property" ? "class" : field === "children" ? "text" : "attribute",
+		...(field === "children" ? {} : { attribute: field }),
+		expected,
+		scope: operation.kind === "property" ? operation.scope : "",
+		repeated: [origin, current, ...calls.map((c) => sources.creation(c.source))].some((s) => mapped(s.ancestors)),
+		...(origin.node.type === "CallExpression" ? { syntax: "react-call" as const } : {}),
+	};
+}
+
 export function sourceRead(sources: Sources, selection: Selection, operation: Operation): Target {
+	if (
+		selection.values &&
+		[selection.values, ...selection.chain.map((call) => call.values)].some((value) => value && value.kind !== "jsx")
+	)
+		return factoryRead(sources, selection, operation);
 	const sites = sources.chain(selection);
 	let site = sites[0]!;
 	let role: Target["role"] = "definition";
@@ -587,10 +905,16 @@ export function sourceRead(sources: Sources, selection: Selection, operation: Op
 	if (operation.kind === "text") {
 		let value = literal(site);
 		for (let i = 1; value === undefined && i < sites.length; i++) {
-			if (selection.chain.some((call) => call.source === sites[i]!.source && call.retainedProps))
-				throw new Error("committed call is known but retained render props need a per-value origin proof");
 			const parameter = directBinding(site, name);
 			if (!parameter) throw new Error("text is not a direct immutable parameter or literal");
+			if (
+				!retainedLiteral(
+					selection.chain.find((call) => call.source === sites[i]!.source),
+					parameter,
+					sites[i]!,
+				)
+			)
+				throw new Error("committed call is known but retained render props need a per-value origin proof");
 			site = sites[i]!;
 			name = parameter === "children" ? undefined : parameter;
 			value = literal(site, name);
@@ -686,9 +1010,9 @@ export function sourceRead(sources: Sources, selection: Selection, operation: Op
 }
 
 export function witnesses(sources: Sources, target: Target) {
-	const site = sources.site(target.source);
+	const site = sources.creation(target.source);
 	const enclosing = owner(site);
-	const opening = site.node.openingElement;
+	const opening = site.node.type === "JSXElement" ? site.node.openingElement : site.node;
 	return {
 		opening: { start: opening.start!, end: opening.end! },
 		enclosing: { start: enclosing.start!, end: enclosing.end! },

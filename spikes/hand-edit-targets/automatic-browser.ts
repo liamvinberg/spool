@@ -6,7 +6,7 @@ import { build } from "esbuild";
 import type { Browser, ElementHandle, Page } from "playwright-core";
 import { __unstable__loadDesignSystem, compile } from "tailwindcss";
 import { anatomyOf, splitClass } from "../../src/daemon/class-write";
-import { buildDesignEntry } from "../../src/daemon/compile";
+import { buildDesignEntry, designBuildOptions, designEntryKey } from "../../src/daemon/compile";
 import { realDesignDir } from "../../src/daemon/design-path";
 import { fingerprintOf } from "../../src/daemon/hand-write";
 import { walkNodes } from "../../src/daemon/jsx-walk";
@@ -16,6 +16,7 @@ import { type Operation, type Revision, type Selection, Sources, sourceRead, wit
 import { buildLazyEntry } from "./lazy-compile";
 import type {} from "./observer";
 import { reconciledRenderer } from "./reconciled-renderer";
+import { valueCalls, valueReact } from "./value-flow-build";
 
 // The lock identifies the installation; compiler/package bytes and bundled
 // CSS defaults also retire a read if replaced without a lockfile update.
@@ -66,12 +67,14 @@ export async function mount(
 	browser: Browser,
 	root: string,
 	frame: string,
-	instrumented: boolean | "observed" | "reconciled" | "lazy-observed" | "lazy-reconciled" = true,
+	instrumented: boolean | "observed" | "reconciled" | "values" | "lazy-observed" | "lazy-reconciled" = true,
 	authority?: ReadAuthority,
 ): Promise<Mounted> {
+	const values = instrumented === "values";
 	const lazyChoices = instrumented === "lazy-observed" || instrumented === "lazy-reconciled";
-	const reconciled = instrumented === "reconciled" || instrumented === "lazy-reconciled";
+	const reconciled = instrumented === "reconciled" || instrumented === "lazy-reconciled" || values;
 	const observed = instrumented === "observed" || reconciled || lazyChoices;
+	const sourceMapping: Record<string, string> = {};
 	const toolchain = compilerRevision();
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
@@ -176,13 +179,28 @@ export async function mount(
 		if (round > 3) throw new Error("module discovery did not stabilize before admitted compilation");
 		const captured = [...sources.revisions.values(), ...sources.assets.values()];
 		lease = await authority?.capture(captured);
-		compiled = await (lazyChoices ? buildLazyEntry : buildDesignEntry)({
+		const entryOptions = {
 			designDir,
 			resolveDir: join(designDir, "frames", frame),
 			sourcefile: "<automatic-read>",
 			label: "automatic target probe",
 			contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => {const entry=createElement(Frame); ${observed ? "globalThis.__handObserver.register(entry, '<entry>', true);" : ""} root.render(entry)}; globalThis.unmount = () => root.unmount(); globalThis.rerender();`,
-		});
+		};
+		if (values) {
+			const options = designBuildOptions(entryOptions);
+			const result = await build({
+				...options,
+				plugins: [...options.plugins!, valueCalls(designDir, sourceMapping)],
+			});
+			const bootJs = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
+			if (!bootJs) throw new Error("value probe compiled to no module");
+			compiled = {
+				bootJs,
+				sourceFiles: Object.keys(result.metafile.inputs)
+					.filter((input) => input !== designEntryKey(entryOptions))
+					.map((input) => resolve(designDir, input)),
+			};
+		} else compiled = await (lazyChoices ? buildLazyEntry : buildDesignEntry)(entryOptions);
 		const discovered = compiled.sourceFiles.filter((file) => /\.[jt]sx?$/.test(file) && !sources.units.has(file));
 		admission.push({
 			round,
@@ -215,7 +233,7 @@ export async function mount(
 		format: "iife",
 		write: false,
 		define: { "process.env.NODE_ENV": '"production"' },
-		plugins: reconciled ? [reconciledRenderer()] : [],
+		plugins: values ? [reconciledRenderer(), valueReact()] : reconciled ? [reconciledRenderer()] : [],
 		alias: {
 			"hand-edit-probe/lazy-witness": resolve("spikes/hand-edit-targets/lazy-runtime.ts"),
 			"spool/jsx-dev-runtime": resolve(
@@ -242,7 +260,7 @@ export async function mount(
 	if (observed) {
 		const hook = await build({
 			stdin: {
-				contents: `import {installObserver} from './spikes/hand-edit-targets/observer'; installObserver(${reconciled}, ${lazyChoices});`,
+				contents: `import {installObserver} from './spikes/hand-edit-targets/observer'; import {installValueFlow} from './spikes/hand-edit-targets/value-flow'; ${values ? `installValueFlow(${JSON.stringify(sourceMapping)});` : ""} installObserver(${reconciled}, ${lazyChoices});`,
 				resolveDir: process.cwd(),
 			},
 			bundle: true,
@@ -310,6 +328,7 @@ export async function stillSelected(mounted: Mounted, selection: Selection): Pro
 					current.occurrence === pick.occurrence &&
 					current.source === pick.source &&
 					current.element === pick.element &&
+					JSON.stringify(current.values) === JSON.stringify(pick.values) &&
 					JSON.stringify(current.chain) === JSON.stringify(pick.chain) &&
 					current.refusal === pick.refusal
 				);
