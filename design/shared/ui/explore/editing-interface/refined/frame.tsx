@@ -15,7 +15,15 @@ import "../reference/frames/everyday/everyday.css";
 import { Choice } from "./choice";
 import "./interface.css";
 import { ChevronIcon, DotsIcon } from "shared/ui/spool/icons";
-import { EditingShell, type AgentRequest } from "./shell";
+import { EditingShell } from "./shell";
+import {
+	type AgentHelp,
+	type AgentRequest,
+	type AgentTarget,
+	agentTarget,
+	elementSelection,
+	prepareHelp,
+} from "./agent-request";
 
 // Integration presentation over a fixed React project. All writes, source
 // identities, scope declarations and save outcomes are explicitly simulated.
@@ -33,9 +41,9 @@ export type Fault =
 type Notice = {
 	title: string;
 	detail: string;
-	attention?: boolean;
 	recovery?: "retry" | "reload" | "render" | "rollback" | "unknown";
-};
+} & ({ attention: true; help: AgentHelp } | { attention?: false; help?: never });
+type EditTransaction = Transaction & { target: AgentTarget; intent?: string };
 const faultNames: Record<Fault, string> = {
 	none: "Normal automatic save",
 	independent: "Agent changes another property",
@@ -82,7 +90,7 @@ export default function EditingInterface({
 }: {
 	initial?: Fault;
 	treatment?: "inline" | "line";
-	state?: "idle" | "uses" | "tokens" | "agent";
+	state?: "idle" | "uses" | "tokens" | "agent" | "blocked" | "prepared";
 }) {
 	const root = useRef<HTMLDivElement>(null);
 	const stage = useRef<HTMLDivElement>(null);
@@ -103,9 +111,9 @@ export default function EditingInterface({
 	const [padding, setPadding] = useState<string | null>(null);
 	const paint = useRef<number | null>(null);
 	const pointer = useRef<{ x: number; y: number } | null>(null);
-	const past = useRef<Transaction[]>([]);
-	const future = useRef<Transaction[]>([]);
-	const pending = useRef<Transaction | null>(null);
+	const past = useRef<EditTransaction[]>([]);
+	const future = useRef<EditTransaction[]>([]);
+	const pending = useRef<EditTransaction | null>(null);
 	const cancelled = useRef(false);
 	const inline = useRef<HTMLElement | null>(null);
 	const active = useRef<HTMLElement | null>(null);
@@ -119,7 +127,9 @@ export default function EditingInterface({
 	const [faultName, setFaultName] = useState<Fault>(initial);
 	const fault = useRef<Fault>(initial);
 	const [request, setRequest] = useState<AgentRequest | null>(null);
-	const retained = useRef<{ transaction: Transaction; after: Snapshot; intent: string } | null>(null);
+	const retained = useRef<{ transaction: EditTransaction; after: Snapshot; intent: string; help: AgentHelp } | null>(
+		null,
+	);
 	const unrendered = useRef<Transaction | null>(null);
 	const saveGeneration = useRef(0);
 	const [frameWidth, setFrameWidth] = useState(480);
@@ -153,8 +163,16 @@ export default function EditingInterface({
 		}
 		return label;
 	};
-	const askAgent = () => {
-		setRequest((previous) => ({ id: (previous?.id ?? 0) + 1, text: retained.current?.intent ?? "" }));
+	const targetOf = (node: HTMLElement | null = active.current) =>
+		agentTarget(node, node ? name(node) : "element", scope);
+	const askAgent = (help?: AgentHelp) => {
+		setRequest((previous) => ({
+			id: (previous?.id ?? 0) + 1,
+			...(help ?? {
+				text: "",
+				selection: elementSelection(active.current, active.current ? name(active.current) : "element"),
+			}),
+		}));
 	};
 
 	const refresh = () => {
@@ -187,7 +205,7 @@ export default function EditingInterface({
 				: ["keyboard move", "image", "alt"].includes(label) || (label === "delete" && owner !== "button-part");
 		setAffected(owner && !local ? owner : null);
 		if (!pending.current && root.current) {
-			pending.current = { before: snapshot(root.current), label };
+			pending.current = { before: snapshot(root.current), label, target: targetOf() };
 			saveGeneration.current++;
 			setNotice({ title: "Editing", detail: "Live preview · Escape cancels this edit." });
 		}
@@ -210,21 +228,30 @@ export default function EditingInterface({
 		feedbackTimer.current = window.setTimeout(() => setAffected(null), 450);
 		transaction.after = after;
 		const intent = intentOf(transaction.before, after, transaction.label);
+		transaction.intent = intent;
 		const outcome = fault.current;
 		fault.current = "none";
 		setFaultName("none");
-		const hold = () => {
-			retained.current = { transaction, after, intent };
+		const editHelp = (reason: string, next: string) =>
+			prepareHelp(transaction.target, `I tried to change ${intent}. ${reason} ${next}`);
+		const hold = (help: AgentHelp) => {
+			retained.current = { transaction, after, intent, help };
+			return help;
 		};
 		if (outcome === "conflict" || outcome === "lost") {
 			move(after, transaction.before, false);
-			hold();
 			if (outcome === "lost") {
 				active.current?.remove();
 				setSelected(null);
 				active.current = null;
 				setNotice({
 					title: "The selected source is gone",
+					help: hold(
+						editHelp(
+							"The selected source disappeared, so the preview was reverted.",
+							"Locate the intended target in current source and confirm it before applying this change.",
+						),
+					),
 					detail: `Your edit is kept: ${intent}. Select a valid target before retrying.`,
 					attention: true,
 					recovery: "retry",
@@ -243,6 +270,12 @@ export default function EditingInterface({
 				}
 				setNotice({
 					title: "Another edit changed this property",
+					help: hold(
+						editHelp(
+							"Another edit changed the same property; Spool is showing that newer value.",
+							"Inspect the current source and reconcile my requested change with it, preserving unrelated edits.",
+						),
+					),
 					detail: `Showing the current value. Your edit is kept: ${intent}.`,
 					attention: true,
 					recovery: "retry",
@@ -262,16 +295,20 @@ export default function EditingInterface({
 				);
 		}
 		if (outcome === "connection") {
-			hold();
 			past.current.pop();
 			setNotice({
 				title: "Save outcome unknown",
+				help: hold(
+					editHelp(
+						"The connection ended before the save was confirmed.",
+						"Check whether the requested change is already in current source before retrying it.",
+					),
+				),
 				detail: `The connection ended before the save was confirmed. Your edit is kept: ${intent}. Check current source before trying again.`,
 				attention: true,
 				recovery: "unknown",
 			});
 		} else if (["mismatch", "loading", "render-failure"].includes(outcome)) {
-			hold();
 			unrendered.current = transaction;
 			// One use stays at the previous output; other uses can succeed.
 			const held = after.filter((entry) => entry.node.closest("[data-frame-shell=confirmation]"));
@@ -284,6 +321,16 @@ export default function EditingInterface({
 					outcome === "loading" ? "Loading…" : "The application could not render.",
 				);
 			setNotice({
+				help: hold(
+					editHelp(
+						outcome === "mismatch"
+							? "The source was saved, but confirmation still shows the previous output."
+							: outcome === "loading"
+								? "The source was saved, but confirmation is still loading."
+								: "The source was saved, but confirmation failed to render.",
+						"Inspect the saved source and the affected frame to diagnose why the result is missing. Ask before a reload that would reset application state.",
+					),
+				),
 				title:
 					outcome === "mismatch"
 						? "Saved, but not visibly applied"
@@ -295,12 +342,17 @@ export default function EditingInterface({
 				recovery: outcome === "loading" ? "render" : "reload",
 			});
 		} else if (outcome === "rollback" || outcome === "rollback-blocked") {
-			hold();
 			if (outcome === "rollback") {
 				move(after, transaction.before);
 				past.current.pop();
 				setNotice({
 					title: "Verification failed · change rolled back",
+					help: hold(
+						editHelp(
+							"The saved output did not match the preview, so Spool rolled this change back.",
+							"Investigate the mismatch before retrying the intended change.",
+						),
+					),
 					detail: `The saved output did not match the preview. The guarded rollback succeeded. Your edit is kept: ${intent}.`,
 					attention: true,
 					recovery: "retry",
@@ -309,6 +361,12 @@ export default function EditingInterface({
 				for (const node of targets()) node.style.setProperty(transaction.label, "40px", "important");
 				setNotice({
 					title: "Saved · rollback blocked",
+					help: hold(
+						editHelp(
+							"Verification failed, and a newer edit to this property prevented rollback.",
+							"Inspect the current source and reconcile the changes. Preserve the newer work and ask me if the intended final value is ambiguous.",
+						),
+					),
 					detail: `Another edit now owns this property. The saved change cannot safely be undone. Your requested input is kept: ${intent}.`,
 					attention: true,
 					recovery: "rollback",
@@ -397,6 +455,10 @@ export default function EditingInterface({
 		if (!move(redo ? item.before : item.after, redo ? item.after : item.before)) {
 			setNotice({
 				title: `${redo ? "Redo" : "Undo"} unavailable`,
+				help: prepareHelp(
+					item.target,
+					`I tried to ${redo ? "redo" : "undo"} this edit: ${item.intent ?? item.label}. A later edit changed the same value, so Spool left the source unchanged. Inspect the competing changes and help me ${redo ? "reapply" : "revert"} this specific edit while preserving the later work.`,
+				),
 				detail:
 					"A later edit changed the same value. This undo entry is kept; another action will not be undone instead.",
 				attention: true,
@@ -406,6 +468,7 @@ export default function EditingInterface({
 		}
 		from.current.pop();
 		into.current.push(item);
+		if (retained.current?.transaction === item) retained.current = null;
 		setNotice({
 			title: redo ? "Redone" : "Undone",
 			detail: `${item.label} · independent changes remain. Undo changes the edit, not the application’s own state.`,
@@ -469,9 +532,10 @@ export default function EditingInterface({
 		setSelected(parent?.closest<HTMLElement>("[data-edit-node]") ?? null);
 		active.current = parent?.closest<HTMLElement>("[data-edit-node]") ?? null;
 	};
-	const swapImage = async (src: string) => {
+	const swapImage = async (src: string, fileName?: string) => {
 		const node = selected;
 		if (!(node instanceof HTMLImageElement)) return;
+		const target = targetOf(node);
 		const probe = new Image();
 		probe.src = src;
 		try {
@@ -479,6 +543,10 @@ export default function EditingInterface({
 		} catch {
 			setNotice({
 				title: "Image could not be opened",
+				help: prepareHelp(
+					target,
+					`I tried to replace this image, but ${fileName ? `the file “${fileName}”` : "the chosen file"} could not be decoded. Nothing changed. Help me find a usable replacement. Ask me to provide the file again if you need to inspect it.`,
+				),
 				detail: "Choose another image. Nothing changed.",
 				attention: true,
 			});
@@ -494,13 +562,14 @@ export default function EditingInterface({
 		if (!file) return;
 		const reader = new FileReader();
 		reader.onload = () => {
-			if (typeof reader.result === "string") void swapImage(reader.result);
+			if (typeof reader.result === "string") void swapImage(reader.result, file.name);
 		};
 		reader.readAsDataURL(file);
 	};
 	const showRendered = (reload: boolean) => {
 		const transaction = unrendered.current;
 		if (transaction?.after) move(transaction.before, transaction.after, false);
+		if (retained.current?.transaction === transaction) retained.current = null;
 		unrendered.current = null;
 		for (const frame of root.current?.querySelectorAll("[data-render-state]") ?? [])
 			frame.removeAttribute("data-render-state");
@@ -517,23 +586,40 @@ export default function EditingInterface({
 		if (!kept || !selected?.isConnected || !root.current) {
 			setNotice({
 				title: "Select a target first",
+				help: kept
+					? prepareHelp(
+							kept.transaction.target,
+							`My requested edit is ${kept.intent}. The original target is unavailable. Locate and confirm the intended target in current source before applying it.`,
+						)
+					: prepareHelp(
+							targetOf(),
+							"Help me locate a valid target for the edit I was trying to make. Ask me to identify it before changing source.",
+						),
 				detail: "Your requested change remains available in Ask agent.",
 				attention: true,
 				recovery: "retry",
 			});
 			return;
 		}
-		const intendedNode = kept.after.find((entry) => entry.node === selected);
-		if (!intendedNode) {
+		const intended = kept.transaction.target.selection[0];
+		if (!intended || intended.id !== selected.dataset.editNode) {
 			setNotice({
 				title: "Choose the original target",
+				help: prepareHelp(
+					kept.transaction.target,
+					`My requested edit is ${kept.intent}. I have selected a different element since that attempt, so Spool refused to transfer the edit to it. Find and confirm the original target before applying the retained change.`,
+				),
 				detail: "A different selection cannot silently inherit this edit. Ask the agent with your retained input.",
 				attention: true,
 				recovery: "retry",
 			});
 			return;
 		}
-		pending.current = { before: snapshot(root.current), label: kept.transaction.label };
+		pending.current = {
+			before: snapshot(root.current),
+			label: kept.transaction.label,
+			target: kept.transaction.target,
+		};
 		move(kept.transaction.before, kept.after, false);
 		finish();
 	};
@@ -715,6 +801,24 @@ export default function EditingInterface({
 		setMeasuring(false);
 		setHint("Type here. Double-click a word to select it. Escape cancels.");
 	};
+	const refuseReorder = (node: HTMLElement, neighbor: HTMLElement, delta: number) => {
+		const label = (element: HTMLElement) =>
+			element.textContent?.trim().replace(/\s+/g, " ").slice(0, 80) || name(element);
+		const help = prepareHelp(
+			targetOf(node),
+			`Move “${label(node)}” ${delta > 0 ? "after" : "before"} “${label(neighbor)}” in ${node.parentElement ? name(node.parentElement) : "its parent"}. Spool blocked this reorder because the items do not have stable keys; nothing was saved. Add stable React keys based on each item's identity so its running state stays with it, then make the intended move.`,
+		);
+		cancel();
+		setNotice({
+			title: "This reorder needs stable keys",
+			detail:
+				"The items could exchange their running state. Nothing was saved. Ask the agent to add stable identities first.",
+			attention: true,
+			help,
+		});
+		return help;
+	};
+
 	keyboard.current = (event) => {
 		const target = event.target;
 		if (!(target instanceof HTMLElement) || !(target === stage.current || root.current?.contains(target))) return;
@@ -798,13 +902,7 @@ export default function EditingInterface({
 		const delta = forward !== reversed ? 1 : -1;
 		const neighbor = siblings[siblings.indexOf(selected) + delta];
 		if (neighbor && (!selected.dataset.stableKey || !neighbor.dataset.stableKey)) {
-			cancel();
-			setNotice({
-				title: "This reorder needs stable keys",
-				detail:
-					"The items could exchange their running state. Nothing was saved. Ask the agent to add stable identities first.",
-				attention: true,
-			});
+			refuseReorder(selected, neighbor, delta);
 			return;
 		}
 		if (neighbor) {
@@ -814,6 +912,19 @@ export default function EditingInterface({
 		}
 		setHint("Reorder in parent layout · move free elements by 1px · Escape cancels this key press");
 	};
+
+	const blockedStateOpened = useRef(false);
+	useEffect(() => {
+		if (!selected || blockedStateOpened.current || (state !== "blocked" && state !== "prepared")) return;
+		blockedStateOpened.current = true;
+		const node = root.current?.querySelector<HTMLElement>(".ev-reorder p");
+		const neighbor = node?.nextElementSibling;
+		if (!node || !(neighbor instanceof HTMLElement)) return;
+		node.removeAttribute("data-stable-key");
+		choose(node, true);
+		const help = refuseReorder(node, neighbor, 1);
+		if (state === "prepared") askAgent(help);
+	}, [state, selected]);
 
 	const resolve = (target: EventTarget) => {
 		if (!(target instanceof HTMLElement || target instanceof SVGElement)) return null;
@@ -1232,7 +1343,17 @@ export default function EditingInterface({
 					<Section name="Content" reason="calculated">
 						<p className="ep-note">
 							{selected.textContent} comes from {selected.dataset.expression}. Direct text editing is unavailable.{" "}
-							<button type="button" onClick={askAgent}>
+							<button
+								type="button"
+								onClick={() =>
+									askAgent(
+										prepareHelp(
+											targetOf(selected),
+										`Help me change the ${name(selected)} text generated from ${selected.dataset.expression}. Spool cannot edit it directly. Find the source that controls it and ask me what value or wording I want before changing it.\n\nCurrent text: “${selected.textContent?.trim()}”`,
+										),
+									)
+								}
+							>
 								Ask agent
 							</button>
 						</p>
@@ -1383,7 +1504,7 @@ export default function EditingInterface({
 				className="ev-status"
 				role="status"
 				data-attention={notice.attention || undefined}
-				data-quiet={(!notice.attention && request === null) || undefined}
+				data-quiet={!notice.attention || undefined}
 			>
 				<strong>{notice.title}</strong>
 				<p>{notice.detail}</p>
@@ -1411,19 +1532,20 @@ export default function EditingInterface({
 					{notice.recovery === "unknown" && (
 						<button
 							type="button"
-							onClick={() =>
+							onClick={() => {
+								retained.current = null;
 								setNotice({
 									title: "Current source read again",
 									detail:
 										"The requested value is present in this simulated case. The missing undo entry cannot be recovered. Select again for a fresh edit.",
-								})
-							}
+								});
+							}}
 						>
 							Check current source
 						</button>
 					)}
 					{(notice.attention || retained.current) && (
-						<button type="button" onClick={askAgent}>
+						<button type="button" onClick={() => askAgent(notice.help ?? retained.current?.help)}>
 							Ask agent
 						</button>
 					)}
@@ -1569,6 +1691,10 @@ export default function EditingInterface({
 											transaction: pending.current,
 											after,
 											intent: intentOf(pending.current.before, after, pending.current.label),
+											help: prepareHelp(
+												pending.current.target,
+												`My interrupted edit was ${intentOf(pending.current.before, after, pending.current.label)}. The source service restarted. Inspect current source before helping me complete it.`,
+											),
 										};
 									}
 									cancel();
@@ -1576,6 +1702,15 @@ export default function EditingInterface({
 									future.current = [];
 									setNotice({
 										title: "Source service restarted",
+										help: retained.current
+											? prepareHelp(
+													retained.current.transaction.target,
+													`My requested edit is ${retained.current.intent}. The source service restarted and previous undo history expired. Check current source before helping me complete the change.`,
+												)
+											: prepareHelp(
+													targetOf(),
+													"The source service restarted and previous undo history expired. Check the current source and help me resume editing this target.",
+												),
 										detail: `Previous undo history expired. ${retained.current ? `Your requested input is kept: ${retained.current.intent}.` : "Select again against current source."}`,
 										attention: true,
 									});

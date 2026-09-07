@@ -19,7 +19,7 @@ import { COMPOSER_W, PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
 import { Choice } from "./choice";
 
-export type AgentRequest = { id: number; text: string };
+import { type AgentRequest, elementSelection } from "./agent-request";
 type Surface = "properties" | "agent";
 const FRAMES = ["booking", "confirmation", "journal"];
 const WIDTH = { properties: 300, agent: 420 };
@@ -64,25 +64,9 @@ export function EditingShell({
 	const [entries, setEntries] = useState<PlayEntry[]>([]);
 	const model = useModel(CAPTURED, 0);
 	const frame = selected?.closest<HTMLElement>("[data-frame-shell]")?.dataset.frameShell;
-	const selection: Pointed[] =
-		selected && frame
-			? [
-					{
-						id: selected.dataset.editNode ?? frame,
-						kind: "element",
-						frame,
-						name: selectedName,
-						path:
-							selected.dataset.owner ??
-							selected.closest<HTMLElement>("[data-owner]")?.dataset.owner ??
-							`frames/${frame}/frame.tsx`,
-						// Authored source identity, like the rest of the fixed editing fixture.
-						lines: selected.dataset.shared ? [12, 34] : [40, 62],
-						selector: `[data-edit-node="${selected.dataset.editNode}"]`,
-						excerpt: selected.outerHTML.slice(0, 240),
-					},
-				]
-			: [];
+	const liveSelection = elementSelection(selected, selectedName);
+	const [attached, setAttached] = useState<readonly Pointed[] | null>(null);
+	const selection = attached ?? liveSelection;
 	useEffect(() => {
 		const last = previous.current;
 		previous.current = surface;
@@ -94,6 +78,7 @@ export function EditingShell({
 	useEffect(() => {
 		if (!request) return;
 		setSurface("agent");
+		setAttached(request.selection);
 		if (request.text)
 			setDraft((current) =>
 				current.includes(request.text) ? current : [current, request.text].filter(Boolean).join("\n\n"),
@@ -120,9 +105,15 @@ export function EditingShell({
 				say="read"
 				entered="plain"
 				selection={selection}
-				onDrop={onDrop}
+				onDrop={() => {
+					setAttached([]);
+					if (selection[0]?.id === liveSelection[0]?.id) onDrop();
+				}}
 				draft={draft}
-				onDraft={setDraft}
+				onDraft={(text) => {
+					setDraft(text);
+					if (!text.trim()) setAttached(null);
+				}}
 				onSend={(text) =>
 					setEntries((current) => [
 						...current,
@@ -153,6 +144,7 @@ export function EditingShell({
 								onClick={() => {
 									setEntries([]);
 									setDraft("");
+									setAttached(null);
 									host.current?.querySelector<HTMLTextAreaElement>("[data-agent-rail] textarea")?.focus();
 								}}
 								className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-150 hover:text-text"
