@@ -1,3 +1,4 @@
+import type { RenderOutcome } from "../../source-edit";
 import { NOTICE_PILL } from "./collision-notice";
 
 /**
@@ -16,12 +17,47 @@ import { NOTICE_PILL } from "./collision-notice";
 export type HandSaid =
 	/** the project keeps no history, said once per project by the daemon */
 	| { kind: "uncaught" }
+	| {
+			kind: "source";
+			frame: string;
+			status: RenderOutcome | "saving" | "unknown" | "blocked";
+			text: string;
+			says: string;
+	  }
 	/** the write went out and never landed, with what came back if anything did */
 	| { kind: "failed"; frame: string; says?: string }
 	/** the class landed and the box did not follow it, so the patch was reverted */
 	| { kind: "clamped"; frame: string };
 
-export function HandNotice({ said, onDismiss }: { said: HandSaid; onDismiss: () => void }) {
+export function HandNotice({
+	said,
+	onDismiss,
+	onReload,
+}: {
+	said: HandSaid;
+	onDismiss: () => void;
+	onReload?: (frame: string) => void;
+}) {
+	if (said.kind === "source")
+		return (
+			<div data-hand-notice={said.status} role="status" className={`pointer-events-auto ${NOTICE_PILL}`}>
+				<span>{said.says}</span>
+				{said.text && said.status !== "saving" ? (
+					<span className="ml-2 text-muted">Your text: {said.text}</span>
+				) : null}
+				{!["saving", "unknown", "blocked"].includes(said.status) && onReload ? (
+					<button type="button" className="ml-3 text-thread-strong" onClick={() => onReload(said.frame)}>
+						Reload app (resets state)
+					</button>
+				) : null}
+				{said.status !== "saving" ? (
+					<button type="button" className="ml-3 text-muted" aria-label="Dismiss notice" onClick={onDismiss}>
+						×
+					</button>
+				) : null}
+			</div>
+		);
+
 	return (
 		<button
 			type="button"

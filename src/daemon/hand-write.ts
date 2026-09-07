@@ -480,7 +480,11 @@ function planText(source: string, element: Element, text: string): OnePlan {
 			? !isLayoutOnly(rawOf(source, child))
 			: !(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression"),
 	);
-	const spoken = children.find((child) => child.type !== "JSXText");
+	const spoken = children.find(
+		(child) =>
+			child.type !== "JSXText" &&
+			!(child.type === "JSXExpressionContainer" && child.expression.type === "StringLiteral"),
+	);
 	if (spoken !== undefined) {
 		const says = source.slice(nodeStart(spoken), nodeEnd(spoken));
 		if (spoken.type === "JSXExpressionContainer") {
@@ -489,6 +493,23 @@ function planText(source: string, element: Element, text: string): OnePlan {
 		return { refusal: { code: "no-text", says: "no text of its own", expression: says } };
 	}
 	const own = children[0];
+	if (
+		children.some((child) => child.type === "JSXExpressionContainer") ||
+		text.includes("\n") ||
+		text === "" ||
+		children.length > 1
+	) {
+		const last = children.at(-1);
+		return {
+			patches: [
+				{
+					start: own ? nodeStart(own) : element.openEnd,
+					end: last ? nodeEnd(last) : element.openEnd,
+					text: `{${JSON.stringify(text)}}`,
+				},
+			],
+		};
+	}
 	if (own !== undefined) return { patches: [coreOf(source, own, text)] };
 	// nothing but layout between the tags: the words go where they would have
 	// been written, inside whatever indentation is already there

@@ -116,6 +116,8 @@ import {
 } from "./session";
 import { createSettingsStore } from "./settings";
 import { createShotTaker } from "./shots";
+import { createSourceObservers } from "./source-observers";
+import { createSourceOwner } from "./source-owner";
 import { compileClasses, readTheme } from "./theme";
 import {
 	createThumbHealer,
@@ -423,6 +425,8 @@ export function createDaemonApp({
 	const startedAt = new Date().toISOString();
 	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
+	const sourceObservers = createSourceObservers();
+	const sourceOwner = createSourceOwner(compiler, sourceObservers.verify);
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
@@ -837,7 +841,12 @@ export function createDaemonApp({
 	}
 
 	function isRenderOnlyPath(path: string): boolean {
-		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
+		return (
+			/^\/p\/[^/]+\/frames\/[^/]+$/.test(path) ||
+			path.startsWith("/vendor/") ||
+			path.startsWith("/source-admission/") ||
+			isProjectDataPath(path)
+		);
 	}
 
 	function normalizedOrigin(value: string): string | undefined {
@@ -2224,6 +2233,92 @@ export function createDaemonApp({
 		 * and the surface says why. The watcher announces the write like any
 		 * other edit, so the document reloads down the one path it always has.
 		 */
+		.post(
+			"/api/p/:project/source",
+			validator("json", (value, c) => {
+				const occurrence = z
+					.object({
+						publication: z.string(),
+						cell: z.string(),
+						occurrence: z.string(),
+						invocation: z.string(),
+						value: z.string().max(100_000),
+						context: z.string().max(100_000),
+					})
+					.strict();
+				const parsed = z
+					.discriminatedUnion("action", [
+						z
+							.object({
+								action: z.literal("read"),
+								observer: z.string(),
+								frame: z.string(),
+								original: occurrence,
+								generation: z.number().int().positive(),
+							})
+							.strict(),
+						z
+							.object({
+								action: z.literal("commit"),
+								handle: z.string(),
+								generation: z.number().int().positive(),
+								original: occurrence,
+								text: z.string().max(100_000),
+								source: z.string(),
+							})
+							.strict(),
+						z
+							.object({
+								action: z.literal("inverse"),
+								receipt: z.object({ handle: z.string(), owner: z.string() }).strict(),
+							})
+							.strict(),
+						z
+							.object({
+								action: z.literal("observed"),
+								observer: z.string(),
+								challenge: z.string(),
+								original: occurrence.optional(),
+							})
+							.strict(),
+						z.object({ action: z.literal("cancel"), handle: z.string() }).strict(),
+						z.object({ action: z.literal("current"), publication: z.string() }).strict(),
+						z.object({ action: z.literal("delivered"), publication: z.string() }).strict(),
+					])
+					.safeParse(value);
+				return parsed.success ? parsed.data : c.text("invalid source operation", 400);
+			}),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const body = c.req.valid("json");
+				switch (body.action) {
+					case "read":
+						return c.json(
+							await sourceOwner.read(project.root, body.frame, body.original, body.generation, body.observer),
+						);
+					case "observed":
+						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
+						return c.json({ ok: true });
+					case "commit":
+						return c.json(
+							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, [
+								{ kind: "set-text", source: body.source, text: body.text },
+							]),
+						);
+					case "inverse":
+						return c.json(await sourceOwner.inverse(project.root, body.receipt));
+					case "cancel":
+						sourceOwner.cancel(project.root, body.handle);
+						return c.json({ ok: true });
+					case "current":
+						return c.json({ current: sourceOwner.current(project.root, body.publication) });
+					case "delivered":
+						sourceOwner.delivered(body.publication);
+						return c.json({ ok: true });
+				}
+			},
+		)
 		.post("/api/p/:project/patch/gate", askBody, async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
@@ -2777,6 +2872,19 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			return serveProjectJson(c, readScenario(project.root, c.req.param("name")));
 		})
+		.get("/api/p/:project/source-observer/:observer", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return streamSSE(c, async (stream) => {
+				beatWhileOpen(stream);
+				const disconnect = sourceObservers.connect(project.root, c.req.param("observer"), (challenge) => {
+					void stream.writeSSE({ event: "observe", data: JSON.stringify(challenge) }).catch(() => {});
+				});
+				stream.onAbort(disconnect);
+				await stream.writeSSE({ event: "hello", data: "{}" });
+				await new Promise<void>((resolve) => stream.onAbort(resolve));
+			});
+		})
 		.get("/api/p/:project/events", (c) => {
 			const name = c.req.param("project");
 			const project = resolveProject(c, name);
@@ -2791,6 +2899,11 @@ export function createDaemonApp({
 				stream.onAbort(unsubscribe);
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
+		})
+		.get("/source-admission/:token", (c) => {
+			c.header("access-control-allow-origin", "*");
+			c.header("cache-control", "no-store");
+			return c.json({ admitted: sourceOwner.admit(c.req.param("token")) });
 		})
 		.get("/vendor/react.js", async (c) => {
 			// sandboxed srcdoc frames fetch this from a null origin — CORS must be open

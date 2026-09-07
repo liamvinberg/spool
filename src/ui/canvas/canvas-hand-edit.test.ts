@@ -23,6 +23,14 @@ const ACCEL = ACCEL_KEY === "Meta" ? { metaKey: true } : { ctrlKey: true };
 const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480 }];
 
 const STAMP = "frames/home/frame.tsx:7:4";
+const ORIGINAL = {
+	publication: "publication",
+	cell: "literal",
+	occurrence: "occurrence",
+	invocation: "invocation",
+	context: "context",
+	value: "Pay now",
+};
 
 /** The ancestry the frame answers with: a root element and the words in it. */
 const CHAIN: PickedHit[] = [
@@ -55,11 +63,8 @@ it("opens an edit on the second click, and writes what was typed", async () => {
 	await frame.answer(CHAIN);
 	await settle();
 
-	// the gate is asked before anything happens to the element
-	expect(gateAsks().at(-1)).toEqual({
-		frame: "home",
-		ops: [{ kind: "set-text", source: STAMP, text: "" }],
-	});
+	// The original committed occurrence is read before native editing starts.
+	expect(sourceCalls("read").at(-1)).toMatchObject({ frame: "home", original: ORIGINAL });
 	const opened = frame.lastEdit();
 	expect(opened).toMatchObject({ selector: "screen > h1", x: 20, y: 20 });
 
@@ -67,16 +72,17 @@ it("opens an edit on the second click, and writes what was typed", async () => {
 	await frame.ended(opened?.id, true, "Pay later");
 	await settle();
 
-	expect(writes().at(-1)).toEqual({
-		frame: "home",
-		fingerprint: "abc",
-		ops: [{ kind: "set-text", source: STAMP, text: "Pay later" }],
+	expect(sourceCalls("commit").at(-1)).toMatchObject({
+		original: ORIGINAL,
+		source: STAMP,
+		text: "Pay later",
+		handle: "read",
 	});
 
 	// one gesture is one press of undo, and it runs the patch the write left
 	await press("z", ACCEL);
 	await settle();
-	expect(reverts().at(-1)).toMatchObject({ path: "design/frames/home/frame.tsx", text: "Pay now" });
+	expect(sourceCalls("inverse").at(-1)).toMatchObject({ receipt: { owner: "owner", handle: "receipt" } });
 });
 
 it("writes nothing when Esc ended it, and nothing when the words did not change", async () => {
@@ -119,8 +125,8 @@ it.each(TEXT_REFUSALS)("shows $code and opens no edit when the gate refuses", as
 	await settle();
 
 	expect(frame.lastEdit()).toBeUndefined();
-	const shown = host.querySelector(`[data-hand-refusal="${refusal.code}"]`);
-	expect(shown?.textContent).toBe([refusal.says, refusal.expression].filter(Boolean).join(" "));
+	const shown = host.querySelector('[data-hand-refusal="source"]');
+	expect(shown?.textContent).toBe("these words have no editable local literal source");
 });
 
 it("takes the held element's lines on ⌫, and the frame's own when no rung is open", async () => {
@@ -238,7 +244,28 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 	const live = (): Window | null => {
 		const contentWindow = host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.contentWindow ?? null;
 		if (contentWindow !== null && !spies.has(contentWindow)) {
-			spies.set(contentWindow, vi.spyOn(contentWindow, "postMessage"));
+			spies.set(
+				contentWindow,
+				vi.spyOn(contentWindow, "postMessage").mockImplementation((message) => {
+					if (message?.spool !== "source-request") return;
+					const result =
+						message.action === "read"
+							? gate.ok
+								? ORIGINAL
+								: undefined
+							: message.action === "complete"
+								? ORIGINAL
+								: true;
+					queueMicrotask(() =>
+						window.dispatchEvent(
+							new MessageEvent("message", {
+								source: contentWindow,
+								data: { spool: "source-reply", id: message.id, result },
+							}),
+						),
+					);
+				}),
+			);
 		}
 		return contentWindow;
 	};
@@ -301,8 +328,8 @@ function posted(suffix: string): Record<string, unknown>[] {
 }
 
 const gateAsks = () => posted("/patch/gate");
-const reverts = () => posted("/patch/revert");
 const writes = () => posted("/patch");
+const sourceCalls = (action: string) => posted("/source").filter((body) => body.action === action);
 
 async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1): Promise<void> {
 	await act(async () => {
@@ -351,7 +378,7 @@ function stubCanvasApis(): void {
 	});
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(async (input: RequestInfo | URL) => {
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const raw = input instanceof Request ? input.url : String(input);
 			const url = new URL(raw, window.location.href);
 			if (url.pathname.endsWith("/events")) {
@@ -374,6 +401,30 @@ function stubCanvasApis(): void {
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
+			}
+			if (url.pathname.endsWith("/source")) {
+				const body = JSON.parse(String(init?.body)) as { action: string; generation: number };
+				if (body.action === "read")
+					return Response.json({
+						ok: true,
+						read: {
+							handle: "read",
+							owner: "owner",
+							generation: body.generation,
+							original: ORIGINAL,
+							source: STAMP,
+							role: "literal-child",
+							value: "Pay now",
+						},
+					});
+				if (body.action === "commit" || body.action === "inverse")
+					return Response.json({
+						ok: true,
+						source: "saved",
+						publication: null,
+						receipt: { owner: "owner", handle: "receipt" },
+					});
+				return Response.json({ ok: true });
 			}
 			if (url.pathname.endsWith("/patch/gate")) return Response.json(gate);
 			if (url.pathname.endsWith("/patch/revert")) {

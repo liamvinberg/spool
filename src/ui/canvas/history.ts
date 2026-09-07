@@ -1,4 +1,5 @@
 import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
+import type { SourceReceipt } from "../../source-edit";
 import type { Geometry, HeldPatch, Place } from "../api";
 
 /**
@@ -97,6 +98,7 @@ export type HistoryEntry =
 	// direction this entry currently sits: running it answers with its own
 	// inverse, and the entry is amended with what came back, because a file
 	// that has just changed has a new fingerprint and the old one would refuse
+	| { readonly kind: "source"; readonly frame: string; readonly receipt: SourceReceipt }
 	| { readonly kind: "patch"; readonly frame: string; readonly patch: HeldPatch }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {
@@ -374,6 +376,8 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			const pages = livePaged(entry.pages, entry.to, alive, way);
 			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
+		case "source":
+			return entry;
 		case "patch":
 			// the daemon's fingerprint is the real check and it happens on the wire;
 			// what the projection can say is whether the frame is still there to edit

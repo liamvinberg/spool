@@ -5,3 +5,9 @@ A frame is one default-exported TSX component; spool builds the document around 
 ## Consequences
 
 A `frame.tsx` renders nothing outside spool. Non-React products get agent-carried copy-out, not direct import. Compile-time JSX stamping is what gives selection exact source locations.
+
+## Retained literal updates
+
+Admitted local literal children compile into transient value cells. An edit publishes source and its captured dependencies, then updates those cells in the existing frame module. The owning function component subscribes through a stable hook position only when the renderer invokes it; class instances receive a retained force-update. React reconciles the same component and host nodes; application effects, memoization and Suspense keep their normal meanings. Saving source, installing its publication and observing the requested words are separate outcomes. A mismatch never forces a remount or reload.
+
+Committed host props associate a mounted occurrence with its original compiled literal. Pinned renderer invocation and commit taps distinguish actual component calls and committed host fibers from speculative work; ordinary direct helper calls receive no hook. The production renderer is pinned to an exact byte hash, and a React upgrade must revalidate source observation, hook behavior, memoization, native input and Suspense before that pin changes. No IDs are inserted into authored files. Player rendering continues to use the ordinary composition path.

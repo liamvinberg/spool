@@ -334,7 +334,8 @@ export function assembleFrameDocument({
 	bootJs,
 }: FrameDocumentParts): string {
 	const fontsBlock = fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`;
-	const bundledBlock = bundledCss === undefined ? "" : `<style>${escapeInlineStyle(bundledCss)}</style>\n`;
+	const bundledBlock =
+		bundledCss === undefined ? "" : `<style id="spool-bundled-css">${escapeInlineStyle(bundledCss)}</style>\n`;
 	// config and shim ride classic scripts so both exist before any module evaluates.
 	// the height chain is baseline (#10): h-full reaches the frame edge in this
 	// document AND inside the player's screen — one dialect for both contexts
@@ -343,7 +344,7 @@ export function assembleFrameDocument({
 		`<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame, projectCapability, controlOrigin })}</script>
 <script>${escapeInlineScript(canvasShimJs)}</script>
 <style>html, body, #root { height: 100%; }</style>
-<style>${escapeInlineStyle(css)}</style>
+<style id="spool-compiled-css">${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
 `,
 		`<div id="root"></div>
@@ -1139,16 +1140,18 @@ const canvasShimJs = `(() => {
 	 * off the moment the edit ends.
 	 */
 	var editing = null;
+	var swallowUntilClick = false;
+	var editingKeys = new Set();
 
-	function beginEdit(selector, x, y, id) {
+	function beginEdit(selector, x, y, id, sourceGeneration) {
 		endEdit(false);
 		const frame = (window.__SPOOL__ || {}).frame;
 		const el = elementFor(selector);
-		if (!el) {
+		if (!el || (sourceGeneration !== undefined && !window.__SPOOL_SOURCE__?.valid(sourceGeneration))) {
 			parent.postMessage({ spool: "edit-open", frame, id, ok: false, text: "" }, "*");
 			return;
 		}
-		editing = { el, id, text: el.textContent || "" };
+		editing = { el, id, sourceGeneration, composing: false, finish: false, text: el.textContent || "", editable: el.getAttribute("contenteditable"), spellcheck: el.getAttribute("spellcheck") };
 		el.setAttribute("contenteditable", "plaintext-only");
 		el.setAttribute("spellcheck", "false");
 		try { el.focus({ preventScroll: true }); } catch { try { el.focus(); } catch {} }
@@ -1158,17 +1161,18 @@ const canvasShimJs = `(() => {
 
 	function endEdit(commit) {
 		if (!editing) return;
+		if (commit && editing.composing) { editing.finish = true; return; }
 		const held = editing;
 		editing = null;
 		const el = held.el;
-		const text = el.textContent || "";
-		el.removeAttribute("contenteditable");
-		el.removeAttribute("spellcheck");
+		const text = el.innerText ?? el.textContent ?? "";
+		if (held.sourceGeneration !== undefined && commit && !window.__SPOOL_SOURCE__?.complete(held.sourceGeneration)) commit = false;
+		if (held.editable === null) el.removeAttribute("contenteditable"); else el.setAttribute("contenteditable", held.editable);
+		if (held.spellcheck === null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", held.spellcheck);
 		try { el.blur(); } catch {}
-		// Esc restores; a commit leaves the typed words standing, because the
-		// reload that carries them into the file is a moment away and flashing
-		// the old ones back is exactly the blink the write lane avoids
-		if (!commit) el.textContent = held.text;
+		// Esc restores; completion leaves the owned preview standing until the
+		// acknowledged publication reconciles in the same task that removes it.
+		if (!commit) { if (held.sourceGeneration !== undefined) window.__SPOOL_SOURCE__?.cancel(held.sourceGeneration); else el.textContent = held.text; }
 		parent.postMessage({
 			spool: "edited",
 			frame: (window.__SPOOL__ || {}).frame,
@@ -1207,31 +1211,46 @@ const canvasShimJs = `(() => {
 	// A press inside the words places the caret and goes no further; a press
 	// anywhere else is the click-away that commits, and the frame never sees it.
 	var swallowWhileEditing = (event) => {
-		if (!editing) return;
+		if (!editing) { if (swallowUntilClick) { event.preventDefault(); event.stopImmediatePropagation(); if (event.type === "click") swallowUntilClick = false; } return; }
 		if (editing.el.contains(event.target)) {
-			event.stopPropagation();
+			event.stopImmediatePropagation();
+			if (event.type === "click" && editing.el.closest("a,button")) event.preventDefault();
 			return;
 		}
-		event.stopPropagation();
+		event.stopImmediatePropagation();
 		event.preventDefault();
-		if (event.type === "pointerdown") endEdit(true);
+		if (event.type === "pointerdown") { swallowUntilClick = true; endEdit(true); }
 	};
 	for (const kind of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick"]) {
 		addEventListener(kind, swallowWhileEditing, true);
 	}
 
-	// focus leaving the words, or the whole frame, is a click-away by another
-	// name. The element's own focus() blurs whatever held it first, which is
-	// why only these two targets count.
+	// Field blur finishes; losing the window cancels the native session.
 	addEventListener("blur", (event) => {
-		if (editing && (event.target === editing.el || event.target === window)) endEdit(true);
+		if (editing && (event.target === editing.el || event.target === window)) endEdit(event.target !== window);
 	}, true);
 
-	// the release half of every key the edit took. stopPropagation rather than
-	// stopImmediatePropagation, so the modifier relay below — a listener on this
-	// same window — still tells the canvas when the accel key came back up.
+	addEventListener("compositionstart", (event) => { if (editing) { editing.composing = true; event.stopImmediatePropagation(); } }, true);
+	addEventListener("compositionend", (event) => {
+		if (!editing) return;
+		const held = editing;
+		held.composing = false;
+		event.stopImmediatePropagation();
+		if (held.finish) setTimeout(() => { if (editing === held) endEdit(true); }, 0);
+	}, true);
+	for (const kind of ["beforeinput", "input", "keypress", "submit"]) addEventListener(kind, (event) => {
+		if (!editing) return;
+		event.stopImmediatePropagation();
+		if (kind === "submit") event.preventDefault();
+	}, true);
+
+	// Swallow the release half too. Relay modifier releases explicitly because
+	// application key listeners on this same window must not receive edit keys.
 	addEventListener("keyup", (event) => {
-		if (editing) event.stopPropagation();
+		if (editing || editingKeys.delete(event.key)) {
+			event.stopImmediatePropagation();
+			if (event.key === "Meta" || event.key === "Control") parent.postMessage({ spool: "modifier", frame: (window.__SPOOL__ || {}).frame, modifier: event.key, held: false }, "*");
+		}
 	}, true);
 
 	// The asset swap's drop half (#260). A file dragged onto an image lands
@@ -1488,6 +1507,22 @@ const canvasShimJs = `(() => {
 			parent.postMessage({ spool: "measured", frame, id: m.id, reading }, "*");
 			return;
 		}
+		if (m.spool === "source-request") {
+			const config = window.__SPOOL__ || {};
+			if (event.source !== parent || event.origin !== config.controlOrigin || typeof m.id !== "string") return;
+			const source = window.__SPOOL_SOURCE__;
+			const reply = (result) => parent.postMessage({ spool: "source-reply", frame: config.frame, id: m.id, result }, "*");
+			if (!source) { reply(undefined); return; }
+			try {
+				if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation) : undefined); }
+				else if (m.action === "complete") reply(source.complete(m.generation));
+				else if (m.action === "cancel") { source.cancel(m.generation); reply(true); }
+				else if (m.action === "preview") reply(source.preview(m.generation, m.text));
+				else if (m.action === "install") source.install(m.publication, m.undo === true).then(reply, () => reply(undefined));
+				else if (m.action === "revoke") { source.revoke(m.publication); reply(true); }
+			} catch { reply(undefined); }
+			return;
+		}
 		if (m.spool === "edit" || m.spool === "edit-end") {
 			// the two verbs that change the document rather than read it, so they
 			// are held to the same door the capture is: this frame's own canvas
@@ -1498,7 +1533,7 @@ const canvasShimJs = `(() => {
 				return;
 			}
 			try {
-				beginEdit(m.selector, m.x, m.y, m.id);
+				beginEdit(m.selector, m.x, m.y, m.id, m.sourceGeneration);
 			} catch {
 				parent.postMessage({ spool: "edit-open", frame: config.frame, id: m.id, ok: false, text: "" }, "*");
 			}
@@ -1654,7 +1689,8 @@ const canvasShimJs = `(() => {
 		// puts back, and every other key is the edit's rather than the
 		// prototype's — the default action still types the character
 		if (editing) {
-			if (event.key === "Enter" || event.key === "Escape") {
+			editingKeys.add(event.key);
+			if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey && !event.isComposing && !editing.composing && event.keyCode !== 229)) {
 				event.preventDefault();
 				event.stopImmediatePropagation();
 				endEdit(event.key === "Enter");
@@ -1670,7 +1706,7 @@ const canvasShimJs = `(() => {
 				try { document.execCommand("insertText", false, " "); } catch {}
 				return;
 			}
-			event.stopPropagation();
+			event.stopImmediatePropagation();
 			return;
 		}
 		// which key is the accel modifier is the canvas's rule, not the frame's:

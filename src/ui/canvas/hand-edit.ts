@@ -1,3 +1,4 @@
+import type { SourceRead } from "../../source-edit";
 import type { HandOp } from "../api";
 import type { Point } from "./camera";
 import type { PickedSelection } from "./overlays";
@@ -57,6 +58,7 @@ export interface HandEdit {
 	id: number;
 	/** the hash of the file the gate answered against */
 	fingerprint: string;
+	read?: SourceRead;
 	phase: "asking" | "open";
 	start: string;
 }
