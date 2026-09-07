@@ -1,0 +1,287 @@
+.ei-app {
+	--font-sans: "Familjen Grotesk", system-ui, sans-serif;
+}
+.ei-app .ep-boundary {
+	visibility: hidden;
+}
+.ei-app .ep-toolbar > div:last-of-type {
+	gap: 0;
+}
+.ei-app .ep-crumbs {
+	flex-wrap: nowrap;
+	overflow: auto;
+	white-space: nowrap;
+	padding: 10px 12px 0;
+}
+.ei-app .ep-crumbs button {
+	flex-shrink: 0;
+}
+.ei-heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	min-height: 42px;
+}
+.ei-heading strong {
+	font-size: 14px;
+	font-weight: 500;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ei-owner {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 3px 4px;
+	border-radius: 4px;
+	color: var(--color-muted);
+	font: 10px var(--font-mono);
+}
+.ei-owner:hover,
+.ei-owner[aria-expanded="true"] {
+	color: var(--color-text);
+	background: var(--color-surface);
+}
+.ei-owner > :first-child {
+	font-size: 14px;
+	color: var(--color-thread);
+}
+.ei-origin-line {
+	padding: 0 8px 7px;
+}
+.ei-origin-line .ei-owner {
+	width: 100%;
+}
+.ei-origin-line .ei-owner > :nth-child(3) {
+	margin-left: auto;
+}
+.ei-actions-menu {
+	margin-left: auto;
+	width: 26px;
+	flex-shrink: 0;
+}
+.ei-actions-menu .ei-choice {
+	justify-content: center;
+	font-size: 20px;
+	line-height: 15px;
+}
+.ei-scope {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-height: 34px;
+	padding: 0 12px 6px;
+	border-bottom: 1px solid var(--color-border);
+	font: 10px var(--font-mono);
+}
+.ei-scope > div {
+	width: 78px;
+}
+.ei-scope-condition {
+	color: var(--color-muted);
+}
+.ei-remove-scope {
+	margin-left: auto;
+	color: var(--color-muted);
+}
+.ei-uses {
+	padding: 4px 12px 10px;
+	border-bottom: 1px solid var(--color-border);
+}
+.ei-uses p {
+	font: 10px / 1.5 var(--font-mono);
+	color: var(--color-muted);
+	overflow-wrap: anywhere;
+	padding-block: 4px 7px;
+}
+.ei-uses button {
+	display: flex;
+	justify-content: space-between;
+	width: 100%;
+	padding: 7px 5px;
+	border-radius: 3px;
+	font: 11px var(--font-mono);
+}
+.ei-uses button:hover {
+	background: var(--color-surface);
+}
+.ei-uses button > :last-child {
+	color: var(--color-muted);
+	font-size: 10px;
+}
+.ei-hidden {
+	display: flex;
+	justify-content: space-between;
+	padding: 8px 12px;
+	font-size: 12px;
+	border-bottom: 1px solid var(--color-border);
+	color: var(--color-muted);
+}
+.ei-hidden button {
+	color: var(--color-text);
+}
+.ei-choice {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	min-height: 23px;
+	padding: 3px 4px;
+	border-radius: 4px;
+	text-align: left;
+	font: 11px var(--font-mono);
+}
+.ei-app [data-properties-row] > div > div:not(.ep-width-mode) {
+	width: 100%;
+	min-width: 0;
+}
+.ei-choice:hover,
+.ei-choice[aria-expanded="true"] {
+	background: var(--color-surface);
+}
+.ei-choice > span:first-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ei-chevron {
+	margin-left: auto;
+	color: var(--color-muted);
+	font: 12px var(--font-mono);
+}
+.ei-menu,
+.ei-app .ep-color-menu {
+	z-index: 60;
+	width: 256px;
+	max-height: min(432px, calc(100dvh - 16px));
+	padding: 6px;
+	border: 1px solid var(--color-border-raised);
+	border-radius: 6px;
+	background: var(--color-bg);
+	color: var(--color-text);
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+.ei-menu-options {
+	max-height: 292px;
+	overflow: auto;
+}
+.ei-menu-options button,
+.ei-app .ep-color-options button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 30px;
+	padding: 6px;
+	border-radius: 3px;
+	text-align: left;
+	font: 11px / 16px var(--font-mono);
+}
+.ei-menu-options button > :nth-child(2) {
+	margin-left: auto;
+	color: var(--color-muted);
+	font-size: 10px;
+}
+.ei-check {
+	width: 10px;
+	flex-shrink: 0;
+	color: var(--color-muted);
+}
+.ei-menu-options button:hover,
+.ei-menu-options button:focus-visible,
+.ei-app .ep-color-options button:hover,
+.ei-app .ep-color-options button:focus-visible {
+	background: var(--color-surface);
+	outline-offset: -1px;
+}
+.ei-menu-options button[aria-selected="true"],
+.ei-app .ep-color-options button[aria-pressed="true"] {
+	background: var(--color-surface);
+}
+.ei-menu-options button:disabled {
+	opacity: 0.4;
+}
+.ei-app .ep-token-search,
+.ei-menu .ep-token-search {
+	padding: 8px 6px;
+	margin-bottom: 6px;
+	border: 0;
+	border-bottom: 1px solid var(--color-border);
+	border-radius: 0;
+	background: transparent;
+	font: 11px var(--font-mono);
+}
+.ei-app .ep-color-options {
+	margin-top: 2px;
+}
+.ei-app .ep-color-options p,
+.ei-menu-options p {
+	padding: 6px;
+	font-size: 11px;
+	color: var(--color-muted);
+}
+.ei-app .ep-color-options button > span:last-child {
+	font-size: 10px;
+}
+.ei-app .ep-gap-heading,
+.ei-app .ei-color-heading {
+	display: flex;
+	justify-content: space-between;
+	padding: 6px 6px 9px;
+	font-size: 12px;
+}
+.ei-color-heading > :last-child {
+	color: var(--color-muted);
+	font: 10px var(--font-mono);
+}
+.ei-app .ep-custom-color {
+	margin: 6px 0 0;
+	padding: 9px 6px 4px;
+	border-top: 1px solid var(--color-border);
+}
+.ei-app .ep-gap-menu .ep-color-options {
+	max-height: 236px;
+}
+.ei-app .ep-unlink {
+	width: 100%;
+	text-align: left;
+}
+.ei-app .ep-color-trigger {
+	border-radius: 4px;
+}
+.ei-app .ev-status[data-quiet] {
+	padding: 7px 12px;
+	min-height: 32px;
+	color: var(--color-muted);
+	font: 10px / 16px var(--font-mono);
+}
+.ei-app .ev-status[data-quiet] > p,
+.ei-app .ev-status[data-quiet] .ev-actions:empty {
+	display: none;
+}
+.ei-app .ep-hint {
+	min-height: 37px;
+	font-size: 10px;
+}
+.ei-app .ep-document [data-reach] {
+	outline: 1px solid color-mix(in srgb, var(--color-thread) 55%, transparent);
+	outline-offset: 3px;
+}
+
+.ei-app .ep-width-mode {
+	width: 61px;
+	flex-basis: 61px;
+}
+.ei-app .ep-width-mode .ei-choice {
+	font-size: 10px;
+	gap: 2px;
+}
+.ei-actions-menu .ei-choice {
+	letter-spacing: 0;
+	font-family: sans-serif;
+}
