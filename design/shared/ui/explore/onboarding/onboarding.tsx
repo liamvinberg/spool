@@ -801,7 +801,7 @@ function MiniFrame({
 	);
 }
 
-function Action({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+export function Action({ children, onClick }: { children: ReactNode; onClick: () => void }) {
 	return (
 		<button type="button" className="ob-action" onClick={onClick}>
 			{children}
@@ -809,7 +809,7 @@ function Action({ children, onClick }: { children: ReactNode; onClick: () => voi
 	);
 }
 
-function Coach({
+export function Coach({
 	children,
 	title,
 	position,
