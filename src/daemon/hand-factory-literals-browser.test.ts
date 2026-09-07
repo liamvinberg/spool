@@ -100,6 +100,7 @@ it.each(cases)(
 		if (sample.title) {
 			await f.select();
 			const title = f.page.getByRole("textbox", { name: "title", exact: true });
+			await expect.poll(() => title.count()).toBe(1);
 			await expect.poll(() => title.inputValue()).toBe("Same");
 			await title.fill(sample.desired);
 			await title.press("Enter");
