@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { type FSWatcher, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -16,6 +16,12 @@ import type { watchTree } from "./watch-tree";
  */
 
 const tree = vi.hoisted(() => ({ watchTree: vi.fn() }));
+const rootWatch = vi.hoisted(() => vi.fn());
+vi.mock(import("node:fs"), async (original) => {
+	const fs = await original();
+	rootWatch.mockImplementation(fs.watch);
+	return { ...fs, watch: rootWatch as typeof fs.watch };
+});
 const watcher = vi.hoisted(() => ({ close: vi.fn() }));
 
 vi.mock(import("./watch-tree"), () => ({ watchTree: tree.watchTree as unknown as typeof watchTree }));
@@ -37,6 +43,7 @@ tree.watchTree.mockImplementation((_dir: string, listener: typeof onChange) => {
 afterEach(() => {
 	vi.useRealTimers();
 	tree.watchTree.mockClear();
+	rootWatch.mockClear();
 	watcher.close.mockClear();
 	onChange = undefined;
 });
@@ -154,8 +161,9 @@ describe("what a changed path means", () => {
 describe("how long a watcher outlives its last subscriber", () => {
 	it("keeps the handle for a stream that comes back, and feeds it what lands after", async () => {
 		vi.useFakeTimers();
+		const root = project();
 		const hub = createChangeHub();
-		const unsubscribe = hub.subscribe("/project", () => {});
+		const unsubscribe = hub.subscribe(root, () => {});
 		expect(tree.watchTree).toHaveBeenCalledTimes(1);
 
 		// the browser's connection dropped: it is gone for its backoff, and the
@@ -165,7 +173,7 @@ describe("how long a watcher outlives its last subscriber", () => {
 		expect(watcher.close).not.toHaveBeenCalled();
 
 		const seen: ChangeEvent[] = [];
-		hub.subscribe("/project", (event) => seen.push(event));
+		hub.subscribe(root, (event) => seen.push(event));
 		expect(tree.watchTree).toHaveBeenCalledTimes(1);
 
 		// no fresh watcher means no fresh arming window: the first edit after the
@@ -179,9 +187,10 @@ describe("how long a watcher outlives its last subscriber", () => {
 
 	it("lets the handle go once nobody has come back", async () => {
 		vi.useFakeTimers();
+		const root = project();
 		const hub = createChangeHub();
 
-		hub.subscribe("/project", () => {})();
+		hub.subscribe(root, () => {})();
 		await vi.advanceTimersByTimeAsync(9_000);
 		expect(watcher.close).not.toHaveBeenCalled();
 
@@ -189,16 +198,17 @@ describe("how long a watcher outlives its last subscriber", () => {
 		expect(watcher.close).toHaveBeenCalledTimes(1);
 
 		// and the next subscriber is watching a folder again, not a closed handle
-		hub.subscribe("/project", () => {});
+		hub.subscribe(root, () => {});
 		expect(tree.watchTree).toHaveBeenCalledTimes(2);
 		hub.close();
 	});
 
 	it("lets it go on close, whatever the window was doing", async () => {
 		vi.useFakeTimers();
+		const root = project();
 		const hub = createChangeHub();
 
-		hub.subscribe("/project", () => {})();
+		hub.subscribe(root, () => {})();
 		hub.close();
 
 		expect(watcher.close).toHaveBeenCalledTimes(1);
@@ -242,4 +252,71 @@ it("reports a failed tree handle immediately and permits a new observation subsc
 	hub.observeSource(root, (event) => seen.push(event));
 	expect(tree.watchTree).toHaveBeenCalledTimes(2);
 	hub.close();
+});
+
+it("fresh observation recovers after initial transient watcher failure", () => {
+	const root = project();
+	const hub = createChangeHub();
+	onTestFinished(() => hub.close());
+	tree.watchTree.mockImplementationOnce(() => {
+		throw new Error("transient watcher setup failure");
+	});
+	const first: SourceObservation[] = [];
+	const release = hub.observeSource(root, (event) => first.push(event));
+	expect(first).toEqual([{ kind: "lost" }]);
+	release();
+	const second: SourceObservation[] = [];
+	hub.observeSource(root, (event) => second.push(event));
+	expect(tree.watchTree).toHaveBeenCalledTimes(2);
+	expect(second).toEqual([]);
+});
+
+it.each(["setup", "error"] as const)(
+	"recovers fresh source observation after configuration watcher %s failure",
+	(failure) => {
+		const root = project();
+		const hub = createChangeHub();
+		onTestFinished(() => hub.close());
+		if (failure === "setup")
+			rootWatch.mockImplementationOnce(() => {
+				throw new Error("transient configuration watch failure");
+			});
+		const first: SourceObservation[] = [];
+		const release = hub.observeSource(root, (event) => first.push(event));
+		if (failure === "error") {
+			const handle: FSWatcher = rootWatch.mock.results.at(-1)?.value;
+			handle.emit("error", new Error("lost configuration watch"));
+		}
+		expect(first).toEqual([{ kind: "lost" }]);
+		release();
+		const second: SourceObservation[] = [];
+		hub.observeSource(root, (event) => second.push(event));
+		expect(rootWatch).toHaveBeenCalledTimes(2);
+		expect(tree.watchTree).toHaveBeenCalledTimes(2);
+		expect(second).toEqual([]);
+		onChange?.("frames/home/frame.tsx");
+		expect(second).toEqual([{ kind: "named", path: join(root, "design/frames/home/frame.tsx") }]);
+	},
+);
+
+it("keeps an open canvas subscriber through source observation recovery and releases its new handle", async () => {
+	vi.useFakeTimers();
+	const root = project();
+	const hub = createChangeHub();
+	onTestFinished(() => hub.close());
+	const changes: ChangeEvent[] = [];
+	const leaveCanvas = hub.subscribe(root, (event) => changes.push(event));
+	const leaveSource = hub.observeSource(root, () => {});
+	const alreadyClosed = watcher.close.mock.calls.length;
+	const handle: FSWatcher = rootWatch.mock.results.at(-1)?.value;
+	handle.emit("error", new Error("lost watch"));
+	leaveSource();
+	const leaveFresh = hub.observeSource(root, () => {});
+	onChange?.("frames/hello/frame.tsx");
+	await vi.advanceTimersByTimeAsync(100);
+	expect(changes).toEqual([{ kind: "frame", frame: "hello" }]);
+	leaveFresh();
+	leaveCanvas();
+	await vi.advanceTimersByTimeAsync(11000);
+	expect(watcher.close).toHaveBeenCalledTimes(alreadyClosed + 2);
 });

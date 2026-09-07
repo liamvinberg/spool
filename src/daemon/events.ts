@@ -95,9 +95,16 @@ const WATCH_LINGER_MS = 10_000;
 export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undefined }) {
 	const roots = new Map<string, RootWatch>();
 
-	function subscribe(root: string, listener: Listener): () => void {
-		const entry = roots.get(root) ?? start(root);
+	function acquire(root: string): RootWatch {
+		const previous = roots.get(root);
+		if (previous?.covered) return previous;
+		previous?.stop();
+		const entry = start(root, previous?.listeners);
 		roots.set(root, entry);
+		return entry;
+	}
+	function subscribe(root: string, listener: Listener): () => void {
+		const entry = acquire(root);
 		// a stream that came back inside the window keeps the watcher it left
 		if (entry.linger !== undefined) {
 			clearTimeout(entry.linger);
@@ -106,26 +113,23 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		entry.listeners.add(listener);
 		return () => {
 			entry.listeners.delete(listener);
-			if (
-				entry.listeners.size > 0 ||
-				entry.sources.size > 0 ||
-				roots.get(root) !== entry ||
-				entry.linger !== undefined
-			)
+			const current = roots.get(root);
+			if (!current || current.listeners !== entry.listeners) return;
+			const held = current;
+			if (held.listeners.size > 0 || held.sources.size > 0 || roots.get(root) !== held || held.linger !== undefined)
 				return;
 			// the last subscriber does not take the watcher with it straight away
-			entry.linger = setTimeout(() => {
-				entry.linger = undefined;
-				if (entry.listeners.size > 0 || entry.sources.size > 0 || roots.get(root) !== entry) return;
-				entry.stop();
+			held.linger = setTimeout(() => {
+				held.linger = undefined;
+				if (held.listeners.size > 0 || held.sources.size > 0 || roots.get(root) !== held) return;
+				held.stop();
 				roots.delete(root);
 			}, WATCH_LINGER_MS);
-			entry.linger.unref?.();
+			held.linger.unref?.();
 		};
 	}
 
-	function start(root: string): RootWatch {
-		const listeners = new Set<Listener>();
+	function start(root: string, listeners = new Set<Listener>()): RootWatch {
 		const pending = new Map<string, ChangeEvent>();
 		let timer: NodeJS.Timeout | undefined;
 		const sources = new Set<SourceListener>();
@@ -140,6 +144,7 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 			},
 		};
 		function lost(): void {
+			if (!entry.covered) return;
 			entry.covered = false;
 			for (const emit of sources) emit({ kind: "lost" });
 		}
@@ -182,7 +187,6 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 				() => {
 					lost();
 					clear();
-					if (roots.get(root) === entry) roots.delete(root);
 				},
 			);
 			try {
@@ -207,7 +211,9 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 
 		function clear(): void {
 			watcher?.close();
+			watcher = undefined;
 			configuration?.close();
+			configuration = undefined;
 			if (timer !== undefined) clearTimeout(timer);
 			timer = undefined;
 			if (entry.linger !== undefined) clearTimeout(entry.linger);
@@ -239,8 +245,7 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 	}
 
 	function observeSource(root: string, listener: SourceListener): () => void {
-		const entry = roots.get(root) ?? start(root);
-		roots.set(root, entry);
+		const entry = acquire(root);
 		entry.sources.add(listener);
 		if (!entry.covered) listener({ kind: "lost" });
 		return () => {
