@@ -849,6 +849,32 @@ describe("one turn", () => {
 		expect(caret(canvas.host)).toBeNull();
 	});
 
+	it.each(["done", "stopped", "failed", "closed"] as const)(
+		"clears an unfinished paragraph's cursor after %s",
+		async (ending) => {
+			const canvas = mount();
+			await canvas.render();
+			await send(canvas.host, "go");
+			canvas.turn.push(waiting);
+			canvas.turn.push(speaking);
+			canvas.turn.push(say("The header is tighter.\n\nThe receipt"));
+			await settle(120);
+			expect(caret(canvas.host)).not.toBeNull();
+
+			if (ending !== "closed") {
+				canvas.turn.push({ kind: "ended", ending, reason: ending, stopReason: null, parent: null });
+			}
+			canvas.turn.push(closed);
+			canvas.turn.close();
+			await settle(1400);
+
+			expect(log(canvas.host)).toContain("The header is tighter.");
+			expect(log(canvas.host)).toContain("The receipt");
+			expect(caret(canvas.host)).toBeNull();
+			expect(canvas.host.querySelector("[data-agent-caret-line]")).toBeNull();
+		},
+	);
+
 	/**
 	 * The loop closes without the human carrying anything across it: the frame lands on
 	 * disk, the daemon's watcher says so, and the canvas repaints it — all while the
@@ -3557,6 +3583,36 @@ describe("a thread waiting on a person", () => {
 });
 
 describe("what survives a restart", () => {
+	it.each([false, true])("removes a saved prose cursor when stopped is %s", async (stopped) => {
+		const canvas = mount();
+		canvas.stored.served = [
+			storedThread({
+				id: ONE,
+				ask: "tighten the header",
+				life: stopped ? "running" : "read",
+				stopped,
+				entries: [
+					{ key: "u0", kind: "user", text: "tighten the header", context: null, attached: null },
+					{ key: "p0", kind: "prose", full: "The header is tighter.\n\nThe receipt", settled: false },
+				],
+				kept: 2,
+			}),
+		];
+		await canvas.render();
+		await settle();
+
+		expect(log(canvas.host)).toContain("The header is tighter.");
+		expect(log(canvas.host)).toContain("The receipt");
+		expect(caret(canvas.host)).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-caret-line]")).toBeNull();
+		expect(canvas.host.querySelector(".animate-agent-paragraph")).toBeNull();
+
+		await newThread(canvas.host);
+		await openCell(canvas.host, "tighten the header");
+		expect(log(canvas.host)).toContain("The receipt");
+		expect(caret(canvas.host)).toBeNull();
+	});
+
 	it("restores every thread the daemon kept, identical to a live one", async () => {
 		const canvas = mount();
 		canvas.stored.served = [
