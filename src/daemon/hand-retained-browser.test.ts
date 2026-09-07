@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
@@ -446,6 +446,10 @@ export default function Frame(){useEffect(()=>{window.mounts=(window.mounts||0)+
 	await expect.poll(() => second.locator("#second-label").getAttribute("data-spool-shared-use")).toBe("");
 	expect(await f.frame.locator("#unrelated").getAttribute("data-spool-shared-use")).toBe(null);
 	await f.page.mouse.move(5, 5);
+	await expect.poll(() => second.locator("#second-label").getAttribute("data-spool-shared-use")).toBe("");
+	expect(await f.frame.locator("#label").getAttribute("data-spool-shared-use")).toBe(null);
+	await disclosure.click();
+	await f.page.mouse.move(5, 5);
 	await f.edit();
 	await replace(f.page, "Shared draft");
 	await expect.poll(() => second.locator("#second-label").textContent()).toBe("Shared draft");
@@ -534,4 +538,37 @@ it("adds a missing supported attribute with no initial prop change and removes i
 	await f.page.keyboard.press("ControlOrMeta+z");
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
 	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe(null);
+});
+
+it("undoes a shared source after normal page navigation and deletion of its initiating consumer", {
+	timeout: 120_000,
+}, async () => {
+	const shared = 'export function Label(){return <h1 id="label" style={{margin:0,fontSize:30}}>Before</h1>}';
+	const consumer =
+		'import {Label} from "shared/label";export default function Frame(){return <main style={{padding:40}}><Label/></main>}';
+	const f = await served(consumer, (root) => {
+		writeDesignFile(root, "shared/label.tsx", shared);
+		writeFrame(root, "second", consumer);
+		writeDesignFile(root, "frames/second/frame.json", '{"x":800,"y":0,"w":450,"h":400}');
+		writeDesignFile(root, "frames/cold-page/cold/frame.tsx", consumer);
+	});
+	await f.edit();
+	await replace(f.page, "Saved shared");
+	await f.page.keyboard.press("Enter");
+	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toContain("Saved shared");
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	await f.select();
+	await f.page.getByRole("button", { name: "Show affected uses", exact: true }).click();
+	await f.page.locator("[data-source-uses]").getByRole("button", { name: "cold not mounted ↗", exact: true }).click();
+	const cold = f.page.frameLocator('iframe[title="cold"]');
+	await expect.poll(() => cold.locator("#label").textContent()).toBe("Saved shared");
+	expect(await f.page.locator('iframe[title="home"]').count()).toBe(0);
+	rmSync(join(f.root, "design/frames/home"), { recursive: true });
+	await f.page.mouse.click(5, 5);
+	await f.page.keyboard.press("ControlOrMeta+z");
+	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
+	await expect.poll(() => cold.locator("#label").textContent()).toBe("Before");
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	await f.page.keyboard.press("ControlOrMeta+Shift+z");
+	await expect.poll(() => cold.locator("#label").textContent()).toBe("Saved shared");
 });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "@babel/parser";
 import { expect, it, onTestFinished } from "vitest";
@@ -701,4 +701,23 @@ it("preserves a separately retained literal attribute across a rebased text save
 	expect(undone.ok).toBe(true);
 	expect(readFileSync(f.file, "utf8")).toBe(SOURCE.replace('defaultValue="keep"', 'defaultValue="changed"'));
 	if (undone.ok && undone.publication) f.owner.delivered(undone.publication.packet.id);
+});
+
+it("keeps shared source inverse authority after every consuming frame is removed", async () => {
+	const shared = 'export function Label(){return <h1>{"Hello"}</h1>}';
+	const f = await fixture((root) => {
+		writeDesignFile(root, "shared/label.tsx", shared);
+		writeFrame(root, "home", 'import {Label} from "shared/label";export default function Frame(){return <Label/>}');
+	});
+	const saved = await f.commit(f.read, "Changed");
+	if (!saved.ok || !saved.receipt || !saved.publication) throw new Error("no shared save");
+	f.owner.delivered(saved.publication.packet.id);
+	rmSync(join(f.root, "design/frames/home"), { recursive: true });
+	const undone = await f.owner.inverse(f.root, saved.receipt, []);
+	expect(undone).toMatchObject({ ok: true, source: "saved", publication: null });
+	expect(readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
+	if (!undone.ok || !undone.receipt) throw new Error("no source-owned redo");
+	const redone = await f.owner.inverse(f.root, undone.receipt, []);
+	expect(redone).toMatchObject({ ok: true, source: "saved", publication: null });
+	expect(readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toContain("Changed");
 });

@@ -288,13 +288,13 @@ function sameFlowElement(call: Call, slot: string, selection: Selection): boolea
 	const value = call.values?.fields[slot]?.value;
 	return (
 		!call.retainedProps &&
-		selection.element !== undefined &&
+		selection.values?.id !== undefined &&
 		value !== null &&
 		typeof value === "object" &&
 		"kind" in value &&
 		"id" in value &&
 		value.kind === "element" &&
-		value.id === selection.element
+		value.id === selection.values.id
 	);
 }
 

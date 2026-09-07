@@ -60,6 +60,7 @@ export interface SourceRead {
 export type SourceDescription = Omit<SourceRead, "handle" | "owner" | "generation">;
 
 export interface SourceReceipt {
+	field?: string | undefined;
 	handle: string;
 	owner: string;
 }

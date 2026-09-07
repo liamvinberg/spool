@@ -21,7 +21,14 @@ import type { SourceObservation } from "./events";
 import { planFactoryLiteral } from "./factory-literal";
 import { applySpan, type HandOp, planOps, type SpanPatch, spanBetween } from "./hand-write";
 import { lookupFrame } from "./projection";
-import { directoryEntries, type RetainedCompilation, readInput, type SourceInput, sameInput } from "./retained-compile";
+import {
+	directoryEntries,
+	lowerLiterals,
+	type RetainedCompilation,
+	readInput,
+	type SourceInput,
+	sameInput,
+} from "./retained-compile";
 import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from "./source-agent";
 import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
@@ -30,6 +37,7 @@ import { sourceTarget } from "./source-syntax";
 import { resolveTextSource } from "./source-target";
 
 interface OriginalRead {
+	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
 	target?: Target;
@@ -381,7 +389,14 @@ export function createSourceOwner(
 		const rebased = new Map(
 			[...held.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
 		);
-		if ([...rebased].some(([file, input]) => !sameInput(input, held.compilation.inputs.get(file)!))) {
+		if (held.sourceOnly) {
+			for (const [file, input] of rebased)
+				if (/\.[cm]?[jt]sx?$/.test(file)) {
+					const path = relative(realDesignDir(held.root), file);
+					if (lowerLiterals(path, input.bytes.toString("utf8")).shape !== held.compilation.shapes[path])
+						throw new Error("the source role or executable context changed before saving");
+				}
+		} else if ([...rebased].some(([file, input]) => !sameInput(input, held.compilation.inputs.get(file)!))) {
 			const certified = await compiler.compilePublication(
 				held.root,
 				held.frame,
@@ -422,7 +437,11 @@ export function createSourceOwner(
 		);
 		frozen.set(held.file, after);
 		for (const [file, input] of frozen) continuity.set(file, input);
-		const receipt: SourceReceipt = { owner, handle: randomUUID() };
+		const receipt: SourceReceipt = {
+			owner,
+			handle: randomUUID(),
+			...(held.read.original.field ? { field: held.read.original.field } : {}),
+		};
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
 			required: sourceHistoryCompilation(held.root, saved, held.file),
@@ -444,6 +463,24 @@ export function createSourceOwner(
 			retired: false,
 		};
 		receipts.set(receipt.handle, inverse);
+		if (held.sourceOnly) {
+			const cells: RetainedCompilation["cells"] = {};
+			for (const [file, input] of frozen)
+				if (/\.[cm]?[jt]sx?$/.test(file))
+					Object.assign(
+						cells,
+						lowerLiterals(relative(realDesignDir(held.root), file), input.bytes.toString("utf8")).cells,
+					);
+			inverse.compilation = { ...saved, cells };
+			inverse.required = sourceHistoryCompilation(held.root, inverse.compilation, held.file);
+			return {
+				ok: true,
+				source: "saved",
+				publication: null,
+				receipt,
+				reason: "Source saved; no mounted affected use was available to verify.",
+			};
+		}
 		try {
 			const retained = await compiler.compilePublication(
 				held.root,
@@ -643,7 +680,7 @@ export function createSourceOwner(
 			}
 		});
 	}
-	function inverse(root: string, receipt: SourceReceipt): Promise<SourceResult> {
+	function inverse(root: string, receipt: SourceReceipt, inventories?: SourceInventory[]): Promise<SourceResult> {
 		return ordered(root, async () => {
 			const held = receipts.get(receipt.handle);
 			try {
@@ -655,6 +692,52 @@ export function createSourceOwner(
 				let compilation = held.compilation;
 				let original = held.original;
 				let reach = held.reach;
+				if (inventories) {
+					const uses: SourceUse[] = [],
+						unknown: string[] = [];
+					for (const inventory of inventories) {
+						const publication = compiler.publication(inventory.publication);
+						if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
+							unknown.push(inventory.frame);
+							continue;
+						}
+						if (!publication.compilation.cells[held.cell]) continue;
+						try {
+							valid(root, publication.compilation);
+						} catch {
+							unknown.push(inventory.frame);
+							continue;
+						}
+						if (inventory.unknown) unknown.push(inventory.frame);
+						for (const use of inventory.uses) {
+							if (use.original.publication !== inventory.publication) continue;
+							try {
+								if (
+									resolveTextSource(root, publication.compilation, use.original, held.generation).cellKey ===
+									held.cell
+								)
+									uses.push({ frame: inventory.frame, ...use });
+							} catch {
+								unknown.push(inventory.frame);
+							}
+						}
+					}
+					const dependent = await dependencyFrames(root, held.file);
+					reach = {
+						uses,
+						unmounted: (dependent ?? []).filter(
+							(frame) => !inventories.some((inventory) => inventory.frame === frame),
+						),
+						unknown: [...new Set(dependent ? unknown : [...unknown, "source coverage"])],
+					};
+					const consumer = uses.find((use) => use.frame === held.frame) ?? uses[0];
+					const publication = consumer ? compiler.publication(consumer.original.publication) : undefined;
+					if (consumer && publication) {
+						frame = consumer.frame;
+						compilation = publication.compilation;
+						original = consumer.original;
+					}
+				}
 				if (lookupFrame(root, frame).kind !== "found") {
 					const consumer = reach?.uses.find((use) => lookupFrame(root, use.frame).kind === "found");
 					const publication = consumer ? compiler.publication(consumer.original.publication) : undefined;
@@ -670,6 +753,9 @@ export function createSourceOwner(
 						uses: reach.uses.filter((use) => lookupFrame(root, use.frame).kind === "found"),
 						unmounted: reach.unmounted.filter((name) => lookupFrame(root, name).kind === "found"),
 					};
+				const sourceOnly =
+					lookupFrame(root, frame).kind !== "found" || (inventories !== undefined && reach?.uses.length === 0);
+				if (sourceOnly) compilation = held.required;
 				held.retired = true;
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the inverse source read is incomplete");
@@ -682,6 +768,7 @@ export function createSourceOwner(
 				return await publish(
 					{
 						observer: "",
+						sourceOnly,
 						coverage: held.coverage,
 						root,
 						frame,
