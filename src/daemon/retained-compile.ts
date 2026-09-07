@@ -25,6 +25,7 @@ export interface LiteralCell {
 	syntax?: "jsx" | "react-call";
 }
 export interface RetainedCompilation {
+	globDiscoveries?: readonly { importer: string; files: readonly string[]; directories: readonly string[] }[];
 	packet: RetainedValues;
 	cells: Record<string, LiteralCell>;
 	inputs: Map<string, SourceInput>;
