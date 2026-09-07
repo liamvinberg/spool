@@ -350,6 +350,7 @@ export function ProjectCanvas({
 	const [spaceDown, setSpaceDown] = useState(false);
 	const [panning, setPanning] = useState(false);
 	const [resizeCursor, setResizeCursor] = useState<string | null>(null);
+	const [resizingFrame, setResizingFrame] = useState<string | null>(null);
 	const [marks, setMarks] = useState<SnapMarks>(NO_MARKS);
 	const [marquee, setMarquee] = useState<Box | null>(null);
 	const [menu, setMenu] = useState<CanvasContextMenu | null>(null);
@@ -728,15 +729,14 @@ export function ProjectCanvas({
 		[project],
 	);
 
-	const selectedFrame = selected[selected.length - 1];
 	// A pointing tool owns every frame represented by its element picks. Without
 	// picks, the selected frame and entered-frame modifier keep their intent.
 	const selectionTargets = useMemo(() => {
 		if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
 		if (!pointerTool) return new Set<string>();
-		const fallback = selectedFrame ?? (accelDown ? entered : null);
-		return fallback === null ? new Set<string>() : new Set([fallback]);
-	}, [pointerTool, picked, selectedFrame, accelDown, entered]);
+		if (selected.length > 0) return new Set(selected);
+		return accelDown && entered !== null ? new Set([entered]) : new Set<string>();
+	}, [pointerTool, picked, selected, accelDown, entered]);
 	// the walks this page can take that no arrow can reach: the ones that land
 	// on another page (#151). Derived at rest — the layer is never gated on a
 	// selection, because the gap it fills is the frames you did not pick.
@@ -759,6 +759,7 @@ export function ProjectCanvas({
 		allFramesRef,
 		entered,
 		selectionTargets,
+		resizing: resizingFrame,
 		selected,
 		hovered: hoveredFrame,
 		hasCover: hasCover,
@@ -771,6 +772,21 @@ export function ProjectCanvas({
 	lifecycleRef.current = lifecycle;
 	const sweepLifecycle = lifecycle.sweep;
 	const noteCameraMoving = lifecycle.noteCameraMoving;
+	const contentRequest = useRef(0);
+	const contentSize = useRef<{ frame: string; width: number; height: number } | null>(null);
+	const resizingWidth = frames.find((frame) => frame.name === resizingFrame)?.w;
+	useEffect(() => {
+		contentRequest.current += 1;
+		if (resizingFrame === null || resizingWidth === undefined) {
+			contentSize.current = null;
+			return;
+		}
+		if (contentSize.current?.width !== Math.round(resizingWidth)) contentSize.current = null;
+		if (!lifecycle.ready.has(resizingFrame)) return;
+		iframes.current
+			.get(resizingFrame)
+			?.contentWindow?.postMessage({ spool: "content-size", id: contentRequest.current }, "*");
+	}, [resizingFrame, resizingWidth, lifecycle.ready]);
 
 	/** The held document lets go: the one behind it has loaded, or given up. */
 	const releaseHold = useCallback((frame: string) => {
@@ -884,7 +900,7 @@ export function ProjectCanvas({
 	 */
 	const footprints = useRef(new Map<string, string>());
 	useEffect(() => {
-		if (gesture.current.kind === "resize") return;
+		if (resizingFrame !== null || gesture.current.kind === "resize") return;
 		const seen = new Map<string, string>();
 		for (const frame of frames) {
 			const footprint = `${Math.round(frame.w)}×${Math.round(frame.h)}`;
@@ -893,7 +909,7 @@ export function ProjectCanvas({
 			if (before !== undefined && before !== footprint) lifecycleRef.current.markStale(frame.name);
 		}
 		footprints.current = seen;
-	}, [frames]);
+	}, [frames, resizingFrame]);
 
 	const onIframe = useCallback((name: string, el: HTMLIFrameElement | null) => {
 		if (el === null) iframes.current.delete(name);
@@ -2847,6 +2863,16 @@ export function ProjectCanvas({
 			if (message === undefined) return;
 			if (!ownsFrameMessage(iframes.current, message.frame, event.source)) return;
 			switch (message.spool) {
+				case "content-size": {
+					const active = gesture.current;
+					if (active.kind !== "resize" || active.frame !== message.frame || message.id !== contentRequest.current)
+						return;
+					const frame = framesRef.current.find((entry) => entry.name === message.frame);
+					if (frame === undefined || message.width !== Math.round(frame.w)) return;
+					if (message.height !== null)
+						contentSize.current = { frame: message.frame, width: message.width, height: message.height };
+					return;
+				}
 				case "copy": {
 					const source = event.source as WindowProxy;
 					const blocked = departedFrameDocuments.current.has(message.frame);
@@ -2927,6 +2953,13 @@ export function ProjectCanvas({
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
 					lifecycleRef.current.noteArrived(message.frame);
+					// Fonts and entry motion can change the bottom after loaded.
+					if (gesture.current.kind === "resize" && gesture.current.frame === message.frame) {
+						contentRequest.current += 1;
+						iframes.current
+							.get(message.frame)
+							?.contentWindow?.postMessage({ spool: "content-size", id: contentRequest.current }, "*");
+					}
 					return;
 				case "capture-source":
 					lifecycleRef.current.noteCaptureSource(message, event.source);
@@ -3447,6 +3480,7 @@ export function ProjectCanvas({
 		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
+		setResizingFrame(null);
 		setElementDrag(null);
 		setPanning(false);
 		if (active.kind === "move") {
@@ -3589,6 +3623,7 @@ export function ProjectCanvas({
 					origin: { x: frame.x, y: frame.y, w: frame.w, h: frame.h },
 				};
 				setResizeCursor(HANDLE_CURSORS[handle]);
+				setResizingFrame(single);
 				return;
 			}
 		}
@@ -3882,7 +3917,12 @@ export function ProjectCanvas({
 				}
 			}
 			if (handle.includes("n") || handle.includes("s")) {
-				const snap = snapEdge(world.y, statics, "y", threshold);
+				const content = contentSize.current;
+				const stops =
+					content?.frame === active.frame && content.width === Math.round(w)
+						? [handle.includes("n") ? anchor.y - content.height : anchor.y + content.height]
+						: [];
+				const snap = snapEdge(world.y, statics, "y", threshold, stops);
 				let edge = snap.value;
 				hGuides = snap.guides;
 				if (handle.includes("n")) {
@@ -3971,6 +4011,7 @@ export function ProjectCanvas({
 		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
+		setResizingFrame(null);
 		setElementDrag(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
@@ -4630,6 +4671,7 @@ export function ProjectCanvas({
 											ready={lifecycle.ready.has(frame.name)}
 											settled={lifecycle.settled.has(frame.name)}
 											entered={isEntered}
+											active={selectionTargets.has(frame.name)}
 											// an open in-place edit gives the frame its pointer back, so
 											// the caret lands where the click did and the words can be
 											// typed into the element itself (#255). Only once it is open:

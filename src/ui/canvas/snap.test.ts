@@ -13,6 +13,13 @@ import { runOf, snapEdge, snapMovedBox } from "./snap";
 
 const box = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
 
+it("catches a resize at the content edge and lets a deliberate drag pass it", () => {
+	expect(snapEdge(805, [], "y", 8, [800])).toEqual({ value: 800, guides: [800] });
+	expect(snapEdge(820, [], "y", 8, [800])).toEqual({ value: 820, guides: [] });
+	// Nearby frame edges still compete by distance.
+	expect(snapEdge(805, [box(0, 803, 100, 100)], "y", 8, [800])).toEqual({ value: 803, guides: [803] });
+});
+
 describe("snapMovedBox", () => {
 	it("pulls a near-aligned left edge onto the static's left edge", () => {
 		const result = snapMovedBox(box(103, 500, 100, 100), [box(100, 0, 200, 100)], 8);

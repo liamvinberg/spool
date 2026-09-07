@@ -1372,9 +1372,49 @@ const canvasShimJs = `(() => {
 	 * canvas is asking when it may stop standing a picture in front of this one.
 	 */
 	let arrivalReported = false;
+	// Read the page, not #root: spool's root always fills the viewport. A
+	// viewport-sized app has no independent bottom to snap to. Fixed overlays
+	// and content clipped inside a scrolling panel do not extend the page.
+	function contentHeight() {
+		const root = document.getElementById("root");
+		if (!root) return null;
+		function bottomOf(el) {
+			const style = getComputedStyle(el);
+			if (style.display === "none" || style.visibility === "hidden" || style.position === "fixed") return 0;
+			const rect = el.getBoundingClientRect();
+			let bottom = rect.width > 0 || rect.height > 0 ? rect.bottom + scrollY : 0;
+			if (style.overflowY === "visible" || style.overflowY === "") {
+				for (const child of el.children) bottom = Math.max(bottom, bottomOf(child));
+			}
+			return bottom;
+		}
+		let bottom = 0;
+		let fillsViewport = false;
+		for (const child of root.children) {
+			const childBottom = bottomOf(child);
+			if (!(childBottom > 0)) continue;
+			bottom = Math.max(bottom, childBottom);
+			const rect = child.getBoundingClientRect();
+			const style = child.computedStyleMap();
+			const height = String(style.get("height"));
+			const minHeight = String(style.get("min-height"));
+			if (Math.abs(rect.bottom + scrollY - innerHeight) <= 1 &&
+				(height !== "auto" || minHeight.includes("%") || parseFloat(minHeight) >= innerHeight)) fillsViewport = true;
+		}
+		if (!(bottom > 0) || (fillsViewport && Math.abs(bottom - innerHeight) <= 1)) return null;
+		return Math.ceil(bottom);
+	}
 	addEventListener("message", async (event) => {
 		const m = event.data;
 		if (!m || typeof m !== "object") return;
+		if (m.spool === "content-size") {
+			const config = window.__SPOOL__ || {};
+			if (event.source !== parent || event.origin !== config.controlOrigin || !Number.isSafeInteger(m.id)) return;
+			let height = null;
+			try { height = contentHeight(); } catch {}
+			parent.postMessage({ spool: "content-size", frame: config.frame, id: m.id, width: innerWidth, height }, "*");
+			return;
+		}
 		if (m.spool === "arrive") {
 			// The same settle a capture waits out, answered as a bare report (#177).
 			// Loaded is mid-arrival: an entry animation is at its beginning where

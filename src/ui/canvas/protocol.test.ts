@@ -8,6 +8,17 @@ import {
 	walkRejectionReason,
 } from "./protocol";
 
+it("accepts a content measurement only with finite dimensions and a request id", () => {
+	const message = { spool: "content-size", frame: "landing", id: 3, width: 1440, height: 900 };
+	expect(parseFrameMessage(message)).toEqual(message);
+	expect(parseFrameMessage({ ...message, height: null })).toEqual({ ...message, height: null });
+	for (const height of [0, -1, NaN, Infinity, "900"]) {
+		expect(parseFrameMessage({ ...message, height })).toBeUndefined();
+	}
+	expect(parseFrameMessage({ ...message, width: 0 })).toBeUndefined();
+	expect(parseFrameMessage({ ...message, id: 1.5 })).toBeUndefined();
+});
+
 describe("trusted capture source protocol", () => {
 	const id = "0123456789abcdef0123456789abcdef";
 	const svg = new Blob(["<svg/>"], { type: "image/svg+xml" });

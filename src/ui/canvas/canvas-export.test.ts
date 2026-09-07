@@ -31,7 +31,7 @@ const frames = [
 ];
 
 describe("multi-frame canvas export", () => {
-	it("mounts covered HTML frames one at a time and captures each at full resolution", async () => {
+	it("captures selected frames one at a time at full resolution while they stay live", async () => {
 		vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 		const requests: string[] = [];
 		vi.stubGlobal(
@@ -120,7 +120,7 @@ describe("multi-frame canvas export", () => {
 				}),
 			);
 		});
-		await until(() => heldB.parentElement?.style.visibility === "hidden");
+		await until(() => heldB.parentElement?.style.visibility === "visible");
 
 		// export lost its key to the Edit tool, so the frame's own menu opens it
 		await act(async () => {
@@ -149,7 +149,7 @@ describe("multi-frame canvas export", () => {
 		]);
 		expect(requests.filter((path) => path.startsWith("/covers/"))).toEqual([]);
 		const restoredSelection = host.querySelector<HTMLIFrameElement>('iframe[title="b"]');
-		expect(restoredSelection?.parentElement?.style.visibility).toBe("hidden");
+		expect(restoredSelection?.parentElement?.style.visibility).toBe("visible");
 	});
 });
 
@@ -188,8 +188,7 @@ async function completeMountedCapture(
 	const iframe = host.querySelector<HTMLIFrameElement>(`iframe[title="${frame}"]`);
 	const sourceWindow = iframe?.contentWindow;
 	if (iframe === null || sourceWindow == null) throw new Error(`${frame} did not mount`);
-	expect(iframe.parentElement?.style.visibility).toBe("hidden");
-	expect(host.querySelector(`[data-frame-cover="${frame}"]`)).not.toBeNull();
+	expect(iframe.parentElement?.style.visibility).toBe("visible");
 	const postMessage = loadedPost ?? vi.spyOn(sourceWindow, "postMessage");
 
 	if (loadedPost === undefined) {

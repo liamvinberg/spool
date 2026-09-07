@@ -19,17 +19,13 @@ import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage }
  * and 3 are the same errand: borrow the frame long enough to photograph it.
  * The sweep hands that errand out a couple at a time.
  *
- * Intent holds a document too: every frame represented by the element
- * selection. With no element picks, Select instead holds the selected frame,
- * or the entered frame while its modifier is down. A frame being exported is
- * held separately. A readable selected HTML frame stays
- * live; an unreadable one stays held behind its still and keeps running.
+ * Selection makes its frames live at every zoom, so moving, resizing and
+ * editing work on the visible document. A frame being exported is held
+ * separately. Selected frames prepare missing or stale pictures in the
+ * background, except while a resize is still changing their viewport.
  *
  * A picture stands in below the readable threshold. Above it, a nearby frame
  * is live; a borrowed or held frame remains behind its still.
- *
- * Documents keep running: Select leaves a readable one live, and an
- * unreadable held one runs behind its still.
  *
  * Live HTML frames hold their animations while the camera moves (#171) and
  * again once nothing has attended them for a long minute (#172) — the mount is
@@ -241,6 +237,8 @@ export interface SweepInput {
 	entered: string | null;
 	/** Every frame Select currently owns: mounted for the element selection. */
 	selectionTargets: ReadonlySet<string>;
+	/** A resize is still changing the viewport; photograph only its final size. */
+	resizing?: string | null;
 	/** A frame being read rather than looked at — an export in flight holds one mounted. */
 	held: string | null;
 	states: Readonly<Record<string, FrameState>>;
@@ -408,10 +406,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			model.modelLive.add(name);
 		}
 		let intent: FrameState | null;
-		if (selected && modelLive) {
+		if (selected) {
 			intent = "live";
-		} else if (selected) {
-			intent = "held";
 		} else if (entered === name || modelLive) {
 			intent = "live";
 		} else if (held === name) {
@@ -513,7 +509,16 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// The photograph is the errand's whole point, taken the moment the
 		// borrowed document has run long enough to be worth one — or, past
 		// CAPTURE_MAX_STALE_MS, the moment it merely holds one (#215).
-		if (intent === null && target === "refreshing" && debt && model.arrived.has(name) && !capturing.has(name)) {
+		if (
+			(target === "refreshing" || selectionTargets.has(name)) &&
+			input.resizing !== name &&
+			entered !== name &&
+			held !== name &&
+			debt &&
+			model.arrived.has(name) &&
+			!capturing.has(name) &&
+			refreshCaptures.length + capturing.size < ERRANDS_IN_FLIGHT
+		) {
 			refreshCaptures.push({ frame: name, overdue });
 		}
 		next[name] = target;
@@ -581,12 +586,10 @@ export interface LifecycleDeps {
 	allFramesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
 	selectionTargets: ReadonlySet<string>;
+	resizing?: string | null;
 	/**
-	 * The whole frame selection, which keeps those frames awake (#172) and
-	 * nothing else. `selectionTargets` is intent, not the selection — the one
-	 * frame Select mounts for, and nothing at all in another tool — while three
-	 * frames picked to compare are three frames somebody is using, whichever
-	 * tool is up.
+	 * The whole frame selection keeps its frames awake even while another
+	 * tool is up. `selectionTargets` determines which documents are shown.
 	 */
 	selected: readonly string[];
 	/**
@@ -623,6 +626,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		allFramesRef,
 		entered,
 		selectionTargets,
+		resizing = null,
 		selected,
 		hovered,
 		hasCover,
@@ -651,6 +655,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	enteredRef.current = entered;
 	const selectionTargetsRef = useRef(selectionTargets);
 	selectionTargetsRef.current = selectionTargets;
+	const resizingRef = useRef(resizing);
+	resizingRef.current = resizing;
 	const selectedRef = useRef(selected);
 	selectedRef.current = selected;
 	const hoveredRef = useRef(hovered);
@@ -1005,6 +1011,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			frames: framesRef.current,
 			entered: enteredRef.current,
 			selectionTargets: selectionTargetsRef.current,
+			resizing: resizingRef.current,
 			held: exportFrame.current,
 			states: statesRef.current,
 			ready: readyRef.current,
@@ -1111,8 +1118,19 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	useEffect(() => {
 		enteredRef.current = entered;
 		selectionTargetsRef.current = selectionTargets;
+		// A shot begun before the grab has the old viewport. Retire it before
+		// allowing the drag's final footprint to start a new capture.
+		const pending = resizing === null ? undefined : captureWaiters.current.get(resizing);
+		if (pending !== undefined && resizing !== null) noteShot(resizing, pending.id, undefined);
 		compute();
-	}, [entered, selectionTargets, compute]);
+	}, [entered, selectionTargets, resizing, compute, noteShot]);
+
+	// The document already waited for fonts and entry motion. Its arrival is
+	// enough to prepare a still, without a second fixed delay after boot.
+	useEffect(() => {
+		for (const frame of settled) model.current.arrived.add(frame);
+		compute();
+	}, [settled, compute]);
 
 	// So must the wake: a frozen frame you point at or pick animates now, not up
 	// to a sweep later. This is the freeze alone, never a sweep — neither the
@@ -1129,9 +1147,14 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	}, [compute]);
 
 	/** A source edit made this frame's cover stale (#22: SSE-live updates). */
-	const markStale = useCallback((frame: string) => {
-		markPictureWrong(model.current, frame);
-	}, []);
+	const markStale = useCallback(
+		(frame: string) => {
+			const pending = captureWaiters.current.get(frame);
+			if (pending !== undefined) noteShot(frame, pending.id, undefined);
+			markPictureWrong(model.current, frame);
+		},
+		[noteShot],
+	);
 
 	/**
 	 * The tab is being looked at again.

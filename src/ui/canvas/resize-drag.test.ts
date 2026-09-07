@@ -17,7 +17,7 @@ import { ProjectCanvas } from "./canvas";
  */
 
 /** One frame, alone: nothing to snap an edge to, so the numbers are the pointer's. */
-const ALONE = [{ name: "home", x: 0, y: 0, w: 320, h: 240 }];
+const ALONE = [{ name: "home", x: 0, y: 0, w: 320, h: 240, cover: { hash: "a".repeat(32) } }];
 
 let asked: Array<{ url: string; body: unknown }> = [];
 let painting = new Map<number, FrameRequestCallback>();
@@ -25,6 +25,25 @@ let painting = new Map<number, FrameRequestCallback>();
 beforeEach(() => {
 	asked = [];
 	painting = new Map();
+});
+
+it("shows the live document while resizing below the readable threshold", async () => {
+	const { host, canvas } = await renderCanvas();
+	await grabEastEdge(host, canvas);
+	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
+	if (iframe?.contentWindow == null) throw new Error("the selected frame did not mount");
+	await act(async () => {
+		for (const spool of ["loaded", "arrived"]) {
+			window.dispatchEvent(
+				new MessageEvent("message", { data: { spool, frame: "home" }, source: iframe.contentWindow }),
+			);
+		}
+	});
+	await move(canvas, 360);
+	await paint();
+	expect(iframe.parentElement?.style.visibility).toBe("visible");
+	expect(host.querySelector<HTMLElement>('[data-frame-cover="home"]')?.style.opacity ?? "0").toBe("0");
+	expect(readout(host)).toBe("360 × 240");
 });
 
 it("applies one size per painted frame, and it is the last one", async () => {

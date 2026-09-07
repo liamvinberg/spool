@@ -8,12 +8,10 @@ import type { FrameState } from "./lifecycle";
  * One frame on the canvas, rendering whatever the lifecycle says:
  *   picture: the still (or a quiet placeholder), no iframe in the DOM
  *   refreshing: a document booting behind the still, only to be photographed
- *   held: a document behind its still, only to answer the rail and
- *                the Select tool
- *   live: a readable document or the frame you went inside
+ *   held: a document behind its still, borrowed for an export
+ *   live: a readable document, a selection or the frame you went inside
  *
- * A readable HTML frame stays visible while Select owns the pointer. Below the
- * readable threshold its held document remains behind its still.
+ * A selected frame stays visible at every zoom while Select owns the pointer.
  *
  * memo'd hard: pans and zooms must never re-render shells — React
  * reconciling an iframe whose src changed reloads it and resets its state.
@@ -53,6 +51,8 @@ export function coverPlan(input: {
 	settled: boolean;
 	/** Whether this is the frame you went inside — looked at whether or not its time runs. */
 	entered: boolean;
+	/** A selection asks to see the document immediately, at any zoom. */
+	active?: boolean;
 	/** Whether the frame has a cover to stand in for it at all. */
 	covered: boolean;
 	/** Whether this boot is a walk arrival — quiet, however it ends up covered. */
@@ -69,11 +69,11 @@ export function coverPlan(input: {
 	 */
 	holding?: boolean;
 }): CoverPlan {
-	const { state, ready, settled, entered, covered, walk, holding = false } = input;
+	const { state, ready, settled, entered, active = false, covered, walk, holding = false } = input;
 	return {
 		// A live frame is what the canvas is showing, whether it is entered or
 		// Select currently owns the pointer above it.
-		cover: !holding && ((state !== "live" && !entered) || !ready || (!entered && !settled)),
+		cover: !holding && ((state !== "live" && !entered) || !ready || (!entered && !active && !settled)),
 		image: covered ? "cover" : "placeholder",
 		// Going inside is the whole of "a boot somebody asked for". A borrowed
 		// frame boots out of sight, and badging those is how one arrival becomes
@@ -89,6 +89,7 @@ export const FrameShell = memo(function FrameShell({
 	ready,
 	settled,
 	entered,
+	active = false,
 	interactive,
 	docNonce,
 	holdNonce,
@@ -104,6 +105,7 @@ export const FrameShell = memo(function FrameShell({
 	settled: boolean;
 	/** Whether this is the frame you went inside. */
 	entered: boolean;
+	active?: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
 	interactive: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
@@ -150,6 +152,7 @@ export const FrameShell = memo(function FrameShell({
 		ready,
 		settled,
 		entered,
+		active,
 		covered: cover !== undefined,
 		walk: walkArrival,
 		holding: held !== null,
@@ -170,8 +173,7 @@ export const FrameShell = memo(function FrameShell({
 				<div
 					className="absolute inset-0"
 					style={{
-						// A held document stays mounted for Select and the rail, but its
-						// still remains on screen below the readable threshold.
+						// An export keeps its document behind the still.
 						visibility: state === "live" || entered ? "visible" : "hidden",
 					}}
 				>
@@ -234,7 +236,7 @@ export const FrameShell = memo(function FrameShell({
 					// frame beneath owns the pointer, and the fade out of an entered
 					// frame's cover must not swallow the first click into it.
 					className="pointer-events-none absolute inset-0"
-					style={{ opacity: plan.cover ? 1 : 0, transition: "opacity 180ms ease-out" }}
+					style={{ opacity: plan.cover ? 1 : 0, transition: active ? "none" : "opacity 180ms ease-out" }}
 				>
 					{plan.image === "cover" && cover !== undefined ? (
 						// The still at its true shape, never stretched to the box: a cover

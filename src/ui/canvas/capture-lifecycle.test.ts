@@ -88,6 +88,25 @@ async function mountLifecycle(
 }
 
 describe("capture request lifecycle", () => {
+	it("retires an old picture when the frame changes before its capture returns", async () => {
+		const oldId = "1".repeat(32);
+		const newId = "2".repeat(32);
+		broker.id.mockReturnValueOnce(oldId).mockReturnValueOnce(newId);
+		const image: CoverRaster = { url: "data:image/jpeg;base64,anBlZw==", width: 800, height: 800 };
+		broker.raster.mockResolvedValue(image);
+		const onShot = vi.fn();
+		const { lifecycle, sourceWindow } = await mountLifecycle(onShot);
+		const old = lifecycle.capture("landing");
+		lifecycle.markStale("landing");
+		lifecycle.noteCaptureSource(source(oldId, 400), sourceWindow);
+		await expect(old).resolves.toBeUndefined();
+		expect(onShot).not.toHaveBeenCalled();
+		const fresh = lifecycle.capture("landing");
+		lifecycle.noteCaptureSource(source(newId, 400), sourceWindow);
+		await expect(fresh).resolves.toEqual(image);
+		expect(onShot).toHaveBeenCalledExactlyOnceWith("landing", image);
+	});
+
 	it("correlates one image to its id and window, and never persists an export", async () => {
 		const id1 = "11111111111111111111111111111111";
 		const id2 = "22222222222222222222222222222222";

@@ -353,14 +353,46 @@ describe("the cap on frames borrowed at once", () => {
 });
 
 describe("intent", () => {
-	it("holds every unreadable frame represented by a multi-frame element selection", () => {
+	it("leaves an export's capture slot free even when its selected frame needs a new picture", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		const selectionTargets = new Set(["a"]);
+		s.sweep(frames, { selectionTargets });
+		s.model.stale.add("a");
+		expect(s.sweep(frames, { selectionTargets, held: "a" }).refreshCaptures).toEqual([]);
+	});
+	it("refreshes a resized selection in the background only after the drag ends", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		const selectionTargets = new Set(["a"]);
+		s.sweep(frames, { selectionTargets });
+		s.model.stale.add("a");
+		expect(s.sweep(frames, { selectionTargets, resizing: "a" }).refreshCaptures).toEqual([]);
+		const released = s.sweep(frames, { selectionTargets });
+		expect(released.states.a).toBe("live");
+		expect(released.refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		noteErrandShot(s.model, "a", true);
+		expect(s.sweep(frames, { selectionTargets }).refreshCaptures).toEqual([]);
+	});
+
+	it("bounds background captures even when many selected frames need pictures", () => {
+		const frames = Array.from({ length: 20 }, (_, i) => frame(`f${i}`, i * 100, 0));
+		const s = sweeper();
+		const input = { selectionTargets: new Set(frames.map((f) => f.name)), hasCover: () => false };
+		s.sweep(frames, input);
+		expect(s.sweep(frames, input).refreshCaptures).toHaveLength(ERRANDS_IN_FLIGHT);
+		expect(s.sweep(frames, { ...input, capturing: new Set(["f0"]) }).refreshCaptures).toHaveLength(
+			ERRANDS_IN_FLIGHT - 1,
+		);
+	});
+	it("shows every selected frame live below the readable threshold", () => {
 		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("c", 750, 450)];
 		const s = sweeper();
 
 		expect(s.sweep(frames, { selectionTargets: new Set(["a", "b", "c"]) }).states).toEqual({
-			a: "held",
-			b: "held",
-			c: "held",
+			a: "live",
+			b: "live",
+			c: "live",
 		});
 	});
 
@@ -383,14 +415,15 @@ describe("intent", () => {
 		s.sweep(frames, { selectionTargets: new Set(["a", "b", "c"]) });
 
 		expect(s.sweep(frames, { selectionTargets: new Set(["a", "c"]) }).states).toEqual({
-			a: "held",
-			b: "picture",
-			c: "held",
+			a: "live",
+			b: "refreshing",
+			c: "live",
 		});
+		noteErrandShot(s.model, "b", true);
 		expect(s.sweep(frames, { selectionTargets: new Set() }).states).toEqual({
-			a: "picture",
+			a: "refreshing",
 			b: "picture",
-			c: "picture",
+			c: "refreshing",
 		});
 	});
 
@@ -403,7 +436,7 @@ describe("intent", () => {
 				selectionTargets: new Set(["a", "b"]),
 				held: "export",
 			}).states,
-		).toEqual({ a: "held", b: "held", export: "held" });
+		).toEqual({ a: "live", b: "live", export: "held" });
 	});
 
 	it("leaves a readable selection live while Select owns it and an export holds it", () => {
@@ -420,12 +453,12 @@ describe("intent", () => {
 		).toEqual({ a: "live", b: "live" });
 	});
 
-	it("keeps an unreadable selection held behind its still", () => {
+	it("shows an unreadable selection live", () => {
 		const frames = [frame("a", 350, 450), frame("b", 550, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { selectionTargets: new Set(["a"]) }).states).toEqual({ a: "held", b: "picture" });
-		expect(s.sweep(frames, { selectionTargets: new Set(["b"]) }).states).toEqual({ a: "picture", b: "held" });
+		expect(s.sweep(frames, { selectionTargets: new Set(["a"]) }).states).toEqual({ a: "live", b: "picture" });
+		expect(s.sweep(frames, { selectionTargets: new Set(["b"]) }).states).toEqual({ a: "refreshing", b: "live" });
 	});
 
 	it("holds a frame being read rather than looked at, wherever the camera is", () => {
@@ -435,11 +468,11 @@ describe("intent", () => {
 		expect(s.sweep(frames, { held: "far" }).states.far).toBe("held");
 	});
 
-	it("keeps an unreadable entered selection held, then returns it live", () => {
+	it("keeps an unreadable entered selection live", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { entered: "a", selectionTargets: new Set(["a"]) }).states).toEqual({ a: "held" });
+		expect(s.sweep(frames, { entered: "a", selectionTargets: new Set(["a"]) }).states).toEqual({ a: "live" });
 		expect(s.sweep(frames, { entered: "a" }).states).toEqual({ a: "live" });
 	});
 
@@ -727,20 +760,20 @@ describe("a readable frame", () => {
 		expect(s.model.stale.size).toBe(0);
 	});
 
-	it("keeps natural live provenance while selection carries it below readable size", () => {
+	it("keeps a selection live through zooming out and refreshes its picture on release", () => {
 		const frames = [frame("a", 0, 0)];
 		const s = sweeper();
 		s.sweep(frames, at(4));
 		s.sweep(frames, { selectionTargets: new Set(["a"]), ...at(4) });
 
-		const held = s.sweep(frames, { selectionTargets: new Set(["a"]), ...at(1) });
-		expect(held.states.a).toBe("held");
+		const selected = s.sweep(frames, { selectionTargets: new Set(["a"]), ...at(1) });
+		expect(selected.states.a).toBe("live");
 		expect(s.model.stale.has("a")).toBe(false);
 
 		const released = s.sweep(frames, at(1));
-		expect(released.states.a).toBe("picture");
-		expect(released.refreshCaptures).toEqual([]);
-		expect(s.model.stale.has("a")).toBe(false);
+		expect(released.states.a).toBe("refreshing");
+		expect(released.refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(s.model.stale.has("a")).toBe(true);
 	});
 
 	it("owes a fresh picture for the frame you actually went inside", () => {

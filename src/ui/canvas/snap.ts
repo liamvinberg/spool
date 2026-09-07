@@ -135,6 +135,7 @@ export function snapEdge(
 	statics: Box[],
 	axis: "x" | "y",
 	threshold: number,
+	extraStops: readonly number[] = [],
 ): { value: number; guides: number[] } {
 	let best: number | undefined;
 	for (const target of statics) {
@@ -148,9 +149,16 @@ export function snapEdge(
 			}
 		}
 	}
+	for (const stop of extraStops) {
+		if (
+			Math.abs(stop - value) <= threshold &&
+			(best === undefined || Math.abs(stop - value) < Math.abs(best - value))
+		)
+			best = stop;
+	}
 	if (best === undefined) return { value, guides: [] };
 	const snapped = best;
-	const guides: number[] = [];
+	const guides: number[] = extraStops.filter((stop) => Math.abs(stop - snapped) <= EPS);
 	for (const target of statics) {
 		const stops = extentOf(target, axis);
 		for (const stop of STOPS) {

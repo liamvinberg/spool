@@ -71,6 +71,11 @@ describe("coverPlan", () => {
 		expect(plan({ ready: true, settled: false }).cover).toBe(false);
 	});
 
+	it("uncovers an active selection as soon as its document loads", () => {
+		expect(plan({ entered: false, active: true, ready: true, settled: false }).cover).toBe(false);
+		expect(plan({ entered: false, active: true, ready: false, settled: false }).cover).toBe(true);
+	});
+
 	it("shows the placeholder for a frame with nothing to stand in for it", () => {
 		expect(plan({ state: "picture", entered: false, covered: false })).toEqual({
 			cover: true,

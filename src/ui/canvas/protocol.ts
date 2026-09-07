@@ -147,6 +147,7 @@ export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
 	| { spool: "arrived"; frame: string }
+	| { spool: "content-size"; frame: string; id: number; width: number; height: number | null }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
 	| CaptureSourceReply
@@ -198,6 +199,15 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 	const m = data as Record<string, unknown>;
 	if (typeof m.spool !== "string" || typeof m.frame !== "string") return undefined;
 	switch (m.spool) {
+		case "content-size":
+			return typeof m.id === "number" &&
+				Number.isSafeInteger(m.id) &&
+				typeof m.width === "number" &&
+				Number.isSafeInteger(m.width) &&
+				m.width > 0 &&
+				(m.height === null || (typeof m.height === "number" && Number.isSafeInteger(m.height) && m.height > 0))
+				? { spool: "content-size", frame: m.frame, id: m.id, width: m.width, height: m.height }
+				: undefined;
 		case "copy":
 			return parseClipboardCopyRequest(data);
 		case "loaded":
