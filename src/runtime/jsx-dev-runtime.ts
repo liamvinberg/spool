@@ -283,7 +283,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	if (!(await admitted())) return refused("the source installation lease expired or was revoked");
 	if (
 		!sourcePacket ||
-		publication.before !== sourcePacket.id ||
+		(publication.before !== sourcePacket.id && !(undo && publication.compatibleBefore?.includes(sourcePacket.id))) ||
 		publication.packet.shape !== sourcePacket.shape ||
 		publication.packet.sequence <= sequence
 	)

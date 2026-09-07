@@ -10,6 +10,8 @@ import {
 import type { AgentPermissions } from "../settings/registry";
 import type { AgentReply } from "./agent-control";
 import type { AgentEvent } from "./agent-events";
+import { editsFromTrace, observedEditor, withTrace } from "./bundled-editor";
+import type { SourceAgentClient } from "./source-agent";
 
 /** Resolve missing leaves through their real ancestors, including dangling links. */
 export function canonicalFile(path: string, depth = 0): string {
@@ -106,6 +108,7 @@ export class BundledFilePolicy {
 export class BundledFileTurn {
 	private readonly pending = new Map<string, { scope: string; finish: (allowed: boolean) => void }>();
 	private stopped = false;
+	public source: SourceAgentClient | undefined;
 	constructor(
 		readonly policy: BundledFilePolicy,
 		public mode: AgentPermissions,
@@ -190,8 +193,19 @@ export class BundledFileTurn {
 				...(definition.promptGuidelines === undefined ? {} : { promptGuidelines: definition.promptGuidelines }),
 				execute: async (id, input, signal, update, context) => {
 					const tool = name === "read" ? "Read" : name === "write" ? "Write" : "MultiEdit";
-					const raw = input as { path: string; content?: string; edits?: { oldText: string; newText: string }[] };
+					const raw = input as {
+						path: string;
+						content?: string;
+						offset?: number;
+						limit?: number;
+						edits?: { oldText: string; newText: string }[];
+					};
 					let nonExecution: string | undefined;
+					let handle: string | undefined;
+					let original: Buffer | undefined;
+					let coordinated = false;
+					let replaced = false;
+					let trace: Parameters<typeof editsFromTrace>[2] = [];
 					try {
 						const target = canonicalFile(
 							isAbsolute(raw.path) ? raw.path : `${this.policy.root}${sep}${raw.path}`,
@@ -212,9 +226,22 @@ export class BundledFileTurn {
 						};
 						check();
 						nonExecution = undefined;
+						if (this.source) {
+							const response = await this.source.request(
+								name === "read"
+									? { kind: "read", path: target }
+									: { kind: "prepare", path: target, operation: name === "edit" ? "edit" : "write" },
+							);
+							check();
+							if (response.kind === "read" || response.kind === "prepared") {
+								coordinated = true;
+								handle = response.handle;
+								original = response.bytes === null ? undefined : Buffer.from(response.bytes, "base64");
+							}
+						}
 						const readFile = async () => {
 							check();
-							return readFileSync(target);
+							return original ?? readFileSync(target);
 						};
 						const access = async () => {
 							check();
@@ -222,7 +249,20 @@ export class BundledFileTurn {
 						};
 						const writeFile = async (_path: string, content: string) => {
 							check();
-							writeFileSync(target, content);
+							if (coordinated && handle && this.source) {
+								const response = await this.source.request({
+									kind: "replace",
+									handle,
+									output: content,
+									edits:
+										name === "edit" && original
+											? editsFromTrace(original.toString("utf8"), content, trace)
+											: null,
+								});
+								if (response.kind !== "replaced") throw new Error("Source replacement was not acknowledged");
+								replaced = true;
+								check();
+							} else writeFileSync(target, content);
 						};
 						const guarded =
 							name === "read"
@@ -253,20 +293,19 @@ export class BundledFileTurn {
 												writeFile,
 												mkdir: async () => {
 													check();
-													mkdirSync(dirname(target), { recursive: true });
+													if (!coordinated) mkdirSync(dirname(target), { recursive: true });
 												},
 											},
 										})
-									: createEditToolDefinition(this.policy.root, {
+									: (await observedEditor())(this.policy.root, {
 											operations: { access, readFile, writeFile },
 										});
-						const result = await (guarded as ToolDefinition).execute(
-							id,
-							{ ...raw, path: target },
-							signal,
-							update,
-							context,
-						);
+						const traced = await withTrace(async (events) => {
+							trace = events;
+							return (guarded as ToolDefinition).execute(id, { ...raw, path: target }, signal, update, context);
+						});
+						const result = traced.value;
+						check();
 						this.emit({
 							kind: "result",
 							id,
@@ -280,8 +319,24 @@ export class BundledFileTurn {
 							),
 							parent: null,
 						});
+						if (handle && this.source) {
+							if (name === "read")
+								await this.source.request({
+									kind: "read-complete",
+									handle,
+									complete:
+										raw.offset === undefined &&
+										raw.limit === undefined &&
+										result.content.length === 1 &&
+										result.content[0]?.type === "text" &&
+										result.content[0].text === original?.toString("utf8") &&
+										Buffer.from(original.toString("utf8"), "utf8").equals(original),
+								});
+							else if (replaced) await this.source.request({ kind: "acknowledge", handle, complete: true });
+						}
 						return result;
 					} catch (error) {
+						if (handle && this.source) await this.source.request({ kind: "discard", handle }).catch(() => {});
 						const text = error instanceof Error ? error.message : "File action failed";
 						this.emit({
 							kind: "result",

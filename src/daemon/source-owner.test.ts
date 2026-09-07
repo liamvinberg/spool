@@ -1,10 +1,13 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it } from "vitest";
-import type { RetainedValues, SourceOccurrence, SourceRead } from "../source-edit";
+import { expect, it, onTestFinished } from "vitest";
+import type { RetainedValues, SourceOccurrence, SourceRead, SourceResult } from "../source-edit";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { buildDesignEntry, createFrameCompiler } from "./compile";
+import { deterministicBundledRuntime } from "./fixtures/bundled-provider";
 import { emptyCompilation, lowerLiterals, readInput } from "./retained-compile";
+import type { SourceAgentReply, SourceAgentRequest } from "./source-agent";
 import { createSourceOwner } from "./source-owner";
 
 const SOURCE = 'export default function Frame(){ return <main><h1>{"Hello"}</h1><input defaultValue="keep" /></main> }';
@@ -275,3 +278,352 @@ it.each(["tsconfig.json", "base.json", "frames/home/package.json"])(
 		expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
 	},
 );
+
+async function actualAgent(
+	f: Awaited<ReturnType<typeof fixture>>,
+	hook?: (request: SourceAgentRequest, response: SourceAgentReply) => Promise<void>,
+) {
+	const directory = join(makeTempDir(), "bundled");
+	const runtime = await deterministicBundledRuntime(directory);
+	await runtime.request({ kind: "connect", provider: "openai", key: "fixture-key" });
+	const authority = f.owner.agent(f.root, () => true);
+	runtime.source = () => ({
+		request: async (request) => {
+			const response = await authority.request(request);
+			await hook?.(request, response);
+			return response;
+		},
+	});
+	onTestFinished(() => {
+		authority.revoke();
+		return runtime.close();
+	});
+	const session = randomUUID();
+	return {
+		authority,
+		directory,
+		run: async (calls: { name: string; arguments: Record<string, unknown> }[]) => {
+			const results: { failed: boolean; text: string }[] = [];
+			await runtime.turn(
+				randomUUID(),
+				{
+					root: f.root,
+					session: { id: session },
+					permissions: "ask",
+					ask: { value: "spool/openai/api_key/spool-test" },
+					said: [{ selection: "", prompt: `file tools: ${JSON.stringify(calls)}` }],
+				},
+				(event) => {
+					if (event.kind === "result") results.push(event);
+				},
+			);
+			return results;
+		},
+	};
+}
+const agentRead = (path: string) => ({ name: "read", arguments: { path } });
+const agentEdit = (path: string, oldText: string, newText: string) => ({
+	name: "edit",
+	arguments: { path, edits: [{ oldText, newText }] },
+});
+
+for (const order of ["agent first", "hand first"] as const) {
+	it(`preserves actual bundled full Read and executed MultiEdit through hand commit, undo and redo: ${order}`, async () => {
+		const f = await fixture((root) => writeFrame(root, "home", SOURCE.replace("<input", '<p>{"Other"}</p><input')));
+		let hand: SourceResult | undefined;
+		const agent = await actualAgent(f, async (request) => {
+			if (order === "hand first" && request.kind === "read-complete") {
+				hand = await f.commit(f.read, "Mine");
+				if (hand.ok && hand.publication) f.owner.delivered(hand.publication.packet.id);
+			}
+		});
+		const results = await agent.run([agentRead(f.file), agentEdit(f.file, "Other", "the agent")]);
+		expect(results.map((one) => one.failed)).toEqual([false, false]);
+		hand ??= await f.commit(f.read, "Mine");
+		if (!hand.ok || !hand.receipt) throw new Error(JSON.stringify(hand));
+		if (hand.publication) f.owner.delivered(hand.publication.packet.id);
+		expect(readFileSync(f.file, "utf8")).toContain('{"Mine"}');
+		expect(readFileSync(f.file, "utf8")).toContain('{"the agent"}');
+		const undo = await f.owner.inverse(f.root, hand.receipt);
+		if (!undo.ok || !undo.receipt) throw new Error(JSON.stringify(undo));
+		if (undo.publication) f.owner.delivered(undo.publication.packet.id);
+		expect(readFileSync(f.file, "utf8")).toContain('{"Hello"}');
+		expect(readFileSync(f.file, "utf8")).toContain('{"the agent"}');
+		const redo = await f.owner.inverse(f.root, undo.receipt);
+		expect(redo.ok).toBe(true);
+		if (redo.ok && redo.publication) f.owner.delivered(redo.publication.packet.id);
+		expect(readFileSync(f.file, "utf8")).toContain('{"Mine"}');
+		expect(readFileSync(f.file, "utf8")).toContain('{"the agent"}');
+		expect(readFileSync(join(agent.directory, "provider-calls.jsonl"), "utf8")).not.toContain('"handle"');
+	});
+}
+it("records competing matcher touches permanently even when another character changes and original bytes return", async () => {
+	const f = await fixture();
+	const agent = await actualAgent(f);
+	const results = await agent.run([
+		agentRead(f.file),
+		agentEdit(f.file, "Hello", "Yello"),
+		agentEdit(f.file, "Yello", "Hello"),
+	]);
+	expect(results.every((result) => !result.failed)).toBe(true);
+	expect(await f.commit(f.read, "HellX")).toMatchObject({ ok: false, reason: expect.stringContaining("touched") });
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
+it("treats actual identical-byte Write as opaque and refuses an old inverse", async () => {
+	const f = await fixture();
+	const hand = await f.commit(f.read, "Mine");
+	if (!hand.ok || !hand.receipt) throw new Error("hand failed");
+	if (hand.publication) f.owner.delivered(hand.publication.packet.id);
+	const agent = await actualAgent(f);
+	expect(
+		(
+			await agent.run([
+				agentRead(f.file),
+				{ name: "write", arguments: { path: f.file, content: readFileSync(f.file, "utf8") } },
+			])
+		).every((r) => !r.failed),
+	).toBe(true);
+	expect(await f.owner.inverse(f.root, hand.receipt)).toMatchObject({ ok: false });
+});
+for (const partial of [{ offset: 1 }, { limit: 100 }, { offset: 2 }]) {
+	it(`does not authorize edits from an actual partial Read ${JSON.stringify(partial)}`, async () => {
+		const f = await fixture();
+		const agent = await actualAgent(f);
+		const results = await agent.run([
+			{ name: "read", arguments: { path: f.file, ...partial } },
+			agentEdit(f.file, "Hello", "agent"),
+		]);
+		expect(results.at(-1)?.failed).toBe(true);
+		expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+	});
+}
+it("requires a fresh full read of unseen rebased output", async () => {
+	const f = await fixture((root) => writeFrame(root, "home", SOURCE.replace("<input", '<p>{"Other"}</p><input')));
+	const agent = await actualAgent(f, async (request) => {
+		if (request.kind !== "read-complete") return;
+		const hand = await f.commit(f.read, "Mine");
+		if (hand.ok && hand.publication) f.owner.delivered(hand.publication.packet.id);
+	});
+	const results = await agent.run([
+		agentRead(f.file),
+		agentEdit(f.file, "Other", "agent"),
+		agentEdit(f.file, "agent", "later"),
+	]);
+	expect(results.map((result) => result.failed)).toEqual([false, false, true]);
+	expect(readFileSync(f.file, "utf8")).toContain('{"agent"}');
+});
+it("invalidates out-of-order complete reads, forged handles and cross-session prepared records", async () => {
+	const f = await fixture();
+	const one = f.owner.agent(f.root, () => true),
+		two = f.owner.agent(f.root, () => true);
+	const old = await one.request({ kind: "read", path: f.file });
+	const fresh = await one.request({ kind: "read", path: f.file });
+	if (old.kind !== "read" || fresh.kind !== "read") throw new Error("no read");
+	await one.request({ kind: "read-complete", handle: old.handle, complete: true });
+	await expect(one.request({ kind: "prepare", path: f.file, operation: "edit" })).rejects.toThrow("complete");
+	await expect(two.request({ kind: "read-complete", handle: fresh.handle, complete: true })).rejects.toThrow();
+	await expect(one.request({ kind: "replace", handle: "forged", output: "bad", edits: null })).rejects.toThrow();
+	one.revoke();
+	two.revoke();
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
+it("keeps ambiguous named observations ordered and retires evidence on known observation loss", async () => {
+	const f = await fixture();
+	f.owner.observe(f.root, { kind: "named", path: f.file });
+	const hand = await f.commit(f.read, "Mine");
+	if (!hand.ok || !hand.receipt) throw new Error(JSON.stringify(hand));
+	if (hand.publication) f.owner.delivered(hand.publication.packet.id);
+	f.owner.observe(f.root, { kind: "lost" });
+	expect(await f.owner.inverse(f.root, hand.receipt)).toMatchObject({ ok: false });
+});
+
+it.each(["LF", "BOM CRLF", "fuzzy CRLF"])("retains actual SDK encoding and matcher spans with %s", async (encoding) => {
+	const content = 'export default function Frame(){return <main>\n<h1>{"Hello"}</h1>\n<p>“Other”</p>\n</main>}';
+	const encoded = encoding === "LF" ? content : `\uFEFF${content.replaceAll("\n", "\r\n")}`;
+	const f = await fixture((root) => writeFrame(root, "home", encoded));
+	const agent = await actualAgent(f);
+	const result = await agent.run([
+		agentRead(f.file),
+		agentEdit(f.file, encoding === "fuzzy CRLF" ? '"Other"' : "“Other”", "Agent"),
+	]);
+	expect(result.every((r) => !r.failed)).toBe(true);
+	const saved = await f.commit(f.read, "Mine");
+	expect(saved.ok).toBe(true);
+	if (saved.ok && saved.publication) f.owner.delivered(saved.publication.packet.id);
+	expect(readFileSync(f.file, "utf8")).toContain("<p>Agent</p>");
+	if (encoding !== "LF") {
+		expect(readFileSync(f.file, "utf8").startsWith("\uFEFF")).toBe(true);
+		expect(readFileSync(f.file, "utf8").replaceAll("\r\n", "")).not.toContain("\n");
+	}
+});
+it("retires mixed-ending normalization as an opaque actual SDK replacement", async () => {
+	const f = await fixture((root) => writeFrame(root, "home", SOURCE.replace("<input", "\r\n<p>Other</p>\n<input")));
+	const agent = await actualAgent(f);
+	expect((await agent.run([agentRead(f.file), agentEdit(f.file, "Other", "Agent")])).every((r) => !r.failed)).toBe(
+		true,
+	);
+	expect(await f.commit(f.read, "Mine")).toMatchObject({ ok: false });
+});
+it("rejects automatic Read truncation and consumes a failed executed edit's base", async () => {
+	const f = await fixture((root) => writeFrame(root, "home", `${SOURCE}\n${"// padding\n".repeat(2100)}`));
+	const agent = await actualAgent(f);
+	const results = await agent.run([agentRead(f.file), agentEdit(f.file, "Hello", "bad")]);
+	expect(results.map((r) => r.failed)).toEqual([false, true]);
+	const short = await fixture();
+	const second = await actualAgent(short);
+	const failed = await second.run([
+		agentRead(short.file),
+		agentEdit(short.file, "missing text", "bad"),
+		agentEdit(short.file, "Hello", "bad"),
+	]);
+	expect(failed.map((r) => r.failed)).toEqual([false, true, true]);
+	expect(readFileSync(short.file, "utf8")).toBe(SOURCE);
+});
+it("requires checked absence for actual Write and refuses a competing creation", async () => {
+	const f = await fixture();
+	const path = join(f.root, "design/frames/home/new.ts");
+	const agent = await actualAgent(f, async (request) => {
+		if (request.kind === "prepare" && request.path === path) writeFileSync(path, "outside creation");
+	});
+	const result = await agent.run([{ name: "write", arguments: { path, content: "must not replace" } }]);
+	expect(result[0]?.failed).toBe(true);
+	expect(readFileSync(path, "utf8")).toBe("outside creation");
+});
+it("recertifies executable context before applying a disjoint hand span", async () => {
+	const f = await fixture();
+	const agent = await actualAgent(f);
+	expect(
+		(await agent.run([agentRead(f.file), agentEdit(f.file, 'defaultValue="keep"', 'defaultValue="changed"')])).every(
+			(r) => !r.failed,
+		),
+	).toBe(true);
+	expect(await f.commit(f.read, "must not save")).toMatchObject({
+		ok: false,
+		reason: expect.stringContaining("context changed"),
+	});
+	expect(readFileSync(f.file, "utf8")).not.toContain("must not save");
+});
+it("releases an unacknowledged replacement and retires its source inverse when observation is lost", async () => {
+	const f = await fixture();
+	const saved = await f.commit(f.read, "Mine");
+	if (!saved.ok || !saved.receipt) throw new Error("no receipt");
+	if (saved.publication) f.owner.delivered(saved.publication.packet.id);
+	const authority = f.owner.agent(f.root, () => true);
+	const read = await authority.request({ kind: "read", path: f.file });
+	if (read.kind !== "read") throw new Error("no read");
+	await authority.request({ kind: "read-complete", handle: read.handle, complete: true });
+	const prepared = await authority.request({ kind: "prepare", path: f.file, operation: "write" });
+	if (prepared.kind !== "prepared") throw new Error("no prepared write");
+	await authority.request({ kind: "replace", handle: prepared.handle, output: SOURCE, edits: null });
+	authority.revoke();
+	expect(await f.owner.inverse(f.root, saved.receipt)).toMatchObject({ ok: false });
+	await expect(authority.request({ kind: "acknowledge", handle: prepared.handle, complete: true })).rejects.toThrow();
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
+
+it("keeps another project's actual agent records when one project's observation is lost", async () => {
+	const first = await fixture(),
+		second = await fixture();
+	const agent = await actualAgent({ ...second, owner: first.owner });
+	expect(
+		(await agent.run([agentRead(second.file), agentEdit(second.file, "Hello", "Agent")])).every((r) => !r.failed),
+	).toBe(true);
+	first.owner.observe(first.root, { kind: "unknown" });
+	expect((await agent.run([agentEdit(second.file, "Agent", "Still available")]))[0]?.failed).toBe(false);
+	expect(readFileSync(second.file, "utf8")).toContain("Still available");
+});
+it("allows an outside editor's stale buffer to overwrite a save, then refuses its unavailable inverse", async () => {
+	const f = await fixture();
+	const saved = await f.commit(f.read, "Mine");
+	if (!saved.ok || !saved.receipt) throw new Error("no saved receipt");
+	if (saved.publication) f.owner.delivered(saved.publication.packet.id);
+	writeFileSync(f.file, SOURCE);
+	f.owner.observe(f.root, { kind: "named", path: f.file });
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+	expect(await f.owner.inverse(f.root, saved.receipt)).toMatchObject({ ok: false });
+});
+
+it("permanently revokes a session when its persisted owner disappears and later returns", async () => {
+	const f = await fixture();
+	let persisted = true;
+	const authority = f.owner.agent(f.root, () => persisted);
+	const read = await authority.request({ kind: "read", path: f.file });
+	if (read.kind !== "read") throw new Error("no read");
+	await authority.request({ kind: "read-complete", handle: read.handle, complete: true });
+	persisted = false;
+	await expect(authority.request({ kind: "prepare", path: f.file, operation: "edit" })).rejects.toThrow();
+	persisted = true;
+	await expect(authority.request({ kind: "read", path: f.file })).rejects.toThrow();
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
+it("retires authority on project loss and daemon close without allowing a late reply to restore it", async () => {
+	const f = await fixture();
+	const authority = f.owner.agent(f.root, () => true);
+	const read = await authority.request({ kind: "read", path: f.file });
+	if (read.kind !== "read") throw new Error("no read");
+	f.owner.keepProjects([]);
+	await expect(authority.request({ kind: "read-complete", handle: read.handle, complete: true })).rejects.toThrow();
+	f.owner.close();
+	expect(await f.commit(f.read, "late")).toMatchObject({ ok: false });
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
+
+it("two hand undos preserve an independent actual agent edit", async () => {
+	const f = await fixture((root) => writeFrame(root, "home", SOURCE.replace("<input", '<p>{"Other"}</p><input')));
+	const first = await f.commit(f.read, "One");
+	if (!first.ok || !first.publication) throw new Error("first save failed");
+	f.owner.delivered(first.publication.packet.id);
+	f.observation.current = {
+		...f.read.original,
+		publication: first.publication.packet.id,
+		value: "One",
+		invocation: "second committed call",
+	};
+	const asked = await f.owner.read(f.root, "home", f.observation.current, 2, "canvas");
+	if (!asked.ok) throw new Error(asked.reason);
+	const second = await f.commit(asked.read, "Two");
+	if (!second.ok || !second.publication) throw new Error("second save failed");
+	f.owner.delivered(second.publication.packet.id);
+	const agent = await actualAgent(f);
+	expect((await agent.run([agentRead(f.file), agentEdit(f.file, "Other", "Agent")])).map((r) => r.failed)).toEqual([
+		false,
+		false,
+	]);
+	const undoSecond = await f.owner.inverse(f.root, second.publication.receipt);
+	if (!undoSecond.ok || !undoSecond.publication) throw new Error("second undo failed");
+	f.owner.delivered(undoSecond.publication.packet.id);
+	const undoFirst = await f.owner.inverse(f.root, first.publication.receipt);
+	if (!undoFirst.ok || !undoFirst.publication) throw new Error(`first undo failed: ${JSON.stringify(undoFirst)}`);
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE.replace("<input", '<p>{"Agent"}</p><input'));
+	f.owner.delivered(undoFirst.publication.packet.id);
+	const redoFirst = await f.owner.inverse(f.root, undoFirst.publication.receipt);
+	if (!redoFirst.ok || !redoFirst.publication) throw new Error("first redo failed");
+	f.owner.delivered(redoFirst.publication.packet.id);
+	const redoSecond = await f.owner.inverse(f.root, undoSecond.publication.receipt);
+	if (!redoSecond.ok || !redoSecond.publication) throw new Error("second redo failed");
+	expect(readFileSync(f.file, "utf8")).toContain('{"Two"}</h1>');
+	f.owner.delivered(redoSecond.publication.packet.id);
+});
+
+it("coordinates a design folder symlink inside the project and revokes it when its identity changes", async () => {
+	const f = await fixture((root) => {
+		renameSync(join(root, "design"), join(root, "actual-design"));
+		symlinkSync("actual-design", join(root, "design"));
+	});
+	const agent = await actualAgent(f);
+	expect(
+		(await agent.run([agentRead(f.file), agentEdit(f.file, "Hello", "Agent")])).map((result) => result.failed),
+	).toEqual([false, false]);
+	expect(await f.commit(f.read, "Mine")).toMatchObject({ ok: false, reason: expect.stringContaining("touched") });
+	const second = await actualAgent(f, async (request) => {
+		if (request.kind === "prepare") {
+			renameSync(join(f.root, "actual-design"), join(f.root, "old-design"));
+			renameSync(join(f.root, "old-design"), join(f.root, "replacement-design"));
+			// A different directory at the canonical path cannot inherit the authority.
+			mkdirSync(join(f.root, "actual-design"));
+			writeFrame(f.root, "home", SOURCE);
+		}
+	});
+	expect((await second.run([agentRead(f.file), agentEdit(f.file, "Agent", "Wrong")])).at(-1)?.failed).toBe(true);
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});

@@ -2978,16 +2978,24 @@ export function ProjectCanvas({
 			{
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
-					if (event.kind === "frame" && event.frame !== undefined) {
-						const frame = event.frame;
+					const refreshSource = (frame: string) => {
 						void (pendingSource.current.get(frame) ?? Promise.resolve()).then(async () => {
-							if (unappliedSource.current.has(frame)) return;
+							if (editingRef.current?.frame === frame || unappliedSource.current.has(frame)) return;
 							const publication = retainedPublications.current.get(frame);
 							if (publication && (await sourceIsCurrent(project, publication))) return;
-							if (editingRef.current?.frame === frame) return;
+							// A gesture or save can begin while that source check is in flight.
+							if (
+								editingRef.current?.frame === frame ||
+								pendingSource.current.has(frame) ||
+								unappliedSource.current.has(frame)
+							)
+								return;
 							retainedPublications.current.delete(frame);
 							reloadFrameDocument(frame);
 						});
+					};
+					if (event.kind === "frame" && event.frame !== undefined) {
+						refreshSource(event.frame);
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -2999,19 +3007,7 @@ export function ProjectCanvas({
 					} else if (event.kind === "shared") {
 						// a shared file the link graph has read names its own readers (#109);
 						// anything it could not name can stale every document
-						const staled = event.frames;
-						if (staled === undefined) {
-							setDocNonces((current) => {
-								const next: Record<string, number> = { ...current };
-								for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
-								return next;
-							});
-							setWalkArrivals((current) => (current.size === 0 ? current : new Set<string>()));
-							setPicked([]);
-							holdChain(null);
-						} else {
-							for (const frame of staled) reloadFrameDocument(frame);
-						}
+						for (const frame of event.frames ?? framesRef.current.map((one) => one.name)) refreshSource(frame);
 						void refetchFrames();
 						// a shared source file moves the graph as surely as a frame's own
 						void refetchFlows();
@@ -3034,7 +3030,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [holdChain, noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync]);
+	}, [noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost

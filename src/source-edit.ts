@@ -51,6 +51,7 @@ export interface SourcePublication {
 	owner: string;
 	frame: string;
 	before: string;
+	compatibleBefore?: string[];
 	packet: RetainedValues;
 	generation: number;
 	original: SourceOccurrence;
