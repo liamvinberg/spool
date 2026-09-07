@@ -1,5 +1,5 @@
 .ei-app {
-	--font-sans: "Familjen Grotesk", system-ui, sans-serif;
+	--font-sans: "Instrument Sans Variable", system-ui, sans-serif;
 }
 .ei-app .ep-boundary {
 	visibility: hidden;
@@ -38,7 +38,7 @@
 	padding: 3px 4px;
 	border-radius: 4px;
 	color: var(--color-muted);
-	font: 10px var(--font-mono);
+	font: var(--type-detail);
 }
 .ei-owner:hover,
 .ei-owner[aria-expanded="true"] {
@@ -75,7 +75,7 @@
 	min-height: 34px;
 	padding: 0 12px 6px;
 	border-bottom: 1px solid var(--color-border);
-	font: 10px var(--font-mono);
+	font: var(--type-detail);
 }
 .ei-scope > div {
 	width: 78px;
@@ -92,7 +92,7 @@
 	border-bottom: 1px solid var(--color-border);
 }
 .ei-uses p {
-	font: 10px / 1.5 var(--font-mono);
+	font: var(--type-detail);
 	color: var(--color-muted);
 	overflow-wrap: anywhere;
 	padding-block: 4px 7px;
@@ -103,7 +103,7 @@
 	width: 100%;
 	padding: 7px 5px;
 	border-radius: 3px;
-	font: 11px var(--font-mono);
+	font: var(--type-value);
 }
 .ei-uses button:hover {
 	background: var(--color-surface);
@@ -133,7 +133,7 @@
 	padding: 3px 4px;
 	border-radius: 4px;
 	text-align: left;
-	font: 11px var(--font-mono);
+	font: var(--type-value);
 }
 .ei-app [data-properties-row] > div > div:not(.ep-width-mode) {
 	width: 100%;
@@ -151,7 +151,10 @@
 .ei-chevron {
 	margin-left: auto;
 	color: var(--color-muted);
-	font: 12px var(--font-mono);
+	width: 10px;
+	height: 10px;
+	flex: 0 0 10px;
+	display: block;
 }
 .ei-menu,
 .ei-app .ep-color-menu {
@@ -180,7 +183,7 @@
 	padding: 6px;
 	border-radius: 3px;
 	text-align: left;
-	font: 11px / 16px var(--font-mono);
+	font: var(--type-detail);
 }
 .ei-menu-options button > :nth-child(2) {
 	margin-left: auto;
@@ -214,7 +217,7 @@
 	border-bottom: 1px solid var(--color-border);
 	border-radius: 0;
 	background: transparent;
-	font: 11px var(--font-mono);
+	font: var(--type-value);
 }
 .ei-app .ep-color-options {
 	margin-top: 2px;
@@ -237,7 +240,7 @@
 }
 .ei-color-heading > :last-child {
 	color: var(--color-muted);
-	font: 10px var(--font-mono);
+	font: var(--type-detail);
 }
 .ei-app .ep-custom-color {
 	margin: 6px 0 0;
@@ -258,7 +261,7 @@
 	padding: 7px 12px;
 	min-height: 32px;
 	color: var(--color-muted);
-	font: 10px / 16px var(--font-mono);
+	font: var(--type-detail);
 }
 .ei-app .ev-status[data-quiet] > p,
 .ei-app .ev-status[data-quiet] .ev-actions:empty {
@@ -284,4 +287,93 @@
 .ei-actions-menu .ei-choice {
 	letter-spacing: 0;
 	font-family: sans-serif;
+}
+
+.ei-app .ep-stage-wrap {
+	height: 100%;
+}
+.ei-app .ep-rail {
+	height: 100%;
+	border-left: 0;
+}
+.ei-app .ep-crumbs button {
+	font: var(--type-detail);
+	display: flex;
+	align-items: center;
+}
+.ei-heading strong {
+	font: var(--type-title);
+}
+.ei-owner {
+	min-height: 24px;
+}
+.ei-shell-controls {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+.ei-shell-controls .ev-lab {
+	position: relative;
+	font: var(--type-caption);
+	color: var(--color-muted);
+}
+.ei-shell-controls .ev-lab-body {
+	right: 0;
+	top: 32px;
+	max-height: calc(100dvh - 64px);
+	overflow: auto;
+}
+.ei-app .ev-status {
+	font: var(--type-label);
+}
+.ei-app .ep-hint {
+	font: var(--type-detail);
+}
+.ei-dock-panel {
+	position: relative;
+	height: 100%;
+	overflow: hidden;
+	transition: width 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.ei-dock-surface {
+	position: absolute;
+	inset-block: 0;
+	right: 0;
+	height: 100%;
+	border-left: 1px solid var(--color-border);
+	background: var(--color-bg);
+	opacity: 0;
+	transition: opacity 120ms;
+}
+.ei-dock-surface[data-visible] {
+	opacity: 1;
+}
+.ei-menu,
+.ei-app .ep-color-menu {
+	animation: var(--animate-menu-in);
+	transform-origin: top right;
+}
+.ei-app [data-agent-plate] .ei-choice {
+	font: var(--type-label);
+	color: var(--color-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+	.ei-dock-panel,
+	.ei-dock-surface {
+		transition: none;
+	}
+	.ei-menu,
+	.ei-app .ep-color-menu {
+		animation: none;
+	}
+}
+
+.ei-app [data-agent-rail] textarea:focus-visible {
+	outline: none;
+}
+.ei-app .app-header:has([aria-expanded="true"], .ev-lab[open]) {
+	z-index: 70;
+}
+.ei-app .ev-screen {
+	font-family: "Familjen Grotesk", system-ui, sans-serif;
 }

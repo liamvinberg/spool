@@ -1,11 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import {
-	BOX,
-	Row,
-	Section,
-	VALUE,
-} from "shared/ui/explore/editing-interface/reference/shared/ui/spool/properties-fields";
+import { BOX, Row, Section, VALUE } from "./fields";
 import { gapProperty } from "../reference/frames/editing/gap";
 import { Selection } from "../reference/frames/editing/selection";
 import { useViewport } from "../reference/frames/editing/viewport";
@@ -19,6 +14,8 @@ import { move, type Snapshot, same, snapshot, type Transaction } from "../refere
 import "../reference/frames/everyday/everyday.css";
 import { Choice } from "./choice";
 import "./interface.css";
+import { ChevronIcon, DotsIcon } from "shared/ui/spool/icons";
+import { EditingShell, type AgentRequest } from "./shell";
 
 // Integration presentation over a fixed React project. All writes, source
 // identities, scope declarations and save outcomes are explicitly simulated.
@@ -85,7 +82,7 @@ export default function EditingInterface({
 }: {
 	initial?: Fault;
 	treatment?: "inline" | "line";
-	state?: "idle" | "uses" | "tokens";
+	state?: "idle" | "uses" | "tokens" | "agent";
 }) {
 	const root = useRef<HTMLDivElement>(null);
 	const stage = useRef<HTMLDivElement>(null);
@@ -99,9 +96,7 @@ export default function EditingInterface({
 	const feedbackTimer = useRef<number | undefined>(undefined);
 	const [hoverUse, setHoverUse] = useState<HTMLElement | null>(null);
 	const [uses, setUses] = useState(state === "uses");
-	const [hint, setHint] = useState(
-		"Select anything. Double-click text to edit. Option + hover measures spacing. Shift 2 zooms to selection. Space pans.",
-	);
+	const [hint, setHint] = useState("Double-click text to edit.");
 	const [hovered, setHovered] = useState<HTMLElement | null>(null);
 	const [measuring, setMeasuring] = useState(false);
 	const [gapAnchor, setGapAnchor] = useState<GapAnchor | null>(null);
@@ -123,7 +118,7 @@ export default function EditingInterface({
 	const [firstUse, setFirstUse] = useState(false);
 	const [faultName, setFaultName] = useState<Fault>(initial);
 	const fault = useRef<Fault>(initial);
-	const [request, setRequest] = useState<string | null>(null);
+	const [request, setRequest] = useState<AgentRequest | null>(null);
 	const retained = useRef<{ transaction: Transaction; after: Snapshot; intent: string } | null>(null);
 	const unrendered = useRef<Transaction | null>(null);
 	const saveGeneration = useRef(0);
@@ -141,9 +136,7 @@ export default function EditingInterface({
 			.flatMap((node) => {
 				const selector = `[data-edit-node="${node.dataset.editNode}"]`;
 				return [
-					node.dataset.mdStyle
-						? `@container frame (min-width: 768px) { ${selector} { ${node.dataset.mdStyle} } }`
-						: "",
+					node.dataset.mdStyle ? `@container frame (min-width: 768px) { ${selector} { ${node.dataset.mdStyle} } }` : "",
 					node.dataset.hoverStyle ? `${selector}:hover { ${node.dataset.hoverStyle} }` : "",
 				];
 			})
@@ -161,9 +154,7 @@ export default function EditingInterface({
 		return label;
 	};
 	const askAgent = () => {
-		setRequest(
-			`Please help with ${retained.current?.intent ?? name(active.current ?? document.body)}. ${notice.detail} Source context: ${active.current?.dataset.owner ?? active.current?.closest<HTMLElement>("[data-owner]")?.dataset.owner ?? "target needs fresh identification"}.`,
-		);
+		setRequest((previous) => ({ id: (previous?.id ?? 0) + 1, text: retained.current?.intent ?? "" }));
 	};
 
 	const refresh = () => {
@@ -180,6 +171,13 @@ export default function EditingInterface({
 		// Read the rail after React applies the page's new viewport geometry.
 		setRevision((v) => v + 1);
 	}, [viewport.width, viewport.zoom]);
+	const fitted = useRef(false);
+	useLayoutEffect(() => {
+		if (fitted.current || !viewport.width) return;
+		fitted.current = true;
+		viewport.zoomBy(Math.min(1, viewport.width / 1104));
+	}, [viewport.width, viewport.zoomBy]);
+
 	const begin = (label: string) => {
 		window.clearTimeout(feedbackTimer.current);
 		const owner = active.current?.dataset.shared;
@@ -903,763 +901,693 @@ export default function EditingInterface({
 			onPointerEnter={() => setReach(true)}
 			onPointerLeave={() => setReach(false)}
 		>
-			<span aria-hidden="true">◇</span>
+			<svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5">
+				<path d="m8 2 6 6-6 6-6-6Z" fill="none" stroke="currentColor" strokeWidth="1.4" />
+			</svg>
 			<span>{treatment === "line" ? "shared definition" : targets().length}</span>
 			{treatment === "line" && <span>{targets().length} uses</span>}
-			<span className="ei-chevron">⌄</span>
+			<ChevronIcon open={uses} className="ei-chevron" />
 		</button>
 	);
 
-	return (
-		<div className="ep-app ev-app ei-app" data-treatment={treatment}>
-			<header className="ep-toolbar">
-				<span className="ep-title">
-					spool <span>northbound</span>
-				</span>
-				<span className="ep-boundary">editing interface</span>
-				<div className="ep-zoom" role="toolbar" aria-label="Canvas zoom">
-					<button type="button" aria-label="Zoom out" onClick={() => viewport.zoomBy(1 / 1.25)}>
-						−
-					</button>
-					<button
-						type="button"
-						aria-label="Actual size"
-						title="Actual size · Shift 0"
-						onClick={viewport.actualSize}
-					>
-						{Math.round(viewport.zoom * 100)}%
-					</button>
-					<button type="button" aria-label="Zoom in" onClick={() => viewport.zoomBy(1.25)}>
-						+
-					</button>
-					<button
-						type="button"
-						aria-label="Zoom to selection"
-						title="Zoom to selection · Shift 2"
-						onClick={() => viewport.fitSelection(selected)}
-					>
-						Fit selection
+	const canvas = (
+		<div className="ep-stage-wrap">
+			{firstUse && (
+				<div className="ev-first-use">
+					<strong>Edits save automatically.</strong>
+					<p>
+						Other editors and agents can still save these files. Simultaneous outside saves can overwrite changes,
+						including edits that were already saved.
+					</p>
+					<button type="button" onClick={() => setFirstUse(false)}>
+						Got it
 					</button>
 				</div>
-				<div>
-					<button type="button" aria-label="Undo" disabled={!past.current.length} onClick={() => history(false)}>
-						Undo
-					</button>
-					<button type="button" aria-label="Redo" disabled={!future.current.length} onClick={() => history(true)}>
-						Redo
-					</button>
+			)}
+			<div
+				className="ep-stage"
+				ref={stage}
+				// biome-ignore lint/a11y/noNoninteractiveTabindex: This canvas receives selection-scoped editing shortcuts.
+				tabIndex={0}
+				role="application"
+				aria-label="Editing canvas"
+				data-panning={viewport.panning || undefined}
+				onPointerMove={(e) => {
+					pointer.current = { x: e.clientX, y: e.clientY };
+					if (!e.buttons && !inline.current && !viewport.panning) setHovered(resolve(e.target));
+				}}
+				onPointerLeave={() => {
+					pointer.current = null;
+					setHovered(null);
+				}}
+				onScroll={() => {
+					if (pointer.current && !inline.current) {
+						const target = document.elementFromPoint(pointer.current.x, pointer.current.y);
+						setHovered(target ? resolve(target) : null);
+					}
+				}}
+			>
+				<div
+					ref={root}
+					className="ep-document"
+					style={{ width: viewport.width || undefined, zoom: viewport.zoom }}
+					onAuxClickCapture={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+					}}
+					onInputCapture={() => {
+						if (inline.current) {
+							if (active.current?.dataset.shared === "button-part")
+								for (const node of root.current?.querySelectorAll<HTMLElement>("[data-shared=button-part]") ?? [])
+									if (node !== inline.current) node.textContent = inline.current.textContent;
+							refresh();
+						}
+					}}
+					onPointerDownCapture={(e) => {
+						e.stopPropagation();
+						if (!inline.current?.contains(e.target instanceof Node ? e.target : null)) e.preventDefault();
+					}}
+					onPointerUpCapture={(e) => e.stopPropagation()}
+					onMouseDownCapture={(e) => e.stopPropagation()}
+					onMouseUpCapture={(e) => e.stopPropagation()}
+					onDragStartCapture={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+					}}
+					onClickCapture={(e) => {
+						e.preventDefault();
+						if (inline.current?.contains(e.target instanceof Node ? e.target : null)) {
+							e.stopPropagation();
+							return;
+						}
+						e.stopPropagation();
+						const node = resolve(e.target);
+						if (node && !e.altKey) choose(node);
+					}}
+					onDoubleClickCapture={(e) => {
+						if (inline.current?.contains(e.target instanceof Node ? e.target : null)) {
+							e.stopPropagation();
+							return;
+						}
+						e.preventDefault();
+						e.stopPropagation();
+						const node = resolve(e.target);
+						if (node && !e.altKey) startInline(node);
+					}}
+					onKeyDownCapture={(e) => {
+						if (inline.current) {
+							e.stopPropagation();
+							if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+								e.preventDefault();
+								stopInline();
+							}
+							return;
+						}
+						if (e.key === "Enter" || e.key === " ") {
+							e.preventDefault();
+							e.stopPropagation();
+							const node = resolve(e.target);
+							if (node) choose(node);
+						}
+					}}
+					onKeyUpCapture={(e) => e.stopPropagation()}
+					onBlurCapture={(e) => {
+						if (e.target === inline.current) stopInline();
+					}}
+					onSubmitCapture={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+					}}
+				>
+					<Demo />
 				</div>
-
-				<details className="ev-lab">
-					<summary>Prototype</summary>
-					<div className="ev-lab-body">
-						<p>
-							In-memory editing. Source labels, affected uses and save outcomes are authored for this example.
-							Repository files stay unchanged.
-						</p>
-						<button type="button" onClick={() => window.location.reload()}>
-							Reset prototype
-						</button>
-						<button type="button" onClick={() => setFirstUse(true)}>
-							Show the first-use note
-						</button>
-						<p>
-							{source}
-							<br />
-							Frame width {frameWidth}px · rendered{" "}
-							{selected
-								? `${Number((selected.getBoundingClientRect().width / viewport.zoom).toFixed(2))} × ${Number((selected.getBoundingClientRect().height / viewport.zoom).toFixed(2))}px`
-								: "no selection"}
-						</p>
-						<button
-							type="button"
-							onClick={() => {
-								stopInline();
-								const next = frameWidth === 480 ? 820 : 480;
-								setFrameWidth(next);
-								for (const node of root.current?.querySelectorAll<HTMLElement>("[data-frame-shell]") ?? []) {
-									node.style.width = `${next}px`;
-									const label = node.querySelector(".ev-frame-label span");
-									if (label) label.textContent = `${next} × auto`;
-								}
-								refresh();
+			</div>
+			{selected && gap && gapPixels && (
+				<GapOverlay
+					key={selected.dataset.editNode}
+					node={selected}
+					property={gap}
+					value={numeric(gap)}
+					stage={stage}
+					zoom={viewport.zoom}
+					revision={revision}
+					disabled={measuring || inline.current !== null || viewport.panning}
+					cancelled={cancelled}
+					onOpen={openGap}
+					onBegin={() => {
+						finish();
+						setGapAnchor(null);
+						beginGap();
+					}}
+					onChange={(v) => css(gap, v)}
+					onFinish={finish}
+					onCancel={cancel}
+					onHint={setHint}
+				/>
+			)}
+			<Selection
+				selected={selected?.isConnected && computed?.display !== "none" ? selected : null}
+				zoom={viewport.zoom}
+				onPosition={localCss}
+				onRestore={restoreProperty}
+				hovered={hovered}
+				measuring={measuring}
+				editing={inline.current !== null}
+				stage={stage}
+				revision={revision}
+				padding={padding}
+				onBegin={() => {
+					stopInline();
+					cancelled.current = false;
+					setHovered(null);
+					begin("resize");
+				}}
+				onChange={css}
+				onFinish={finish}
+				onCancel={cancel}
+				cancelled={cancelled}
+				onHint={setHint}
+			/>
+		</div>
+	);
+	const properties = (
+		<aside className="ep-rail" aria-label="Properties">
+			<nav className="ep-crumbs" aria-label="Selection breadcrumb">
+				{parents.map((node) => (
+					<button key={node.dataset.editNode} type="button" onClick={() => choose(node)}>
+						{name(node)}
+						<span>›</span>
+					</button>
+				))}
+			</nav>
+			{selected && (
+				<>
+					<div className="ei-heading">
+						<strong>{name(selected)}</strong>
+						{shared && treatment === "inline" && useDisclosure}
+						<Choice
+							className="ei-actions-menu"
+							label="Element actions"
+							value=""
+							options={[
+								{ value: "hide", label: computed?.display === "none" ? "Show again" : "Hide element" },
+								{ value: "delete", label: "Delete element", detail: "⌫" },
+								{ value: "ask", label: "Ask agent" },
+							]}
+							onChange={(action) => {
+								if (action === "delete") removeSelected();
+								if (action === "hide") apply("display", computed?.display === "none" ? "" : "none");
+								if (action === "ask") askAgent();
 							}}
 						>
-							Set frame width to {frameWidth === 480 ? 820 : 480}px
-						</button>
-						<p>
-							Testing controls. Each case changes the next edit’s simulated outcome. These controls are not
-							proposed product UI.
-						</p>
-						{Object.keys(faultNames)
-							.filter((key): key is Fault => key in faultNames)
-							.map((key) => (
-								<button
-									key={key}
-									type="button"
-									aria-pressed={key === faultName}
-									onClick={() => {
-										fault.current = key;
-										setFaultName(key);
-									}}
-								>
-									{faultNames[key]}
-								</button>
-							))}
-						<button
-							type="button"
-							onClick={() => {
-								const button = root.current?.querySelector<HTMLElement>("[data-shared=button]");
-								if (button) choose(button, true);
-							}}
-						>
-							Select the shared button
-						</button>
-						<button
-							type="button"
-							onClick={() => {
-								const title = root.current?.querySelector<HTMLElement>("[data-custom]");
-								if (title) choose(title, true);
-							}}
-						>
-							Select the supplied heading
-						</button>
-						<button
-							type="button"
-							onClick={() => {
-								const node = root.current?.querySelector<HTMLElement>(".ev-reorder p");
-								if (node) {
-									node.removeAttribute("data-stable-key");
-									choose(node, true);
-								}
-							}}
-						>
-							Try an unsafe reorder with arrow keys
-						</button>
-						<button
-							type="button"
-							onClick={() => {
-								stopInline();
-								const owner = active.current?.closest<HTMLElement>("[data-frame-shell]");
-								owner?.remove();
-								setSelected(null);
-								active.current = null;
-								refresh();
-								setNotice({
-									title: "Starting frame removed",
-									detail: "Shared Undo is still reachable and updates the surviving uses.",
-								});
-							}}
-						>
-							Remove the starting frame after a shared edit
-						</button>
-						<button
-							type="button"
-							onClick={() => {
-								if (pending.current && root.current) {
-									const after = snapshot(root.current);
-									retained.current = {
-										transaction: pending.current,
-										after,
-										intent: intentOf(pending.current.before, after, pending.current.label),
-									};
-								}
-								cancel();
-								past.current = [];
-								future.current = [];
-								setNotice({
-									title: "Source service restarted",
-									detail: `Previous undo history expired. ${retained.current ? `Your requested input is kept: ${retained.current.intent}.` : "Select again against current source."}`,
-									attention: true,
-								});
-								refresh();
-							}}
-						>
-							Restart the source service
-						</button>
+							<DotsIcon className="h-3.5 w-3.5" />
+						</Choice>
 					</div>
-				</details>
-			</header>
-			<style ref={projected} />
-			<div className="ep-workspace">
-				<div className="ep-stage-wrap">
-					{firstUse && (
-						<div className="ev-first-use">
-							<strong>Edits save automatically.</strong>
-							<p>
-								Other editors and agents can still save these files. Simultaneous outside saves can overwrite
-								changes, including edits that were already saved.
-							</p>
-							<button type="button" onClick={() => setFirstUse(false)}>
-								Got it
+					{shared && treatment === "line" && <div className="ei-origin-line">{useDisclosure}</div>}
+					{uses && (
+						<div className="ei-uses">
+							<p>{source}</p>
+							{targets().map((node) => {
+								const box = node.getBoundingClientRect();
+								const view = stage.current?.getBoundingClientRect();
+								const visible =
+									view &&
+									box.bottom > view.top &&
+									box.top < view.bottom &&
+									box.right > view.left &&
+									box.left < view.right;
+								return (
+									<button
+										key={node.dataset.editNode}
+										type="button"
+										onClick={() => {
+											setHoverUse(null);
+											choose(node, true);
+										}}
+										onPointerEnter={() => setHoverUse(node)}
+										onPointerLeave={() => setHoverUse(null)}
+									>
+										<span>{node.closest<HTMLElement>("[data-frame-shell]")?.dataset.frameShell}</span>
+										<span>{node === selected ? "selected" : visible ? "visible" : "reveal ↗"}</span>
+									</button>
+								);
+							})}
+						</div>
+					)}
+					<div className="ei-scope">
+						<Choice
+							label="Editing scope"
+							value={scope}
+							options={openedScopes.map((candidate) => ({
+								value: candidate,
+								label: candidate === "base" ? "base" : `${candidate}:`,
+								detail:
+									candidate === "md" ? "frame ≥ 768px" : candidate === "hover" ? "pointer over element" : "always",
+							}))}
+							onChange={(next) => {
+								stopInline();
+								setScope(next);
+							}}
+						/>
+						{scope !== "base" && <span className="ei-scope-condition">{scope === "md" ? "≥ 768px" : "on hover"}</span>}
+						{scope !== "base" && (
+							<button
+								type="button"
+								className="ei-remove-scope"
+								aria-label={`Remove ${scope} scope`}
+								onClick={() => {
+									stopInline();
+									cancelled.current = false;
+									begin(`remove ${scope} scope`);
+									for (const node of targets()) node.removeAttribute(`data-${scope}-style`);
+									finish();
+									setScope("base");
+									setOpenedScopes(openedScopes.filter((value) => value !== scope));
+								}}
+							>
+								×
+							</button>
+						)}
+						{openedScopes.length < 3 && (
+							<button type="button" aria-label="Open a scope" onClick={() => setOpenedScopes(["base", "md", "hover"])}>
+								+
+							</button>
+						)}
+						{scope === "base" && <span className="ei-scope-condition">{shared ? "shared styles" : "this use"}</span>}
+					</div>
+					{computed?.display === "none" && (
+						<div className="ei-hidden">
+							Hidden{" "}
+							<button type="button" onClick={() => apply("display", "")}>
+								Show again
 							</button>
 						</div>
 					)}
-					<div
-						className="ep-stage"
-						ref={stage}
-						// biome-ignore lint/a11y/noNoninteractiveTabindex: This canvas receives selection-scoped editing shortcuts.
-						tabIndex={0}
-						role="application"
-						aria-label="Editing canvas"
-						data-panning={viewport.panning || undefined}
-						onPointerMove={(e) => {
-							pointer.current = { x: e.clientX, y: e.clientY };
-							if (!e.buttons && !inline.current && !viewport.panning) setHovered(resolve(e.target));
-						}}
-						onPointerLeave={() => {
-							pointer.current = null;
-							setHovered(null);
-						}}
-						onScroll={() => {
-							if (pointer.current && !inline.current) {
-								const target = document.elementFromPoint(pointer.current.x, pointer.current.y);
-								setHovered(target ? resolve(target) : null);
-							}
-						}}
-					>
-						<div
-							ref={root}
-							className="ep-document"
-							style={{ width: viewport.width || undefined, zoom: viewport.zoom }}
-							onAuxClickCapture={(e) => {
-								e.preventDefault();
-								e.stopPropagation();
+				</>
+			)}
+
+			<div className="ep-fields" data-empty={!selected || undefined} key={`${selected?.dataset.editNode}-${scope}`}>
+				{!selected && <p className="ep-note">Select an element, or Undo to restore the removed one.</p>}
+				{selected instanceof HTMLImageElement && (
+					<Section name="Attributes">
+						<Row name="image">
+							<Choice
+								label="image"
+								value={selected.src === imageB ? "coast" : selected.src === imageA ? "hills" : "custom"}
+								options={[
+									{ value: "hills", label: "hills.svg" },
+									{ value: "coast", label: "coast.svg" },
+									{ value: "custom", label: "Chosen image", disabled: true },
+								]}
+								onChange={(next) => {
+									if (next !== "custom") void swapImage(next === "hills" ? imageA : imageB);
+								}}
+							/>
+						</Row>
+						<Row name="choose a file">
+							<input
+								aria-label="Choose an image file"
+								type="file"
+								accept="image/*"
+								onChange={(event) => pickFile(event.target.files?.[0])}
+							/>
+						</Row>
+						<TextControl
+							name="alt"
+							value={selected.alt}
+							onBegin={() => {
+								cancelled.current = false;
+								begin("alt");
 							}}
-							onInputCapture={() => {
-								if (inline.current) {
-									if (active.current?.dataset.shared === "button-part")
-										for (const node of root.current?.querySelectorAll<HTMLElement>(
-											"[data-shared=button-part]",
-										) ?? [])
-											if (node !== inline.current) node.textContent = inline.current.textContent;
+							onChange={(text) => {
+								selected.alt = text;
+								refresh();
+							}}
+							onFinish={finish}
+						/>
+					</Section>
+				)}
+
+				{selected?.dataset.expression && (
+					<Section name="Content" reason="calculated">
+						<p className="ep-note">
+							{selected.textContent} comes from {selected.dataset.expression}. Direct text editing is unavailable.{" "}
+							<button type="button" onClick={askAgent}>
+								Ask agent
+							</button>
+						</p>
+					</Section>
+				)}
+				{textNode && (
+					<Section name="Content" reason={sharedKey === "button-part" ? "shared definition" : "this use"}>
+						<TextControl
+							name="text"
+							value={textNode.innerText}
+							multiline
+							onBegin={() => {
+								cancelled.current = false;
+								begin("text");
+							}}
+							onChange={(text) => {
+								if (!cancelled.current) {
+									for (const node of sharedKey === "button-part" ? targets() : [textNode]) node.innerText = text;
 									refresh();
 								}
 							}}
-							onPointerDownCapture={(e) => {
-								e.stopPropagation();
-								if (!inline.current?.contains(e.target instanceof Node ? e.target : null)) e.preventDefault();
-							}}
-							onPointerUpCapture={(e) => e.stopPropagation()}
-							onMouseDownCapture={(e) => e.stopPropagation()}
-							onMouseUpCapture={(e) => e.stopPropagation()}
-							onDragStartCapture={(e) => {
-								e.preventDefault();
-								e.stopPropagation();
-							}}
-							onClickCapture={(e) => {
-								e.preventDefault();
-								if (inline.current?.contains(e.target instanceof Node ? e.target : null)) {
-									e.stopPropagation();
-									return;
-								}
-								e.stopPropagation();
-								const node = resolve(e.target);
-								if (node && !e.altKey) choose(node);
-							}}
-							onDoubleClickCapture={(e) => {
-								if (inline.current?.contains(e.target instanceof Node ? e.target : null)) {
-									e.stopPropagation();
-									return;
-								}
-								e.preventDefault();
-								e.stopPropagation();
-								const node = resolve(e.target);
-								if (node && !e.altKey) startInline(node);
-							}}
-							onKeyDownCapture={(e) => {
-								if (inline.current) {
-									e.stopPropagation();
-									if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-										e.preventDefault();
-										stopInline();
-									}
-									return;
-								}
-								if (e.key === "Enter" || e.key === " ") {
-									e.preventDefault();
-									e.stopPropagation();
-									const node = resolve(e.target);
-									if (node) choose(node);
-								}
-							}}
-							onKeyUpCapture={(e) => e.stopPropagation()}
-							onBlurCapture={(e) => {
-								if (e.target === inline.current) stopInline();
-							}}
-							onSubmitCapture={(e) => {
-								e.preventDefault();
-								e.stopPropagation();
-							}}
-						>
-							<Demo />
-						</div>
-					</div>
-					{selected && gap && gapPixels && (
-						<GapOverlay
-							key={selected.dataset.editNode}
-							node={selected}
-							property={gap}
-							value={numeric(gap)}
-							stage={stage}
-							zoom={viewport.zoom}
-							revision={revision}
-							disabled={measuring || inline.current !== null || viewport.panning}
-							cancelled={cancelled}
-							onOpen={openGap}
-							onBegin={() => {
-								finish();
-								setGapAnchor(null);
-								beginGap();
-							}}
-							onChange={(v) => css(gap, v)}
 							onFinish={finish}
-							onCancel={cancel}
-							onHint={setHint}
 						/>
-					)}
-					<Selection
-						selected={selected?.isConnected && computed?.display !== "none" ? selected : null}
-						zoom={viewport.zoom}
-						onPosition={localCss}
-						onRestore={restoreProperty}
-						hovered={hovered}
-						measuring={measuring}
-						editing={inline.current !== null}
-						stage={stage}
-						revision={revision}
-						padding={padding}
-						onBegin={() => {
-							stopInline();
-							cancelled.current = false;
-							setHovered(null);
-							begin("resize");
-						}}
-						onChange={css}
-						onFinish={finish}
-						onCancel={cancel}
-						cancelled={cancelled}
-						onHint={setHint}
-					/>
-				</div>
-				<aside className="ep-rail" aria-label="Properties">
-					<nav className="ep-crumbs" aria-label="Selection breadcrumb">
-						{parents.map((node) => (
-							<button key={node.dataset.editNode} type="button" onClick={() => choose(node)}>
-								{name(node)}
-								<span>›</span>
-							</button>
-						))}
-					</nav>
-					{selected && (
-						<>
-							<div className="ei-heading">
-								<strong>{name(selected)}</strong>
-								{shared && treatment === "inline" && useDisclosure}
-								<Choice
-									className="ei-actions-menu"
-									label="Element actions"
-									value=""
-									options={[
-										{ value: "hide", label: computed?.display === "none" ? "Show again" : "Hide element" },
-										{ value: "delete", label: "Delete element", detail: "⌫" },
-										{ value: "ask", label: "Ask agent" },
-									]}
-									onChange={(action) => {
-										if (action === "delete") removeSelected();
-										if (action === "hide") apply("display", computed?.display === "none" ? "" : "none");
-										if (action === "ask") askAgent();
-									}}
-								>
-									<span aria-hidden="true">···</span>
-								</Choice>
-							</div>
-							{shared && treatment === "line" && <div className="ei-origin-line">{useDisclosure}</div>}
-							{uses && (
-								<div className="ei-uses">
-									<p>{source}</p>
-									{targets().map((node) => {
-										const box = node.getBoundingClientRect();
-										const view = stage.current?.getBoundingClientRect();
-										const visible =
-											view &&
-											box.bottom > view.top &&
-											box.top < view.bottom &&
-											box.right > view.left &&
-											box.left < view.right;
-										return (
-											<button
-												key={node.dataset.editNode}
-												type="button"
-												onClick={() => {
-													setHoverUse(null);
-													choose(node, true);
-												}}
-												onPointerEnter={() => setHoverUse(node)}
-												onPointerLeave={() => setHoverUse(null)}
-											>
-												<span>{node.closest<HTMLElement>("[data-frame-shell]")?.dataset.frameShell}</span>
-												<span>{node === selected ? "selected" : visible ? "visible" : "reveal ↗"}</span>
-											</button>
-										);
-									})}
-								</div>
-							)}
-							<div className="ei-scope">
-								<Choice
-									label="Editing scope"
-									value={scope}
-									options={openedScopes.map((candidate) => ({
-										value: candidate,
-										label: candidate === "base" ? "base" : `${candidate}:`,
-										detail:
-											candidate === "md"
-												? "frame ≥ 768px"
-												: candidate === "hover"
-													? "pointer over element"
-													: "always",
-									}))}
-									onChange={(next) => {
-										stopInline();
-										setScope(next);
-									}}
-								/>
-								{scope !== "base" && (
-									<span className="ei-scope-condition">{scope === "md" ? "≥ 768px" : "on hover"}</span>
-								)}
-								{scope !== "base" && (
-									<button
-										type="button"
-										className="ei-remove-scope"
-										aria-label={`Remove ${scope} scope`}
-										onClick={() => {
-											stopInline();
-											cancelled.current = false;
-											begin(`remove ${scope} scope`);
-											for (const node of targets()) node.removeAttribute(`data-${scope}-style`);
-											finish();
-											setScope("base");
-											setOpenedScopes(openedScopes.filter((value) => value !== scope));
-										}}
-									>
-										×
-									</button>
-								)}
-								{openedScopes.length < 3 && (
-									<button
-										type="button"
-										aria-label="Open a scope"
-										onClick={() => setOpenedScopes(["base", "md", "hover"])}
-									>
-										+
-									</button>
-								)}
-								{scope === "base" && (
-									<span className="ei-scope-condition">{shared ? "shared styles" : "this use"}</span>
-								)}
-							</div>
-							{computed?.display === "none" && (
-								<div className="ei-hidden">
-									Hidden{" "}
-									<button type="button" onClick={() => apply("display", "")}>
-										Show again
-									</button>
-								</div>
-							)}
-						</>
-					)}
-
-					<div
-						className="ep-fields"
-						data-empty={!selected || undefined}
-						key={`${selected?.dataset.editNode}-${scope}`}
-					>
-						{!selected && <p className="ep-note">Select an element, or Undo to restore the removed one.</p>}
-						{selected instanceof HTMLImageElement && (
-							<Section name="Attributes">
-								<Row name="image">
-									<Choice
-										label="image"
-										value={selected.src === imageB ? "coast" : selected.src === imageA ? "hills" : "custom"}
-										options={[
-											{ value: "hills", label: "hills.svg" },
-											{ value: "coast", label: "coast.svg" },
-											{ value: "custom", label: "Chosen image", disabled: true },
-										]}
-										onChange={(next) => {
-											if (next !== "custom") void swapImage(next === "hills" ? imageA : imageB);
-										}}
-									/>
-								</Row>
-								<Row name="choose a file">
-									<input
-										aria-label="Choose an image file"
-										type="file"
-										accept="image/*"
-										onChange={(event) => pickFile(event.target.files?.[0])}
-									/>
-								</Row>
-								<TextControl
-									name="alt"
-									value={selected.alt}
-									onBegin={() => {
-										cancelled.current = false;
-										begin("alt");
-									}}
-									onChange={(text) => {
-										selected.alt = text;
-										refresh();
-									}}
-									onFinish={finish}
-								/>
-							</Section>
-						)}
-
-						{selected?.dataset.expression && (
-							<Section name="Content" reason="calculated">
-								<p className="ep-note">
-									{selected.textContent} comes from {selected.dataset.expression}. Direct text editing is
-									unavailable.{" "}
-									<button type="button" onClick={askAgent}>
-										Ask agent
-									</button>
-								</p>
-							</Section>
-						)}
-						{textNode && (
-							<Section name="Content" reason={sharedKey === "button-part" ? "shared definition" : "this use"}>
-								<TextControl
-									name="text"
-									value={textNode.innerText}
-									multiline
-									onBegin={() => {
-										cancelled.current = false;
-										begin("text");
-									}}
-									onChange={(text) => {
-										if (!cancelled.current) {
-											for (const node of sharedKey === "button-part" ? targets() : [textNode])
-												node.innerText = text;
-											refresh();
-										}
-									}}
-									onFinish={finish}
-								/>
-							</Section>
-						)}
-						{selected?.matches(GROUPS) && (
-							<p className="ep-note">Demo preview. Edit its box; the inner demo stays still.</p>
-						)}
-						<div>
-							<Section name="Layout">
-								{menu("display", ["block", "flex", "grid", "inline-flex", "none"])}
-								{["flex", "inline-flex", "grid"].includes(value("display")) && (
-									<>
-										{menu("flex-direction", ["row", "column"])}
-										{menu("justify-content", ["normal", "flex-start", "center", "flex-end", "space-between"])}
-										{menu("align-items", ["normal", "stretch", "flex-start", "center", "flex-end"])}
-									</>
-								)}
-								{["width", "height"].map((axis) =>
-									numberRow(
-										axis,
-										"px",
-										0,
-										Number.POSITIVE_INFINITY,
-										<Choice
-											className="ep-width-mode"
-											label={`${axis} mode`}
-											value={
-												selected?.style.getPropertyValue(axis) === "100%"
-													? "fill"
-													: selected?.style.getPropertyValue(axis) &&
-															selected.style.getPropertyValue(axis) !== "auto"
-														? "fixed"
-														: "auto"
-											}
-											options={(axis === "width" ? ["auto", "fill", "fixed"] : ["auto", "fixed"]).map(
-												(v) => ({ value: v }),
-											)}
-											onChange={(next) =>
-												apply(
-													axis,
-													next === "fill" ? "100%" : next === "auto" ? "auto" : `${numeric(axis)}px`,
-												)
-											}
-										/>,
-									),
-								)}
-								{NUMBERS.map((property) => numberRow(property))}
-								{selected && gap && gapPixels && (
-									<GapField
-										declaration={
-											scope === "base"
-												? selected.style.getPropertyValue(gap)
-												: scopedStyle(selected).getPropertyValue(gap)
-										}
-										node={selected}
-										property={gap}
-										value={numeric(gap)}
-										anchor={gapAnchor}
-										onOpen={openGap}
-										onClose={() => setGapAnchor(null)}
-										onBegin={beginGap}
-										onChange={(v) => css(gap, v)}
-										onFinish={finish}
-										onCancel={cancel}
-										cancelled={cancelled}
-										revision={revision}
-									/>
-								)}
-								{gap && !gapPixels && (
-									<Row name="gap" ok={false}>
-										<span title="Relative gap; source editing is outside this playground">{value(gap)}</span>
-									</Row>
-								)}
-								{visibleOptional
-									.filter((property) => property !== "letter-spacing" && !(gap && property === "gap"))
-									.map((property) =>
-										numberRow(property, "px", property.startsWith("margin-") ? Number.NEGATIVE_INFINITY : 0),
-									)}
-							</Section>
-							<Section name="Typography">
-								{numberRow("font-size")}
-								{numberRow("line-height")}
-								{visibleOptional.includes("letter-spacing") && numberRow("letter-spacing", "px", -100)}
-								{menu("font-weight", ["400", "500", "600", "700"])}
-								{menu("text-align", ["start", "left", "center", "right"])}
-							</Section>
-							<Section name="Appearance">
-								{numberRow("border-radius")}
-								{numberRow("opacity", "", 0, 1)}
-								{selected &&
-									["color", "background-color"].map((property) => (
-										<ColorField
-											authored={
-												scope === "base"
-													? selected.style.getPropertyValue(property)
-													: scopedStyle(selected).getPropertyValue(property)
-											}
-											key={property}
-											node={selected}
-											name={property}
-											value={value(property)}
-											onBegin={() => {
-												cancelled.current = false;
-												begin(property);
-											}}
-											onChange={(v) => css(property, v)}
-											onApply={(v) => apply(property, v)}
-											onFinish={finish}
-										/>
-									))}
-							</Section>
-							<div className="ep-add">
-								<Choice
-									label="Add property"
-									value=""
-									placeholder="+ Add property"
-									searchable
-									options={OPTIONAL.filter(
-										(property) => !visibleOptional.includes(property) && !(gap && property === "gap"),
-									).map((v) => ({ value: v }))}
-									onChange={(property) => {
-										cancelled.current = false;
-										css(
-											property,
-											`${property === "border-width" ? Math.max(1, numeric(property)) : numeric(property)}px`,
-										);
-										if (property === "border-width") css("border-style", "solid");
-										finish();
-									}}
-								/>
-							</div>
-						</div>
-					</div>
-
-					<div
-						className="ev-status"
-						role="status"
-						data-attention={notice.attention || undefined}
-						data-quiet={(!notice.attention && request === null) || undefined}
-					>
-						<strong>{notice.title}</strong>
-						<p>{notice.detail}</p>
-						<div className="ev-actions">
-							{notice.recovery === "retry" && (
-								<button type="button" onClick={retry}>
-									Retry this edit
-								</button>
-							)}
-							{notice.recovery === "reload" && (
-								<button type="button" onClick={() => showRendered(true)}>
-									Reload confirmation · resets state
-								</button>
-							)}
-							{notice.recovery === "render" && (
-								<button type="button" onClick={() => showRendered(false)}>
-									Finish simulated render
-								</button>
-							)}
-							{notice.recovery === "rollback" && (
-								<button type="button" onClick={() => history(false)}>
-									Try Undo again
-								</button>
-							)}
-							{notice.recovery === "unknown" && (
-								<button
-									type="button"
-									onClick={() =>
-										setNotice({
-											title: "Current source read again",
-											detail:
-												"The requested value is present in this simulated case. The missing undo entry cannot be recovered. Select again for a fresh edit.",
-										})
-									}
-								>
-									Check current source
-								</button>
-							)}
-							{(notice.attention || retained.current) && (
-								<button type="button" onClick={askAgent}>
-									Ask agent
-								</button>
-							)}
-						</div>
-						{request !== null && (
+					</Section>
+				)}
+				{selected?.matches(GROUPS) && (
+					<p className="ep-note">Demo preview. Edit its box; the inner demo stays still.</p>
+				)}
+				<div>
+					<Section name="Layout">
+						{menu("display", ["block", "flex", "grid", "inline-flex", "none"])}
+						{["flex", "inline-flex", "grid"].includes(value("display")) && (
 							<>
-								<textarea
-									className="ev-request"
-									aria-label="Prepared agent request"
-									value={request}
-									onChange={(event) => setRequest(event.target.value)}
-								/>
-								<p>Prepared only. Review this before sending.</p>
-								<div className="ev-actions">
-									<button
-										type="button"
-										onClick={() => {
-											setRequest(null);
-											setNotice({
-												title: "Request sent in this prototype",
-												detail: "The send action was simulated. No agent was started.",
-											});
-										}}
-									>
-										Send request
-									</button>
-									<button type="button" onClick={() => setRequest(null)}>
-										Dismiss
-									</button>
-								</div>
+								{menu("flex-direction", ["row", "column"])}
+								{menu("justify-content", ["normal", "flex-start", "center", "flex-end", "space-between"])}
+								{menu("align-items", ["normal", "stretch", "flex-start", "center", "flex-end"])}
 							</>
 						)}
+						{["width", "height"].map((axis) =>
+							numberRow(
+								axis,
+								"px",
+								0,
+								Number.POSITIVE_INFINITY,
+								<Choice
+									className="ep-width-mode"
+									label={`${axis} mode`}
+									value={
+										selected?.style.getPropertyValue(axis) === "100%"
+											? "fill"
+											: selected?.style.getPropertyValue(axis) && selected.style.getPropertyValue(axis) !== "auto"
+												? "fixed"
+												: "auto"
+									}
+									options={(axis === "width" ? ["auto", "fill", "fixed"] : ["auto", "fixed"]).map((v) => ({
+										value: v,
+									}))}
+									onChange={(next) =>
+										apply(axis, next === "fill" ? "100%" : next === "auto" ? "auto" : `${numeric(axis)}px`)
+									}
+								/>,
+							),
+						)}
+						{NUMBERS.map((property) => numberRow(property))}
+						{selected && gap && gapPixels && (
+							<GapField
+								declaration={
+									scope === "base" ? selected.style.getPropertyValue(gap) : scopedStyle(selected).getPropertyValue(gap)
+								}
+								node={selected}
+								property={gap}
+								value={numeric(gap)}
+								anchor={gapAnchor}
+								onOpen={openGap}
+								onClose={() => setGapAnchor(null)}
+								onBegin={beginGap}
+								onChange={(v) => css(gap, v)}
+								onFinish={finish}
+								onCancel={cancel}
+								cancelled={cancelled}
+								revision={revision}
+							/>
+						)}
+						{gap && !gapPixels && (
+							<Row name="gap" ok={false}>
+								<span title="Relative gap; source editing is outside this playground">{value(gap)}</span>
+							</Row>
+						)}
+						{visibleOptional
+							.filter((property) => property !== "letter-spacing" && !(gap && property === "gap"))
+							.map((property) =>
+								numberRow(property, "px", property.startsWith("margin-") ? Number.NEGATIVE_INFINITY : 0),
+							)}
+					</Section>
+					<Section name="Typography">
+						{numberRow("font-size")}
+						{numberRow("line-height")}
+						{visibleOptional.includes("letter-spacing") && numberRow("letter-spacing", "px", -100)}
+						{menu("font-weight", ["400", "500", "600", "700"])}
+						{menu("text-align", ["start", "left", "center", "right"])}
+					</Section>
+					<Section name="Appearance">
+						{numberRow("border-radius")}
+						{numberRow("opacity", "", 0, 1)}
+						{selected &&
+							["color", "background-color"].map((property) => (
+								<ColorField
+									authored={
+										scope === "base"
+											? selected.style.getPropertyValue(property)
+											: scopedStyle(selected).getPropertyValue(property)
+									}
+									key={property}
+									node={selected}
+									name={property}
+									value={value(property)}
+									onBegin={() => {
+										cancelled.current = false;
+										begin(property);
+									}}
+									onChange={(v) => css(property, v)}
+									onApply={(v) => apply(property, v)}
+									onFinish={finish}
+								/>
+							))}
+					</Section>
+					<div className="ep-add">
+						<Choice
+							label="Add property"
+							value=""
+							placeholder="+ Add property"
+							searchable
+							options={OPTIONAL.filter(
+								(property) => !visibleOptional.includes(property) && !(gap && property === "gap"),
+							).map((v) => ({ value: v }))}
+							onChange={(property) => {
+								cancelled.current = false;
+								css(property, `${property === "border-width" ? Math.max(1, numeric(property)) : numeric(property)}px`);
+								if (property === "border-width") css("border-style", "solid");
+								finish();
+							}}
+						/>
 					</div>
-					<div className="ep-hint" role="status">
-						{hint}
-					</div>
-				</aside>
+				</div>
 			</div>
+
+			<div
+				className="ev-status"
+				role="status"
+				data-attention={notice.attention || undefined}
+				data-quiet={(!notice.attention && request === null) || undefined}
+			>
+				<strong>{notice.title}</strong>
+				<p>{notice.detail}</p>
+				<div className="ev-actions">
+					{notice.recovery === "retry" && (
+						<button type="button" onClick={retry}>
+							Retry this edit
+						</button>
+					)}
+					{notice.recovery === "reload" && (
+						<button type="button" onClick={() => showRendered(true)}>
+							Reload confirmation · resets state
+						</button>
+					)}
+					{notice.recovery === "render" && (
+						<button type="button" onClick={() => showRendered(false)}>
+							Finish simulated render
+						</button>
+					)}
+					{notice.recovery === "rollback" && (
+						<button type="button" onClick={() => history(false)}>
+							Try Undo again
+						</button>
+					)}
+					{notice.recovery === "unknown" && (
+						<button
+							type="button"
+							onClick={() =>
+								setNotice({
+									title: "Current source read again",
+									detail:
+										"The requested value is present in this simulated case. The missing undo entry cannot be recovered. Select again for a fresh edit.",
+								})
+							}
+						>
+							Check current source
+						</button>
+					)}
+					{(notice.attention || retained.current) && (
+						<button type="button" onClick={askAgent}>
+							Ask agent
+						</button>
+					)}
+				</div>
+			</div>
+			<div className="ep-hint" role="status">
+				{hint}
+			</div>
+		</aside>
+	);
+	return (
+		<div className="ep-app ev-app ei-app" data-treatment={treatment}>
+			<style ref={projected} />
+			<EditingShell
+				canvas={canvas}
+				properties={properties}
+				request={request}
+				initialAgent={state === "agent"}
+				selected={selected}
+				selectedName={selected ? name(selected) : ""}
+				onReveal={(frame) => {
+					const node = root.current?.querySelector<HTMLElement>(`[data-frame="${frame}"]`);
+					if (node) choose(node, true);
+				}}
+				onDrop={() => {
+					setSelected(null);
+					active.current = null;
+				}}
+				zoom={viewport.zoom}
+				onZoom={viewport.zoomBy}
+				onFit={() => viewport.fitSelection(selected)}
+				diagnostics={
+					<details className="ev-lab">
+						<summary>Prototype</summary>
+						<div className="ev-lab-body">
+							<p>
+								In-memory editing. Source labels, affected uses and save outcomes are authored for this example.
+								Repository files stay unchanged. Ask agent opens the existing composer with this selection; sending is
+								simulated. Surrounding app navigation is a visual fixture.
+							</p>
+							<button type="button" onClick={() => window.location.reload()}>
+								Reset prototype
+							</button>
+							<button type="button" onClick={() => setFirstUse(true)}>
+								Show the first-use note
+							</button>
+							<p>
+								{source}
+								<br />
+								Frame width {frameWidth}px · rendered{" "}
+								{selected
+									? `${Number((selected.getBoundingClientRect().width / viewport.zoom).toFixed(2))} × ${Number((selected.getBoundingClientRect().height / viewport.zoom).toFixed(2))}px`
+									: "no selection"}
+							</p>
+							<button
+								type="button"
+								onClick={() => {
+									stopInline();
+									const next = frameWidth === 480 ? 820 : 480;
+									setFrameWidth(next);
+									for (const node of root.current?.querySelectorAll<HTMLElement>("[data-frame-shell]") ?? []) {
+										node.style.width = `${next}px`;
+										const label = node.querySelector(".ev-frame-label span");
+										if (label) label.textContent = `${next} × auto`;
+									}
+									refresh();
+								}}
+							>
+								Set frame width to {frameWidth === 480 ? 820 : 480}px
+							</button>
+							<p>
+								Testing controls. Each case changes the next edit’s simulated outcome. These controls are not proposed
+								product UI.
+							</p>
+							{Object.keys(faultNames)
+								.filter((key): key is Fault => key in faultNames)
+								.map((key) => (
+									<button
+										key={key}
+										type="button"
+										aria-pressed={key === faultName}
+										onClick={() => {
+											fault.current = key;
+											setFaultName(key);
+										}}
+									>
+										{faultNames[key]}
+									</button>
+								))}
+							<button
+								type="button"
+								onClick={() => {
+									const button = root.current?.querySelector<HTMLElement>("[data-shared=button]");
+									if (button) choose(button, true);
+								}}
+							>
+								Select the shared button
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									const title = root.current?.querySelector<HTMLElement>("[data-custom]");
+									if (title) choose(title, true);
+								}}
+							>
+								Select the supplied heading
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									const node = root.current?.querySelector<HTMLElement>(".ev-reorder p");
+									if (node) {
+										node.removeAttribute("data-stable-key");
+										choose(node, true);
+									}
+								}}
+							>
+								Try an unsafe reorder with arrow keys
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									stopInline();
+									const owner = active.current?.closest<HTMLElement>("[data-frame-shell]");
+									owner?.remove();
+									setSelected(null);
+									active.current = null;
+									refresh();
+									setNotice({
+										title: "Starting frame removed",
+										detail: "Shared Undo is still reachable and updates the surviving uses.",
+									});
+								}}
+							>
+								Remove the starting frame after a shared edit
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									if (pending.current && root.current) {
+										const after = snapshot(root.current);
+										retained.current = {
+											transaction: pending.current,
+											after,
+											intent: intentOf(pending.current.before, after, pending.current.label),
+										};
+									}
+									cancel();
+									past.current = [];
+									future.current = [];
+									setNotice({
+										title: "Source service restarted",
+										detail: `Previous undo history expired. ${retained.current ? `Your requested input is kept: ${retained.current.intent}.` : "Select again against current source."}`,
+										attention: true,
+									});
+									refresh();
+								}}
+							>
+								Restart the source service
+							</button>
+						</div>
+					</details>
+				}
+			/>
 		</div>
 	);
 }

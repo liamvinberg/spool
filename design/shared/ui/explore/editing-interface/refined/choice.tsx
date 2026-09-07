@@ -1,5 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { ChevronIcon } from "shared/ui/spool/icons";
+
 export type ChoiceOption = { value: string; label?: string; detail?: string; disabled?: boolean };
 
 // One menu treatment for property values, scope, and element actions.
@@ -93,7 +95,7 @@ export function Choice({
 				{children ?? (
 					<>
 						<span>{options.find((option) => option.value === value)?.label ?? (value || placeholder)}</span>
-						<span className="ei-chevron">⌄</span>
+						<ChevronIcon open className="ei-chevron" />
 					</>
 				)}
 			</button>
@@ -106,10 +108,7 @@ export function Choice({
 						left: Math.max(8, Math.min(box.left - 248, window.innerWidth - 264)),
 						top: Math.max(
 							8,
-							Math.min(
-								box.top,
-								window.innerHeight - Math.min(352, options.length * 30 + (searchable ? 50 : 14)),
-							),
+							Math.min(box.top, window.innerHeight - Math.min(352, options.length * 30 + (searchable ? 50 : 14))),
 						),
 					}}
 					onKeyDown={(event) => {
@@ -123,9 +122,7 @@ export function Choice({
 							!(event.target instanceof HTMLInputElement && ["Home", "End"].includes(event.key))
 						) {
 							event.preventDefault();
-							const buttons = [
-								...(menu.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []),
-							];
+							const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
 							const index = buttons.findIndex((button) => button === document.activeElement);
 							const next =
 								event.key === "Home"

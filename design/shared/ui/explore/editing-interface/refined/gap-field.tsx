@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
-import { Row } from "shared/ui/explore/editing-interface/reference/shared/ui/spool/properties-fields";
+import { Row } from "./fields";
 import { type GapProperty } from "../reference/frames/editing/gap";
 import type { GapAnchor } from "../reference/frames/editing/gap-overlay";
 import { spacingChoices } from "./spacing-choices";
@@ -79,12 +79,7 @@ export function GapField({
 		const scroll = (e: Event) => {
 			if (e.target instanceof Node && host.current?.contains(e.target)) return;
 			const now = anchor?.element.getBoundingClientRect();
-			if (
-				!now ||
-				!anchor ||
-				Math.abs(now.top - anchor.rect.top) > 0.5 ||
-				Math.abs(now.left - anchor.rect.left) > 0.5
-			)
+			if (!now || !anchor || Math.abs(now.top - anchor.rect.top) > 0.5 || Math.abs(now.left - anchor.rect.left) > 0.5)
 				dismiss();
 		};
 		const key = (e: KeyboardEvent) => {
@@ -163,10 +158,7 @@ export function GapField({
 					style={{
 						left: Math.max(
 							8,
-							Math.min(
-								anchor.rect.left - (anchor.element === trigger.current ? 270 : 0),
-								window.innerWidth - 272,
-							),
+							Math.min(anchor.rect.left - (anchor.element === trigger.current ? 270 : 0), window.innerWidth - 272),
 						),
 						top: Math.max(8, Math.min(anchor.rect.bottom + 8, window.innerHeight - 448)),
 					}}
@@ -258,9 +250,7 @@ export function GapField({
 											e.preventDefault();
 											onBegin();
 											setDraft(null);
-											onChange(
-												`${Math.max(0, value + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1))}px`,
-											);
+											onChange(`${Math.max(0, value + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1))}px`);
 										}
 									}}
 								/>

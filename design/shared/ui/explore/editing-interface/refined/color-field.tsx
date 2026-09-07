@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { tokenKeys } from "./token-keys";
-import { Row } from "shared/ui/explore/editing-interface/reference/shared/ui/spool/properties-fields";
+import { Row } from "./fields";
 
 // The fixture's authored variables, not names guessed from matching pixels.
 // Production menus come from the project's compiled theme.
