@@ -8,6 +8,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
+import { type SourceRead, type SourceResult, sameSourceOccurrence } from "../../source-edit";
 import type {
 	Camera,
 	FlowEdge,
@@ -23,6 +24,8 @@ import type {
 import {
 	applyPatch,
 	beaconTrash,
+	cancelSource,
+	commitSource,
 	fetchCanvasState,
 	fetchEnginePreference,
 	fetchFlows,
@@ -30,6 +33,7 @@ import {
 	fileAsAsset,
 	gatePatch,
 	type HandOp,
+	inverseSource,
 	postCaptureFailure,
 	postSeen,
 	postTrash,
@@ -41,8 +45,11 @@ import {
 	putSelection,
 	putSetting,
 	readRungs,
+	readSource,
 	resolveFlows,
 	revertPatch,
+	sourceDelivered,
+	sourceIsCurrent,
 	subscribeSse,
 	swapAsset,
 } from "../api";
@@ -170,6 +177,7 @@ import {
 } from "./protocol";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
+import { useSourceDelivery } from "./source-delivery";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
@@ -613,6 +621,11 @@ export function ProjectCanvas({
 	const pageSessions = useRef(new Map<string, SessionRecord>());
 	const departedFrameDocuments = useRef(new Set<string>());
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
+	const sourceDelivery = useSourceDelivery(project, iframes);
+	const retainedPublications = useRef(new Map<string, string>());
+	const unappliedSource = useRef(new Set<string>());
+	const pendingSource = useRef(new Map<string, Promise<unknown>>());
+	const [sourceRevision, setSourceRevision] = useState(0);
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
@@ -1754,6 +1767,64 @@ export function ProjectCanvas({
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
+	const showSourceResult = useCallback(
+		async (frame: string, result: SourceResult | undefined, text = "", undo = false) => {
+			if (!result) {
+				unappliedSource.current.add(frame);
+				setSaid({
+					kind: "source",
+					frame,
+					status: "unknown",
+					text,
+					says: "The save was not acknowledged. It has not been retried.",
+				});
+				return;
+			}
+			if (!result.ok) {
+				setSaid({ kind: "source", frame, status: "blocked", text, says: result.reason });
+				return;
+			}
+			if (result.source === "unchanged") return;
+			if (!result.publication) {
+				unappliedSource.current.add(frame);
+				setSaid({
+					kind: "source",
+					frame,
+					status: "unverified",
+					text,
+					says: `Saved. ${result.reason ?? "The running result could not be verified."}`,
+				});
+				return;
+			}
+			retainedPublications.current.set(frame, result.publication.packet.id);
+			unappliedSource.current.add(frame);
+			const admitted = await sourceIsCurrent(project, result.publication.packet.id);
+			if (!admitted) await sourceDelivery.revoke(result.publication);
+			const outcome = admitted ? await sourceDelivery.install(result.publication, undo) : undefined;
+			await sourceDelivered(project, result.publication.packet.id);
+			setSourceRevision((value) => value + 1);
+			if (outcome?.rendered === "verified") {
+				unappliedSource.current.delete(frame);
+				setSaid(null);
+				return;
+			}
+			setSaid({
+				kind: "source",
+				frame,
+				status: outcome?.rendered ?? "unverified",
+				text,
+				says:
+					outcome?.reason ??
+					(outcome?.rendered === "mismatching"
+						? "Saved, but the running app kept different words."
+						: outcome?.rendered === "pending"
+							? "Saved. The app is still loading."
+							: "Saved. The running result could not be verified."),
+			});
+		},
+		[sourceDelivery, project],
+	);
+
 	/**
 	 * One step of the one stack (#230).
 	 *
@@ -1769,6 +1840,7 @@ export function ProjectCanvas({
 	 */
 	const walk = useCallback(
 		(way: Way) => {
+			if (pendingSource.current.size > 0 || editingRef.current !== null) return;
 			flushNudge(); // a pending nudge is its own entry: undo pops it, redo is voided by it
 			const held = history.current;
 			const alive = liveness();
@@ -1793,6 +1865,30 @@ export function ProjectCanvas({
 			// goes back over the wire, the daemon re-checks the fingerprint, and what
 			// comes back is the inverse this entry carries from here on. A refusal
 			// means the file moved since — the entry is not a future anybody has
+			if (entry.kind === "source") {
+				setSaid({
+					kind: "source",
+					frame: entry.frame,
+					status: "saving",
+					text: "",
+					says: way === "undo" ? "Undoing…" : "Redoing…",
+				});
+				const ran = history.current;
+				const operation = inverseSource(project, entry.receipt).then(async (result) => {
+					if (history.current !== ran) {
+						if (result?.ok && result.receipt) recordEntry({ ...entry, receipt: result.receipt });
+						await showSourceResult(entry.frame, result, "", true);
+						return;
+					}
+					if (result?.ok && result.receipt)
+						history.current = amend(history.current, way, { ...entry, receipt: result.receipt });
+					else history.current = held; // an unavailable top inverse is explained, never skipped
+					await showSourceResult(entry.frame, result, "", true);
+				});
+				pendingSource.current.set(entry.frame, operation);
+				void operation.finally(() => pendingSource.current.delete(entry.frame));
+				return;
+			}
 			if (entry.kind === "patch") {
 				const ran = history.current;
 				// an undo reloads the frame it wrote, and that reload is ours (#253)
@@ -1825,7 +1921,18 @@ export function ProjectCanvas({
 				void refetchFrames();
 			});
 		},
-		[applyPlaces, applyRects, flushNudge, liveness, project, refetchFrames, stageEntry, undoTrash],
+		[
+			applyPlaces,
+			applyRects,
+			flushNudge,
+			liveness,
+			project,
+			refetchFrames,
+			stageEntry,
+			undoTrash,
+			recordEntry,
+			showSourceResult,
+		],
 	);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens
@@ -2178,6 +2285,8 @@ export function ProjectCanvas({
 			// an edit the frame has not opened yet has nothing to answer with, so it
 			// is closed here rather than left holding the frame's pointer
 			if (held.phase === "asking") {
+				void sourceDelivery.cancel(held.frame, held.id);
+				if (held.read) void cancelSource(project, held.read.handle);
 				setEdit(null);
 				return;
 			}
@@ -2189,7 +2298,7 @@ export function ProjectCanvas({
 				if (editingRef.current?.id === held.id) setEdit(null);
 			}, PICK_REPLY_MS);
 		},
-		[setEdit],
+		[setEdit, project, sourceDelivery],
 	);
 	endEditRef.current = endEdit;
 
@@ -2204,6 +2313,7 @@ export function ProjectCanvas({
 	 */
 	const beginTextEdit = useCallback(
 		(pick: PickedSelection, local: Point) => {
+			if (pendingSource.current.size > 0) return;
 			const stamp = stampOf(pick);
 			if (typeof stamp !== "string") {
 				showRefusal(pick.frame, pick.selector, stamp);
@@ -2221,29 +2331,42 @@ export function ProjectCanvas({
 			};
 			setEdit(asking);
 			setRefused(null);
-			void gatePatch(project, pick.frame, [{ kind: "set-text", source: stamp, text: "" }]).then((asked) => {
-				if (editingRef.current?.id !== id) return; // the gesture moved on
-				if (asked === undefined || !asked.ok) {
+			void sourceDelivery.read(pick.frame, pick.selector, id).then(async (original) => {
+				if (editingRef.current?.id !== id) return;
+				if (!original) {
 					setEdit(null);
-					// an element with no words is not a text target at all, so a
-					// second click on one simply means nothing — the two refusals
-					// worth showing are the ones about words the file has but will
-					// not hand over: an expression, and a mapped row's data
-					if (asked !== undefined && asked.refusal.code !== "no-text") {
-						showRefusal(pick.frame, pick.selector, asked.refusal);
-					}
+					showRefusal(pick.frame, pick.selector, {
+						code: "source",
+						says: "these words have no editable local literal source",
+					});
 					return;
 				}
-				setEdit({ ...asking, fingerprint: asked.fingerprint });
+				const asked = await readSource(project, pick.frame, original, id, sourceDelivery.observer);
+				if (editingRef.current?.id !== id) {
+					if (asked?.ok) void cancelSource(project, asked.read.handle);
+					return;
+				}
+				if (!asked?.ok) {
+					setEdit(null);
+					void sourceDelivery.cancel(pick.frame, id);
+					showRefusal(pick.frame, pick.selector, {
+						code: "source",
+						says: asked?.reason ?? "the original source read did not arrive",
+					});
+					return;
+				}
+				setEdit({ ...asking, read: asked.read });
+				retainedPublications.current.set(pick.frame, original.publication);
 				iframes.current
 					.get(pick.frame)
-					?.contentWindow?.postMessage(editMessage(pick.selector, local.x, local.y, id), "*");
-				// typing has to land in the frame, which only happens once the
-				// document it is drawn in holds the focus
+					?.contentWindow?.postMessage(
+						{ ...editMessage(pick.selector, local.x, local.y, id), sourceGeneration: id },
+						"*",
+					);
 				iframes.current.get(pick.frame)?.focus();
 			});
 		},
-		[project, setEdit, showRefusal],
+		[project, setEdit, showRefusal, sourceDelivery],
 	);
 
 	/**
@@ -2501,10 +2624,77 @@ export function ProjectCanvas({
 		(held: HandEdit, commit: boolean, text: string) => {
 			setEdit(null);
 			viewportRef.current?.focus();
-			if (!commit || text === held.start) return;
-			writePatch(held.frame, held.fingerprint, [{ kind: "set-text", source: held.source, text }]);
+			if (!held.read) return;
+			if (!commit || text === held.start) {
+				void cancelSource(project, held.read.handle);
+				void sourceDelivery.cancel(held.frame, held.id);
+				return;
+			}
+			setSaid({ kind: "source", frame: held.frame, status: "saving", text, says: "Saving…" });
+			const operation = commitSource(project, held.read, text).then(async (result) => {
+				if (result?.ok && result.receipt)
+					recordEntry({ kind: "source", frame: held.frame, receipt: result.receipt });
+				if (!result?.ok || !result.publication) void sourceDelivery.cancel(held.frame, held.id);
+				await showSourceResult(held.frame, result, text);
+			});
+			pendingSource.current.set(held.frame, operation);
+			void operation.finally(() => pendingSource.current.delete(held.frame));
 		},
-		[setEdit, writePatch],
+		[setEdit, project, sourceDelivery, recordEntry, showSourceResult],
+	);
+
+	const beginRailText = useCallback(
+		async (frame: string, selector: string): Promise<SourceRead | undefined> => {
+			if (pendingSource.current.size > 0) return;
+			const generation = ++pickSeq.current;
+			const original = await sourceDelivery.read(frame, selector, generation);
+			if (!original) {
+				showRefusal(frame, selector, { code: "source", says: "these words have no editable local literal source" });
+				return;
+			}
+			const result = await readSource(project, frame, original, generation, sourceDelivery.observer);
+			if (!result?.ok) {
+				showRefusal(frame, selector, {
+					code: "source",
+					says: result?.reason ?? "the original read did not arrive",
+				});
+				return;
+			}
+			retainedPublications.current.set(frame, original.publication);
+			return result.read;
+		},
+		[project, sourceDelivery, showRefusal],
+	);
+	const finishRailText = useCallback(
+		(frame: string, read: SourceRead, text: string, commit: boolean) => {
+			if (!commit || text === read.value) {
+				void cancelSource(project, read.handle);
+				void sourceDelivery.cancel(frame, read.generation);
+				return;
+			}
+			const operation = sourceDelivery.complete(frame, read.generation).then(async (original) => {
+				if (!original || !sameSourceOccurrence(original, read.original)) {
+					void cancelSource(project, read.handle);
+					await sourceDelivery.cancel(frame, read.generation);
+					setSaid({
+						kind: "source",
+						frame,
+						status: "blocked",
+						text,
+						says: "The original element changed. Your text was not saved.",
+					});
+					return;
+				}
+				const result = await commitSource(project, read, text);
+				if (result?.ok && result.receipt) recordEntry({ kind: "source", frame, receipt: result.receipt });
+				if (!result?.ok || !result.publication) await sourceDelivery.cancel(frame, read.generation);
+				await showSourceResult(frame, result, text);
+			});
+			setSaid({ kind: "source", frame, status: "saving", text, says: "Saving…" });
+			pendingSource.current.set(frame, operation);
+			void operation.finally(() => pendingSource.current.delete(frame));
+		},
+		[project, sourceDelivery, recordEntry, showSourceResult],
 	);
 
 	// A refusal is about the element it was refused on, so it goes when the
@@ -2790,7 +2980,14 @@ export function ProjectCanvas({
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
-						reloadFrameDocument(frame);
+						void (pendingSource.current.get(frame) ?? Promise.resolve()).then(async () => {
+							if (unappliedSource.current.has(frame)) return;
+							const publication = retainedPublications.current.get(frame);
+							if (publication && (await sourceIsCurrent(project, publication))) return;
+							if (editingRef.current?.frame === frame) return;
+							retainedPublications.current.delete(frame);
+							reloadFrameDocument(frame);
+						});
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -4854,7 +5051,17 @@ export function ProjectCanvas({
 				{(collisions.length > 0 || said !== null) && (
 					<NoticeStrip>
 						{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
-						{said !== null && <HandNotice said={said} onDismiss={() => setSaid(null)} />}
+						{said !== null && (
+							<HandNotice
+								said={said}
+								onDismiss={() => setSaid(null)}
+								onReload={(frame) => {
+									retainedPublications.current.delete(frame);
+									unappliedSource.current.delete(frame);
+									reloadFrameDocument(frame);
+								}}
+							/>
+						)}
 					</NoticeStrip>
 				)}
 
@@ -4916,7 +5123,7 @@ export function ProjectCanvas({
 					<PropertiesRail
 						project={project}
 						held={railHeld}
-						revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0)}
+						revision={sourceRevision + (railFrame === null ? 0 : (docNonces[railFrame] ?? 0))}
 						width={width}
 						onCollapse={shut}
 						preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
@@ -4926,6 +5133,13 @@ export function ProjectCanvas({
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
 							onWrite: writeOps,
+							text: {
+								begin: beginRailText,
+								preview: (frame, read, text) => {
+									void sourceDelivery.preview(frame, read.generation, text);
+								},
+								finish: finishRailText,
+							},
 							onSwap: swapPicture,
 						}}
 					/>

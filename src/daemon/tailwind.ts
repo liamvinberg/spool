@@ -47,7 +47,10 @@ export interface DesignStylesheets {
  * and anything else is not an import this daemon serves. Both callers want the
  * same rules and the same list of what was read, so there is one of it.
  */
-export function designStylesheets(designDir: string): DesignStylesheets {
+export function designStylesheets(
+	designDir: string,
+	readSource: (file: string) => string = (file) => readFileSync(file, "utf8"),
+): DesignStylesheets {
 	const stylesheets = new Set<string>();
 
 	async function loadStylesheet(id: string, base: string): Promise<{ path: string; base: string; content: string }> {
@@ -75,7 +78,11 @@ export function designStylesheets(designDir: string): DesignStylesheets {
 			file = resolveDesignPath(designDir, file, id);
 			stylesheets.add(file);
 		}
-		return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
+		return {
+			path: file,
+			base: dirname(file),
+			content: isWithin(tailwindDir, file) ? readFileSync(file, "utf8") : readSource(file),
+		};
 	}
 
 	async function loadModule(): Promise<never> {
@@ -92,8 +99,12 @@ export function designStylesheets(designDir: string): DesignStylesheets {
  * files — Tailwind's build() accumulates candidates across calls, which would
  * bleed one frame's utilities into the next document.
  */
-export async function buildFrameCss(designDir: string, files: string[]): Promise<FrameCss> {
-	const sheets = designStylesheets(designDir);
+export async function buildFrameCss(
+	designDir: string,
+	files: string[],
+	readSource: (file: string) => string = (file) => readFileSync(file, "utf8"),
+): Promise<FrameCss> {
+	const sheets = designStylesheets(designDir, readSource);
 	const compiler = await compile(ROOT_CSS, {
 		base: sheets.base,
 		loadStylesheet: sheets.loadStylesheet,
@@ -103,7 +114,7 @@ export async function buildFrameCss(designDir: string, files: string[]): Promise
 	const sources = files.flatMap((file) => {
 		let content: string;
 		try {
-			content = readFileSync(resolveDesignPath(designDir, file), "utf8");
+			content = readSource(resolveDesignPath(designDir, file));
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 			return [];

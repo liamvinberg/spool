@@ -3,6 +3,7 @@ import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
+import { ContentText, type TextActions } from "./content-text";
 import { MenuItem } from "./context-menu";
 import { type AttributeField, fieldsFor, IMAGE_ACCEPT, swappable } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
@@ -98,6 +99,7 @@ export interface RailPreview {
 }
 
 export interface PropertiesActs {
+	text?: TextActions;
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
 	/** the frame's own geometry, which is `frame.json` and never source */
@@ -402,6 +404,15 @@ function Body({
 				{/* keyed on the rung: a fold left open on one element is not an opinion
 				    about the next one, and a re-pick after this rail's own write is the
 				    same rung, so an edit does not close what you opened */}
+				{element && acts.text ? (
+					<ContentText
+						key={`${identity}:${revision}`}
+						frame={element.frame}
+						selector={element.selector}
+						html={element.chain[rung]?.outerHtml ?? ""}
+						actions={acts.text}
+					/>
+				) : null}
 				{element === null || read === undefined ? null : <PropertySections key={identity} view={view} />}
 				{element === null || read === undefined ? null : (
 					<Attributes

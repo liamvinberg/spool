@@ -355,7 +355,7 @@ describe("daemon authority matrix", () => {
 		const frame = await render(framePath);
 		expect(frame.status).toBe(200);
 		expect(frame.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
-		expect(await frame.text()).toContain('children: "safe"');
+		expect(await frame.text()).toContain('"values":{"frames/home/frame.tsx#literal:0":"safe"}');
 
 		const shell = await request(CONTROL_HOST, playPath);
 		const shellHtml = await shell.text();

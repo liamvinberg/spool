@@ -268,12 +268,9 @@ it("types into the element and writes the file, then takes an element's lines", 
 		.poll(() => page.frameLocator('iframe[title="cart"]').locator("h1").textContent(), { timeout: 20_000 })
 		.toBe("basket");
 
-	// the lines: down to the paragraph, then ⌫ takes it out of the file
-	await descendTo("p", [
-		{ step: "child", rung: "div" },
-		{ step: "child", rung: "div > h1" },
-		{ step: "next", rung: "div > p" },
-	]);
+	// Saving retains the selection and running document. The next sibling is still one Tab away.
+	await page.keyboard.press("Tab");
+	await expect.poll(held).toBe("div > p");
 	await page.keyboard.press("Backspace");
 	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 20_000 }).not.toContain("<p");
 	expect(readFileSync(file, "utf8")).toBe(

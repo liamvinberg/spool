@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
@@ -56,6 +56,18 @@ function lazyBuild<T>(builder: () => Promise<T>): () => Promise<T> {
 export const vendorReactJs: () => Promise<string> = lazyBuild(buildVendorReact);
 
 async function buildVendorReact(): Promise<string> {
+	// Committed source reads use this renderer's host-props/alternate contract.
+	// Upgrading React requires replaying retained state, memo and native-input tests.
+	const renderer = join(
+		dirname(fileURLToPath(import.meta.resolve("react-dom/client"))),
+		"cjs/react-dom-client.production.js",
+	);
+	if (
+		createHash("sha256").update(readFileSync(renderer)).digest("hex") !==
+		"9d2de2ee4a588c5d0b8580ff3467f796b8d9bbc45bdc35b257f7d1380e686c56"
+	) {
+		throw new Error("the pinned React renderer changed; source observation requires revalidation");
+	}
 	const seen = new Set<string>(["default"]);
 	const lines: string[] = [];
 	for (const [i, spec] of REACT_SPECIFIERS.entries()) {
@@ -78,6 +90,38 @@ async function buildVendorReact(): Promise<string> {
 		define: { "process.env.NODE_ENV": '"production"' },
 		write: false,
 		logLevel: "silent",
+		plugins: [
+			{
+				name: "spool-committed-renderer",
+				setup(build) {
+					build.onLoad({ filter: /react-dom-client\.production\.js$/ }, ({ path }) => {
+						let contents = readFileSync(path, "utf8");
+						const replace = (before: string, after: string) => {
+							if (contents.split(before).length !== 2)
+								throw new Error("pinned renderer observation anchor changed");
+							contents = contents.replace(before, after);
+						};
+						replace(
+							"nextRenderLanes = Component(props, secondArg);",
+							"nextRenderLanes = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => Component(props, secondArg)) : Component(props, secondArg);",
+						);
+						replace(
+							"children = Component(props, secondArg);",
+							"children = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => Component(props, secondArg)) : Component(props, secondArg);",
+						);
+						replace(
+							": context.render()),",
+							": (globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(context, () => context.render()) : context.render())),",
+						);
+						replace(
+							"root.current = finishedWork;",
+							"root.current = finishedWork; globalThis.__SPOOL_REACT__?.commit(finishedWork);",
+						);
+						return { contents, loader: "js" };
+					});
+				},
+			},
+		],
 	});
 	const js = result.outputFiles[0]?.text;
 	if (js === undefined) throw new Error("vendor react bundle produced no output");

@@ -110,6 +110,11 @@ it("drags an element wider, and puts back a width layout would not take", { time
 	await page.keyboard.press("ControlOrMeta+z");
 	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 30_000 }).toContain("w-40");
 	await settled();
+	await expect
+		.poll(async () => (await page.frameLocator('iframe[title="cart"]').locator("p").boundingBox())?.width, {
+			timeout: 20_000,
+		})
+		.toBe(160);
 
 	// the half static analysis cannot promise: the span is a flex item, so the
 	// class compiles, lands, and the box does not follow it

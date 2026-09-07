@@ -23,6 +23,7 @@ import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "..
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
+import type { SourceOccurrence, SourceRead, SourceReceipt, SourceResult } from "../source-edit";
 
 declare global {
 	interface Window {
@@ -1525,5 +1526,97 @@ export async function agentPermissions(
 		return { reason: "The engine did not report its permissions." };
 	} catch {
 		return { reason: "Could not reach the engine." };
+	}
+}
+
+export async function readSource(
+	project: string,
+	frame: string,
+	original: SourceOccurrence,
+	generation: number,
+	observer: string,
+): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: { action: "read", frame, original, generation, observer },
+		});
+		return res.ok
+			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+export async function commitSource(project: string, read: SourceRead, text: string): Promise<SourceResult | undefined> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: {
+				action: "commit",
+				handle: read.handle,
+				generation: read.generation,
+				original: read.original,
+				source: read.source,
+				text,
+			},
+		});
+		return res.ok ? ((await res.json()) as SourceResult) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+export async function inverseSource(project: string, receipt: SourceReceipt): Promise<SourceResult | undefined> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: { action: "inverse", receipt },
+		});
+		return res.ok ? ((await res.json()) as SourceResult) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+export async function cancelSource(project: string, handle: string): Promise<void> {
+	try {
+		await client.api.p[":project"].source.$post({ param: { project }, json: { action: "cancel", handle } });
+	} catch {
+		/* a cancelled read never writes */
+	}
+}
+export async function sourceIsCurrent(project: string, publication: string): Promise<boolean> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: { action: "current", publication },
+		});
+		const data: unknown = await res.json();
+		return res.ok && typeof data === "object" && data !== null && "current" in data && data.current === true;
+	} catch {
+		return false;
+	}
+}
+
+export async function sourceDelivered(project: string, publication: string): Promise<void> {
+	try {
+		await client.api.p[":project"].source.$post({ param: { project }, json: { action: "delivered", publication } });
+	} catch {
+		/* the owner expires this delivery lease */
+	}
+}
+
+export async function respondSourceObservation(
+	project: string,
+	observer: string,
+	challenge: string,
+	original: SourceOccurrence | undefined,
+): Promise<void> {
+	try {
+		await client.api.p[":project"].source.$post({
+			param: { project },
+			json: { action: "observed", observer, challenge, ...(original ? { original } : {}) },
+		});
+	} catch {
+		/* no observation cannot authorize source */
 	}
 }
