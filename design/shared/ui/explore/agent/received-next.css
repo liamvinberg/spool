@@ -1,0 +1,89 @@
+.received-next { height: 100%; }
+.received-next .received-track { display: none; }
+.received-next .received-marker { position: relative; height: 14px; min-width: 24px; opacity: 1 !important; }
+.rn-ink { display: inline-flex; position: relative; align-items: center; color: var(--color-text); transition: opacity 300ms; }
+.received-next [data-receiving="false"] .rn-ink { opacity: .32; }
+.received-next [data-receiving="false"] .rn-ink * { animation-play-state: paused !important; }
+.rn-ink i, .rn-ink b { display: block; font-weight: normal; }
+.received-next:is([data-loading-take="typesetter"], [data-loading-take="scanlines"], [data-loading-take="constellation"], [data-loading-take="receipt"]) .received-marker { display: flex; margin: 15px 0 0; height: 54px; width: 100%; }
+
+/* A galley of word-sized pieces. Each row gathers ink before it becomes readable. */
+.rn-typesetter { display: flex; flex-direction: column; gap: 10px; }
+.rn-typesetter > span { display: flex; gap: 5px; height: 5px; }
+.rn-typesetter i { height: 4px; border-radius: 1px; background: currentColor; opacity: .08; animation: rn-type 2400ms ease-in-out infinite; animation-delay: calc(var(--i) * -130ms); }
+@keyframes rn-type { 0%, 65%, 100% { opacity: .08; transform: scaleX(.7); } 30% { opacity: .36; transform: scaleX(1); } }
+[data-loading-take="typesetter"] .animate-agent-paragraph > div > div { animation: rn-print 500ms ease-out both; }
+@keyframes rn-print { from { filter: blur(2px); opacity: .25; } to { filter: blur(0); opacity: 1; } }
+
+/* A narrow reading head traverses the area reserved for the next paragraph. */
+.rn-scanlines { position: relative; display: flex; flex-direction: column; gap: 13px; width: 240px; overflow: hidden; }
+.rn-scanlines i { height: 1px; background: currentColor; opacity: .13; }
+.rn-scanlines b { position: absolute; inset: 0; width: 38px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-text) 18%, transparent), transparent); animation: rn-scan 2800ms ease-in-out infinite; }
+@keyframes rn-scan { 0%, 10% { transform: translateX(-40px); } 90%, 100% { transform: translateX(240px); } }
+[data-loading-take="scanlines"] .animate-agent-paragraph > div > div { animation: rn-develop 650ms ease-out both; }
+@keyframes rn-develop { from { clip-path: inset(0 100% 0 0); opacity: .3; } to { clip-path: inset(0); opacity: 1; } }
+
+/* Sparse connections rather than a text-shaped promise. */
+.rn-constellation { overflow: visible; }
+.rn-constellation path { fill: none; stroke: currentColor; stroke-width: .6; stroke-dasharray: 16 180; opacity: .3; animation: rn-connect 3600ms linear infinite; }
+.rn-constellation circle { fill: currentColor; animation: rn-star 2600ms ease-in-out infinite; animation-delay: calc(var(--i) * -370ms); }
+@keyframes rn-connect { to { stroke-dashoffset: -196; } }
+@keyframes rn-star { 0%,100% { opacity: .15; } 50% { opacity: .85; } }
+
+/* A feed crossing a fixed gate, like material arriving at the head of a printer. */
+.rn-ribbon { display: block; position: relative; width: 56px; height: 16px; overflow: hidden; mask-image: linear-gradient(90deg, transparent, black 30%, black 90%, transparent); }
+.rn-ribbon > span { display: flex; align-items: center; gap: 4px; height: 16px; width: 112px; animation: rn-feed 1700ms linear infinite; }
+.rn-ribbon i { flex: 0 0 2px; background: currentColor; opacity: .4; }
+.rn-ribbon b { position: absolute; height: 16px; width: 1px; background: currentColor; right: 9px; top: 0; opacity: .8; }
+@keyframes rn-feed { to { transform: translateX(-42px); } }
+
+/* An honest quantity, with no invented completion percentage. The ticks saturate. */
+.rn-receipt { display: flex; flex-direction: column; gap: 9px; width: 252px; }
+.rn-receipt-rule { height: 1px; width: 24px; background: currentColor; opacity: .5; }
+.rn-receipt-label { display: flex; justify-content: space-between; font: var(--type-label); color: var(--color-muted); }
+.rn-receipt-label > span { font-variant-numeric: tabular-nums; }
+.rn-receipt-ticks { display: flex; gap: 6px; }
+.rn-receipt-ticks i { width: 2px; height: 4px; background: currentColor; opacity: .08; transition: opacity 180ms; }
+.rn-receipt-ticks i[data-filled="true"] { opacity: .6; }
+
+/* Five tiny reeds. Movement is vertical, with a quiet, fixed footprint. */
+.rn-tuning { display: flex; align-items: center; justify-content: center; gap: 3px; width: 24px; height: 14px; }
+.rn-tuning i { width: 1px; height: 10px; border-radius: 1px; background: currentColor; transform: scaleY(.2); animation: rn-tune 1500ms ease-in-out infinite; animation-delay: calc(var(--i) * -180ms); }
+@keyframes rn-tune { 0%,100% { transform: scaleY(.2); opacity: .35; } 50% { transform: scaleY(1); opacity: .8; } }
+
+/* A solid square opening to admit light. No rotation or travel. */
+.rn-aperture { position: relative; display: block; width: 10px; height: 10px; overflow: hidden; border: 1px solid currentColor; border-radius: 2px; opacity: .8; }
+.rn-aperture i, .rn-aperture b { position: absolute; top: 0; bottom: 0; width: 50%; background: currentColor; animation: rn-open 2200ms ease-in-out infinite; }
+.rn-aperture i { left: 0; transform-origin: left; }
+.rn-aperture b { right: 0; transform-origin: right; }
+@keyframes rn-open { 0%,100% { transform: scaleX(1); } 50% { transform: scaleX(.18); } }
+
+/* A four-place moving space: absence is the animated part. */
+.rn-stepping { display: flex; gap: 3px; }
+.rn-stepping i { width: 3px; height: 3px; background: currentColor; animation: rn-step 1800ms steps(1,end) infinite; animation-delay: calc(var(--i) * -450ms); }
+@keyframes rn-step { 0%,24% { opacity: .08; transform: translateY(2px); } 25%,100% { opacity: .65; transform: translateY(0); } }
+
+/* A stationary source with two rectangular echoes, borrowing the frame's geometry. */
+.rn-echo { position: relative; display: block; width: 22px; height: 18px; }
+.rn-echo b { position: absolute; top: 8px; left: 10px; width: 2px; height: 2px; background: currentColor; }
+.rn-echo i { position: absolute; inset: 5px 7px; border: .75px solid currentColor; border-radius: 2px; animation: rn-echo 2600ms ease-out infinite; }
+.rn-echo i:nth-child(2) { animation-delay: -1300ms; }
+@keyframes rn-echo { 0% { transform: scale(.4); opacity: .7; } 85%,100% { transform: scale(2.2); opacity: 0; } }
+
+/* Two brackets hold an empty line open, then ease inward while a thought collects. */
+[data-loading-take="bookend"] .received-marker { display: flex; height: 25px; margin: 13px 0 0; }
+.rn-bookend { position: relative; display: flex; align-items: center; width: 90px; height: 18px; }
+.rn-bookend i, .rn-bookend b { position: absolute; height: 12px; width: 3px; border: 1px solid currentColor; opacity: .65; }
+.rn-bookend i { left: 0; border-right: 0; }
+.rn-bookend b { right: 0; border-left: 0; animation: rn-bracket 3000ms ease-in-out infinite; }
+.rn-bookend > span { margin-left: 9px; height: 1px; width: 60px; background: linear-gradient(90deg, currentColor, transparent); opacity: .12; }
+@keyframes rn-bracket { 0%,100% { transform: translateX(0); } 50% { transform: translateX(-26px); } }
+[data-loading-take="bookend"] .animate-agent-paragraph > div > div { animation: rn-focus 500ms ease-out both; }
+@keyframes rn-focus { from { opacity: .15; transform: translateX(3px); } to { opacity: 1; transform: translateX(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+ .received-next .rn-ink *, .received-next .animate-agent-paragraph > div > div { animation: none !important; transition: none !important; }
+ .rn-typesetter i { opacity: .22; }
+ .rn-scanlines b { display: none; }
+ .rn-tuning i { transform: scaleY(.5); }
+}
