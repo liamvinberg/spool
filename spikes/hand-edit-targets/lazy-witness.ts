@@ -16,6 +16,8 @@ interface Witness {
 	namespace(value: object, file: string): void;
 	member(namespace: Record<string, unknown>, key: string): Member;
 	project(member: Member): { default: unknown };
+	copy(source: Record<string, unknown>): Record<string, unknown>;
+	replace(target: { default: unknown }, member: Member): unknown;
 	created<T extends object>(value: T, loader: LazyChoice["loader"]): T;
 	choice(lazy: object, result: object, committed: unknown): LazyChoice;
 }
@@ -46,18 +48,43 @@ export function installLazyWitness(): void {
 		member(namespace, key) {
 			const value: unknown = namespace[key];
 			const held = namespaces.get(namespace);
+			const projection = projections.get(namespace);
 			return {
 				value,
 				origin:
 					held && unchanged(namespace, key, held.descriptors[key])
 						? { module: held.file, export: key, via: "projection" }
-						: undefined,
+						: key === "default" && projection && value === projection.value
+							? projection.origin
+							: undefined,
 			};
 		},
 		project(member) {
 			const value = { default: member.value };
 			projections.set(value, member);
 			return value;
+		},
+		copy(source) {
+			// Spread performs exactly the application's own enumeration and reads.
+			// Only registered sources are inspected beyond the original spread.
+			const value = { ...source };
+			const namespace = namespaces.get(source),
+				projection = projections.get(source);
+			const origin =
+				namespace && unchanged(source, "default", namespace.descriptors.default)
+					? { module: namespace.file, export: "default", via: "projection" as const }
+					: projection?.origin;
+			// Promise resolution calls an authored `then` with this object as
+			// its receiver. That is an escape, even without an explicit call in
+			// the loader, so subsequent replacements cannot restore a witness.
+			if (typeof Object.getOwnPropertyDescriptor(value, "then")?.value !== "function")
+				projections.set(value, { value: value.default, origin });
+			return value;
+		},
+		replace(target, member) {
+			target.default = member.value;
+			if (projections.has(target)) projections.set(target, member);
+			return member.value;
 		},
 		created(value, loader) {
 			loaders.set(value, loader);
@@ -72,8 +99,7 @@ export function installLazyWitness(): void {
 			const projection = projections.get(result);
 			// Unknown objects can be proxies. Do not probe descriptors or getters
 			// on application-owned result objects merely to reject them.
-			if (!projection?.origin)
-				throw new Error("lazy resolved default has no preserved executed module/export origin");
+			if (!projection?.origin) throw new Error("lazy resolved default has no preserved executed module/export origin");
 			const property = Object.getOwnPropertyDescriptor(result, "default");
 			if (!property || !("value" in property) || property.value !== projection.value || property.value !== committed)
 				throw new Error("lazy resolved default has no preserved executed module/export origin");

@@ -6,11 +6,14 @@ import { build, type Plugin, transform } from "esbuild";
 import { type DesignEntryOptions, designBuildOptions, designEntryKey } from "../../src/daemon/compile";
 import { resolveDesignPath } from "../../src/daemon/design-path";
 import { walkNodes } from "../../src/daemon/jsx-walk";
+import { rewriteObjectLoader } from "./lazy-objects";
 
-// Only direct return flows earn a witness. In particular, a returned object
-// cannot escape through a variable, spread, getter or later transformation.
-// Arbitrary prefix statements still execute normally; they earn no origin.
 function rewriteLoader(node: Node, text: string, helper: string): string | undefined {
+	const objects = rewriteObjectLoader(node, text, helper);
+	if (objects) return objects;
+	// The earlier direct-return proof remains the fallback. Prefix statements
+	// execute normally but earn no object origin, and no projected object may
+	// pass through an unaccounted-for variable, getter or callback here.
 	const slice = (node: Node) => text.slice(node.start!, node.end!);
 	const member = (node: Node): string | undefined => {
 		if (node.type === "ConditionalExpression") {
@@ -111,9 +114,7 @@ function plugin(designDir: string): Plugin {
 							? node.specifiers
 									.filter(
 										(s) =>
-											s.type === "ImportSpecifier" &&
-											s.imported.type === "Identifier" &&
-											s.imported.name === "lazy",
+											s.type === "ImportSpecifier" && s.imported.type === "Identifier" && s.imported.name === "lazy",
 									)
 									.map((s) => s.local.name)
 							: [],
