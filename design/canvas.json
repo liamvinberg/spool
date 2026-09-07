@@ -44,7 +44,7 @@
 		},
 		"site": {
 			"x": 80,
-			"y": 7303
+			"y": 7309
 		},
 		"variants": {
 			"x": 27001,
@@ -287,11 +287,11 @@
 			"y": 80
 		},
 		"explore/explorer": {
-			"x": 7671,
+			"x": 6667,
 			"y": 3566
 		},
 		"explore/manipulate": {
-			"x": 11461,
+			"x": 10457,
 			"y": 3566
 		},
 		"explore/play-app": {
@@ -460,7 +460,7 @@
 		},
 		"system": {
 			"x": 5725,
-			"y": 7303
+			"y": 7309
 		},
 		"explore/new-project": {
 			"x": 15762,
@@ -607,7 +607,7 @@
 			"y": 7216
 		},
 		"explore/engines": {
-			"x": 3687,
+			"x": 2683,
 			"y": 3566
 		},
 		"explore/properties-map": {
@@ -743,7 +743,7 @@
 			"y": 5432
 		},
 		"explore/home": {
-			"x": 9485,
+			"x": 8481,
 			"y": 3566
 		},
 		"explore/home/projects": {
