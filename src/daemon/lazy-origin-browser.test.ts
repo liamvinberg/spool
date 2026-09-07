@@ -10,7 +10,6 @@ import { designBuildOptions } from "./compile";
 import { consumedChoices, lazyChoices } from "./lazy-origin-cases";
 
 let browser: Browser | undefined;
-let uiDir: string | undefined;
 afterAll(async () => browser?.close());
 const leaf = `globalThis.moduleInitializers=(globalThis.moduleInitializers??0)+1;export function Button({label}){return <button>{label}</button>} export {Button as default};`;
 const refused = new Set([
@@ -35,18 +34,14 @@ async function fixture(
 	consumed: boolean,
 	authored?: { source: string; files?: Record<string, string> },
 ) {
-	uiDir = undefined;
 	if (!browser) browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	// Each test keeps its build directory alive only until its daemon closes.
-	const buildDir = join(makeTempDir(), "ui");
-	if (!uiDir) {
-		await buildUi({
-			configFile: join(process.cwd(), "vite.config.ts"),
-			logLevel: "silent",
-			build: { outDir: buildDir, emptyOutDir: true },
-		});
-		uiDir = buildDir;
-	}
+	const uiDir = join(makeTempDir(), "ui");
+	await buildUi({
+		configFile: join(process.cwd(), "vite.config.ts"),
+		logLevel: "silent",
+		build: { outDir: uiDir, emptyOutDir: true },
+	});
 	const project = await serveProject({ uiDir });
 	const source =
 		authored?.source ??
@@ -60,6 +55,7 @@ async function fixture(
 	for (const path of [
 		"shared/ui/leaf.tsx",
 		"shared/ui/other.tsx",
+		"shared/ui/runtime.tsx",
 		"frames/home/parts/first.tsx",
 		"frames/home/parts/second.tsx",
 	])
@@ -124,8 +120,6 @@ it.each([
 	...lazyChoices.map((sample) => ({ ...sample, consumed: false })),
 	...consumedChoices.map((sample) => ({ ...sample, consumed: true })),
 ])("saves and inverses actual lazy origin: $name", { timeout: 90000 }, async (sample) => {
-	// The UI is shared only within this case; its temp directory is removed by the test cleanup.
-	uiDir = undefined;
 	const f = await fixture(sample, sample.consumed);
 	const display = () =>
 		f.frame.locator("main").evaluate(() => ({
@@ -392,15 +386,23 @@ it("matches ordinary lazy state, refs, props, input, focus and getter counts wit
 	});
 	await f.frame.locator("button").evaluate((element) => globalThis.__SPOOL_OBSERVER__.observe(element));
 	expect(await f.frame.locator("main").evaluate(snapshot)).toEqual(before);
+	await f.page.bringToFront();
 	await f.page.keyboard.press("Escape");
-	await f.select();
-	const field = f.page.getByRole("textbox", { name: "Text", exact: true });
-	await expect.poll(() => field.count()).toBe(1);
-	await field.fill("Unsupported computation");
-	await field.press("Tab");
 	await expect
-		.poll(() => f.page.getByText("these words have no editable local literal source", { exact: true }).count())
-		.toBe(1);
+		.poll(() => f.page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents))
+		.toBe("none");
+	await f.page.mouse.click(500, 750);
+	await f.page.getByRole("button", { name: "edit", exact: true }).click();
+	const picking = await f.frame.locator("button").boundingBox();
+	if (!picking) throw new Error("missing button");
+	await f.page.mouse.click(picking.x + 5, picking.y + 5);
+	const selected = await f.frame.locator("button").boundingBox();
+	if (!selected) throw new Error("missing button");
+	await f.page.mouse.click(selected.x + 5, selected.y + 5);
+	await expect
+		.poll(() => f.page.locator('[data-hand-refusal="source"]').textContent())
+		.toBe("these words have no editable local literal source");
+	expect(await f.frame.locator("button").getAttribute("contenteditable")).toBeNull();
 	expect(readFileSync(f.file, "utf8")).toBe(f.source);
 });
 
@@ -461,12 +463,12 @@ it("saves and inverses an unshadowed imported getter result", { timeout: 90000 }
 	const f = await fixture(
 		{
 			name: "unshadowed",
-			setup: `import {Button as Chosen} from 'shared/ui/leaf';`,
+			setup: `import {Button as Chosen} from 'shared/ui/runtime';`,
 			loader: `async()=>({get default(){return Chosen}})`,
 		},
 		true,
 	);
-	expect(await choice(f)).toMatchObject({ module: "shared/ui/leaf.tsx", export: "Button" });
+	expect(await choice(f)).toMatchObject({ module: "shared/ui/runtime.tsx", export: "Button" });
 	await saveAndInverse(f);
 });
 
@@ -528,3 +530,23 @@ it.each(["loader", "caller", "module", "absent-path", "generation", "directory"]
 		expect(readFileSync(f.file, "utf8")).toBe(before);
 	},
 );
+
+it("refuses a lazy text inverse when a captured empty glob directory gains another choice", {
+	timeout: 90000,
+}, async () => {
+	const f = await fixture({ name: "glob inverse", loader: "" }, true, {
+		source: `import {lazy,Suspense} from 'react';globalThis.pick='first';const Pick=lazy(()=>import('./parts/'+globalThis.pick+'.tsx'));export default function Frame(){return <main style={{padding:40}}><Suspense fallback={<i>Waiting</i>}><Pick label="Same"/></Suspense></main>}`,
+		files: { "frames/home/parts/empty/.keep": "" },
+	});
+	await saveAndInverse(f);
+	const saved = readFileSync(f.file, "utf8");
+	writeDesignFile(f.project.root, "frames/home/parts/empty/third.tsx", leaf);
+	await f.page.mouse.click(500, 750);
+	const response = f.page.waitForResponse(
+		(response) =>
+			response.url().endsWith("/source") && response.request().postData()?.includes('"action":"inverse"') === true,
+	);
+	await f.page.keyboard.press("ControlOrMeta+z");
+	expect(await (await response).json()).toMatchObject({ ok: false });
+	expect(readFileSync(f.file, "utf8")).toBe(saved);
+});
