@@ -1591,11 +1591,15 @@ export async function commitSource(project: string, read: SourceRead, text: stri
 		return undefined;
 	}
 }
-export async function inverseSource(project: string, receipt: SourceReceipt): Promise<SourceResult | undefined> {
+export async function inverseSource(
+	project: string,
+	receipt: SourceReceipt,
+	inventories?: SourceInventory[],
+): Promise<SourceResult | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "inverse", receipt },
+			json: { action: "inverse", receipt, ...(inventories ? { inventories } : {}) },
 		});
 		return res.ok ? ((await res.json()) as SourceResult) : undefined;
 	} catch {

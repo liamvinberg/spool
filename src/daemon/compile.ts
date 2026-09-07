@@ -183,7 +183,25 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		publications.set(retained.packet.id, { root, frame, compilation: retained });
 		return retained;
 	}
-	return { getDocument, compilePublication, publication: (id: string) => publications.get(id) };
+	return {
+		getDocument,
+		compilePublication,
+		publication: (id: string) => publications.get(id),
+		matchingPublications: (root: string, frame: string, inputs: ReadonlyMap<string, SourceInput>, shape: string) =>
+			[...publications.values()]
+				.filter(
+					(one) =>
+						one.root === root &&
+						one.frame === frame &&
+						one.compilation.packet.shape === shape &&
+						one.compilation.inputs.size === inputs.size &&
+						[...inputs].every(([file, input]) => {
+							const held = one.compilation.inputs.get(file);
+							return held && sameInput(held, input);
+						}),
+				)
+				.map((one) => one.compilation.packet.id),
+	};
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;

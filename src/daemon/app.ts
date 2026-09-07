@@ -485,6 +485,7 @@ export function createDaemonApp({
 	const flowGraph = createFlowGraph();
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
 	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
+	sourceOwner.watchSource(hub.observeSource);
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
 	const trashImpl = moveToTrash ?? (async (paths: string[]) => void (await trash(paths, { glob: false })));
@@ -622,7 +623,10 @@ export function createDaemonApp({
 	const emitAppEvent = (event: AppEvent) => {
 		// a project that arrived or left changes who keeps history, and an arrival
 		// brings whatever design/ churn the daemon was not up for
-		if (event.kind === "registry" || event.kind === "project-renamed") history.keeping(registeredRoots());
+		if (event.kind === "registry" || event.kind === "project-renamed") {
+			history.keeping(registeredRoots());
+			sourceOwner.keepProjects(registeredRoots());
+		}
 		for (const listener of appListeners) listener(event);
 	};
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
@@ -671,6 +675,15 @@ export function createDaemonApp({
 		).map((engine) => [engine.id, engine]),
 	);
 
+	for (const engine of engines.values())
+		engine.coordinateSource?.({
+			open: (options, _generation) =>
+				sourceOwner.agent(options.root, () => {
+					if (!options.thread || !registeredRoots().includes(options.root)) return false;
+					const thread = readThread(spoolDir, options.root, options.thread);
+					return thread?.engine === "spool" && !thread.closed && thread.session.id === options.session.id;
+				}),
+		});
 	const permissionChanges = new Set<string>();
 	const projectRenames = new Set<string>();
 
@@ -1758,6 +1771,7 @@ export function createDaemonApp({
 					});
 				}
 				const turn = selected.engine.start({
+					thread,
 					...(recovery === undefined ? {} : { recovery }),
 					root: project.root,
 					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
@@ -2292,7 +2306,10 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("inverse"),
-								receipt: z.object({ handle: z.string(), owner: z.string() }).strict(),
+								receipt: z
+									.object({ handle: z.string(), owner: z.string(), field: z.string().optional() })
+									.strict(),
+								inventories: z.array(inventory).optional(),
 							})
 							.strict(),
 						z
@@ -2349,7 +2366,7 @@ export function createDaemonApp({
 							]),
 						);
 					case "inverse":
-						return c.json(await sourceOwner.inverse(project.root, body.receipt));
+						return c.json(await sourceOwner.inverse(project.root, body.receipt, body.inventories));
 					case "cancel":
 						sourceOwner.cancel(project.root, body.handle);
 						return c.json({ ok: true });
@@ -3284,6 +3301,7 @@ export function createDaemonApp({
 			history.close();
 			liveTurns.close();
 			for (const engine of engines.values()) engine.close?.();
+			sourceOwner.close();
 			hub.close();
 			updateChecker.stop();
 			void shots.close();

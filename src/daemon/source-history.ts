@@ -19,6 +19,13 @@ export function sourceHistoryCompilation(
 	let changed = true;
 	while (changed) {
 		changed = false;
+		for (const group of compilation.globDiscoveries ?? [])
+			if (required.has(group.importer) || group.files.some((file) => required.has(file)))
+				for (const file of group.files)
+					if (!required.has(file)) {
+						required.add(file);
+						changed = true;
+					}
 		for (const { parts, result } of edges)
 			if (
 				required.has(parts[1]) &&
@@ -35,6 +42,10 @@ export function sourceHistoryCompilation(
 	for (const file of compilation.inputs.keys())
 		if (file.startsWith(`${design}/shared/`) && /\.(?:css|json)$/.test(file)) required.add(file);
 	const directories = new Set<string>();
+	const globDiscoveries = compilation.globDiscoveries?.filter(
+		(group) => required.has(group.importer) || group.files.some((file) => required.has(file)),
+	);
+	for (const group of globDiscoveries ?? []) for (const directory of group.directories) directories.add(directory);
 	for (const { parts } of edges)
 		if (
 			required.has(parts[1]) &&
@@ -55,7 +66,11 @@ export function sourceHistoryCompilation(
 	const keepsConfiguration = (file: string) => ancestors.has(dirname(file)) || !file.startsWith(`${design}/frames/`);
 	return {
 		...compilation,
+		...(globDiscoveries ? { globDiscoveries } : {}),
 		inputs: new Map([...compilation.inputs].filter(([file]) => required.has(file))),
+		shapes: Object.fromEntries(
+			Object.entries(compilation.shapes).filter(([path]) => required.has(resolve(design, path))),
+		),
 		cells: Object.fromEntries(
 			Object.entries(compilation.cells).filter(([, cell]) => required.has(resolve(design, cell.file))),
 		),

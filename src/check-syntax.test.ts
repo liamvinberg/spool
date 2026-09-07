@@ -6,7 +6,7 @@ import { messages } from "./check-test-harness";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 
 describe("design source inspection", () => {
-	it("discovers modules from syntax while leaving comments and strings inert", () => {
+	it("discovers modules from syntax while leaving comments and strings inert", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(
@@ -15,16 +15,16 @@ describe("design source inspection", () => {
 			'// import "../../outside"\nconst text = \'export * from "../../outside"\';\nexport default function Home() { return <p>{text}</p>; }\n',
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("replaces absolute local module errors with a stable boundary diagnostic", () => {
+	it("replaces absolute local module errors with a stable boundary diagnostic", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const absolute = "/private/spool-secret/missing.ts";
 		writeFrame(root, "home", `import value from ${JSON.stringify(absolute)};\nvoid value;\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("TS2307: Absolute local imports are outside design/");
@@ -32,7 +32,7 @@ describe("design source inspection", () => {
 		expect(result[0]).not.toContain("spool-secret");
 	});
 
-	it("blocks a relative import from entering a checker-trusted declaration root", () => {
+	it("blocks a relative import from entering a checker-trusted declaration root", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -40,14 +40,14 @@ describe("design source inspection", () => {
 		const specifier = relative(dirname(frame), trusted);
 		writeFrame(root, "home", `import * as runtime from ${JSON.stringify(specifier)};\nruntime.notReal();\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:26 TS2307: Relative imports outside design/"]);
 		expect(result.join("\n")).not.toContain(trusted);
 		expect(result.join("\n")).not.toContain("notReal");
 	});
 
-	it("diagnoses an extensionless source alias that resolves into a trusted root", () => {
+	it("diagnoses an extensionless source alias that resolves into a trusted root", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -55,20 +55,20 @@ describe("design source inspection", () => {
 		symlinkSync(trusted, join(root, "design", "shared", "trusted.ts"));
 		writeFrame(root, "home", 'import * as runtime from "../../shared/trusted";\nruntime.notReal();\n');
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:26 TS2307: Relative imports outside design/"]);
 		expect(result.join("\n")).not.toContain(trusted);
 		expect(result.join("\n")).not.toContain("notReal");
 	});
 
-	it("blocks an absolute TypeScript import assignment without leaking its target", () => {
+	it("blocks an absolute TypeScript import assignment without leaking its target", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/spool-import-assignment-secret.ts";
 		writeFrame(root, "home", `import secret = require(${JSON.stringify(secret)});\nvoid secret;\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual([
 			expect.stringContaining("design/frames/home/frame.tsx:1:1 TS1202: Import assignment cannot be used"),
@@ -78,20 +78,20 @@ describe("design source inspection", () => {
 		expect(result.join("\n")).not.toContain("spool-import-assignment-secret");
 	});
 
-	it("blocks an absolute exported TypeScript import assignment at its Babel 7 source literal", () => {
+	it("blocks an absolute exported TypeScript import assignment at its Babel 7 source literal", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/spool-exported-import-assignment-secret.ts";
 		writeFrame(root, "home", `export import secret = require(${JSON.stringify(secret)});\nvoid secret;\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toContain("design/frames/home/frame.tsx:1:32 TS2307: Absolute local imports are outside design/");
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain("spool-exported-import-assignment-secret");
 	});
 
-	it("classifies cooked static template imports while leaving expression templates dynamic", () => {
+	it("classifies cooked static template imports while leaving expression templates dynamic", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/importmap.json", '{ "imports": { "mapped/": "https://example.test/mapped/" } }\n');
@@ -101,7 +101,7 @@ describe("design source inspection", () => {
 			`async function load() {\n\t(await import(\`mapped\\x2fpkg\`)).anything();\n\t(await import(\`unmapped-template\`)).anything();\n\tconst segment = "secret";\n\t(await import(\`/private/\${segment}\`)).anything();\n}\nvoid load;\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("design/frames/home/frame.tsx:3:16");
@@ -110,13 +110,13 @@ describe("design source inspection", () => {
 		expect(result.join("\n")).not.toContain("/private/");
 	});
 
-	it("blocks a static template import into a trusted root without loading or leaking it", () => {
+	it("blocks a static template import into a trusted root without loading or leaking it", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
 		writeFrame(root, "home", `async function load() { (await import(\`${trusted}\`)).notReal(); }\nvoid load;\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("TS2307: Absolute local imports are outside design/");
@@ -124,13 +124,13 @@ describe("design source inspection", () => {
 		expect(result.join("\n")).not.toContain("notReal");
 	});
 
-	it("fails closed on a deferred import that the live ES2022 build rejects", () => {
+	it("fails closed on a deferred import that the live ES2022 build rejects", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/importmap.json", '{ "imports": { "mapped": "https://example.test/mapped.js" } }\n');
 		writeFrame(root, "home", 'import defer * as deferred from "mapped";\ndeferred.runtimeOnly();\n');
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely",
 		]);
 	});
@@ -139,13 +139,13 @@ describe("design source inspection", () => {
 		["decorator", "function dec(value: Function) {}\n@dec class Model {}\n"],
 		["exported decorator", "function dec(value: Function) {}\n@dec export class Model {}\n"],
 		["auto-accessor", "class Model { accessor value = 1; }\n"],
-	])("keeps module policy active around a TypeScript %s", (_name, syntax) => {
+	])("keeps module policy active around a TypeScript %s", async (_name, syntax) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/importmap.json", '{ "imports": { "mapped": "https://example.test/mapped.js" } }\n');
 		writeFrame(root, "home", `${syntax}import mapped from "mapped";\nmapped.runtimeOnly();\nvoid Model;\n`);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
@@ -181,7 +181,7 @@ describe("design source inspection", () => {
 			declaration: "export default @dec declare abstract class Model {}",
 			isDefault: true,
 		},
-	] as const)("accepts the TypeScript decorated declare class $form form", ({ declaration, isDefault }) => {
+	] as const)("accepts the TypeScript decorated declare class $form form", async ({ declaration, isDefault }) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(
@@ -192,32 +192,32 @@ describe("design source inspection", () => {
 			}`,
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
 		{ shape: "named", declaration: "export default @dec abstract class Model {}" },
 		{ shape: "anonymous", declaration: "export default @dec abstract class {}" },
-	] as const)("accepts a decorated runtime default abstract $shape class", ({ declaration }) => {
+	] as const)("accepts a decorated runtime default abstract $shape class", async ({ declaration }) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(root, "home", `function dec(value: Function) {}\n${declaration}\n`);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
 		{ modifier: "concrete", declaration: "export default @dec declare class {}" },
 		{ modifier: "abstract", declaration: "export default @dec declare abstract class {}" },
-	] as const)("accepts a decorated ambient anonymous default $modifier class", ({ declaration }) => {
+	] as const)("accepts a decorated ambient anonymous default $modifier class", async ({ declaration }) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(root, "home", `function dec(value: Function) {}\n${declaration}\n`);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("preserves strict TypeScript diagnostics when an ambient default precedes a runtime default", () => {
+	it("preserves strict TypeScript diagnostics when an ambient default precedes a runtime default", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(
@@ -230,13 +230,13 @@ describe("design source inspection", () => {
 			].join("\n"),
 		);
 
-		expect(messages(root)).toEqual([
+		expect(await messages(root)).toEqual([
 			"design/frames/home/frame.tsx:2:44 TS2323: Cannot redeclare exported variable 'default'.",
 			"design/frames/home/frame.tsx:3:25 TS2323: Cannot redeclare exported variable 'default'.",
 		]);
 	});
 
-	it("accepts every ECMAScript same-line whitespace between decorated ambient class modifiers", () => {
+	it("accepts every ECMAScript same-line whitespace between decorated ambient class modifiers", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const whitespace = [
@@ -271,7 +271,7 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n${declarations}\nexport default function Home() { return null; }\n`,
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
 	it.each([
@@ -283,7 +283,7 @@ describe("design source inspection", () => {
 			placement: "decorator newline",
 			declaration: "@dec\n/* decorator gap */ declare abstract class Model {}",
 		},
-	] as const)("accepts a decorated declare abstract class with $placement placement", ({ declaration }) => {
+	] as const)("accepts a decorated declare abstract class with $placement placement", async ({ declaration }) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(
@@ -292,10 +292,10 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n${declaration}\nexport default function Home() { return null; }\n`,
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("accepts multiple decorated declare classes with an inline comment gap", () => {
+	it("accepts multiple decorated declare classes with an inline comment gap", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(
@@ -310,10 +310,10 @@ describe("design source inspection", () => {
 			].join("\n"),
 		);
 
-		expect(messages(root)).toEqual([]);
+		expect(await messages(root)).toEqual([]);
 	});
 
-	it("fails closed when the decorated declare repair budget is exhausted", () => {
+	it("fails closed when the decorated declare repair budget is exhausted", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/decorated-declare-budget-secret.ts";
@@ -327,14 +327,14 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n${declarations}\nimport ${JSON.stringify(secret)};\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("does not let a decorated ambient class shadow a static require", () => {
+	it("does not let a decorated ambient class shadow a static require", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/decorated-declare-require-secret.ts";
@@ -344,14 +344,14 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n@dec declare class require {}\nrequire(${JSON.stringify(secret)});\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:3:9 TS2307: Absolute local imports are outside design/"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("does not let an exported decorated ambient abstract class shadow a static require", () => {
+	it("does not let an exported decorated ambient abstract class shadow a static require", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/decorated-declare-abstract-require-secret.ts";
@@ -361,14 +361,14 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\nexport default @dec declare abstract class require {}\nrequire(${JSON.stringify(secret)});\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:3:9 TS2307: Absolute local imports are outside design/"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("preserves import offsets after an astral decorated ambient default class", () => {
+	it("preserves import offsets after an astral decorated ambient default class", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -378,14 +378,14 @@ describe("design source inspection", () => {
 			`const label = "🧵";\nfunction dec(value: Function) {}\nexport default @dec declare abstract class Model {}\nimport type { SpoolUi } from ${JSON.stringify(trusted)};\ndeclare const ui: SpoolUi;\nui.go("home");\nvoid label;\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:4:30 TS2307: Absolute local imports are outside design/"]);
 		expect(result.join("\n")).not.toContain(trusted);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("preserves import offsets after inspecting a decorated declare class", () => {
+	it("preserves import offsets after inspecting a decorated declare class", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -395,14 +395,14 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n@dec declare class Model {}\nimport type { SpoolUi } from ${JSON.stringify(trusted)};\ndeclare const ui: SpoolUi;\nui.go("home");\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:3:30 TS2307: Absolute local imports are outside design/"]);
 		expect(result.join("\n")).not.toContain(trusted);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("fails closed when a decorated declare class is split after declare", () => {
+	it("fails closed when a decorated declare class is split after declare", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/decorated-declare-newline-secret.ts";
@@ -412,7 +412,7 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n@dec declare\nclass Model {}\nimport ${JSON.stringify(secret)};\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(secret);
@@ -432,13 +432,13 @@ describe("design source inspection", () => {
 		},
 		{ form: "duplicate modifier", declaration: "@dec declare abstract abstract class Model {}" },
 		{ form: "missing class keyword", declaration: "@dec declare abstract Model {}" },
-	] as const)("fails closed on a decorated declare abstract class with $form", ({ declaration }) => {
+	] as const)("fails closed on a decorated declare abstract class with $form", async ({ declaration }) => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/decorated-declare-abstract-malformed-secret.ts";
 		writeFrame(root, "home", `function dec(value: Function) {}\n${declaration}\nimport ${JSON.stringify(secret)};\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(secret);
@@ -474,20 +474,20 @@ describe("design source inspection", () => {
 			form: "named-export anonymous ambient class",
 			declaration: "export @dec declare abstract class {}",
 		},
-	] as const)("fails closed on a decorated default fallback with $form", ({ declaration }) => {
+	] as const)("fails closed on a decorated default fallback with $form", async ({ declaration }) => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/decorated-default-malformed-secret.ts";
 		writeFrame(root, "home", `function dec(value: Function) {}\n${declaration}\nimport ${JSON.stringify(secret)};\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("fails closed when a decorated declare class remains malformed after normalization", () => {
+	it("fails closed when a decorated declare class remains malformed after normalization", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/decorated-declare-malformed-secret.ts";
@@ -497,14 +497,14 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n@dec declare class Model {\nimport ${JSON.stringify(secret)};\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("keeps the absolute-import boundary active after a decorator", () => {
+	it("keeps the absolute-import boundary active after a decorator", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -514,13 +514,13 @@ describe("design source inspection", () => {
 			`function dec(value: Function) {}\n@dec class Model {}\nimport type { SpoolUi } from ${JSON.stringify(trusted)};\ndeclare const ui: SpoolUi;\nui.go("home");\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:3:30 TS2307: Absolute local imports are outside design/"]);
 		expect(result.join("\n")).not.toContain(trusted);
 	});
 
-	it("fails closed when source syntax cannot be inspected for module policy", () => {
+	it("fails closed when source syntax cannot be inspected for module policy", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -530,27 +530,27 @@ describe("design source inspection", () => {
 			`const unsupported = #{};\nimport type { SpoolUi } from ${JSON.stringify(trusted)};\ndeclare const ui: SpoolUi;\nui.go("home");\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(trusted);
 	});
 
-	it("fails closed when parser exhaustion prevents source inspection", () => {
+	it("fails closed when parser exhaustion prevents source inspection", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/parser-exhaustion-secret.ts";
 		const nested = `${"[".repeat(500)}0${"]".repeat(500)}`;
 		writeFrame(root, "home", `const nested = ${nested};\nimport ${JSON.stringify(secret)};\nvoid nested;\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("fails closed when policy traversal cannot inspect a successfully parsed source", () => {
+	it("fails closed when policy traversal cannot inspect a successfully parsed source", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/traversal-exhaustion-secret.ts";
@@ -561,14 +561,14 @@ describe("design source inspection", () => {
 			`${memberChain};\nimport ${JSON.stringify(secret)};\nexport default function Home() { return null; }\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("blocks an absolute JSX import source without leaking its target", () => {
+	it("blocks an absolute JSX import source without leaking its target", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const secret = "/private/spool-secret-jsx";
@@ -578,19 +578,19 @@ describe("design source inspection", () => {
 			`/** @jsxImportSource ${secret} */\nexport default function Home() { return <main>ok</main>; }\n`,
 		);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:22 TS2307: Absolute local imports are outside design/"]);
 		expect(result.join("\n")).not.toContain(secret);
 	});
 
-	it("fails closed on a deferred absolute import without loading or leaking its target", () => {
+	it("fails closed on a deferred absolute import without loading or leaking its target", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
 		writeFrame(root, "home", `import defer * as deferred from ${JSON.stringify(trusted)};\ndeferred.notReal();\n`);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(trusted);
@@ -598,7 +598,7 @@ describe("design source inspection", () => {
 		expect(result.join("\n")).not.toContain(root);
 	});
 
-	it("fails closed on a deferred relative import without following its escaped source", () => {
+	it("fails closed on a deferred relative import without following its escaped source", async () => {
 		const root = makeTempDir();
 		markProject(root);
 		const trusted = fileURLToPath(new URL("./runtime/spool-public.ts", import.meta.url));
@@ -606,7 +606,7 @@ describe("design source inspection", () => {
 		symlinkSync(trusted, join(root, "design", "shared", "trusted.js"));
 		writeFrame(root, "home", 'import defer * as deferred from "../../shared/trusted.js";\ndeferred.notReal();\n');
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
 		expect(result.join("\n")).not.toContain(trusted);
@@ -623,12 +623,12 @@ describe("design source inspection", () => {
 			name: "template",
 			source: "void import(`../../shared/\\0secret`);\n",
 		},
-	])("reports a sanitized module diagnostic for a $name NUL specifier", ({ source }) => {
+	])("reports a sanitized module diagnostic for a $name NUL specifier", async ({ source }) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(root, "home", source);
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("TS2307: Cannot find module");
@@ -656,14 +656,14 @@ describe("design source inspection", () => {
 			name: "CSS import",
 			source: (segment: string) => `import ${JSON.stringify(`../../shared/${segment}.css`)};\n`,
 		},
-	])("reports a stable diagnostic for an overlong authored $name", ({ source }) => {
+	])("reports a stable diagnostic for an overlong authored $name", async ({ source }) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "shared/keep.ts", "export const keep = true;\n");
 		const segment = "a".repeat(300);
 		writeFrame(root, "home", source(segment));
 
-		const result = messages(root);
+		const result = await messages(root);
 
 		expect(result).toHaveLength(1);
 		expect(result[0]).toContain("design/frames/home/frame.tsx:1:");

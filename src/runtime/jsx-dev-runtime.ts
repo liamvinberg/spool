@@ -237,25 +237,26 @@ function inspectSource(element: HTMLElement, field?: string): SourceOccurrence |
 		: undefined;
 	try {
 		const observed = globalThis.__SPOOL_OBSERVER__.observe(element);
-		if (!observed.refusal) {
-			provenance = JSON.stringify(observed);
-			if (
-				!origin &&
-				sourcePacket &&
-				fiber &&
-				(field !== undefined || typeof value === "string") &&
-				(value === undefined || typeof value === "string")
-			)
-				origin = {
-					cell: observed.source,
-					publication: sourcePacket.id,
-					invocation: JSON.stringify(
-						observed.chain.map((call) => [call.occurrence, call.invocation?.id, call.element]),
-					),
-					value: String(value ?? ""),
-				};
-		}
-	} catch {}
+		if (observed.refusal) return;
+		provenance = JSON.stringify(observed);
+		if (
+			!origin &&
+			sourcePacket &&
+			fiber &&
+			(field !== undefined || typeof value === "string") &&
+			(value === undefined || typeof value === "string")
+		)
+			origin = {
+				cell: observed.source,
+				publication: sourcePacket.id,
+				invocation: JSON.stringify(
+					observed.chain.map((call) => [call.occurrence, call.invocation?.id, call.element]),
+				),
+				value: String(value ?? ""),
+			};
+	} catch {
+		return;
+	}
 	if (!origin) return;
 	let id = nodes.get(element);
 	if (!id) {
@@ -477,7 +478,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	if (!(await admitted())) return refused("the source installation lease expired or was revoked");
 	if (
 		!sourcePacket ||
-		publication.before !== sourcePacket.id ||
+		(publication.before !== sourcePacket.id && !(undo && publication.compatibleBefore?.includes(sourcePacket.id))) ||
 		publication.packet.shape !== sourcePacket.shape ||
 		publication.packet.sequence <= sequence
 	)

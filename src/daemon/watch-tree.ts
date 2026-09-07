@@ -70,7 +70,7 @@ export function watchFolders(root: string, onPath: (filename: string | null) => 
 			open.delete(dir);
 			// one folder's handle failing is not the tree failing — unless it is
 			// the root's, which is the whole watch
-			if (dir === root) onError();
+			onError();
 		});
 		watcher.on("change", (_type, name) => {
 			const child = named(name);

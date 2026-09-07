@@ -61,7 +61,7 @@ it("recovers a completed real edit through renewal and rate limits in the served
 			.split("\n")
 			.map((line) => JSON.parse(line));
 	const failure = (message: string) =>
-		writeFileSync(join(directory, "failure.json"), JSON.stringify({ afterTool: true, message }));
+		writeFileSync(join(directory, "failure.json"), JSON.stringify({ afterTool: true, afterMutation: true, message }));
 	const shot = async (name: string) => {
 		if (process.env.SPOOL_TEST_SHOTS) {
 			mkdirSync(process.env.SPOOL_TEST_SHOTS, { recursive: true });
@@ -70,12 +70,12 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	};
 	failure("401 Invalid API key old-secret");
 	const prompt =
-		'file tools: [{"name":"edit","arguments":{"path":"design/frames/home/frame.tsx","edits":[{"oldText":"Original title","newText":"Updated title"}]}}]';
+		'file tools: [{"name":"read","arguments":{"path":"design/frames/home/frame.tsx"}},{"name":"edit","arguments":{"path":"design/frames/home/frame.tsx","edits":[{"oldText":"Original title","newText":"Updated title"}]}}]';
 	await field.fill(prompt);
 	await field.press("Enter");
 	await rail.locator('[data-recovery="login"]').waitFor();
 	expect(readFileSync(join(project.root, "design/frames/home/frame.tsx"), "utf8")).toContain("Updated title");
-	expect(await rail.locator('[data-agent-jump="home"]').count()).toBe(1);
+	expect(await rail.locator('[data-agent-jump="home"]').count()).toBe(2);
 	await field.fill("Keep the total aligned with the items.");
 	await field.press("Enter");
 	expect(await field.inputValue()).toBe("Keep the total aligned with the items.");
@@ -88,11 +88,11 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	firstHost.kill();
 	await exited;
 	await client.request({ kind: "account" });
-	expect(calls()).toHaveLength(1);
+	expect(calls()).toHaveLength(2);
 	await page.reload();
 	await rail.locator('[data-recovery="login"]').waitFor();
 	expect(await field.inputValue()).toBe("Keep the total aligned with the items.");
-	expect(await rail.locator('[data-agent-jump="home"]').count()).toBe(1);
+	expect(await rail.locator('[data-agent-jump="home"]').count()).toBe(2);
 	await rail.getByRole("button", { name: "sign in again", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "Connect an account", exact: true });
 	await shot("login-list-renew");
@@ -102,7 +102,7 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	await expect.poll(() => dialog.textContent()).toContain("connected");
 	await dialog.getByRole("button", { name: "Done", exact: true }).click();
 	await rail.locator('[data-recovery="login"]').waitFor();
-	expect(calls()).toHaveLength(1);
+	expect(calls()).toHaveLength(2);
 	failure('429 {"error":{"scope":"account","resets_at":2000000000,"message":"old-secret"}}');
 	await rail.getByRole("button", { name: "sign in again", exact: true }).click();
 	await dialog.getByRole("button", { name: "Sign in again", exact: true }).click();
@@ -129,7 +129,7 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	const permissionMenu = rail.getByRole("menu", { name: "Agent permissions", exact: true });
 	await permissionMenu.waitFor({ state: "visible" });
 	expect(await field.inputValue()).toBe("Keep the total aligned with the items.");
-	expect(calls()).toHaveLength(1);
+	expect(calls()).toHaveLength(2);
 	await permissionMenu.press("Escape");
 	await permissionMenu.waitFor({ state: "hidden" });
 	await rail.getByRole("button", { name: "choose model", exact: true }).click();
@@ -157,7 +157,7 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	expect(await rail.getByRole("button", { name: "continue with this model", exact: true }).count()).toBe(0);
 	await rail.getByRole("button", { name: "retry", exact: true }).click();
 	await rail.locator('[data-recovery="limit"]').waitFor();
-	expect(calls()).toHaveLength(1);
+	expect(calls()).toHaveLength(2);
 	await rail.getByRole("button", { name: "choose model", exact: true }).click();
 	await rail
 		.locator("[data-agent-model-menu] button")
@@ -169,14 +169,14 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	await modelMenu.waitFor({ state: "hidden" });
 	await expect.poll(() => rail.locator("[data-agent-model]").textContent()).toContain("Test image model");
 	expect(await field.inputValue()).toBe("Keep the total aligned with the items.");
-	expect(calls()).toHaveLength(1);
+	expect(calls()).toHaveLength(2);
 	await shot("limits-rail-continue");
 	await rail.getByRole("button", { name: "continue with this model", exact: true }).click();
 	await expect.poll(() => rail.textContent()).toContain("Saved reply 1.");
 	expect(await field.inputValue()).toBe("Keep the total aligned with the items.");
 	const final = calls().at(-1);
 	expect(final.messages.filter((message: { role: string }) => message.role === "user")).toHaveLength(1);
-	expect(final.messages.filter((message: { role: string }) => message.role === "toolResult")).toHaveLength(1);
+	expect(final.messages.filter((message: { role: string }) => message.role === "toolResult")).toHaveLength(2);
 	expect(JSON.stringify(final)).not.toContain("Keep the total aligned");
 	expect(readFileSync(join(project.root, "design/frames/home/frame.tsx"), "utf8")).toContain("Updated title");
 	const after = await stored();
@@ -205,12 +205,12 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	await dialog.getByRole("button", { name: "Done", exact: true }).click();
 	await expect.poll(() => rail.textContent()).toContain("Saved reply 2.");
 	expect(await field.inputValue()).toBe("The separate next draft after renewal.");
-	expect(calls()).toHaveLength(3);
+	expect(calls()).toHaveLength(4);
 	expect(
 		calls()
 			.at(-1)
 			.messages.filter((message: { role: string }) => message.role === "toolResult"),
-	).toHaveLength(1);
+	).toHaveLength(2);
 	expect(
 		calls()
 			.at(-1)

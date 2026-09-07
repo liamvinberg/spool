@@ -15,6 +15,7 @@ import type { PickedHit } from "./protocol";
 /** Calls belong to the original iframe WindowProxy, never just a frame name. */
 export function useSourceDelivery(project: string, iframes: RefObject<Map<string, HTMLIFrameElement>>) {
 	const observer = useRef(crypto.randomUUID());
+	const inverseHolds = useRef(new Map<string, string[]>());
 	const prepared = useRef(new Map<number, { initiator: string; frames: string[] }>());
 	const pending = useRef(
 		new Map<string, { window: Window; resolve: (value: unknown) => void; timer: ReturnType<typeof setTimeout> }>(),
@@ -136,6 +137,12 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	);
 
 	return {
+		holdInverse: useCallback((key: string, frames: string[]) => {
+			inverseHolds.current.set(key, frames);
+		}, []),
+		releaseInverse: useCallback((key: string) => {
+			inverseHolds.current.delete(key);
+		}, []),
 		highlight: useCallback(
 			(uses: SourceUse[]) => {
 				for (const frame of iframes.current.keys())
@@ -174,7 +181,9 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[inventory, project, request],
 		),
 		holds: useCallback(
-			(frame: string) => [...prepared.current.values()].some((value) => value.frames.includes(frame)),
+			(frame: string) =>
+				[...prepared.current.values()].some((value) => value.frames.includes(frame)) ||
+				[...inverseHolds.current.values()].some((frames) => frames.includes(frame)),
 			[],
 		),
 		clearFeedback: useCallback(() => {

@@ -13,12 +13,14 @@ export function SourceOwnership({
 	name,
 	revision,
 	actions,
+	onSupport,
 }: {
 	frame: string;
 	selector: string;
 	name: string;
 	revision: number;
 	actions: OwnershipActions;
+	onSupport(identity: string | undefined): void;
 }) {
 	const [description, setDescription] = useState<SourceDescription>();
 	const [open, setOpen] = useState(false);
@@ -27,12 +29,15 @@ export function SourceOwnership({
 	useEffect(() => {
 		let live = true;
 		void describe(frame, selector).then((value) => {
-			if (live) setDescription(value);
+			if (live) {
+				setDescription(value);
+				onSupport(value ? `${frame} ${selector}` : undefined);
+			}
 		});
 		return () => {
 			live = false;
 		};
-	}, [describe, frame, selector, revision]);
+	}, [describe, frame, selector, revision, onSupport]);
 	useEffect(() => () => highlight([]), [highlight]);
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -44,24 +49,38 @@ export function SourceOwnership({
 		addEventListener("keydown", onKey);
 		return () => removeEventListener("keydown", onKey);
 	}, [highlight]);
+	const otherUses =
+		description?.reach?.uses.filter(
+			(use) => !(use.frame === frame && use.original.occurrence === description.original.occurrence),
+		) ?? [];
+	useEffect(() => {
+		if (open)
+			highlight(
+				description?.reach?.uses.filter(
+					(use) => !(use.frame === frame && use.original.occurrence === description.original.occurrence),
+				) ?? [],
+			);
+	}, [open, description, frame, highlight]);
 	if (!description) return null;
 	const reach = description.reach;
 	const uses = reach?.uses ?? [];
 	const shared =
-		description.scope === "definition" && (!description.source.startsWith(`frames/${frame}/`) || uses.length > 1);
+		description.scope === "definition" &&
+		(!description.source.startsWith(`frames/${frame}/`) || uses.length > 1 || !!reach?.unmounted.length);
 	const label = shared ? "shared definition" : description.repeated ? "repeated call site" : "this use";
 	return (
 		<div data-source-ownership="" className="shrink-0 border-border border-b">
-			<div className="flex min-h-9 items-center gap-2 px-2.5">
-				<strong className="min-w-0 truncate text-sm font-medium">{name}</strong>
+			<div className="flex min-h-[42px] items-center gap-2 px-3 py-2">
+				<strong className="min-w-0 truncate type-title">{name}</strong>
 				<button
 					type="button"
 					aria-label="Show affected uses"
+					title={label}
 					aria-expanded={open}
 					onClick={() => setOpen(!open)}
-					onPointerEnter={() => highlight(uses)}
-					onPointerLeave={() => highlight([])}
-					className={`ml-auto inline-flex items-center gap-[5px] rounded px-1 py-[3px] text-muted hover:bg-surface hover:text-text ${FAINT}`}
+					onPointerEnter={() => highlight(otherUses)}
+					onPointerLeave={() => highlight(open ? otherUses : [])}
+					className={`inline-flex min-h-6 items-center gap-[5px] rounded px-1 py-[3px] text-muted hover:bg-surface hover:text-text ${FAINT}`}
 				>
 					<svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5 text-thread">
 						<path d="m8 2 6 6-6 6-6-6Z" fill="none" stroke="currentColor" strokeWidth="1.4" />
@@ -75,10 +94,12 @@ export function SourceOwnership({
 					</svg>
 				</button>
 			</div>
-			<div className={`px-2.5 pb-1 ${FAINT}`}>{label}</div>
+
 			{open && (
 				<div data-source-uses="" className="px-3 pt-1 pb-2.5">
-					<p className={`break-all pt-1 pb-[7px] ${FAINT}`}>{description.source}</p>
+					<p className={`break-all pt-1 pb-[7px] ${FAINT}`}>
+						{label} · {description.source}
+					</p>
 					<p className={`pb-1 ${FAINT}`}>
 						{uses.filter((use) => use.visible).length} visible · {uses.filter((use) => !use.visible).length}{" "}
 						off-screen
@@ -91,8 +112,14 @@ export function SourceOwnership({
 								highlight([]);
 								reveal(use.frame, use);
 							}}
-							onPointerEnter={() => highlight([use])}
-							onPointerLeave={() => highlight([])}
+							onPointerEnter={() =>
+								highlight(
+									use.frame === frame && use.original.occurrence === description.original.occurrence
+										? []
+										: [use],
+								)
+							}
+							onPointerLeave={() => highlight(open ? otherUses : [])}
 							className={`flex w-full justify-between rounded-[3px] px-[5px] py-[7px] hover:bg-surface ${VALUE}`}
 						>
 							<span>{use.frame}</span>

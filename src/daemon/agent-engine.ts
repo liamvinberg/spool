@@ -4,6 +4,7 @@ import type { AgentPermissions } from "../settings/registry";
 import type { AgentAsk, AgentOffer } from "./agent-offer";
 import type { AgentLogin } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
+import type { SourceAgentSupervisor } from "./source-agent";
 
 export type AgentEngineId = "claude" | "spool";
 
@@ -37,6 +38,7 @@ export interface EngineOfferOptions {
 }
 
 export interface EngineTurnOptions {
+	readonly thread?: string;
 	readonly recovery?: string;
 	readonly root: string;
 	readonly session: AgentSessionRef;
@@ -54,6 +56,7 @@ export interface EngineTurnOptions {
 export interface AgentEngine {
 	readonly id: AgentEngineId;
 	readonly authentication: AgentAuthentication;
+	coordinateSource?(source: SourceAgentSupervisor): void;
 	close?(): void;
 	prepareRename?(
 		root: string,

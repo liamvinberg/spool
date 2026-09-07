@@ -126,7 +126,7 @@ async function fixture() {
 	};
 }
 const prompt =
-	'file tools: [{"name":"edit","arguments":{"path":"design/frames/home/frame.tsx","edits":[{"oldText":"before","newText":"after"}]}}]';
+	'file tools: [{"name":"read","arguments":{"path":"design/frames/home/frame.tsx"}},{"name":"edit","arguments":{"path":"design/frames/home/frame.tsx","edits":[{"oldText":"before","newText":"after"}]}}]';
 
 it.each([false, true])(
 	"continues exact completed sessions through HTTP rename, restarting=%s",
@@ -179,7 +179,7 @@ it.each([false, true])(
 		const context = JSON.parse(f.calls().trim().split("\n").at(-1) ?? "");
 		expect(context.systemPrompt).toContain("Renamed project instruction.");
 		expect(context.messages.filter((message: { role: string }) => message.role === "user")).toHaveLength(2);
-		expect(context.messages.filter((message: { role: string }) => message.role === "toolResult")).toHaveLength(2);
+		expect(context.messages.filter((message: { role: string }) => message.role === "toolResult")).toHaveLength(3);
 		expect(JSON.stringify(context)).toContain(Buffer.from(COVER_PNG).toString("base64"));
 	},
 );
@@ -191,7 +191,7 @@ it.each([false, true])(
 		const f = await fixture();
 		writeFileSync(
 			join(f.directory, "failure.json"),
-			JSON.stringify({ afterTool: true, message: "401 Invalid API key" }),
+			JSON.stringify({ afterTool: true, afterMutation: true, message: "401 Invalid API key" }),
 		);
 		const first = await f.turn("before", prompt, undefined, true);
 		const ended = first.find((event) => event.kind === "ended");
@@ -222,7 +222,7 @@ it.each([false, true])(
 		expect(next.filter((event) => event.kind === "result")).toHaveLength(0);
 		const context = JSON.parse(f.calls().trim().split("\n").at(-1) ?? "");
 		expect(context.messages.filter((message: { role: string }) => message.role === "user")).toHaveLength(1);
-		expect(context.messages.filter((message: { role: string }) => message.role === "toolResult")).toHaveLength(1);
+		expect(context.messages.filter((message: { role: string }) => message.role === "toolResult")).toHaveLength(2);
 		expect(JSON.stringify(context)).toContain(Buffer.from(COVER_PNG).toString("base64"));
 		expect(JSON.stringify(context)).not.toContain("Do not replace");
 		expect(readFileSync(join(f.parent, "after/design/frames/home/frame.tsx"), "utf8")).toBe("after");
@@ -235,7 +235,7 @@ it("rolls back session bytes, recovery, registry, threads and folder on a late p
 	const f = await fixture();
 	writeFileSync(
 		join(f.directory, "failure.json"),
-		JSON.stringify({ afterTool: true, message: "401 Invalid API key" }),
+		JSON.stringify({ afterTool: true, afterMutation: true, message: "401 Invalid API key" }),
 	);
 	const first = await f.turn("before", prompt);
 	const ended = first.find((event) => event.kind === "ended");

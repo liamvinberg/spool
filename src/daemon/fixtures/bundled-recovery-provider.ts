@@ -18,7 +18,12 @@ export async function recoveryRuntime(directory: string) {
 				if (
 					model.provider === "openai" &&
 					failure &&
-					(!failure.afterTool || context.messages.some((entry) => entry.role === "toolResult"))
+					(!failure.afterTool ||
+						context.messages.some(
+							(entry) =>
+								entry.role === "toolResult" &&
+								(!failure.afterMutation || entry.toolName === "edit" || entry.toolName === "write"),
+						))
 				) {
 					appendFileSync(join(directory, "failed-calls.jsonl"), `${JSON.stringify(context)}\n`);
 					const stream = createAssistantMessageEventStream();
