@@ -443,7 +443,8 @@ it("retains basic breakpoint/state scopes and maps logical sides from the actual
 		property: "padding-left",
 		scope: "group-hover:",
 	});
-	expect(custom.kind).toBe("refused");
+	expect(supported(custom).property?.owner).toBeNull();
+	expect(supported(custom).property?.writeScope).toBe("group-hover:");
 	evidence.scopes = { results, important, mixed, custom };
 	await mounted.page.close();
 });

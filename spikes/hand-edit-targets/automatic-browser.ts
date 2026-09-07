@@ -5,13 +5,12 @@ import { Scanner } from "@tailwindcss/oxide";
 import { build } from "esbuild";
 import type { Browser, ElementHandle, Page } from "playwright-core";
 import { __unstable__loadDesignSystem, compile } from "tailwindcss";
-import { anatomyOf } from "../../src/daemon/class-write";
+import { anatomyOf, splitClass } from "../../src/daemon/class-write";
 import { buildDesignEntry } from "../../src/daemon/compile";
 import { realDesignDir } from "../../src/daemon/design-path";
 import { fingerprintOf } from "../../src/daemon/hand-write";
 import { walkNodes } from "../../src/daemon/jsx-walk";
 import { designStylesheets, ROOT_CSS } from "../../src/daemon/tailwind";
-import { compileClasses } from "../../src/daemon/theme";
 import { ROWS } from "../../src/ui/canvas/properties-rows";
 import { type Operation, type Revision, type Selection, Sources, sourceRead, witnesses } from "./automatic-source";
 import type {} from "./observer";
@@ -21,12 +20,17 @@ import { reconciledRenderer } from "./reconciled-renderer";
 // CSS defaults also retire a read if replaced without a lockfile update.
 function compilerRevision(): string {
 	const packageDir = dirname(dirname(fileURLToPath(import.meta.resolve("tailwindcss"))));
+	const esbuildDir = dirname(dirname(fileURLToPath(import.meta.resolve("esbuild"))));
 	const files = readdirSync(packageDir, { recursive: true })
 		.filter((path): path is string => typeof path === "string" && /\.(?:m?js|css|json)$/.test(path))
 		.sort();
 	return fingerprintOf(
 		JSON.stringify([
 			readFileSync("pnpm-lock.yaml", "utf8"),
+			...["package.json", "lib/main.js", "bin/esbuild"].map((path) => [
+				path,
+				fingerprintOf(readFileSync(join(esbuildDir, path)).toString("base64")),
+			]),
 			...files.map((path) => [path, fingerprintOf(readFileSync(join(packageDir, path), "utf8"))]),
 		]),
 	);
@@ -46,6 +50,7 @@ export interface Mounted {
 	sources: Sources;
 	generation: string;
 	css: string;
+	bundledCss: string;
 	toolchain: string;
 	selectedNodes: Map<string, ElementHandle<HTMLElement | SVGElement>>;
 	observed: boolean;
@@ -67,6 +72,17 @@ export async function mount(
 	const toolchain = compilerRevision();
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
+	// Capture imported CSS before bundling, then check the bundler's actual
+	// dependency closure. Unknown import syntax refuses instead of dropping it.
+	const visitCss = (path: string): void => {
+		if (sources.revisions.has(path)) return;
+		const held = sources.retain(path);
+		const content = readFileSync(held.file, "utf8");
+		for (const match of content.matchAll(/@import\s+(?:url\()?['"]([^'"]+)['"]/g)) {
+			if (!match[1]!.startsWith(".")) throw new Error("unproved imported CSS resource");
+			visitCss(join(dirname(path), match[1]!));
+		}
+	};
 	// Capture inputs before compilation, including imports pruned by the bundle.
 	const visited = new Set<string>();
 	const visit = (path: string): void => {
@@ -83,6 +99,14 @@ export async function mount(
 				continue;
 			if (/\.(png|jpe?g|gif|webp|svg|avif)$/.test(statement.source.value)) {
 				sources.asset(
+					statement.source.value.startsWith("shared/")
+						? statement.source.value
+						: join(dirname(unit.path), statement.source.value),
+				);
+				continue;
+			}
+			if (statement.source.value.endsWith(".css")) {
+				visitCss(
 					statement.source.value.startsWith("shared/")
 						? statement.source.value
 						: join(dirname(unit.path), statement.source.value),
@@ -172,7 +196,12 @@ export async function mount(
 			.filter((file) => /\.[jt]sx?$/.test(file))
 			.map((file) => ({ content: sources.read(relative(designDir, file)).text, extension: "tsx" })),
 	);
-	const css = compiler.build(candidates);
+	for (const file of compiled.sourceFiles) {
+		if (![...sources.revisions.values(), ...sources.assets.values()].some((revision) => revision.file === file))
+			throw new Error(`bundler dependency was not captured before compilation: ${relative(designDir, file)}`);
+	}
+	const bundledCss = compiled.bundledCss ?? "";
+	const css = `${compiler.build(candidates)}\n${bundledCss}`;
 	const result = await build({
 		stdin: { contents: compiled.bootJs, resolveDir: process.cwd(), loader: "js" },
 		bundle: true,
@@ -221,6 +250,7 @@ export async function mount(
 		sources,
 		generation,
 		css,
+		bundledCss,
 		toolchain,
 		selectedNodes: new Map(),
 		observed,
@@ -301,26 +331,48 @@ async function propertyRead(
 ) {
 	if (!ROWS.some((row) => row.property === operation.property && row.rule.kind !== "read"))
 		throw new Error("property is outside the retained operation inventory");
-	const tokens = (literal ?? "").split(/\s+/).filter(Boolean);
+	const tokens = splitClass(literal ?? "");
 	if (new Set(tokens).size !== tokens.length) throw new Error("duplicate source tokens need occurrence attribution");
-	const compiled = await compileClasses(mounted.sources.root, tokens);
+	const scopeToken = `${operation.scope}[--spool-scope-probe:1]`;
+	const system = await __unstable__loadDesignSystem(ROOT_CSS, designStylesheets(realDesignDir(mounted.sources.root)));
+	const scopeCss = system.candidatesToCss([scopeToken])[0];
+	if (
+		!scopeCss ||
+		anatomyOf(scopeToken)
+			.variants.map((v) => `${v}:`)
+			.join("") !== operation.scope
+	)
+		throw new Error("scope does not compile in the held project");
+	const scopeProbe = { token: scopeToken, css: (await compile(mounted.themeCss + scopeCss)).build([]) };
+	const compiled = system
+		.candidatesToCss(tokens)
+		.flatMap((css, index) => (css ? [{ token: tokens[index]!, css }] : []));
 	const candidates = await Promise.all(
-		compiled
-			.filter((n) => n.ok)
-			.map(async (n) => ({
-				token: n.token,
-				rawCss: n.css,
-				css: (await compile(mounted.themeCss + n.css)).build([]),
-				scope: anatomyOf(n.token)
-					.variants.map((v) => `${v}:`)
-					.join(""),
-			})),
+		compiled.map(async (n) => ({
+			token: n.token,
+			rawCss: n.css,
+			css: (await compile(mounted.themeCss + n.css)).build([]),
+			scope: anatomyOf(n.token)
+				.variants.map((v) => `${v}:`)
+				.join(""),
+		})),
 	);
 	const preflight = (
 		await compile(readFileSync(fileURLToPath(import.meta.resolve("tailwindcss/preflight.css")), "utf8"))
 	).build([]);
 	const result = await mounted.page.evaluate(
-		({ pick, property, scope, candidates, expectedCss, expectedClass, preflight, themeBindings }) => {
+		({
+			pick,
+			property,
+			scope,
+			candidates,
+			expectedCss,
+			expectedClass,
+			preflight,
+			themeBindings,
+			scopeProbe,
+			bundledCss,
+		}) => {
 			const el =
 				globalThis.__handObserver?.node(pick.occurrence) ??
 				[...document.querySelectorAll("[data-probe-occurrence]")].find(
@@ -362,6 +414,7 @@ async function propertyRead(
 				layer: string;
 				conditions: string[];
 				active: boolean;
+				featureSupported: boolean;
 				declaration: string;
 				authoredDeclaration: string;
 				value: string;
@@ -417,7 +470,8 @@ async function propertyRead(
 			const nested = property.includes("between children");
 			const placeholder = property === "placeholder color";
 			const subjects = nested ? [...el.children] : [el];
-			if (nested && subjects.length < 2) throw new Error("no observed pair of direct children for the nested effect");
+			if (nested && subjects.length < 2)
+				throw new Error("no observed pair of direct children for the nested effect");
 			if (placeholder && !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement))
 				throw new Error("no observed input placeholder target");
 			const probe = document.createElement("div").style;
@@ -449,6 +503,98 @@ async function propertyRead(
 				if (part.trim()) parts.push(part);
 				return parts.map((part) => part.slice(0, part.indexOf(":")).trim());
 			};
+			// Size queries use the nearest eligible ancestor's content box. This
+			// bounded evaluator accepts emitted Tailwind inline-size ranges only.
+			const containerMatches = (rule: CSSContainerRule): boolean => {
+				const query = rule.containerQuery;
+				const tests = [...query.matchAll(/\(width\s*(>=|>|<=|<)\s*([\d.]+)(px|rem|em)\)/g)];
+				if (
+					!tests.length ||
+					query
+						.replace(/\(width\s*(>=|>|<=|<)\s*([\d.]+)(px|rem|em)\)/g, "")
+						.replace(/\band\b/g, "")
+						.trim()
+				)
+					throw new Error(`unproved container query: ${query}`);
+				let container = el.parentElement;
+				while (container) {
+					const style = getComputedStyle(container);
+					const eligible =
+						style.containerType === "size" ||
+						(style.containerType === "inline-size" && style.writingMode === "horizontal-tb");
+					if (eligible && (!rule.containerName || style.containerName.split(/\s+/).includes(rule.containerName)))
+						break;
+					container = container.parentElement;
+				}
+				if (!container) return false;
+				const style = getComputedStyle(container);
+				if (
+					style.display === "none" ||
+					style.display === "contents" ||
+					style.display.includes("table") ||
+					!container.getClientRects().length
+				)
+					throw new Error("container has no proved principal content box");
+				const width =
+					Number.parseFloat(style.width) -
+					(style.boxSizing === "border-box"
+						? [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth].reduce(
+								(n, v) => n + Number.parseFloat(v),
+								0,
+							)
+						: 0);
+				if (!Number.isFinite(width)) throw new Error("container content width unavailable");
+				return tests.every((test) => {
+					const value =
+						Number(test[2]) *
+						(test[3] === "rem"
+							? Number.parseFloat(getComputedStyle(document.documentElement).fontSize)
+							: test[3] === "em"
+								? Number.parseFloat(style.fontSize)
+								: 1);
+					return test[1] === ">="
+						? width >= value
+						: test[1] === ">"
+							? width > value
+							: test[1] === "<="
+								? width <= value
+								: width < value;
+				});
+			};
+			// A compound whose left anchor is the exact source class still denotes
+			// the selected element while an attribute/ancestor condition is false.
+			// Top-level combinators or selector lists cannot change that subject.
+			const anchored = (selector: string, token: string): boolean => {
+				const anchor = `.${CSS.escape(token)}`;
+				if (!selector.startsWith(anchor)) return false;
+				const tail = selector.slice(anchor.length);
+				let depth = 0,
+					quote = "",
+					escaped = false;
+				for (let i = 0; i < tail.length; i++) {
+					const c = tail[i]!;
+					if (escaped) {
+						escaped = false;
+						continue;
+					}
+					if (c === "\\") {
+						escaped = true;
+						continue;
+					}
+					if (quote) {
+						if (c === quote) quote = "";
+						continue;
+					}
+					if (c === '"' || c === "'") {
+						quote = c;
+						continue;
+					}
+					if (c === "[" || c === "(") depth++;
+					else if (c === "]" || c === ")") depth--;
+					else if (depth === 0 && /[\s>+~,]/.test(c)) return false;
+				}
+				return depth === 0 && (!tail || /^(?:\[|:)/.test(tail)) && !tail.includes("::");
+			};
 			const collect = (
 				rules: CSSRuleList,
 				parent = "",
@@ -457,6 +603,7 @@ async function propertyRead(
 				active = true,
 				onlyProperty = true,
 				sequence = { value: 0 },
+				featureSupported = true,
 			): Rule[] => {
 				const rows: Rule[] = [];
 				for (const rule of rules) {
@@ -464,20 +611,26 @@ async function propertyRead(
 					let nextLayer = layer;
 					let nextConditions = conditions;
 					let nextActive = active;
+					let nextFeatureSupported = featureSupported;
 					if (rule instanceof CSSStyleRule)
-						selector = rule.selectorText.includes("&") ? rule.selectorText.replaceAll("&", parent) : rule.selectorText;
+						selector = rule.selectorText.includes("&")
+							? rule.selectorText.replaceAll("&", parent)
+							: rule.selectorText;
 					if (rule instanceof CSSLayerBlockRule) nextLayer = rule.name;
 					if (rule instanceof CSSMediaRule) {
 						nextConditions = [...conditions, rule.conditionText];
 						nextActive = active && matchMedia(rule.conditionText).matches;
 					}
+					if (rule instanceof CSSContainerRule) {
+						nextConditions = [...conditions, `@container ${rule.containerName} ${rule.containerQuery}`];
+						nextActive = containerMatches(rule) && active;
+					}
 					if (rule instanceof CSSSupportsRule) {
-						// Browser feature support is fixed for this mounted generation.
-						// Unlike media/state, an unsupported feature branch cannot turn
-						// active while this read is being used in the same renderer.
-						if (!CSS.supports(rule.conditionText)) continue;
+						// Keep inactive feature branches in the declaration account too.
+						// Activity and source existence are separate facts.
 						nextConditions = [...conditions, rule.conditionText];
-						nextActive = active && CSS.supports(rule.conditionText);
+						nextFeatureSupported = featureSupported && CSS.supports(rule.conditionText);
+						nextActive = active && nextFeatureSupported;
 					}
 					if (
 						"cssRules" in rule &&
@@ -485,6 +638,7 @@ async function propertyRead(
 							rule instanceof CSSStyleRule ||
 							rule instanceof CSSLayerBlockRule ||
 							rule instanceof CSSMediaRule ||
+							rule instanceof CSSContainerRule ||
 							rule instanceof CSSSupportsRule
 						)
 					)
@@ -505,6 +659,7 @@ async function propertyRead(
 									layer: nextLayer,
 									conditions: nextConditions,
 									active: nextActive,
+									featureSupported: nextFeatureSupported,
 									declaration: name,
 									authoredDeclaration: authored,
 									value: rule.style.getPropertyValue(authored),
@@ -522,6 +677,7 @@ async function propertyRead(
 								nextActive,
 								onlyProperty,
 								sequence,
+								nextFeatureSupported,
 							),
 						);
 				}
@@ -529,32 +685,24 @@ async function propertyRead(
 			};
 			const matches = (row: Rule) => {
 				try {
+					if (!nested && !placeholder && candidates.some((candidate) => anchored(row.selector, candidate.token)))
+						return true;
 					if (placeholder !== row.selector.includes("::placeholder")) return false;
-					const selector = (placeholder ? row.selector.replaceAll("::placeholder", "") || "*" : row.selector).replace(
-						/:(hover|active|focus-visible|focus-within|focus|checked|disabled|enabled|target)\b/g,
-						"",
-					);
+					const selector = (
+						placeholder ? row.selector.replaceAll("::placeholder", "") || "*" : row.selector
+					).replace(/:(hover|active|focus-visible|focus-within|focus|checked|disabled|enabled|target)\b/g, "");
 					return subjects.some((subject) => subject.matches(selector));
 				} catch {
 					throw new Error("unsupported selector");
 				}
 			};
 			const sheetDeclarations = collect(document.styleSheets[0]!.cssRules, "", "", [], true, false);
-			const all = sheetDeclarations.filter(matches);
-			if (all.some((row) => !["base", "utilities", "theme"].includes(row.layer)))
-				throw new Error(
-					`an author CSS declaration competes, including inactive or same-valued rules (${all.find((row) => !["base", "utilities", "theme"].includes(row.layer))?.layer})`,
-				);
-			const sourceRules = candidates.flatMap((candidate) => {
-				const sheet = new CSSStyleSheet();
-				sheet.replaceSync(candidate.css);
-				return collect(sheet.cssRules, "", "", [], true, false)
-					.filter(matches)
-					.map((row) => ({ ...row, token: candidate.token, scope: candidate.scope }));
-			});
-			// A full utility rule must map to a source candidate with the same selector,
-			// conditions and raw declaration. An arbitrary .foo in @layer utilities is
-			// not trusted merely because its author chose that layer's name.
+			// Unsupported feature branches cannot participate in this browser's
+			// cascade. Retain them unfiltered below, with their support result.
+			const all = sheetDeclarations.filter((row) => row.featureSupported && matches(row));
+			const authoredSheet = new CSSStyleSheet();
+			authoredSheet.replaceSync(bundledCss);
+			const importedDeclarations = collect(authoredSheet.cssRules, "", "", [], true, false);
 			const same = (a: Rule, b: Rule) =>
 				a.selector === b.selector &&
 				a.declaration === b.declaration &&
@@ -562,21 +710,49 @@ async function propertyRead(
 				a.value === b.value &&
 				JSON.stringify(a.conditions) === JSON.stringify(b.conditions) &&
 				a.important === b.important;
+			const fromImport = (row: Rule) =>
+				importedDeclarations.some((source) => source.layer === row.layer && same(row, source));
+			if (all.some((row) => !["base", "utilities", "theme"].includes(row.layer) && !fromImport(row)))
+				throw new Error(
+					`an author CSS declaration competes, including inactive or same-valued rules (${all.find((row) => !["base", "utilities", "theme"].includes(row.layer))?.layer})`,
+				);
+			const sourceRules = candidates.flatMap((candidate) => {
+				const sheet = new CSSStyleSheet();
+				sheet.replaceSync(candidate.css);
+				return collect(sheet.cssRules, "", "", [], true, false)
+					.filter((row) => row.featureSupported && matches(row))
+					.map((row) => ({ ...row, token: candidate.token, scope: candidate.scope }));
+			});
+			// A full utility rule must map to a source candidate with the same selector,
+			// conditions and raw declaration. An arbitrary .foo in @layer utilities is
+			// not trusted merely because its author chose that layer's name.
+
 			const baseSheet = new CSSStyleSheet();
 			baseSheet.replaceSync(preflight);
 			const baseline = collect(baseSheet.cssRules, "", "", [], true, false);
 			if (
-				all.some((row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base))))
+				all.some(
+					(row) =>
+						row.layer === "theme" ||
+						(row.layer === "base" && !baseline.some((base) => same(row, base)) && !fromImport(row)),
+				)
 			)
 				throw new Error(
-					`author rule in a baseline layer is not the pinned reset: ${JSON.stringify(all.find((row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base)))))}`,
-				);
-			if (all.some((row) => row.layer === "utilities" && !sourceRules.some((source) => same(row, source))))
-				throw new Error(
-					`utility rule has no verified source candidate: ${JSON.stringify(all.find((row) => row.layer === "utilities" && !sourceRules.some((source) => same(row, source))))}`,
+					`author rule in a baseline layer is not the pinned reset: ${JSON.stringify(all.find((row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base)) && !fromImport(row))))}`,
 				);
 			if (
-				sourceRules.some((source) => all.filter((row) => row.layer === "utilities" && same(row, source)).length !== 1)
+				all.some(
+					(row) =>
+						row.layer === "utilities" && !sourceRules.some((source) => same(row, source)) && !fromImport(row),
+				)
+			)
+				throw new Error(
+					`utility rule has no verified source candidate: ${JSON.stringify(all.find((row) => row.layer === "utilities" && !sourceRules.some((source) => same(row, source)) && !fromImport(row)))}`,
+				);
+			if (
+				sourceRules.some(
+					(source) => all.filter((row) => row.layer === "utilities" && same(row, source)).length !== 1,
+				)
 			)
 				throw new Error("missing or duplicated utility declaration");
 			const contenders = sourceRules
@@ -605,35 +781,14 @@ async function propertyRead(
 				return effects[0] ? [{ key, owner: effects[0], shadowed: effects.slice(1) }] : [];
 			});
 			const owned = [...new Set(winners.map((winner) => winner.owner))];
-			const variants = [
-				...themeBindings
-					.filter((binding) => binding.name.startsWith("--breakpoint-"))
-					.map((binding) => binding.name.slice(13)),
-				"dark",
-				"hover",
-				"active",
-				"focus",
-				"focus-visible",
-				"focus-within",
-				"checked",
-				"disabled",
-				"enabled",
-				"target",
-				"group-hover",
-				"group-focus",
-				"peer-checked",
-			];
-			if (
-				(scope !== "" && !scope.endsWith(":")) ||
-				(scope !== "" &&
-					scope
-						.slice(0, -1)
-						.split(":")
-						.some((variant) => !variants.includes(variant)))
-			)
-				throw new Error("scope needs unproven ancestor, container or custom condition attribution");
-			if (/group-|peer-/.test(scope) && !candidates.some((candidate) => candidate.scope === scope))
-				throw new Error("ancestor scope needs an existing source candidate");
+			const scopeSheet = new CSSStyleSheet();
+			scopeSheet.replaceSync(scopeProbe.css);
+			const scopeRules = collect(scopeSheet.cssRules, "", "", [], true, false).filter(
+				(r) => r.declaration === "--spool-scope-probe",
+			);
+			if (!scopeRules.length || scopeRules.some((row) => !anchored(row.selector, scopeProbe.token)))
+				throw new Error("scope changes the selected subject; no proved explicit override target");
+
 			if (
 				!owned.length &&
 				candidates.some((candidate) => {
@@ -644,6 +799,42 @@ async function propertyRead(
 				})
 			)
 				throw new Error("source condition has no proven selected-subject attribution; not an absent property");
+			const authorRules = all.filter(fromImport);
+			const authorScope = (row: Rule): string => {
+				if (row.conditions.length) throw new Error("imported author condition requires a separate scope proof");
+				// Retained direct state selectors, including :is(tag, context tag).
+				// An ancestor state is not silently relabelled as a direct state.
+				const states = [
+					...row.selector.matchAll(
+						/:(hover|focus-visible|focus-within|focus|active|checked|disabled|enabled|target)\b/g,
+					),
+				];
+				if (!states.length) return "";
+				if (states.length !== 1 || !row.selector.endsWith(states[0]![0]))
+					throw new Error(`imported ancestor/combined state needs an explicit scope proof: ${row.selector}`);
+				return `${states[0]![1]}:`;
+			};
+			const authorEffects = authorRules
+				.filter((row) => affects(row.declaration))
+				.map((row) => ({ ...row, scope: authorScope(row) }));
+			if (authorEffects.some((row) => row.important || !["base", ""].includes(row.layer)))
+				throw new Error("imported important/layer competition has no proved override");
+			const inAuthorScope = authorEffects.filter((row) => row.scope === scope);
+			const requiresImportant = inAuthorScope.some((row) => row.layer === "");
+			if (requiresImportant && scope === "")
+				throw new Error("unlayered resting author rule would require a cross-state override proof");
+			const explicitOverride = authorEffects.length
+				? {
+						scope,
+						important: requiresImportant,
+						target: "verified selected source class slot",
+						declarations: inAuthorScope,
+						rationale: requiresImportant
+							? "scoped important utility outranks normal unlayered state CSS"
+							: "normal utility outranks normal base-layer CSS; unlayered state rules keep their precedence",
+					}
+				: null;
+
 			const owner = owned[0] ?? null;
 			if (owner?.value === "") throw new Error("browser did not expose the authored declaration value");
 			const ownerCandidate = candidates.find((candidate) => candidate.token === owner?.token);
@@ -651,19 +842,30 @@ async function propertyRead(
 			ownerSheet.replaceSync(ownerCandidate?.css ?? "");
 			return {
 				owner,
+				explicitOverride,
+				authorEffects,
 				owners: owned,
 				winners,
 				contenders,
 				ownership: "source owner per effect in the explicit write scope; not the cross-scope rendered winner",
 				effectKeys: keys,
 				writeScope: scope,
-				declaration: owner === null ? "absent in chosen scope; add explicit override" : "literal utility",
+				declaration: owner
+					? "literal utility"
+					: inAuthorScope.length
+						? "imported declaration; verified explicit override"
+						: "absent in chosen scope; add explicit override",
 				reference: ownerCandidate?.rawCss.match(/var\((--[^,)]+)/)?.[1] ?? null,
 				bindings: themeBindings.filter(
 					(binding) =>
 						sourceRules.some((rule) => rule.value.includes(`var(${binding.name}`)) ||
 						(ownerCandidate?.rawCss.includes(binding.value) && binding.value.startsWith("var(")),
 				),
+				scopeActivity: scopeRules.map((row) => ({
+					selector: row.selector,
+					conditions: row.conditions,
+					active: row.active && el.matches(row.selector.replace(`.${CSS.escape(scopeProbe.token)}`, ":where(*)")),
+				})),
 				computed: getComputedStyle(el).getPropertyValue(property),
 				renderedEffects: subjects.map((subject) => ({
 					tag: subject.tagName,
@@ -691,17 +893,27 @@ async function propertyRead(
 					.flatMap((candidate) => {
 						const sheet = new CSSStyleSheet();
 						sheet.replaceSync(candidate.css);
-						return collect(sheet.cssRules, "", "", [], true, false).map((row) => ({ ...row, token: candidate.token }));
+						return collect(sheet.cssRules, "", "", [], true, false).map((row) => ({
+							...row,
+							token: candidate.token,
+						}));
 					}),
 				readSet: {
 					declarations: sourceRules,
 					sheetDeclarations,
+					layerStatements: [...document.styleSheets[0]!.cssRules]
+						.filter((rule) => rule instanceof CSSLayerStatementRule)
+						.map((rule) => rule.cssText),
 					stylesheet: expectedCss,
 					candidates,
-					compilerInputs: { preflight, themeBindings },
+					importedDeclarations,
+					bundledCss,
+					compilerInputs: { preflight, themeBindings, scopeProbe, scopeRules },
 					variables: [
 						...new Set(
-							sourceRules.flatMap((row) => [...row.value.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]!)),
+							sheetDeclarations.flatMap((row) =>
+								[...row.value.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]!),
+							),
 						),
 					],
 					policy:
@@ -719,6 +931,8 @@ async function propertyRead(
 			expectedClass: literal,
 			preflight,
 			themeBindings: mounted.themeBindings,
+			scopeProbe,
+			bundledCss: mounted.bundledCss,
 		},
 	);
 	return result;
@@ -855,7 +1069,8 @@ export async function validPropertyRead(
 	mounted: Mounted,
 	previous: Awaited<ReturnType<typeof read>>,
 ): Promise<boolean> {
-	if (previous.kind !== "supported" || !previous.property || previous.proof.operation.kind !== "property") return false;
+	if (previous.kind !== "supported" || !previous.property || previous.proof.operation.kind !== "property")
+		return false;
 	const current = await read(mounted, previous.proof.selection, {
 		kind: "property",
 		property: previous.proof.operation.property,
