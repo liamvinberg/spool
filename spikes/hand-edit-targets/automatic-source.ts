@@ -39,6 +39,7 @@ export interface Site {
 export interface Call {
 	source: string;
 	occurrence: string;
+	passedChild?: boolean;
 }
 export interface Selection {
 	generation: string;
@@ -291,12 +292,22 @@ export class Sources {
 					: this.local(unit, specifier.local.name, seen);
 			}
 		}
-		throw new Error("export-star or unresolved export binding");
+		const stars = unit.ast.program.body.filter((statement) => statement.type === "ExportAllDeclaration");
+		if (name === "default") throw new Error("export star does not forward default");
+		if (stars.length > 1) throw new Error("multiple export-star branches are unproven");
+		if (stars[0]) return this.exported(this.resolve(unit, stars[0].source.value), name, seen);
+		throw new Error("unresolved export binding");
 	}
 	callee(site: Site): { unit: Unit; fn: Component } {
 		const tag = site.node.openingElement.name;
-		if (tag.type !== "JSXIdentifier" || !/^[A-Z]/.test(tag.name)) throw new Error("not a direct component binding");
-		const name = tag.name;
+		const namespace = tag.type === "JSXMemberExpression" && tag.object.type === "JSXIdentifier" ? tag : undefined;
+		const name =
+			namespace?.object.type === "JSXIdentifier"
+				? namespace.object.name
+				: tag.type === "JSXIdentifier"
+					? tag.name
+					: undefined;
+		if (!name || !/^[A-Z]/.test(name)) throw new Error("not a direct component binding");
 		let shadowed = false;
 		walkNodes(site.unit.ast, [], (node, ancestors) => {
 			if (!ancestors.some((n) => /Function|Method/.test(n.type))) return;
@@ -309,19 +320,46 @@ export class Sources {
 		for (const ancestor of site.ancestors)
 			if (/Function|Method/.test(ancestor.type) && getBindingIdentifiers(ancestor)[name]) shadowed = true;
 		if (shadowed) throw new Error("component binding may be shadowed");
+		if (namespace) {
+			const imported = site.unit.ast.program.body.find(
+				(statement) =>
+					statement.type === "ImportDeclaration" &&
+					statement.importKind !== "type" &&
+					statement.specifiers.some(
+						(binding) => binding.type === "ImportNamespaceSpecifier" && binding.local.name === name,
+					),
+			);
+			if (imported?.type !== "ImportDeclaration") throw new Error("member is not a verified namespace import");
+			return this.exported(this.resolve(site.unit, imported.source.value), namespace.property.name);
+		}
 		return this.local(site.unit, name, new Set());
 	}
 	chain(selection: Selection): Site[] {
 		if (selection.refusal) throw new Error(selection.refusal);
 		const leaf = this.site(selection.source);
 		let current = leaf;
+		let transported = leaf;
 		const sites: Site[] = [leaf];
 		for (const call of [...selection.chain].reverse()) {
 			const site = this.site(call.source);
 			const actual = this.callee(site);
-			if (actual.unit.file !== current.unit.file || actual.fn.start !== owner(current).start)
-				throw new Error("mounted call relationship does not match the lexical binding");
+			if (actual.unit.file !== current.unit.file || actual.fn.start !== owner(current).start) {
+				// Transport is separate from authorship. Prove both the exact
+				// incoming element identity and the bounded source forwarding form.
+				if (
+					!call.passedChild ||
+					site.unit.file !== transported.unit.file ||
+					!site.node.children.some(
+						(child) => child.start === transported.node.start && child.end === transported.node.end,
+					) ||
+					!passesChildren(actual.fn)
+				)
+					throw new Error("mounted call relationship is not a verified children passthrough");
+				transported = site;
+				continue;
+			}
 			current = site;
+			transported = site;
 			sites.push(site);
 		}
 		// The uninstrumented createElement entry must end at the frame export.
@@ -343,6 +381,60 @@ export class Sources {
 			return false;
 		}
 	}
+}
+
+// Only a direct, immutable children return, optionally inside literal host
+// wrappers. Calls, callbacks, aliases, cached elements and named slots need a
+// separate value-flow proof. A matching lexical owner alone is insufficient.
+function passesChildren(fn: Component): boolean {
+	if (fn.type === "ClassMethod" || fn.params.length !== 1) return false;
+	const param = fn.params[0];
+	let local: string | undefined;
+	if (param?.type === "ObjectPattern") {
+		const child = param.properties.find(
+			(p) => p.type === "ObjectProperty" && !p.computed && p.key.type === "Identifier" && p.key.name === "children",
+		);
+		if (child?.type === "ObjectProperty" && child.value.type === "Identifier") local = child.value.name;
+	}
+	const body =
+		fn.body.type === "BlockStatement"
+			? fn.body.body.length === 1 && fn.body.body[0]?.type === "ReturnStatement"
+				? fn.body.body[0].argument
+				: undefined
+			: fn.body;
+	let count = 0;
+	const visit = (node: Node): boolean => {
+		if (
+			(node.type === "Identifier" && local === node.name) ||
+			(node.type === "MemberExpression" &&
+				!node.computed &&
+				param?.type === "Identifier" &&
+				node.object.type === "Identifier" &&
+				node.object.name === param.name &&
+				node.property.type === "Identifier" &&
+				node.property.name === "children")
+		) {
+			count++;
+			return true;
+		}
+		if (node.type === "JSXText") return node.value.trim() === "";
+		if (node.type === "JSXExpressionContainer") return visit(node.expression);
+		if (node.type === "JSXFragment") return node.children.every(visit);
+		if (
+			node.type !== "JSXElement" ||
+			node.openingElement.name.type !== "JSXIdentifier" ||
+			!/^[a-z]/.test(node.openingElement.name.name)
+		)
+			return false;
+		if (
+			node.openingElement.attributes.some(
+				(attr) => attr.type !== "JSXAttribute" || (attr.value !== null && attr.value?.type !== "StringLiteral"),
+			)
+		)
+			return false;
+		return node.children.every(visit);
+	};
+	return !!body && visit(body) && count === 1;
 }
 
 function directBinding(site: Site, name?: string): string | undefined {
@@ -502,7 +594,9 @@ export function sourceRead(sources: Sources, selection: Selection, operation: Op
 		...(name === undefined ? {} : { attribute: name }),
 		expected,
 		scope: operation.kind === "property" ? operation.scope : "",
-		repeated: sites.some((s) => mapped(s.ancestors)),
+		repeated: [...sites, ...selection.chain.map((call) => sources.site(call.source))].some((s) =>
+			mapped(s.ancestors),
+		),
 		...(asset ? { asset } : {}),
 	};
 }
@@ -561,8 +655,8 @@ export function reach(sources: Sources, entries: readonly string[], target: Addr
 			walkNodes(unit.ast, [], (node, ancestors) => {
 				if (
 					node.type !== "JSXElement" ||
-					node.openingElement.name.type !== "JSXIdentifier" ||
-					!/^[A-Z]/.test(node.openingElement.name.name)
+					(node.openingElement.name.type !== "JSXMemberExpression" &&
+						(node.openingElement.name.type !== "JSXIdentifier" || !/^[A-Z]/.test(node.openingElement.name.name)))
 				)
 					return;
 				const source = `${unit.path}:${node.loc!.start.line}:${node.loc!.start.column + 1}`;

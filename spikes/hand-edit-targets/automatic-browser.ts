@@ -132,7 +132,7 @@ export async function mount(
 					? "spikes/hand-edit-targets/observed-runtime.tsx"
 					: instrumented
 						? "spikes/hand-edit-targets/runtime.tsx"
-						: "src/runtime/jsx-dev-runtime.ts",
+						: "spikes/hand-edit-targets/plain-runtime.tsx",
 			),
 		},
 	});

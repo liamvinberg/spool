@@ -98,7 +98,7 @@ export default function Frame(){const ref=useRef(null); const forward=useRef(nul
 		"Portal",
 	]) {
 		const result = await stableText(observed, `button:text-is("${label}")`);
-		if (["Memo", "Context", "Cloned", "Passed"].includes(label)) expect(result.kind).toBe("refused");
+		if (["Memo", "Context", "Cloned"].includes(label)) expect(result.kind).toBe("refused");
 		else supported(result);
 		results.push({ label, result });
 	}
@@ -271,14 +271,14 @@ it("records the remaining syntax inventory without accepting coincidentally equa
 			definition: `export const Button = ({label}) => <button>{label}</button>`,
 			importer: `import * as UI from 'shared/ui/button'`,
 			tag: `<UI.Button label="Same"/>`,
-			kind: "refused",
+			kind: "supported",
 		},
 		{
 			name: "export star",
 			definition: `export * from './leaf';`,
 			importer: `import {Button} from 'shared/ui/button'`,
 			tag: `<Button label="Same"/>`,
-			kind: "refused",
+			kind: "supported",
 		},
 		{
 			name: "mutable component binding",

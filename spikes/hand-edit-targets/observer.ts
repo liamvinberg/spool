@@ -17,11 +17,12 @@ interface Authored {
 	source: string;
 	type: unknown;
 	entry: boolean;
+	element: { props: unknown; type: unknown };
 }
 export interface Observation {
 	occurrence: string;
 	source: string;
-	chain: { source: string; occurrence: string }[];
+	chain: { source: string; occurrence: string; passedChild?: boolean }[];
 	refusal?: string;
 }
 export interface Observer {
@@ -78,21 +79,28 @@ export function installObserver(): void {
 		const result: Observation = { occurrence: identity(fiber), source: "", chain: [] };
 		try {
 			result.source = at(fiber).source;
+			let child = at(fiber);
 			const chain: Observation["chain"] = [];
 			let foundEntry = false;
+			if (parents.some((parent) => [14, 15].includes(parent.tag)))
+				throw new Error("memo source continuity is unproven across equal-prop bailouts");
 			for (const parent of [...parents].reverse()) {
 				// Host/text/root, fragments, mode, context, profiler, suspense,
 				// offscreen and host resource nodes are not authored component calls.
 				if ([3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 19, 22, 26, 27].includes(parent.tag)) continue;
 				if (![0, 1, 11, 14, 15, 16].includes(parent.tag)) throw new Error(`unproven React fiber tag ${parent.tag}`);
-				if ([14, 15].includes(parent.tag))
-					throw new Error("memo source continuity is unproven across equal-prop bailouts");
 				const value = at(parent);
 				if (value.entry) {
 					foundEntry = true;
 					continue;
 				}
-				chain.push({ source: value.source, occurrence: identity(parent) });
+				const children = Reflect.get(value.element.props as object, "children") as unknown;
+				chain.push({
+					source: value.source,
+					occurrence: identity(parent),
+					passedChild: children === child.element || (Array.isArray(children) && children.includes(child.element)),
+				});
+				child = value;
 			}
 			if (!foundEntry) throw new Error("mounted ancestry does not reach the compiled entry");
 			result.chain = chain.reverse();
@@ -109,7 +117,7 @@ export function installObserver(): void {
 				this.failure = "unexpected React props shape";
 				return;
 			}
-			authored.set(element.props, { source, type: element.type, entry });
+			authored.set(element.props, { source, type: element.type, entry, element });
 		},
 		observe(node) {
 			if (this.failure) throw new Error(this.failure);
@@ -123,8 +131,23 @@ export function installObserver(): void {
 	};
 	global.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
 		supportsFiber: true,
-		inject: () => 1,
+		inject(renderer: {
+			version?: string;
+			rendererPackageName?: string;
+			bundleType?: number;
+			reconcilerVersion?: string;
+		}) {
+			if (
+				renderer.version !== "19.2.7" ||
+				renderer.reconcilerVersion !== "19.2.7" ||
+				renderer.rendererPackageName !== "react-dom" ||
+				renderer.bundleType !== 0
+			)
+				global.__handObserver.failure = "only React DOM 19.2.7 production is pinned by this observer";
+			return 1;
+		},
 		onCommitFiberRoot(_renderer: number, root: { current: Fiber }) {
+			if (global.__handObserver.failure) return;
 			try {
 				roots.add(root);
 				hosts = new WeakMap();
