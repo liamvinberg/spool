@@ -1,5 +1,5 @@
 import { useLandingArrival } from "./landing-arrival";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { DemoProduct, DEMO_TAKES, DEMO_NAMES, type DemoTake } from "./landing-product";
 import { OffprintSurface } from "./landing-canvas";
 import { SpoolMark } from "shared/ui/spool/mark";
@@ -92,7 +92,11 @@ function Source() {
 }
 
 // Landing-page prototype using the current hero and layout, with Offprint as the single demo.
-export function OffprintLanding({ take }: { take: ModernTake }) {
+export function OffprintLanding({ take, heroArt, footerExtra }: {
+	take: ModernTake;
+	heroArt?: ReactNode;
+	footerExtra?: ReactNode;
+}) {
 	const root = useRef<HTMLDivElement>(null);
 	useLandingArrival(root);
 	const dialog = useRef<HTMLDialogElement>(null);
@@ -197,6 +201,7 @@ export function OffprintLanding({ take }: { take: ModernTake }) {
 			</header>
 			<main>
 				<section className="sg-hero sg-width">
+					{heroArt}
 					<h1>
 						A canvas for
 						<br />
@@ -355,6 +360,7 @@ export function OffprintLanding({ take }: { take: ModernTake }) {
 					GitHub <GuideIcon name="arrow" />
 				</a>
 				<a href={`${REPO}/blob/main/LICENSE.md`}>MIT licence</a>
+				{footerExtra}
 			</footer>
 			<dialog
 				className="sg-player"
