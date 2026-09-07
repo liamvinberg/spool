@@ -606,9 +606,21 @@
 			"x": 5806,
 			"y": 3566
 		},
+		"app/mac-window": {
+			"x": 14600,
+			"y": 80
+		},
+		"app/model-picker": {
+			"x": 15860,
+			"y": 80
+		},
 		"explore/agent/live/receiving/directions": {
 			"x": 1160,
 			"y": 0
+		},
+		"app/project-entry": {
+			"x": 17555,
+			"y": 80
 		},
 		"site/shaders": {
 			"x": 3099,
