@@ -117,11 +117,7 @@ export default function Frame(){return <main><Pass><Button label="Same"/></Pass>
 
 it("reads all sixteen replacement and transport cases from the selected committed occurrence", async () => {
 	const outcomes = [];
-	const allRefused = new Set([
-		"clone replaces named slot",
-		"recreated component has no observed creation",
-		"cached first child between different callers",
-	]);
+	const allRefused = new Set(["cached first child between different callers"]);
 	for (const sample of replacementCases) {
 		const source = `import {Children,cloneElement,createElement,useState} from 'react';
 const Button=({label})=><button className="p-4">{label}</button>;const Header=({header})=>header;
@@ -162,9 +158,13 @@ export default function Frame(){const [flip,setFlip]=useState(false);globalThis.
 								? sample.name === "clone replaces class and preserves children"
 									? "p-8"
 									: "p-4"
-								: ["clone replaces label", "clone replaces children and preserves style"].includes(sample.name)
-									? "Changed"
-									: "Same";
+								: sample.name === "clone replaces named slot"
+									? "Replacement"
+									: ["clone replaces label", "clone replaces children and preserves style"].includes(
+												sample.name,
+											)
+										? "Changed"
+										: "Same";
 						expect(value.target.expected).toBe(expected);
 						expect(value.proof.selection.generation).toBe(observed.generation);
 						expect(value.proof.committedRender).toBeGreaterThan(0);
@@ -490,6 +490,246 @@ it("keeps ordinary prop names separate from React type and key metadata", async 
 	expect(value?.key.value).toBe("Stable key");
 	expect(value?.type.origin.kind).toBe("jsx");
 	evidence.metadata = { pick, text };
+	await normal.page.close();
+	await observed.page.close();
+});
+
+it("composes same-expression retained factory fields without choosing another equal-valued call", async () => {
+	const outcomes = [];
+	for (const body of [
+		`return cloneElement(children)`,
+		`return cloneElement(children,{label:'Same'})`,
+		`return createElement(children.type,{label:'Same'})`,
+	]) {
+		const source = `import {memo,cloneElement,createElement,useState} from 'react';const Button=({label})=><button className="p-4">{label}</button>;const Memo=memo(Button,()=>true);function Pass({children}){${body}}
+export default function Frame(){const [flip,set]=useState(false);globalThis.flip=()=>set(x=>!x);return <main>{flip?<Pass><Memo label="Same"/></Pass>:<Pass><Memo label="Same" /></Pass>}<input id="input"/></main>}`;
+		const root = project({ "frames/home/frame.tsx": source }),
+			normal = await mount(browser, root, "home", false),
+			observed = await mount(browser, root, "home", "values");
+		const steps = [];
+		for (const action of [null, "rerender()", "flip()", "rerender()"]) {
+			if (action) for (const mounted of [normal, observed]) await act(mounted, action);
+			expect(await display(observed)).toEqual(await display(normal));
+			const pick = await select(observed, "button"),
+				text = await read(observed, pick, { kind: "text" });
+			// A different retained input call remains with the live-rendering decision.
+			const refused = steps.length >= 2;
+			expect(text.kind, JSON.stringify(text)).toBe(refused ? "refused" : "supported");
+			if (text.kind === "supported")
+				expect(text.target.address.start).toBe(
+					body === "return cloneElement(children)"
+						? source.indexOf('<Memo label="Same" />')
+						: source.indexOf(body.slice(7)),
+				);
+			steps.push({ action, pick, text });
+		}
+		outcomes.push({ body, steps });
+		await normal.page.close();
+		await observed.page.close();
+	}
+	evidence.retainedFactories = outcomes;
+}, 30000);
+
+it("retains separate replacement-slot and recreated-type authors through imports and owner retirement", async () => {
+	const outcomes = [];
+	for (const body of [
+		`return cloneElement(children,{header:<Button label="Same"/>})`,
+		`return createElement(children.type,{label:'Same'})`,
+	]) {
+		const replaced = body.includes("header:");
+		const files = {
+			"shared/ui/leaf.tsx": `export const Button=({label})=><button className="p-4">{label}</button>;export const Header=({header})=><section>{header}</section>`,
+			"shared/ui/exports.ts": `export {Button,Header} from './leaf'`,
+			"shared/ui/pass.tsx": `import {cloneElement,createElement} from 'react';import {Button} from './exports';export function Pass({children}){${body}}`,
+			"shared/ui/bridge.ts": `export {Pass} from './pass'`,
+			"frames/home/frame.tsx": `import {Button,Header} from 'shared/ui/exports';import {Pass} from 'shared/ui/bridge';export default function Frame(){return <main><Pass>${replaced ? '<Header header={<Button label="Same"/>}/>' : '<Button label="Same"/>'}</Pass><input id="input"/></main>}`,
+		};
+		const root = project(files);
+		let admitted = true;
+		const observed = await mount(browser, root, "home", "values", {
+				capture: async (revisions) => ({
+					epoch: "composition",
+					handles: revisions.map((r) => ({ path: r.path, handle: r.path, revision: 1 })),
+				}),
+				valid: async () => admitted,
+			}),
+			normal = await mount(browser, root, "home", false);
+		expect(await display(observed)).toEqual(await display(normal));
+		const pick = await select(observed, "button"),
+			text = await read(observed, pick, { kind: "text" });
+		expect(text).toMatchObject({
+			kind: "supported",
+			target: { source: expect.stringContaining("shared/ui/pass.tsx"), expected: "Same" },
+		});
+		if (text.kind !== "supported") throw new Error(text.reason);
+		expect(text.target.address.start).toBe(
+			files["shared/ui/pass.tsx"].indexOf(replaced ? '<Button label="Same"/>' : "createElement(children.type"),
+		);
+		expect(text.proof.revisions.map((r) => r.path).sort()).toEqual(
+			[...Object.keys(files), "shared/tokens.css"].sort(),
+		);
+		const property = await read(observed, pick, { kind: "property", property: "padding-top", scope: "" });
+		expect(property).toMatchObject({
+			kind: "supported",
+			target: { source: expect.stringContaining("shared/ui/leaf.tsx") },
+		});
+		const structure = await read(observed, pick, { kind: "delete" });
+		expect(structure.kind).toBe("refused");
+		admitted = false;
+		expect(await stillSelected(observed, pick)).toBe(false);
+		admitted = true;
+		for (const [path, source] of Object.entries({ ...files, "shared/tokens.css": "" })) {
+			writeDesignFile(root, path, `${source}\n/* revision */`);
+			expect(await stillSelected(observed, pick), path).toBe(false);
+			writeDesignFile(root, path, source);
+		}
+		outcomes.push({
+			body,
+			pick,
+			text,
+			property,
+			structure,
+			retired: Object.keys({ ...files, "shared/tokens.css": "" }),
+		});
+		await normal.page.close();
+		await observed.page.close();
+	}
+	evidence.composedAuthority = outcomes;
+});
+
+it("refuses mutable, indirect, nested and side-effecting type or replacement transport", async () => {
+	const outcomes = [];
+	for (const body of [
+		`children.type=Button;return createElement(children.type,{label:'Same'})`,
+		`return createElement(children.type,{label:(children.props.label='Same','Same')})`,
+		`const type=children.type;return createElement(type,{label:'Same'})`,
+		`return createElement(children.type,{...{label:'Same'}})`,
+		`return createElement(children.type,{get label(){return 'Same'}})`,
+		`return cloneElement(cloneElement(children),{label:'Same'})`,
+		`return cloneElement(children,{header:(children.props.header=<Button label="Same"/>,<Button label="Same"/>)})`,
+	]) {
+		const source = `import {cloneElement,createElement} from 'react';const Button=({label})=><button>{label}</button>;const Header=({header})=>header;function Pass({children}){${body}}export default function Frame(){return <main><Pass>${body.includes("header:") ? '<Header header={<Button label="Same"/>}/>' : '<Button label="Same"/>'}</Pass></main>}`;
+		const root = project({ "frames/home/frame.tsx": source }),
+			normal = await mount(browser, root, "home", false),
+			observed = await mount(browser, root, "home", "values");
+		expect(await display(observed)).toEqual(await display(normal));
+		const pick = await select(observed, "button"),
+			text = await read(observed, pick, { kind: "text" });
+		expect(text.kind, body).toBe("refused");
+		outcomes.push({ body, pick, text });
+		await normal.page.close();
+		await observed.page.close();
+	}
+	evidence.composedRefusals = outcomes;
+}, 30000);
+
+it("records cache assignments and reads while refusing unobserved same-value mutation and external writes", async () => {
+	const source = `const Button=({label})=><button className="p-4">{label}</button>;function Pass({children}){globalThis.saved??=children;return globalThis.saved}export default function Frame(){return <main><Pass><Button label="Same"/></Pass><Pass><Button label="Same"/></Pass><input id="input"/></main>}`;
+	const root = project({ "frames/home/frame.tsx": source }),
+		normal = await mount(browser, root, "home", false),
+		observed = await mount(browser, root, "home", "values");
+	const steps = [];
+	for (const action of [
+		null,
+		"rerender()",
+		"globalThis.saved.props.label='Same';globalThis.saved=globalThis.saved;rerender()",
+		"globalThis.saved=undefined;rerender()",
+	]) {
+		if (action) for (const mounted of [normal, observed]) await act(mounted, action);
+		expect(await display(observed)).toEqual(await display(normal));
+		const events = await observed.page.evaluate(() => globalThis.__handValues!.cacheEvents());
+		const reads = [];
+		for (let index = 0; index < 2; index++) {
+			const pick = await select(observed, `button >> nth=${index}`),
+				text = await read(observed, pick, { kind: "text" });
+			expect(text.kind).toBe("refused");
+			const property = await read(observed, pick, { kind: "property", property: "padding-top", scope: "" });
+			expect(property.kind).toBe("refused");
+			reads.push({ pick, text, property });
+		}
+		expect(events.slice(-4).map((e) => e.kind)).toEqual(["assignment", "read", "assignment", "read"]);
+		const firstRead = events.at(-3)!,
+			secondRead = events.at(-1)!;
+		expect(firstRead.matchingAssignment).toBe(secondRead.matchingAssignment);
+		expect(firstRead.value).toEqual(secondRead.value);
+		expect(firstRead.revision).toBe(steps.length === 3 ? 2 : 1);
+		steps.push({ action, events, reads });
+	}
+	// The external same-value write is deliberately absent from observed revisions.
+	expect(steps[2]!.events.filter((e) => e.rhsEvaluated).length).toBe(1);
+	evidence.cacheLifetime = {
+		steps,
+		boundary:
+			"diagnostic assignment results and reads since this document installed; external stores, mutation and commit ownership are unproved",
+	};
+	await normal.page.close();
+	await observed.page.close();
+});
+
+it("keeps cache accessor evaluation counts and thrown writes identical to ordinary production", async () => {
+	const outcomes = [];
+	for (const throws of [false, true]) {
+		const source = `globalThis.gets=0;globalThis.sets=0;let saved;Object.defineProperty(globalThis,'saved',{get(){globalThis.gets++;return saved},set(value){globalThis.sets++;${throws ? "throw new Error('denied')" : "saved=value"}},configurable:true});const Button=({label})=><button>{label}</button>;function Pass({children}){globalThis.saved??=children;return globalThis.saved}globalThis.tryPass=()=>{try{Pass({children:<Button label="Same"/>});return 'ok'}catch(error){return error.message}};export default function Frame(){return <main><input id="input"/></main>}`;
+		const root = project({ "frames/home/frame.tsx": source }),
+			normal = await mount(browser, root, "home", false),
+			observed = await mount(browser, root, "home", "values");
+		const result = [];
+		for (const mounted of [normal, observed])
+			result.push(
+				await mounted.page.evaluate(() => ({
+					first: Reflect.get(globalThis, "tryPass")(),
+					second: Reflect.get(globalThis, "tryPass")(),
+					gets: Reflect.get(globalThis, "gets"),
+					sets: Reflect.get(globalThis, "sets"),
+				})),
+			);
+		expect(result[1]).toEqual(result[0]);
+		expect(result[0]).toMatchObject({ gets: throws ? 2 : 4, sets: throws ? 2 : 1 });
+		outcomes.push({
+			throws,
+			result,
+			events: await observed.page.evaluate(() => globalThis.__handValues!.cacheEvents()),
+		});
+		await normal.page.close();
+		await observed.page.close();
+	}
+	evidence.cacheAccessors = outcomes;
+});
+
+it("does not turn a speculative cache write into committed source ownership", async () => {
+	const source = `import {Suspense,startTransition,useState} from 'react';let ready=false;let resolve;const pending=new Promise(r=>resolve=r);globalThis.release=()=>{ready=true;resolve()};const Button=({label})=><button className="p-4">{label}</button>;function Pass({children}){globalThis.saved??=children;return globalThis.saved}function Gate({mode}){if(mode===1&&!ready)throw pending;return <i>Ready</i>}function Content({mode}){globalThis.attempts??=[];globalThis.attempts.push(mode);return <><Pass>{mode===0?<Button label="Old"/>:mode===1?<Button label="Pending"/>:<Button label="Urgent"/>}</Pass><Gate mode={mode}/></>}export default function Frame(){const [mode,set]=useState(0);globalThis.pending=()=>{globalThis.saved=undefined;startTransition(()=>set(1))};globalThis.urgent=()=>set(2);return <main><Suspense fallback={<b>Loading</b>}><Content mode={mode}/></Suspense><input id="input"/></main>}`;
+	const root = project({ "frames/home/frame.tsx": source }),
+		normal = await mount(browser, root, "home", false),
+		observed = await mount(browser, root, "home", "values");
+	const initial = await select(observed, "button"),
+		commit = await observed.page.evaluate(() => globalThis.__handObserver.commits);
+	for (const mounted of [normal, observed]) {
+		await act(mounted, "pending()");
+		await mounted.page.waitForFunction(() => (Reflect.get(globalThis, "attempts") as number[]).includes(1));
+	}
+	expect(await display(observed)).toEqual(await display(normal));
+	expect(await select(observed, "button")).toEqual(initial);
+	expect(await observed.page.evaluate(() => globalThis.__handObserver.commits)).toBe(commit);
+	const pendingEvents = await observed.page.evaluate(() => globalThis.__handValues!.cacheEvents());
+	expect(pendingEvents.filter((e) => e.rhsEvaluated)).toHaveLength(2);
+	for (const mounted of [normal, observed]) {
+		await act(mounted, "urgent()");
+		await act(mounted, "release()");
+		await mounted.page.locator('button:text-is("Pending")').waitFor();
+	}
+	expect(await display(observed)).toEqual(await display(normal));
+	const pick = await select(observed, "button"),
+		text = await read(observed, pick, { kind: "text" });
+	expect(text.kind).toBe("refused");
+	evidence.speculativeCache = {
+		initial,
+		commit,
+		pendingEvents,
+		pick,
+		text,
+		events: await observed.page.evaluate(() => globalThis.__handValues!.cacheEvents()),
+		display: await display(observed),
+	};
 	await normal.page.close();
 	await observed.page.close();
 });

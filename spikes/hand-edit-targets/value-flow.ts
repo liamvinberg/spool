@@ -18,13 +18,30 @@ export interface ValueSnapshot {
 	source: string;
 	kind: FieldOrigin["kind"];
 	base?: number;
+	typeInput?: number;
 	type: { value: unknown; origin: FieldOrigin };
 	key: { value: unknown; origin: FieldOrigin };
 	fields: Record<string, { value: unknown; origin: FieldOrigin }>;
 }
+export interface CacheEvent {
+	sequence: number;
+	source: string;
+	key: string;
+	kind: "assignment" | "read";
+	value: unknown;
+	matchingAssignment?: number;
+	// Only instrumented stores are counted. This is not a continuity lease.
+	revision: number;
+	rhsEvaluated?: boolean;
+}
 export interface ValueFlow {
+	cacheInput<T>(value: T): T;
+	cacheAssign<T>(source: string, key: string, action: () => T): T;
+	cacheRead<T>(source: string, key: string, value: T): T;
+	cacheEvents(): CacheEvent[];
 	at<T>(source: string, action: () => T): T;
 	remap(source: string): string;
+	typeFrom(element: ValueElement): unknown;
 	jsx(element: ValueElement, source: string): void;
 	created(
 		element: ValueElement,
@@ -46,6 +63,7 @@ export function installValueFlow(mapping: Record<string, string>): void {
 		source: string;
 		kind: FieldOrigin["kind"];
 		base?: ValueElement | undefined;
+		typeInput?: ValueElement | undefined;
 		replaced: string[];
 		keyReplaced: boolean;
 		id: number;
@@ -54,7 +72,11 @@ export function installValueFlow(mapping: Record<string, string>): void {
 	const props = new WeakMap<object, ValueElement>();
 	const identities = new WeakMap<object, number>();
 	let serial = 0;
+	let cacheRhs = false;
+	const cacheEvents: CacheEvent[] = [];
+	const cacheWrites = new Map<string, { sequence: number; revision: number; value: unknown }>();
 	let active = "";
+	let typeInput: ValueElement | undefined;
 	const id = (object: object) => {
 		let held = identities.get(object);
 		if (!held) {
@@ -73,7 +95,16 @@ export function installValueFlow(mapping: Record<string, string>): void {
 		replaced: string[] = [],
 		keyReplaced = false,
 	) => {
-		records.set(element, { element, source, kind, base, replaced, keyReplaced, id: id(element) });
+		records.set(element, {
+			element,
+			source,
+			kind,
+			base,
+			typeInput: kind === "create" ? typeInput : undefined,
+			replaced,
+			keyReplaced,
+			id: id(element),
+		});
 		// A key-only copy shares props. Preserve their original creation record.
 		if (element.props !== null && typeof element.props === "object" && !props.has(element.props))
 			props.set(element.props, element);
@@ -81,6 +112,13 @@ export function installValueFlow(mapping: Record<string, string>): void {
 	const origin = (element: ValueElement, field: string, slot: FieldOrigin["slot"] = "prop"): FieldOrigin => {
 		const value = records.get(element);
 		if (!value) return { kind: "unknown", source: "", field, slot, element: id(element), via: [] };
+		if (slot === "type" && value.typeInput) {
+			const from = origin(value.typeInput, field, slot);
+			return {
+				...from,
+				via: [...from.via, { kind: "type", source: value.source, element: value.id, replaced: false }],
+			};
+		}
 		const replaced = slot === "key" ? value.keyReplaced : slot === "prop" && value.replaced.includes(field);
 		if (value.base && !replaced) {
 			const from = origin(value.base, field, slot);
@@ -107,14 +145,65 @@ export function installValueFlow(mapping: Record<string, string>): void {
 		return { kind: typeof value };
 	};
 	globalThis.__handValues = {
+		cacheInput(value) {
+			cacheRhs = true;
+			return value;
+		},
+		cacheAssign(source, key, action) {
+			const before = cacheRhs;
+			cacheRhs = false;
+			try {
+				const value = action();
+				const sequence = cacheEvents.length + 1;
+				const previous = cacheWrites.get(key);
+				const revision = (previous?.revision ?? 0) + (cacheRhs ? 1 : 0);
+				if (cacheRhs) cacheWrites.set(key, { sequence, revision, value });
+				cacheEvents.push({
+					sequence,
+					source,
+					key,
+					kind: "assignment",
+					value: atom(value),
+					revision,
+					rhsEvaluated: cacheRhs,
+				});
+				return value;
+			} finally {
+				cacheRhs = before;
+			}
+		},
+		cacheRead(source, key, value) {
+			const write = cacheWrites.get(key);
+			cacheEvents.push({
+				sequence: cacheEvents.length + 1,
+				source,
+				key,
+				kind: "read",
+				value: atom(value),
+				revision: write?.revision ?? 0,
+				...(write?.value === value ? { matchingAssignment: write.sequence } : {}),
+			});
+			return value;
+		},
+		cacheEvents() {
+			return cacheEvents.map((event) => ({ ...event }));
+		},
 		at(source, action) {
 			const before = active;
+			const beforeType = typeInput;
+			typeInput = undefined;
 			active = source;
 			try {
 				return action();
 			} finally {
 				active = before;
+				typeInput = beforeType;
 			}
+		},
+		typeFrom(element) {
+			const type = element.type;
+			typeInput = element;
+			return type;
 		},
 		remap(source) {
 			return mapping[source] ?? source;
@@ -130,6 +219,8 @@ export function installValueFlow(mapping: Record<string, string>): void {
 		transports(parent, child) {
 			const matches = (input: unknown): boolean => {
 				const copies: ValueElement[] = [child];
+				const typeBase = records.get(child)?.typeInput;
+				if (typeBase) copies.push(typeBase);
 				for (let at = records.get(child)?.base; at; at = records.get(at)?.base) copies.push(at);
 				if (copies.includes(input as ValueElement)) return true;
 				if (Array.isArray(input))
@@ -157,6 +248,7 @@ export function installValueFlow(mapping: Record<string, string>): void {
 				source: value?.source ?? "",
 				kind: value?.kind ?? "unknown",
 				...(value?.base ? { base: id(value.base) } : {}),
+				...(value?.typeInput ? { typeInput: id(value.typeInput) } : {}),
 				type: { value: atom(own(element, "type")), origin: origin(element, "type", "type") },
 				key: { value: atom(own(element, "key")), origin: origin(element, "key", "key") },
 				fields,

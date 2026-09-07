@@ -96,8 +96,44 @@ export function valueCalls(designDir: string, mapping: Record<string, string>): 
 					)
 						for (const name of Object.keys(getBindingIdentifiers(node))) imports.delete(name);
 				});
-				const edits: { offset: number; text: string }[] = [];
+				const edits: { offset: number; text: string; end?: number }[] = [];
 				const originals: Node[] = [];
+				// Diagnostic only: preserve actual ??= get/set and return-read counts.
+				// A matching observed write cannot certify an externally writable slot.
+				walkNodes(ast, [], (node) => {
+					if (node.type !== "FunctionDeclaration" || node.body.body.length !== 2) return;
+					const [statement, returned] = node.body.body;
+					const assign = statement?.type === "ExpressionStatement" ? statement.expression : undefined;
+					const read = returned?.type === "ReturnStatement" ? returned.argument : undefined;
+					if (
+						assign?.type !== "AssignmentExpression" ||
+						assign.operator !== "??=" ||
+						assign.right.type !== "Identifier" ||
+						assign.left.type !== "MemberExpression" ||
+						assign.left.computed ||
+						assign.left.object.type !== "Identifier" ||
+						assign.left.object.name !== "globalThis" ||
+						assign.left.property.type !== "Identifier" ||
+						read?.type !== "MemberExpression" ||
+						read.computed ||
+						read.object.type !== "Identifier" ||
+						read.object.name !== "globalThis" ||
+						read.property.type !== "Identifier" ||
+						read.property.name !== assign.left.property.name
+					)
+						return;
+					const key = JSON.stringify(read.property.name);
+					const stamp = (part: Node) =>
+						JSON.stringify(`${file}:${part.loc!.start.line}:${part.loc!.start.column + 1}`);
+					edits.push(
+						{ offset: assign.start!, text: `globalThis.__handValues.cacheAssign(${stamp(assign)},${key},()=>` },
+						{ offset: assign.end!, text: ")" },
+						{ offset: assign.right.start!, text: "globalThis.__handValues.cacheInput(" },
+						{ offset: assign.right.end!, text: ")" },
+						{ offset: read.start!, text: `globalThis.__handValues.cacheRead(${stamp(read)},${key},` },
+						{ offset: read.end!, text: ")" },
+					);
+				});
 				walkNodes(ast, [], (node) => {
 					if (node.type === "JSXElement" || node.type === "JSXFragment") originals.push(node);
 					if (node.type !== "CallExpression" || node.optional) return;
@@ -119,6 +155,20 @@ export function valueCalls(designDir: string, mapping: Record<string, string>): 
 						if (["AwaitExpression", "YieldExpression", "Super"].includes(part.type)) unsafe = true;
 					});
 					if (unsafe) return;
+					const type = node.arguments[0];
+					if (
+						api === "createElement" &&
+						type?.type === "MemberExpression" &&
+						!type.computed &&
+						type.object.type === "Identifier" &&
+						type.property.type === "Identifier" &&
+						type.property.name === "type"
+					) {
+						edits.push(
+							{ offset: type.object.start!, text: "globalThis.__handValues.typeFrom(" },
+							{ offset: type.object.end!, end: type.end!, text: ")" },
+						);
+					}
 					const stamp = `${file}:${node.loc!.start.line}:${node.loc!.start.column + 1}`;
 					edits.push(
 						{ offset: node.start!, text: `globalThis.__handValues.at(${JSON.stringify(stamp)},()=>` },
@@ -127,7 +177,7 @@ export function valueCalls(designDir: string, mapping: Record<string, string>): 
 				});
 				let contents = source;
 				for (const edit of edits.sort((a, b) => b.offset - a.offset))
-					contents = contents.slice(0, edit.offset) + edit.text + contents.slice(edit.offset);
+					contents = contents.slice(0, edit.offset) + edit.text + contents.slice(edit.end ?? edit.offset);
 				const transformed = parse(contents, { sourceType: "module", plugins: ["jsx", "typescript"] });
 				let index = 0;
 				walkNodes(transformed, [], (node) => {

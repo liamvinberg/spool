@@ -489,8 +489,19 @@ export class Sources {
 					!call.retainedProps &&
 					passesSlot(actual.fn, slot) &&
 					containsSlot(site, transported, slot);
-				if (site.unit.file !== transported.unit.file || (!direct && !indirect))
+				if (site.unit.file !== transported.unit.file || (!direct && !indirect)) {
+					const returned = actual.fn.body.type === "BlockStatement" ? actual.fn.body.body.at(-1) : undefined;
+					if (
+						returned?.type === "ReturnStatement" &&
+						returned.argument?.type === "MemberExpression" &&
+						returned.argument.object.type === "Identifier" &&
+						returned.argument.object.name === "globalThis"
+					)
+						throw new Error(
+							"cache return lacks committed read-to-occurrence and uninterrupted slot-lifetime evidence",
+						);
 					throw new Error("mounted call relationship is not a verified children passthrough");
+				}
 				transported = site;
 				continue;
 			}
@@ -735,12 +746,21 @@ function verifyFactory(site: Creation, kind: "clone" | "create" | "key"): void {
 	if (shadowed) throw new Error("React factory binding may be shadowed");
 }
 
-function verifyCopiedInput(sources: Sources, value: ValueSnapshot, carrier: Call | undefined): void {
-	if (value.kind !== "clone" && value.kind !== "key") return;
+function verifyFactoryInput(sources: Sources, value: ValueSnapshot, carrier: Call | undefined): void {
+	if (value.kind !== "clone" && value.kind !== "key" && value.kind !== "create") return;
+	if (value.kind === "create" && value.type.origin.source === value.source) return;
 	const site = sources.creation(value.source);
 	verifyFactory(site, value.kind);
 	if (site.node.type !== "CallExpression") throw new Error("copy is not an authored factory call");
-	const input = site.node.arguments[0];
+	const argument = site.node.arguments[0];
+	const input =
+		value.kind === "create" &&
+		argument?.type === "MemberExpression" &&
+		!argument.computed &&
+		argument.property.type === "Identifier" &&
+		argument.property.name === "type"
+			? argument.object
+			: argument;
 	const typeSource = value.type?.origin.source;
 	if (!input || !typeSource) throw new Error("copy has no authored input relationship");
 	const original = sources.creation(typeSource);
@@ -813,9 +833,9 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 	if (selection.refusal) throw new Error(selection.refusal);
 	const leaf = selection.values!;
 	const calls = [...selection.chain].reverse();
-	verifyCopiedInput(sources, leaf, calls[0]);
+	verifyFactoryInput(sources, leaf, calls[0]);
 	calls.forEach((call, index) => {
-		if (call.values) verifyCopiedInput(sources, call.values, calls[index + 1]);
+		if (call.values) verifyFactoryInput(sources, call.values, calls[index + 1]);
 	});
 	let current = sources.creation(leaf.source);
 	// Validate the creation's mounted owner separately from each field's author.
@@ -827,8 +847,36 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 		const type = value.type?.origin;
 		if (!type?.source) throw new Error("mounted type has no authored creation relationship");
 		const definition = sources.valueCallee(type.source);
-		if (definition.unit.file !== current.unit.file || definition.fn.start !== owner(current).start)
-			throw new Error("factory output needs a verified slot or cache transport relationship");
+		if (definition.unit.file !== current.unit.file || definition.fn.start !== owner(current).start) {
+			const slot = call.transportedFields?.length === 1 ? call.transportedFields[0] : undefined;
+			const field = slot ? value.fields[slot] : undefined;
+			if (!slot || !field || call.retainedProps || !passesSlot(definition.fn, slot))
+				throw new Error("factory output needs a verified slot or cache transport relationship");
+			const author = sources.creation(field.origin.source);
+			let contains = false;
+			if (author.node.type === "JSXElement" && current.node.type === "JSXElement")
+				contains = containsSlot({ ...author, node: author.node }, { ...current, node: current.node }, slot);
+			else if (field.origin.kind === "clone" && author.node.type === "CallExpression") {
+				verifyFactory(author, "clone");
+				const config = author.node.arguments[1];
+				if (
+					config?.type === "ObjectExpression" &&
+					config.properties.every((p) => p.type === "ObjectProperty" && !p.computed)
+				) {
+					const fields = config.properties.filter(
+						(p) => p.type === "ObjectProperty" && p.key.type === "Identifier" && p.key.name === slot,
+					);
+					const entry = fields.length === 1 ? fields[0] : undefined;
+					contains =
+						entry?.type === "ObjectProperty" &&
+						entry.value.type === "JSXElement" &&
+						entry.value.start === current.node.start;
+				}
+			}
+			if (!contains || author.unit.file !== current.unit.file)
+				throw new Error("forwarded slot has no verified authored field edge");
+			continue;
+		}
 		current = sources.creation(value.source);
 		if (value.kind === "clone" || value.kind === "create" || value.kind === "key") verifyFactory(current, value.kind);
 	}
@@ -852,7 +900,25 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 		if (!parameter) throw new Error("text is not a direct immutable parameter or literal");
 		const call = calls[0];
 		if (!call) throw new Error("text has no committed input call");
-		if (call.retainedProps) throw new Error("retained factory inputs need same-expression per-field admission");
+		if (call.retainedProps) {
+			const incoming = call.values?.fields[parameter],
+				rendered = call.renderedValues?.fields[parameter];
+			if (
+				call.values?.type.origin.source !== call.renderedValues?.type.origin.source ||
+				!incoming ||
+				!rendered ||
+				incoming.origin.source !== rendered.origin.source ||
+				incoming.origin.kind !== rendered.origin.kind ||
+				incoming.origin.field !== rendered.origin.field ||
+				incoming.value !== rendered.value ||
+				JSON.stringify(incoming.origin.via.map((e) => [e.kind, e.source, e.replaced])) !==
+					JSON.stringify(rendered.origin.via.map((e) => [e.kind, e.source, e.replaced]))
+			)
+				throw new Error(
+					"retained factory inputs differ in authored field ancestry; writable owner remains unproved",
+				);
+			if (call.renderedValues) verifyFactoryInput(sources, call.renderedValues, calls[1]);
+		}
 		field = parameter;
 		cell = call.renderedValues?.fields[field];
 		role = "call-site";
