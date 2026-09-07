@@ -1,5 +1,9 @@
 # Automatic source reads
 
+The [observed source-read extension](observed.md) preserves the original
+counterexamples and runs this suite against a second observation mechanism.
+The account below describes the original 2026-09-06 evidence.
+
 Disposable read-only probe, 2026-09-06. Selection plus an operation resolves a
 source slot without the test providing a source snippet. No product code imports
 these files, and no production support or performance claim follows from them.

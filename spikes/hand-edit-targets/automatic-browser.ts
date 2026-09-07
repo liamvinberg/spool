@@ -1,17 +1,28 @@
 import { readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Scanner } from "@tailwindcss/oxide";
 import { build } from "esbuild";
 import type { Browser, ElementHandle, Page } from "playwright-core";
-import { compile } from "tailwindcss";
+import { __unstable__loadDesignSystem, compile } from "tailwindcss";
 import { anatomyOf } from "../../src/daemon/class-write";
 import { buildDesignEntry } from "../../src/daemon/compile";
 import { realDesignDir } from "../../src/daemon/design-path";
 import { fingerprintOf } from "../../src/daemon/hand-write";
 import { designStylesheets, ROOT_CSS } from "../../src/daemon/tailwind";
 import { compileClasses } from "../../src/daemon/theme";
-import { type Operation, type Selection, Sources, sourceRead, witnesses } from "./automatic-source";
+import { ROWS } from "../../src/ui/canvas/properties-rows";
+import { type Operation, type Revision, type Selection, Sources, sourceRead, witnesses } from "./automatic-source";
+import type {} from "./observer";
+
+export interface ReadLease {
+	epoch: string;
+	handles: { path: string; handle: string; revision: number }[];
+}
+export interface ReadAuthority {
+	capture(revisions: readonly Revision[]): Promise<ReadLease>;
+	valid(lease: ReadLease, revisions: readonly Revision[]): Promise<boolean>;
+}
 
 export interface Mounted {
 	page: Page;
@@ -20,9 +31,21 @@ export interface Mounted {
 	css: string;
 	toolchain: string;
 	selectedNodes: Map<string, ElementHandle<HTMLElement | SVGElement>>;
+	observed: boolean;
+	authority: ReadAuthority | undefined;
+	lease: ReadLease | undefined;
+	themeCss: string;
+	themeBindings: { name: string; value: string; from: "default" | "project" }[];
 }
 
-export async function mount(browser: Browser, root: string, frame: string, instrumented = true): Promise<Mounted> {
+export async function mount(
+	browser: Browser,
+	root: string,
+	frame: string,
+	instrumented: boolean | "observed" = true,
+	authority?: ReadAuthority,
+): Promise<Mounted> {
+	const toolchain = fingerprintOf(readFileSync("pnpm-lock.yaml", "utf8"));
 	const sources = new Sources(root);
 	const designDir = realDesignDir(root);
 	// Capture inputs before compilation, including imports pruned by the bundle.
@@ -30,10 +53,20 @@ export async function mount(browser: Browser, root: string, frame: string, instr
 		const unit = sources.read(path);
 		for (const statement of unit.ast.program.body) {
 			if (
-				statement.type !== "ImportDeclaration" ||
+				!["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(statement.type) ||
+				!("source" in statement) ||
+				!statement.source ||
 				(!statement.source.value.startsWith(".") && !statement.source.value.startsWith("shared/"))
 			)
 				continue;
+			if (/\.(png|jpe?g|gif|webp|svg|avif)$/.test(statement.source.value)) {
+				sources.asset(
+					statement.source.value.startsWith("shared/")
+						? statement.source.value
+						: join(dirname(unit.path), statement.source.value),
+				);
+				continue;
+			}
 			const count = sources.units.size;
 			const dependency = sources.resolve(unit, statement.source.value);
 			if (sources.units.size > count) visit(dependency.path);
@@ -41,13 +74,7 @@ export async function mount(browser: Browser, root: string, frame: string, instr
 	};
 	visit(`frames/${frame}/frame.tsx`);
 	sources.retain("shared/tokens.css");
-	const compiled = await buildDesignEntry({
-		designDir,
-		resolveDir: join(designDir, "frames", frame),
-		sourcefile: "<automatic-read>",
-		label: "automatic target probe",
-		contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => root.render(createElement(Frame)); globalThis.rerender();`,
-	});
+
 	const sheets = designStylesheets(designDir);
 	const compiler = await compile(ROOT_CSS, {
 		base: sheets.base,
@@ -65,9 +92,32 @@ export async function mount(browser: Browser, root: string, frame: string, instr
 			return loaded;
 		},
 	});
+	const system = await __unstable__loadDesignSystem(ROOT_CSS, sheets);
+	const themeBindings = [...system.theme.entries()].map(([name, value]) => ({
+		name,
+		value: value.value,
+		from: value.options & 4 ? ("default" as const) : ("project" as const),
+	}));
+	// Re-run the pinned compiler's lowering on each generated candidate. A raw
+	// candidatesToCss answer precedes fallback generation and is not the emitted
+	// sheet (shadow colors are an executable counterexample). Only theme entries
+	// and compiler-generated candidate CSS enter this isolated compilation.
+	const themeCss = `@theme reference {${themeBindings.map((binding) => `${binding.name}:${binding.value};`).join("")}}`;
+	// Capture owner revisions before the TSX compile. Stylesheet compilation
+	// has only discovered/read dependencies; its snapshots are checked here too.
+	const lease = await authority?.capture([...sources.revisions.values(), ...sources.assets.values()]);
+	const compiled = await buildDesignEntry({
+		designDir,
+		resolveDir: join(designDir, "frames", frame),
+		sourcefile: "<automatic-read>",
+		label: "automatic target probe",
+		contents: `import Frame from './frame.tsx'; import {createRoot} from 'react-dom/client'; import {createElement} from 'react'; const root = createRoot(document.getElementById('root')); globalThis.rerender = () => {const entry=createElement(Frame); ${instrumented === "observed" ? "globalThis.__handObserver.register(entry, '<entry>', true);" : ""} root.render(entry)}; globalThis.unmount = () => root.unmount(); globalThis.rerender();`,
+	});
 	const scanner = new Scanner({ sources: [] });
 	const candidates = scanner.scanFiles(
-		compiled.sourceFiles.map((file) => ({ content: sources.read(relative(designDir, file)).text, extension: "tsx" })),
+		compiled.sourceFiles
+			.filter((file) => /\.[jt]sx?$/.test(file))
+			.map((file) => ({ content: sources.read(relative(designDir, file)).text, extension: "tsx" })),
 	);
 	const css = compiler.build(candidates);
 	const result = await build({
@@ -78,15 +128,38 @@ export async function mount(browser: Browser, root: string, frame: string, instr
 		define: { "process.env.NODE_ENV": '"production"' },
 		alias: {
 			"spool/jsx-dev-runtime": resolve(
-				instrumented ? "spikes/hand-edit-targets/runtime.tsx" : "src/runtime/jsx-dev-runtime.ts",
+				instrumented === "observed"
+					? "spikes/hand-edit-targets/observed-runtime.tsx"
+					: instrumented
+						? "spikes/hand-edit-targets/runtime.tsx"
+						: "src/runtime/jsx-dev-runtime.ts",
 			),
 		},
 	});
-	if (!sources.valid()) throw new Error("compile inputs changed");
+	if (
+		!sources.valid() ||
+		toolchain !== fingerprintOf(readFileSync("pnpm-lock.yaml", "utf8")) ||
+		(authority &&
+			lease &&
+			!(await authority.valid(lease, [...sources.revisions.values(), ...sources.assets.values()])))
+	)
+		throw new Error("compile inputs or source-owner lease changed");
 	const page = await browser.newPage({ viewport: { width: 700, height: 700 } });
 	await page.setContent('<div id="root"></div><div id="portal"></div>');
 	const generation = crypto.randomUUID();
 	await page.addStyleTag({ content: css });
+	if (instrumented === "observed") {
+		const hook = await build({
+			stdin: {
+				contents: "import {installObserver} from './spikes/hand-edit-targets/observer'; installObserver();",
+				resolveDir: process.cwd(),
+			},
+			bundle: true,
+			write: false,
+			format: "iife",
+		});
+		await page.addScriptTag({ content: hook.outputFiles[0]!.text });
+	}
 	await page.addScriptTag({ content: result.outputFiles[0]!.text });
 	await page.locator("#root > *").first().waitFor();
 	return {
@@ -94,19 +167,26 @@ export async function mount(browser: Browser, root: string, frame: string, instr
 		sources,
 		generation,
 		css,
-		toolchain: fingerprintOf(readFileSync("pnpm-lock.yaml", "utf8")),
+		toolchain,
 		selectedNodes: new Map(),
+		observed: instrumented === "observed",
+		authority,
+		lease,
+		themeCss,
+		themeBindings,
 	};
 }
 
 export async function select(mounted: Mounted, selector: string): Promise<Selection> {
 	const node = await mounted.page.locator(selector).elementHandle();
 	if (!node) throw new Error("no selected element");
-	const observation = await node.evaluate((el) => ({
-		occurrence: el.getAttribute("data-probe-occurrence") ?? "",
-		source: el.getAttribute("data-spool-source") ?? "",
-		chain: JSON.parse(el.getAttribute("data-probe-chain") ?? "[]") as Selection["chain"],
-	}));
+	const observation = mounted.observed
+		? await node.evaluate((el) => globalThis.__handObserver.observe(el))
+		: await node.evaluate((el) => ({
+				occurrence: el.getAttribute("data-probe-occurrence") ?? "",
+				source: el.getAttribute("data-spool-source") ?? "",
+				chain: JSON.parse(el.getAttribute("data-probe-chain") ?? "[]") as Selection["chain"],
+			}));
 	const held = mounted.selectedNodes.get(observation.occurrence);
 	if (held && !(await held.evaluate((old, current) => old === current, node)))
 		throw new Error("occurrence stamp was copied to another DOM node");
@@ -117,9 +197,32 @@ export async function select(mounted: Mounted, selector: string): Promise<Select
 export async function stillSelected(mounted: Mounted, selection: Selection): Promise<boolean> {
 	if (selection.generation !== mounted.generation || selection.occurrence === "" || !mounted.sources.valid())
 		return false;
+	if (
+		mounted.authority &&
+		mounted.lease &&
+		!(await mounted.authority.valid(mounted.lease, [
+			...mounted.sources.revisions.values(),
+			...mounted.sources.assets.values(),
+		]))
+	)
+		return false;
 	if (mounted.toolchain !== fingerprintOf(readFileSync("pnpm-lock.yaml", "utf8"))) return false;
 	const node = mounted.selectedNodes.get(selection.occurrence);
 	if (!node || !(await node.evaluate((el) => el.isConnected))) return false;
+	if (mounted.observed)
+		return node.evaluate((el, pick) => {
+			try {
+				const current = globalThis.__handObserver.observe(el);
+				return (
+					current.occurrence === pick.occurrence &&
+					current.source === pick.source &&
+					JSON.stringify(current.chain) === JSON.stringify(pick.chain) &&
+					current.refusal === pick.refusal
+				);
+			} catch {
+				return false;
+			}
+		}, selection);
 	return mounted.page.evaluate((pick) => {
 		const all = [...document.querySelectorAll("[data-probe-occurrence]")].filter(
 			(el) => el.getAttribute("data-probe-occurrence") === pick.occurrence,
@@ -140,37 +243,32 @@ async function propertyRead(
 	operation: Extract<Operation, { kind: "property" }>,
 	literal: string | null,
 ) {
-	if (
-		![
-			"padding-top",
-			"padding-left",
-			"padding-right",
-			"padding-bottom",
-			"color",
-			"background-color",
-			"column-gap",
-			"row-gap",
-			"border-top-width",
-		].includes(operation.property)
-	)
-		throw new Error("property is outside this read probe's demonstrated effect set");
+	if (!ROWS.some((row) => row.property === operation.property && row.rule.kind !== "read"))
+		throw new Error("property is outside the retained operation inventory");
 	const tokens = (literal ?? "").split(/\s+/).filter(Boolean);
 	const compiled = await compileClasses(mounted.sources.root, tokens);
-	const candidates = compiled
-		.filter((n) => n.ok)
-		.map((n) => ({
-			token: n.token,
-			css: n.css,
-			scope: anatomyOf(n.token)
-				.variants.map((v) => `${v}:`)
-				.join(""),
-		}));
-	const preflight = readFileSync(fileURLToPath(import.meta.resolve("tailwindcss/preflight.css")), "utf8");
+	const candidates = await Promise.all(
+		compiled
+			.filter((n) => n.ok)
+			.map(async (n) => ({
+				token: n.token,
+				rawCss: n.css,
+				css: (await compile(mounted.themeCss + n.css)).build([]),
+				scope: anatomyOf(n.token)
+					.variants.map((v) => `${v}:`)
+					.join(""),
+			})),
+	);
+	const preflight = (
+		await compile(readFileSync(fileURLToPath(import.meta.resolve("tailwindcss/preflight.css")), "utf8"))
+	).build([]);
 	const result = await mounted.page.evaluate(
-		({ pick, property, scope, candidates, expectedCss, expectedClass, preflight }) => {
-			const el = [...document.querySelectorAll("[data-probe-occurrence]")].find(
-				(n) => n.getAttribute("data-probe-occurrence") === pick.occurrence,
-			);
+		({ pick, property, scope, candidates, expectedCss, expectedClass, preflight, themeBindings }) => {
+			const el =
+				globalThis.__handObserver?.node(pick.occurrence) ??
+				[...document.querySelectorAll("[data-probe-occurrence]")].find(
+					(n) => n.getAttribute("data-probe-occurrence") === pick.occurrence,
+				);
 			if (!el) throw new Error("occurrence disappeared");
 			if ((el.getAttribute("class") ?? "") !== (expectedClass ?? ""))
 				throw new Error("rendered classes differ from the authored literal");
@@ -189,8 +287,17 @@ async function propertyRead(
 				throw new Error("stylesheet CSSOM changed");
 			if (el.hasAttribute("style") || el.getAnimations().length)
 				throw new Error("inline or animated property ownership is unknown");
-			if (getComputedStyle(el).writingMode !== "horizontal-tb" || getComputedStyle(el).direction !== "ltr")
-				throw new Error("logical/physical mapping needs another proof");
+			const environment = getComputedStyle(el);
+			if (!["horizontal-tb", "vertical-rl", "vertical-lr"].includes(environment.writingMode))
+				throw new Error("writing mode is outside the demonstrated mapping");
+			const inline = environment.writingMode === "horizontal-tb" ? ["left", "right"] : ["top", "bottom"];
+			if (environment.direction === "rtl") inline.reverse();
+			const block =
+				environment.writingMode === "horizontal-tb"
+					? ["top", "bottom"]
+					: environment.writingMode === "vertical-rl"
+						? ["right", "left"]
+						: ["left", "right"];
 			type Rule = {
 				selector: string;
 				layer: string;
@@ -202,21 +309,87 @@ async function propertyRead(
 				important: boolean;
 			};
 			const physical: Record<string, string> = {
-				"inline-start": "left",
-				"inline-end": "right",
-				"block-start": "top",
-				"block-end": "bottom",
+				"inline-start": inline[0]!,
+				"inline-end": inline[1]!,
+				"block-start": block[0]!,
+				"block-end": block[1]!,
 			};
-			const affects = (name: string) =>
-				name === property ||
-				name === "all" ||
-				Object.entries(physical).some(([logical, physical]) => name.replace(logical, physical) === property) ||
-				["padding", "margin", "border", "gap", "border-radius", "font", "background"].some(
-					(prefix) => property.startsWith(`${prefix}-`) && name === prefix,
-				) ||
-				((property.startsWith("padding-") || property.startsWith("margin-")) &&
-					["inline", "block"].some((axis) => name === `${property.split("-")[0]}-${axis}`)) ||
-				(property.endsWith("-gap") && name === "gap");
+			const normalize = (name: string) => {
+				const corner = /^border-(start|end)-(start|end)-radius$/.exec(name);
+				if (corner) {
+					const sides = [block[corner[1] === "start" ? 0 : 1], inline[corner[2] === "start" ? 0 : 1]];
+					return `border-${sides.find((s) => s === "top" || s === "bottom")}-${sides.find((s) => s === "left" || s === "right")}-radius`;
+				}
+				for (const [logical, side] of Object.entries(physical)) name = name.replace(logical, side);
+				return name.replace(/^inset-(top|right|bottom|left)$/, "$1");
+			};
+			const componentKeys: Record<string, string[]> = {
+				"column-gap, between children": ["margin-left", "margin-right"],
+				"row-gap, between children": ["margin-top", "margin-bottom"],
+				"border-color, between children": [
+					"border-top-color",
+					"border-right-color",
+					"border-bottom-color",
+					"border-left-color",
+				],
+				"placeholder color": ["color"],
+				"width and height": ["width", "height"],
+				"width mode": ["width"],
+				"height mode": ["height"],
+				"scale-x": ["--tw-scale-x"],
+				"scale-y": ["--tw-scale-y"],
+				"rotate-x": ["--tw-rotate-x"],
+				"rotate-y": ["--tw-rotate-y"],
+				skew: ["--tw-skew-x", "--tw-skew-y"],
+				"skew-x": ["--tw-skew-x"],
+				"skew-y": ["--tw-skew-y"],
+				"translate-x": ["--tw-translate-x"],
+				"translate-y": ["--tw-translate-y"],
+				brightness: ["--tw-brightness"],
+				contrast: ["--tw-contrast"],
+				saturate: ["--tw-saturate"],
+				"hue-rotate": ["--tw-hue-rotate"],
+				"ring-width": ["--tw-ring-shadow"],
+				"ring-offset-width": ["--tw-ring-offset-width"],
+				"ring-color": ["--tw-ring-color"],
+				"box-shadow color": ["--tw-shadow-color"],
+			};
+			const nested = property.includes("between children");
+			const placeholder = property === "placeholder color";
+			const subjects = nested ? [...el.children] : [el];
+			if (nested && subjects.length < 2)
+				throw new Error("no observed pair of direct children for the nested effect");
+			if (placeholder && !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement))
+				throw new Error("no observed input placeholder target");
+			const probe = document.createElement("div").style;
+			probe.setProperty(property, "initial");
+			const keys = componentKeys[property] ?? [...probe].map(normalize);
+			if (!keys.length) throw new Error("operation has no proven CSS effect identity");
+			const affects = (name: string) => name === "all" || keys.includes(normalize(name));
+			const serializedNames = (style: CSSStyleDeclaration): string[] => {
+				let depth = 0,
+					quote = "",
+					escaped = false,
+					part = "";
+				const parts: string[] = [];
+				for (const char of style.cssText) {
+					if (escaped) escaped = false;
+					else if (char === "\\") escaped = true;
+					else if (quote) {
+						if (char === quote) quote = "";
+					} else if (char === '"' || char === "'") quote = char;
+					else if (char === "(" || char === "[") depth++;
+					else if (char === ")" || char === "]") depth--;
+					else if (char === ";" && depth === 0) {
+						parts.push(part);
+						part = "";
+						continue;
+					}
+					part += char;
+				}
+				if (part.trim()) parts.push(part);
+				return parts.map((part) => part.slice(0, part.indexOf(":")).trim());
+			};
 			const collect = (
 				rules: CSSRuleList,
 				parent = "",
@@ -241,6 +414,10 @@ async function propertyRead(
 						nextActive = active && matchMedia(rule.conditionText).matches;
 					}
 					if (rule instanceof CSSSupportsRule) {
+						// Browser feature support is fixed for this mounted generation.
+						// Unlike media/state, an unsupported feature branch cannot turn
+						// active while this read is being used in the same renderer.
+						if (!CSS.supports(rule.conditionText)) continue;
 						nextConditions = [...conditions, rule.conditionText];
 						nextActive = active && CSS.supports(rule.conditionText);
 					}
@@ -257,25 +434,11 @@ async function propertyRead(
 					if ("style" in rule && rule.style instanceof CSSStyleDeclaration) {
 						const style = rule.style;
 						for (const name of style) {
-							const shorthand = [
-								"padding-inline",
-								"padding-block",
-								"padding",
-								"margin-inline",
-								"margin-block",
-								"margin",
-								"gap",
-								"border-top",
-								"border-width",
-								"border",
-								"border-radius",
-								"font",
-								"background",
-							].find(
-								(candidate) =>
-									(name.startsWith(`${candidate}-`) || (name.endsWith("-gap") && candidate === "gap")) &&
-									style.getPropertyValue(candidate) !== "",
-							);
+							const shorthand = serializedNames(style).find((candidate) => {
+								const isolated = document.createElement("div").style;
+								isolated.setProperty(candidate, style.getPropertyValue(candidate));
+								return [...isolated].includes(name);
+							});
 							const authored = rule.style.getPropertyValue(name) === "" ? (shorthand ?? name) : name;
 							if (!onlyProperty || affects(name))
 								rows.push({
@@ -306,23 +469,24 @@ async function propertyRead(
 			};
 			const matches = (row: Rule) => {
 				try {
-					return el.matches(
-						row.selector.replace(
-							/:(hover|active|focus-visible|focus-within|focus|checked|disabled|enabled|target)\b/g,
-							"",
-						),
-					);
+					if (placeholder !== row.selector.includes("::placeholder")) return false;
+					const selector = (
+						placeholder ? row.selector.replaceAll("::placeholder", "") || "*" : row.selector
+					).replace(/:(hover|active|focus-visible|focus-within|focus|checked|disabled|enabled|target)\b/g, "");
+					return subjects.some((subject) => subject.matches(selector));
 				} catch {
 					throw new Error("unsupported selector");
 				}
 			};
-			const all = collect(document.styleSheets[0]!.cssRules).filter(matches);
+			const all = collect(document.styleSheets[0]!.cssRules, "", "", [], true, false).filter(matches);
 			if (all.some((row) => !["base", "utilities", "theme"].includes(row.layer)))
-				throw new Error("an author CSS declaration competes, including inactive or same-valued rules");
+				throw new Error(
+					`an author CSS declaration competes, including inactive or same-valued rules (${all.find((row) => !["base", "utilities", "theme"].includes(row.layer))?.layer})`,
+				);
 			const sourceRules = candidates.flatMap((candidate) => {
 				const sheet = new CSSStyleSheet();
 				sheet.replaceSync(candidate.css);
-				return collect(sheet.cssRules)
+				return collect(sheet.cssRules, "", "", [], true, false)
 					.filter(matches)
 					.map((row) => ({ ...row, token: candidate.token, scope: candidate.scope }));
 			});
@@ -338,26 +502,53 @@ async function propertyRead(
 				a.important === b.important;
 			const baseSheet = new CSSStyleSheet();
 			baseSheet.replaceSync(preflight);
-			const baseline = collect(baseSheet.cssRules);
+			const baseline = collect(baseSheet.cssRules, "", "", [], true, false);
 			if (
 				all.some(
 					(row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base))),
 				)
 			)
-				throw new Error("author rule in a baseline layer is not the pinned reset");
+				throw new Error(
+					`author rule in a baseline layer is not the pinned reset: ${JSON.stringify(all.find((row) => row.layer === "theme" || (row.layer === "base" && !baseline.some((base) => same(row, base)))))}`,
+				);
 			if (all.some((row) => row.layer === "utilities" && !sourceRules.some((source) => same(row, source))))
-				throw new Error("utility rule has no verified source candidate");
+				throw new Error(
+					`utility rule has no verified source candidate: ${JSON.stringify(all.find((row) => row.layer === "utilities" && !sourceRules.some((source) => same(row, source))))}`,
+				);
 			if (
 				sourceRules.some(
 					(source) => all.filter((row) => row.layer === "utilities" && same(row, source)).length !== 1,
 				)
 			)
 				throw new Error("missing or duplicated utility declaration");
-			if (all.some((row) => row.important)) throw new Error("important cascade is outside the bounded owner proof");
-			const owned = sourceRules.filter((row) => row.scope === scope);
-			if (owned.length > 1) throw new Error("competing declarations in the chosen scope; equality is not ownership");
-			if (!/^(?:wide:)?(?:hover:)?$/.test(scope))
-				throw new Error("scope is outside the demonstrated base/wide/hover forms");
+			const owned = sourceRules.filter((row) => row.scope === scope && affects(row.declaration));
+			for (const key of keys)
+				if (new Set(owned.filter((row) => normalize(row.declaration) === key).map((row) => row.token)).size > 1)
+					throw new Error("competing declarations in the chosen scope; equality is not ownership");
+			const variants = [
+				...themeBindings
+					.filter((binding) => binding.name.startsWith("--breakpoint-"))
+					.map((binding) => binding.name.slice(13)),
+				"dark",
+				"hover",
+				"active",
+				"focus",
+				"focus-visible",
+				"focus-within",
+				"checked",
+				"disabled",
+				"enabled",
+				"target",
+			];
+			if (
+				(scope !== "" && !scope.endsWith(":")) ||
+				(scope !== "" &&
+					scope
+						.slice(0, -1)
+						.split(":")
+						.some((variant) => !variants.includes(variant)))
+			)
+				throw new Error("scope needs unproven ancestor, container or custom condition attribution");
 			const owner = owned[0] ?? null;
 			if (owner?.value === "") throw new Error("browser did not expose the authored declaration value");
 			const ownerCandidate = candidates.find((candidate) => candidate.token === owner?.token);
@@ -365,18 +556,50 @@ async function propertyRead(
 			ownerSheet.replaceSync(ownerCandidate?.css ?? "");
 			return {
 				owner,
+				owners: owned,
+				effectKeys: keys,
 				writeScope: scope,
 				declaration: owner === null ? "absent in chosen scope; add explicit override" : "literal utility",
-				reference: owner?.value.match(/var\((--[^,)]+)/)?.[1] ?? null,
+				reference: ownerCandidate?.rawCss.match(/var\((--[^,)]+)/)?.[1] ?? null,
+				bindings: themeBindings.filter(
+					(binding) =>
+						sourceRules.some((rule) => rule.value.includes(`var(${binding.name}`)) ||
+						(ownerCandidate?.rawCss.includes(binding.value) && binding.value.startsWith("var(")),
+				),
 				computed: getComputedStyle(el).getPropertyValue(property),
+				renderedEffects: subjects.map((subject) => ({
+					tag: subject.tagName,
+					pseudo: placeholder ? "::placeholder" : null,
+					values: Object.fromEntries(
+						keys.map((key) => [
+							key,
+							getComputedStyle(subject, placeholder ? "::placeholder" : null).getPropertyValue(key),
+						]),
+					),
+				})),
 				context: {
 					width: innerWidth,
 					hover: el.matches(":hover"),
 					rootFont: getComputedStyle(document.documentElement).fontSize,
+					direction: environment.direction,
+					writingMode: environment.writingMode,
 				},
-				selectedDeclarations: owner === null ? [] : [owner.declaration],
+				selectedDeclarations: owned.map((row) => row.declaration),
 				ownerCandidateCss: ownerCandidate?.css ?? null,
+				allOwnerCandidateCss: candidates.filter((candidate) => owned.some((row) => row.token === candidate.token)),
 				ownerCandidateDeclarations: collect(ownerSheet.cssRules, "", "", [], true, false),
+				readSet: {
+					declarations: sourceRules,
+					variables: [
+						...new Set(
+							sourceRules.flatMap((row) =>
+								[...row.value.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]!),
+							),
+						),
+					],
+					policy:
+						"conservative complete matching-candidate read set; stylesheet revisions include inherited bindings and compiler prerequisites",
+				},
 				otherScopes: sourceRules.filter((row) => row.scope !== scope),
 			};
 		},
@@ -388,6 +611,7 @@ async function propertyRead(
 			expectedCss: mounted.css,
 			expectedClass: literal,
 			preflight,
+			themeBindings: mounted.themeBindings,
 		},
 	);
 	return result;
@@ -395,6 +619,9 @@ async function propertyRead(
 
 export async function read(mounted: Mounted, selection: Selection, operation: Operation) {
 	try {
+		const committedRender = mounted.observed
+			? await mounted.page.evaluate(() => globalThis.__handObserver.commits)
+			: null;
 		if (!(await stillSelected(mounted, selection)))
 			throw new Error("stale document, occurrence, relationship, source or toolchain");
 		const target = sourceRead(mounted.sources, selection, operation);
@@ -403,21 +630,46 @@ export async function read(mounted: Mounted, selection: Selection, operation: Op
 			if (rendered !== target.expected)
 				throw new Error("rendered text disagrees with the verified literal; no whitespace or expression inversion");
 		}
+		if (
+			operation.kind === "attribute" &&
+			(await mounted.selectedNodes.get(selection.occurrence)!.getAttribute(operation.attribute)) !== target.expected
+		)
+			throw new Error("rendered attribute differs from authored literal");
+		if (operation.kind === "asset" && target.asset) {
+			const src = await mounted.selectedNodes.get(selection.occurrence)!.getAttribute("src");
+			if (!src?.startsWith("data:")) throw new Error("mounted image is not the compiled local asset");
+			const comma = src.indexOf(",");
+			const bytes = src.slice(0, comma).endsWith(";base64")
+				? Buffer.from(src.slice(comma + 1), "base64")
+				: Buffer.from(decodeURIComponent(src.slice(comma + 1)));
+			if (fingerprintOf(bytes.toString("base64")) !== target.asset.revision)
+				throw new Error("rendered image differs from imported asset bytes");
+		}
 		const property =
 			operation.kind === "property" ? await propertyRead(mounted, selection, operation, target.expected) : null;
 		if (!(await stillSelected(mounted, selection))) throw new Error("read invalidated before completion");
+		if (
+			committedRender !== null &&
+			committedRender !== (await mounted.page.evaluate(() => globalThis.__handObserver.commits))
+		)
+			throw new Error("React committed another render during the read");
 		return {
 			kind: "supported" as const,
 			target,
 			property,
 			proof: {
 				selection,
+				committedRender,
 				revisions: [...mounted.sources.revisions.values()],
+				assets: [...mounted.sources.assets.values()],
 				resolutions: [...mounted.sources.resolutions],
 				witnesses: witnesses(mounted.sources, target),
 				absentResolutionCandidates: [...mounted.sources.missing],
 				toolchain: mounted.toolchain,
-				continuity: "exact compiled snapshot only; no continuity across replacement or source edits",
+				owner: mounted.lease ?? null,
+				continuity: mounted.lease
+					? "owner epoch and complete dependency revisions admitted before compile; no rebasing or outside-write exclusion"
+					: "exact compiled snapshot only; no continuity across replacement or source edits",
 			},
 		};
 	} catch (error) {

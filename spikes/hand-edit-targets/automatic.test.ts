@@ -3,11 +3,11 @@ import { join } from "node:path";
 import { type Browser, chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeTempDir, markProject, writeDesignFile } from "../../src/test-helpers";
-import { mount, read, select, stillSelected } from "./automatic-browser";
+import { mount as mountProbe, read, select, stillSelected } from "./automatic-browser";
 import { reach, Sources } from "./automatic-source";
 import { button, first, nested, second, tokens, unused } from "./fixtures";
 
-const evidence: Record<string, unknown> = {};
+const allEvidence: Record<string, unknown> = {};
 const roots: string[] = [];
 function project() {
 	const root = makeTempDir();
@@ -34,7 +34,15 @@ const supported = (result: Awaited<ReturnType<typeof read>>) => {
 	return result;
 };
 
-describe("automatic mounted selection to source", () => {
+describe.each([true, "observed"] as const)("automatic mounted selection to source (%s)", (instrumentation) => {
+	const evidence: Record<string, unknown> = {};
+	allEvidence[String(instrumentation)] = evidence;
+	const mount = (
+		browser: Browser,
+		root: string,
+		frame: string,
+		instrumented: boolean | "observed" = instrumentation,
+	) => mountProbe(browser, root, frame, instrumented);
 	let browser: Browser;
 	beforeAll(async () => {
 		browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
@@ -44,7 +52,7 @@ describe("automatic mounted selection to source", () => {
 		if (process.env.AUTO_TARGET_EVIDENCE)
 			writeFileSync(
 				process.env.AUTO_TARGET_EVIDENCE,
-				`${JSON.stringify(evidence, (_key, value: unknown) => (typeof value === "string" ? roots.reduce((text, root) => text.replaceAll(root, "<project>"), value) : value), 2)}\n`,
+				`${JSON.stringify(allEvidence, (_key, value: unknown) => (typeof value === "string" ? roots.reduce((text, root) => text.replaceAll(root, "<project>"), value) : value), 2)}\n`,
 			);
 	});
 
@@ -222,7 +230,11 @@ describe("automatic mounted selection to source", () => {
 				.locator("button")
 				.evaluateAll(
 					(nodes) =>
-						nodes.filter((n) => n.getAttribute("data-spool-source")?.startsWith("shared/ui/button.tsx")).length,
+						nodes.filter((n) =>
+							(globalThis.__handObserver?.observe(n).source ?? n.getAttribute("data-spool-source"))?.startsWith(
+								"shared/ui/button.tsx",
+							),
+						).length,
 				);
 		expect(await count(mounted)).toBe(7);
 		expect(await count(secondFrame)).toBe(1);
@@ -447,7 +459,8 @@ export default function Frame(){ const ref=useRef(null); useEffect(()=>{document
 		const normalLabels = await plain.page.locator("button").allTextContents();
 		const probeLabels = await instrumented.page.locator("button").allTextContents();
 		expect(normalLabels).toContain("Cloned");
-		expect(probeLabels).toContain("Original");
+		expect(probeLabels).toContain(instrumentation === "observed" ? "Cloned" : "Original");
+		if (instrumentation === "observed") expect(probeLabels).toEqual(normalLabels);
 		const memo = await read(instrumented, await select(instrumented, "main > button:nth-of-type(2)"), {
 			kind: "text",
 		});
@@ -455,12 +468,15 @@ export default function Frame(){ const ref=useRef(null); useEffect(()=>{document
 			kind: "text",
 		});
 		expect(memo.kind).toBe("refused");
-		expect(forward.kind).toBe("refused");
+		expect(forward.kind).toBe(instrumentation === "observed" ? "supported" : "refused");
 		evidence.instrumentation = {
 			ref: "BUTTON",
 			normalLabels,
 			probeLabels,
-			cloneElement: "counterexample: wrapper changes element props/type semantics; cannot ship as-is",
+			cloneElement:
+				instrumentation === "observed"
+					? "same rendered labels as normal React; source attribution remains separately gated"
+					: "counterexample: wrapper changes element props/type semantics; cannot ship as-is",
 			memo,
 			forward,
 			classLazySuspenseTransitions: "not executed; unsupported pending instrumentation proof",

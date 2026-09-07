@@ -1,5 +1,8 @@
 # Hand-edit source probes
 
+The [observed source-read extension](observed.md) adds React composition checks,
+the complete retained-row read inventory, and an optional source-owner seam.
+
 Disposable feasibility evidence, 2026-09-06. No product module imports this directory.
 Source reviewed at `2072758ec1c77ccb79a6424b11a4dc4bfb25653e`; the probes run against the current checkout.
 
