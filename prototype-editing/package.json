@@ -4,6 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "tsx ../src/dev.ts",
-		"export": "node export.mjs"
+		"export": "node export.mjs",
+		"everyday": "node everyday.mjs"
 	}
 }
