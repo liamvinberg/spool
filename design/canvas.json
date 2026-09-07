@@ -451,7 +451,7 @@
 			"y": 2852
 		},
 		"site/terminal": {
-			"x": 12513,
+			"x": 12760,
 			"y": 5432
 		},
 		"site/type": {
@@ -459,7 +459,7 @@
 			"y": 8729
 		},
 		"system": {
-			"x": 5407,
+			"x": 5725,
 			"y": 7303
 		},
 		"explore/new-project": {
@@ -675,19 +675,19 @@
 			"y": 5432
 		},
 		"site/sleeve": {
-			"x": 7127,
+			"x": 7374,
 			"y": 5432
 		},
 		"site/sleeve-guide": {
-			"x": 8610,
+			"x": 8857,
 			"y": 5432
 		},
 		"site/sleeve-modern": {
-			"x": 9993,
+			"x": 10240,
 			"y": 5432
 		},
 		"site/sleeve-real": {
-			"x": 11253,
+			"x": 11500,
 			"y": 5432
 		},
 		"site/restaurant/fire": {
