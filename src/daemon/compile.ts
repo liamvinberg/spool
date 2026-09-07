@@ -702,5 +702,10 @@ function finishCompilation(compilation: RetainedCompilation, sequence: number): 
 			.filter(([, cell]) => !cell.absent)
 			.map(([id, cell]) => [id, cell.value]),
 	);
+	compilation.packet.childValues = Object.fromEntries(
+		Object.entries(compilation.cells)
+			.filter(([, cell]) => cell.childValue !== undefined)
+			.map(([id, cell]) => [id, cell.childValue!]),
+	);
 	compilation.packet.shape = digest(JSON.stringify(Object.entries(compilation.shapes).sort()));
 }

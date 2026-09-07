@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
+import type { SourceDescription } from "../../source-edit";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
@@ -437,6 +438,7 @@ function Body({
 				{element === null || read === undefined ? null : <PropertySections key={identity} view={view} />}
 				{element === null || read === undefined ? null : (
 					<Attributes
+						html={element.chain[rung]?.outerHtml ?? ""}
 						key={`${identity} attributes`}
 						read={read}
 						tag={rowElement.tag}
@@ -1032,6 +1034,7 @@ const CHOOSE = "\u0000choose";
  * drop out on the canvas lands in the same place.
  */
 function Attributes({
+	html,
 	read,
 	tag,
 	assets,
@@ -1040,6 +1043,7 @@ function Attributes({
 	actions,
 	onSwap,
 }: {
+	html: string;
 	read: RungRead;
 	tag: string;
 	assets: readonly ProjectAsset[];
@@ -1048,11 +1052,43 @@ function Attributes({
 	actions: TextActions | undefined;
 	onSwap: (put: { file: File } | { asset: string }) => void;
 }) {
-	const fields = fieldsFor(
-		tag,
-		read.attributes ?? [],
-		actions && read.refusal?.code === "shared-definition" ? undefined : read.refusal,
-	);
+	const candidates = useMemo(() => {
+		const node = new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
+		const attributes = [...(read.attributes ?? [])];
+		for (const attribute of node?.attributes ?? [])
+			if (
+				!attribute.name.startsWith("data-spool-") &&
+				!["class", "style"].includes(attribute.name) &&
+				!attributes.some((item) => item.name === attribute.name)
+			)
+				attributes.push({ name: attribute.name, value: attribute.value });
+		return fieldsFor(tag, attributes, read.refusal);
+	}, [tag, read.attributes, read.refusal, html]);
+	const [descriptions, setDescriptions] = useState<Record<string, SourceDescription | undefined>>({});
+	const describe = actions?.describe;
+	useEffect(() => {
+		let live = true;
+		setDescriptions({});
+		if (describe)
+			void Promise.all(
+				candidates
+					.filter(
+						(field) =>
+							!field.asset && !["src", "className", "style", "data-go", "key", "ref"].includes(field.name),
+					)
+					.map(async (field) => [field.name, await describe(frame, selector, field.name)] as const),
+			).then((entries) => {
+				if (live) setDescriptions(Object.fromEntries(entries));
+			});
+		return () => {
+			live = false;
+		};
+	}, [candidates, describe, frame, selector]);
+	const fields = candidates.map((field) => {
+		const description = descriptions[field.name];
+		if (!description) return field;
+		return { name: field.name, value: description.value };
+	});
 	if (fields.length === 0) return null;
 	return (
 		<Section name="attributes" {...(read.mapped === true ? { reason: "all rows" } : {})}>

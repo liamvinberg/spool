@@ -146,6 +146,13 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	);
 
 	return {
+		describeField: useCallback(
+			async (frame: string, selector: string, field: string) => {
+				const original = await request<SourceOccurrence>(frame, { action: "inspect", selector, field });
+				return original ? describeSource(project, frame, original, []) : undefined;
+			},
+			[project, request],
+		),
 		liveFrames,
 		releaseDescription: useCallback(() => {
 			descriptionVersion.current++;

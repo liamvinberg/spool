@@ -35,10 +35,14 @@ export function jsxDEV(
 ): unknown {
 	const generated = source ? `${source.fileName}:${source.lineNumber}:${source.columnNumber}` : "";
 	const site = initialStamps[generated];
-	const stamped =
+	let stamped =
 		typeof type === "string" && source !== undefined
 			? { ...props, "data-spool-source": (site ? sourcePacket?.locations?.[site] : undefined) ?? generated }
 			: props;
+	if (site && sourcePacket?.childValues?.[site] === null && stamped) {
+		stamped = { ...stamped };
+		delete stamped.children;
+	}
 	if (typeof type === "string" && stamped && site)
 		for (const [field, definition] of Object.entries(sourcePacket?.attributes?.[site] ?? {})) {
 			if (definition.absent) delete stamped[field];
@@ -146,7 +150,13 @@ Object.assign(globalThis, {
 });
 const nodes = new WeakMap<Element, string>();
 const subscribers = new Map<string, { revision: number; listeners: Set<() => void> }>();
-const leases = new Map<number, { element: HTMLElement; original: SourceOccurrence; preview: string }>();
+interface PreviewedUse {
+	element: HTMLElement;
+	original: SourceOccurrence;
+	preview: string;
+	children: { node: ChildNode; value: string | null }[];
+}
+const leases = new Map<number, PreviewedUse>();
 const subscription = (owner: string) => {
 	let held = subscribers.get(owner);
 	if (!held) {
@@ -170,6 +180,14 @@ export function observeFactory<T>(site: string, action: () => T): T {
 }
 export function sourceValue(cell: string, initial: string): string {
 	return sourcePacket?.values[cell] ?? initial;
+}
+export function sourceChildren(
+	cell: string,
+	initial: string | readonly string[] | null,
+): string | readonly string[] | undefined {
+	const values = sourcePacket?.childValues;
+	const value = values && Object.hasOwn(values, cell) ? values[cell] : initial;
+	return Array.isArray(value) ? [...value] : (value ?? undefined);
 }
 const anonymousOwners = new WeakMap<object, string>();
 export function sourceComponent<T extends object>(owner: string, component: T): T {
@@ -307,7 +325,12 @@ function previewField(element: HTMLElement, field: string | undefined, value: st
 	}
 	element.setAttribute(attributeName(field), value);
 }
-function restoreField(element: HTMLElement, original: SourceOccurrence): void {
+function restoreField(element: HTMLElement, original: SourceOccurrence, children: PreviewedUse["children"]): void {
+	if (!original.field) {
+		for (const child of children) child.node.nodeValue = child.value;
+		element.replaceChildren(...children.map((child) => child.node));
+		return;
+	}
 	if (original.field && original.absent) {
 		element.removeAttribute(attributeName(original.field));
 		return;
@@ -318,7 +341,15 @@ function textOf(element: HTMLElement): string {
 	return element.innerText ?? element.textContent ?? "";
 }
 
-const sharedPreviews = new Map<number, { element: HTMLElement; original: SourceOccurrence; preview: string }[]>();
+const sharedPreviews = new Map<number, PreviewedUse[]>();
+function previewedUse(element: HTMLElement, original: SourceOccurrence): PreviewedUse {
+	return {
+		element,
+		original,
+		preview: original.value,
+		children: [...element.childNodes].map((node) => ({ node, value: node.nodeValue })),
+	};
+}
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 function sourceElement(original: SourceOccurrence): HTMLElement | undefined {
 	return [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
@@ -348,10 +379,10 @@ function inventorySource(field?: string): Omit<SourceInventory, "frame"> {
 	const uses: SourceInventory["uses"] = [];
 	let unknown = 0;
 	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-source]")) {
-		if (field === undefined && (element.children.length > 0 || !element.textContent)) continue;
+		if (field === undefined && element.children.length > 0) continue;
 		const original = inspectSource(element, field);
 		if (!original) {
-			unknown++;
+			if (field !== undefined || element.textContent) unknown++;
 			continue;
 		}
 		const rect = element.getBoundingClientRect();
@@ -371,13 +402,13 @@ function inventorySource(field?: string): Omit<SourceInventory, "frame"> {
 function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolean {
 	clearSourceFeedback();
 	for (const previous of sharedPreviews.keys()) cancelSourceUses(previous);
-	const prepared: { element: HTMLElement; original: SourceOccurrence; preview: string }[] = [];
+	const prepared: PreviewedUse[] = [];
 	for (const original of uses) {
 		const element = [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
 			const current = inspectSource(element, original.field);
 			return current && sameSourceOccurrence(current, original);
 		});
-		if (element) prepared.push({ element, original, preview: original.value });
+		if (element) prepared.push(previewedUse(element, original));
 	}
 	sharedPreviews.set(generation, prepared);
 	if (uses.length) ensureSourceFeedback();
@@ -404,7 +435,7 @@ function cancelSourceUses(generation: number, feedback = true): void {
 			renderedField(use.element, use.original.field) === use.preview &&
 			use.preview !== use.original.value
 		)
-			restoreField(use.element, use.original);
+			restoreField(use.element, use.original, use.children);
 	}
 	if (feedback) clearSourceFeedback();
 }
@@ -414,7 +445,7 @@ function sourceRead(element: HTMLElement, generation: number, field?: string): S
 	intent = generation;
 	const original = inspectSource(element, field);
 	if (!original || original.value !== renderedField(element, original.field)) return;
-	leases.set(generation, { element, original, preview: original.value });
+	leases.set(generation, previewedUse(element, original));
 	return original;
 }
 function validLease(generation: number): boolean {
@@ -443,9 +474,10 @@ function cancelSource(generation: number): void {
 	if (!held) return;
 	if (
 		held.element.isConnected &&
+		renderedField(held.element, held.original.field) === held.preview &&
 		inspectSource(held.element, held.original.field)?.invocation === held.original.invocation
 	)
-		restoreField(held.element, held.original);
+		restoreField(held.element, held.original, held.children);
 }
 function completeSource(generation: number): SourceOccurrence | undefined {
 	const held = leases.get(generation);
@@ -518,7 +550,8 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	if (undo && leases.size > 0) return refused("another edit is in progress");
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
-	if (held) restoreField(held.element, held.original);
+	if (held && renderedField(held.element, held.original.field) === held.preview)
+		restoreField(held.element, held.original, held.children);
 	cancelSourceUses(publication.generation, false);
 	feedbackTimer = setTimeout(clearSourceFeedback, 450);
 	leases.delete(publication.generation);
@@ -529,9 +562,30 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	addEventListener("error", onError);
 	try {
 		flushSync(() => {
+			const attributeAbsence = (packet: RetainedValues | undefined) =>
+				new Map(
+					Object.values(packet?.attributes ?? {}).flatMap((fields) =>
+						Object.values(fields).map(({ cell, absent }) => [cell, absent] as const),
+					),
+				);
+			const previousAbsence = attributeAbsence(sourcePacket);
+			const nextAbsence = attributeAbsence(publication.packet);
 			const changed = new Set(
-				[...new Set([...Object.keys(publication.packet.values), ...Object.keys(sourcePacket?.values ?? {})])]
-					.filter((cell) => sourcePacket?.values[cell] !== publication.packet.values[cell])
+				[
+					...new Set([
+						...Object.keys(publication.packet.values),
+						...Object.keys(sourcePacket?.values ?? {}),
+						...previousAbsence.keys(),
+						...nextAbsence.keys(),
+					]),
+				]
+					.filter(
+						(cell) =>
+							sourcePacket?.values[cell] !== publication.packet.values[cell] ||
+							previousAbsence.get(cell) !== nextAbsence.get(cell) ||
+							JSON.stringify(sourcePacket?.childValues?.[cell]) !==
+								JSON.stringify(publication.packet.childValues?.[cell]),
+					)
 					.map((cell) => publication.packet.owners[cell]),
 			);
 			sourcePacket = publication.packet;
@@ -556,22 +610,27 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 		});
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		const expected =
-			publication.packet.values[publication.cell ?? original.cell] ?? (original.field ? "" : undefined);
+		const expected = publication.expected;
 		return combineUseOutcomes(
 			targets.map(({ original, element }) => {
 				const observed = element ? renderedField(element, original.field) : undefined;
-				const rendered = failed
-					? "failed"
-					: !element?.isConnected
-						? "unmounted"
-						: pendingIn(element)
-							? "pending"
-							: expected === undefined
-								? "unverified"
-								: observed === expected
-									? "verified"
-									: "mismatching";
+				const matches = original.field
+					? !!element &&
+						(expected.absent
+							? !element.hasAttribute(attributeName(original.field))
+							: element.hasAttribute(attributeName(original.field)) && observed === expected.value)
+					: observed === expected.value;
+				const rendered = !element?.isConnected
+					? failed
+						? "failed"
+						: "unmounted"
+					: pendingIn(element)
+						? "pending"
+						: matches
+							? "verified"
+							: failed
+								? "failed"
+								: "mismatching";
 				return {
 					occurrence: original.occurrence,
 					installation: "installed",

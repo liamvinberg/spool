@@ -10,6 +10,7 @@ export function resolveTextSource(
 	compilation: RetainedCompilation,
 	original: SourceOccurrence,
 	generation: number,
+	allowRenderedMismatch = false,
 ) {
 	if (
 		original.field &&
@@ -41,6 +42,7 @@ export function resolveTextSource(
 		cellKey = found[0];
 	}
 	const cell = compilation.cells[cellKey];
-	if (!cell || cell.value !== original.value) throw new Error("the selected words have no proven literal source");
+	if (!cell || (!allowRenderedMismatch && cell.value !== original.value))
+		throw new Error("the selected words have no proven literal source");
 	return { cellKey, cell, target };
 }

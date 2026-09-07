@@ -49,6 +49,7 @@ interface OriginalRead {
 	file: string;
 }
 interface Receipt {
+	expected: SourcePublication["expected"];
 	required: RetainedCompilation;
 	cell: string;
 	reach?: SourceRead["reach"];
@@ -380,6 +381,7 @@ export function createSourceOwner(
 	async function publish(
 		held: OriginalRead,
 		next: string,
+		expected: SourcePublication["expected"],
 		executed?: SpanPatch,
 		inverseOf?: symbol,
 	): Promise<SourceResult> {
@@ -444,6 +446,10 @@ export function createSourceOwner(
 		};
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
+			expected: {
+				value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
+				absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
+			},
 			required: sourceHistoryCompilation(held.root, saved, held.file),
 			cell: held.read.cell ?? held.read.original.cell,
 			...(held.read.reach ? { reach: held.read.reach } : {}),
@@ -557,6 +563,7 @@ export function createSourceOwner(
 						next.packet.id,
 					]);
 					related.push({
+						expected,
 						admission: secondaryAdmission,
 						owner,
 						frame,
@@ -595,6 +602,7 @@ export function createSourceOwner(
 				ok: true,
 				source: "saved",
 				publication: {
+					expected,
 					admission,
 					related,
 					failures,
@@ -673,6 +681,7 @@ export function createSourceOwner(
 				return await publish(
 					held,
 					applySpan(journal.current(held.file, input).bytes.toString("utf8"), patch),
+					{ value: op.text, absent: false },
 					patch,
 				);
 			} catch (error) {
@@ -713,8 +722,8 @@ export function createSourceOwner(
 							if (use.original.publication !== inventory.publication) continue;
 							try {
 								if (
-									resolveTextSource(root, publication.compilation, use.original, held.generation).cellKey ===
-									held.cell
+									resolveTextSource(root, publication.compilation, use.original, held.generation, true)
+										.cellKey === held.cell
 								)
 									uses.push({ frame: inventory.frame, ...use });
 							} catch {
@@ -788,6 +797,7 @@ export function createSourceOwner(
 						},
 					},
 					applySpan(journal.current(held.file, input).bytes.toString("utf8"), transformed),
+					held.expected,
 					transformed,
 					held.operation,
 				);
