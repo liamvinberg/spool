@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { SourcePublication, SourceRead, SourceResult, UseOutcome } from "../source-edit";
+import type { SourcePublication, SourceResult, UseOutcome } from "../source-edit";
 import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
 
 const frameSource = 'import Group from "shared/outcomes";export default function Frame(){return <Group/>}';
@@ -66,7 +66,6 @@ async function observed(
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await expect.poll(() => second.locator("#good span").count()).toBe(1);
 	const sourceResults: SourceResult[] = [];
-	const sourceReads: SourceRead[] = [];
 	f.page.on("response", async (response) => {
 		if (
 			response.url().endsWith("/source") &&
@@ -92,14 +91,14 @@ async function observed(
 	};
 	const events = async () => f.page.evaluate(() => Reflect.get(window, "outcomeEvents")) as Promise<Evidence[]>;
 	const save = async () => {
-		sourceReads.push(await f.edit());
+		await f.edit();
 		await f.page.keyboard.press("ControlOrMeta+a");
 		await f.page.keyboard.insertText("After");
 		await f.page.keyboard.press("Enter");
 		await expect.poll(() => f.bytes()["shared/outcomes.tsx"], { timeout: 15_000 }).toBe(changed(source, "After"));
 		return initial();
 	};
-	return { ...f, second, sourceResults, sourceReads, events, save, source };
+	return { ...f, second, sourceResults, events, save, source };
 }
 async function warm(f: Awaited<ReturnType<typeof observed>>) {
 	for (const app of [f.frame, f.second]) {
@@ -487,7 +486,14 @@ it("does not conceal unknown class-boundary coverage behind its verified sibling
 		expect(await app.locator("#special b").textContent()).toBe("Failed");
 		expect(await app.locator("#draft").inputValue()).toBe("Typed independent");
 	}
-	expect(f.sourceReads[0]?.reach?.unknown.length).toBeGreaterThan(0);
+	const saved = f.sourceResults[0];
+	expect(saved?.ok && saved.publication).toBeTruthy();
+	if (saved?.ok && saved.publication)
+		expect(
+			[saved.publication, ...(saved.publication.related ?? [])]
+				.flatMap((publication) => publication.failures ?? [])
+				.some((use) => use.rendered === "unverified"),
+		).toBe(true);
 	expect(results.every((item) => item.result.uses?.some((use) => use.rendered === "verified"))).toBe(true);
 	await expect.poll(() => f.page.locator('[data-hand-notice="unverified"]').count()).toBe(1);
 	for (const redo of [false, true]) {
