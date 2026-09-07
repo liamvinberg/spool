@@ -63,8 +63,16 @@ it("renders every generic provider interaction through the shared host and keeps
 		.toContain("spool");
 
 	await field.fill("keep my model and draft");
-	await field.press("Enter");
+	const connect = page.getByRole("button", { name: "Connect account", exact: true });
+	await connect.click();
 	const dialog = page.getByRole("dialog", { name: "Connect an account" });
+	await dialog.waitFor();
+	expect(await page.locator("[data-agent-model-menu]").count()).toBe(0);
+	expect(await connect.getAttribute("aria-expanded")).toBeNull();
+	expect(await connect.locator("svg").count()).toBe(0);
+	await dialog.press("Escape");
+	expect(await connect.evaluate((element) => element === document.activeElement)).toBe(true);
+	await field.press("Enter");
 	await dialog.waitFor();
 	expect(Math.round((await dialog.boundingBox())?.width ?? 0)).toBe(380);
 	await shot("login-list-idle");

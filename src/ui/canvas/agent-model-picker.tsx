@@ -1,6 +1,7 @@
 import { useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { AgentLimit } from "../../daemon/agent-events";
+import { fetchAgentLogin } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, SearchIcon } from "../icons";
 import { ResizePopover } from "../resize-popover";
@@ -31,6 +32,7 @@ export function AgentModelPicker({
 	const [view, setView] = useState<"models" | "search" | "effort">("models");
 	const [query, setQuery] = useState("");
 	const [keyboard, setKeyboard] = useState(false);
+	const [noAccounts, setNoAccounts] = useState(false);
 	const reduced = useReducedMotion() === true;
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
@@ -38,6 +40,7 @@ export function AgentModelPicker({
 	const favorites = useModelFavorites(model.engine ?? "claude");
 	const { offer, levels } = model;
 	const bundled = model.engine === "spool";
+	const connectDirectly = bundled && !model.loading && offer.models.length === 0 && noAccounts;
 	const current = offer.models.find((entry) => entry.value === offer.current.value);
 	const name =
 		current?.displayName ??
@@ -68,6 +71,17 @@ export function AgentModelPicker({
 			model.refresh();
 		} else trigger.current?.focus({ preventScroll: true });
 	};
+	useEffect(() => {
+		setNoAccounts(false);
+		if (!bundled || model.loading || offer.models.length > 0 || model.project === undefined) return;
+		let live = true;
+		void fetchAgentLogin(model.project, "spool").then((account) => {
+			if (live) setNoAccounts(account?.signedIn === false);
+		});
+		return () => {
+			live = false;
+		};
+	}, [bundled, model.loading, model.project, offer]);
 	useEffect(() => {
 		if (modelRequest) {
 			setQuery("");
@@ -373,17 +387,18 @@ export function AgentModelPicker({
 			<button
 				type="button"
 				ref={trigger}
-				aria-label="Choose model"
+				aria-label={connectDirectly ? "Connect account" : "Choose model"}
 				title={`${name}${levels.length ? ` · ${offer.current.effort ?? "auto"}` : ""}`}
-				aria-expanded={open}
+				aria-expanded={connectDirectly ? undefined : open}
 				onPointerDown={() => setKeyboard(false)}
 				onClick={(event) => {
 					setKeyboard(event.detail === 0);
-					show(!open);
+					if (connectDirectly) connect();
+					else show(!open);
 				}}
 				onKeyDown={(event) => {
 					setKeyboard(true);
-					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+					if (!connectDirectly && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
 						event.preventDefault();
 						show(true);
 					}
@@ -391,7 +406,7 @@ export function AgentModelPicker({
 				className="relative z-30 flex min-w-0 items-center gap-1.5 text-muted type-detail transition-colors hover:text-text"
 			>
 				<span className="min-w-0 truncate">{name}</span>
-				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
+				{connectDirectly ? null : <ChevronIcon open={open} className="h-2 w-2 shrink-0" />}
 			</button>
 			{interrupted ? null : (
 				<ResizePopover ref={panel} open={open} view={view} still={reduced || keyboard}>
