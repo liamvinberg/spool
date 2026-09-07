@@ -327,7 +327,7 @@ export class BundledRuntime {
 		let saveError: unknown;
 		let ending: "done" | "failed" | "stopped" = "done";
 		let reason: string | null = null;
-		let recovery: AgentRecovery | undefined;
+		let recovery: AgentRecovery | null | undefined;
 		let account = "Selected account";
 		let selectedOffer = options.ask.value;
 		let entered = false;
@@ -343,8 +343,10 @@ export class BundledRuntime {
 			beforeUsers = userCount;
 			if (options.recovery !== undefined) {
 				const pending = existsSync(recoveryPath) ? JSON.parse(readFileSync(recoveryPath, "utf8")) : null;
-				if (pending?.token !== options.recovery || pending.root !== options.root)
+				if (pending?.token !== options.recovery || pending.root !== options.root) {
+					recovery = null;
 					throw new Error("This recovery has already been continued");
+				}
 				said = pending.said;
 				beforeUsers = pending.beforeUsers ?? userCount;
 				entered = pending.entered === true || userCount > beforeUsers;
@@ -534,7 +536,7 @@ export class BundledRuntime {
 		} catch (error) {
 			ending = running.stopped ? "stopped" : "failed";
 			const words = error instanceof Error ? error.message : "Bundled turn failed";
-			recovery ??= responseRecovery ?? providerRecovery(words, account, selectedOffer);
+			if (recovery === undefined) recovery = responseRecovery ?? providerRecovery(words, account, selectedOffer);
 			reason =
 				recovery?.kind === "login"
 					? `Sign in to ${account} to continue.`
@@ -564,8 +566,8 @@ export class BundledRuntime {
 				}, this.idleMs);
 				idle.idle.unref();
 			}
-			if (recovery !== undefined && ending === "failed") {
-				const token = randomUUID();
+			if (recovery != null && ending === "failed") {
+				const token = options.recovery ?? randomUUID();
 				try {
 					this.persist(recoveryPath, JSON.stringify({ root: options.root, token, said, entered, beforeUsers }));
 					recovery = { ...recovery, token };
@@ -574,7 +576,14 @@ export class BundledRuntime {
 					reason = "Could not save the pending request";
 				}
 			}
-			emit({ kind: "ended", ending, reason, stopReason: reason, ...(recovery ? { recovery } : {}), parent: null });
+			emit({
+				kind: "ended",
+				ending,
+				reason,
+				stopReason: reason,
+				...(recovery !== undefined ? { recovery } : {}),
+				parent: null,
+			});
 			emit({
 				kind: "closed",
 				code: ending === "failed" ? 1 : 0,

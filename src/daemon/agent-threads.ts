@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { type AgentEngineId, type AgentOwnership, isAgentEngineId } from "./agent-engine";
-import type { AgentRecovery } from "./agent-events";
+import type { AgentEnded, AgentRecovery } from "./agent-events";
 
 /**
  * The threads of one project, on disk, where a daemon restart cannot reach them
@@ -17,12 +17,9 @@ import type { AgentRecovery } from "./agent-events";
  * routine, so memory alone would delete the visible thread every time spool updated
  * itself.
  *
- * What is stored is what the rail draws, and this module does not know what that is.
- * The fold from the event union to entries lives in the rail, so the rail is what
- * writes them; the envelope below is spool's own bookkeeping and the entries ride
- * through as the JSON they already are. A second fold down here would be a second
- * copy of the vocabulary to keep in sync, which is the one thing #120 bought by
- * storing the drawing rather than the stream.
+ * The picture uses the rail's transcript vocabulary. The rail checkpoints it while
+ * watching; the daemon uses that same pure fold to save the ending when nobody is
+ * watching. The envelope keeps the draft and queue independently of that final fold.
  *
  * One file per thread, atomically written. A file per thread rather than a list is
  * what keeps a bad byte cheap: an unreadable thread costs that thread and the strip
@@ -92,6 +89,8 @@ export interface StoredThread extends AgentOwnership {
 	readonly draft: string;
 	readonly pending?: ThreadPicture;
 	readonly recovery?: AgentRecovery | null;
+	/** The last turn's outcome, so returning to a failed turn does not fire its queue. */
+	readonly ending?: AgentEnded["ending"] | null;
 	/** a restart caught this thread mid-turn: it stopped, and it is never resumed */
 	readonly stopped: boolean;
 	/** closing a tab tidies it out of the strip and deletes nothing */
@@ -190,6 +189,12 @@ function parseEnvelope(value: unknown): ThreadPut | undefined {
 		draft: typeof record.draft === "string" ? record.draft : "",
 		...(Array.isArray(record.pending) ? { pending: record.pending } : {}),
 		...(record.recovery === undefined ? {} : { recovery: parseRecovery(record.recovery) }),
+		...(record.ending === "done" ||
+		record.ending === "failed" ||
+		record.ending === "stopped" ||
+		record.ending === null
+			? { ending: record.ending }
+			: {}),
 	};
 }
 

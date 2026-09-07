@@ -54,6 +54,8 @@ export interface AgentImage {
 }
 
 export interface AgentEventBase {
+	/** Active turn time in milliseconds, stamped by the daemon for replay. */
+	readonly elapsed?: number;
 	/**
 	 * The delegating call this came from, or null on the thread the human is
 	 * talking to. A sub-agent's own turns reach the parent stream tagged with
@@ -325,7 +327,7 @@ export interface AgentRecovery {
 }
 
 export interface AgentEnded extends AgentEventBase {
-	readonly recovery?: AgentRecovery;
+	readonly recovery?: AgentRecovery | null;
 	readonly kind: "ended";
 	readonly ending: AgentEnding;
 	readonly reason: string | null;
@@ -337,7 +339,7 @@ export interface AgentEnded extends AgentEventBase {
 
 /** The process is gone. Emitted by the runner rather than by any adapter. */
 export interface AgentClosed extends AgentEventBase {
-	readonly recovery?: AgentRecovery;
+	readonly recovery?: AgentRecovery | null;
 	readonly kind: "closed";
 	readonly code: number | null;
 	readonly message?: string;

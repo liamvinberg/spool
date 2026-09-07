@@ -1031,6 +1031,7 @@ export interface AgentSaying {
  * still up, and how much of what follows is a replay rather than something happening now.
  */
 export interface AgentAttached {
+	readonly elapsed?: number;
 	/** the name a stop quotes (#165), absent for a turn nobody intends to stop */
 	readonly turn?: string;
 	readonly running: boolean;

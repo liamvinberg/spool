@@ -38,10 +38,11 @@ function mount(stored: readonly ServedThread[] = []) {
 	 * `threads` is the read of what this project has, held open: the rail has no thread to
 	 * put anything in until it lands, and what a press does in that window is its own claim.
 	 */
-	const door: { turn: number; gone: boolean; threads: Promise<void> | null } = {
+	const door: { turn: number; gone: boolean; threads: Promise<void> | null; picture: Promise<void> | null } = {
 		turn: 0,
 		gone: false,
 		threads: null,
+		picture: null,
 	};
 
 	const opened = () => {
@@ -52,6 +53,7 @@ function mount(stored: readonly ServedThread[] = []) {
 		const body = new ReadableStream<Uint8Array>({
 			start: (controller) => {
 				read.ctrl = controller;
+				controller.enqueue(encoder.encode('event: attached\ndata: {"running":true,"from":0,"logged":0}\n\n'));
 			},
 		});
 		reads.push(read);
@@ -72,6 +74,7 @@ function mount(stored: readonly ServedThread[] = []) {
 			}
 			if (url.pathname.includes("/agent/threads/")) {
 				puts.push(JSON.parse(String(init?.body ?? "{}")) as ThreadPut);
+				if (door.picture !== null) await door.picture;
 				return new Response(null, { status: 204 });
 			}
 			if (url.pathname.endsWith("/agent/turn")) {
@@ -106,6 +109,12 @@ function mount(stored: readonly ServedThread[] = []) {
 
 	return {
 		latest: () => (seen[seen.length - 1] as AgentDeck).turn as AgentTurn,
+		deck: () => seen[seen.length - 1] as AgentDeck,
+		leave: async () => {
+			await act(async () => {
+				root.render(null);
+			});
+		},
 		/** how many times the hook has run, which is how many renders it has cost the canvas */
 		renders: () => seen.length,
 		asked,
@@ -155,6 +164,44 @@ describe("the turn a thread is running", () => {
 	 * Reduced motion drops the pacing, not the updates: the arrival is what stillness
 	 * asks not to see, and the clock is what puts arriving events on screen at all.
 	 */
+	it("starts an accepted prompt if its project leaves while the picture is saving", async () => {
+		const canvas = mount();
+		await canvas.render();
+		let saved: (() => void) | undefined;
+		canvas.door.picture = new Promise<void>((resolve) => {
+			saved = resolve;
+		});
+		await act(async () => {
+			canvas.latest().send("keep working after I switch");
+		});
+		expect(canvas.named).toHaveLength(0);
+		await canvas.leave();
+		await act(async () => {
+			saved?.();
+		});
+		expect(canvas.named).toHaveLength(1);
+		expect(canvas.asked.some((path) => path.endsWith("/agent/interrupt"))).toBe(false);
+	});
+
+	it.each(["stop", "close"])("does not start a prompt after %s while its picture is saving", async (action) => {
+		const canvas = mount();
+		await canvas.render();
+		let saved: (() => void) | undefined;
+		canvas.door.picture = new Promise<void>((resolve) => {
+			saved = resolve;
+		});
+		await act(async () => {
+			canvas.latest().send("cancel this before it starts");
+		});
+		await act(async () => {
+			if (action === "stop") canvas.latest().stop();
+			else canvas.deck().onClose(canvas.deck().open);
+			saved?.();
+		});
+		expect(canvas.named).toHaveLength(0);
+		if (action === "stop") expect(canvas.latest().phase).toBe("settled");
+	});
+
 	it("keeps reading the stream when stillness is asked for", async () => {
 		still();
 		const canvas = mount();
@@ -341,6 +388,21 @@ describe("a stream that dropped", () => {
 		expect(canvas.asked.filter((path) => path.endsWith("/agent/turn"))).toHaveLength(1);
 	});
 
+	it("keeps the thinking clock below a day after reconnecting to replayed events", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.close();
+		await settle(700);
+		canvas.attached({ turn: "t1", running: true, from: 0, logged: 1 });
+		canvas.push(waiting);
+		await settle(150);
+		expect(canvas.latest().phase).toBe("playing");
+		expect(canvas.latest().elapsed).toBeLessThan(2000);
+	});
+
 	it("draws nothing twice when the turn comes back", async () => {
 		const canvas = mount();
 		await canvas.render();
@@ -470,6 +532,22 @@ describe("a turn picked back up", () => {
 		expect(turn.entries.filter((entry) => entry.kind === "prose")).toEqual([
 			{ key: "say:0:0", kind: "prose", full: "Reading the header.", settled: false },
 		]);
+	});
+
+	it("keeps queued messages held when a bundled turn failed while the project was away", async () => {
+		const canvas = mount([
+			{
+				...midTurn(),
+				engine: "spool",
+				life: "unread",
+				live: false,
+				ending: "failed",
+				queued: [{ id: "queued", text: "do not send yet", selection: [], attached: null }],
+			},
+		]);
+		await canvas.render();
+		expect(canvas.named).toHaveLength(0);
+		expect(canvas.latest().queued.map((one) => one.text)).toEqual(["do not send yet"]);
 	});
 
 	it("carries on live from where the replay left off", async () => {
@@ -673,5 +751,32 @@ describe("what the queue survives", () => {
 		// nothing is drawn about it: the refusal is spool's own bookkeeping
 		expect(canvas.latest().entries.filter((entry) => entry.kind === "note")).toEqual([]);
 		expect(canvas.latest().entries.filter((entry) => entry.kind === "user")).toEqual([]);
+	});
+});
+
+describe("a consumed recovery", () => {
+	it("clears a stale retry when the engine says the pending request is gone", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push({
+			...ended,
+			ending: "failed",
+			recovery: { kind: "limit", account: "ChatGPT", scope: "unknown", token: "old" },
+		});
+		canvas.push({ ...closed, code: 1 });
+		canvas.close();
+		await settle(150);
+		await act(async () => {
+			canvas.deck().login.retry?.();
+		});
+		canvas.push({ ...ended, ending: "failed", recovery: null });
+		canvas.push({ ...closed, code: 1 });
+		canvas.close();
+		await settle(150);
+		expect(canvas.deck().login.recovery).toBeNull();
+		expect(canvas.puts.at(-1)?.pending).toEqual([]);
 	});
 });

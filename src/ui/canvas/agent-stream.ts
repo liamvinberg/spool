@@ -86,17 +86,6 @@ const TICK_MS = 100;
 const SAVE_MS = 2000;
 
 /**
- * How far in the past a picked-up turn's clock is started (#211).
- *
- * Everything replayed is stamped at zero, so this is what makes all of it settled at once:
- * every receipt in a turn arriving whole has its total rather than counting up from the
- * beginning, which is the rule a picture off disk has always been under. A day is not a
- * number to tune — it is far past the length of any turn, and what arrives after the
- * replay counts normally from wherever the clock then stands.
- */
-const REPLAYED_MS = 86_400_000;
-
-/**
  * What the turn is doing, and the one member that is about the person (#145).
  *
  * `asking` is not a slower `playing`. A turn parked on a request is spending nothing
@@ -297,6 +286,7 @@ interface Live {
 	 */
 	said: readonly AgentQueued[];
 	recovery: AgentRecovery | null;
+	ending: ServedThread["ending"];
 	pending: readonly AgentQueued[];
 	/**
 	 * Climbs whenever what the fold reads has moved, which is what dates the fold.
@@ -375,6 +365,7 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		abandon: null,
 		said: [],
 		recovery: null,
+		ending: null,
 		pending: [],
 		rev: 0,
 		folded: null,
@@ -416,7 +407,7 @@ function restored(stored: ServedThread): Live {
 	 * turn itself is refolded from the log rather than taken off disk, so it is never drawn
 	 * twice.
 	 */
-	const live = stored.live && (!stored.recovery || stored.life === "running");
+	const live = stored.live;
 	const before = live ? entries.slice(0, stored.kept) : stored.stopped ? cutPicture(entries) : entries;
 	return born(stored.id, {
 		engine: stored.engine,
@@ -434,6 +425,7 @@ function restored(stored: ServedThread): Live {
 		draft: stored.draft,
 		pending: drawableQueue(stored.pending ?? []),
 		recovery: stored.recovery ?? null,
+		ending: stored.ending ?? null,
 	});
 }
 
@@ -618,9 +610,9 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			owed.current.delete(thread);
 			// a thread nobody has said anything to is not a conversation yet, and an empty
 			// picture on disk would be a tab restored with nothing in it
-			if (entries.length === 0) return;
+			if (entries.length === 0) return Promise.resolve();
 			thread.saved = Date.now();
-			void putAgentThread(project, thread.id, {
+			return putAgentThread(project, thread.id, {
 				engine: thread.engine,
 				ask: askOf(entries),
 				life: storedLife(lifeFor(thread, openRef.current, shown)),
@@ -636,6 +628,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				draft: thread.draft,
 				pending: thread.pending,
 				recovery: thread.recovery,
+				ending: thread.ending ?? null,
 			});
 		},
 		[project],
@@ -729,6 +722,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				thread.pending = opening.saying;
 			}
 			thread.streaming = true;
+			thread.ending = null;
 			thread.run += 1;
 			thread.ms = 0;
 			thread.drained = false;
@@ -749,16 +743,6 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				 */
 				thread.named = crypto.randomUUID();
 			}
-			/**
-			 * How many of the events still to arrive already happened (#211).
-			 *
-			 * A replay is not an arrival. Everything before this rail attached is stamped at zero
-			 * against a clock started long enough ago that every receipt in it has its total,
-			 * and the prose it carries mounts whole rather than paragraph by paragraph — the same
-			 * rule a picture off disk is under, and for the same reason: neither of them is
-			 * happening now. What arrives after the replay arrives as it always did.
-			 */
-			let replaying = 0;
 			const clock = () =>
 				Date.now() -
 				thread.started -
@@ -768,8 +752,14 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				// the standing window, lifted out of the turn: it was true before this one
 				// started and it will still be true after it ends (#122)
 				if (event.kind === "limit") setLimit(event.limit);
-				if ((event.kind === "ended" || event.kind === "closed") && event.recovery) thread.recovery = event.recovery;
-				if (event.kind === "ended" && event.ending === "done") {
+				if (event.kind === "ended") thread.ending = event.ending;
+				if (event.kind === "closed")
+					thread.ending ??= thread.stopping ? "stopped" : event.code === 0 ? "done" : "failed";
+				if ((event.kind === "ended" || event.kind === "closed") && event.recovery !== undefined) {
+					thread.recovery = event.recovery;
+					if (event.recovery === null) thread.pending = [];
+				}
+				if (event.kind === "ended" && (event.ending === "done" || event.ending === "stopped")) {
 					thread.recovery = null;
 					thread.pending = [];
 				}
@@ -786,15 +776,16 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				else if (thread.parked.since !== null) {
 					thread.parked = { total: thread.parked.total + (Date.now() - thread.parked.since), since: null };
 				}
-				thread.events.push({ at: replaying > 0 ? 0 : clock(), event });
+				thread.events.push({ at: event.elapsed ?? clock(), event });
 				stirred(thread);
-				if (replaying > 0) replaying -= 1;
 			};
 			/** what the daemon says as the read opens, which is the turn introducing itself */
 			const attached = (info: AgentAttached) => {
 				if (info.turn !== undefined) thread.named = info.turn;
-				replaying = Math.max(0, info.logged - info.from);
-				if (replaying > 0) thread.started = Date.now() - REPLAYED_MS;
+				if (info.elapsed !== undefined) {
+					thread.started = Date.now() - info.elapsed;
+					thread.parked = { total: 0, since: thread.waitingOn.size > 0 ? Date.now() : null };
+				}
 			};
 			const reading: AgentReading = {
 				attached,
@@ -885,26 +876,60 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 					redraw();
 				},
 			};
-			if (!attaching) save(thread);
-			thread.abandon = followAgentTurn(
-				project,
-				attaching
-					? { attach: { thread: thread.id } }
-					: {
-							say: {
-								thread: thread.id,
-								engine: thread.engine,
-								turn: thread.named,
-								...(recovery?.token === undefined ? {} : { recovery: recovery.token }),
-								saying: opening.saying.map((words) => ({
-									prompt: words.text,
-									selection: words.selection,
-									attached: words.attached ?? undefined,
-								})),
+			let cancelled = false;
+			let acknowledged = attaching;
+			let detach: (() => void) | undefined;
+			thread.abandon = () => {
+				cancelled = true;
+				if (acknowledged) detach?.();
+			};
+			const saved = attaching ? Promise.resolve() : save(thread);
+			void saved.then(() => {
+				if (cancelled && attaching) return;
+				if (!attaching && thread.stopping) {
+					if (!cancelled) {
+						push({ kind: "ended", ending: "stopped", reason: STOPPED, stopReason: null, parent: null });
+						push({ kind: "closed", code: 0, parent: null });
+						reading.end({ kind: "ended" });
+					}
+					return;
+				}
+				// A submitted prompt still starts when its project view leaves during the save.
+				detach = followAgentTurn(
+					project,
+					attaching
+						? { attach: { thread: thread.id } }
+						: {
+								say: {
+									thread: thread.id,
+									engine: thread.engine,
+									turn: thread.named,
+									...(recovery?.token === undefined ? {} : { recovery: recovery.token }),
+									saying: opening.saying.map((words) => ({
+										prompt: words.text,
+										selection: words.selection,
+										attached: words.attached ?? undefined,
+									})),
+								},
 							},
+					{
+						attached: (info) => {
+							acknowledged = true;
+							if (thread.stopping) void interruptAgentTurn(project, info.turn ?? thread.named);
+							if (cancelled) detach?.();
+							else reading.attached?.(info);
 						},
-				reading,
-			);
+						event: (event) => {
+							acknowledged = true;
+							if (cancelled) detach?.();
+							else reading.event(event);
+						},
+						end: (ending) => {
+							if (!cancelled) reading.end(ending);
+						},
+					},
+				);
+			});
 			redraw();
 		},
 		[project, save, redraw],
@@ -960,7 +985,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				 * the list opens on, because they were all still working while the page was
 				 * away — which is the same promise #192 made about looking at another thread.
 				 */
-				if (one.live && (!thread.recovery || one.life === "running")) {
+				if (one.live) {
 					run(thread, { attach: true });
 					continue;
 				}
@@ -973,7 +998,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				 * that ever fired one was a stream closing — and the next thing typed went out
 				 * ahead of them, which is the one order the queue exists to keep.
 				 */
-				if (!(thread.engine === "spool" && one.stopped)) fire(thread);
+				if (!(thread.engine === "spool" && (one.stopped || one.ending === "failed" || one.ending === "stopped")))
+					fire(thread);
 			}
 			// the row opens on something either way, so this only ever runs before it has:
 			// a project with nothing stored gets one fresh thread, which is what the rail
@@ -1197,6 +1223,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			 * only letting go. So the turn is stopped the way the stop button stops one — a
 			 * request the binary survives and ends itself on — and then the read is dropped.
 			 */
+			thread.stopping = true;
 			if (thread.streaming) void interruptAgentTurn(project, thread.named);
 			thread.abandon?.();
 			// what the box was holding for a conversation that is going does not go with it

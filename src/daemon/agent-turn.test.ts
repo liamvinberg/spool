@@ -17,6 +17,7 @@ import { readSelection } from "../verbs";
 import { sessionFile } from "./agent-claude-session";
 import type { AgentEvent } from "./agent-events";
 import { agentFraming } from "./agent-spawn";
+import { readThread } from "./agent-threads";
 import { startAgentTurn } from "./agent-turn";
 
 /** Every event of one turn, read off the stream the way a client would. */
@@ -149,6 +150,33 @@ describe("one turn over the wire", () => {
 		expect((await back.next()).data).toMatchObject({ kind: "say", text: "before" });
 		expect((await back.next()).data).toMatchObject({ kind: "say", text: "after" });
 		await back.cancel();
+	});
+
+	it("saves the completed reply while the viewer is in another project", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor();
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+		const res = await startTurn(name, app);
+		await until(() => agent.spawned.length === 1);
+		await agentReader(res).cancel();
+		const proc = agent.spawned[0];
+		if (!proc) throw new Error("Missing process");
+		proc.emit(
+			JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Finished while away." }] } }),
+		);
+		proc.emit(JSON.stringify({ type: "result", subtype: "success" }));
+		proc.exit(0);
+		await until(() => readThread(spoolDir, root, THREAD)?.life === "unread");
+		const saved = readThread(spoolDir, root, THREAD);
+		expect(JSON.stringify(saved?.entries)).toContain("Finished while away.");
+		expect(saved?.recovery).toBeNull();
+		// The saved result survives beyond this daemon's in-memory replay window.
+		const restarted = makeApp(spoolDir, { agentExecutor: agent.executor });
+		const listed = await (await restarted.request(`/api/p/${name}/agent/threads`)).json();
+		expect(listed.threads[0]).toMatchObject({ stopped: false, live: false });
+		expect(JSON.stringify(listed.threads[0].entries)).toContain("Finished while away.");
+		expect(agent.spawned).toHaveLength(1);
 	});
 
 	it("refuses a second turn in a conversation that already has one running", async () => {
@@ -434,7 +462,7 @@ describe("one turn over the wire", () => {
 		const events = await drainTurn(await startTurn(name, app));
 
 		expect(events).toHaveLength(1);
-		expect(events[0]).toEqual({ kind: "closed", code: null, message: "spawn claude ENOENT", parent: null });
+		expect(events[0]).toMatchObject({ kind: "closed", code: null, message: "spawn claude ENOENT", parent: null });
 	});
 
 	it("takes the process with the turn that was abandoned", async () => {

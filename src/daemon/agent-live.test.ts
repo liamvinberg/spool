@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { until } from "../test-helpers";
 import type { AgentEvent } from "./agent-events";
 import { type AgentHeld, createAgentTurns, holdAgentTurn } from "./agent-live";
@@ -91,8 +91,41 @@ describe("holding a turn", () => {
 		fake.push(fake.says("two"));
 		await until(() => held.logged === 2);
 
-		expect(await read(held)).toEqual([fake.says("one"), fake.says("two")]);
+		expect(await read(held)).toMatchObject([fake.says("one"), fake.says("two")]);
 		expect(fake.abandoned).toBe(false);
+	});
+
+	it("replays the original thinking time and excludes time waiting for a person", async () => {
+		vi.useFakeTimers();
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const fake = fakeTurn();
+		const held = holdAgentTurn({ root: "/p", thread: "t", turn: fake.turn });
+		fake.push({ kind: "waiting", parent: null });
+		await vi.advanceTimersByTimeAsync(3000);
+		fake.push({
+			kind: "asking",
+			request: "question",
+			call: null,
+			tool: "ask_person",
+			display: null,
+			description: null,
+			interaction: true,
+			input: {},
+			suggestions: [],
+			parent: null,
+		});
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(held.elapsed).toBe(3000);
+		fake.push({ kind: "answered", request: "question", answer: "deny", words: null, parent: null });
+		await vi.advanceTimersByTimeAsync(2000);
+		fake.push(fake.says("finished"));
+		fake.finish();
+		await vi.advanceTimersByTimeAsync(0);
+		const replay: AgentEvent[] = [];
+		for await (const entry of held.watch(0)) replay.push(entry.event);
+		expect(replay.map((event) => event.elapsed)).toEqual([0, 3000, 3000, 5000]);
 	});
 
 	it("lets a viewer go without the turn going with it", async () => {
@@ -116,7 +149,7 @@ describe("holding a turn", () => {
 		// and the turn goes on writing into a log the next viewer will read
 		fake.push(fake.says("two"));
 		await until(() => held.logged === 2);
-		expect(await read(held)).toEqual([fake.says("one"), fake.says("two")]);
+		expect(await read(held)).toMatchObject([fake.says("one"), fake.says("two")]);
 	});
 
 	it("reads from where a viewer left off, and follows what arrives after", async () => {
@@ -134,7 +167,7 @@ describe("holding a turn", () => {
 		// nothing it already had, and everything after it
 		fake.push(fake.says("three"));
 		await until(() => seen.length === 1);
-		expect(seen).toEqual([fake.says("three")]);
+		expect(seen).toMatchObject([fake.says("three")]);
 
 		view.close();
 		await reading;
@@ -175,8 +208,8 @@ describe("holding a turn", () => {
 			})(),
 		]);
 
-		expect(whole).toEqual([fake.says("one"), fake.says("two")]);
-		expect(tail).toEqual([fake.says("two")]);
+		expect(whole).toMatchObject([fake.says("one"), fake.says("two")]);
+		expect(tail).toMatchObject([fake.says("two")]);
 	});
 
 	it("ends the read when the turn is over rather than parking it forever", async () => {
@@ -211,7 +244,7 @@ describe("the turns this daemon is holding", () => {
 		// still there the instant it ends, which is what lets a client that was away read the
 		// ending rather than the rail inventing a `stopped` for it
 		expect(turns.get("/p", "t")).toBe(held);
-		expect(await read(turns.get("/p", "t") as AgentHeld)).toEqual([fake.says("done")]);
+		expect(await read(turns.get("/p", "t") as AgentHeld)).toMatchObject([fake.says("done")]);
 
 		await until(() => turns.get("/p", "t") === undefined);
 		expect(turns.threads("/p").size).toBe(0);

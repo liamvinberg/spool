@@ -51,6 +51,7 @@ it.each([
 	expect(first.filter((event) => event.kind === "result")).toHaveLength(1);
 	expect(JSON.stringify(first)).not.toContain("fixture-secret");
 	const repeated = await run(held);
+	expect(token(repeated)).toBe(held);
 	held = token(repeated);
 	expect(repeated.filter((event) => event.kind === "result")).toHaveLength(0);
 	const beforeRestart = readFileSync(join(directory, "failed-calls.jsonl"), "utf8");
@@ -74,6 +75,7 @@ it.each([
 	expect(duplicate.find((event) => event.kind === "ended")).toMatchObject({
 		ending: "failed",
 		reason: "This recovery has already been continued",
+		recovery: null,
 	});
 	expect(readFileSync(join(directory, "provider-calls.jsonl"), "utf8").trim().split("\n")).toHaveLength(calls.length);
 	const saved = readFileSync(join(directory, "sessions", `${options.session.id}.jsonl`), "utf8");

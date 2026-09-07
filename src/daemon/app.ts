@@ -28,6 +28,7 @@ import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-preferences";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
+import { agentPictureEnding } from "./agent-picture";
 import type { Look } from "./agent-preflight";
 import {
 	closeThread,
@@ -324,6 +325,7 @@ function attachTurn(c: Context, held: AgentHeld, from: number) {
 					running: held.running,
 					from,
 					logged: held.logged,
+					elapsed: held.elapsed,
 				}),
 			});
 			for await (const { id, event } of view) {
@@ -1730,8 +1732,14 @@ export function createDaemonApp({
 						ask: said[0]?.prompt ?? "",
 						life: "running",
 						at: Date.now(),
-						entries: [],
-						kept: 0,
+						entries: said.map((one, index) => ({
+							key: `user:${index}`,
+							kind: "user",
+							text: one.prompt,
+							context: null,
+							attached: null,
+						})),
+						kept: said.length,
 						plan: null,
 						queued: [],
 						draft: "",
@@ -1749,7 +1757,9 @@ export function createDaemonApp({
 					})),
 					ask,
 				});
+				const picture = readThread(spoolDir, project.root, thread);
 				const held = liveTurns.hold({
+					...(picture ? { onEnded: agentPictureEnding(spoolDir, project.root, picture) } : {}),
 					root: project.root,
 					thread,
 					turn,
@@ -1939,7 +1949,11 @@ export function createDaemonApp({
 					} catch {
 						/* A missing session or host never hides saved history. */
 					}
-					return { ...thread, continuable };
+					const held = liveTurns.get(project.root, thread.id);
+					const live =
+						held !== undefined &&
+						(held.running || thread.life === "running" || (thread.life === "waiting" && !thread.recovery));
+					return { ...thread, live, continuable };
 				}),
 			);
 			return c.json({ threads });

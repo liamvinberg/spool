@@ -51,6 +51,7 @@ export interface AgentHeld {
 	readonly running: boolean;
 	/** how much has arrived, which is what a fresh viewer is told it is replaying */
 	readonly logged: number;
+	readonly elapsed: number;
 	readonly permissions: AgentTurn["permissions"];
 	answer(request: string, reply: AgentReply): boolean;
 	interrupt(): boolean;
@@ -66,7 +67,7 @@ export interface AgentHoldOptions {
 	readonly id?: string | undefined;
 	readonly turn: AgentTurn;
 	/** the process is gone: the caller starts its own grace window from here */
-	readonly onEnded?: (() => void) | undefined;
+	readonly onEnded?: ((events: readonly AgentEvent[]) => void) | undefined;
 }
 
 /**
@@ -80,6 +81,12 @@ export interface AgentHoldOptions {
 export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOptions): AgentHeld {
 	const log: AgentEvent[] = [];
 	let running = true;
+	const started = Date.now();
+	let parked = 0;
+	let finishedElapsed: number | undefined;
+	let since: number | null = null;
+	const requests = new Map<string, string | null>();
+	const elapsed = () => finishedElapsed ?? (since ?? Date.now()) - started - parked;
 	/** every viewer parked on the tail, woken together whenever the tail moves */
 	const waiting = new Set<() => void>();
 
@@ -90,14 +97,26 @@ export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOpti
 
 	function stop(): void {
 		if (!running) return;
+		finishedElapsed = elapsed();
 		running = false;
 		wake();
-		onEnded?.();
+		onEnded?.(log);
 	}
 
 	void (async () => {
 		for await (const event of turn.events) {
-			log.push(event);
+			log.push({ ...event, elapsed: elapsed() });
+			if (event.kind === "asking") requests.set(event.request, event.call);
+			if (event.kind === "answered") requests.delete(event.request);
+			if (event.kind === "result") {
+				for (const [request, call] of requests) if (call === event.id) requests.delete(request);
+			}
+			if (event.kind === "ended" || event.kind === "closed") requests.clear();
+			if (requests.size > 0) since ??= Date.now();
+			else if (since !== null) {
+				parked += Date.now() - since;
+				since = null;
+			}
 			wake();
 		}
 		stop();
@@ -139,6 +158,9 @@ export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOpti
 		get running() {
 			return running;
 		},
+		get elapsed() {
+			return elapsed();
+		},
 		get logged() {
 			return log.length;
 		},
@@ -161,7 +183,7 @@ const KEPT_MS = 5 * 60_000;
 export interface AgentTurns {
 	relocate(root: string, target: string): void;
 	get(root: string, thread: string): AgentHeld | undefined;
-	hold(options: Omit<AgentHoldOptions, "onEnded">): AgentHeld;
+	hold(options: AgentHoldOptions): AgentHeld;
 	/** the turns of one project, for the doors addressed by something other than a thread */
 	of(root: string): Iterable<AgentHeld>;
 	/** every thread this daemon can still show a turn for, live or lately ended */
@@ -236,8 +258,11 @@ export function createAgentTurns(keptMs = KEPT_MS): AgentTurns {
 			drop(key);
 			const taken: AgentHeld = holdAgentTurn({
 				...options,
-				onEnded: () => {
-					if (held.get(key) === taken) keep(key);
+				onEnded: (events) => {
+					if (held.get(key) === taken) {
+						keep(key);
+						options.onEnded?.(events);
+					}
 				},
 			});
 			held.set(key, taken);

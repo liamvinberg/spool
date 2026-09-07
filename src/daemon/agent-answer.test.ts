@@ -185,7 +185,7 @@ describe("answering", () => {
 		expect(replies[0]?.request_id).toBe(turn.asking.request);
 		expect(replies[0]?.response).toEqual({ behavior: "allow", decisionClassification: "user_temporary" });
 		// the log's only trace of it, because the answer went the other way
-		expect((await turn.events.next()).data).toEqual({
+		expect((await turn.events.next()).data).toMatchObject({
 			kind: "answered",
 			request: turn.asking.request,
 			answer: "allow",
