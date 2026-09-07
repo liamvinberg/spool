@@ -13,7 +13,8 @@ import { AgentModelPicker } from "./agent-model-picker";
 import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
-import { Caret, Paragraphs } from "./agent-said";
+import { Caret } from "./agent-said";
+import { SeedParagraphs, SeedSurface } from "./agent-seed";
 import { Lightbox, Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
 import { type Life, type Thread, UNSAID } from "./agent-threads";
@@ -1096,7 +1097,7 @@ function Transcript({
 	}, []);
 
 	return (
-		<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+		<SeedSurface viewport={view}>
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: the handlers only watch the reader leave; the log stays a scroll region, and its one control is the chip below */}
 			<div
 				ref={view}
@@ -1185,7 +1186,7 @@ function Transcript({
 					{live ? "live" : "latest"}
 				</button>
 			)}
-		</div>
+		</SeedSurface>
 	);
 }
 
@@ -1841,7 +1842,7 @@ function AskOutcome({ state, text }: { state: RowState; text: string }) {
  */
 function Prose({ entry }: { entry: Extract<AgentEntry, { kind: "prose" }> }) {
 	const still = useStillness();
-	return <Paragraphs text={entry.full} finished={entry.settled} still={still} caret={<Caret />} />;
+	return <SeedParagraphs text={entry.full} finished={entry.settled} still={still} />;
 }
 
 /* ---------- the mark ----------

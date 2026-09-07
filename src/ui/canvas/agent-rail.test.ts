@@ -380,6 +380,12 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		return 1;
 	});
 	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+	// happy-dom has no CSS animations. Seed's motion is exercised with an animation
+	// clock in agent-seed.test.ts; this harness checks the full transcript lifecycle.
+	Object.defineProperty(HTMLElement.prototype, "getAnimations", { configurable: true, value: () => [] });
+	onTestFinished(() => {
+		Reflect.deleteProperty(HTMLElement.prototype, "getAnimations");
+	});
 	/**
 	 * Every size watcher the page put on something, so a test can say the content grew.
 	 *
@@ -828,6 +834,7 @@ describe("one turn", () => {
 		expect(paragraphs(canvas.host)).toEqual([]);
 		expect(rail(canvas.host)?.textContent).not.toContain(MESSAGE);
 		expect(canvas.host.querySelectorAll("[data-agent-caret]")).toHaveLength(1);
+		expect(canvas.host.querySelectorAll("[data-agent-seed]")).toHaveLength(1);
 		expect(canvas.host.querySelector("[data-agent-caret-line]")).not.toBeNull();
 		expect(caret(canvas.host)?.className).not.toMatch(/animate-/);
 
@@ -860,6 +867,7 @@ describe("one turn", () => {
 			canvas.turn.push(say("The header is tighter.\n\nThe receipt"));
 			await settle(120);
 			expect(caret(canvas.host)).not.toBeNull();
+			expect(canvas.host.querySelector("[data-agent-seed]")).not.toBeNull();
 
 			if (ending !== "closed") {
 				canvas.turn.push({ kind: "ended", ending, reason: ending, stopReason: null, parent: null });
@@ -871,6 +879,7 @@ describe("one turn", () => {
 			expect(log(canvas.host)).toContain("The header is tighter.");
 			expect(log(canvas.host)).toContain("The receipt");
 			expect(caret(canvas.host)).toBeNull();
+			expect(canvas.host.querySelector("[data-agent-seed]")).toBeNull();
 			expect(canvas.host.querySelector("[data-agent-caret-line]")).toBeNull();
 		},
 	);
@@ -3599,6 +3608,7 @@ describe("what survives a restart", () => {
 		expect(log(canvas.host)).toContain("The header is tighter.");
 		expect(log(canvas.host)).toContain("The receipt");
 		expect(caret(canvas.host)).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-seed]")).toBeNull();
 		expect(canvas.host.querySelector("[data-agent-caret-line]")).toBeNull();
 		expect(canvas.host.querySelector(".animate-agent-paragraph")).toBeNull();
 

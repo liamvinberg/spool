@@ -16,14 +16,7 @@ import { closedText } from "./agent-markers";
  */
 
 /**
- * The live end marker: one static bar, and the *static* is the decision (#149).
- *
- * It rides the end of the last whole paragraph while more is coming, and stands alone on
- * a line of its own before the first paragraph is whole. Nothing that ships blinks one:
- * of thirteen chat surfaces read at the source, zero blink at the live edge. WCAG 2.2.2
- * also lists blinking beside moving and scrolling under the same five-second trigger, so
- * a caret blinking through a twenty-second message would owe a pause mechanism. A CSS
- * blink would also silently defeat macOS's own non-blinking-cursor setting.
+ * A quiet end marker for a question still arriving. Prose uses Seed instead.
  */
 export function Caret() {
 	return (
