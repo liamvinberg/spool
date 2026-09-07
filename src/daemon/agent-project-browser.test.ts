@@ -39,7 +39,7 @@ it("keeps working across projects and restores a reply completed while away", { 
 		}
 	});
 	const uiDir = join(makeTempDir(), "ui");
-	const project = await serveProject({ uiDir, agentExecutor: agent.executor });
+	const project = await serveProject({ uiDir, agentExecutor: agent.executor, agentLook: () => true });
 	const other = makeProject(project.spoolDir);
 	writeFrame(project.root, "home", "export default () => <h1>Home</h1>");
 	writeFrame(other.root, "other", "export default () => <h1>Other project</h1>");
