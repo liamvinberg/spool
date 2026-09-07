@@ -35,6 +35,7 @@ describe("browseRows", () => {
 			browseRows({
 				path: `${HOME}/personal`,
 				parent: HOME,
+				isProject: false,
 				dirs: [{ name: "projects", path: `${HOME}/personal/projects`, isProject: false }],
 			}),
 		).toEqual([

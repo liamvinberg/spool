@@ -251,3 +251,17 @@ export function ArrowRightIcon({ className }: { className?: string }) {
 		</svg>
 	);
 }
+
+export function ChevronIcon() {
+	return (
+		<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+			<path
+				d="m4 2.5 3.5 3.5L4 9.5"
+				stroke="currentColor"
+				strokeWidth="1.25"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}

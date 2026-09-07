@@ -151,6 +151,12 @@ export async function browseDirectory(path?: string): Promise<FsListing | undefi
 	return (await res.json()) as FsListing;
 }
 
+export async function createDirectoryAt(path: string, name: string): Promise<FsListing> {
+	const res = await client.api.fs.create.$post({ json: { path, name } });
+	if (!res.ok) throw new Error(await errorText(res));
+	return (await res.json()) as FsListing;
+}
+
 /** Every folder under `under` (home when absent) the query answers to, ranked (#251/#277) — the daemon walks, the picker draws. */
 export async function searchDirectories(query: string, under?: string): Promise<FsSearch | undefined> {
 	const res = await client.api.fs.search.$get({ query: under === undefined ? { q: query } : { q: query, under } });

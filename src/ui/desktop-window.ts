@@ -13,7 +13,6 @@ export type DesktopCommand =
 export interface DesktopWindow {
 	onCommand(listener: (command: DesktopCommand) => void): () => void;
 	setCanvasActive(active: boolean): void;
-	chooseDirectory?: (options: { path: string; title: string; buttonLabel: string }) => Promise<string | null>;
 }
 
 export function desktopWindow(

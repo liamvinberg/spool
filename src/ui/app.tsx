@@ -21,8 +21,7 @@ import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-d
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, HomeIcon } from "./icons";
-import { NewProjectDialog } from "./new-project-dialog";
-import { FolderPicker } from "./picker";
+import { ProjectPicker } from "./picker";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
@@ -520,7 +519,8 @@ export function App() {
 			)}
 
 			{picking === "new" && (
-				<NewProjectDialog
+				<ProjectPicker
+					initial="start"
 					location={location}
 					onOpened={(project) => {
 						setPicking(false);
@@ -530,7 +530,7 @@ export function App() {
 				/>
 			)}
 			{picking === "folder" && (
-				<FolderPicker
+				<ProjectPicker
 					onOpened={(project) => {
 						setPicking(false);
 						openTab(project);

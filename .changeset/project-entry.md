@@ -2,4 +2,4 @@
 "spool.page": patch
 ---
 
-New project now lets you name a project and choose where it lives before creating it. Open projects from the separate Open action, use native folder dialogs in the Mac app, and set up an existing codebase directly from the folder picker.
+New project opens a compact picker with an optional name, setup inside an existing codebase, and opening an existing spool project. Folder selection keeps the plus for new projects, shows the exact action before confirming once, and uses the back arrow to go up one folder. Save locations use the same picker on Mac and in the browser.

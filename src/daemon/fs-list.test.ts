@@ -1,9 +1,38 @@
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
 import { makeTempDir } from "../test-helpers";
-import { refreshIndex, searchDirectories } from "./fs-list";
+import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
+
+it("identifies the current folder as a project, including through a symlink", () => {
+	const parent = makeHome(["coffee#"]);
+	symlinkSync(join(parent, "coffee"), join(parent, "shortcut"));
+	expect(listDirectory(parent)?.isProject).toBe(false);
+	expect(listDirectory(join(parent, "shortcut"))).toMatchObject({
+		path: join(realpathSync(parent), "coffee"),
+		isProject: true,
+	});
+});
+
+it("creates an empty location folder without changing an existing directory", () => {
+	const parent = makeTempDir();
+	const created = createDirectory(parent, " ideas ");
+	expect(created).toMatchObject({ path: join(realpathSync(parent), "ideas"), isProject: false, dirs: [] });
+	writeFileSync(join(created.path, "keep.txt"), "keep");
+	expect(() => createDirectory(parent, "ideas")).toThrow("already exists");
+	expect(readFileSync(join(created.path, "keep.txt"), "utf8")).toBe("keep");
+	expect(existsSync(join(created.path, "design"))).toBe(false);
+});
+
+it.each(["", "..", "../escape", "nested/child", "nested\\child", ".hidden"])(
+	"rejects a folder name that is not one visible path segment: %s",
+	(name) => {
+		const parent = makeTempDir();
+		expect(() => createDirectory(parent, name)).toThrow("Choose a folder name");
+		expect(readdirSync(parent)).toEqual([]);
+	},
+);
 
 /** A home to search: every path is a directory, `#` marks a spool project. */
 function makeHome(paths: readonly string[]): string {

@@ -67,7 +67,7 @@ import {
 	renamePage,
 } from "./explorer";
 import { createFlowGraph, recordWalk } from "./flows";
-import { listDirectory, refreshIndex, searchDirectories } from "./fs-list";
+import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
 import { ASSET_REQUEST_CAP, base64Length, listAssets } from "./hand-asset";
@@ -774,11 +774,11 @@ export function createDaemonApp({
 
 	/** Body of the picker's create: { path, name } — the folder to make it in, and what to call it. */
 	function requestedNewProject(value: unknown, c: Context): { path: string; name: string } | Response {
-		const { path, name } = value as { path?: unknown; name?: unknown };
-		if (typeof path !== "string" || path === "" || typeof name !== "string") {
+		const parsed = z.object({ path: z.string().min(1), name: z.string() }).safeParse(value);
+		if (!parsed.success) {
 			return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
 		}
-		return { path, name };
+		return parsed.data;
 	}
 
 	type HostClass = "control" | "alias" | "render" | "capture" | "unexpected";
@@ -1074,6 +1074,15 @@ export function createDaemonApp({
 			// no path is the picker opening: the moment to walk home again behind the index that stands (#277)
 			if (path === undefined) void refreshIndex(fsIndex);
 			return c.json(listing);
+		})
+		.post("/api/fs/create", validator("json", requestedNewProject), (c) => {
+			try {
+				const { path, name } = c.req.valid("json");
+				return c.json(createDirectory(path, name));
+			} catch (error) {
+				if (!(error instanceof SpoolError)) throw error;
+				return c.json({ error: error.message }, 409);
+			}
 		})
 		.get("/api/fs/search", async (c) => {
 			// one indexed walk of home, answered under the folder asked for: the browse is what an empty query still shows

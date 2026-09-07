@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import {
 	app,
 	BrowserWindow,
@@ -564,40 +563,6 @@ function updateCanvasMenu(): void {
 }
 
 function installCanvasChannels(): void {
-	let choosingDirectory = false;
-	ipcMain.handle("spool:choose-directory", async (event, value: unknown) => {
-		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
-			throw new Error("Only the canvas can choose a folder.");
-		if (choosingDirectory) return null;
-		if (typeof value !== "object" || value === null) throw new Error("Expected folder options.");
-		const options = value as Record<string, unknown>;
-		if (
-			typeof options.path !== "string" ||
-			typeof options.title !== "string" ||
-			typeof options.buttonLabel !== "string"
-		)
-			throw new Error("Expected a folder path, title and button label.");
-		const path =
-			options.path === "~"
-				? homedir()
-				: options.path.startsWith("~/")
-					? join(homedir(), options.path.slice(2))
-					: options.path;
-		if (!isAbsolute(path)) throw new Error("Expected an absolute folder path.");
-		choosingDirectory = true;
-		try {
-			const result = await dialog.showOpenDialog(window, {
-				title: options.title,
-				buttonLabel: options.buttonLabel,
-				defaultPath: path,
-				properties: ["openDirectory", "createDirectory"],
-			});
-			return result.canceled ? null : (result.filePaths[0] ?? null);
-		} finally {
-			choosingDirectory = false;
-		}
-	});
-
 	ipcMain.on("spool:canvas-fullscreen", (event) => {
 		event.returnValue = window?.isFullScreen() ?? false;
 	});

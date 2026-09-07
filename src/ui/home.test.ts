@@ -4,8 +4,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ProjectCard } from "./api";
 import { Home } from "./home";
-import { NewProjectDialog } from "./new-project-dialog";
-import { FolderPicker } from "./picker";
+import { ProjectPicker } from "./picker";
 
 function mount(element: React.ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -115,114 +114,136 @@ describe("project creation and folder selection", () => {
 					const path = url.searchParams.get("path") ?? "/Users/test";
 					return Response.json({
 						path,
-						parent: "/Users/test",
-						dirs: [{ name: "src", path: `${path}/src`, isProject: false }],
+						parent: path === "/" ? null : path.slice(0, path.lastIndexOf("/")) || "/",
+						isProject: path.endsWith("/existing"),
+						dirs: [
+							{ name: "src", path: `${path}/src`, isProject: false },
+							{ name: "existing", path: `${path}/existing`, isProject: true },
+						],
 					});
 				}
 				requests.push({ path: url.pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
-				if (url.pathname === "/api/projects/open") return Response.json({ offerInit: true }, { status: 404 });
+				if (url.pathname === "/api/settings")
+					return Response.json({ key: "projects.location", value: "/Users/test/coffee/src" });
 				return Response.json({ root: "/Users/test/coffee", name: "coffee" });
 			}),
 		);
 		return requests;
 	}
-	it("can initialize the current codebase with a mouse even when it has child folders", async () => {
+	it("initializes the exact codebase with one confirmation even when it has child folders", async () => {
 		const requests = disk();
 		const onOpened = vi.fn();
-		const host = mount(createElement(FolderPicker, { location: "/Users/test/coffee", onOpened, onClose: vi.fn() }));
+		const host = mount(createElement(ProjectPicker, { location: "/Users/test/coffee", onOpened, onClose: vi.fn() }));
 		await act(async () => {});
-		expect(host.querySelector(".pj-location-footer code")?.textContent).toBe("~/coffee");
-		await act(async () => button(host, "Open folder").click());
-		expect(requests).toEqual([{ path: "/api/projects/open", body: { path: "/Users/test/coffee" } }]);
-		expect(host.textContent).toContain("Spool will add a design folder inside coffee.");
-		expect(onOpened).not.toHaveBeenCalled();
-		act(() => button(host, "Back").click());
-		expect(host.textContent).toContain("src");
-		expect(document.activeElement?.getAttribute("aria-label")).toBe("Search folders or paste a path");
-		await act(async () => button(host, "Open folder").click());
-		await act(async () => button(host, "Create project here").click());
-		expect(requests.at(-1)).toEqual({ path: "/api/projects/init", body: { path: "/Users/test/coffee" } });
-		expect(onOpened).toHaveBeenCalledExactlyOnceWith(
-			expect.objectContaining({ root: "/Users/test/coffee", name: "coffee" }),
-		);
+		expect(host.querySelector(".picker-footer code")?.textContent).toBe("~/coffee");
+		expect(requests).toEqual([]);
+		await act(async () => button(host, "Add spool here").click());
+		expect(requests).toEqual([{ path: "/api/projects/init", body: { path: "/Users/test/coffee" } }]);
+		expect(onOpened).toHaveBeenCalledOnce();
 	});
-	it("selects a row without navigating or writing, and confirms that exact folder", async () => {
+	it("selects without writing, confirms the selected location, and uses the arrow to go up one directory", async () => {
 		const requests = disk();
 		const onLocation = vi.fn(async () => ({ ok: true }));
-		const onClose = vi.fn();
 		const host = mount(
-			createElement(FolderPicker, {
+			createElement(ProjectPicker, {
 				initial: "location",
 				location: "/Users/test/coffee",
 				onOpened: vi.fn(),
 				onLocation,
-				onClose,
+				onClose: vi.fn(),
 			}),
 		);
 		await act(async () => {});
-		act(() => button(host, "src").click());
-		expect(host.querySelector(".pj-location-footer code")?.textContent).toBe("~/coffee/src");
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Select src"]')?.click());
+		expect(host.querySelector(".picker-footer code")?.textContent).toBe("~/coffee/src");
 		expect(requests).toEqual([]);
-		await act(async () => button(host, "Use folder").click());
+		await act(async () => button(host, "Save projects here").click());
 		expect(onLocation).toHaveBeenCalledExactlyOnceWith("/Users/test/coffee/src");
-		expect(onClose).toHaveBeenCalledOnce();
+		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')?.click());
+		expect(host.querySelector(".picker-footer code")?.textContent).toBe("~");
+		expect(requests).toEqual([]);
 	});
-	it("preserves a creation draft through folder selection and cancellation without changing a setting", async () => {
+	it("opens an existing project without initializing it or requiring a second Enter", async () => {
 		const requests = disk();
 		const host = mount(
-			createElement(NewProjectDialog, { location: "/Users/test/coffee", onOpened: vi.fn(), onClose: vi.fn() }),
+			createElement(ProjectPicker, { location: "/Users/test/coffee", onOpened: vi.fn(), onClose: vi.fn() }),
 		);
+		await act(async () => {});
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Select existing"]')?.click());
+		await act(async () =>
+			host.querySelector("input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+		);
+		expect(requests).toEqual([{ path: "/api/projects/open", body: { path: "/Users/test/coffee/existing" } }]);
+	});
+	it("keeps a draft when canceling location selection and changes the default only when selected", async () => {
+		const requests = disk();
+		const host = mount(
+			createElement(ProjectPicker, {
+				initial: "start",
+				location: "/Users/test/coffee",
+				onOpened: vi.fn(),
+				onClose: vi.fn(),
+			}),
+		);
+		await act(async () => {});
 		act(() => type(host.querySelector("input"), "workshop"));
-		await act(async () => button(host, "Change…").click());
-		expect(host.querySelector(".pj-location-footer code")?.textContent).toBe("~/coffee");
-		act(() => host.querySelector<HTMLButtonElement>(".project-picker .pj-location-footer button")?.click());
+		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Choose project location"]')?.click());
+		act(() => host.querySelector("dialog")?.dispatchEvent(new Event("cancel", { cancelable: true })));
 		expect(host.querySelector<HTMLInputElement>("input")?.value).toBe("workshop");
-		await act(async () => button(host, "Change…").click());
-		act(() => button(host, "src").click());
-		await act(async () => button(host, "Use folder").click());
-		expect(host.querySelector<HTMLInputElement>("input")?.value).toBe("workshop");
-		expect(host.textContent).toContain("Home / coffee / src");
+		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Choose project location"]')?.click());
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Select src"]')?.click());
+		await act(async () => button(host, "Choose location").click());
 		expect(requests).toEqual([]);
+		expect(host.querySelector<HTMLInputElement>("input")?.value).toBe("workshop");
+		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Choose project location"]')?.click());
+		act(() => host.querySelector<HTMLInputElement>('[type="checkbox"]')?.click());
+		await act(async () => button(host, "Choose location").click());
+		expect(requests).toEqual([
+			{ path: "/api/settings", body: { key: "projects.location", value: "/Users/test/coffee/src" } },
+		]);
 		await act(async () =>
 			host.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
 		);
-		expect(requests).toEqual([
-			{ path: "/api/projects/create", body: { path: "/Users/test/coffee/src", name: "workshop" } },
-		]);
-	});
-	it("uses the native location picker and preserves the draft when it is cancelled", async () => {
-		const requests = disk();
-		const chooseDirectory = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("/Users/test/Projects");
-		vi.stubGlobal("spoolCanvasWindow", { onCommand: () => () => {}, setCanvasActive: () => {}, chooseDirectory });
-		const host = mount(createElement(NewProjectDialog, { location: "~/spool", onOpened: vi.fn(), onClose: vi.fn() }));
-		act(() => type(host.querySelector("input"), "coffee"));
-		await act(async () => button(host, "Change…").click());
-		expect(chooseDirectory).toHaveBeenCalledExactlyOnceWith({
-			path: "~/spool",
-			title: "Choose a folder",
-			buttonLabel: "Use folder",
+		expect(requests.at(-1)).toEqual({
+			path: "/api/projects/create",
+			body: { path: "/Users/test/coffee/src", name: "workshop" },
 		});
-		expect(host.querySelector(".project-picker")).toBeNull();
-		expect(host.querySelector<HTMLInputElement>("input")?.value).toBe("coffee");
-		expect(host.textContent).toContain("Home / spool");
-		await act(async () => button(host, "Change…").click());
-		expect(host.textContent).toContain("Home / Projects");
-		expect(requests).toEqual([]);
 	});
-	it("allows an unnamed project and guards concurrent creation while retaining failed drafts", async () => {
+	it("uses the custom picker in the desktop app too", async () => {
+		disk();
+		const chooseDirectory = vi.fn();
+		vi.stubGlobal("spoolCanvasWindow", { onCommand: () => () => {}, setCanvasActive: () => {}, chooseDirectory });
+		const host = mount(
+			createElement(ProjectPicker, {
+				initial: "start",
+				location: "/Users/test/coffee",
+				onOpened: vi.fn(),
+				onClose: vi.fn(),
+			}),
+		);
+		await act(async () => {});
+		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Choose project location"]')?.click());
+		expect(host.querySelector('[aria-label="Search folders or paste a path"]')).not.toBeNull();
+		expect(chooseDirectory).not.toHaveBeenCalled();
+	});
+	it("allows unnamed creation, prevents concurrent submits, and retains a failed draft", async () => {
 		let finish: ((response: Response) => void) | undefined;
 		const writes: unknown[] = [];
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-				writes.push(JSON.parse(String(init?.body)));
+				if (!init?.body)
+					return Response.json({ path: "/Users/test", parent: "/Users", isProject: false, dirs: [] });
+				writes.push(JSON.parse(String(init.body)));
 				return new Promise<Response>((resolve) => {
 					finish = resolve;
 				});
 			}),
 		);
 		const onOpened = vi.fn();
-		const host = mount(createElement(NewProjectDialog, { location: "~/spool", onOpened, onClose: vi.fn() }));
+		const host = mount(
+			createElement(ProjectPicker, { initial: "start", location: "~/spool", onOpened, onClose: vi.fn() }),
+		);
 		const submit = () =>
 			host.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 		await act(async () => {
@@ -265,11 +286,11 @@ it("opens the same creation form from Home and the tab strip without creating on
 	const host = mount(createElement(App));
 	await act(async () => {});
 	act(() => host.querySelector<HTMLButtonElement>(".spool-empty-actions button")?.click());
-	expect(host.querySelector("dialog h2")?.textContent).toBe("New project");
-	expect(document.activeElement?.getAttribute("placeholder")).toBe("Untitled");
-	act(() => button(host, "Cancel").click());
+	expect(host.querySelector("dialog")?.getAttribute("aria-label")).toBe("New project");
+	expect(document.activeElement?.getAttribute("placeholder")).toBe("Project name (optional)");
+	act(() => host.querySelector("dialog")?.dispatchEvent(new Event("cancel", { cancelable: true })));
 	act(() => host.querySelector<HTMLButtonElement>('[aria-label="New project"]')?.click());
-	expect(host.querySelector("dialog h2")?.textContent).toBe("New project");
+	expect(host.querySelector("dialog")?.getAttribute("aria-label")).toBe("New project");
 	expect(writes).toEqual([]);
 });
 

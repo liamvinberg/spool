@@ -1,8 +1,10 @@
-import { type Dirent, existsSync, readdirSync, realpathSync } from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { access, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
+import { SpoolError } from "../errors";
 import { matchName } from "../name-match";
+import { isSafeName } from "../page-path";
 import { expandHome } from "../paths";
 import { readRegistry } from "../registry";
 import { summarizeProject } from "./projection";
@@ -29,6 +31,7 @@ export interface FsEntry {
 export interface FsListing {
 	path: string;
 	parent: string | null;
+	isProject: boolean;
 	dirs: FsEntry[];
 }
 
@@ -52,7 +55,30 @@ export function listDirectory(requested: string | undefined): FsListing | undefi
 		return undefined;
 	}
 	const parent = dirname(path);
-	return { path, parent: parent === path ? null : parent, dirs };
+	return {
+		path,
+		parent: parent === path ? null : parent,
+		isProject: existsSync(join(path, "design", "canvas.json")),
+		dirs,
+	};
+}
+
+/** A new save-location folder, without initializing or registering a project. */
+export function createDirectory(parent: string, name: string): FsListing {
+	const trimmed = name.trim();
+	if (!isSafeName(trimmed)) throw new SpoolError("Choose a folder name without slashes or a leading dot.");
+	try {
+		const path = join(realpathSync(expandHome(parent)), trimmed);
+		mkdirSync(path);
+		const listing = listDirectory(path);
+		if (!listing) throw new SpoolError("The folder was created, but could not be read.");
+		return listing;
+	} catch (error) {
+		if (error instanceof SpoolError) throw error;
+		if (error instanceof Error && "code" in error && error.code === "EEXIST")
+			throw new SpoolError(`${trimmed} already exists here. Choose another name.`);
+		throw new SpoolError("Could not create this folder. Check that the parent folder is writable.");
+	}
 }
 
 export interface FsHit extends FsEntry {

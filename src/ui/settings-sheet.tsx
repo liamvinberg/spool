@@ -21,7 +21,7 @@ import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { RibbonMark } from "./icons";
-import { FolderPicker } from "./picker";
+import { ProjectPicker } from "./picker";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
 /**
@@ -199,7 +199,7 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 						{String(entry.value)} · Change…
 					</button>
 					{picking && (
-						<FolderPicker
+						<ProjectPicker
 							initial="location"
 							location={String(entry.value)}
 							onOpened={() => {}}

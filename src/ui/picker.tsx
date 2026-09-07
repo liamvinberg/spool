@@ -1,121 +1,86 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { charWeights, runsIn, type Weight } from "../name-match";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { isSafeName } from "../page-path";
 import {
 	browseDirectory,
+	createDirectoryAt,
+	createProjectAt,
 	type FsHit,
-	type FsListing,
-	type FsSearch,
 	initProjectAt,
+	type OpenOutcome,
 	openProjectAt,
-	searchDirectories,
 } from "./api";
-import { cn } from "./cn";
-import { desktopWindow } from "./desktop-window";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
-import { ArrowRightIcon, FolderIcon, SearchIcon } from "./icons";
-import { browseRows, crumbsOf, shortPath, within } from "./picker-model";
+import { ArrowRightIcon, BackIcon, ChevronIcon, FolderIcon, PlusIcon, SearchIcon } from "./icons";
+import { crumbsOf, shortPath } from "./picker-model";
+import { useWriteSetting } from "./settings";
+import { useFolderBrowser } from "./use-folder-browser";
 import "./picker.css";
 
-const TONE: Record<Weight, string> = { runup: "text-muted/45", hit: "text-thread-strong", plain: "text-text" };
+type Step = "start" | "folder" | "location" | "name" | "directory";
 
-/** Browse without writing; only the footer or Enter confirms the selected folder. */
-export function FolderPicker({
+/** One modal for creating a project, adding design to a folder, and opening existing work. */
+export function ProjectPicker({
+	initial = "folder",
+	location,
 	onOpened,
 	onClose,
-	initial = "folder",
 	onLocation,
-	location = "~",
 }: {
+	initial?: "start" | "folder" | "location";
+	location?: string | undefined;
 	onOpened: (project: { root: string; name: string }) => void;
 	onClose: () => void;
-	initial?: "folder" | "location";
 	onLocation?: (path: string) => Promise<{ ok: boolean; reason?: string }>;
-	location?: string;
 }) {
-	const native = useMemo(() => desktopWindow()?.chooseDirectory, []);
-	const [showBrowser, setShowBrowser] = useState(initial !== "location" || native === undefined);
-	const [listing, setListing] = useState<FsListing | null>(null);
-	const [home, setHome] = useState<string | null>(null);
-	const [query, setQuery] = useState("");
-	const [found, setFound] = useState<{ key: string; answer: FsSearch } | null>(null);
-	const [at, setAt] = useState(-1);
-	const [initPath, setInitPath] = useState<string | null>(null);
-	const [notice, setNotice] = useState<string | null>(null);
+	const [step, setStep] = useState<Step>(initial);
+	const [returnTo, setReturnTo] = useState<"start" | "name">("start");
+	const [name, setName] = useState("");
+	const [chosenLocation, setLocation] = useState<string | null>(null);
+	const [directoryName, setDirectoryName] = useState("");
+	const [useAsDefault, setUseAsDefault] = useState(false);
 	const [busy, setBusy] = useState(false);
-	const [browsing, setBrowsing] = useState(false);
+	const [notice, setNotice] = useState<string | null>(null);
 	const working = useRef(false);
 	const mounted = useRef(true);
-	const revision = useRef(0);
-	const nativeStarted = useRef(false);
-	const dialogRef = useRef<HTMLDialogElement>(null);
-	const inputRef = useRef<HTMLInputElement>(null);
-	const listRef = useRef<HTMLDivElement>(null);
-	const crumbsRef = useRef<HTMLDivElement>(null);
-	const title = initial === "location" ? "Choose a folder" : "Open a project or folder";
+	const dialog = useRef<HTMLDialogElement>(null);
+	const nameInput = useRef<HTMLInputElement>(null);
+	const crumbsRef = useRef<HTMLElement>(null);
+	const [initialPath] = useState(initial === "start" ? "~" : (location ?? "~"));
+	const folder = useFolderBrowser(initialPath);
+	const writeSetting = useWriteSetting();
+	const parent = chosenLocation ?? location;
+	const browsing = step === "folder" || step === "location";
+	const display = (path: string) => (folder.home ? shortPath(path, folder.home) : path);
+	const target = folder.target;
+	const crumbs = folder.listing && folder.home ? crumbsOf(folder.listing.path, folder.home) : [];
+	const canCreate = parent !== undefined && (name.trim() === "" || isSafeName(name.trim()));
+	useLayoutEffect(() => {
+		if (folder.listing && crumbsRef.current) crumbsRef.current.scrollLeft = crumbsRef.current.scrollWidth;
+	}, [folder.listing]);
 
+	useLayoutEffect(() => {
+		const previous = document.activeElement;
+		const modal = dialog.current;
+		modal?.showModal();
+		return () => {
+			modal?.close();
+			if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+		};
+	}, []);
 	useEffect(() => {
 		mounted.current = true;
 		return () => {
 			mounted.current = false;
-			revision.current++;
 		};
 	}, []);
-
-	const browse = useCallback(async (path?: string) => {
-		const mine = ++revision.current;
-		setBrowsing(true);
-		setNotice(null);
-		try {
-			const next = await browseDirectory(path);
-			if (!mounted.current || mine !== revision.current) return;
-			if (next === undefined) {
-				setNotice("Could not open this folder. Choose another folder or try again.");
-				return;
-			}
-			setListing(next);
-			if (path === undefined) setHome(next.path);
-			setQuery("");
-			setFound(null);
-			setAt(-1);
-			setInitPath(null);
-		} catch {
-			if (mounted.current && mine === revision.current) setNotice("Could not open this folder. Try again.");
-		} finally {
-			if (mounted.current && mine === revision.current) {
-				setBrowsing(false);
-				inputRef.current?.focus();
-			}
-		}
-	}, []);
-
-	useEffect(() => {
-		if (!showBrowser) return;
-		let active = true;
-		void (async () => {
-			const mine = revision.current + 1;
-			await browse();
-			if (active && mine === revision.current && location !== "~") await browse(location);
-		})();
-		return () => {
-			active = false;
-			revision.current++;
-		};
-	}, [browse, location, showBrowser]);
-
-	useLayoutEffect(() => {
-		if (!showBrowser) return;
-		const previous = document.activeElement;
-		const dialog = dialogRef.current;
-		dialog?.showModal();
-		inputRef.current?.focus();
-		return () => {
-			dialog?.close();
-			if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-		};
-	}, [showBrowser]);
 	useEffect(() => attachHotkeyLayer({ scope: "picker", handlers: {} }), []);
+	useEffect(() => {
+		if (busy) return;
+		if (browsing) folder.input.current?.focus();
+		else nameInput.current?.focus();
+	}, [browsing, busy, folder.input]);
 
-	const run = useCallback(async (action: () => Promise<void>) => {
+	async function run(action: () => Promise<void>) {
 		if (working.current) return;
 		working.current = true;
 		setBusy(true);
@@ -123,389 +88,485 @@ export function FolderPicker({
 		try {
 			await action();
 		} catch (error) {
-			if (mounted.current) {
-				setShowBrowser(true);
-				setNotice(error instanceof Error ? error.message : "Could not open the folder. Try again.");
-			}
+			if (mounted.current) setNotice(error instanceof Error ? error.message : "Could not finish. Try again.");
 		} finally {
 			working.current = false;
-			if (mounted.current) setBusy(false);
-		}
-	}, []);
-
-	const accept = useCallback(
-		async (path: string) => {
-			if (initial === "location") {
-				const result = await onLocation?.(path);
-				if (!mounted.current) return;
-				if (result?.ok) onClose();
-				else throw new Error(result?.reason ?? "Could not use this folder. Try again.");
-			} else {
-				const outcome = await openProjectAt(path);
-				if (!mounted.current) return;
-				if (outcome.kind === "opened") onOpened(outcome);
-				else if (outcome.kind === "offer-init") setInitPath(path);
-				else throw new Error(outcome.message);
+			if (mounted.current) {
+				setBusy(false);
+				if (browsing) folder.input.current?.focus();
+				else nameInput.current?.focus();
 			}
-		},
-		[initial, onLocation, onClose, onOpened],
-	);
-
-	const chooseNative = useCallback(
-		() =>
-			run(async () => {
-				if (native === undefined) return;
-				const path = await native({
-					path: listing?.path ?? location,
-					title,
-					buttonLabel: initial === "location" ? "Use folder" : "Open",
-				});
-				if (!mounted.current) return;
-				if (path !== null) await accept(path);
-				else if (initial === "location") onClose();
-			}),
-		[run, native, listing, location, title, accept, initial, onClose],
-	);
-	useEffect(() => {
-		if (initial !== "location" || native === undefined || nativeStarted.current) return;
-		nativeStarted.current = true;
-		void chooseNative();
-	}, [chooseNative, initial, native]);
-
-	const term = query.trim();
-	const pathQuery = term.startsWith("/") || term === "~" || term.startsWith("~/") || /^[a-z]:[\\/]/i.test(term);
-	const scope =
-		home !== null && listing !== null && (listing.path === home || listing.path.startsWith(`${home}/`))
-			? listing.path
-			: null;
-	const key = scope === null || pathQuery || term === "" ? null : `${scope}\0${term}`;
-	useEffect(() => {
-		if (key === null || scope === null) return;
-		let active = true;
-		void searchDirectories(term, scope)
-			.then((answer) => {
-				if (!active) return;
-				if (answer === undefined) setNotice("Could not search folders. Try again.");
-				else setFound({ key, answer });
-			})
-			.catch(() => {
-				if (active) setNotice("Could not search folders. Try again.");
-			});
-		return () => {
-			active = false;
-		};
-	}, [key, term, scope]);
-	const answered = found?.key === key ? found?.answer : undefined;
-	const pending = key !== null && answered === undefined;
-	const flat: readonly FsHit[] = pathQuery
-		? []
-		: key !== null
-			? (answered?.hits ?? [])
-			: listing === null
-				? []
-				: browseRows(listing).filter((row) => row.name.toLowerCase().includes(term.toLowerCase()));
-	const picked = flat[at];
-	const target = pathQuery ? term : (picked?.path ?? (term === "" ? listing?.path : undefined));
-	const crumbs = home === null || listing === null ? [] : crumbsOf(listing.path, home);
-	const display = (path: string) => (home === null ? path : shortPath(path, home));
-	const disabled = busy || browsing || pending || target === undefined;
-
-	useLayoutEffect(() => {
-		if (listing === null) return;
-		const crumbs = crumbsRef.current;
-		if (crumbs !== null) crumbs.scrollLeft = crumbs.scrollWidth;
-	}, [listing]);
-
-	useEffect(() => {
-		listRef.current?.querySelector<HTMLElement>(`[data-at="${at}"]`)?.scrollIntoView({ block: "nearest" });
-	}, [at]);
-	useEffect(() => {
-		if (initPath === null) inputRef.current?.focus();
-		else dialogRef.current?.querySelector<HTMLButtonElement>(".pj-location-footer button")?.focus();
-	}, [initPath]);
-
-	const enter = (row: FsHit) => {
-		if (busy || browsing) return;
-		if (initial === "folder" && row.isProject) void run(() => accept(row.path));
-		else void browse(row.path);
-	};
-	const confirm = () => {
-		if (pathQuery) {
-			if (!busy && !browsing) void browse(term);
-			return;
 		}
-		if (!disabled && target !== undefined) void run(() => accept(target));
-	};
+	}
+	function opened(outcome: OpenOutcome) {
+		if (!mounted.current) return;
+		if (outcome.kind === "opened") onOpened(outcome);
+		else
+			throw new Error(
+				outcome.kind === "error"
+					? outcome.message
+					: "This folder no longer has a spool project. Choose it again to add spool.",
+			);
+	}
+	function move(next: Step) {
+		setNotice(null);
+		setStep(next);
+	}
+	function back() {
+		if (working.current) return;
+		if (step === "location" && onLocation === undefined) move(returnTo);
+		else if (step === "directory") move("location");
+		else if (step === "name") move("folder");
+		else if (step === "folder" && initial === "start") move("start");
+		else onClose();
+	}
+	function up() {
+		if (!busy && folder.listing?.parent) void folder.browse(folder.listing.parent);
+	}
+	function create() {
+		if (canCreate && parent !== undefined) void run(async () => opened(await createProjectAt(parent, name.trim())));
+	}
+	function chooseLocation() {
+		if (parent === undefined) return;
+		setReturnTo(step === "name" ? "name" : "start");
+		setUseAsDefault(false);
+		move("location");
+		void folder.browse(parent);
+	}
+	function createDirectory() {
+		if (!folder.listing || !isSafeName(directoryName.trim())) return;
+		const path = folder.listing.path;
+		void run(async () => {
+			const created = await createDirectoryAt(path, directoryName.trim());
+			if (mounted.current) {
+				await folder.browse(created.path);
+				move("location");
+			}
+		});
+	}
+	function confirm() {
+		if (folder.pending || target === undefined) return;
+		void run(async () => {
+			// Selection may outlive the directory read. Verify its kind before doing the advertised operation.
+			const current = await browseDirectory(target.path);
+			if (!current) throw new Error("This folder is no longer available. Choose another folder.");
+			if (!mounted.current) return;
+			if (step === "location") {
+				if (onLocation) {
+					const result = await onLocation(current.path);
+					if (!result.ok) throw new Error(result.reason ?? "Could not save this location.");
+					if (mounted.current) onClose();
+				} else {
+					if (useAsDefault) {
+						const written = await writeSetting("projects.location", current.path);
+						if (!written.ok) throw new Error(written.reason);
+					}
+					if (mounted.current) {
+						setLocation(current.path);
+						move(returnTo);
+					}
+				}
+			} else if (current.isProject !== target.isProject) {
+				await folder.browse(current.path);
+				throw new Error("This folder changed. Check its action and try again.");
+			} else opened(await (current.isProject ? openProjectAt(current.path) : initProjectAt(current.path)));
+		});
+	}
+	const label =
+		step === "location"
+			? onLocation
+				? "Save projects here"
+				: "Choose location"
+			: target?.isProject
+				? "Open project"
+				: "Add spool here";
+	const fields = (
+		<form
+			onSubmit={(event) => {
+				event.preventDefault();
+				create();
+			}}
+		>
+			<fieldset disabled={busy}>
+				<div className="picker-name-field">
+					<PlusIcon />
+					<input
+						ref={nameInput}
+						aria-label="Project name (optional)"
+						placeholder="Project name (optional)"
+						value={name}
+						autoComplete="off"
+						spellCheck={false}
+						onChange={(event) => {
+							setName(event.target.value);
+							setNotice(null);
+						}}
+					/>
+				</div>
+				<div className="picker-name-bottom">
+					<button
+						type="button"
+						className="picker-location-link"
+						onClick={chooseLocation}
+						disabled={parent === undefined}
+						aria-label="Choose project location"
+						title={parent}
+					>
+						<FolderIcon />
+						{parent === undefined ? <span>Loading…</span> : <PickerPath path={display(parent)} />}
+						<ChevronIcon />
+					</button>
+					<button type="submit" className="picker-primary" disabled={!canCreate}>
+						{busy ? "Creating…" : "Create project"}
+						<ArrowRightIcon />
+					</button>
+				</div>
+				{name.trim() !== "" && !isSafeName(name.trim()) && (
+					<p className="picker-error">Use a name without slashes or a leading dot.</p>
+				)}
+			</fieldset>
+		</form>
+	);
 
-	if (!showBrowser) return null;
 	return (
 		<dialog
-			ref={dialogRef}
+			ref={dialog}
 			className="project-picker"
-			aria-label={initPath === null ? title : "Create project here?"}
+			tabIndex={-1}
+			aria-label={
+				browsing
+					? step === "location"
+						? "Choose a save location"
+						: "Choose a project folder"
+					: step === "directory"
+						? "New folder"
+						: "New project"
+			}
 			onCancel={(event) => {
 				event.preventDefault();
-				if (!working.current) {
-					if (initPath !== null) {
-						setInitPath(null);
-						setNotice(null);
-					} else onClose();
-				}
+				back();
+			}}
+			onClick={(event) => {
+				if (busy || event.target !== event.currentTarget) return;
+				const rect = event.currentTarget.getBoundingClientRect();
+				if (
+					event.clientX < rect.left ||
+					event.clientX > rect.right ||
+					event.clientY < rect.top ||
+					event.clientY > rect.bottom
+				)
+					back();
 			}}
 			onKeyDown={(event) => {
 				event.stopPropagation();
-				if (event.nativeEvent.isComposing) return;
-				if (event.key === "Escape" && query !== "" && initPath === null) {
+				if (event.nativeEvent.isComposing && event.key === "Enter") event.preventDefault();
+				if (event.key === "Escape" && browsing && folder.query) {
 					event.preventDefault();
-					setQuery("");
-					setAt(-1);
+					folder.setQuery("");
 				}
 			}}
 		>
-			{initPath !== null ? (
-				<div className="project-picker-init">
-					<h2>Create project here?</h2>
-					<p>Spool will add a design folder inside {initPath.split("/").filter(Boolean).at(-1) ?? initPath}.</p>
-					<code>{display(initPath)}</code>
-				</div>
-			) : (
+			{browsing ? (
 				<>
-					<header className="project-picker-heading">
-						<h2>{title}</h2>
-						{native !== undefined && (
-							<button
-								type="button"
-								className="project-picker-browse"
-								disabled={busy}
-								onClick={() => void chooseNative()}
-							>
-								Browse folders…
-							</button>
+					<div className="picker-field">
+						<button
+							type="button"
+							aria-label="Parent folder"
+							title="Go up one folder"
+							disabled={busy || folder.pending || !folder.listing?.parent}
+							onClick={up}
+						>
+							<BackIcon />
+						</button>
+						<SearchIcon className="picker-search-icon" />
+						{!folder.query && (
+							<nav ref={crumbsRef} className="picker-crumbs" aria-label="Folder location">
+								{crumbs.map((crumb) => (
+									<button
+										type="button"
+										key={crumb.path}
+										disabled={busy}
+										onClick={() => void folder.browse(crumb.path)}
+									>
+										{crumb.label}
+										{crumb.label === "/" ? "" : "/"}
+									</button>
+								))}
+							</nav>
 						)}
-					</header>
-					<div className="project-picker-search">
-						<SearchIcon />
 						<input
-							ref={inputRef}
-							value={query}
+							ref={folder.input}
 							aria-label="Search folders or paste a path"
-							placeholder="Search folders or paste a path"
-							spellCheck={false}
+							placeholder="Search…"
 							autoComplete="off"
-							disabled={busy || browsing}
+							spellCheck={false}
+							value={folder.query}
+							disabled={busy || folder.browsing}
 							onChange={(event) => {
-								setQuery(event.target.value);
-								setAt(event.target.value.trim() === "" ? -1 : 0);
 								setNotice(null);
+								folder.setQuery(event.target.value);
 							}}
 							onKeyDown={(event) => {
-								if (event.nativeEvent.isComposing || busy || browsing) return;
+								if (event.nativeEvent.isComposing || busy) return;
 								if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 									event.preventDefault();
-									setAt((n) =>
-										Math.max(-1, Math.min(flat.length - 1, n + (event.key === "ArrowDown" ? 1 : -1))),
+									folder.select(
+										Math.max(
+											-1,
+											Math.min(folder.rows.length - 1, folder.at + (event.key === "ArrowDown" ? 1 : -1)),
+										),
 									);
 								} else if (event.key === "Enter") {
 									event.preventDefault();
 									confirm();
-								} else if (
-									event.key === "ArrowRight" &&
-									picked !== undefined &&
-									event.currentTarget.selectionStart === query.length
-								) {
+								} else if (event.key === "ArrowRight" && !folder.query && target) {
 									event.preventDefault();
-									void browse(picked.path);
-								} else if (event.key === "Backspace" && query === "" && listing?.parent != null) {
+									void folder.browse(target.path);
+								} else if ((event.key === "Backspace" || event.key === "ArrowLeft") && !folder.query) {
 									event.preventDefault();
-									void browse(listing.parent);
+									up();
 								}
 							}}
 						/>
-					</div>
-					<div className="project-picker-crumbs">
 						<button
 							type="button"
-							aria-label="Parent folder"
-							disabled={listing?.parent == null || busy || browsing}
+							className="picker-plus"
+							aria-label={step === "location" ? "New folder here" : "New project inside this folder"}
+							title={
+								folder.listing
+									? `New ${step === "location" ? "folder" : "project"} inside ${display(folder.listing.path)}`
+									: undefined
+							}
+							disabled={busy || folder.pending || !folder.listing}
 							onClick={() => {
-								if (listing?.parent != null) void browse(listing.parent);
+								if (!folder.listing) return;
+								if (step === "location") {
+									setDirectoryName("");
+									move("directory");
+								} else {
+									setName("");
+									setLocation(folder.listing.path);
+									move("name");
+								}
 							}}
 						>
+							<PlusIcon />
+						</button>
+					</div>
+					<div
+						ref={folder.list}
+						className="picker-folders"
+						role="listbox"
+						aria-label="Folders"
+						aria-busy={folder.pending}
+					>
+						{folder.rows.map((row, index) => (
+							<FolderRow
+								key={row.path}
+								row={row}
+								index={index}
+								selected={target?.path === row.path}
+								disabled={busy || folder.pending}
+								searching={folder.query.trim() !== ""}
+								display={display}
+								onSelect={() => folder.select(index)}
+								onBrowse={() => void folder.browse(row.path)}
+							/>
+						))}
+						{folder.rows.length === 0 && (
+							<p className="picker-nothing">
+								{folder.pending
+									? "Loading folders…"
+									: folder.query
+										? "No matching folders."
+										: "No folders inside."}
+							</p>
+						)}
+					</div>
+					<div className="picker-footer">
+						<div>
+							<code title={target?.path}>
+								{target ? <PickerPath path={display(target.path)} /> : "Choose a folder"}
+							</code>
+							<span>
+								{step === "location"
+									? onLocation
+										? "New projects will start here."
+										: `Creates ${name.trim() || "untitled"} inside this folder.`
+									: target?.isProject
+										? "Existing spool project."
+										: "Adds a design folder here."}
+							</span>
+							{step === "location" && !onLocation && (
+								<label className="picker-default">
+									<input
+										type="checkbox"
+										checked={useAsDefault}
+										disabled={busy}
+										onChange={(event) => setUseAsDefault(event.target.checked)}
+									/>
+									Use for future projects
+								</label>
+							)}
+						</div>
+						<button
+							type="button"
+							className="picker-primary"
+							disabled={busy || folder.pending || target === undefined}
+							onClick={confirm}
+						>
+							{busy ? "Working…" : label}
 							<ArrowRightIcon />
 						</button>
-						<nav ref={crumbsRef} aria-label="Folder location">
-							{crumbs.map((crumb) => (
-								<button
-									type="button"
-									key={crumb.path}
-									disabled={busy || browsing}
-									onClick={() => void browse(crumb.path)}
-								>
-									{crumb.label === "~" ? "Home" : crumb.label}
-									<span>/</span>
-								</button>
-							))}
-						</nav>
 					</div>
-					<div ref={listRef} className="project-picker-list" aria-busy={browsing || pending}>
-						{pathQuery ? (
-							<button type="button" className="project-picker-row" disabled={busy || browsing} onClick={confirm}>
-								<FolderIcon />
-								<span className="truncate">Go to {query}</span>
+				</>
+			) : step === "directory" ? (
+				<form
+					onSubmit={(event) => {
+						event.preventDefault();
+						createDirectory();
+					}}
+				>
+					<fieldset disabled={busy}>
+						<div className="picker-small-heading">
+							<button type="button" aria-label="Back" onClick={back}>
+								<BackIcon />
 							</button>
-						) : flat.length === 0 ? (
-							<p>
-								{browsing || pending
-									? "Loading folders…"
-									: term === ""
-										? "No folders here. You can use this folder."
-										: "No matching folders."}
-							</p>
-						) : (
-							flat.map((row, index) => (
-								<Row
-									key={row.path}
-									row={row}
-									at={index}
-									picked={index === at}
-									disabled={busy || browsing}
-									place={term !== "" && scope !== null ? within(row.parent, scope) : ""}
-									onSelect={() => setAt(index)}
-									onEnter={() => enter(row)}
-									onBrowse={() => void browse(row.path)}
-									onConfirm={() => void run(() => accept(row.path))}
-								/>
-							))
-						)}
-						{answered !== undefined && answered.answered > flat.length && (
-							<p>
-								Showing {flat.length} of {answered.answered}. Keep typing to narrow it.
-							</p>
-						)}
+							<span>New folder</span>
+						</div>
+						<div className="picker-name-field">
+							<FolderIcon />
+							<input
+								ref={nameInput}
+								aria-label="Folder name"
+								placeholder="Folder name"
+								value={directoryName}
+								onChange={(event) => setDirectoryName(event.target.value)}
+							/>
+						</div>
+						<div className="picker-name-bottom">
+							<code>{folder.listing && display(folder.listing.path)}</code>
+							<button type="submit" className="picker-primary" disabled={!isSafeName(directoryName.trim())}>
+								{busy ? "Creating…" : "Create folder"}
+								<ArrowRightIcon />
+							</button>
+						</div>
+					</fieldset>
+				</form>
+			) : step === "name" ? (
+				<>
+					<div className="picker-small-heading">
+						<button type="button" aria-label="Back" disabled={busy} onClick={back}>
+							<BackIcon />
+						</button>
+						<span>New project here</span>
+						<span className="picker-untitled-hint">Blank name becomes untitled.</span>
+					</div>
+					{fields}
+				</>
+			) : (
+				<>
+					<div className="picker-expanded">
+						<div className="picker-expanded-title">
+							Start designing<span>Blank name becomes untitled.</span>
+						</div>
+						{fields}
+					</div>
+					<div className="picker-choices">
+						<Choice
+							title="Add spool to a folder"
+							description="Start designing inside an existing codebase or folder."
+							disabled={busy}
+							onClick={() => move("folder")}
+						/>
+						<Choice
+							title="Open a spool project"
+							description="Pick a folder that already has a spool design."
+							disabled={busy}
+							onClick={() => move("folder")}
+						/>
 					</div>
 				</>
 			)}
-			{notice !== null && (
-				<p role="alert" className="project-picker-notice">
-					{notice}
+			{(notice || (browsing && folder.notice)) && (
+				<p className="picker-error" role="alert">
+					{notice ?? folder.notice}
 				</p>
 			)}
-			<div className="pj-location-footer">
-				{initPath === null && (
-					<code title={target}>
-						{target !== undefined && (
-							<>
-								<span>{display(target).slice(0, display(target).lastIndexOf("/") + 1)}</span>
-								<span>{display(target).slice(display(target).lastIndexOf("/") + 1)}</span>
-							</>
-						)}
-					</code>
-				)}
-				<button
-					type="button"
-					className="home-action"
-					disabled={busy}
-					onClick={() => {
-						if (initPath !== null) {
-							setInitPath(null);
-							setNotice(null);
-							inputRef.current?.focus();
-						} else onClose();
-					}}
-				>
-					{initPath === null ? "Cancel" : "Back"}
-				</button>
-				<button
-					type="button"
-					className="home-action home-action-primary"
-					disabled={initPath !== null ? busy : pathQuery ? busy || browsing : disabled}
-					onClick={() => {
-						if (initPath === null) {
-							confirm();
-							return;
-						}
-						void run(async () => {
-							const outcome = await initProjectAt(initPath);
-							if (!mounted.current) return;
-							if (outcome.kind === "opened") onOpened(outcome);
-							else if (outcome.kind === "error") throw new Error(outcome.message);
-						});
-					}}
-				>
-					{busy
-						? initPath !== null
-							? "Creating…"
-							: initial === "location"
-								? "Saving…"
-								: "Opening…"
-						: initPath !== null
-							? "Create project here"
-							: pathQuery
-								? "Go to folder"
-								: initial === "location"
-									? "Use folder"
-									: picked?.isProject
-										? "Open project"
-										: "Open folder"}
-				</button>
-			</div>
 		</dialog>
 	);
 }
 
-function Row({
-	row,
-	at,
-	picked,
+function Choice({
+	title,
+	description,
 	disabled,
-	place,
+	onClick,
+}: {
+	title: string;
+	description: string;
+	disabled: boolean;
+	onClick: () => void;
+}) {
+	return (
+		<button type="button" className="picker-choice" disabled={disabled} onClick={onClick}>
+			<FolderIcon />
+			<span>
+				<strong>{title}</strong>
+				<small>{description}</small>
+			</span>
+			<ArrowRightIcon />
+		</button>
+	);
+}
+function FolderRow({
+	row,
+	index,
+	selected,
+	disabled,
+	searching,
+	display,
 	onSelect,
-	onEnter,
 	onBrowse,
-	onConfirm,
 }: {
 	row: FsHit;
-	at: number;
-	picked: boolean;
+	index: number;
+	selected: boolean;
 	disabled: boolean;
-	place: string;
+	searching: boolean;
+	display: (path: string) => string;
 	onSelect: () => void;
-	onEnter: () => void;
 	onBrowse: () => void;
-	onConfirm: () => void;
 }) {
-	const weights = charWeights(row.name, row.matched);
 	return (
-		<button
-			type="button"
-			data-at={at}
-			aria-pressed={picked}
-			disabled={disabled}
-			onClick={onSelect}
-			onDoubleClick={onEnter}
-			onKeyDown={(event) => {
-				if (event.key === "ArrowRight") {
-					event.preventDefault();
-					onBrowse();
-				} else if (event.key === "Enter") {
-					event.preventDefault();
-					onConfirm();
-				}
-			}}
-			className={cn("project-picker-row", picked && "is-selected")}
-		>
-			<FolderIcon className={row.isProject ? "text-thread-strong" : "text-muted"} />
-			<span className="min-w-0 truncate">
-				{row.matched.length === 0
-					? row.name
-					: runsIn(row.name, weights).map((run) => (
-							<span key={run.at} className={TONE[run.weight]}>
-								{run.text}
-							</span>
-						))}
-			</span>
-			{place !== "" && <small className="truncate">{place}</small>}
-			{row.isProject && <small>{row.frames === undefined ? "Project" : `${row.frames} frames`}</small>}
-		</button>
+		<div className={`picker-folder-row ${selected ? "is-selected" : ""}`} data-at={index}>
+			<button
+				type="button"
+				role="option"
+				aria-selected={selected}
+				aria-label={`Select ${row.name}`}
+				disabled={disabled}
+				onClick={onSelect}
+				onDoubleClick={onBrowse}
+			>
+				<FolderIcon className={row.isProject ? "is-project" : ""} />
+				<span>{row.name}</span>
+				{searching && <code>{display(row.parent)}</code>}
+				{row.frames !== undefined && <code>{row.frames} frames</code>}
+			</button>
+			<button type="button" aria-label={`Browse ${row.name}`} disabled={disabled} onClick={onBrowse}>
+				<ChevronIcon />
+			</button>
+		</div>
+	);
+}
+
+function PickerPath({ path }: { path: string }) {
+	const split = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1;
+	return (
+		<span className="picker-path">
+			<span>{path.slice(0, split)}</span>
+			<span>{path.slice(split)}</span>
+		</span>
 	);
 }

@@ -44,6 +44,24 @@ function shellConfigOf(document: string): { innerUrl: string } {
 }
 
 describe("daemon authority matrix", () => {
+	it("creates location folders only through an authenticated canvas request", async () => {
+		const { project, request, control, render } = makeSecurityHarness();
+		const path = "/api/fs/create";
+		const init = {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ path: project.root, name: "ideas" }),
+		};
+		expect((await request(CONTROL_HOST, path, init)).status).toBe(401);
+		expect((await render(path, init)).status).toBe(404);
+		expect(
+			(await control(path, { ...init, headers: { ...init.headers, origin: "https://attacker.example" } })).status,
+		).toBe(403);
+		const created = await control(path, init);
+		expect(created.status).toBe(200);
+		expect(await created.json()).toMatchObject({ path: join(project.root, "ideas"), isProject: false, dirs: [] });
+		expect((await control(path, { ...init, body: "null" })).status).toBe(400);
+	});
 	it.each([
 		["IPv4", "127.0.0.1", "http://127.0.0.1:7788"],
 		["IPv6", "::1", "http://[::1]:7788"],

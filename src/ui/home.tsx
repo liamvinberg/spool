@@ -104,7 +104,7 @@ export function Home({
 									<button type="button" onClick={onStart}>
 										<PlusIcon />
 										<strong>
-											New project
+											New project…
 											<ArrowRightIcon className="home-arrow" />
 										</strong>
 										<small>
@@ -156,7 +156,7 @@ export function Home({
 								</button>
 								<button type="button" className="home-action home-action-primary" onClick={onStart}>
 									<PlusIcon />
-									New project
+									New project…
 								</button>
 							</div>
 						</header>
