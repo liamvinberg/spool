@@ -1885,19 +1885,31 @@ export function ProjectCanvas({
 					says: way === "undo" ? "Undoing…" : "Redoing…",
 				});
 				const ran = history.current;
-				const operation = inverseSource(project, entry.receipt).then(async (result) => {
-					if (history.current !== ran) {
-						if (result?.ok && result.receipt) recordEntry({ ...entry, receipt: result.receipt });
+				const operation = sourceDelivery
+					.inventory(entry.receipt.field)
+					.then((inventories) => {
+						sourceDelivery.holdInverse(
+							entry.receipt.handle,
+							inventories.map((inventory) => inventory.frame),
+						);
+						return inverseSource(project, entry.receipt, inventories);
+					})
+					.then(async (result) => {
+						if (history.current !== ran) {
+							if (result?.ok && result.receipt) recordEntry({ ...entry, receipt: result.receipt });
+							await showSourceResult(entry.frame, result, "", true);
+							return;
+						}
+						if (result?.ok && result.receipt)
+							history.current = amend(history.current, way, { ...entry, receipt: result.receipt });
+						else history.current = held; // an unavailable top inverse is explained, never skipped
 						await showSourceResult(entry.frame, result, "", true);
-						return;
-					}
-					if (result?.ok && result.receipt)
-						history.current = amend(history.current, way, { ...entry, receipt: result.receipt });
-					else history.current = held; // an unavailable top inverse is explained, never skipped
-					await showSourceResult(entry.frame, result, "", true);
-				});
+					});
 				pendingSource.current.set(entry.frame, operation);
-				void operation.finally(() => pendingSource.current.delete(entry.frame));
+				void operation.finally(() => {
+					pendingSource.current.delete(entry.frame);
+					sourceDelivery.releaseInverse(entry.receipt.handle);
+				});
 				return;
 			}
 			if (entry.kind === "patch") {
@@ -1943,6 +1955,9 @@ export function ProjectCanvas({
 			undoTrash,
 			recordEntry,
 			showSourceResult,
+			sourceDelivery.inventory,
+			sourceDelivery.holdInverse,
+			sourceDelivery.releaseInverse,
 		],
 	);
 

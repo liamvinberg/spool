@@ -2306,7 +2306,10 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("inverse"),
-								receipt: z.object({ handle: z.string(), owner: z.string() }).strict(),
+								receipt: z
+									.object({ handle: z.string(), owner: z.string(), field: z.string().optional() })
+									.strict(),
+								inventories: z.array(inventory).optional(),
 							})
 							.strict(),
 						z
@@ -2363,7 +2366,7 @@ export function createDaemonApp({
 							]),
 						);
 					case "inverse":
-						return c.json(await sourceOwner.inverse(project.root, body.receipt));
+						return c.json(await sourceOwner.inverse(project.root, body.receipt, body.inventories));
 					case "cancel":
 						sourceOwner.cancel(project.root, body.handle);
 						return c.json({ ok: true });

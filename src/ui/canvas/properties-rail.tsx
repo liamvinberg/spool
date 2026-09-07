@@ -268,6 +268,7 @@ function Body({
 	const [opened, setOpened] = useState<Scope[]>([]);
 
 	const element = held?.kind === "element" ? held : null;
+	const [sourceSupported, setSourceSupported] = useState<string>();
 	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const filed = read?.className ?? "";
@@ -369,7 +370,13 @@ function Body({
 
 	return (
 		<>
-			<Head held={held} rungs={rungs} acts={acts} onCollapse={onCollapse} />
+			<Head
+				held={held}
+				rungs={rungs}
+				acts={acts}
+				onCollapse={onCollapse}
+				sourceSupported={sourceSupported === identity}
+			/>
 			{element && acts.ownership ? (
 				<SourceOwnership
 					key={identity}
@@ -378,6 +385,7 @@ function Body({
 					name={read?.name ?? rowElement.tag}
 					revision={revision}
 					actions={acts.ownership}
+					onSupport={setSourceSupported}
 				/>
 			) : null}
 			{element === null ? null : (
@@ -507,11 +515,13 @@ function Head({
 	rungs,
 	acts,
 	onCollapse,
+	sourceSupported,
 }: {
 	held: Held | null;
 	rungs: RungRead[] | null;
 	acts: PropertiesActs;
 	onCollapse: () => void;
+	sourceSupported: boolean;
 }) {
 	const element = held?.kind === "element" ? held : null;
 	const rung = rungOf(held);
@@ -545,7 +555,7 @@ function Head({
 				{element === null ? null : <span className={cn("shrink-0", FAINT)}>{element.chain[rung]?.tag ?? ""}</span>}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
-			{read?.refusal === undefined ? null : (
+			{read?.refusal === undefined || (sourceSupported && read.refusal.code === "shared-definition") ? null : (
 				<div className="flex h-5 items-center px-2.5 pb-1">
 					<span className={cn("min-w-0 truncate", FAINT)}>{read.refusal.says}</span>
 				</div>

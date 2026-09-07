@@ -35,6 +35,7 @@ export interface RetainedCompilation {
 	configuration: Map<string, SourceInput>;
 	configurationAbsent: Set<string>;
 	configurationError?: string;
+	globDiscoveries?: readonly { importer: string; files: readonly string[]; directories: readonly string[] }[];
 }
 
 /** esbuild reads configuration outside onLoad/metafile. Preserve that context
@@ -584,11 +585,8 @@ export function retainedPlugin(
 				if (local) {
 					const target = resolve(args.path.startsWith("shared/") ? designDir : args.resolveDir, args.path);
 					captureConfiguration(target, compilation);
-					for (
-						let directory = target;
-						directory.startsWith(`${designDir}${sep}`) || directory === designDir;
-						directory = dirname(directory)
-					) {
+					for (const directory of [target, dirname(target)]) {
+						if (!directory.startsWith(`${designDir}${sep}`) && directory !== designDir) continue;
 						const entries = directoryEntries(directory);
 						const previous = compilation.directories.get(directory);
 						if (previous !== undefined && previous !== entries)
