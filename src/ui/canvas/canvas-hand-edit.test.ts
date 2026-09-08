@@ -75,8 +75,7 @@ it("opens an edit on the second click, and writes what was typed", async () => {
 
 	expect(sourceCalls("commit").at(-1)).toMatchObject({
 		original: ORIGINAL,
-		source: STAMP,
-		text: "Pay later",
+		change: { kind: "literal", text: "Pay later" },
 		handle: "read",
 	});
 
@@ -432,7 +431,7 @@ function stubCanvasApis(): void {
 						ok: true,
 						source: "saved",
 						publication: null,
-						receipt: { owner: "owner", handle: "receipt" },
+						receipt: { owner: "owner", handle: "receipt", operation: { kind: "literal" } },
 					});
 				return Response.json({ ok: true });
 			}
