@@ -4,11 +4,23 @@ import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
+
+async function screenshot(page: Page, path: string) {
+	await page.locator("[data-dock]").evaluate(async (element) => {
+		await Promise.all(
+			element
+				.getAnimations({ subtree: true })
+				.filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
+				.map((animation) => animation.finished.catch(() => {})),
+		);
+	});
+	await page.screenshot({ path });
+}
 
 async function served(source: string, client: BundledHostClient, directory: string, prepare?: (root: string) => void) {
 	const uiDir = join(makeTempDir(), "ui");
@@ -145,7 +157,9 @@ it("hands a real conflict to the existing composer once and sends its original r
 	await f.page.keyboard.press("Enter");
 	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
 	expect(await f.notice.textContent()).toContain("My retained words");
+	expect(await f.notice.textContent()).toContain('Checked current source: "Agent words"');
 	expect(readFileSync(f.file, "utf8")).toContain("Agent words");
+	await screenshot(f.page, "/tmp/spool-spec-132/310-actual-blocked.png");
 	const before = f.calls();
 	await f.select("#other");
 	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
@@ -154,6 +168,7 @@ it("hands a real conflict to the existing composer once and sends its original r
 	expect(await f.composer.inputValue()).toContain("Target: home, #label");
 	await expect.poll(() => f.composer.evaluate((element) => document.activeElement === element)).toBe(true);
 	expect(f.calls()).toBe(before);
+	await screenshot(f.page, "/tmp/spool-spec-132/310-actual-prepared.png");
 	const prepared = await f.composer.inputValue();
 	await f.properties();
 	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
@@ -278,6 +293,7 @@ it("keeps pre-transaction calculated text intent, deduplicates it, and opens a g
 	await expect.poll(() => f.composer.inputValue()).toBe("");
 	expect(f.calls()).toBe("");
 	await f.composer.fill("What can I change here?");
+	await screenshot(f.page, "/tmp/spool-spec-132/310-actual-generic.png");
 	const outgoing = f.page.waitForRequest(
 		(request) => request.url().endsWith("/agent/turn") && request.method() === "POST",
 	);
@@ -318,6 +334,7 @@ it("refuses a retry after the same native host switches to another literal owner
 	await f.notice.getByRole("button", { name: "Retry this edit" }).click();
 	await expect.poll(() => f.notice.textContent()).toContain("owner changed");
 	expect(commits).toEqual([]);
+	expect(await f.notice.textContent()).not.toContain("Checked current source");
 	expect(readFileSync(f.file, "utf8")).toBe(before);
 	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
 	await expect.poll(() => f.composer.inputValue()).toContain("Requested A");
@@ -545,10 +562,170 @@ it("does not invent a new save or verified result when fresh retry source alread
 	expect(await (await response).json()).toEqual({ ok: true, source: "unchanged", publication: null });
 	await expect.poll(() => f.notice.textContent()).toContain("No new edit was saved");
 	expect(await f.notice.getAttribute("data-hand-notice")).toBe("unverified");
+	expect(await f.notice.locator("strong").textContent()).toBe("No new edit saved");
 	expect(readFileSync(f.file, "utf8")).toBe(before);
 	expect(await f.frame.locator("#label").textContent()).toBe("Hello world");
 	expect(await f.frame.locator("#draft").inputValue()).toBe("retained native state");
+	const callsBeforeHandoff = f.calls();
 	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
 	await expect.poll(() => f.composer.inputValue()).toContain("Already requested");
-	expect(f.calls()).not.toBe("");
+	expect(f.calls()).toBe(callsBeforeHandoff);
+});
+
+it("preserves Properties scroll and field state across the approved reduced-motion Agent handoff", {
+	timeout: 180000,
+}, async () => {
+	const f = await withAgent(APP);
+	await f.page.setViewportSize({ width: 1440, height: 560 });
+	await f.page.emulateMedia({ reducedMotion: "reduce" });
+	await f.composer.evaluate((element) => element.focus());
+	expect(await f.composer.evaluate((element) => document.activeElement === element)).toBe(false);
+	expect(await f.composer.evaluate((element) => element.closest("[inert]") !== null)).toBe(true);
+	await expect(f.composer.click({ timeout: 200 })).rejects.toThrow();
+	expect(f.calls()).toBe("");
+	await f.select();
+	const rail = f.page.locator("[data-properties-rail]");
+	const scroll = rail.locator("div.overflow-y-auto").first();
+	await scroll.evaluate((element) => {
+		element.scrollTop = element.scrollHeight;
+	});
+	const top = await scroll.evaluate((element) => element.scrollTop);
+	expect(top).toBeGreaterThan(0);
+	const field = f.page.getByRole("textbox", { name: "Text", exact: true });
+	const value = await field.inputValue();
+	await rail.getByRole("button", { name: "Element actions", exact: true }).click();
+	await f.page.getByRole("option", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.evaluate((element) => document.activeElement === element)).toBe(true);
+	await f.composer.fill("Keep these unsent words");
+	await f.properties();
+	expect(await scroll.evaluate((element) => element.scrollTop)).toBe(top);
+	expect(await field.inputValue()).toBe(value);
+	expect(await f.frame.locator("#label").textContent()).toBe("Hello world");
+	const transitions = await f.page
+		.locator("[data-dock-panel], [data-dock-panel] > div")
+		.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).transitionProperty));
+	expect(transitions.length).toBeGreaterThan(0);
+	expect(transitions.every((property) => property === "none")).toBe(true);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	expect(await f.composer.inputValue()).toBe("Keep these unsent words");
+	expect(f.calls()).toBe("");
+});
+
+it("reloads a saved-but-unapplied retry Undo to the agent's actual previous value and retires its own prompt", {
+	timeout: 180000,
+}, async () => {
+	const source =
+		'import {useMemo} from "react";export default function Frame(){const label=useMemo(()=><h1 id="label">Hello world</h1>,[]);return <main style={{padding:40}}>{label}<p id="other">Other target</p><input id="draft" defaultValue="initial" /></main>}';
+	const f = await withAgent(source);
+	await f.edit();
+	await f.page.keyboard.press("ControlOrMeta+a");
+	await f.page.keyboard.insertText("My retry words");
+	await f.agentEdit("Hello world", "Agent previous words");
+	await f.page.keyboard.press("Enter");
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
+	await f.notice.getByRole("button", { name: "Retry this edit" }).click();
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
+	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("My retry words");
+	await expect.poll(() => f.notice.count()).toBe(0);
+	await f.frame.locator("#draft").fill("Before explicit undo reload");
+	await f.page.mouse.click(5, 5);
+	await f.delivered(() => f.page.keyboard.press("ControlOrMeta+z"));
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
+	expect(readFileSync(f.file, "utf8")).toContain("Agent previous words");
+	expect(await f.frame.locator("#label").textContent()).toBe("My retry words");
+	expect(await f.frame.locator("#draft").inputValue()).toBe("Before explicit undo reload");
+	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.inputValue()).toContain('undo change text to "Agent previous words"');
+	expect(await f.composer.inputValue()).not.toContain('to "My retry words"');
+	const beforeReload = readFileSync(f.file, "utf8");
+	const calls = f.calls();
+	await f.properties();
+	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Agent previous words");
+	await expect.poll(() => f.notice.count()).toBe(0);
+	expect(readFileSync(f.file, "utf8")).toBe(beforeReload);
+	expect(await f.frame.locator("#draft").inputValue()).toBe("initial");
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	await expect.poll(() => f.composer.inputValue()).toBe("");
+	expect(f.calls()).toBe(calls);
+});
+
+it("retires only the appended recovery segment when identical text already belongs to the person's draft", {
+	timeout: 180000,
+}, async () => {
+	const f = await withAgent(APP);
+	await f.edit();
+	await f.page.keyboard.press("ControlOrMeta+a");
+	await f.page.keyboard.insertText("My duplicate-context request");
+	await f.agentEdit("Hello world", "Agent words");
+	await f.page.keyboard.press("Enter");
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
+	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.inputValue()).toContain("My duplicate-context request");
+	const generated = await f.composer.inputValue();
+	await f.properties();
+	await f.select("#other");
+	await f.page.getByRole("button", { name: "Element actions", exact: true }).click();
+	await f.page.getByRole("option", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.inputValue()).toBe("");
+	const ownDraft = `My copied paragraph\n\n${generated}\n\nKeep this ending`;
+	await f.composer.fill(ownDraft);
+	await f.properties();
+	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.inputValue()).toBe(`${ownDraft}\n\n${generated}`);
+	await f.properties();
+	await f.notice.getByRole("button", { name: "Retry this edit" }).click();
+	await expect.poll(() => f.notice.count()).toBe(0);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	await expect.poll(() => f.composer.inputValue()).toBe(ownDraft);
+	expect(await f.frame.locator("#label").textContent()).toBe("My duplicate-context request");
+});
+
+it("distinguishes an inverse's absent title from another editor's empty title on explicit reload", {
+	timeout: 180000,
+}, async () => {
+	const source =
+		'import {useMemo} from "react";export default function Frame(){const label=useMemo(()=><h1 id="label">Hello world</h1>,[]);return <main style={{padding:40}}>{label}<p id="other">Other target</p></main>}';
+	const f = await withAgent(source);
+	await f.select();
+	const field = f.page.getByRole("textbox", { name: "title", exact: true });
+	await field.fill("Authored title");
+	await f.delivered(() => field.press("Enter"));
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
+	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe("Authored title");
+	await expect.poll(() => f.notice.count()).toBe(0);
+	await f.page.mouse.click(5, 5);
+	await f.delivered(() => f.page.keyboard.press("ControlOrMeta+z"));
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
+	expect(readFileSync(f.file, "utf8")).toBe(source);
+	await f.agentEdit('<h1 id="label">', '<h1 id="label" title="">');
+	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.inputValue()).toContain("Requested result: title is absent");
+	await f.properties();
+	await f.page.evaluate(() => {
+		Reflect.set(window, "reloadVerified", false);
+		window.addEventListener("message", (event) => {
+			if (event.data?.spool === "source-reply" && event.data.result?.rendered)
+				Reflect.set(window, "reloadVerified", true);
+		});
+	});
+	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe("");
+	// Wait for the actual read-only reload description, then the notice must remain:
+	// an empty present attribute has not achieved the inverse's absent expectation.
+	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "reloadVerified"))).toBe(true);
+	await f.page.evaluate(
+		() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+	);
+	expect(await f.notice.count()).toBe(1);
+	expect(readFileSync(f.file, "utf8")).toContain('title=""');
+	await f.agentEdit('<h1 id="label" title="">', '<h1 id="label">');
+	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe(null);
+	await expect.poll(() => f.notice.count()).toBe(0);
+	expect(readFileSync(f.file, "utf8")).toBe(source);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	await expect.poll(() => f.composer.inputValue()).toBe("");
 });

@@ -162,7 +162,42 @@ export interface Threads {
 interface Holding {
 	readonly draft: string;
 	readonly attached: Attachment | null;
-	readonly prepared?: Readonly<Record<string, NonNullable<AgentRequest["prepared"]>>>;
+	readonly prepared?: Readonly<
+		Record<
+			string,
+			NonNullable<AgentRequest["prepared"]> & {
+				readonly inserted: string;
+				readonly span?: { readonly start: number; readonly end: number };
+			}
+		>
+	>;
+}
+
+/** Only untouched inserted spans may be retired; equal user words are not ownership. */
+function changedDraft(was: Holding, draft: string): Holding {
+	if (draft === was.draft) return was;
+	if (!draft.trim()) return { ...was, draft, prepared: {} };
+	let start = 0;
+	while (start < was.draft.length && start < draft.length && was.draft[start] === draft[start]) start++;
+	let end = was.draft.length;
+	let nextEnd = draft.length;
+	while (end > start && nextEnd > start && was.draft[end - 1] === draft[nextEnd - 1]) {
+		end--;
+		nextEnd--;
+	}
+	const delta = nextEnd - end;
+	const prepared: Record<string, NonNullable<Holding["prepared"]>[string]> = {};
+	for (const [id, entry] of Object.entries(was.prepared ?? {})) {
+		const { span, ...kept } = entry;
+		prepared[id] = !span
+			? entry
+			: end <= span.start
+				? { ...kept, span: { start: span.start + delta, end: span.end + delta } }
+				: start >= span.end
+					? entry
+					: kept;
+	}
+	return { ...was, draft, prepared };
 }
 
 const PermissionAction = createContext<(() => void) | undefined>(undefined);
@@ -286,7 +321,7 @@ export function AgentRail({
 	const write = (patch: (was: Holding) => Holding) => setHeld((all) => ({ ...all, [open]: patch(all[open] ?? seed) }));
 	/** the field's words, into the composer and into the thread that outlives it */
 	const writeDraft = (text: string) => {
-		write((was) => ({ ...was, draft: text, ...(text.trim() ? {} : { prepared: {} }) }));
+		write((was) => changedDraft(was, text));
 		onDraft(text);
 	};
 	/** the handovers already merged per thread, since the same words can come back twice */
@@ -302,7 +337,7 @@ export function AgentRail({
 		);
 		setHeld((all) => ({
 			...all,
-			[open]: { ...was, draft: landed, attached: handedBackReference(handback.messages, was.attached) },
+			[open]: { ...changedDraft(was, landed), attached: handedBackReference(handback.messages, was.attached) },
 		}));
 		// the words landed in the box rather than being typed into it, and the box is written
 		// down either way: a stop hands a whole queue back, which is the most there has ever
@@ -320,22 +355,38 @@ export function AgentRail({
 		const targets = request.retire ? Object.entries(held) : [[open, held[open] ?? seed] as const];
 		const updates: Record<string, Holding> = {};
 		for (const [thread, was] of targets) {
-			if (request.retire && !was.prepared?.[request.retire]) continue;
-			const prepared = { ...was.prepared };
-			let text = was.draft;
+			if (request.retire && !request.retire.some((id) => was.prepared?.[id])) continue;
+			let next = was;
 			if (!request.prepared) {
-				for (const [id, entry] of Object.entries(prepared)) {
-					if (request.retire && request.retire !== id) continue;
-					text = text.includes(`\n\n${entry.text}`)
-						? text.replace(`\n\n${entry.text}`, "")
-						: text.replace(entry.text, "");
+				const removing = Object.entries(was.prepared ?? {})
+					.filter(([id]) => !request.retire || request.retire.includes(id))
+					.sort(([, a], [, b]) => (b.span?.start ?? -1) - (a.span?.start ?? -1));
+				for (const [id] of removing) {
+					const entry = next.prepared?.[id];
+					if (!entry) continue;
+					const prepared = { ...next.prepared };
 					delete prepared[id];
+					next = { ...next, prepared };
+					if (entry.span && next.draft.slice(entry.span.start, entry.span.end) === entry.inserted)
+						next = changedDraft(next, next.draft.slice(0, entry.span.start) + next.draft.slice(entry.span.end));
 				}
-			} else if (!prepared[request.prepared.intent]) {
-				prepared[request.prepared.intent] = request.prepared;
-				text = [text, request.prepared.text].filter(Boolean).join("\n\n");
+			} else if (!was.prepared?.[request.prepared.intent]) {
+				const inserted = `${was.draft ? "\n\n" : ""}${request.prepared.text}`;
+				next = {
+					...was,
+					draft: was.draft + inserted,
+					prepared: {
+						...was.prepared,
+						[request.prepared.intent]: {
+							...request.prepared,
+							inserted,
+							span: { start: was.draft.length, end: was.draft.length + inserted.length },
+						},
+					},
+				};
 			}
-			updates[thread] = { ...was, draft: text, prepared };
+			updates[thread] = next;
+			const text = next.draft;
 			onDraft(text, thread);
 		}
 		setHeld((all) => ({ ...all, ...updates }));

@@ -1,5 +1,10 @@
-import type { SourceDescription, SourceOccurrence, SourceOperation } from "../../source-edit";
-import type { SourcePropertyValue } from "../../source-property";
+import type {
+	SourceChange,
+	SourceDescription,
+	SourceOccurrence,
+	SourceOperation,
+	SourcePublication,
+} from "../../source-edit";
 import type { SelectionEntry } from "../api";
 import type { PickedSelection } from "./overlays";
 import { parseStampRef } from "./protocol";
@@ -11,9 +16,9 @@ export interface SourceIntent {
 	selector: string;
 	selection: readonly SelectionEntry[];
 	operation: SourceOperation;
-	requested?: SourcePropertyValue;
+	change?: SourceChange;
+	expected?: SourcePublication["expected"];
 	action: string;
-	value?: string;
 	field?: string;
 	original?: SourceOccurrence;
 	source?: string;
@@ -65,12 +70,36 @@ export function attributedIntent(intent: SourceIntent, read: SourceDescription):
 	};
 }
 
+export function inverseIntent(intent: SourceIntent, way: "undo" | "redo"): SourceIntent {
+	const { change: _forward, expected: _expected, ...original } = intent;
+	return {
+		...original,
+		id: crypto.randomUUID(),
+		resolves: intent.id,
+		inverse: way,
+		action: `${way} ${intent.action}`,
+	};
+}
+
+export function intentText(intent: SourceIntent): string | undefined {
+	return intent.change?.kind === "literal" ? intent.change.text : undefined;
+}
+
 export function preparedHelp(intent: SourceIntent, reason: string, saved: boolean): string {
 	return [
-		`I tried to ${intent.action}${intent.value === undefined ? "" : ` to ${JSON.stringify(intent.value)}`}. ${reason}`,
+		`I tried to ${intent.action}${intent.change?.kind === "literal" && !(intent.expected?.kind === "literal" && intent.expected.absent) ? ` to ${JSON.stringify(intent.change.text)}` : ""}. ${reason}`,
+		...(intent.operation.kind === "property"
+			? [`Property: ${intent.operation.property}. Property scope: ${intent.operation.scope}.`]
+			: []),
+		...(intent.change?.kind === "property" ? [`Requested value: ${JSON.stringify(intent.change.value)}.`] : []),
 		saved
 			? "Inspect the saved source and the affected app to diagnose why the result is missing. Ask before a reload that would reset application state. Do not repeat an acknowledged source write."
 			: "Inspect the current source and reconcile my requested change with it, preserving unrelated edits. Confirm the original target before applying the change; do not replay an uncertain save.",
+		...(intent.expected?.kind === "literal" && intent.field
+			? [
+					`Requested result: ${intent.field} ${intent.expected.absent ? "is absent" : `is present with value ${JSON.stringify(intent.expected.value)}`}.`,
+				]
+			: []),
 		`Target: ${intent.frame}, ${intent.selector}.`,
 		`Source: ${intent.source ?? intent.selection.find((entry) => entry.kind === "element")?.path ?? "not attributed"}.`,
 		`Role: ${intent.role ?? "not established"}. Scope: ${intent.scope ?? "not established"}.`,
@@ -83,7 +112,7 @@ export function preparedHelp(intent: SourceIntent, reason: string, saved: boolea
 }
 
 export type AgentRequest =
-	| { id: string; retire: string; thread?: never; prepared?: never }
+	| { id: string; retire: readonly string[]; thread?: never; prepared?: never }
 	| {
 			id: string;
 			thread: string;

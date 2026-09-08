@@ -179,7 +179,15 @@ import {
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { useSourceDelivery } from "./source-delivery";
-import { type AgentRequest, attributedIntent, preparedHelp, type SourceIntent, sourceIntent } from "./source-intent";
+import {
+	type AgentRequest,
+	attributedIntent,
+	intentText,
+	inverseIntent,
+	preparedHelp,
+	type SourceIntent,
+	sourceIntent,
+} from "./source-intent";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
@@ -1789,7 +1797,11 @@ export function ProjectCanvas({
 					? {
 							prepared: {
 								intent: intent.id,
-								text: preparedHelp(intent, failure.says, !["blocked", "unknown"].includes(failure.status)),
+								text: preparedHelp(
+									intent,
+									failure.says,
+									!failure.sourceUnchanged && !["blocked", "unknown"].includes(failure.status),
+								),
 								selection: intent.selection,
 							},
 						}
@@ -1800,7 +1812,7 @@ export function ProjectCanvas({
 	);
 	const resolveIntent = useCallback((intent?: SourceIntent) => {
 		if (!intent) return;
-		setAgentRequest({ id: crypto.randomUUID(), retire: intent.resolves ?? intent.id });
+		setAgentRequest({ id: crypto.randomUUID(), retire: [intent.id, ...(intent.resolves ? [intent.resolves] : [])] });
 	}, []);
 	const presentSourceOutcome = useCallback(
 		(frame: string, outcome: UseOutcome | undefined, text: string, intent?: SourceIntent) => {
@@ -1843,7 +1855,23 @@ export function ProjectCanvas({
 	);
 
 	const showSourceResult = useCallback(
-		async (frame: string, result: SourceResult | undefined, text = "", undo = false, intent?: SourceIntent) => {
+		async (
+			frame: string,
+			result: SourceResult | undefined,
+			text = "",
+			undo = false,
+			retainedIntent?: SourceIntent,
+		) => {
+			const intent: SourceIntent | undefined =
+				retainedIntent && result?.ok && result.publication
+					? {
+							...retainedIntent,
+							expected: result.publication.expected,
+							...(undo && result.publication.expected.kind === "literal"
+								? { change: { kind: "literal" as const, text: result.publication.expected.value } }
+								: {}),
+						}
+					: retainedIntent;
 			observingSource.current = undefined;
 			if (!result) {
 				unappliedSource.current.add(frame);
@@ -1865,19 +1893,23 @@ export function ProjectCanvas({
 					frame,
 					status: "blocked",
 					text,
-					says: result.reason,
+					says:
+						result.current?.kind === "literal"
+							? `${result.reason}. Checked current source: ${JSON.stringify(result.current.text)}.`
+							: result.reason,
 				});
 				return;
 			}
 			if (result.source === "unchanged") {
-				const checked = intent
-					? await sourceDelivery.verifyReload(frame, intent.selector, intent.field)
-					: undefined;
+				const checked =
+					intent?.operation.kind === "literal"
+						? await sourceDelivery.verifyReload(frame, intent.selector, intent.field)
+						: undefined;
 				if (
 					intent &&
 					(!checked ||
 						checked.description.cell !== intent.cell ||
-						checked.description.value !== intent.value ||
+						checked.description.value !== intentText(intent) ||
 						checked.outcome.rendered !== "verified")
 				) {
 					unappliedSource.current.add(frame);
@@ -1885,6 +1917,7 @@ export function ProjectCanvas({
 						kind: "source",
 						frame,
 						status: "unverified",
+						sourceUnchanged: true,
 						text,
 						intent,
 						says: "Current source already has this value. No new edit was saved; the running result is not verified.",
@@ -1977,15 +2010,7 @@ export function ProjectCanvas({
 			// comes back is the inverse this entry carries from here on. A refusal
 			// means the file moved since — the entry is not a future anybody has
 			if (entry.kind === "source") {
-				const intent: SourceIntent | undefined = entry.intent
-					? {
-							...entry.intent,
-							id: crypto.randomUUID(),
-							resolves: entry.intent.id,
-							inverse: way,
-							action: `${way} ${entry.intent.action}`,
-						}
-					: undefined;
+				const intent = entry.intent ? inverseIntent(entry.intent, way) : undefined;
 				setSaid({
 					kind: "source",
 					...(intent ? { intent } : {}),
@@ -2405,9 +2430,16 @@ export function ProjectCanvas({
 
 	/** Why the gesture just tried does not apply, on the element it was about. */
 	const showRefusal = useCallback((frame: string, selector: string, refusal: Refusal, intent?: SourceIntent) => {
-		setRefused({ frame, selector, refusal });
+		setRefused(intent ? null : { frame, selector, refusal });
 		if (intent)
-			setSaid({ kind: "source", frame, status: "blocked", text: intent.value ?? "", says: refusal.says, intent });
+			setSaid({
+				kind: "source",
+				frame,
+				status: "blocked",
+				text: intentText(intent) ?? "",
+				says: refusal.says,
+				intent,
+			});
 	}, []);
 
 	/**
@@ -2786,7 +2818,9 @@ export function ProjectCanvas({
 				void sourceDelivery.cancel(held.frame, held.id);
 				return;
 			}
-			const intent = held.intent ? { ...held.intent, value: text } : undefined;
+			const intent: SourceIntent | undefined = held.intent
+				? { ...held.intent, change: { kind: "literal", text } }
+				: undefined;
 			setSaid({
 				kind: "source",
 				frame: held.frame,
@@ -2856,7 +2890,7 @@ export function ProjectCanvas({
 				return;
 			}
 			const before = railIntents.current.get(read);
-			const intent = before ? { ...before, value: text } : undefined;
+			const intent: SourceIntent | undefined = before ? { ...before, change: { kind: "literal", text } } : undefined;
 			const operation = sourceDelivery.complete(frame, read.generation).then(async (original) => {
 				if (!original || !sameSourceOccurrence(original, read.original)) {
 					void cancelSource(project, read.handle);
@@ -2889,12 +2923,14 @@ export function ProjectCanvas({
 			const intent = reloadedIntent.current;
 			if (!intent || intent.frame !== frame) return;
 			reloadedIntent.current = undefined;
+			if (intent.operation.kind !== "literal" || intent.expected?.kind !== "literal") return;
 			const checked = await sourceDelivery.verifyReload(frame, intent.selector, intent.field);
 			if (
 				checked &&
 				checked.description.cell === intent.cell &&
 				checked.description.source === intent.source &&
-				checked.description.value === intent.value &&
+				checked.description.value === intent.expected.value &&
+				(checked.description.original.absent ?? false) === intent.expected.absent &&
 				checked.outcome.rendered === "verified"
 			) {
 				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
@@ -2942,16 +2978,17 @@ export function ProjectCanvas({
 				pendingSource.current.size ||
 				editingRef.current ||
 				intent.operation.kind !== "literal" ||
-				intent.value === undefined ||
+				intent.change?.kind !== "literal" ||
 				!intent.original ||
 				intent.inverse
 			)
 				return;
+			const change = intent.change;
 			const generation = ++pickSeq.current;
 			setSaid({
 				kind: "source",
 				frame: intent.frame,
-				text: intent.value,
+				text: change.text,
 				status: "saving",
 				says: "Checking the original target…",
 				intent,
@@ -2967,7 +3004,7 @@ export function ProjectCanvas({
 							reason:
 								"The original target is no longer available. Locate it in current source before trying again.",
 						},
-						intent.value,
+						change.text,
 						false,
 						intent,
 					);
@@ -2987,7 +3024,7 @@ export function ProjectCanvas({
 					await showSourceResult(
 						intent.frame,
 						{ ok: false, reason: asked?.reason ?? "The fresh source read did not arrive. Nothing was retried." },
-						intent.value,
+						change.text,
 						false,
 						intent,
 					);
@@ -3008,17 +3045,17 @@ export function ProjectCanvas({
 							ok: false,
 							reason: "The original source owner changed. Confirm it in current source before retrying.",
 						},
-						intent.value,
+						change.text,
 						false,
 						intent,
 					);
 					return;
 				}
-				const result = await commitSource(project, read, { kind: "literal", text: intent.value ?? "" });
+				const result = await commitSource(project, read, change);
 				if (result?.ok && result.receipt)
 					recordEntry({ kind: "source", frame: intent.frame, receipt: result.receipt, intent });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(intent.frame, generation);
-				await showSourceResult(intent.frame, result, intent.value, false, intent);
+				await showSourceResult(intent.frame, result, change.text, false, intent);
 			})();
 			pendingSource.current.set(intent.frame, operation);
 			try {
@@ -5507,7 +5544,7 @@ export function ProjectCanvas({
 									onRetry={
 										said.intent?.operation.kind === "literal" &&
 										said.intent.original &&
-										said.intent.value !== undefined &&
+										intentText(said.intent) !== undefined &&
 										!said.intent.inverse
 											? () => {
 													if (said.intent) void retrySource(said.intent);
@@ -5556,7 +5593,12 @@ export function ProjectCanvas({
 										current.intent?.frame === frame &&
 										current.intent.selector === selector &&
 										current.intent.field === field
-											? { ...current, dismissed: false, text, intent: { ...current.intent, value: text } }
+											? {
+													...current,
+													dismissed: false,
+													text,
+													intent: { ...current.intent, change: { kind: "literal", text } },
+												}
 											: current,
 									),
 							},

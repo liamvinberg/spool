@@ -1,4 +1,5 @@
 import type { RenderOutcome } from "../../source-edit";
+import { CloseIcon } from "../icons";
 import { NOTICE_PILL } from "./collision-notice";
 import type { SourceIntent } from "./source-intent";
 
@@ -22,6 +23,7 @@ export type HandSaid =
 			kind: "source";
 			intent?: SourceIntent;
 			dismissed?: boolean;
+			sourceUnchanged?: boolean;
 			frame: string;
 			status: RenderOutcome | "saving" | "unknown" | "blocked";
 			text: string;
@@ -49,8 +51,9 @@ export function HandNotice({
 }) {
 	if (said.kind === "source") {
 		if (said.dismissed) return null;
-		const title =
-			said.status === "saving"
+		const title = said.sourceUnchanged
+			? "No new edit saved"
+			: said.status === "saving"
 				? "Saving…"
 				: said.status === "unknown"
 					? "Save outcome unknown"
@@ -76,9 +79,9 @@ export function HandNotice({
 							type="button"
 							aria-label="Dismiss notice"
 							onClick={onDismiss}
-							className="-mt-[3px] -mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted transition-colors duration-[140ms] hover:bg-surface hover:text-text motion-reduce:transition-none"
+							className="-mt-[3px] -mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted transition-colors duration-[140ms] hover:bg-surface hover:text-text motion-reduce:transition-none [&>svg]:size-3"
 						>
-							×
+							<CloseIcon />
 						</button>
 					) : null}
 				</div>
