@@ -57,15 +57,15 @@ async function served(source: string, client: BundledHostClient, directory: stri
 			.toBe(selector);
 		return box;
 	};
-	const edit = async () => {
-		const box = await select();
+	const edit = async (selector = "#label") => {
+		const box = await select(selector);
 		const reading = page.waitForResponse(
 			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "read",
 		);
 		await page.mouse.click(box.x + 40, box.y + box.height / 2);
 		const result = await (await reading).json();
 		expect(result.ok, result.reason).toBe(true);
-		await expect.poll(() => frame.locator("#label").getAttribute("contenteditable")).toBe("plaintext-only");
+		await expect.poll(() => frame.locator(selector).getAttribute("contenteditable")).toBe("plaintext-only");
 	};
 	const delivered = async (action: () => Promise<unknown>) => {
 		const reply = page.waitForResponse(
@@ -474,4 +474,81 @@ it("sends retained mismatch context through the real transport and reloads only 
 	expect(commits).toHaveLength(1);
 	expect(readFileSync(f.file, "utf8")).toBe(bytes);
 	await expect.poll(() => f.notice.count()).toBe(0);
+});
+
+it.each([false, true])(
+	"retires the resolved older attempt while preserving another request and draft (other thread: %s)",
+	{ timeout: 180000 },
+	async (otherThread) => {
+		const source =
+			'import {useMemo} from "react";export default function Frame(){return <main style={{padding:40}}>{useMemo(()=><h1 id="label">Hello world</h1>,[])}<p id="other">Other target</p><input id="draft" defaultValue="initial" /></main>}';
+		const f = await withAgent(source);
+		await f.page.locator('[data-dock-glyph="agent"]').click();
+		await f.composer.fill("Keep my own draft");
+		await f.properties();
+		await f.edit();
+		await f.page.keyboard.press("ControlOrMeta+a");
+		await f.page.keyboard.insertText("Attempt A memo");
+		await f.delivered(() => f.page.keyboard.press("Enter"));
+		await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
+		await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+		await expect.poll(() => f.composer.inputValue()).toContain("Attempt A memo");
+		if (otherThread) {
+			await f.page.locator('[data-agent-rail] button[aria-label="New chat"]').click();
+			await f.composer.fill("Second thread draft");
+		}
+		await f.properties();
+		await f.edit("#other");
+		await f.page.keyboard.press("ControlOrMeta+a");
+		await f.page.keyboard.insertText("Attempt B conflict");
+		await f.agentEdit("Other target", "Agent body");
+		await f.page.keyboard.press("Enter");
+		await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
+		const callsBeforeHandoff = f.calls();
+		await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+		await expect.poll(() => f.composer.inputValue()).toContain("Attempt B conflict");
+		await f.properties();
+		await f.page.mouse.click(5, 5);
+		await f.delivered(() => f.page.keyboard.press("ControlOrMeta+z"));
+		await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source.replace("Other target", "Agent body"));
+		await f.page.locator('[data-dock-glyph="agent"]').click();
+		await expect.poll(() => f.composer.inputValue()).toContain("Attempt B conflict");
+		await expect.poll(() => f.composer.inputValue()).not.toContain("Attempt A memo");
+		if (otherThread) {
+			expect(await f.composer.inputValue()).toContain("Second thread draft");
+			await f.page.locator("[data-agent-plate-ask]").click();
+			await f.page.locator('[data-agent-thread]:not([aria-current="true"])').click();
+			await expect.poll(() => f.composer.inputValue()).toBe("Keep my own draft");
+		} else {
+			expect(await f.composer.inputValue()).toContain("Keep my own draft");
+		}
+		expect(f.calls()).toBe(callsBeforeHandoff);
+	},
+);
+
+it("does not invent a new save or verified result when fresh retry source already contains the request", {
+	timeout: 180000,
+}, async () => {
+	const f = await withAgent(APP);
+	await f.frame.locator("#draft").fill("retained native state");
+	await f.edit();
+	await f.page.keyboard.press("ControlOrMeta+a");
+	await f.page.keyboard.insertText("Already requested");
+	await f.agentEdit("Hello world", "Already requested");
+	await f.page.keyboard.press("Enter");
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
+	const before = readFileSync(f.file, "utf8");
+	const response = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await f.notice.getByRole("button", { name: "Retry this edit" }).click();
+	expect(await (await response).json()).toEqual({ ok: true, source: "unchanged", publication: null });
+	await expect.poll(() => f.notice.textContent()).toContain("No new edit was saved");
+	expect(await f.notice.getAttribute("data-hand-notice")).toBe("unverified");
+	expect(readFileSync(f.file, "utf8")).toBe(before);
+	expect(await f.frame.locator("#label").textContent()).toBe("Hello world");
+	expect(await f.frame.locator("#draft").inputValue()).toBe("retained native state");
+	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.inputValue()).toContain("Already requested");
+	expect(f.calls()).not.toBe("");
 });

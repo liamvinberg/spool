@@ -1800,11 +1800,7 @@ export function ProjectCanvas({
 	);
 	const resolveIntent = useCallback((intent?: SourceIntent) => {
 		if (!intent) return;
-		setAgentRequest((request) =>
-			request?.prepared?.intent === (intent.resolves ?? intent.id)
-				? { id: crypto.randomUUID(), thread: request.thread, retire: intent.resolves ?? intent.id }
-				: request,
-		);
+		setAgentRequest({ id: crypto.randomUUID(), retire: intent.resolves ?? intent.id });
 	}, []);
 	const presentSourceOutcome = useCallback(
 		(frame: string, outcome: UseOutcome | undefined, text: string, intent?: SourceIntent) => {
@@ -5568,8 +5564,9 @@ export function ProjectCanvas({
 						}}
 					/>
 				)}
-				agent={(width, shut) => (
+				agent={(width, shut, active) => (
 					<AgentRail
+						active={active}
 						request={agentRequest}
 						permissions={permissions}
 						width={width}

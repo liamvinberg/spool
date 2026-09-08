@@ -82,10 +82,12 @@ export function preparedHelp(intent: SourceIntent, reason: string, saved: boolea
 	].join("\n\n");
 }
 
-export interface AgentRequest {
-	id: string;
-	thread: string;
-	retire?: string;
-	/** A generic request deliberately clears the old recovery target without adding words. */
-	prepared?: { intent: string; text: string; selection: readonly SelectionEntry[] };
-}
+export type AgentRequest =
+	| { id: string; retire: string; thread?: never; prepared?: never }
+	| {
+			id: string;
+			thread: string;
+			retire?: never;
+			/** A generic request clears the old recovery target without adding words. */
+			prepared?: { intent: string; text: string; selection: readonly SelectionEntry[] };
+	  };

@@ -168,6 +168,7 @@ interface Holding {
 const PermissionAction = createContext<(() => void) | undefined>(undefined);
 
 export function AgentRail({
+	active = true,
 	width,
 	onCollapse,
 	permissions,
@@ -224,10 +225,11 @@ export function AgentRail({
 	/** whatever left the queue un-fired, for the box below to take back (#170) */
 	handback: AgentHandback;
 	request?: AgentRequest | undefined;
+	active?: boolean;
 	/** what this thread was left holding and nobody sent, off its own picture (#234) */
 	draft: string;
 	/** the box saying what it holds now, which is how a draft outlives the tab (#234) */
-	onDraft: (text: string) => void;
+	onDraft: (text: string, thread?: string) => void;
 	/**
 	 * Whether a turn is in flight right now, asked rather than rendered (#234).
 	 *
@@ -310,25 +312,33 @@ export function AgentRail({
 	const requested = useRef<string | undefined>(undefined);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: one explicit handoff, not a replay when the draft changes
 	useEffect(() => {
-		if (!request || request.thread !== open || requested.current === request.id) return;
+		if (!request || requested.current === request.id) return;
+		if (!request.retire && request.thread !== open) return;
 		requested.current = request.id;
-		const was = held[open] ?? seed;
-		const prepared = { ...was.prepared };
-		let text = was.draft;
-		if (!request.prepared) {
-			for (const [id, entry] of Object.entries(prepared)) {
-				if (request.retire && request.retire !== id) continue;
-				text = text.includes(`\n\n${entry.text}`)
-					? text.replace(`\n\n${entry.text}`, "")
-					: text.replace(entry.text, "");
-				delete prepared[id];
+		// A resolution belongs to its prepared attempt wherever the person left it,
+		// including a different thread or an older request in the same draft.
+		const targets = request.retire ? Object.entries(held) : [[open, held[open] ?? seed] as const];
+		const updates: Record<string, Holding> = {};
+		for (const [thread, was] of targets) {
+			if (request.retire && !was.prepared?.[request.retire]) continue;
+			const prepared = { ...was.prepared };
+			let text = was.draft;
+			if (!request.prepared) {
+				for (const [id, entry] of Object.entries(prepared)) {
+					if (request.retire && request.retire !== id) continue;
+					text = text.includes(`\n\n${entry.text}`)
+						? text.replace(`\n\n${entry.text}`, "")
+						: text.replace(entry.text, "");
+					delete prepared[id];
+				}
+			} else if (!prepared[request.prepared.intent]) {
+				prepared[request.prepared.intent] = request.prepared;
+				text = [text, request.prepared.text].filter(Boolean).join("\n\n");
 			}
-		} else if (!prepared[request.prepared.intent]) {
-			prepared[request.prepared.intent] = request.prepared;
-			text = [text, request.prepared.text].filter(Boolean).join("\n\n");
+			updates[thread] = { ...was, draft: text, prepared };
+			onDraft(text, thread);
 		}
-		setHeld((all) => ({ ...all, [open]: { ...was, draft: text, prepared } }));
-		onDraft(text);
+		setHeld((all) => ({ ...all, ...updates }));
 	}, [request, open]);
 	/**
 	 * The question the composer would answer, read off the log rather than handed in.
@@ -447,7 +457,7 @@ export function AgentRail({
 								waited={waited}
 								finished={threads.finished}
 								answering={asking?.kind === "ask" ? asking.request : null}
-								request={request?.thread === open && !request.retire ? request.id : undefined}
+								request={active && request?.thread === open && !request.retire ? request.id : undefined}
 								strip={stripOf(
 									Object.values(holding.prepared ?? {}).length
 										? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)
