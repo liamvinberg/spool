@@ -1,4 +1,5 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
+import { type NativeBorderSide, nativeBorderColors } from "./property-border-colors";
 import { nativeColor } from "./property-colors";
 import { nativeFilter } from "./property-filters";
 import { nativeFont } from "./property-fonts";
@@ -121,6 +122,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			observed: outcomes.map((outcome) => outcome.observed ?? "").join(" "),
 		};
 	}
+	if (borderColorRow.test(expected.property)) return borderColorOutcome(element, expected);
 	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
 	if (shadowProperties.includes(expected.property)) return composedOutcome(element, expected, "box-shadow");
 	if (expected.property === "font-variant-numeric") return composedOutcome(element, expected, expected.property);
@@ -680,6 +682,9 @@ function selectedPseudo(paths: readonly (readonly string[])[]): string | undefin
 	return carried.size === 1 ? [...carried][0] : undefined;
 }
 
+const borderPaint =
+	/^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?(?:width|style)$/;
+
 const borderGroups = [
 	"",
 	"top",
@@ -794,6 +799,84 @@ function borderOutcome(element: Element, expected: SourcePropertyExpectation): P
 		}
 	}
 	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
+}
+
+const borderColorRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?color$/;
+
+/** Nine source roles over four native sides. Only the side is mapped; the comparator owns paint. */
+function borderColorOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this border color has no native document context");
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const style = view.getComputedStyle(element);
+	const physical = physicalSides(style);
+	if (!physical) return unverified("this border color needs a known native writing mode context");
+	const logical = new Map([...physical].map(([role, side]) => [side, role]));
+	const group = expected.property.slice(7, -6);
+	const sides =
+		group === ""
+			? ["top", "right", "bottom", "left"]
+			: group === "inline" || group === "block"
+				? [physical.get(`${group}-start`), physical.get(`${group}-end`)]
+				: physical.has(group)
+					? [physical.get(group)]
+					: [group];
+	if (sides.some((side) => side === undefined)) return unverified("this border color has no known native side");
+	const selected: { side: NativeBorderSide; color: string }[] = [];
+	for (const side of sides as NativeBorderSide[]) {
+		const role = logical.get(side);
+		const property = `border-${side}-color`;
+		const applicable = borderDefaults(sheet, property);
+		for (const effect of expected.effects) {
+			if (effect.owner !== null && !classes.has(effect.owner)) continue;
+			// Width and style decide whether a side paints at all, which the comparator reads natively.
+			if (effect.property === "--tw-border-style" || borderPaint.test(effect.property)) continue;
+			const parts = /^border-(.*?)-?color$/.exec(effect.property);
+			const declared = parts?.[1] ?? "";
+			if (!parts || !borderGroups.includes(declared))
+				return unverified("this border color has dependent effects requiring native proof");
+			const target =
+				declared === "" || declared === side
+					? property
+					: declared === role ||
+							((declared === "inline" || declared === "block") && role?.startsWith(`${declared}-`))
+						? `border-${role}-color`
+						: undefined;
+			if (target === undefined) continue;
+			const condition = pathCondition(element, effect.path, effect.owner !== null);
+			if (condition === "inactive") continue;
+			if (condition === "unverified")
+				return unverified("this border color needs a native conditional context proof");
+			const value = resolvedValue(element, sheet, effect.value);
+			if (value === undefined) return unverified("this border color needs a variable context proof");
+			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+			const rule = sheet.cssRules[index];
+			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+			rule.style.setProperty(effect.property, value);
+			const expanded = rule.style.getPropertyValue(target);
+			if (!expanded) return unverified("this border color has no native shorthand component proof");
+			applicable.push({ ...effect, property, value: expanded });
+		}
+		const selection = winningEffect(sheet, applicable);
+		if (selection.reason) return unverified(selection.reason);
+		if (!selection.winner) return unverified("this border color needs an initial declaration proof");
+		let color = selection.winner.value.trim();
+		if (color.toLowerCase() === "inherit") {
+			const parent = element.parentElement;
+			if (!parent) return unverified("this border color needs a native inherited context proof");
+			color = view.getComputedStyle(parent).getPropertyValue(property);
+		}
+		// A border painted with the current color takes this element's own computed color.
+		if (color.toLowerCase() === "currentcolor") color = style.color;
+		selected.push({ side, color });
+	}
+	const result = nativeBorderColors(element, selected);
+	return result.kind === "unknown"
+		? unverified(result.reason)
+		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
 }
 
 /** The compiler closure includes native preflight shorthands outside the selected utility roots. */

@@ -2207,3 +2207,98 @@ it("verifies the compiled placeholder color on its own native pseudo-element", a
 		});
 	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
 });
+
+it.each([
+	{ property: "border-color", before: "border-red-500", after: "border-blue-500", side: "" },
+	{ property: "border-top-color", before: "border-t-red-500", after: "border-t-blue-500", side: "" },
+	{ property: "border-right-color", before: "border-r-red-500", after: "border-r-blue-500", side: "" },
+	{ property: "border-bottom-color", before: "border-b-red-500", after: "border-b-blue-500", side: "" },
+	{ property: "border-left-color", before: "border-l-red-500", after: "border-l-blue-500", side: "" },
+	{ property: "border-inline-color", before: "border-x-red-500", after: "border-x-blue-500", side: "" },
+	{ property: "border-block-color", before: "border-y-red-500", after: "border-y-blue-500", side: "" },
+	{ property: "border-inline-start-color", before: "border-s-red-500", after: "border-s-blue-500", side: "right" },
+	{ property: "border-inline-end-color", before: "border-e-red-500", after: "border-e-blue-500", side: "left" },
+])("verifies compiled $property against its own native border side", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = `${row.before} border-2`;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string, extra = "", direction = "ltr") =>
+		`<div data-subject dir="${direction}" class="${classes}" style="width:60px;height:40px;color:rgb(20,30,40);${extra}">Border</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	// A cleared side falls back to the preflight current color, which is this element's own color.
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.side) {
+		// A right-to-left use must read the physical side its own native context selects.
+		const rtl = await fixture(
+			`<!doctype html><style>${expected.css}</style>${host(plan.next, "", "rtl")}${host(plan.next, `border-${row.side}-color:rgb(9,9,9)`, "rtl")}`,
+		);
+		expect((await rtl.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	}
+	// A side with no painted native border is unverified, never a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native border host");
+			element.style.borderStyle = "none";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
