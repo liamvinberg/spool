@@ -1691,15 +1691,17 @@ export async function describeSource(
 	original: SourceOccurrence,
 	inventories: SourceInventory[],
 	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
-): Promise<SourceDescription | undefined> {
+): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
 			json: { action: "describe", frame, original, inventories, operation },
 		});
-		const result = (await res.json()) as { ok: boolean; description?: SourceDescription };
-		return res.ok && result.ok ? result.description : undefined;
+		const result = (await res.json()) as { ok: boolean; description?: SourceDescription; reason?: string };
+		return res.ok && result.ok && result.description
+			? { ok: true, description: result.description }
+			: { ok: false, reason: result.reason ?? "Source description is unavailable." };
 	} catch {
-		return undefined;
+		return { ok: false, reason: "Source description could not be reached." };
 	}
 }

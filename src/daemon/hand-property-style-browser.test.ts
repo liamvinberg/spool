@@ -24,11 +24,15 @@ it.each([
 				response.request().postDataJSON()?.operation?.property === "color",
 		);
 		await f.select();
-		expect(await (await described).json()).toMatchObject({
+		const refusal = await (await described).json();
+		expect(refusal).toMatchObject({
 			ok: false,
 			reason: expect.stringMatching(/style.*(getter|key|literal|descriptor|object)/i),
 		});
 		expect(await f.page.getByRole("button", { name: "Choose color", exact: true }).isDisabled()).toBe(true);
+		await expect
+			.poll(() => f.page.getByRole("button", { name: "Choose color", exact: true }).getAttribute("title"))
+			.toBe(refusal.reason);
 		expect(await f.frame.locator("#subject").evaluate(() => Reflect.get(window, "styleReads"))).toBe(before);
 		expect(f.bytes()[file]).toBe(original);
 		expect(f.writes).toEqual([]);

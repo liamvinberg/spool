@@ -65,7 +65,12 @@ it("previews exact fractional typography and cancels without completing a source
 });
 
 it("scrubs fractional typography by displayed units and completes only on release", async () => {
-	const { host, field, begin, preview, apply, finish } = await mount();
+	const { host, field, begin, preview, apply, finish } = await mount({
+		tokens: ["text-[17.25px]"],
+		binding: { kind: "custom" },
+		authored: "17.25px",
+		native: "17.25px",
+	});
 	const label = host.querySelector('[data-properties-row="font-size"] > span');
 	if (!label) throw new Error("missing typography scrub label");
 	await act(() =>
@@ -121,4 +126,33 @@ it.each([true, false])("marks only the authored typography reference in its toke
 	expect(option.getAttribute("aria-selected")).toBe(String(linked));
 	await act(() => option.click());
 	expect(apply).toHaveBeenCalledExactlyOnceWith({ kind: "binding", tokens: ["text-body"] });
+});
+
+it("does not detach a reference through untouched keyboard or scrub stepping", async () => {
+	const { host, field, preview, finish } = await mount();
+	await act(() => field.focus());
+	await act(() =>
+		field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })),
+	);
+	expect(field.value).toBe("17.25");
+	expect(preview).not.toHaveBeenCalled();
+	await act(() =>
+		field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })),
+	);
+	const label = host.querySelector('[data-properties-row="font-size"] > span');
+	if (!label) throw new Error("missing scrub label");
+	await act(() =>
+		label.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 12, button: 0, clientX: 100, bubbles: true })),
+	);
+	await act(() =>
+		document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 12, clientX: 104, bubbles: true })),
+	);
+	await act(() =>
+		document.dispatchEvent(new PointerEvent("pointerup", { pointerId: 12, clientX: 104, bubbles: true })),
+	);
+	expect(field.value).toBe("17.25");
+	expect(preview).not.toHaveBeenCalled();
+	expect(finish.mock.calls).toEqual([[false]]);
+	expect(label.getAttribute("title")).toContain("Choose a token or type a custom value");
+	expect(label.classList.contains("cursor-ew-resize")).toBe(false);
 });

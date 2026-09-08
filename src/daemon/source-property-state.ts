@@ -5,7 +5,7 @@ import type { SourcePropertyGroupExpectation } from "../source-property-group";
 import { realDesignDir } from "./design-path";
 import { lowerLiterals, type RetainedCompilation, type SourceInput } from "./retained-compile";
 import { compilePropertySource } from "./source-property-compile";
-import { propertyConsumers } from "./source-property-dependencies";
+import { nativePropertyEffects } from "./source-property-dependencies";
 
 /** Read the same retained class cell from a proposed or acknowledged source snapshot. */
 export async function propertyState(
@@ -37,7 +37,7 @@ export async function propertyState(
 			property: operation.property,
 			scope: operation.scope,
 			scopePaths,
-			effects: propertyConsumers(certificate, roots, environment),
+			effects: nativePropertyEffects(certificate, roots, environment),
 		};
 	} else {
 		if (!selections) throw new Error("the grouped property selections are missing");
@@ -46,7 +46,7 @@ export async function propertyState(
 			kind: "properties",
 			selections: selections.map((selection) => ({
 				...selection,
-				effects: propertyConsumers(certificate, new Set(selection.roots), environment),
+				effects: nativePropertyEffects(certificate, new Set(selection.roots), environment),
 			})),
 		};
 	}

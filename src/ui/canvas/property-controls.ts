@@ -2,9 +2,14 @@ import { toggledOf } from "../../properties/families";
 import { type At, editsFor, type Row, type RowValue } from "../../properties/rows";
 import type { SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 
+export interface PropertyDescription {
+	reading?: SourcePropertyReading | undefined;
+	reason?: string;
+}
+
 export interface PropertyControls {
 	identity: string;
-	describe(property: string): Promise<SourcePropertyReading | undefined>;
+	describe(property: string): Promise<PropertyDescription | undefined>;
 	begin(property: string): void;
 	preview(property: string, value: SourcePropertyValue, sampleValue?: string): void;
 	apply(property: string, value: SourcePropertyValue): void;

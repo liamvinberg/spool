@@ -5856,14 +5856,7 @@ export function ProjectCanvas({
 								if (read) finishRailSource(frame, read, change, !signal.aborted);
 							},
 							property: {
-								describe: async (frame, selector, property, scope) =>
-									(
-										await sourceDelivery.describeField(frame, selector, "className", {
-											kind: "property",
-											property,
-											scope,
-										})
-									)?.property,
+								describe: sourceDelivery.describeProperty,
 								begin: (frame, selector, property, scope, request) =>
 									beginRailText(
 										frame,

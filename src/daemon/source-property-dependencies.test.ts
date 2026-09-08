@@ -7,6 +7,7 @@ import { compilePropertySource } from "./source-property-compile";
 import {
 	changedPropertyKeys,
 	externalPropertySignature,
+	nativePropertyEffects,
 	propertyConsumers,
 	propertyDependencies,
 } from "./source-property-dependencies";
@@ -91,3 +92,21 @@ it("retains the native style companion of a width change without claiming its so
 		externalPropertySignature(outside, roots, ["border-[4px]"], environment),
 	);
 });
+
+it.each([
+	["scale-x-50 scale-y-75", "--tw-scale-x", "--tw-scale-y", "75%"],
+	["rotate-x-4 rotate-y-6 skew-x-8", "--tw-rotate-x", "--tw-rotate-y", "rotateY(6deg)"],
+	["contrast-50 brightness-75", "--tw-contrast", "--tw-brightness", "brightness(75%)"],
+])(
+	"captures carried native inputs while preserving independent source roots: %s",
+	async (literal, root, property, value) => {
+		const compile = fixture();
+		const certificate = await compile(literal);
+		const roots = new Set([root]);
+		expect(nativePropertyEffects(certificate, roots, environment)).toContainEqual(
+			expect.objectContaining({ property, value }),
+		);
+		expect([...roots]).toEqual([root]);
+		expect(propertyDependencies(certificate, roots, environment).has(property)).toBe(false);
+	},
+);

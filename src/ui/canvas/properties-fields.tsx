@@ -59,6 +59,7 @@ export function Section({
 /** the CSS name on the left, one control on the right, a hairline under each */
 export function Row({
 	name,
+	reason,
 	ok = true,
 	tall = false,
 	changed = false,
@@ -69,6 +70,7 @@ export function Row({
 	children,
 }: {
 	name: string;
+	reason?: string | undefined;
 	ok?: boolean;
 	/** a control taller than one line: the label sits at the top of it */
 	tall?: boolean;
@@ -166,6 +168,7 @@ export function Row({
 			)}
 		>
 			<span
+				title={reason}
 				onPointerDown={down}
 				className={cn(
 					tall ? "self-start pt-1.5 " : long ? "break-words " : "truncate",
