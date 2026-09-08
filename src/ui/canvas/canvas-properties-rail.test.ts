@@ -701,7 +701,9 @@ async function readyCanvas({ refused = false }: { refused?: boolean } = {}): Pro
 										uses: iframe.title === "home" ? [{ original, visible: true }] : [],
 										unknown: 0,
 									}
-								: true;
+								: message.action === "preview-image"
+									? "ready"
+									: true;
 					queueMicrotask(() =>
 						window.dispatchEvent(
 							new MessageEvent("message", {
