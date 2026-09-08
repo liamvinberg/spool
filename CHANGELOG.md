@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.0
+
+### Minor Changes
+
+- 333b752: Keep independent hand text edits and bundled agent edits in the same file through save, Undo and Redo. Detected competing edits and lost source records stop the operation and preserve your input. The bundled agent now needs a complete source Read before changing existing source; whole-file replacement remains a current-file operation.
+- 87c4ffb: Edit literal text and supported literal attributes inline or in Properties without reloading running frames. The active text or attribute field shows its own source and affected uses, while edits preserve each app’s state. Undo and Redo follow the source even after the original consumer leaves. Source conflicts, pending renders and saved values the app has not displayed are reported separately.
+- 3cca978: Failed edits keep their original target and requested change. Prepare a request in the existing Agent composer without losing your draft, and send it when you are ready. Retry and app reload remain explicit.
+- 691490d: Delete an authored element with its source scope intact, then restore its source with Undo. Supported slots keep their existing fallback and neighboring output, and surviving elements keep their application state.
+
+### Patch Changes
+
+- 613e5a5: Stopped `spool check` from sometimes printing `context canceled` after it finishes checking frames.
+- 87d55ae: Connect account now opens the connection dialog directly when no accounts are connected.
+- d8f9c56: Observe registry and open-tab writes even when filesystem notifications are missed, including writes made immediately after the daemon starts watching.
+- f1009d1: The Mac app now uses the native folder dialog to choose a project location, add Spool to a folder, or open an existing project. Opening a folder without a Spool project explains how to add one. The browser picker is centred and shows more folders at once.
+
 ## 0.18.0
 
 ### Minor Changes
