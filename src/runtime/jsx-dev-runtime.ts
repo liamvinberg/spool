@@ -279,6 +279,11 @@ export function useSourceValues(owner: string, component?: unknown): void {
 		() => held.revision,
 	);
 }
+/** The compiler marks only direct data objects; their identity and members are unchanged. */
+export function sourceStyle<T extends object>(value: T): T {
+	return globalThis.__SPOOL_VALUES__?.styleLiteral(value) ?? value;
+}
+
 export function observeSource<T>(cell: string, element: T): T {
 	if (
 		sourcePacket &&

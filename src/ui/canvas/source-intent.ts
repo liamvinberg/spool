@@ -92,16 +92,14 @@ export function attributedIntent(intent: SourceIntent, read: SourceDescription):
 /** Source comparison for recovery presentation; current publication and native outcome remain separately required. */
 export function matchesIntentSource(intent: SourceIntent, description: SourceDescription): boolean {
 	const expected = intent.expected;
-	if (expected?.kind !== "literal" && expected?.kind !== "image") return false;
+	if (expected?.kind !== "literal" && expected?.kind !== "image" && expected?.kind !== "property") return false;
 	return (
 		description.cell === intent.cell &&
 		description.source === (expected.kind === "image" ? expected.source : intent.source) &&
-		description.value === expected.value &&
+		description.value === (expected.kind === "property" ? expected.className : expected.value) &&
 		(description.original.absent ?? false) === expected.absent &&
-		(expected.kind !== "image" ||
-			(description.asset === expected.asset &&
-				description.role === intent.role &&
-				description.scope === intent.scope))
+		(expected.kind === "literal" || (description.role === intent.role && description.scope === intent.scope)) &&
+		(expected.kind !== "image" || description.asset === expected.asset)
 	);
 }
 
@@ -147,6 +145,11 @@ export function preparedHelp(intent: SourceIntent, reason: string, saved: boolea
 		...(intent.expected?.kind === "image"
 			? [
 					`Requested result: image ${intent.expected.absent ? "source is absent" : intent.expected.asset ? `references ${JSON.stringify(intent.expected.asset)}` : intent.expected.value === "" ? "source is present and empty" : "uses the captured source value"}.`,
+				]
+			: []),
+		...(intent.expected?.kind === "property"
+			? [
+					`Requested result: ${intent.expected.property} ${intent.expected.absent ? "with the class declaration absent" : `from className ${JSON.stringify(intent.expected.className)}`}.`,
 				]
 			: []),
 		`Target: ${intent.frame}, ${intent.selector}.`,

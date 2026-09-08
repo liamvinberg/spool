@@ -140,6 +140,46 @@ it("retries the original property after a real competing edit and undoes to chec
 	expect(f.calls()).toBe(calls);
 });
 
+it("refuses a property retry when another original ancestry input changes after its fresh read", {
+	timeout: 180000,
+}, async () => {
+	const f = await fixture();
+	await conflict(f);
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let observed = () => {};
+	const reading = new Promise<void>((resolve) => {
+		observed = resolve;
+	});
+	onTestFinished(release);
+	await f.page.route("**/source", async (route) => {
+		const request = route.request().postDataJSON();
+		if (request?.action !== "read" || !request.retry) return route.continue();
+		const response = await route.fetch();
+		expect(await response.json()).toMatchObject({ ok: true, read: { value: "opacity-25" } });
+		observed();
+		await held;
+		await route.fulfill({ response });
+	});
+	await f.notice.getByRole("button", { name: "Retry this edit", exact: true }).click();
+	await reading;
+	await f.agentEdit("Hello", "Changed ancestry input");
+	const refused = f.reply("commit");
+	release();
+	expect(await (await refused).json()).toMatchObject({
+		ok: false,
+		reason: expect.stringMatching(/ancestry|original|context/i),
+	});
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
+	expect(readFileSync(f.file(owner), "utf8")).toBe(
+		source.replace("opacity-75", "opacity-25").replace("Hello", "Changed ancestry input"),
+	);
+	await expect.poll(f.opacity).toBe("0.75");
+	expect(f.writes).toEqual(["commit", "commit"]);
+});
+
 it("checks an unknown property save without replay or invented history", { timeout: 180000 }, async () => {
 	const f = await fixture();
 	let acknowledged: unknown;

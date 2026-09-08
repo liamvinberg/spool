@@ -194,6 +194,7 @@ it("previews current native samples before compiler replies and retires late fai
 			operation: { kind: "property", property: "opacity", scope: "hover:" },
 			propertyPreview: {
 				placeholder: "var(--sample)",
+				declarations: [{ property: "opacity", value: "var(--sample)" }],
 				plan: {
 					generation: 1,
 					revision: 0,

@@ -29,3 +29,10 @@ Group the approved Typography and Appearance controls together, and add optional
 Grouped property changes retain their original fields or written scope and use one source save and Undo receipt.
 
 Remove a written scope or add and remove raw classes through the same retained source owner, including cancellation while the original read is pending.
+
+Remove a color declaration from its existing menu and restore the original reference with Undo, without authoring an inherit token.
+
+
+Known literal inline weight and padding can supply read-only context for class color and opacity. Relevant inline properties and unknown style objects remain refused.
+
+Retry a property edit against checked current source, or check an uncertain save without replaying it. Shared recovery remains until every affected use verifies the saved result, including Undo's restored binding.

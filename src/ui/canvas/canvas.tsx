@@ -3193,9 +3193,20 @@ export function ProjectCanvas({
 
 	const checkUnknownSource = useCallback(
 		async (intent: SourceIntent) => {
-			if (intent.operation.kind !== "literal" || pendingSource.current.size || editingRef.current) return;
+			if (
+				(intent.operation.kind !== "literal" && intent.operation.kind !== "property") ||
+				pendingSource.current.size ||
+				editingRef.current
+			)
+				return;
 			const generation = ++pickSeq.current;
-			const original = await sourceDelivery.read(intent.frame, intent.selector, generation, intent.field);
+			const original = await sourceDelivery.read(
+				intent.frame,
+				intent.selector,
+				generation,
+				intent.field,
+				intent.operation,
+			);
 			const asked =
 				original && original.occurrence === intent.original?.occurrence
 					? await readSource(
@@ -3228,24 +3239,32 @@ export function ProjectCanvas({
 			if (
 				pendingSource.current.size ||
 				editingRef.current ||
-				intent.operation.kind !== "literal" ||
-				intent.change?.kind !== "literal" ||
+				(intent.operation.kind !== "literal" && intent.operation.kind !== "property") ||
+				!intent.change ||
+				intent.change.kind !== intent.operation.kind ||
 				!intent.original ||
 				intent.inverse
 			)
 				return;
 			const change = intent.change;
+			const text = change.kind === "literal" ? change.text : "";
 			const generation = ++pickSeq.current;
 			setSaid({
 				kind: "source",
 				frame: intent.frame,
-				text: change.text,
+				text,
 				status: "saving",
 				says: "Checking the original target…",
 				intent,
 			});
 			const operation = (async () => {
-				const original = await sourceDelivery.read(intent.frame, intent.selector, generation, intent.field);
+				const original = await sourceDelivery.read(
+					intent.frame,
+					intent.selector,
+					generation,
+					intent.field,
+					intent.operation,
+				);
 				if (!original || original.occurrence !== intent.original?.occurrence) {
 					await sourceDelivery.cancel(intent.frame, generation);
 					await showSourceResult(
@@ -3255,7 +3274,7 @@ export function ProjectCanvas({
 							reason:
 								"The original target is no longer available. Locate it in current source before trying again.",
 						},
-						change.text,
+						text,
 						false,
 						intent,
 					);
@@ -3275,7 +3294,7 @@ export function ProjectCanvas({
 					await showSourceResult(
 						intent.frame,
 						{ ok: false, reason: asked?.reason ?? "The fresh source read did not arrive. Nothing was retried." },
-						change.text,
+						text,
 						false,
 						intent,
 					);
@@ -3296,7 +3315,7 @@ export function ProjectCanvas({
 							ok: false,
 							reason: "The original source owner changed. Confirm it in current source before retrying.",
 						},
-						change.text,
+						text,
 						false,
 						intent,
 					);
@@ -3306,7 +3325,7 @@ export function ProjectCanvas({
 				if (result?.ok && result.receipt)
 					recordEntry({ kind: "source", frame: intent.frame, receipt: result.receipt, intent });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(intent.frame, generation);
-				await showSourceResult(intent.frame, result, change.text, false, intent);
+				await showSourceResult(intent.frame, result, text, false, intent);
 			})();
 			pendingSource.current.set(intent.frame, operation);
 			try {
@@ -5776,16 +5795,17 @@ export function ProjectCanvas({
 									}}
 									onAsk={() => askAgent(said)}
 									onCheck={
-										said.intent?.operation.kind === "literal"
+										said.intent?.operation.kind === "literal" || said.intent?.operation.kind === "property"
 											? () => {
 													if (said.intent) void checkUnknownSource(said.intent);
 												}
 											: undefined
 									}
 									onRetry={
-										said.intent?.operation.kind === "literal" &&
+										(said.intent?.operation.kind === "literal" ||
+											said.intent?.operation.kind === "property") &&
 										said.intent.original &&
-										intentText(said.intent) !== undefined &&
+										said.intent.change?.kind === said.intent.operation.kind &&
 										!said.intent.inverse
 											? () => {
 													if (said.intent) void retrySource(said.intent);

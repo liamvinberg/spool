@@ -72,3 +72,22 @@ it("guards reached theme definitions independently of candidate emission and unr
 	expect(signature(changed)).not.toBe(signature(original));
 	expect(original.theme["--color-chosen"]?.value).toBe("#123456");
 });
+
+it("retains the native style companion of a width change without claiming its source ownership", async () => {
+	const compile = fixture();
+	const before = await compile("border-2");
+	const after = await compile("border-[4px]");
+	const roots = changedPropertyKeys(
+		before.effects.filter((effect) => effect.owner === "border-2"),
+		after.effects.filter((effect) => effect.owner === "border-[4px]"),
+		environment,
+	);
+	expect([...roots]).not.toContain("border-top-style");
+	expect(propertyConsumers(after, roots, environment)).toContainEqual(
+		expect.objectContaining({ owner: "border-[4px]", property: "border-style", value: "var(--tw-border-style)" }),
+	);
+	const outside = await compile("border-[4px] border-dashed");
+	expect(externalPropertySignature(after, roots, ["border-[4px]"], environment)).not.toBe(
+		externalPropertySignature(outside, roots, ["border-[4px]"], environment),
+	);
+});

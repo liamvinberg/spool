@@ -198,56 +198,61 @@ it("edits all four shared property uses through source history without resetting
 	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
 });
 
-it("discloses the shared property owner without replacing the separate call-owned text scope", {
-	timeout: 120_000,
-}, async () => {
-	const authored = 'export function Card({label,id}){return <button id={id} className="opacity-75">{label}</button>}';
-	const calls =
-		'import {Card} from "./card";export function Calls(){return <><Card id="first" label="First"/><Card id="other" label="Other"/></>}';
-	const f = await propertyCanvas(
-		{ [owner]: authored, "shared/calls.tsx": calls },
-		'import {Calls} from "shared/calls";export default function Frame(){return <main style={{padding:40}}><Calls/></main>}',
-		"#first",
-		true,
-	);
-	const second = f.page.frameLocator('iframe[title="second"]');
-	await second.locator("#other").waitFor();
-	await f.select();
-	const disclosure = f.page.getByRole("button", { name: "Show affected uses", exact: true });
-	await expect.poll(() => disclosure.textContent()).toBe("2");
-	await disclosure.click();
-	const panel = f.page.locator("[data-source-uses]");
-	await expect.poll(() => panel.textContent()).toContain("repeated call site · shared/calls.tsx");
-	const described = f.page.waitForResponse(
-		(response) =>
-			response.url().endsWith("/source") &&
-			response.request().postDataJSON()?.action === "describe" &&
-			response.request().postDataJSON()?.operation?.kind === "property",
-	);
-	await control(f).focus();
-	const description = await (await described).json();
+it.each([false, true])(
+	"discloses the shared property owner without replacing the separate call-owned text scope (unknown style: %s)",
+	{
+		timeout: 120_000,
+	},
+	async (unknownStyle) => {
+		const authored =
+			'export function Card({label,id}){return <button id={id} className="opacity-75">{label}</button>}';
+		const calls =
+			'import {Card} from "./card";export function Calls(){return <><Card id="first" label="First"/><Card id="other" label="Other"/></>}';
+		const f = await propertyCanvas(
+			{ [owner]: authored, "shared/calls.tsx": calls },
+			`import {Calls} from "shared/calls";export default function Frame(){${unknownStyle ? "const style={padding:40};" : ""}return <main style={${unknownStyle ? "style" : "{padding:40}"}}><Calls/></main>}`,
+			"#first",
+			true,
+		);
+		const second = f.page.frameLocator('iframe[title="second"]');
+		await second.locator("#other").waitFor();
+		await f.select();
+		const disclosure = f.page.getByRole("button", { name: "Show affected uses", exact: true });
+		await expect.poll(() => disclosure.textContent()).toBe("2");
+		await disclosure.click();
+		const panel = f.page.locator("[data-source-uses]");
+		await expect.poll(() => panel.textContent()).toContain("repeated call site · shared/calls.tsx");
+		const described = f.page.waitForResponse(
+			(response) =>
+				response.url().endsWith("/source") &&
+				response.request().postDataJSON()?.action === "describe" &&
+				response.request().postDataJSON()?.operation?.kind === "property",
+		);
+		await control(f).focus();
+		const description = await (await described).json();
 
-	await expect.poll(() => panel.textContent()).toContain("shared definition · shared/card.tsx");
-	expect(description.description.reach.uses).toHaveLength(4);
-	expect(description.description.reach.unknown).toEqual(["home", "second"]);
-	expect(await disclosure.textContent()).toBe("4+");
-	expect(await f.page.getByText("Content", { exact: true }).locator("..").textContent()).toBe(
-		"Contentrepeated call site",
-	);
-	await f.page.mouse.move(5, 5);
-	for (const target of [f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
-		await expect.poll(() => target.getAttribute("data-spool-shared-use")).toBe("");
-	const preview = reply(f, "preview");
-	await control(f).fill("50");
-	await previewed(f, preview, 2);
-	for (const target of [f.target, f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
-		await expect.poll(() => target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.5");
-	await control(f).press("Escape");
-	for (const target of [f.target, f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
-		await expect.poll(() => target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
-	expect(f.bytes()).toEqual({ [owner]: authored, "shared/calls.tsx": calls });
-	expect(f.writes).toEqual([]);
-});
+		await expect.poll(() => panel.textContent()).toContain("shared definition · shared/card.tsx");
+		expect(description.description.reach.uses).toHaveLength(4);
+		expect(description.description.reach.unknown).toEqual(unknownStyle ? ["home", "second"] : []);
+		expect(await disclosure.textContent()).toBe(unknownStyle ? "4+" : "4");
+		expect(await f.page.getByText("Content", { exact: true }).locator("..").textContent()).toBe(
+			"Contentrepeated call site",
+		);
+		await f.page.mouse.move(5, 5);
+		for (const target of [f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
+			await expect.poll(() => target.getAttribute("data-spool-shared-use")).toBe("");
+		const preview = reply(f, "preview");
+		await control(f).fill("50");
+		await previewed(f, preview, 2);
+		for (const target of [f.target, f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
+			await expect.poll(() => target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.5");
+		await control(f).press("Escape");
+		for (const target of [f.target, f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
+			await expect.poll(() => target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+		expect(f.bytes()).toEqual({ [owner]: authored, "shared/calls.tsx": calls });
+		expect(f.writes).toEqual([]);
+	},
+);
 
 it.each([
 	{ name: "absent", attribute: "" },

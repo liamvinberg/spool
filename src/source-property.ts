@@ -60,5 +60,6 @@ export interface SourcePropertyReading {
 /** A once-compiled temporary declaration; samples replace only its value marker. */
 export interface SourcePropertyPreviewTemplate {
 	placeholder: string;
+	declarations: readonly { property: string; value: string }[];
 	plan: SourcePropertyPreview;
 }

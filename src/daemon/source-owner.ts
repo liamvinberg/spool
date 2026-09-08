@@ -56,6 +56,7 @@ import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
 import { planPropertyValue } from "./source-property-plan";
+import { propertyPreviewDeclarations } from "./source-property-preview";
 import { propertyReading } from "./source-property-reading";
 import { propertyScopePaths } from "./source-property-scope";
 import { propertyState } from "./source-property-state";
@@ -352,7 +353,7 @@ export function createSourceOwner(
 			if (operation.kind === "image" && retry)
 				throw new Error("read the current image binding before trying this replacement again");
 			const retryFrom = retry ? compilation : undefined;
-			if (retry && operation.kind !== "literal")
+			if (retry && operation.kind !== "literal" && operation.kind !== "property")
 				throw new Error("this source operation has no admitted retry planner");
 			let resolved = isPropertyOperation(operation)
 				? {
@@ -366,10 +367,13 @@ export function createSourceOwner(
 				const current = await currentCompilation(root, frame, compilation);
 				if (readingCoverage !== (coverage.get(root) ?? 0))
 					throw new Error("source observation changed during retry");
-				resolved = {
-					kind: "literal" as const,
-					...retryTextSource(root, compilation, current, original, generation),
-				};
+				resolved =
+					operation.kind === "property"
+						? {
+								kind: "property" as const,
+								...retryPropertySource(root, compilation, current, original, generation, operation),
+							}
+						: { kind: "literal" as const, ...retryTextSource(root, compilation, current, original, generation) };
 				compilation = current;
 			}
 			const { cellKey, cell, target } = resolved;
@@ -523,8 +527,18 @@ export function createSourceOwner(
 			planned.preview.frames.some(
 				(frame) => frame.css.includes(placeholder) || frame.bundledCss.includes(placeholder),
 			)
-		)
-			held.read = { ...held.read, propertyPreview: { placeholder, plan: planned.preview } };
+		) {
+			const declarations = (
+				await Promise.all(
+					planned.preview.frames.map(async (frame) => {
+						const compiled = await inspectPropertyCss(`${frame.css}\n${frame.bundledCss}`);
+						return propertyPreviewDeclarations(compiled.effects, placeholder);
+					}),
+				)
+			).flat();
+			if (declarations.length)
+				held.read = { ...held.read, propertyPreview: { placeholder, declarations, plan: planned.preview } };
+		}
 		return { ok: true as const, read: held.read };
 	}
 	async function describe(
@@ -1205,6 +1219,9 @@ export function createSourceOwner(
 			held.read.original,
 			held.read.generation,
 			operation,
+			held.retryFrom && held.read.cell
+				? { kind: "retry", cell: held.read.cell, before: held.read.original.value, after: held.read.value }
+				: undefined,
 		);
 		const planned = await (async () => {
 			if (operation.kind === "property" && change.kind === "property")
@@ -1412,7 +1429,16 @@ export function createSourceOwner(
 				valid(root, held.compilation);
 				if (held.retryFrom) {
 					const current = await currentCompilation(root, held.frame, held.compilation);
-					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
+					if (held.read.operation.kind === "property")
+						retryPropertySource(
+							root,
+							held.retryFrom,
+							current,
+							held.read.original,
+							generation,
+							held.read.operation,
+						);
+					else retryTextSource(root, held.retryFrom, current, held.read.original, generation);
 				}
 				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");

@@ -13,6 +13,7 @@ import { assertDesignFile } from "./design-path";
 import { observeCacheSource } from "./source-cache-compile";
 import { observeLazySource } from "./source-lazy-compile";
 import { planStructureCompilation } from "./source-structure-compile";
+import { literalStyleMembers } from "./source-style-members";
 
 export interface SourceInput {
 	bytes: Buffer;
@@ -538,6 +539,31 @@ export function lowerLiterals(
 		if (node.arguments.length === 3 && node.arguments[2]) retain(node.arguments[2], "children");
 	});
 
+	let styleObjects = 0;
+	walk(ast, (node) => {
+		if (
+			node.type !== "JSXAttribute" ||
+			node.name.type !== "JSXIdentifier" ||
+			node.name.name !== "style" ||
+			node.value?.type !== "JSXExpressionContainer"
+		)
+			return;
+		const object = node.value.expression;
+		try {
+			literalStyleMembers(object);
+		} catch {
+			return;
+		}
+		styleObjects++;
+		patches.push({
+			start: position(object).start,
+			end: position(object).start,
+			wrap: object,
+			text: `${prefix}Style(`,
+		});
+		patches.push({ start: position(object).end, end: position(object).end, wrap: object, text: ")", order: 2 });
+	});
+
 	const structureOwners: Record<string, string> = {};
 	walk(ast, (node, ancestors) => {
 		const groups = structural.groups.filter((group) => group.node === node);
@@ -657,8 +683,8 @@ export function lowerLiterals(
 	const shape = digest(JSON.stringify(normalize(ast)));
 	const structure = structural.state((node) => normalize(node, false));
 	const imports =
-		functions.size || factory > 0 || structural.groups.length > 0
-			? `\nimport {sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom,sourceOptional as ${prefix}Optional,sourceList as ${prefix}List} from "spool/jsx-dev-runtime";`
+		functions.size || factory > 0 || structural.groups.length > 0 || styleObjects > 0
+			? `\nimport {sourceStyle as ${prefix}Style,sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom,sourceOptional as ${prefix}Optional,sourceList as ${prefix}List} from "spool/jsx-dev-runtime";`
 			: "";
 	const priorStamps = Object.values(stamps);
 	transformed = structural.render(
