@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, it, onTestFinished } from "vitest";
 import { readInput } from "../daemon/retained-compile";
 import { compilePropertySource } from "../daemon/source-property-compile";
 import { propertyConsumers } from "../daemon/source-property-dependencies";
+import { propertyScopePaths } from "../daemon/source-property-scope";
 import type { SourcePropertyExpectation } from "../source-property";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import type { PropertyOutcome } from "./property-outcome";
@@ -37,13 +38,21 @@ function opacity(value: string): SourcePropertyExpectation {
 		css: `@layer utilities { .opacity-50 { opacity: ${value} } }`,
 	};
 }
-async function compiledOpacity(classes: string): Promise<SourcePropertyExpectation> {
+async function compiledOpacity(classes: string, scope = ""): Promise<SourcePropertyExpectation> {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", "");
 	const file = realpathSync(join(root, "design/shared/tokens.css"));
 	const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), classes);
 	return {
 		...opacity("0.5"),
+		scope,
+		className: scope ? `${scope}opacity-50` : "opacity-50",
+		scopePaths: propertyScopePaths(
+			certificate,
+			certificate,
+			{ kind: "property", property: "opacity", scope },
+			{ direction: "ltr", writingMode: "horizontal-tb" },
+		),
 		css: certificate.css,
 		effects: propertyConsumers(certificate, new Set(["opacity"]), { direction: "ltr", writingMode: "horizontal-tb" }),
 	};
@@ -115,9 +124,9 @@ it("verifies removed opacity against its native initial value for each use", asy
 	]);
 });
 
-it("keeps unresolved variables and inactive scopes unverified", async () => {
+it("keeps unresolved variables and missing scope proof unverified", async () => {
 	const f = await fixture('<div data-subject style="opacity:.5"></div>');
-	for (const expected of [opacity("var(--authored-opacity)"), { ...opacity("0.5"), scope: "hover:" }])
+	for (const expected of [opacity("var(--authored-opacity)"), { ...opacity("0.5"), scope: "hover:", scopePaths: [] }])
 		expect((await f.inspect(expected))[0]).toMatchObject({ rendered: "unverified", reason: expect.any(String) });
 });
 
@@ -156,3 +165,61 @@ it("keeps a retained different token separate from its independently matching na
 	expect(expected.className).toBe("opacity-50");
 	expect(await f.page.content()).toBe(before);
 });
+
+it("uses compiled focus conditions independently for healthy and retained consumers", async () => {
+	const expected = await compiledOpacity("focus:opacity-50 focus:opacity-75", "focus:");
+	const f = await fixture(
+		`<style>${expected.css}</style><input data-subject class="focus:opacity-50"><input data-subject class="focus:opacity-75">`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["inactive", "inactive"]);
+	await f.page.locator("input").nth(0).focus();
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "inactive"]);
+	await f.page.locator("input").nth(1).focus();
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["inactive", "mismatching"]);
+});
+
+it("uses each document's native media context from the compiler path", async () => {
+	const expected = await compiledOpacity("min-[700px]:opacity-50", "min-[700px]:");
+	const f = await fixture(
+		`<style>${expected.css}</style><section data-subject class="min-[700px]:opacity-50"></section>`,
+	);
+	await f.page.setViewportSize({ width: 600, height: 400 });
+	expect((await f.inspect(expected))[0]?.rendered).toBe("inactive");
+	await f.page.setViewportSize({ width: 800, height: 400 });
+	expect((await f.inspect(expected))[0]).toEqual({ rendered: "verified", observed: "0.5" });
+});
+
+it("retains the compiled condition after removal and does not guess unknown containers", async () => {
+	const compiled = await compiledOpacity("focus:opacity-50", "focus:");
+	const expected = { ...compiled, className: "", absent: true, effects: [], css: "" };
+	const f = await fixture("<input data-subject>");
+	expect((await f.inspect(expected))[0]?.rendered).toBe("inactive");
+	await f.page.locator("input").focus();
+	expect((await f.inspect(expected))[0]).toEqual({ rendered: "verified", observed: "1" });
+	expect((await f.inspect({ ...expected, scopePaths: [["@container (width > 1px)", "$"]] }))[0]?.rendered).toBe(
+		"unverified",
+	);
+});
+
+it.each(["", "<!doctype html>"])(
+	"reads actual hover state in document mode %j without using retained utility values",
+	async (doctype) => {
+		const expected = await compiledOpacity("hover:opacity-50 hover:opacity-75", "hover:");
+		const f = await fixture(
+			`${doctype}<style>${expected.css}</style><button data-subject class="hover:opacity-50">Healthy</button><button data-subject class="hover:opacity-75">Retained</button>`,
+		);
+		await f.page.mouse.move(500, 300);
+		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["inactive", "inactive"]);
+		await f.page.locator("button").nth(0).hover();
+		const hoverEvidence = await f.page.evaluate(() => ({
+			hover: [...document.querySelectorAll("button")].map((element) => element.matches(":hover")),
+			media: matchMedia("(hover: hover)").matches,
+		}));
+		expect(
+			(await f.inspect(expected)).map((outcome) => outcome.rendered),
+			JSON.stringify({ paths: expected.scopePaths, hoverEvidence }),
+		).toEqual(["verified", "inactive"]);
+		await f.page.locator("button").nth(1).hover();
+		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["inactive", "mismatching"]);
+	},
+);
