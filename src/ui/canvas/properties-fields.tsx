@@ -361,6 +361,7 @@ export function Menu({
 	label,
 	arbitrary,
 	onPick,
+	onOpen,
 	className,
 }: {
 	current: Option;
@@ -375,6 +376,7 @@ export function Menu({
 	/** what typed text becomes when no option matches it, offered first */
 	arbitrary?: ((typed: string) => Option | null) | undefined;
 	onPick: (token: string | null) => void;
+	onOpen?: () => void;
 	className?: string;
 }) {
 	const [open, setOpen] = useState(false);
@@ -431,6 +433,7 @@ export function Menu({
 				options.findIndex((option) => option.token === current.token),
 			),
 		);
+		onOpen?.();
 		setOpen(true);
 	};
 

@@ -1,3 +1,4 @@
+import type { SourceImageExpectation } from "./source-image";
 import type { SourcePropertyExpectation, SourcePropertyValue } from "./source-property";
 import type { SourceStructuralExpectation, SourceStructuralParent } from "./source-structure";
 
@@ -5,18 +6,20 @@ import type { SourceStructuralExpectation, SourceStructuralParent } from "./sour
 export type SourceOperation =
 	| { kind: "literal"; field?: string }
 	| { kind: "property"; property: string; scope: string }
+	| { kind: "image" }
 	| { kind: "delete" };
 
 /** Requested value is separate from the original source operation's authority. */
 export type SourceChange =
 	| { kind: "literal"; text: string }
 	| { kind: "property"; value: SourcePropertyValue }
+	| { kind: "image"; path: string }
 	| { kind: "delete" };
 
 export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boolean {
 	if (a.kind === "literal") return b.kind === "literal" && a.field === b.field;
 	if (a.kind === "property") return b.kind === "property" && a.property === b.property && a.scope === b.scope;
-	return b.kind === "delete";
+	return a.kind === b.kind;
 }
 
 /** Transient source authority shared by canvas input, frame delivery and history. */
@@ -68,6 +71,7 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	asset?: string;
 	structure?: SourceStructuralExpectation;
 	operation: SourceOperation;
 	handle: string;
@@ -75,7 +79,7 @@ export interface SourceRead {
 	generation: number;
 	original: SourceOccurrence;
 	source: string;
-	role: "literal-child" | "literal-attribute" | "factory-literal" | "structural-unit";
+	role: "literal-child" | "literal-attribute" | "factory-literal" | "image-binding" | "structural-unit";
 	cell?: string;
 	field?: string;
 	scope?: "definition" | "call-site";
@@ -112,6 +116,7 @@ export interface SourcePublication {
 	expected:
 		| { kind: "literal"; value: string; absent: boolean }
 		| SourcePropertyExpectation
+		| SourceImageExpectation
 		| SourceStructuralExpectation;
 	admission: { token: string; expires: number };
 	owner: string;

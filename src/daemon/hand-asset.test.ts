@@ -2,25 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
-import {
-	base64Length,
-	identifierHint,
-	imageSpend,
-	inlinedSize,
-	listAssets,
-	overBudget,
-	specifierFrom,
-} from "./hand-asset";
+import { base64Length, identifierHint, inlinedSize, listAssets, overBudget, specifierFrom } from "./hand-asset";
 import { fingerprintOf } from "./hand-write";
 
-/**
- * The asset swap end to end (#260): the picture lands in the project, the
- * import is written, and the `src` points at it.
- *
- * The one hand edit that writes a file, because an image in a frame is an
- * import and never a URL — so the whole of the op is the bytes, the import and
- * the splice, and the refusals are about all three.
- */
+/** Asset listing/budget utilities and the retired writer boundary. Actual source
+ * transactions are exercised by source-image-owner and source-image-browser. */
 
 /** A one-pixel PNG, which is the smallest honest picture to drop on a frame. */
 const PNG = Buffer.from(
@@ -61,205 +47,20 @@ function put(root: string, rel: string, bytes: Buffer): void {
 	writeFileSync(file, bytes);
 }
 
-describe("the asset swap", () => {
-	it("writes the file beside the frame, writes the import, and points src at it", async () => {
-		const { root, name, app, source } = project();
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf(FRAME),
-				file: { name: "shot.png", data: PNG.toString("base64") },
-			}),
-		);
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as { ok: boolean; asset: string };
-		expect(body.ok).toBe(true);
-		expect(body.asset).toBe("design/frames/hero/shot.png");
-		expect(readFileSync(join(root, "design/frames/hero/shot.png"))).toEqual(PNG);
-		expect(readFrame(root)).toBe(
-			`import shot from "./shot.png";\nexport default function Frame() {\n\treturn <img src={shot} alt="hero" />;\n}\n`,
-		);
-	});
-
-	it("points at a picture the project already holds without writing a second copy", async () => {
-		const { root, name, app, source } = project();
-		put(root, "shared/assets/logo.svg", Buffer.from("<svg/>"));
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({ frame: "hero", source, fingerprint: fingerprintOf(FRAME), asset: "shared/assets/logo.svg" }),
-		);
-		expect(res.status).toBe(200);
-		expect(readFrame(root)).toContain('import logo from "../../shared/assets/logo.svg";');
-		expect(readFrame(root)).toContain('<img src={logo} alt="hero" />');
-		expect(existsSync(join(root, "design/frames/hero/logo.svg"))).toBe(false);
-	});
-
-	it("keeps one file when the same picture is dropped twice", async () => {
-		const { root, name, app } = project();
-		const drop = async () => {
-			const held = readFrame(root);
-			return app.request(
-				`/api/p/${name}/asset`,
-				jsonPost({
-					frame: "hero",
-					source: stamp(held, "<img", "frames/hero/frame.tsx"),
-					fingerprint: fingerprintOf(held),
-					file: { name: "shot.png", data: PNG.toString("base64") },
-				}),
-			);
-		};
-		await drop();
-		const second = (await (await drop()).json()) as { asset: string };
-		expect(second.asset).toBe("design/frames/hero/shot.png");
-		expect(existsSync(join(root, "design/frames/hero/shot-2.png"))).toBe(false);
-	});
-
-	it("gives a different picture with the same name a number of its own", async () => {
-		const { root, name, app, source } = project();
-		put(root, "frames/hero/shot.png", Buffer.from("another picture entirely"));
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf(FRAME),
-				file: { name: "shot.png", data: PNG.toString("base64") },
-			}),
-		);
-		expect(((await res.json()) as { asset: string }).asset).toBe("design/frames/hero/shot-2.png");
-		expect(readFileSync(join(root, "design/frames/hero/shot.png"), "utf8")).toBe("another picture entirely");
-	});
-
-	it("refuses a picture one document cannot carry, and writes nothing", async () => {
-		const { root, name, app, source } = project();
-		const huge = Buffer.alloc(600 * 1024, 7);
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf(FRAME),
-				file: { name: "huge.png", data: huge.toString("base64") },
-			}),
-		);
-		expect(res.status).toBe(409);
-		expect(((await res.json()) as { refusal: { code: string } }).refusal.code).toBe("image-budget");
-		expect(existsSync(join(root, "design/frames/hero/huge.png"))).toBe(false);
-		expect(readFrame(root)).toBe(FRAME);
-	});
-
-	it("refuses a picture the rest of the document leaves no room for", async () => {
-		const frame = `import other from "./other.png";\nexport default function Frame() {\n\treturn (\n\t\t<div>\n\t\t\t<img src={other} alt="other" />\n\t\t\t<img src="/hero.png" alt="hero" />\n\t\t</div>\n\t);\n}\n`;
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "hero", frame);
-		put(root, "frames/hero/other.png", Buffer.alloc(300 * 1024, 1));
-		const app = makeApp(spoolDir);
-		const source = stamp(frame, '<img src="/hero.png"', "frames/hero/frame.tsx");
-
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf(frame),
-				file: { name: "second.png", data: Buffer.alloc(300 * 1024, 2).toString("base64") },
-			}),
-		);
-		expect(res.status).toBe(409);
-		expect(((await res.json()) as { refusal: { code: string } }).refusal.code).toBe("image-budget");
-		expect(existsSync(join(root, "design/frames/hero/second.png"))).toBe(false);
-	});
-
-	it("counts the picture it replaced as gone, so a swap of like for like fits", async () => {
-		const frame = `import old from "./old.png";\nexport default function Frame() {\n\treturn <img src={old} alt="hero" />;\n}\n`;
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "hero", frame);
-		put(root, "frames/hero/old.png", Buffer.alloc(300 * 1024, 1));
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source: stamp(frame, "<img", "frames/hero/frame.tsx"),
-				fingerprint: fingerprintOf(frame),
-				file: { name: "fresh.png", data: Buffer.alloc(300 * 1024, 2).toString("base64") },
-			}),
-		);
-		expect(res.status).toBe(200);
-		expect(readFrame(root)).toBe(
-			`import fresh from "./fresh.png";\nexport default function Frame() {\n\treturn <img src={fresh} alt="hero" />;\n}\n`,
-		);
-	});
-
-	it("refuses a computed src and names it", async () => {
-		const frame = `export default function Frame({ photo }) {\n\treturn <img src={photo} />;\n}\n`;
-		const { root, name, app, source } = project(frame);
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf(frame),
-				file: { name: "shot.png", data: PNG.toString("base64") },
-			}),
-		);
-		expect(res.status).toBe(409);
-		expect((await res.json()) as unknown).toMatchObject({
-			refusal: { code: "expression-attribute", says: "src is an expression", expression: "{photo}" },
-		});
-		expect(readFrame(root)).toBe(frame);
-	});
-
-	it("refuses a file the compiler has no loader for", async () => {
-		const { name, app, source } = project();
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf(FRAME),
-				file: { name: "clip.mp4", data: PNG.toString("base64") },
-			}),
-		);
-		expect(res.status).toBe(400);
-	});
-
-	it("refuses a file the swap was not formed against", async () => {
-		const { name, app, source } = project();
-		const res = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf("something else"),
-				file: { name: "shot.png", data: PNG.toString("base64") },
-			}),
-		);
-		expect(res.status).toBe(409);
-		expect(((await res.json()) as { refusal: { code: string } }).refusal.code).toBe("stale-file");
-	});
-
-	it("puts the file back through the same revert every other hand edit uses", async () => {
-		const { root, name, app, source } = project();
-		const swap = await app.request(
-			`/api/p/${name}/asset`,
-			jsonPost({
-				frame: "hero",
-				source,
-				fingerprint: fingerprintOf(FRAME),
-				file: { name: "shot.png", data: PNG.toString("base64") },
-			}),
-		);
-		const { undo } = (await swap.json()) as { undo: unknown };
-		const back = await app.request(`/api/p/${name}/patch/revert`, jsonPost(undo));
-		expect(back.status).toBe(200);
-		expect(readFrame(root)).toBe(FRAME);
-	});
+it("does not expose the retired fingerprint-based asset source writer", async () => {
+	const { root, name, app, source } = project();
+	const response = await app.request(
+		`/api/p/${name}/asset`,
+		jsonPost({
+			frame: "hero",
+			source,
+			fingerprint: fingerprintOf(FRAME),
+			file: { name: "shot.png", data: PNG.toString("base64") },
+		}),
+	);
+	expect(response.status).toBe(404);
+	expect(readFrame(root)).toBe(FRAME);
+	expect(existsSync(join(root, "design/frames/hero/shot.png"))).toBe(false);
 });
 
 describe("the imports a swap may choose from", () => {
@@ -300,18 +101,6 @@ describe("what the swap works out before it writes", () => {
 		expect(inlinedSize(3 * 1024)).toBe(4 * 1024 + "data:image/svg+xml;base64,".length);
 		expect(overBudget(inlinedSize(1024))).toBeUndefined();
 		expect(overBudget(inlinedSize(512 * 1024))?.code).toBe("image-budget");
-	});
-
-	it("weighs every picture the file would carry, not only the one arriving", () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root } = makeProject(spoolDir);
-		writeFrame(root, "hero", FRAME);
-		put(root, "frames/hero/one.png", Buffer.alloc(300 * 1024, 1));
-		put(root, "frames/hero/two.png", Buffer.alloc(300 * 1024, 2));
-		const file = join(root, "design/frames/hero/frame.tsx");
-		const spend = imageSpend(join(root, "design"), file, ["./one.png", "./two.png"], new Map());
-		expect(overBudget(spend)?.code).toBe("image-budget");
-		expect(overBudget(imageSpend(join(root, "design"), file, ["./one.png"], new Map()))).toBeUndefined();
 	});
 
 	it("mints an identifier an author would have typed", () => {

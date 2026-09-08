@@ -23,6 +23,7 @@ export interface SourceIntent {
 	field?: string;
 	original?: SourceOccurrence;
 	source?: string;
+	asset?: string;
 	cell?: string;
 	resolves?: readonly string[];
 	role?: SourceDescription["role"];
@@ -81,10 +82,27 @@ export function attributedIntent(intent: SourceIntent, read: SourceDescription):
 			: {}),
 		original: read.original,
 		source: read.source,
+		...(read.asset ? { asset: read.asset } : {}),
 		role: read.role,
 		...(read.scope ? { scope: read.scope } : {}),
 		...(read.cell ? { cell: read.cell } : {}),
 	};
+}
+
+/** Source comparison for recovery presentation; current publication and native outcome remain separately required. */
+export function matchesIntentSource(intent: SourceIntent, description: SourceDescription): boolean {
+	const expected = intent.expected;
+	if (expected?.kind !== "literal" && expected?.kind !== "image") return false;
+	return (
+		description.cell === intent.cell &&
+		description.source === (expected.kind === "image" ? expected.source : intent.source) &&
+		description.value === expected.value &&
+		(description.original.absent ?? false) === expected.absent &&
+		(expected.kind !== "image" ||
+			(description.asset === expected.asset &&
+				description.role === intent.role &&
+				description.scope === intent.scope))
+	);
 }
 
 export function inverseIntent(intent: SourceIntent, way: "undo" | "redo"): SourceIntent {
@@ -102,6 +120,16 @@ export function intentText(intent: SourceIntent): string | undefined {
 }
 
 export function preparedHelp(intent: SourceIntent, reason: string, saved: boolean): string {
+	const originalValue =
+		intent.operation.kind === "image"
+			? intent.asset
+				? JSON.stringify(intent.asset)
+				: intent.original?.absent
+					? "absent image source"
+					: intent.original?.value === ""
+						? "empty image source"
+						: "captured image source"
+			: JSON.stringify(intent.original?.value);
 	return [
 		`I tried to ${intent.inverse ? `${intent.inverse} ` : ""}${intent.action}${intent.change?.kind === "literal" && !(intent.expected?.kind === "literal" && intent.expected.absent) ? ` to ${JSON.stringify(intent.change.text)}` : ""}. ${reason}`,
 		...(intent.operation.kind === "property"
@@ -116,12 +144,17 @@ export function preparedHelp(intent: SourceIntent, reason: string, saved: boolea
 					`Requested result: ${intent.field} ${intent.expected.absent ? "is absent" : `is present with value ${JSON.stringify(intent.expected.value)}`}.`,
 				]
 			: []),
+		...(intent.expected?.kind === "image"
+			? [
+					`Requested result: image ${intent.expected.absent ? "source is absent" : intent.expected.asset ? `references ${JSON.stringify(intent.expected.asset)}` : intent.expected.value === "" ? "source is present and empty" : "uses the captured source value"}.`,
+				]
+			: []),
 		`Target: ${intent.frame}, ${intent.selector}.`,
 		`Source: ${intent.source ?? intent.selection.find((entry) => entry.kind === "element")?.path ?? "not attributed"}.`,
 		`Role: ${intent.role ?? "not established"}. Scope: ${intent.scope ?? "not established"}.`,
 		...(intent.original
 			? [
-					`Original occurrence: ${intent.original.occurrence}. Original value: ${JSON.stringify(intent.original.value)}. Render context: ${intent.original.context}.`,
+					`Original occurrence: ${intent.original.occurrence}. Original value: ${originalValue}. Render context: ${intent.original.context}.`,
 				]
 			: []),
 	].join("\n\n");

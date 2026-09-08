@@ -1521,7 +1521,7 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			const reply = (result) => parent.postMessage({ spool: "source-reply", frame: config.frame, id: m.id, result }, "*");
 			if (!source) { reply(undefined); return; }
 			try {
-				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "delete"].includes(m.operation?.kind)) { reply(undefined); return; }
+				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "delete", "image"].includes(m.operation?.kind)) { reply(undefined); return; }
 				if (m.action === "inventory") reply(source.inventory(m.field,m.operation));
 else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses,m.structure));
 else if(m.action === "highlight") {source.highlight(m.uses);reply(true);}
@@ -1534,7 +1534,8 @@ else if (m.action === "inspect") { const el=elementFor(m.selector); reply(el ? s
 else if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation, m.field,m.operation) : undefined); }
 				else if (m.action === "complete") reply(source.complete(m.generation));
 				else if (m.action === "cancel") { source.cancel(m.generation); reply(true); }
-				else if (m.action === "preview") reply(source.preview(m.generation, m.text));
+				else if (m.action === "preview-image") source.previewImage(m.generation,m.value).then(reply,()=>reply("unavailable"));
+else if (m.action === "preview") reply(source.preview(m.generation, m.text));
 				else if (m.action === "install") source.install(m.publication, m.undo === true).then(reply, () => reply(undefined));
 				else if (m.action === "revoke") { source.revoke(m.publication); reply(true); }
 			} catch { reply(undefined); }

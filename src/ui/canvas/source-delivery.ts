@@ -10,6 +10,7 @@ import {
 	type SourceUse,
 	type UseOutcome,
 } from "../../source-edit";
+import type { SourceImagePreview } from "../../source-image";
 import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 import type { SourceIntent } from "./source-intent";
@@ -278,14 +279,19 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 
 	return {
 		describeField: useCallback(
-			async (frame: string, selector: string, field: string) => {
+			async (
+				frame: string,
+				selector: string,
+				field: string,
+				operation: SourceOperation = { kind: "literal", field },
+			) => {
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
 					field,
-					operation: { kind: "literal", ...(field ? { field } : {}) },
+					operation,
 				});
-				return original ? describeSource(project, frame, original, []) : undefined;
+				return original ? describeSource(project, frame, original, [], operation) : undefined;
 			},
 			[project, request],
 		),
@@ -314,7 +320,13 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 						outcomes.push({ occurrence: "", installation: "refused", rendered: "unverified" });
 					return { kind: "structure" as const, outcome: combineUseOutcomes(outcomes, intent.original.occurrence) };
 				}
-				if (operation.kind !== "literal" || expected?.kind !== "literal") return;
+				if (
+					!(
+						(operation.kind === "literal" && expected?.kind === "literal") ||
+						(operation.kind === "image" && expected?.kind === "image")
+					)
+				)
+					return;
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
@@ -337,19 +349,31 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 								action: "verify",
 								publication: use.original.publication,
 								original: use.original,
-								expected: { kind: "literal", value: description.value, absent: original.absent ?? false },
+								expected:
+									expected.kind === "image"
+										? expected
+										: { kind: "literal", value: description.value, absent: original.absent ?? false },
 							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
 							frame: use.frame,
 						}),
 					),
 				);
+				if (expected.kind === "image") {
+					for (const name of intent.recovery?.frames ?? [frame]) {
+						const uses = description.reach.uses.filter((use) => use.frame === name);
+						if (!uses.length || !(await sourceIsCurrent(project, uses[0]!.original.publication)))
+							outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
+					}
+					if (intent.recovery?.unknown)
+						outcomes.push({ occurrence: "", installation: "refused", rendered: "unverified" });
+				}
 				outcomes.push(...(description.reach.unverified ?? []));
 				for (const name of description.reach.unknown)
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
 				for (const name of description.reach.unmounted)
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unmounted" });
 				return {
-					kind: "literal" as const,
+					kind: expected.kind,
 					description,
 					outcome: combineUseOutcomes(outcomes, original.occurrence),
 				};
@@ -511,6 +535,20 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				return groupOutcome(group);
 			},
 			[iframes, request],
+		),
+		previewImage: useCallback(
+			async (frame: string, generation: number, value: string): Promise<SourceImagePreview> => {
+				const targets = prepared.current.get(generation)?.frames ?? [frame];
+				if (targets.length === 0) return "unavailable";
+				const results = await Promise.all(
+					targets.map((frame) =>
+						request<SourceImagePreview>(frame, { action: "preview-image", generation, value }),
+					),
+				);
+				if (results.includes("failed")) return "failed";
+				return results.every((result) => result === "ready") ? "ready" : "unavailable";
+			},
+			[request],
 		),
 		preview: useCallback(
 			async (frame: string, generation: number, text: string) => {

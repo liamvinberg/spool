@@ -23,6 +23,7 @@ import {
 	type SourceInput,
 	sameInput,
 } from "./retained-compile";
+import { resolveImageValues } from "./source-image-values";
 import { captureLazyGraph } from "./source-lazy-graph";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
@@ -126,7 +127,8 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 	}
 
-	async function compilePublication(
+	/** Compile captured bytes without publishing them or asserting that they are current. */
+	async function compileSnapshot(
 		root: string,
 		frame: string,
 		frozen: ReadonlyMap<string, SourceInput>,
@@ -148,6 +150,7 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			sourcefile: STDIN_NAME,
 			contents: bootEntry(frame),
 			label: `frame "${frame}"`,
+			imageBudget: IMAGE_BUDGET_BYTES,
 			retained,
 			frozen,
 			resolutions: resolution?.resolutions,
@@ -159,7 +162,6 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 		for (const [file, input] of frozen) {
 			assertDesignFile(designDir, file);
-			if (!sameInput(input, readInput(file))) throw new Error("source changed during retained compilation");
 			retained.inputs.set(file, input);
 		}
 		const sheets = await buildFrameCss(designDir, built.sourceFiles, (file) => {
@@ -179,11 +181,19 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			if (existsSync(file)) throw new Error("compiler configuration resolution changed during compilation");
 		for (const file of absent)
 			if (existsSync(resolveDesignPath(designDir, file))) throw new Error("an absent dependency was created");
-		finishCompilation(retained, sequence);
+		finishCompilation(retained, sequence, designDir);
+		return retained;
+	}
+	async function compilePublication(...args: Parameters<typeof compileSnapshot>): Promise<RetainedCompilation> {
+		const [root, frame, frozen] = args;
+		const retained = await compileSnapshot(...args);
+		for (const [file, input] of frozen)
+			if (!sameInput(input, readInput(file))) throw new Error("source changed during retained compilation");
 		publications.set(retained.packet.id, { root, frame, compilation: retained });
 		return retained;
 	}
 	return {
+		compileSnapshot,
 		getDocument,
 		compilePublication,
 		publication: (id: string) => publications.get(id),
@@ -442,7 +452,7 @@ async function compileFrame({
 		if (!sameInput(input, readInput(file))) throw new Error("compiler configuration changed during compilation");
 	for (const file of retained.configurationAbsent)
 		if (existsSync(file)) throw new Error("compiler configuration resolution changed during compilation");
-	finishCompilation(retained, 0);
+	finishCompilation(retained, 0, designDir);
 	const document = assembleFrameDocument({
 		project,
 		frame,
@@ -685,7 +695,8 @@ export function describeCompileError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function finishCompilation(compilation: RetainedCompilation, sequence: number): void {
+function finishCompilation(compilation: RetainedCompilation, sequence: number, designDir: string): void {
+	resolveImageValues(compilation, designDir);
 	compilation.packet.sequence = sequence;
 	compilation.packet.owners = {
 		...compilation.structureOwners,

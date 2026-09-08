@@ -8,7 +8,7 @@ import { type OnResolveResult, type Plugin, transformSync } from "esbuild";
 import { LITERAL_ATTRIBUTES_BY_TAG, LITERAL_ATTRIBUTES_EVERY } from "../literal-attributes";
 import type { RetainedValues } from "../source-edit";
 import type { SourceStructureState } from "../source-structure";
-import { TEXT_LOADERS } from "./assets";
+import { ASSET_FILTER, TEXT_LOADERS } from "./assets";
 import { assertDesignFile } from "./design-path";
 import { observeCacheSource } from "./source-cache-compile";
 import { observeLazySource } from "./source-lazy-compile";
@@ -19,6 +19,7 @@ export interface SourceInput {
 	identity: string;
 }
 export interface LiteralCell {
+	image?: { specifier?: string; identifier?: string };
 	childValue?: string | readonly string[] | null;
 	absent?: true;
 	source: string;
@@ -192,6 +193,21 @@ export function lowerLiterals(
 	const attributes = new Set<Node>();
 	const retainedAttributes = new Set<Node>();
 	const absentCells: Record<string, LiteralCell> = {};
+	const imageImports = new Map<string, Extract<Node, { type: "ImportDeclaration" }>>();
+	const imageReferences = new Map<string, number>();
+	for (const statement of ast.body)
+		if (
+			statement.type === "ImportDeclaration" &&
+			ASSET_FILTER.test(statement.source.value) &&
+			(statement.source.value.startsWith(".") || statement.source.value.startsWith("shared/")) &&
+			statement.specifiers.length === 1 &&
+			statement.specifiers[0]?.type === "ImportDefaultSpecifier"
+		)
+			imageImports.set(statement.specifiers[0].local.name, statement);
+	walk(ast, (node) => {
+		if (node.type === "VariableDeclarator" || /Function|Method/.test(node.type) || node.type === "CatchClause")
+			for (const name of Object.keys(getBindingIdentifiers(node))) imageImports.delete(name);
+	});
 	const sites: { node: Extract<Node, { type: "JSXElement" | "CallExpression" }>; id: string }[] = [];
 	const functions = new Map<Node, string>();
 	const patches: Patch[] = [];
@@ -242,7 +258,7 @@ export function lowerLiterals(
 				const field = attribute.name.name;
 				if (/^(?:on[A-Z]|data-spool-)/.test(field)) continue;
 				if (["key", "ref", "data-go", "className", "style"].includes(field)) continue;
-				if (field === "src" && open.name.type === "JSXIdentifier" && open.name.name === "img") continue;
+				const image = field === "src" && open.name.type === "JSXIdentifier" && open.name.name === "img";
 				if (
 					open.attributes.filter(
 						(other) =>
@@ -257,22 +273,36 @@ export function lowerLiterals(
 								attribute.value.expression.type === "StringLiteral"
 							? attribute.value.expression
 							: undefined;
-				if (!value) continue;
+				const expression =
+					attribute.value?.type === "JSXExpressionContainer" ? attribute.value.expression : undefined;
+				const imported = image && expression?.type === "Identifier" ? imageImports.get(expression.name) : undefined;
+				if (!value && !imported) continue;
 				const key = `${id}@${field}`;
 				cells[key] = {
 					file,
 					source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`,
-					value: value.value,
+					value: value?.value ?? "",
+					...(image
+						? {
+								image:
+									imported && expression?.type === "Identifier"
+										? { specifier: imported.source.value, identifier: expression.name }
+										: {},
+							}
+						: {}),
 					owner,
 					field,
 					syntax: "jsx",
 				};
 				retainOwner();
-				attributes.add(value);
+				const retained = value ?? expression!;
+				attributes.add(retained);
 				retainedAttributes.add(attribute);
+				if (imported && expression?.type === "Identifier")
+					imageReferences.set(expression.name, (imageReferences.get(expression.name) ?? 0) + 1);
 				patches.push({
-					...position(value),
-					text: `${attribute.value === value ? "{" : ""}${prefix}Value(${JSON.stringify(key)},${JSON.stringify(value.value)})${attribute.value === value ? "}" : ""}`,
+					...position(retained),
+					text: `${attribute.value === retained ? "{" : ""}${prefix}Value(${JSON.stringify(key)},${value ? JSON.stringify(value.value) : source.slice(position(retained).start, position(retained).end)})${attribute.value === retained ? "}" : ""}`,
 				});
 			}
 		}
@@ -282,9 +312,7 @@ export function lowerLiterals(
 			!open.attributes.some((attr) => attr.type === "JSXSpreadAttribute")
 		) {
 			const tag = open.name.name;
-			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY].filter(
-				(name) => name !== "src" || tag !== "img",
-			);
+			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY];
 			for (const field of names) {
 				if (
 					open.attributes.some(
@@ -301,6 +329,7 @@ export function lowerLiterals(
 					field,
 					syntax: "jsx",
 					absent: true,
+					...(tag === "img" && field === "src" ? { image: {} } : {}),
 				};
 				retainOwner();
 			}
@@ -586,6 +615,16 @@ export function lowerLiterals(
 		locations[id] = `${file}:${node.loc!.start.line}:${node.loc!.start.column + 1}`;
 	}
 	Object.assign(cells, absentCells);
+	// Only imports whose every read is an admitted image field are mutable data.
+	// A reused import with any ordinary application consumer remains executable.
+	const retainedImports = new Set<Node>();
+	for (const [name, declaration] of imageImports) {
+		let mentions = 0;
+		walk(ast, (node) => {
+			if (node.type === "Identifier" && node.name === name) mentions++;
+		});
+		if (mentions === (imageReferences.get(name) ?? 0) + 1 && mentions > 1) retainedImports.add(declaration);
+	}
 	const normalize = (node: Node, retainRootOptional = true) =>
 		JSON.parse(
 			JSON.stringify(node, (key, value: unknown) => {
@@ -606,6 +645,7 @@ export function lowerLiterals(
 					const shaped = structural.shape(value as Node, key !== "" || retainRootOptional);
 					if (shaped !== undefined) return shaped;
 				}
+				if (key === "body" && Array.isArray(value)) return value.filter((node) => !retainedImports.has(node));
 				if (key === "attributes" && Array.isArray(value))
 					return value.filter((attribute) => !retainedAttributes.has(attribute));
 				if (typeof value === "object" && value !== null && attributes.has(value as Node))

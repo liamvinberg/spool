@@ -102,15 +102,6 @@ const ATTRIBUTE = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
 const STAMP = /^[^\s:]+:\d+:\d+$/;
 const TEXT_CAP = 4096;
 /**
- * A relative import of a project asset, which is the only thing a `src` may be
- * pointed at. Composed from the one asset list rather than spelled again: a
- * kind added there and not here is a picture the swap would refuse to write.
- */
-const SPECIFIER = new RegExp(`^\\.{1,2}/[^"'\\\\\\s]*${ASSET_FILTER.source}`, "i");
-/** The stem a fresh import's identifier is minted from. */
-const HINT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-
-/**
  * The ops off the wire, or nothing. Strict: an op the daemon cannot read is a
  * 400 rather than a guess, because every one of them writes to a file.
  *
@@ -120,9 +111,8 @@ const HINT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
  * takes, and every one of them folds into a single patch on one literal.
  */
 export function parseHandOps(value: unknown): HandOp[] | undefined {
-	// `set-asset` is deliberately not among them: it is formed by the lane's own
-	// asset door, which is the only place that knows where the picture is, what
-	// it weighs and whether the document can carry it (#260)
+	// The original source owner alone can plan image imports after staging and
+	// checking their canonical bytes and complete document budget.
 	if (!Array.isArray(value) || value.length === 0 || value.length > 32) return undefined;
 	const ops: HandOp[] = [];
 	for (const raw of value) {
@@ -160,33 +150,6 @@ export function parseStamps(value: unknown): string[] | undefined {
 	if (!Array.isArray(value) || value.length === 0 || value.length > 32) return undefined;
 	if (!value.every((source): source is string => typeof source === "string" && STAMP.test(source))) return undefined;
 	return [...value];
-}
-
-/**
- * The one op no client may send: the asset swap, formed by the lane itself.
- *
- * It carries a path rather than a value, and the answers a path needs — where
- * the picture is, what it weighs, whether one document can carry it — are the
- * asset door's. So the door mints it and this is where its shape is checked,
- * which keeps the check in the same file as the splice that trusts it.
- */
-export function assetOp(source: string, specifier: string, hint: string): HandOp | undefined {
-	if (specifier.length > 512 || !SPECIFIER.test(specifier)) return undefined;
-	if (hint.length > 64 || !HINT.test(hint)) return undefined;
-	return { kind: "set-asset", source, specifier, hint };
-}
-
-/** The image files this source imports, as the specifiers it spells them with. */
-export function imageImports(source: string): string[] {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
-		return [];
-	}
-	return importsIn(program)
-		.map((held) => held.specifier)
-		.filter((specifier) => ASSET_FILTER.test(specifier));
 }
 
 export function fingerprintOf(source: string): string {
