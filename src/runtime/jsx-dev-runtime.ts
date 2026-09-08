@@ -3,6 +3,7 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import type { SourcePropertyPreview } from "../source-property";
 import type { SourceStructuralExpectation } from "../source-structure";
 import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
+import { propertyOutcome } from "./property-outcome";
 import { installObserver } from "./source-observer";
 import { previewPropertyStyles, restorePropertyStyles } from "./source-property-preview";
 import { changedStructure, compatibleStructure, structuralList, structuralOptional } from "./source-structure";
@@ -651,21 +652,26 @@ function observedUse(
 			})),
 			original.occurrence,
 		);
-	if (expected.kind !== "literal")
+	if (expected.kind !== "literal" && expected.kind !== "property")
 		return {
 			occurrence: original.occurrence,
 			installation: "installed",
 			rendered: "unverified",
 			reason: "this rendered source effect has no verifier",
 		};
-	const observed = element ? renderedField(element, original.field) : undefined;
-	const matches = original.field
-		? !!element &&
-			(expected.absent
-				? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
-				: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
-					observed === expected.value)
-		: observed === expected.value;
+	const property = expected.kind === "property" && element ? propertyOutcome(element, expected) : undefined;
+	const observed =
+		expected.kind === "property" ? property?.observed : element ? renderedField(element, original.field) : undefined;
+	const matches =
+		expected.kind === "property"
+			? property?.rendered === "verified"
+			: original.field
+				? !!element &&
+					(expected.absent
+						? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
+						: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
+							observed === expected.value)
+				: observed === expected.value;
 	const rendered = !element?.isConnected
 		? element && failed.has(element)
 			? "failed"
@@ -676,12 +682,13 @@ function observedUse(
 				? "verified"
 				: element && failed.has(element)
 					? "failed"
-					: "mismatching";
+					: (property?.rendered ?? "mismatching");
 	return {
 		occurrence: original.occurrence,
 		installation: "installed",
 		rendered,
 		...(observed === undefined ? {} : { observed }),
+		...(property?.reason === undefined ? {} : { reason: property.reason }),
 	};
 }
 function observedOutcome(held: AcceptedOutcome): UseOutcome {
