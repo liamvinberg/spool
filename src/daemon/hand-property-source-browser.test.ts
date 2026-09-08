@@ -365,43 +365,49 @@ it("does not prepare an old property read after Escape and a newer preview", asy
 	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
 });
 
-it.each([true, false])("scrubs one retained opacity gesture and completes only on release: %s", async (commit) => {
-	const f = await originCanvas(
-		{
-			"shared/button.tsx":
-				'export function Button(){return <button id="subject" className="opacity-75">Hello</button>}',
-		},
-		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
-		"#subject",
-	);
-	await f.select();
-	// The rail scrolls: a pointer gesture reads the row where it actually is.
-	const label = f.page.locator('[data-properties-row="opacity"] > span').first();
-	await label.scrollIntoViewIfNeeded();
-	const box = await label.boundingBox();
-	if (!box) throw new Error("opacity scrub label has no box");
-	const x = box.x + 5,
-		y = box.y + box.height / 2;
-	await f.page.mouse.move(x, y);
-	await f.page.mouse.down();
-	await f.page.mouse.move(x + 8, y);
-	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.77");
-	await f.page.mouse.move(x + 16, y);
-	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.79");
-	expect(f.writes).toEqual([]);
-	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
-	if (!commit) await f.page.keyboard.press("Escape");
-	await f.page.mouse.up();
-	if (commit) {
-		await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-79");
-		await f.settled();
-		expect(f.writes).toEqual(["commit"]);
-		await f.history();
-		await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-75");
-		await f.settled();
-	} else expect(f.writes).toEqual([]);
-	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
-});
+it.each([true, false])(
+	"scrubs one retained opacity gesture and completes only on release: %s",
+	// The same retained-lifecycle budget its multiphase peers here are given: this
+	// case boots a canvas, scrubs, saves and reverses, which no 5s default covers.
+	{ timeout: 120_000 },
+	async (commit) => {
+		const f = await originCanvas(
+			{
+				"shared/button.tsx":
+					'export function Button(){return <button id="subject" className="opacity-75">Hello</button>}',
+			},
+			'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+			"#subject",
+		);
+		await f.select();
+		// The rail scrolls: a pointer gesture reads the row where it actually is.
+		const label = f.page.locator('[data-properties-row="opacity"] > span').first();
+		await label.scrollIntoViewIfNeeded();
+		const box = await label.boundingBox();
+		if (!box) throw new Error("opacity scrub label has no box");
+		const x = box.x + 5,
+			y = box.y + box.height / 2;
+		await f.page.mouse.move(x, y);
+		await f.page.mouse.down();
+		await f.page.mouse.move(x + 8, y);
+		await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.77");
+		await f.page.mouse.move(x + 16, y);
+		await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.79");
+		expect(f.writes).toEqual([]);
+		expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+		if (!commit) await f.page.keyboard.press("Escape");
+		await f.page.mouse.up();
+		if (commit) {
+			await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-79");
+			await f.settled();
+			expect(f.writes).toEqual(["commit"]);
+			await f.history();
+			await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+			await f.settled();
+		} else expect(f.writes).toEqual([]);
+		await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+	},
+);
 
 it.each([false, true])(
 	"keeps a continuous native scrub current while later compiler plans are held: outside CSSOM %s",
