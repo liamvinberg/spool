@@ -75,6 +75,13 @@ it("deletes a keyed authored call through retained source history while its sibl
 
 const carriers = [
 	{
+		name: "a special-name authored key",
+		definition: "",
+		a: '<Counter key="__proto__" name="A"/>',
+		b: '<Counter key="constructor" name="B"/>',
+		removed: "",
+	},
+	{
 		name: "a supplied named slot",
 		definition: "function Pass({header}){return <section>{header}</section>}",
 		a: '<Pass key="a" header={<Counter name="A"/>}/>',

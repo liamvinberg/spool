@@ -195,7 +195,7 @@ export function planStructureCompilation(ast: Node, file: string) {
 						const factories = group.children.map((child) => {
 							const expression =
 								child.node.type === "JSXExpressionContainer" ? child.node.expression : child.node;
-							return `${JSON.stringify(child.key)}:()=>(${render(map(span(expression).start, "start"), map(span(expression).end, "end"))})`;
+							return `[${JSON.stringify(child.key)}]:()=>(${render(map(span(expression).start, "start"), map(span(expression).end, "end"))})`;
 						});
 						output += ` {...${prefix}List(${JSON.stringify(group.id)},{${factories.join(",")}})}/>`;
 					}
