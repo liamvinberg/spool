@@ -135,3 +135,85 @@ it.each(["primary", "secondary"])(
 		expect(f.writes).toEqual([]);
 	},
 );
+
+it.each(["Escape", "selection change"])(
+	"clears the post-save gesture outline immediately on %s",
+	{ timeout: 120000 },
+	async (action) => {
+		const f = await preview();
+		await f.save();
+		expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBe("");
+		if (action === "Escape") await f.page.keyboard.press("Escape");
+		else {
+			const box = await f.frame.locator("#unrelated").boundingBox();
+			if (!box) throw new Error("unrelated heading has no box");
+			await f.page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
+			await f.page.mouse.click(box.x + 8, box.y + box.height / 2);
+			await f.page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
+		}
+		await f.page.evaluate(
+			() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+		);
+		expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBeNull();
+	},
+);
+
+it("does not echo older native text over the initiating frame's newer text and caret", {
+	timeout: 120000,
+}, async () => {
+	const source = "export function Label({id}){return <h1 id={id}>Before</h1>}";
+	const f = await originCanvas(
+		{ [file]: source },
+		'import {Label} from "shared/feedback";export default function Frame(){return <main style={{padding:40}}><Label id="label"/><Label id="peer"/></main>}',
+		"#label",
+		true,
+	);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	await second.locator("#label").waitFor();
+	await f.page.evaluate(() => {
+		Reflect.set(window, "heldNativePreviews", []);
+		Reflect.set(window, "releaseNativePreview", false);
+		addEventListener(
+			"message",
+			(event) => {
+				if (event.data?.spool !== "source-preview" || Reflect.get(window, "releaseNativePreview")) return;
+				Reflect.get(window, "heldNativePreviews").push(event.data);
+				event.stopImmediatePropagation();
+			},
+			{ capture: true },
+		);
+	});
+	await f.edit();
+	for (const text of ["First", "Second"]) {
+		await f.page.keyboard.press("ControlOrMeta+a");
+		await f.page.keyboard.insertText(text);
+	}
+	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "heldNativePreviews").length)).toBe(2);
+	expect(await f.frame.locator("#peer").textContent()).toBe("Second");
+	const selection = () =>
+		f.target.evaluate((element) => {
+			const selected = getSelection();
+			return {
+				anchor: selected?.anchorOffset,
+				focus: selected?.focusOffset,
+				inside: element.contains(selected?.anchorNode ?? null),
+			};
+		});
+	const caret = await selection();
+	expect(caret).toEqual({ anchor: 6, focus: 6, inside: true });
+	const held = await f.page.evaluate(() => Reflect.get(window, "heldNativePreviews"));
+	await f.page.evaluate(() => Reflect.set(window, "releaseNativePreview", true));
+	await f.target.evaluate((_element, data) => parent.postMessage(data, "*"), held[0]);
+	await expect.poll(() => second.locator("#label").textContent()).toBe("First");
+	expect(await f.target.textContent()).toBe("Second");
+	expect(await f.frame.locator("#peer").textContent()).toBe("Second");
+	expect(await selection()).toEqual(caret);
+	await f.target.evaluate((_element, data) => parent.postMessage(data, "*"), held[1]);
+	await expect.poll(() => second.locator("#peer").textContent()).toBe("Second");
+	await f.page.keyboard.press("Escape");
+	await expect.poll(() => second.locator("#label").textContent()).toBe("Before");
+	expect(await f.target.textContent()).toBe("Before");
+	expect(await f.frame.locator("#peer").textContent()).toBe("Before");
+	expect(f.bytes()[file]).toBe(source);
+	expect(f.writes).toEqual([]);
+});

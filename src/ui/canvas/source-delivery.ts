@@ -96,7 +96,9 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				const held = prepared.current.get(data.generation);
 				if (held?.initiator !== data.frame || event.source !== iframes.current.get(data.frame)?.contentWindow)
 					return;
-				for (const frame of held.frames)
+				// Native input already updated every governed use in its own frame.
+				// Echoing it back could replace a newer native edit with queued text.
+				for (const frame of held.frames.filter((frame) => frame !== held.initiator))
 					iframes.current.get(frame)?.contentWindow?.postMessage(
 						{
 							spool: "source-request",
