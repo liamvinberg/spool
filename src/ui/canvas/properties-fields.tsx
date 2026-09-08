@@ -598,11 +598,12 @@ export function Menu({
 				aria-expanded={open}
 				onClick={() => (open ? setOpen(false) : show())}
 				onKeyDown={(event) => {
+					// The trigger keeps focus after a pick, so it owns only the keys it
+					// opens with; everything else is the canvas's, Undo included.
+					if (event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== " ") return;
 					event.stopPropagation();
-					if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-						event.preventDefault();
-						show();
-					}
+					event.preventDefault();
+					show();
 				}}
 				className={cn(
 					"flex h-6 min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-1 text-left focus:outline-none",

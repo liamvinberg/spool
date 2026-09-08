@@ -480,6 +480,23 @@ it("keeps its controls while the element is read again, and retires them when th
 	expect(fieldIn(rail, "border-width")).toBeNull();
 });
 
+// A menu keeps focus after it commits, and canvas Undo is a canvas key: the
+// trigger owns only the keys it opens with.
+it("lets a canvas key through the menu trigger it does not use", async () => {
+	const rail = await mount("text-md");
+	const trigger = menuIn(rail, "font-weight");
+	if (!trigger) throw new Error("missing font-weight menu");
+	const seen: string[] = [];
+	const listen = (event: KeyboardEvent) => seen.push(event.key);
+	document.addEventListener("keydown", listen);
+	onTestFinished(() => document.removeEventListener("keydown", listen));
+	await act(() => {
+		trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true }));
+		trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+	});
+	expect(seen).toEqual(["z"]);
+});
+
 // Tabbing out of another control lands here: a field nobody has edited must not
 // take the source lane and cancel the edit that is still saving.
 it("takes the source lane on an edit, never on focus alone", async () => {

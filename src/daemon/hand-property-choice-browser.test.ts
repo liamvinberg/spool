@@ -113,6 +113,7 @@ it.each(["reference", "custom at reduced zoom"] as const)(
 			expect(await target.evaluate((element) => getComputedStyle(element).lineHeight)).toBe("24px");
 		}
 		await expect.poll(() => trigger.textContent()).toContain("--text-display");
+		// The menu keeps focus after it commits, and Undo is still the canvas's.
 		await f.page.keyboard.press("ControlOrMeta+z");
 		await f.settled();
 		expect(f.bytes()[file]).toBe(original);
