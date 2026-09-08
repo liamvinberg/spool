@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "@babel/parser";
 import { expect, it, onTestFinished } from "vitest";
 import type { RetainedValues, SourceOccurrence, SourceRead, SourceResult } from "../source-edit";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
@@ -106,8 +107,10 @@ it("preserves executable shape across empty and escaped literal writes and leave
 	const second = lowerLiterals("frame.tsx", SOURCE.replace('{"Hello"}', '{""}'));
 	expect(first.shape).toBe(second.shape);
 	const adjacent = lowerLiterals("frame.tsx", 'export default function Frame(){return <p>{"one"}{"two"}</p>}');
-	expect(adjacent.cells).toEqual({});
-	expect(adjacent.code).toBe('export default function Frame(){return <p>{"one"}{"two"}</p>}');
+	expect(Object.values(adjacent.cells).filter((cell) => !cell.field)).toMatchObject([
+		{ value: "onetwo", childValue: ["one", "two"] },
+	]);
+	expect(adjacent.code).toContain('["one","two"]');
 });
 
 it("keeps two coordinated source edits reversible through two undos and two redos", async () => {
@@ -249,9 +252,26 @@ it("preserves the ordinary compiler's configured class-field assignment semantic
 	};
 	const ordinary = await buildDesignEntry(options),
 		retained = await buildDesignEntry({ ...options, retained: emptyCompilation() });
+
+	const runtime = await import("../runtime/jsx-dev-runtime");
 	const evaluate = (code: string) => {
-		const target = { result: undefined };
-		Function("globalThis", code.replace(/^import .*spool\/jsx-dev-runtime.*;\n/gm, ""))(target);
+		const target = { result: undefined, __SPOOL_CONSUMED__: globalThis.__SPOOL_CONSUMED__ };
+		const names: string[] = [],
+			values: unknown[] = [];
+		const imports = parse(code, { sourceType: "module" }).program.body.filter(
+			(statement) => statement.type === "ImportDeclaration" && statement.source.value === "spool/jsx-dev-runtime",
+		);
+		for (const statement of imports) {
+			if (statement.type !== "ImportDeclaration") continue;
+			for (const spec of statement.specifiers) {
+				if (spec.type !== "ImportSpecifier") throw new Error("unexpected runtime import");
+				const name = spec.imported.type === "Identifier" ? spec.imported.name : spec.imported.value;
+				names.push(spec.local.name);
+				values.push(Reflect.get(runtime, name));
+			}
+		}
+		for (const statement of imports.reverse()) code = code.slice(0, statement.start!) + code.slice(statement.end!);
+		Function("globalThis", ...names, code)(target, ...values);
 		return target.result;
 	};
 	expect(evaluate(ordinary.bootJs)).toBe("set");
@@ -279,6 +299,45 @@ it.each(["tsconfig.json", "base.json", "frames/home/package.json"])(
 	},
 );
 
+it("secondary-only dependency changes revoke secondary publication admission", async () => {
+	const f = await fixture((root) => {
+		writeDesignFile(root, "shared/label.tsx", 'export function Label(){return <h1>{"Hello"}</h1>}');
+		writeFrame(root, "home", 'import {Label} from "shared/label"; export default function Frame(){return <Label/>}');
+		writeFrame(
+			root,
+			"second",
+			'import {Label} from "shared/label"; import "./only.css"; export default function Frame(){return <Label/>}',
+		);
+		writeDesignFile(root, "frames/second/only.css", "body{color:red}");
+	});
+	const document = await f.compiler.getDocument(f.root, "second", {
+		projectCapability: "test",
+		controlOrigin: "http://localhost",
+	});
+	if (document.kind !== "ok") throw new Error(document.message);
+	const id = /configureSource\(\{"id":"([^"]+)"/.exec(document.document)?.[1];
+	if (!id) throw new Error("no second publication");
+	const second = { ...f.read.original, publication: id, occurrence: "second-node" };
+	const reached = await f.owner.reach(f.root, f.read.handle, [
+		{
+			frame: "home",
+			publication: f.read.original.publication,
+			unknown: 0,
+			uses: [{ original: f.read.original, visible: true }],
+		},
+		{ frame: "second", publication: id, unknown: 0, uses: [{ original: second, visible: true }] },
+	]);
+	if (!reached.ok) throw new Error(reached.reason);
+	const saved = await f.commit(f.read, "After");
+	if (!saved.ok || !saved.publication) throw new Error("no saved publication");
+	const related = saved.publication.related?.[0];
+	if (!related) throw new Error("no secondary publication");
+	expect(f.owner.admit(related.admission.token)).toBe(true);
+	writeDesignFile(f.root, "frames/second/only.css", "body{color:blue}");
+	expect(f.owner.current(f.root, related.packet.id)).toBe(false);
+	expect(f.owner.admit(related.admission.token)).toBe(false);
+	f.owner.delivered(saved.publication.packet.id);
+});
 async function actualAgent(
 	f: Awaited<ReturnType<typeof fixture>>,
 	hook?: (request: SourceAgentRequest, response: SourceAgentReply) => Promise<void>,
@@ -493,9 +552,9 @@ it("recertifies executable context before applying a disjoint hand span", async 
 	const f = await fixture();
 	const agent = await actualAgent(f);
 	expect(
-		(await agent.run([agentRead(f.file), agentEdit(f.file, 'defaultValue="keep"', 'defaultValue="changed"')])).every(
-			(r) => !r.failed,
-		),
+		(
+			await agent.run([agentRead(f.file), agentEdit(f.file, 'defaultValue="keep"', "defaultValue={window.initial}")])
+		).every((r) => !r.failed),
 	).toBe(true);
 	expect(await f.commit(f.read, "must not save")).toMatchObject({
 		ok: false,
@@ -626,4 +685,78 @@ it("coordinates a design folder symlink inside the project and revokes it when i
 	});
 	expect((await second.run([agentRead(f.file), agentEdit(f.file, "Agent", "Wrong")])).at(-1)?.failed).toBe(true);
 	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
+
+it("preserves a separately retained literal attribute across a rebased text save and inverse", async () => {
+	const f = await fixture();
+	const agent = await actualAgent(f);
+	expect(
+		(await agent.run([agentRead(f.file), agentEdit(f.file, 'defaultValue="keep"', 'defaultValue="changed"')])).every(
+			(result) => !result.failed,
+		),
+	).toBe(true);
+	const saved = await f.commit(f.read, "Mine");
+	if (!saved.ok || !saved.receipt || !saved.publication) throw new Error("source did not save");
+	expect(readFileSync(f.file, "utf8")).toContain('defaultValue="changed"');
+	f.owner.delivered(saved.publication.packet.id);
+	const undone = await f.owner.inverse(f.root, saved.receipt);
+	expect(undone.ok).toBe(true);
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE.replace('defaultValue="keep"', 'defaultValue="changed"'));
+	if (undone.ok && undone.publication) f.owner.delivered(undone.publication.packet.id);
+});
+
+it("keeps shared source inverse authority after every consuming frame is removed", async () => {
+	const shared = 'export function Label(){return <h1>{"Hello"}</h1>}';
+	const f = await fixture((root) => {
+		writeDesignFile(root, "shared/label.tsx", shared);
+		writeFrame(root, "home", 'import {Label} from "shared/label";export default function Frame(){return <Label/>}');
+	});
+	const saved = await f.commit(f.read, "Changed");
+	if (!saved.ok || !saved.receipt || !saved.publication) throw new Error("no shared save");
+	f.owner.delivered(saved.publication.packet.id);
+	rmSync(join(f.root, "design/frames/home"), { recursive: true });
+	const undone = await f.owner.inverse(f.root, saved.receipt, []);
+	expect(undone).toMatchObject({ ok: true, source: "saved", publication: null });
+	expect(readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
+	if (!undone.ok || !undone.receipt) throw new Error("no source-owned redo");
+	const redone = await f.owner.inverse(f.root, undone.receipt, []);
+	expect(redone).toMatchObject({ ok: true, source: "saved", publication: null });
+	expect(readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toContain("Changed");
+});
+
+it.each(["save", "undo"])("keeps a stale observed use unverified beside a valid use during %s", async (operation) => {
+	const f = await fixture();
+	let original = f.read.original;
+	let receipt: import("../source-edit").SourceReceipt | undefined;
+	if (operation === "undo") {
+		const saved = await f.commit(f.read, "After");
+		if (!saved.ok || !saved.publication) throw new Error("save did not publish");
+		receipt = saved.publication.receipt;
+		f.owner.delivered(saved.publication.packet.id);
+		original = { ...original, publication: saved.publication.packet.id, value: "After" };
+	}
+	const inventories = [
+		{
+			frame: "home",
+			publication: original.publication,
+			unknown: 0,
+			uses: [
+				{ original, visible: true },
+				{ original: { ...original, publication: "retired-publication", occurrence: "stale-node" }, visible: true },
+			],
+		},
+	];
+	if (operation === "save") {
+		const reached = await f.owner.reach(f.root, f.read.handle, inventories);
+		if (!reached.ok) throw new Error(reached.reason);
+		expect(reached.read.reach?.unknown).toContain("home");
+	}
+	const result = receipt ? await f.owner.inverse(f.root, receipt, inventories) : await f.commit(f.read, "After");
+	if (!result.ok || !result.publication) throw new Error("valid use was not published");
+	expect(result.publication.targets).toHaveLength(1);
+	expect(result.publication.failures).toContainEqual(
+		expect.objectContaining({ frame: "home", rendered: "unverified" }),
+	);
+	f.owner.delivered(result.publication.packet.id);
+	expect(readFileSync(f.file, "utf8")).toBe(operation === "undo" ? SOURCE : SOURCE.replace('"Hello"', '"After"'));
 });

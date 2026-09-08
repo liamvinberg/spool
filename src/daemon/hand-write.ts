@@ -570,6 +570,22 @@ function planAttribute(source: string, element: Element, name: string, value: st
 	if (held === undefined && element.spread) {
 		return { refusal: { code: "spread-props", says: "spread props with no literal" } };
 	}
+	if (held?.value?.type === "JSXExpressionContainer" && held.value.expression.type === "StringLiteral") {
+		const literal = held.value.expression;
+		return {
+			patches: [
+				{
+					start: nodeStart(literal),
+					end: nodeEnd(literal),
+					text: JSON.stringify(value).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029"),
+				},
+			],
+		};
+	}
+	if (held?.value?.type === "StringLiteral") {
+		const literal = held.value;
+		return { patches: [{ start: nodeStart(literal), end: nodeEnd(literal), text: `"${escapeAttribute(value)}"` }] };
+	}
 	return { patches: [fill(element, name, value, slot)] };
 }
 

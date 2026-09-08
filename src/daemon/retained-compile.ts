@@ -3,21 +3,28 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { parse, parseExpression } from "@babel/parser";
-import type { Node } from "@babel/types";
+import { getBindingIdentifiers, type Node } from "@babel/types";
 import { type OnResolveResult, type Plugin, transformSync } from "esbuild";
+import { LITERAL_ATTRIBUTES_BY_TAG, LITERAL_ATTRIBUTES_EVERY } from "../literal-attributes";
 import type { RetainedValues } from "../source-edit";
 import { TEXT_LOADERS } from "./assets";
 import { assertDesignFile } from "./design-path";
+import { observeCacheSource } from "./source-cache-compile";
+import { observeLazySource } from "./source-lazy-compile";
 
 export interface SourceInput {
 	bytes: Buffer;
 	identity: string;
 }
 export interface LiteralCell {
+	childValue?: string | readonly string[] | null;
+	absent?: true;
 	source: string;
 	file: string;
 	value: string;
 	owner: string;
+	field?: string;
+	syntax?: "jsx" | "react-call";
 }
 export interface RetainedCompilation {
 	packet: RetainedValues;
@@ -30,6 +37,7 @@ export interface RetainedCompilation {
 	configuration: Map<string, SourceInput>;
 	configurationAbsent: Set<string>;
 	configurationError?: string;
+	globDiscoveries?: readonly { importer: string; files: readonly string[]; directories: readonly string[] }[];
 }
 
 /** esbuild reads configuration outside onLoad/metafile. Preserve that context
@@ -174,7 +182,10 @@ export function lowerLiterals(
 	}).program;
 	const cells: Record<string, LiteralCell> = {};
 	const eligible = new Set<Node>();
-	const sites: { node: Extract<Node, { type: "JSXElement" }>; id: string }[] = [];
+	const attributes = new Set<Node>();
+	const retainedAttributes = new Set<Node>();
+	const absentCells: Record<string, LiteralCell> = {};
+	const sites: { node: Extract<Node, { type: "JSXElement" | "CallExpression" }>; id: string }[] = [];
 	const functions = new Map<Node, string>();
 	const patches: Patch[] = [];
 	const prefix = `__spool_${digest(source).slice(0, 12)}`;
@@ -183,28 +194,7 @@ export function lowerLiterals(
 		const id = `${file}#literal:${sites.length}`;
 		sites.push({ node, id });
 		const open = node.openingElement;
-		if (
-			open.name.type !== "JSXIdentifier" ||
-			!/^[a-z]/.test(open.name.name) ||
-			open.selfClosing ||
-			!node.closingElement
-		)
-			return;
-		const meaningful = node.children.filter(
-			(c) =>
-				!(c.type === "JSXText" && /^\s*\n\s*$/.test(c.value)) &&
-				!(c.type === "JSXExpressionContainer" && c.expression.type === "JSXEmptyExpression"),
-		);
-		if (
-			meaningful.length > 1 ||
-			!node.children.every(
-				(c) =>
-					c.type === "JSXText" ||
-					(c.type === "JSXExpressionContainer" &&
-						["StringLiteral", "JSXEmptyExpression"].includes(c.expression.type)),
-			)
-		)
-			return;
+
 		const fn = ancestors.find((n) =>
 			["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "ClassMethod"].includes(n.type),
 		);
@@ -221,16 +211,6 @@ export function lowerLiterals(
 		)
 			return;
 		if (fn.type === "ClassMethod" && (fn.static || fn.key.type !== "Identifier" || fn.key.name !== "render")) return;
-		if (
-			ancestors.some(
-				(n) =>
-					n.type === "CallExpression" &&
-					n.callee.type === "MemberExpression" &&
-					n.callee.property.type === "Identifier" &&
-					n.callee.property.name === "map",
-			)
-		)
-			return;
 		const declaration = ancestors[ancestors.indexOf(fn) - 1];
 		const name =
 			fn.type === "FunctionDeclaration"
@@ -240,8 +220,92 @@ export function lowerLiterals(
 					: undefined;
 		if (
 			fn.type !== "ClassMethod" &&
-			!(name && /^[A-Z]/.test(name)) &&
-			declaration?.type !== "ExportDefaultDeclaration"
+			!name &&
+			declaration?.type !== "ExportDefaultDeclaration" &&
+			declaration?.type !== "CallExpression"
+		)
+			return;
+
+		const owner = functions.get(fn) ?? `${file}#component:${functions.size}`;
+		const retainOwner = () => functions.set(fn, owner);
+		if (!open.attributes.some((attribute) => attribute.type === "JSXSpreadAttribute")) {
+			for (const attribute of open.attributes) {
+				if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") continue;
+				const field = attribute.name.name;
+				if (/^(?:on[A-Z]|data-spool-)/.test(field)) continue;
+				if (["key", "ref", "data-go", "className", "style"].includes(field)) continue;
+				if (field === "src" && open.name.type === "JSXIdentifier" && open.name.name === "img") continue;
+				if (
+					open.attributes.filter(
+						(other) =>
+							other.type === "JSXAttribute" && other.name.type === "JSXIdentifier" && other.name.name === field,
+					).length !== 1
+				)
+					continue;
+				const value =
+					attribute.value?.type === "StringLiteral"
+						? attribute.value
+						: attribute.value?.type === "JSXExpressionContainer" &&
+								attribute.value.expression.type === "StringLiteral"
+							? attribute.value.expression
+							: undefined;
+				if (!value) continue;
+				const key = `${id}@${field}`;
+				cells[key] = {
+					file,
+					source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`,
+					value: value.value,
+					owner,
+					field,
+					syntax: "jsx",
+				};
+				retainOwner();
+				attributes.add(value);
+				retainedAttributes.add(attribute);
+				patches.push({
+					...position(value),
+					text: `${attribute.value === value ? "{" : ""}${prefix}Value(${JSON.stringify(key)},${JSON.stringify(value.value)})${attribute.value === value ? "}" : ""}`,
+				});
+			}
+		}
+		if (
+			open.name.type === "JSXIdentifier" &&
+			/^[a-z]/.test(open.name.name) &&
+			!open.attributes.some((attr) => attr.type === "JSXSpreadAttribute")
+		) {
+			const tag = open.name.name;
+			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY].filter(
+				(name) => name !== "src" || tag !== "img",
+			);
+			for (const field of names) {
+				if (
+					open.attributes.some(
+						(attr) =>
+							attr.type === "JSXAttribute" && attr.name.type === "JSXIdentifier" && attr.name.name === field,
+					)
+				)
+					continue;
+				absentCells[`${id}@${field}`] = {
+					file,
+					source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`,
+					value: "",
+					owner,
+					field,
+					syntax: "jsx",
+					absent: true,
+				};
+				retainOwner();
+			}
+		}
+		if (
+			open.selfClosing ||
+			!node.closingElement ||
+			!node.children.every(
+				(child) =>
+					child.type === "JSXText" ||
+					(child.type === "JSXExpressionContainer" &&
+						["StringLiteral", "JSXEmptyExpression"].includes(child.expression.type)),
+			)
 		)
 			return;
 		// Ask the same JSX lowerer for the value of only this literal child. No
@@ -252,25 +316,37 @@ export function lowerLiterals(
 			loader: "jsx",
 			jsx: "automatic",
 			jsxDev: true,
+			supported: { "template-literal": false },
 		}).code;
 		let value = "";
+		let childValue: LiteralCell["childValue"] = null;
 		walk(parse(literal, { sourceType: "module" }).program, (n) => {
-			if (
-				n.type === "ObjectProperty" &&
-				n.key.type === "Identifier" &&
-				n.key.name === "children" &&
-				n.value.type === "StringLiteral"
-			)
-				value = n.value.value;
+			if (n.type === "ObjectProperty" && n.key.type === "Identifier" && n.key.name === "children") {
+				if (n.value.type === "StringLiteral") childValue = value = n.value.value;
+				else if (n.value.type === "ArrayExpression") {
+					const values = n.value.elements.map((element) => {
+						if (element?.type !== "StringLiteral")
+							throw new Error("literal children changed during JSX lowering");
+						return element.value;
+					});
+					childValue = values;
+					value = values.join("");
+				}
+			}
 		});
-		const owner = functions.get(fn) ?? `${file}#component:${functions.size}`;
-		functions.set(fn, owner);
+		retainOwner();
 		eligible.add(node);
-		cells[id] = { file, source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`, value, owner };
+		cells[id] = {
+			file,
+			source: `${file}:${node.loc.start.line}:${node.loc.start.column + 1}`,
+			value,
+			childValue,
+			owner,
+		};
 		patches.push({
 			start: contentStart,
 			end: contentEnd,
-			text: `{${prefix}Value(${JSON.stringify(id)},${JSON.stringify(value)})}`,
+			text: `{${prefix}Children(${JSON.stringify(id)},${JSON.stringify(childValue)})}`,
 		});
 		const jsxChild = ["JSXElement", "JSXFragment"].includes(ancestors.at(-1)?.type ?? "");
 		patches.push({
@@ -280,6 +356,139 @@ export function lowerLiterals(
 		});
 		patches.push({ start: position(node).end, end: position(node).end, text: jsxChild ? ")}" : ")", order: 2 });
 	});
+	const factories = new Map<string, string>();
+	for (const statement of ast.body)
+		if (
+			statement.type === "ImportDeclaration" &&
+			statement.source.value === "react" &&
+			statement.importKind !== "type"
+		)
+			for (const spec of statement.specifiers) {
+				if (
+					spec.type === "ImportSpecifier" &&
+					spec.importKind !== "type" &&
+					spec.imported.type === "Identifier" &&
+					["createElement", "cloneElement", "Children"].includes(spec.imported.name)
+				)
+					factories.set(spec.local.name, spec.imported.name);
+				if (spec.type === "ImportNamespaceSpecifier" || spec.type === "ImportDefaultSpecifier")
+					factories.set(spec.local.name, "namespace");
+			}
+	walk(ast, (node) => {
+		if (node.type === "VariableDeclarator" || /Function|Method/.test(node.type) || node.type === "CatchClause")
+			for (const name of Object.keys(getBindingIdentifiers(node))) factories.delete(name);
+	});
+	let factory = 0;
+	walk(ast, (node, ancestors) => {
+		if (node.type !== "CallExpression" || node.optional || !node.loc) return;
+		const callee = node.callee;
+		const api =
+			callee.type === "Identifier"
+				? factories.get(callee.name)
+				: callee.type === "MemberExpression" &&
+						!callee.computed &&
+						callee.object.type === "Identifier" &&
+						["namespace", "Children"].includes(factories.get(callee.object.name) ?? "") &&
+						callee.property.type === "Identifier"
+					? callee.property.name
+					: undefined;
+		if (!api || !["createElement", "cloneElement", "toArray"].includes(api)) return;
+		let unsafe = false;
+		walk(node, (part) => {
+			if (["AwaitExpression", "YieldExpression", "Super"].includes(part.type)) unsafe = true;
+		});
+		if (unsafe) return;
+		const id = `${file}#factory:${factory++}`;
+		sites.push({ node, id });
+		patches.push({
+			start: position(node).start,
+			end: position(node).start,
+			text: `${prefix}Factory(${JSON.stringify(id)},()=>`,
+		});
+		patches.push({ start: position(node).end, end: position(node).end, text: ")", order: 2 });
+		if (api === "toArray") return;
+		const type = node.arguments[0];
+		if (
+			api === "createElement" &&
+			type?.type === "MemberExpression" &&
+			!type.computed &&
+			type.object.type === "Identifier" &&
+			type.property.type === "Identifier" &&
+			type.property.name === "type"
+		)
+			patches.push({ ...position(type), text: `${prefix}TypeFrom(${type.object.name})` });
+		const fn = ancestors.find((part) =>
+			["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "ClassMethod"].includes(part.type),
+		);
+		if (
+			!fn ||
+			!["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "ClassMethod"].includes(fn.type)
+		)
+			return;
+		const declaration = ancestors[ancestors.indexOf(fn) - 1];
+		const name =
+			fn.type === "FunctionDeclaration"
+				? fn.id?.name
+				: declaration?.type === "VariableDeclarator" && declaration.id.type === "Identifier"
+					? declaration.id.name
+					: undefined;
+		if (
+			!name &&
+			declaration?.type !== "ExportDefaultDeclaration" &&
+			declaration?.type !== "CallExpression" &&
+			fn.type !== "ClassMethod"
+		)
+			return;
+		const owner = functions.get(fn) ?? `${file}#component:${functions.size}`;
+		const retain = (literal: Node, field: string) => {
+			if (literal.type !== "StringLiteral" || ["key", "ref", "data-go", "src", "className", "style"].includes(field))
+				return;
+			const key = `${id}@${field}`;
+			cells[key] = {
+				file,
+				source: `${file}:${node.loc!.start.line}:${node.loc!.start.column + 1}`,
+				value: literal.value,
+				owner,
+				field,
+				syntax: "react-call",
+			};
+			functions.set(fn, owner);
+			attributes.add(literal);
+			patches.push({
+				...position(literal),
+				text: `${prefix}Value(${JSON.stringify(key)},${JSON.stringify(literal.value)})`,
+			});
+		};
+		if (node.arguments.some((arg) => arg.type === "SpreadElement")) return;
+		const config = node.arguments[1];
+		if (
+			config?.type === "ObjectExpression" &&
+			config.properties.every((property) => property.type === "ObjectProperty" && !property.computed)
+		) {
+			for (const property of config.properties) {
+				if (property.type !== "ObjectProperty") continue;
+				const field =
+					property.key.type === "Identifier"
+						? property.key.name
+						: property.key.type === "StringLiteral"
+							? property.key.value
+							: undefined;
+				if (!field || (field === "children" && node.arguments.length > 2)) continue;
+				if (
+					config.properties.filter(
+						(part) =>
+							part.type === "ObjectProperty" &&
+							((part.key.type === "Identifier" && part.key.name === field) ||
+								(part.key.type === "StringLiteral" && part.key.value === field)),
+					).length !== 1
+				)
+					continue;
+				retain(property.value, field);
+			}
+		}
+		if (node.arguments.length === 3 && node.arguments[2]) retain(node.arguments[2], "children");
+	});
+
 	for (const [fn, owner] of functions) {
 		if (
 			!(
@@ -320,8 +529,15 @@ export function lowerLiterals(
 				});
 			}
 		}
-		if (!name) throw new Error("retained component has no stable local binding");
-		const use = `${prefix}Use(${JSON.stringify(owner)},${name});`;
+		if (!name) {
+			patches.push({
+				start: position(fn).start,
+				end: position(fn).start,
+				text: `${prefix}Component(${JSON.stringify(owner)},`,
+			});
+			patches.unshift({ start: position(fn).end, end: position(fn).end, text: ")", order: 0 });
+		}
+		const use = `${prefix}Use(${JSON.stringify(owner)}${name ? `,${name}` : ""});`;
 		const body = fn.body;
 		if (body.type === "BlockStatement")
 			patches.push({ start: position(body).start + 1, end: position(body).start + 1, text: use });
@@ -341,6 +557,7 @@ export function lowerLiterals(
 		stamps[`${file}:${before.length}:${(before.at(-1)?.length ?? 0) + 1}`] = id;
 		locations[id] = `${file}:${node.loc!.start.line}:${node.loc!.start.column + 1}`;
 	}
+	Object.assign(cells, absentCells);
 	const shape = digest(
 		JSON.stringify(ast, (key, value: unknown) => {
 			if (
@@ -356,14 +573,19 @@ export function lowerLiterals(
 				].includes(key)
 			)
 				return undefined;
+			if (key === "attributes" && Array.isArray(value))
+				return value.filter((attribute) => !retainedAttributes.has(attribute));
+			if (typeof value === "object" && value !== null && attributes.has(value as Node))
+				return { type: "RetainedAttribute" };
 			if (typeof value === "object" && value !== null && eligible.has(value as Node))
 				return { ...value, children: [{ type: "RetainedLiteral" }] };
 			return value;
 		}),
 	);
-	const imports = functions.size
-		? `\nimport {sourceValue as ${prefix}Value,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use} from "spool/jsx-dev-runtime";`
-		: "";
+	const imports =
+		functions.size || factory > 0
+			? `\nimport {sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom} from "spool/jsx-dev-runtime";`
+			: "";
 	return { code: transformed + imports, cells, shape, stamps, locations };
 }
 
@@ -384,11 +606,8 @@ export function retainedPlugin(
 				if (local) {
 					const target = resolve(args.path.startsWith("shared/") ? designDir : args.resolveDir, args.path);
 					captureConfiguration(target, compilation);
-					for (
-						let directory = target;
-						directory.startsWith(`${designDir}${sep}`) || directory === designDir;
-						directory = dirname(directory)
-					) {
+					for (const directory of [target, dirname(target)]) {
+						if (!directory.startsWith(`${designDir}${sep}`) && directory !== designDir) continue;
 						const entries = directoryEntries(directory);
 						const previous = compilation.directories.get(directory);
 						if (previous !== undefined && previous !== entries)
@@ -446,6 +665,30 @@ export function retainedPlugin(
 								: "js";
 					return { contents: input.bytes, loader, resolveDir: dirname(args.path) };
 				}
+
+				const original = input.bytes.toString("utf8");
+				const observed = observeLazySource(file, original, observeCacheSource(file, original, lowered.code));
+				const locations: string[] = [];
+				walk(
+					parse(lowered.code, { sourceType: "module", plugins: ["jsx", "typescript", "decorators-legacy"] })
+						.program,
+					(node) => {
+						if (node.type === "JSXElement" && node.loc)
+							locations.push(`${file}:${node.loc.start.line}:${node.loc.start.column + 1}`);
+					},
+				);
+				const stamps: Record<string, string> = {};
+				let nextLocation = 0;
+				walk(
+					parse(observed, { sourceType: "module", plugins: ["jsx", "typescript", "decorators-legacy"] }).program,
+					(node) => {
+						if (node.type !== "JSXElement" || !node.loc) return;
+						const old = locations[nextLocation++];
+						const id = old ? lowered.stamps[old] : undefined;
+						if (id) stamps[`${file}:${node.loc.start.line}:${node.loc.start.column + 1}`] = id;
+					},
+				);
+				lowered = { ...lowered, code: observed, stamps };
 				Object.assign(compilation.cells, lowered.cells);
 				compilation.packet.stamps ??= {};
 				compilation.packet.locations ??= {};

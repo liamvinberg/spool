@@ -1,27 +1,47 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, relative } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import {
+	type SourceDescription,
+	type SourceInventory,
 	type SourceOccurrence,
+	type SourcePublication,
 	type SourceRead,
 	type SourceReceipt,
 	type SourceResult,
+	type SourceUse,
 	sameSourceOccurrence,
+	type UseOutcome,
 } from "../source-edit";
 import type { ExecutedEdit } from "./bundled-editor";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-path";
 import type { SourceObservation } from "./events";
+import { planFactoryLiteral } from "./factory-literal";
 import { applySpan, type HandOp, planOps, type SpanPatch, spanBetween } from "./hand-write";
 import { lookupFrame } from "./projection";
-import { directoryEntries, type RetainedCompilation, readInput, type SourceInput, sameInput } from "./retained-compile";
+import {
+	directoryEntries,
+	lowerLiterals,
+	type RetainedCompilation,
+	readInput,
+	type SourceInput,
+	sameInput,
+} from "./retained-compile";
 import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from "./source-agent";
+import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
+import type { Target } from "./source-origins";
+import { sourceTarget } from "./source-syntax";
+import { potentialTextSource, resolveTextSource } from "./source-target";
 
 interface OriginalRead {
+	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
+	target?: Target;
+	history?: RetainedCompilation;
 	root: string;
 	frame: string;
 	read: SourceRead;
@@ -29,6 +49,10 @@ interface OriginalRead {
 	file: string;
 }
 interface Receipt {
+	expected: SourcePublication["expected"];
+	required: RetainedCompilation;
+	cell: string;
+	reach?: SourceRead["reach"];
 	operation: symbol;
 	coverage: number;
 	root: string;
@@ -50,6 +74,7 @@ export function createSourceOwner(
 		generation: number,
 		observer: string,
 	) => Promise<SourceOccurrence | undefined>,
+	dependencyFrames: (root: string, file: string) => Promise<string[] | undefined> = async () => undefined,
 ) {
 	const owner = randomUUID();
 	const reads = new Map<string, OriginalRead>();
@@ -92,7 +117,7 @@ export function createSourceOwner(
 			for (const held of [...reads.values(), ...receipts.values()]) {
 				if (held.root !== root) continue;
 				try {
-					valid(root, held.compilation);
+					valid(root, "required" in held ? held.required : held.compilation);
 				} catch {
 					if ("retired" in held) held.retired = true;
 					else reads.delete(held.read.handle);
@@ -129,7 +154,11 @@ export function createSourceOwner(
 			timer: ReturnType<typeof setTimeout>;
 		}
 	>();
+	const deliveryGroups = new Map<string, string[]>();
 	function delivered(publication: string): void {
+		const children = deliveryGroups.get(publication);
+		deliveryGroups.delete(publication);
+		for (const child of children ?? []) delivered(child);
 		const held = deliveries.get(publication);
 		if (!held) return;
 		deliveries.delete(publication);
@@ -173,8 +202,7 @@ export function createSourceOwner(
 			if (existsSync(file)) throw new Error("compiler configuration resolution changed since this edit was read");
 		for (const [path, entries] of compilation.directories)
 			if (directoryEntries(path) !== entries) {
-				for (const receipt of receipts.values())
-					if (receipt.compilation.directories.has(path)) receipt.retired = true;
+				for (const receipt of receipts.values()) if (receipt.required.directories.has(path)) receipt.retired = true;
 				throw new Error("module resolution changed since this edit was read");
 			}
 		for (const file of compilation.absent)
@@ -208,13 +236,11 @@ export function createSourceOwner(
 			if (readingCoverage !== (coverage.get(root) ?? 0))
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
-			const cell = compilation.cells[original.cell];
-			if (!cell || cell.value !== original.value)
-				throw new Error("the selected words have no proven literal source");
+
+			const { cellKey, cell, target } = resolveTextSource(root, compilation, original, generation);
 			const found = lookupFrame(root, frame);
 			if (found.kind !== "found") throw new Error("the original frame is no longer there");
-			const file = join(realDesignDir(root), cell.file);
-			if (!file.startsWith(`${found.dir}/`)) throw new Error("shared literal editing is not available yet");
+			const file = sourceTarget(root, cell.file, compilation.inputs).file;
 			const handle = randomUUID();
 			const read: SourceRead = {
 				handle,
@@ -222,28 +248,200 @@ export function createSourceOwner(
 				original: { ...original },
 				generation,
 				source: cell.source,
-				role: "literal-child",
+				role:
+					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
+				cell: cellKey,
+				...(cell.field ? { field: cell.field } : {}),
+				scope: target?.role ?? "definition",
+				repeated: target?.repeated ?? false,
 				value: cell.value,
 			};
-			reads.set(handle, { coverage: coverage.get(root) ?? 0, root, frame, read, compilation, file, observer });
+			reads.set(handle, {
+				coverage: readingCoverage,
+				root,
+				frame,
+				read,
+				compilation,
+				file,
+				observer,
+				...(target ? { target } : {}),
+			});
 			return { ok: true, read };
 		} catch (error) {
 			return { ok: false, reason: reason(error) };
 		}
 	}
+	async function reach(root: string, handle: string, inventories: SourceInventory[]) {
+		const held = reads.get(handle);
+		if (!held || held.root !== root)
+			return { ok: false as const, reason: "the original source read is no longer available" };
+		return discover(root, held, inventories);
+	}
+	async function describe(
+		root: string,
+		frame: string,
+		original: SourceOccurrence,
+		inventories: SourceInventory[],
+	): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
+		try {
+			const publication = compiler.publication(original.publication);
+			if (!publication || publication.root !== root || publication.frame !== frame)
+				throw new Error("the source owner is no longer available");
+			valid(root, publication.compilation);
+			const { cellKey, cell, target } = resolveTextSource(root, publication.compilation, original, 0);
+			const read: SourceRead = {
+				handle: "",
+				owner,
+				generation: 0,
+				original,
+				source: cell.source,
+				cell: cellKey,
+				value: cell.value,
+				role:
+					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
+				scope: target?.role ?? "definition",
+				repeated: target?.repeated ?? false,
+				...(cell.field ? { field: cell.field } : {}),
+			};
+			const found = await discover(
+				root,
+				{
+					root,
+					frame,
+					read,
+					compilation: publication.compilation,
+					file: sourceTarget(root, cell.file, publication.compilation.inputs).file,
+					observer: "",
+					coverage: coverage.get(root) ?? 0,
+				},
+				inventories,
+			);
+			if (!found.ok) return found;
+			const { handle: _handle, owner: _owner, generation: _generation, ...description } = found.read;
+			return { ok: true, description };
+		} catch (error) {
+			return { ok: false, reason: reason(error) };
+		}
+	}
+	/** Both fresh reads and receipt-owned inverses inspect the same frozen inventories. */
+	function observedUses(
+		root: string,
+		cell: string,
+		generation: number,
+		inventories: SourceInventory[],
+		mode: "read" | "inverse",
+	) {
+		const uses: SourceUse[] = [];
+		const unverified: UseOutcome[] = [];
+		const unknown = new Set<string>();
+		const refuse = (frame: string, occurrence: string, says: string) =>
+			unverified.push({
+				frame,
+				occurrence,
+				installation: "refused",
+				rendered: "unverified",
+				reason: says,
+			});
+		for (const inventory of inventories) {
+			const publication = compiler.publication(inventory.publication);
+			if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
+				unknown.add(inventory.frame);
+				continue;
+			}
+			if (!publication.compilation.cells[cell]) continue;
+			try {
+				valid(root, publication.compilation);
+			} catch {
+				unknown.add(inventory.frame);
+				continue;
+			}
+			if (inventory.unknown > 0) unknown.add(inventory.frame);
+			for (const use of inventory.uses) {
+				if (use.original.publication !== inventory.publication) {
+					unknown.add(inventory.frame);
+					// A stale candidate can establish uncertainty, never a current occurrence.
+					// Unrelated uninspectable leaves remain coverage, not attributed failures.
+					if (potentialTextSource(publication.compilation, use.original, cell))
+						refuse(
+							inventory.frame,
+							"",
+							"A potentially affected use belongs to another publication; its current coverage is unverified.",
+						);
+					continue;
+				}
+				try {
+					// Only a receipt-owned inverse may resolve a retained old rendered value
+					// against this exact cell. Ordinary reads retain literal equality checks.
+					const target = resolveTextSource(
+						root,
+						publication.compilation,
+						use.original,
+						generation,
+						mode === "inverse" ? cell : undefined,
+					);
+					if (
+						target.cellKey === cell &&
+						!uses.some(
+							(other) =>
+								other.frame === inventory.frame && other.original.occurrence === use.original.occurrence,
+						)
+					)
+						uses.push({ frame: inventory.frame, ...use });
+				} catch (error) {
+					unknown.add(inventory.frame);
+					if (potentialTextSource(publication.compilation, use.original, cell))
+						refuse(
+							inventory.frame,
+							use.original.occurrence,
+							`A potentially affected use could not be attributed: ${reason(error)}`,
+						);
+				}
+			}
+		}
+		return { uses, unverified, unknown };
+	}
+
+	async function discover(
+		root: string,
+		held: OriginalRead,
+		inventories: SourceInventory[],
+	): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string }> {
+		try {
+			valid(root, held.compilation);
+			const cell = held.read.cell ?? held.read.original.cell;
+			const { uses, unverified, unknown } = observedUses(root, cell, held.read.generation, inventories, "read");
+			const mounted = new Set(inventories.map((inventory) => inventory.frame));
+			const dependent = await dependencyFrames(root, held.file);
+			if (!dependent) unknown.add("source coverage");
+			const unmounted = (dependent ?? []).filter((frame) => !mounted.has(frame));
+			held.read = { ...held.read, reach: { uses, unmounted, unknown: [...unknown], unverified } };
+			return { ok: true, read: held.read };
+		} catch (error) {
+			return { ok: false, reason: reason(error) };
+		}
+	}
+
 	async function publish(
 		held: OriginalRead,
 		next: string,
+		expected: SourcePublication["expected"],
 		executed?: SpanPatch,
 		inverseOf?: symbol,
 	): Promise<SourceResult> {
-		valid(held.root, held.compilation);
+		valid(held.root, held.history ?? held.compilation);
 		if (held.coverage !== (coverage.get(held.root) ?? 0))
 			throw new Error("source observation was lost before saving");
 		const rebased = new Map(
 			[...held.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
 		);
-		if ([...rebased].some(([file, input]) => !sameInput(input, held.compilation.inputs.get(file)!))) {
+		if (held.sourceOnly) {
+			for (const [file, input] of rebased)
+				if (/\.[cm]?[jt]sx?$/.test(file)) {
+					const path = relative(realDesignDir(held.root), file);
+					if (lowerLiterals(path, input.bytes.toString("utf8")).shape !== held.compilation.shapes[path])
+						throw new Error("the source role or executable context changed before saving");
+				}
+		} else if ([...rebased].some(([file, input]) => !sameInput(input, held.compilation.inputs.get(file)!))) {
 			const certified = await compiler.compilePublication(
 				held.root,
 				held.frame,
@@ -284,9 +482,20 @@ export function createSourceOwner(
 		);
 		frozen.set(held.file, after);
 		for (const [file, input] of frozen) continuity.set(file, input);
-		const receipt: SourceReceipt = { owner, handle: randomUUID() };
+		const receipt: SourceReceipt = {
+			owner,
+			handle: randomUUID(),
+			...(held.read.original.field ? { field: held.read.original.field } : {}),
+		};
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
+			expected: {
+				value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
+				absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
+			},
+			required: sourceHistoryCompilation(held.root, saved, held.file),
+			cell: held.read.cell ?? held.read.original.cell,
+			...(held.read.reach ? { reach: held.read.reach } : {}),
 			operation,
 			coverage: held.coverage,
 			root: held.root,
@@ -303,6 +512,24 @@ export function createSourceOwner(
 			retired: false,
 		};
 		receipts.set(receipt.handle, inverse);
+		if (held.sourceOnly) {
+			const cells: RetainedCompilation["cells"] = {};
+			for (const [file, input] of frozen)
+				if (/\.[cm]?[jt]sx?$/.test(file))
+					Object.assign(
+						cells,
+						lowerLiterals(relative(realDesignDir(held.root), file), input.bytes.toString("utf8")).cells,
+					);
+			inverse.compilation = { ...saved, cells };
+			inverse.required = sourceHistoryCompilation(held.root, inverse.compilation, held.file);
+			return {
+				ok: true,
+				source: "saved",
+				publication: null,
+				receipt,
+				reason: "Source saved; no mounted affected use was available to verify.",
+			};
+		}
 		try {
 			const retained = await compiler.compilePublication(
 				held.root,
@@ -317,6 +544,7 @@ export function createSourceOwner(
 			if (retained.packet.shape !== held.compilation.packet.shape)
 				throw new Error("saved source has a different executable shape");
 			inverse.compilation = retained;
+			inverse.required = sourceHistoryCompilation(held.root, retained, held.file);
 			let release = () => {};
 			const done = new Promise<void>((resolve) => {
 				release = resolve;
@@ -332,13 +560,109 @@ export function createSourceOwner(
 				done,
 				timer,
 			});
+
+			const related: SourcePublication[] = [];
+			const failures: UseOutcome[] = [...(held.read.reach?.unverified ?? [])];
+			const uses = held.read.reach?.uses ?? [];
+			for (const frame of new Set(uses.map((use) => use.frame))) {
+				if (frame === held.frame) continue;
+				const targets = uses.filter((use) => use.frame === frame).map((use) => use.original);
+				const original = targets[0];
+				if (!original) continue;
+				try {
+					const prior = compiler.publication(original.publication);
+					if (!prior || prior.root !== held.root || prior.frame !== frame)
+						throw new Error("the affected frame publication is no longer available");
+					const inputs = new Map(
+						[...prior.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
+					);
+					if (!inputs.has(held.file)) throw new Error("the affected frame has no source dependency");
+					const compatibleInputs = new Map(inputs);
+					compatibleInputs.set(held.file, input);
+					const compatibleBefore = compiler.matchingPublications(
+						held.root,
+						frame,
+						compatibleInputs,
+						prior.compilation.packet.shape,
+					);
+					valid(held.root, { ...prior.compilation, inputs });
+					const next = await compiler.compilePublication(
+						held.root,
+						frame,
+						inputs,
+						++sequence,
+						prior.compilation.absent,
+						prior.compilation,
+					);
+					if (next.packet.shape !== prior.compilation.packet.shape)
+						throw new Error("the affected frame changed executable shape");
+					const secondaryAdmission = { token: randomUUID(), expires: admission.expires };
+					const secondaryTimer = setTimeout(
+						() => delivered(next.packet.id),
+						Math.max(0, admission.expires - Date.now()),
+					);
+					secondaryTimer.unref();
+					deliveries.set(next.packet.id, {
+						...secondaryAdmission,
+						root: held.root,
+						compilation: next,
+						release: () => {},
+						done: Promise.resolve(),
+						timer: secondaryTimer,
+					});
+					deliveryGroups.set(retained.packet.id, [
+						...(deliveryGroups.get(retained.packet.id) ?? []),
+						next.packet.id,
+					]);
+					related.push({
+						expected,
+						admission: secondaryAdmission,
+						owner,
+						frame,
+						cell: held.read.cell ?? held.read.original.cell,
+						targets,
+						before: prior.compilation.packet.id,
+						compatibleBefore,
+						packet: next.packet,
+						generation: held.read.generation,
+						original,
+						receipt,
+					});
+				} catch (error) {
+					for (const original of targets)
+						failures.push({
+							frame,
+							occurrence: original.occurrence,
+							installation: "refused",
+							rendered: "unverified",
+							reason: reason(error),
+						});
+				}
+			}
+			if (inverse.reach)
+				inverse.reach = {
+					...inverse.reach,
+					uses: inverse.reach.uses.map((use) => {
+						const packet =
+							use.frame === held.frame
+								? retained.packet
+								: related.find((item) => item.frame === use.frame)?.packet;
+						return packet ? { ...use, original: { ...use.original, publication: packet.id } } : use;
+					}),
+				};
+
 			return {
 				ok: true,
 				source: "saved",
 				publication: {
+					expected,
 					admission,
+					related,
+					failures,
+					targets: uses.filter((use) => use.frame === held.frame).map((use) => use.original),
 					owner,
 					frame: held.frame,
+					...(held.read.cell ? { cell: held.read.cell } : {}),
 					before: held.compilation.packet.id,
 					compatibleBefore,
 					packet: retained.packet,
@@ -378,15 +702,39 @@ export function createSourceOwner(
 					throw new Error("this source read does not authorize that operation");
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
-				const planned = planOps(source, ops);
-				if (!planned.ok) throw new Error(planned.refusal.says);
+
+				const op = ops[0];
+				if (op?.kind !== "set-text") throw new Error("this read only authorizes text");
+				let patches: readonly SpanPatch[];
+				if (held.target?.syntax === "react-call")
+					patches = [
+						planFactoryLiteral(
+							source,
+							{
+								start: held.target.address.start,
+								end: held.target.address.end,
+								field: held.target.attribute ?? "children",
+								value: held.read.value,
+							},
+							op.text,
+						),
+					];
+				else {
+					const operation: HandOp = held.read.field
+						? { kind: "set-attribute", source: held.read.source, name: held.read.field, value: op.text }
+						: op;
+					const planned = planOps(source, [operation]);
+					if (!planned.ok) throw new Error(planned.refusal.says);
+					patches = planned.patches;
+				}
 				const input = held.compilation.inputs.get(held.file);
 				if (!input) throw new Error("the original source input is missing");
-				const patch = journal.transform(held.file, input, planned.patches)[0];
+				const patch = journal.transform(held.file, input, patches)[0];
 				if (!patch) throw new Error("the source patch is missing");
 				return await publish(
 					held,
 					applySpan(journal.current(held.file, input).bytes.toString("utf8"), patch),
+					{ value: op.text, absent: false },
 					patch,
 				);
 			} catch (error) {
@@ -394,13 +742,61 @@ export function createSourceOwner(
 			}
 		});
 	}
-	function inverse(root: string, receipt: SourceReceipt): Promise<SourceResult> {
+	function inverse(root: string, receipt: SourceReceipt, inventories?: SourceInventory[]): Promise<SourceResult> {
 		return ordered(root, async () => {
 			const held = receipts.get(receipt.handle);
 			try {
 				if (receipt.owner !== owner || !held || held.root !== root || held.retired)
 					throw new Error("this source undo is no longer available");
-				valid(root, held.compilation);
+
+				valid(root, held.required);
+				let frame = held.frame;
+				let compilation = held.compilation;
+				let original = held.original;
+				let reach = held.reach;
+				if (inventories) {
+					const { uses, unverified, unknown } = observedUses(
+						root,
+						held.cell,
+						held.generation,
+						inventories,
+						"inverse",
+					);
+					const dependent = await dependencyFrames(root, held.file);
+					reach = {
+						uses,
+						unverified,
+						unmounted: (dependent ?? []).filter(
+							(frame) => !inventories.some((inventory) => inventory.frame === frame),
+						),
+						unknown: dependent ? [...unknown] : [...unknown, "source coverage"],
+					};
+					const consumer = uses.find((use) => use.frame === held.frame) ?? uses[0];
+					const publication = consumer ? compiler.publication(consumer.original.publication) : undefined;
+					if (consumer && publication) {
+						frame = consumer.frame;
+						compilation = publication.compilation;
+						original = consumer.original;
+					}
+				}
+				if (lookupFrame(root, frame).kind !== "found") {
+					const consumer = reach?.uses.find((use) => lookupFrame(root, use.frame).kind === "found");
+					const publication = consumer ? compiler.publication(consumer.original.publication) : undefined;
+					if (consumer && publication && publication.root === root) {
+						frame = consumer.frame;
+						compilation = publication.compilation;
+						original = consumer.original;
+					}
+				}
+				if (reach)
+					reach = {
+						...reach,
+						uses: reach.uses.filter((use) => lookupFrame(root, use.frame).kind === "found"),
+						unmounted: reach.unmounted.filter((name) => lookupFrame(root, name).kind === "found"),
+					};
+				const sourceOnly =
+					lookupFrame(root, frame).kind !== "found" || (inventories !== undefined && reach?.uses.length === 0);
+				if (sourceOnly) compilation = held.required;
 				held.retired = true;
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the inverse source read is incomplete");
@@ -408,27 +804,32 @@ export function createSourceOwner(
 				if (!input) throw new Error("the original input is missing");
 				const transformed = journal.transform(held.file, input, [held.inverse])[0];
 				if (!transformed) throw new Error("the inverse source span is missing");
-				const cell = held.compilation.cells[held.original.cell];
+				const cell = held.compilation.cells[held.cell];
 				if (!cell) throw new Error("the original source role changed");
 				return await publish(
 					{
 						observer: "",
+						sourceOnly,
 						coverage: held.coverage,
 						root,
-						frame: held.frame,
+						frame,
 						file: held.file,
-						compilation: held.compilation,
+						compilation,
+						history: held.required,
 						read: {
 							handle: "",
 							owner,
-							original: held.original,
+							original,
 							generation: held.generation,
-							role: "literal-child",
+							role: cell.field ? "literal-attribute" : "literal-child",
+							cell: held.cell,
+							...(reach ? { reach } : {}),
 							source: cell.source,
 							value: cell.value,
 						},
 					},
 					applySpan(journal.current(held.file, input).bytes.toString("utf8"), transformed),
+					held.expected,
 					transformed,
 					held.operation,
 				);
@@ -730,6 +1131,8 @@ export function createSourceOwner(
 		},
 		admit,
 		read,
+		reach,
+		describe,
 		commit,
 		inverse,
 		current,

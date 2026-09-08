@@ -8,7 +8,8 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
-import { type SourceRead, type SourceResult, sameSourceOccurrence } from "../../source-edit";
+import type { SourceUse } from "../../source-edit";
+import { type SourceRead, type SourceResult, sameSourceOccurrence, type UseOutcome } from "../../source-edit";
 import type {
 	Camera,
 	FlowEdge,
@@ -767,11 +768,15 @@ export function ProjectCanvas({
 	// pointing at anything (#172).
 	const hoveredFrame = hovered?.visible === true ? hovered.frame : null;
 
+	const sourceTargets = useMemo(
+		() => new Set([...selectionTargets, ...sourceDelivery.liveFrames]),
+		[selectionTargets, sourceDelivery.liveFrames],
+	);
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		allFramesRef,
 		entered,
-		selectionTargets,
+		selectionTargets: sourceTargets,
 		resizing: resizingFrame,
 		selected,
 		hovered: hoveredFrame,
@@ -1767,8 +1772,42 @@ export function ProjectCanvas({
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
+	const observingSource = useRef<{ publication: string; frame: string; text: string } | undefined>(undefined);
+	const presentSourceOutcome = useCallback((frame: string, outcome: UseOutcome | undefined, text: string) => {
+		for (const name of new Set(outcome?.uses?.map((use) => use.frame).filter((name): name is string => !!name) ?? []))
+			if (outcome?.uses?.filter((use) => use.frame === name).every((use) => use.rendered === "verified"))
+				unappliedSource.current.delete(name);
+		if (outcome?.rendered === "verified") {
+			unappliedSource.current.delete(frame);
+			setSaid(null);
+			return;
+		}
+		setSaid({
+			kind: "source",
+			frame,
+			status: outcome?.rendered ?? "unverified",
+			text,
+			says:
+				outcome?.reason ??
+				(outcome?.rendered === "mismatching"
+					? "Saved, but the running app kept different words."
+					: outcome?.rendered === "pending"
+						? "Saved. The app is still loading."
+						: "Saved. The running result could not be verified."),
+		});
+	}, []);
+	useEffect(
+		() =>
+			sourceDelivery.observeOutcomes((publication, outcome) => {
+				const held = observingSource.current;
+				if (held?.publication === publication) presentSourceOutcome(held.frame, outcome, held.text);
+			}),
+		[sourceDelivery, presentSourceOutcome],
+	);
+
 	const showSourceResult = useCallback(
 		async (frame: string, result: SourceResult | undefined, text = "", undo = false) => {
+			observingSource.current = undefined;
 			if (!result) {
 				unappliedSource.current.add(frame);
 				setSaid({
@@ -1796,33 +1835,23 @@ export function ProjectCanvas({
 				});
 				return;
 			}
-			retainedPublications.current.set(frame, result.publication.packet.id);
-			unappliedSource.current.add(frame);
+
+			observingSource.current = { publication: result.publication.packet.id, frame, text };
+			for (const publication of [result.publication, ...(result.publication.related ?? [])]) {
+				retainedPublications.current.set(publication.frame, publication.packet.id);
+				unappliedSource.current.add(publication.frame);
+			}
+
 			const admitted = await sourceIsCurrent(project, result.publication.packet.id);
 			if (!admitted) await sourceDelivery.revoke(result.publication);
 			const outcome = admitted ? await sourceDelivery.install(result.publication, undo) : undefined;
 			await sourceDelivered(project, result.publication.packet.id);
 			setSourceRevision((value) => value + 1);
-			if (outcome?.rendered === "verified") {
-				unappliedSource.current.delete(frame);
-				setSaid(null);
-				return;
-			}
-			setSaid({
-				kind: "source",
-				frame,
-				status: outcome?.rendered ?? "unverified",
-				text,
-				says:
-					outcome?.reason ??
-					(outcome?.rendered === "mismatching"
-						? "Saved, but the running app kept different words."
-						: outcome?.rendered === "pending"
-							? "Saved. The app is still loading."
-							: "Saved. The running result could not be verified."),
-			});
+
+			if (observingSource.current?.publication === result.publication.packet.id)
+				presentSourceOutcome(frame, sourceDelivery.currentOutcome(result.publication.packet.id) ?? outcome, text);
 		},
-		[sourceDelivery, project],
+		[sourceDelivery, project, presentSourceOutcome],
 	);
 
 	/**
@@ -1874,19 +1903,31 @@ export function ProjectCanvas({
 					says: way === "undo" ? "Undoing…" : "Redoing…",
 				});
 				const ran = history.current;
-				const operation = inverseSource(project, entry.receipt).then(async (result) => {
-					if (history.current !== ran) {
-						if (result?.ok && result.receipt) recordEntry({ ...entry, receipt: result.receipt });
+				const operation = sourceDelivery
+					.inventory(entry.receipt.field)
+					.then((inventories) => {
+						sourceDelivery.holdInverse(
+							entry.receipt.handle,
+							inventories.map((inventory) => inventory.frame),
+						);
+						return inverseSource(project, entry.receipt, inventories);
+					})
+					.then(async (result) => {
+						if (history.current !== ran) {
+							if (result?.ok && result.receipt) recordEntry({ ...entry, receipt: result.receipt });
+							await showSourceResult(entry.frame, result, "", true);
+							return;
+						}
+						if (result?.ok && result.receipt)
+							history.current = amend(history.current, way, { ...entry, receipt: result.receipt });
+						else history.current = held; // an unavailable top inverse is explained, never skipped
 						await showSourceResult(entry.frame, result, "", true);
-						return;
-					}
-					if (result?.ok && result.receipt)
-						history.current = amend(history.current, way, { ...entry, receipt: result.receipt });
-					else history.current = held; // an unavailable top inverse is explained, never skipped
-					await showSourceResult(entry.frame, result, "", true);
-				});
+					});
 				pendingSource.current.set(entry.frame, operation);
-				void operation.finally(() => pendingSource.current.delete(entry.frame));
+				void operation.finally(() => {
+					pendingSource.current.delete(entry.frame);
+					sourceDelivery.releaseInverse(entry.receipt.handle);
+				});
 				return;
 			}
 			if (entry.kind === "patch") {
@@ -1932,6 +1973,9 @@ export function ProjectCanvas({
 			undoTrash,
 			recordEntry,
 			showSourceResult,
+			sourceDelivery.inventory,
+			sourceDelivery.holdInverse,
+			sourceDelivery.releaseInverse,
 		],
 	);
 
@@ -2355,7 +2399,13 @@ export function ProjectCanvas({
 					});
 					return;
 				}
-				setEdit({ ...asking, read: asked.read });
+				const ready = await sourceDelivery.prepare(pick.frame, asked.read);
+				if (editingRef.current?.id !== id) {
+					void cancelSource(project, ready.handle);
+					void sourceDelivery.cancel(pick.frame, id);
+					return;
+				}
+				setEdit({ ...asking, read: ready });
 				retainedPublications.current.set(pick.frame, original.publication);
 				iframes.current
 					.get(pick.frame)
@@ -2644,10 +2694,10 @@ export function ProjectCanvas({
 	);
 
 	const beginRailText = useCallback(
-		async (frame: string, selector: string): Promise<SourceRead | undefined> => {
+		async (frame: string, selector: string, field?: string): Promise<SourceRead | undefined> => {
 			if (pendingSource.current.size > 0) return;
 			const generation = ++pickSeq.current;
-			const original = await sourceDelivery.read(frame, selector, generation);
+			const original = await sourceDelivery.read(frame, selector, generation, field);
 			if (!original) {
 				showRefusal(frame, selector, { code: "source", says: "these words have no editable local literal source" });
 				return;
@@ -2661,13 +2711,13 @@ export function ProjectCanvas({
 				return;
 			}
 			retainedPublications.current.set(frame, original.publication);
-			return result.read;
+			return await sourceDelivery.prepare(frame, result.read);
 		},
 		[project, sourceDelivery, showRefusal],
 	);
 	const finishRailText = useCallback(
 		(frame: string, read: SourceRead, text: string, commit: boolean) => {
-			if (!commit || text === read.value) {
+			if (!commit || (text === read.value && !(read.field && read.original.absent))) {
 				void cancelSource(project, read.handle);
 				void sourceDelivery.cancel(frame, read.generation);
 				return;
@@ -2705,7 +2755,8 @@ export function ProjectCanvas({
 	// biome-ignore lint/correctness/useExhaustiveDependencies(pickedKeys): the selection moving is the whole trigger
 	useEffect(() => {
 		setRefused(null);
-	}, [pickedKeys]);
+		sourceDelivery.clearFeedback();
+	}, [pickedKeys, sourceDelivery.clearFeedback]);
 
 	// nothing holds a document, or an edit, past the window it was drawn in
 	useEffect(() => {
@@ -2833,6 +2884,31 @@ export function ProjectCanvas({
 		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation],
 	);
 	leavePage.current = switchToPage;
+	const revealSourceUse = useCallback(
+		async (frame: string, use?: SourceUse) => {
+			const target = allFramesRef.current.find((candidate) => candidate.name === frame);
+			if (!target) return;
+			recordDeparture();
+			if (pageOf(target) !== activePageRef.current) switchToPage(pageOf(target), arrivalAt(target));
+			else {
+				const arrival = arrivalAt(target);
+				if (arrival) animateCamera(arrival);
+			}
+			setTool("select");
+			setPicked([]);
+			holdChain(null);
+			setSelected([frame]);
+			if (!use) return;
+			const chain = await sourceDelivery.reveal(frame, use.original);
+			const hit = chain?.at(-1);
+			if (hit && chain && pageOf(target) === activePageRef.current) {
+				holdChain({ frame, chain });
+				setSelected([]);
+				setPicked([{ frame, ...hit }]);
+			}
+		},
+		[recordDeparture, switchToPage, arrivalAt, animateCamera, holdChain, sourceDelivery.reveal],
+	);
 
 	/** Page-folder clicks return selection to the page, even when it is already active. */
 	const activatePageFromTree = useCallback(
@@ -2973,29 +3049,35 @@ export function ProjectCanvas({
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
+		const refreshSource = (frame: string) => {
+			void (pendingSource.current.get(frame) ?? Promise.resolve()).then(async () => {
+				if (
+					unappliedSource.current.has(frame) ||
+					editingRef.current?.frame === frame ||
+					sourceDelivery.holds(frame)
+				)
+					return;
+				const publication = retainedPublications.current.get(frame);
+				if (publication && (await sourceIsCurrent(project, publication))) return;
+				if (
+					pendingSource.current.has(frame) ||
+					editingRef.current?.frame === frame ||
+					sourceDelivery.holds(frame) ||
+					unappliedSource.current.has(frame)
+				)
+					return;
+				retainedPublications.current.delete(frame);
+				reloadFrameDocument(frame);
+			});
+		};
 		return subscribeSse(
 			`/api/p/${encodeURIComponent(project)}/events`,
 			{
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
-					const refreshSource = (frame: string) => {
-						void (pendingSource.current.get(frame) ?? Promise.resolve()).then(async () => {
-							if (editingRef.current?.frame === frame || unappliedSource.current.has(frame)) return;
-							const publication = retainedPublications.current.get(frame);
-							if (publication && (await sourceIsCurrent(project, publication))) return;
-							// A gesture or save can begin while that source check is in flight.
-							if (
-								editingRef.current?.frame === frame ||
-								pendingSource.current.has(frame) ||
-								unappliedSource.current.has(frame)
-							)
-								return;
-							retainedPublications.current.delete(frame);
-							reloadFrameDocument(frame);
-						});
-					};
 					if (event.kind === "frame" && event.frame !== undefined) {
-						refreshSource(event.frame);
+						const frame = event.frame;
+						refreshSource(frame);
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -3007,7 +3089,8 @@ export function ProjectCanvas({
 					} else if (event.kind === "shared") {
 						// a shared file the link graph has read names its own readers (#109);
 						// anything it could not name can stale every document
-						for (const frame of event.frames ?? framesRef.current.map((one) => one.name)) refreshSource(frame);
+						const staled = event.frames ?? framesRef.current.map((frame) => frame.name);
+						for (const frame of staled) refreshSource(frame);
 						void refetchFrames();
 						// a shared source file moves the graph as surely as a frame's own
 						void refetchFlows();
@@ -3030,7 +3113,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync]);
+	}, [noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync, sourceDelivery.holds]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost
@@ -5124,12 +5207,20 @@ export function ProjectCanvas({
 						onCollapse={shut}
 						preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
 						acts={{
+							ownership: {
+								active: sourceDelivery.active,
+								describe: sourceDelivery.describe,
+								release: sourceDelivery.releaseDescription,
+								highlight: sourceDelivery.highlight,
+								reveal: revealSourceUse,
+							},
 							onRung: takeRung,
 							onGeometry: setFrameGeometry,
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
 							onWrite: writeOps,
 							text: {
+								describe: sourceDelivery.describeField,
 								begin: beginRailText,
 								preview: (frame, read, text) => {
 									void sourceDelivery.preview(frame, read.generation, text);

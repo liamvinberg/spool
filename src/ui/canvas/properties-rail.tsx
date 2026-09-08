@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
+import type { SourceDescription } from "../../source-edit";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
-import { ContentText, type TextActions } from "./content-text";
+import { ContentText, LiteralField, type TextActions } from "./content-text";
 import { MenuItem } from "./context-menu";
 import { type AttributeField, fieldsFor, IMAGE_ACCEPT, swappable } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
@@ -39,6 +40,7 @@ import {
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
 import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
+import { type OwnershipActions, SourceOwnership } from "./source-ownership";
 
 /**
  * The properties rail (#256): the right column, back, and holding one thing.
@@ -99,6 +101,7 @@ export interface RailPreview {
 }
 
 export interface PropertiesActs {
+	ownership?: OwnershipActions;
 	text?: TextActions;
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
@@ -266,6 +269,15 @@ function Body({
 	const [opened, setOpened] = useState<Scope[]>([]);
 
 	const element = held?.kind === "element" ? held : null;
+	const [sourceSupported, setSourceSupported] = useState<{ identity: string; label: string }>();
+	const [textSupported, setTextSupported] = useState<{ identity: string; label: string; revision: number }>();
+	const support = useCallback(
+		(value: { identity: string; label: string } | undefined, field?: string) => {
+			setSourceSupported(value);
+			if (!field) setTextSupported(value ? { ...value, revision } : undefined);
+		},
+		[revision],
+	);
 	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const filed = read?.className ?? "";
@@ -283,6 +295,9 @@ function Body({
 			? filed
 			: preview.tokens.reduce((held, token) => writeClass(held === "" ? null : held, { token, scope: "" }), filed);
 	const identity = element === null ? "" : `${element.frame} ${element.selector}`;
+	const active = acts.ownership?.active;
+	const purpose =
+		element && active?.frame === element.frame && active.selector === element.selector ? active : undefined;
 
 	// the scope is the element's, not the rail's: a fresh rung starts at the base
 	const before = useRef(identity);
@@ -367,7 +382,29 @@ function Body({
 
 	return (
 		<>
-			<Head held={held} rungs={rungs} acts={acts} onCollapse={onCollapse} />
+			<Head
+				held={held}
+				rungs={rungs}
+				acts={acts}
+				onCollapse={onCollapse}
+				sourceSupported={
+					sourceSupported?.identity === identity ||
+					(textSupported?.identity === identity && textSupported.revision === revision)
+				}
+			/>
+			{element && acts.ownership ? (
+				<SourceOwnership
+					key={identity}
+					frame={element.frame}
+					selector={element.selector}
+					name={read?.name ?? rowElement.tag}
+					revision={revision}
+					field={purpose?.field}
+					generation={purpose?.generation}
+					actions={acts.ownership}
+					onSupport={support}
+				/>
+			) : null}
 			{element === null ? null : (
 				<ScopeBar
 					scopes={scopes}
@@ -406,6 +443,11 @@ function Body({
 				    same rung, so an edit does not close what you opened */}
 				{element && acts.text ? (
 					<ContentText
+						scope={
+							textSupported?.identity === identity && textSupported.revision === revision
+								? textSupported.label
+								: undefined
+						}
 						key={`${identity}:${revision}`}
 						frame={element.frame}
 						selector={element.selector}
@@ -416,11 +458,14 @@ function Body({
 				{element === null || read === undefined ? null : <PropertySections key={identity} view={view} />}
 				{element === null || read === undefined ? null : (
 					<Attributes
+						html={element.chain[rung]?.outerHtml ?? ""}
 						key={`${identity} attributes`}
 						read={read}
 						tag={rowElement.tag}
 						assets={assets}
-						onWrite={(name, value) => write([{ kind: "set-attribute", source: read.source, name, value }])}
+						frame={element.frame}
+						selector={element.selector}
+						actions={acts.text}
 						onSwap={(put) => {
 							if (read.fingerprint === undefined) return;
 							acts.onSwap(
@@ -493,11 +538,13 @@ function Head({
 	rungs,
 	acts,
 	onCollapse,
+	sourceSupported,
 }: {
 	held: Held | null;
 	rungs: RungRead[] | null;
 	acts: PropertiesActs;
 	onCollapse: () => void;
+	sourceSupported: boolean;
 }) {
 	const element = held?.kind === "element" ? held : null;
 	const rung = rungOf(held);
@@ -531,7 +578,7 @@ function Head({
 				{element === null ? null : <span className={cn("shrink-0", FAINT)}>{element.chain[rung]?.tag ?? ""}</span>}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
-			{read?.refusal === undefined ? null : (
+			{read?.refusal === undefined || (sourceSupported && read.refusal.code === "shared-definition") ? null : (
 				<div className="flex h-5 items-center px-2.5 pb-1">
 					<span className={cn("min-w-0 truncate", FAINT)}>{read.refusal.says}</span>
 				</div>
@@ -1007,19 +1054,58 @@ const CHOOSE = "\u0000choose";
  * drop out on the canvas lands in the same place.
  */
 function Attributes({
+	html,
 	read,
 	tag,
 	assets,
-	onWrite,
+	frame,
+	selector,
+	actions,
 	onSwap,
 }: {
+	html: string;
 	read: RungRead;
 	tag: string;
 	assets: readonly ProjectAsset[];
-	onWrite: (name: string, value: string) => void;
+	frame: string;
+	selector: string;
+	actions: TextActions | undefined;
 	onSwap: (put: { file: File } | { asset: string }) => void;
 }) {
-	const fields = fieldsFor(tag, read.attributes ?? [], read.refusal);
+	const candidates = useMemo(() => {
+		const node = new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
+		const attributes = [...(read.attributes ?? [])];
+		for (const attribute of node?.attributes ?? [])
+			if (
+				!attribute.name.startsWith("data-spool-") &&
+				!["class", "style"].includes(attribute.name) &&
+				!attributes.some((item) => item.name === attribute.name)
+			)
+				attributes.push({ name: attribute.name, value: attribute.value });
+		return fieldsFor(tag, attributes, read.refusal);
+	}, [tag, read.attributes, read.refusal, html]);
+	const [descriptions, setDescriptions] = useState<Record<string, SourceDescription | undefined>>({});
+	const describe = actions?.describe;
+	useEffect(() => {
+		let live = true;
+		setDescriptions({});
+		if (describe)
+			void Promise.all(
+				candidates
+					.filter((field) => !field.asset && !["className", "style", "data-go", "key", "ref"].includes(field.name))
+					.map(async (field) => [field.name, await describe(frame, selector, field.name)] as const),
+			).then((entries) => {
+				if (live) setDescriptions(Object.fromEntries(entries));
+			});
+		return () => {
+			live = false;
+		};
+	}, [candidates, describe, frame, selector]);
+	const fields = candidates.map((field) => {
+		const description = descriptions[field.name];
+		if (!description) return field;
+		return { name: field.name, value: description.value };
+	});
 	if (fields.length === 0) return null;
 	return (
 		<Section name="attributes" {...(read.mapped === true ? { reason: "all rows" } : {})}>
@@ -1027,12 +1113,20 @@ function Attributes({
 				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
 					{field.asset === true ? (
 						<AssetField field={field} assets={assets} onSwap={onSwap} />
+					) : field.reason === undefined && actions ? (
+						<LiteralField
+							frame={frame}
+							selector={selector}
+							field={field.name}
+							initial={field.value}
+							actions={actions}
+						/>
 					) : (
 						<TextField
 							value={field.expression ?? field.value}
 							ok={field.reason === undefined}
 							placeholder="none"
-							onCommit={(typed) => onWrite(field.name, typed)}
+							onCommit={() => {}}
 						/>
 					)}
 					{field.reason === undefined ? null : (

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { forgetResolvedProject, readRegistry, registerProject } from "../registry";
 import { removeProject } from "../remove";
 import { makeTempDir, until } from "../test-helpers";
@@ -85,6 +85,54 @@ describe("app session", () => {
 		expect(updateSession(spoolDir, kept, false)).toEqual({ kind: "written", session: { open: [] } });
 		watchHarness.changed("session.json");
 		watchHarness.flush();
+		expect(events).toEqual(["registry", "session"]);
+	});
+
+	it("reconciles immediate startup writes before native notifications arrive", () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = realpathSync(makeTempDir());
+		const watchHarness = createMachineStateWatchHarness();
+		const events: string[] = [];
+		const watcher = watchMachineState(spoolDir, (event) => events.push(event.kind), {
+			adapter: watchHarness.adapter,
+		});
+		onTestFinished(() => watcher.stop());
+
+		// Real fs.watch can miss a write made before its native subscription is armed.
+		registerAndOpenProject(spoolDir, root);
+		expect(events).toEqual([]);
+		watchHarness.flush();
+		expect(events).toEqual(["registry", "session"]);
+
+		watchHarness.changed("registry.json");
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+		expect(events).toEqual(["registry", "session"]);
+	});
+
+	it("reconciles later writes without native events and stops periodic reads", () => {
+		vi.useFakeTimers();
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = realpathSync(makeTempDir());
+		const events: string[] = [];
+		const watcher = watchMachineState(spoolDir, (event) => events.push(event.kind));
+		onTestFinished(() => watcher.stop());
+		vi.advanceTimersByTime(40);
+
+		// Stay in this synchronous turn so the native watcher cannot deliver events.
+		registerAndOpenProject(spoolDir, root);
+		expect(events).toEqual([]);
+		vi.advanceTimersByTime(1000);
+		expect(events).toEqual(["registry", "session"]);
+		vi.advanceTimersByTime(1000);
+		expect(events).toEqual(["registry", "session"]);
+
+		watcher.stop();
+		updateSession(spoolDir, root, false);
+		vi.advanceTimersByTime(2000);
 		expect(events).toEqual(["registry", "session"]);
 	});
 

@@ -426,7 +426,10 @@ export function createDaemonApp({
 	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
 	const sourceObservers = createSourceObservers();
-	const sourceOwner = createSourceOwner(compiler, sourceObservers.verify);
+	const sourceOwner = createSourceOwner(compiler, sourceObservers.verify, async (root, file) => {
+		const graphs = await flowGraph.sources(root);
+		return [...graphs].filter(([, graph]) => graph.files.includes(file)).map(([frame]) => frame);
+	});
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
@@ -2256,12 +2259,31 @@ export function createDaemonApp({
 						cell: z.string(),
 						occurrence: z.string(),
 						invocation: z.string(),
+						provenance: z.string().optional(),
+						field: z.string().optional(),
+						absent: z.boolean().optional(),
 						value: z.string().max(100_000),
 						context: z.string().max(100_000),
 					})
 					.strict();
+				const inventory = z
+					.object({
+						frame: z.string(),
+						publication: z.string(),
+						unknown: z.number().int().nonnegative(),
+						uses: z.array(z.object({ original: occurrence, visible: z.boolean() }).strict()),
+					})
+					.strict();
 				const parsed = z
 					.discriminatedUnion("action", [
+						z
+							.object({
+								action: z.literal("describe"),
+								frame: z.string(),
+								original: occurrence,
+								inventories: z.array(inventory),
+							})
+							.strict(),
 						z
 							.object({
 								action: z.literal("read"),
@@ -2284,7 +2306,10 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("inverse"),
-								receipt: z.object({ handle: z.string(), owner: z.string() }).strict(),
+								receipt: z
+									.object({ handle: z.string(), owner: z.string(), field: z.string().optional() })
+									.strict(),
+								inventories: z.array(inventory).optional(),
 							})
 							.strict(),
 						z
@@ -2293,6 +2318,22 @@ export function createDaemonApp({
 								observer: z.string(),
 								challenge: z.string(),
 								original: occurrence.optional(),
+							})
+							.strict(),
+						z
+							.object({
+								action: z.literal("reach"),
+								handle: z.string(),
+								inventories: z.array(
+									z
+										.object({
+											frame: z.string(),
+											publication: z.string(),
+											unknown: z.number().int().nonnegative(),
+											uses: z.array(z.object({ original: occurrence, visible: z.boolean() }).strict()),
+										})
+										.strict(),
+								),
 							})
 							.strict(),
 						z.object({ action: z.literal("cancel"), handle: z.string() }).strict(),
@@ -2311,9 +2352,13 @@ export function createDaemonApp({
 						return c.json(
 							await sourceOwner.read(project.root, body.frame, body.original, body.generation, body.observer),
 						);
+					case "reach":
+						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories));
 					case "observed":
 						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
 						return c.json({ ok: true });
+					case "describe":
+						return c.json(await sourceOwner.describe(project.root, body.frame, body.original, body.inventories));
 					case "commit":
 						return c.json(
 							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, [
@@ -2321,7 +2366,7 @@ export function createDaemonApp({
 							]),
 						);
 					case "inverse":
-						return c.json(await sourceOwner.inverse(project.root, body.receipt));
+						return c.json(await sourceOwner.inverse(project.root, body.receipt, body.inventories));
 					case "cancel":
 						sourceOwner.cancel(project.root, body.handle);
 						return c.json({ ok: true });

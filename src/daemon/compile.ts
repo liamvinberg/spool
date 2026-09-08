@@ -23,6 +23,7 @@ import {
 	type SourceInput,
 	sameInput,
 } from "./retained-compile";
+import { captureLazyGraph } from "./source-lazy-graph";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
@@ -300,7 +301,58 @@ export function designOutputName(designDir: string, path: string): string {
 
 /** The design/ compile (#16) of one entry into one module: frame documents, and blame. */
 export async function buildDesignEntry(options: DesignEntryOptions): Promise<DesignBundle> {
-	const result = await build(designBuildOptions(options));
+	let result = await build(designBuildOptions(options));
+	if (options.retained) captureLazyGraph(options.designDir, result.metafile, options.retained);
+	if (options.retained?.globDiscoveries?.length && !options.frozen) {
+		// Discovery can enlarge the graph through esbuild's computed-import glob.
+		// Only a fresh build from the complete captured input set may be served.
+		const discovered = options.retained;
+		const validate = () => {
+			for (const [file, input] of discovered.inputs) {
+				assertDesignFile(options.designDir, file);
+				if (!sameInput(input, readInput(file))) throw new Error("source changed during module discovery");
+			}
+			for (const [directory, entries] of discovered.directories)
+				if (directoryEntries(directory) !== entries) throw new Error("module discovery directory changed");
+			for (const [file, input] of discovered.configuration)
+				if (!sameInput(input, readInput(file))) throw new Error("module discovery configuration changed");
+			for (const file of discovered.configurationAbsent)
+				if (existsSync(file)) throw new Error("module discovery configuration resolution changed");
+		};
+		validate();
+		const captured = emptyCompilation();
+		result = await build(
+			designBuildOptions({
+				...options,
+				retained: captured,
+				frozen: new Map(discovered.inputs),
+				resolutions: new Map(discovered.resolutions),
+			}),
+		);
+		captureLazyGraph(options.designDir, result.metafile, captured);
+		validate();
+		if (captured.inputs.size !== discovered.inputs.size || captured.resolutions.size !== discovered.resolutions.size)
+			throw new Error("module discovery did not stabilize before publication");
+		if (JSON.stringify(captured.globDiscoveries) !== JSON.stringify(discovered.globDiscoveries))
+			throw new Error("computed module discovery changed before publication");
+		if (
+			captured.directories.size !== discovered.directories.size ||
+			[...captured.directories].some(([directory, entries]) => discovered.directories.get(directory) !== entries)
+		)
+			throw new Error("module discovery directory inventory changed before publication");
+		for (const [file, input] of captured.configuration) {
+			const previous = discovered.configuration.get(file);
+			if (!previous || !sameInput(previous, input))
+				throw new Error("module discovery configuration changed before publication");
+		}
+		if (
+			captured.configuration.size !== discovered.configuration.size ||
+			captured.configurationAbsent.size !== discovered.configurationAbsent.size ||
+			[...captured.configurationAbsent].some((file) => !discovered.configurationAbsent.has(file))
+		)
+			throw new Error("module discovery configuration resolution changed before publication");
+		Object.assign(discovered, captured);
+	}
 	const bootKey = designEntryKey(options);
 	const sourceFiles = Object.keys(result.metafile.inputs)
 		.filter((input) => input !== bootKey)
@@ -424,6 +476,7 @@ async function compileFrame({
  */
 function bootEntry(frame: string): string {
 	return `import "spool";
+import {observeEntry} from "spool/jsx-dev-runtime";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import Frame from "./frame.tsx";
@@ -438,7 +491,7 @@ function Ready() {
 	return null;
 }
 createRoot(document.getElementById("root")).render(
-	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
+	createElement(Fragment, null, observeEntry(createElement(Frame)), createElement(Ready)),
 );
 `;
 }
@@ -637,8 +690,22 @@ function finishCompilation(compilation: RetainedCompilation, sequence: number): 
 	compilation.packet.owners = Object.fromEntries(
 		Object.entries(compilation.cells).map(([id, cell]) => [id, cell.owner]),
 	);
+	compilation.packet.attributes = {};
+	for (const [cell, definition] of Object.entries(compilation.cells))
+		if (definition.field && definition.syntax === "jsx") {
+			const site = cell.slice(0, cell.lastIndexOf("@"));
+			compilation.packet.attributes[site] ??= {};
+			compilation.packet.attributes[site][definition.field] = { cell, absent: definition.absent === true };
+		}
 	compilation.packet.values = Object.fromEntries(
-		Object.entries(compilation.cells).map(([id, cell]) => [id, cell.value]),
+		Object.entries(compilation.cells)
+			.filter(([, cell]) => !cell.absent)
+			.map(([id, cell]) => [id, cell.value]),
+	);
+	compilation.packet.childValues = Object.fromEntries(
+		Object.entries(compilation.cells)
+			.filter(([, cell]) => cell.childValue !== undefined)
+			.map(([id, cell]) => [id, cell.childValue!]),
 	);
 	compilation.packet.shape = digest(JSON.stringify(Object.entries(compilation.shapes).sort()));
 }

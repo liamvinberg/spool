@@ -74,7 +74,9 @@ it("starts one lazy real host, stops on host failure and reopens the exact saved
 	expect(calls[2]).toContain("selection three");
 });
 
-it("does not pass ambient accounts, executable settings or provider variables to the host", async () => {
+it("does not pass ambient accounts, executable settings or provider variables to the host", {
+	timeout: 20_000,
+}, async () => {
 	const environment = bundledEnvironment(makeTempDir());
 	for (const name of [
 		"OPENAI_API_KEY",

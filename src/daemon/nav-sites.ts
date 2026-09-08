@@ -79,8 +79,9 @@ function frameFolderFiles(designDir: string, frameDir: string): string[] {
  * imports in design/ are actually spelled.
  */
 function resolveLocalImport(designDir: string, fromFile: string, specifier: string): string | undefined {
-	if (!specifier.startsWith("./") && !specifier.startsWith("../")) return undefined;
-	const base = join(dirname(fromFile), specifier);
+	if (!specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("shared/"))
+		return undefined;
+	const base = join(specifier.startsWith("shared/") ? designDir : dirname(fromFile), specifier);
 	const candidates = [
 		base,
 		...SOURCE_EXTENSIONS.map((ext) => `${base}${ext}`),

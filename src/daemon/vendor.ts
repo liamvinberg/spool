@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { observeReactValues } from "./source-react";
 
 /**
  * The one pinned React (#16): a single ESM bundle covering react, react-dom,
@@ -94,6 +95,10 @@ async function buildVendorReact(): Promise<string> {
 			{
 				name: "spool-committed-renderer",
 				setup(build) {
+					build.onLoad({ filter: /[/\\]react\.production\.js$/ }, ({ path }) => ({
+						contents: observeReactValues(readFileSync(path, "utf8")),
+						loader: "js",
+					}));
 					build.onLoad({ filter: /react-dom-client\.production\.js$/ }, ({ path }) => {
 						let contents = readFileSync(path, "utf8");
 						const replace = (before: string, after: string) => {
@@ -103,11 +108,11 @@ async function buildVendorReact(): Promise<string> {
 						};
 						replace(
 							"nextRenderLanes = Component(props, secondArg);",
-							"nextRenderLanes = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => Component(props, secondArg)) : Component(props, secondArg);",
+							"nextRenderLanes = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => globalThis.__SPOOL_RECONCILE__.invoke(workInProgress, props, () => Component(props, secondArg))) : Component(props, secondArg);",
 						);
 						replace(
 							"children = Component(props, secondArg);",
-							"children = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => Component(props, secondArg)) : Component(props, secondArg);",
+							"children = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => globalThis.__SPOOL_RECONCILE__.invoke(workInProgress, props, () => Component(props, secondArg))) : Component(props, secondArg);",
 						);
 						replace(
 							": context.render()),",
@@ -115,7 +120,32 @@ async function buildVendorReact(): Promise<string> {
 						);
 						replace(
 							"root.current = finishedWork;",
-							"root.current = finishedWork; globalThis.__SPOOL_REACT__?.commit(finishedWork);",
+							"root.current = finishedWork; globalThis.__SPOOL_REACT__?.commit(finishedWork); globalThis.__SPOOL_OBSERVER__?.commit(finishedWork);",
+						);
+
+						replace(
+							"function logCaughtError(root, boundary, errorInfo) {",
+							"function logCaughtError(root, boundary, errorInfo) { globalThis.__SPOOL_REACT__?.caught(boundary);",
+						);
+						replace(
+							"function logUncaughtError(root, errorInfo) {",
+							"function logUncaughtError(root, errorInfo) { globalThis.__SPOOL_REACT__?.uncaught(root);",
+						);
+						replace(
+							"function coerceRef(workInProgress, element) {",
+							"function coerceRef(workInProgress, element) { globalThis.__SPOOL_RECONCILE__?.bind(workInProgress, element);",
+						);
+						replace(
+							"  return workInProgress;\n}\nfunction resetWorkInProgress",
+							"  globalThis.__SPOOL_RECONCILE__?.copy(current, workInProgress); globalThis.__SPOOL_CONSUMED__?.copyFiber(current, workInProgress); return workInProgress;\n}\nfunction resetWorkInProgress",
+						);
+						replace(
+							"  return workInProgress;\n}\nfunction createFiberFromTypeAndProps",
+							"  globalThis.__SPOOL_RECONCILE__?.copy(current, workInProgress); globalThis.__SPOOL_CONSUMED__?.copyFiber(current, workInProgress); return workInProgress;\n}\nfunction createFiberFromTypeAndProps",
+						);
+						replace(
+							"current = resolveLazy(workInProgress.elementType);",
+							"current = resolveLazy(workInProgress.elementType); globalThis.__SPOOL_CONSUMED__?.bind(workInProgress);",
 						);
 						return { contents, loader: "js" };
 					});
