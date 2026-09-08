@@ -714,3 +714,58 @@ it("keeps shared image recovery until both original uses show the saved bytes", 
 	expect(f.writes).toEqual(["commit"]);
 	expect(sends).toEqual([]);
 });
+
+it.each([false, true])(
+	"does not treat an empty original image reach as a ready preview (returned: %s)",
+	{ timeout: 120000 },
+	async (returned) => {
+		const f = await originCanvas({ "shared/assets/first.svg": SVG }, SOURCE, "#hero");
+		await f.select();
+		await f.page.route("**/source", async (route) => {
+			const action = route.request().postDataJSON()?.action;
+			if (action !== "read" && action !== "reach") return route.continue();
+			const response = await route.fetch();
+			if (action === "read") {
+				expect(await response.json()).toMatchObject({ ok: true, read: { operation: { kind: "image" } } });
+				// The original read is real; the host disappears before the next real inventory.
+				await f.target.evaluate((element) => {
+					const parent = element.parentNode;
+					const next = element.nextSibling;
+					if (!parent) throw new Error("missing original parent");
+					Reflect.set(window, "restoreImageHost", () => parent.insertBefore(element, next));
+					element.remove();
+				});
+			} else if (returned) {
+				// The same native host returns only after empty reach was actually captured.
+				await f.frame.locator("#counter").evaluate(() => Reflect.get(window, "restoreImageHost")());
+			}
+			await route.fulfill({ response });
+		});
+		const reach = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "reach",
+		);
+		const transfer = await f.target.evaluateHandle((_element, bytes) => {
+			const data = new DataTransfer();
+			data.items.add(new File([bytes], "lost-target.svg", { type: "image/svg+xml" }));
+			return data;
+		}, SECOND);
+		await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+		expect(await (await reach).json()).toMatchObject({ ok: true, read: { reach: { uses: [] } } });
+		const notice = f.page.locator('[data-hand-notice="blocked"]');
+		await expect
+			.poll(async () => ({ notices: await notice.count(), writes: [...f.writes] }))
+			.toEqual({ notices: 1, writes: [] });
+		expect(f.writes).toEqual([]);
+		expect(await notice.textContent()).toContain(
+			returned ? "unavailable" : "the original image changed before staging",
+		);
+		expect(await f.target.count()).toBe(returned ? 1 : 0);
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(SOURCE);
+		expect(existsSync(f.file("frames/home/lost-target.svg"))).toBe(returned);
+		if (returned) expect(readFileSync(f.file("frames/home/lost-target.svg"), "utf8")).toBe(SECOND);
+		await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+		const composer = f.page.locator("[data-agent-rail] textarea");
+		await expect.poll(() => composer.inputValue()).toContain("lost-target.svg");
+		expect(await composer.inputValue()).toContain("#hero");
+	},
+);

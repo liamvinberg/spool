@@ -507,6 +507,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		previewImage: useCallback(
 			async (frame: string, generation: number, value: string): Promise<SourceImagePreview> => {
 				const targets = prepared.current.get(generation)?.frames ?? [frame];
+				if (targets.length === 0) return "unavailable";
 				const results = await Promise.all(
 					targets.map((frame) =>
 						request<SourceImagePreview>(frame, { action: "preview-image", generation, value }),
