@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { appearanceProperties } from "./fixtures/property-appearance";
 import { readInput } from "./retained-compile";
+import { propertyInputs } from "./source-property-effects";
 import { planPropertyValue } from "./source-property-plan";
 
 it.each([
@@ -34,6 +35,11 @@ it.each([
 		).toBe(true);
 	expect(result.next).not.toBe("");
 	if (property === "border-top-left-radius") expect(result.next).toContain("var(--radius-lg)");
+	if (property === "scale-x") {
+		const consumers = result.desired.effects.filter((effect) => effect.owner !== null && effect.property === "scale");
+		expect(consumers).not.toHaveLength(0);
+		expect(consumers.flatMap(propertyInputs)).not.toContain("--tw-scale-z");
+	}
 });
 
 it.each(appearanceProperties)(
@@ -59,3 +65,23 @@ it.each(appearanceProperties)(
 		expect(removed.next).toBe(baseline);
 	},
 );
+
+it("refuses whole-reference expansion when a captured declaration can supply multiple components", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "main{--radius-lg:10px 20px}");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	await expect(
+		planPropertyValue(
+			root,
+			new Map([[file, readInput(file)]]),
+			"rounded-lg",
+			{
+				kind: "property",
+				property: "border-top-left-radius",
+				scope: "",
+			},
+			{ kind: "remove" },
+			{ direction: "ltr", writingMode: "horizontal-tb" },
+		),
+	).rejects.toThrow("this whole shorthand reference has no proven single-component arity");
+});

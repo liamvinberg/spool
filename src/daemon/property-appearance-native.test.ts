@@ -74,7 +74,7 @@ const inventory = [...appearanceProperties, ...compoundLayout];
 it.each([
 	{ property: "border-top-width", before: "border-2", after: "border-r-2 border-b-2 border-l-2" },
 	{ property: "border-top-left-radius", before: "rounded-lg", after: "rounded-tr-lg rounded-br-lg rounded-bl-lg" },
-	{ property: "scale-x", before: "scale-50", after: "scale-y-50" },
+	{ property: "scale-x", before: "scale-50", after: "scale-y-50 [--tw-scale-z:50%]" },
 ])("native partial removal preserves the ordinary $property sibling references", async (row) => {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", ":root{font-size:20px;--space:10px 20px}");
@@ -95,6 +95,7 @@ it.each([
 	const expected = `${row.after} z-10`;
 	const reference = await compilePropertySource(root, inputs, expected);
 	const after = await observePropertyNative(candidate, removed.next, removed.desired.css);
+	if (row.property === "scale-x") expect(after.subject.scale).toBe("1 0.5");
 	expect(after).toEqual(await observePropertyNative(ordinary, expected, reference.css));
 	expect(nativePropertyEffects(after)).not.toEqual(nativePropertyEffects(before));
 	expect(after.state).toBe("retained native state");

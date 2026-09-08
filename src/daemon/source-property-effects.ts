@@ -4,7 +4,10 @@ import type { PropertyCertificate } from "./source-property-compile";
 
 /** Control identities for compound compiler components, not token-prefix ownership. */
 const components: Readonly<Record<string, readonly string[]>> = {
-	scale: ["--tw-scale-x", "--tw-scale-y", "--tw-scale-z"],
+	scale: ["scale", "--tw-scale-x", "--tw-scale-y", "--tw-scale-z"],
+	"column-gap, between children": ["margin-inline-start", "margin-inline-end"],
+	"row-gap, between children": ["margin-block-start", "margin-block-end"],
+	"border-color, between children": ["border-color"],
 	"scale-x": ["--tw-scale-x"],
 	"scale-y": ["--tw-scale-y"],
 	"rotate-x": ["--tw-rotate-x"],
@@ -112,6 +115,8 @@ export function readPropertyEffects(
 			!siblings.some((other) => other.property !== "filter" && roots.has(other.property))
 		)
 			return false;
+		const children = effect.path.includes(":where($ > :not(:last-child))");
+		if (property.endsWith(", between children") !== children) return false;
 		const placeholder = effect.path.some((part) => part.includes("::placeholder"));
 		return property === "placeholder color" ? placeholder : !placeholder;
 	});
