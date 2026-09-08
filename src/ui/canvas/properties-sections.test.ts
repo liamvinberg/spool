@@ -107,6 +107,10 @@ it.each([
 ])("steps the actual border field without losing its unit: %s", async (source, shift, token) => {
 	const rail = await mount(source);
 	await step(rail, "border-width", "ArrowUp", shift);
+	expect(rail.requests).toEqual([]);
+	const field = fieldIn(rail, "border-width");
+	if (!field) throw new Error("missing border field");
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
 	expect(rail.wrote()).toEqual([{ token }]);
 });
 
@@ -727,4 +731,17 @@ it("routes the numeric typography control through one exact custom source gestur
 	expect(rail.previews.at(-1)).toEqual({ property: "font-size", value: { kind: "custom", value: "7.999px" } });
 	expect(rail.completions).toEqual([true]);
 	expect(rail.legacy).toEqual([]);
+});
+
+it.each(["opacity", "border-width"])("keeps repeated %s arrows as previews until completion", async (property) => {
+	const rail = await mount(property === "opacity" ? "opacity-75" : "border-2");
+	await step(rail, property, "ArrowUp", false);
+	await step(rail, property, "ArrowUp", false);
+	expect(rail.requests).toEqual([]);
+	expect(rail.previews).toHaveLength(2);
+	const field = fieldIn(rail, property);
+	if (!field) throw new Error("missing numeric field");
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+	expect(rail.completions).toEqual([false]);
+	expect(rail.requests).toEqual([]);
 });

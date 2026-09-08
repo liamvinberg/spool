@@ -352,7 +352,8 @@ function LengthRow({
 					if (next !== undefined) write(next);
 					else control?.finish(false);
 				}}
-				onStep={stepBy}
+				onStep={control ? undefined : stepBy}
+				stepDraft={control ? stepped : undefined}
 			/>
 			{aside}
 		</Row>
@@ -451,7 +452,8 @@ function BorderWidthRow({
 					if (next !== undefined) write(next);
 					else control?.finish(false);
 				}}
-				onStep={stepBy}
+				onStep={control ? undefined : stepBy}
+				stepDraft={control ? stepped : undefined}
 			/>
 			{fold}
 		</Row>
