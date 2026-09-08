@@ -21,6 +21,7 @@ it("compiles fractional numeric candidates with the project's real compiler", as
 		["px", "outline-offset", "-1.25px", "outline-offset"],
 		["percent", "opacity", "37.5", "opacity"],
 		["deg", "rotate", "12.5", "rotate"],
+		["deg", "rotate", "1.000000000000000001", "rotate"],
 		["deg", "rotate", ".125turn", "rotate"],
 		["ms", "duration", ".3333s", "transition-duration"],
 		["ms", "duration", "150.25", "transition-duration"],

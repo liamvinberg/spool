@@ -240,6 +240,15 @@ export function scaleValue(px: number, step = 4): string {
 	return rounded % step === 0 ? String(rounded / step) : `[${rounded}px]`;
 }
 
+function hasFraction(value: string): boolean {
+	return /[1-9]/.test(value.split(".")[1] ?? "");
+}
+function numericCandidate(kind: Kind, value: string, negative: boolean): { value: string; negative: boolean } {
+	if ((kind === "px" || kind === "ms" || kind === "deg") && value.includes("."))
+		return { value: `[${value}${kind}]`, negative };
+	return { value: kind === "count" ? value.replace(/\.0+$/, "") : value, negative };
+}
+
 /**
  * Explicit units are custom values. Bare spacing numbers deliberately keep
  * their scale reference; equal pixels never choose that reference for a person.
@@ -258,12 +267,10 @@ export function parseTyped(kind: Kind, typed: string): { value: string; negative
 		const count = Number(number[1]);
 		const unit = number[2];
 		if (!Number.isFinite(count)) return null;
-		if (kind === "count" && (unit !== undefined || !Number.isInteger(count))) return null;
+		if (kind === "count" && (unit !== undefined || hasFraction(number[1]))) return null;
 		if (unit !== undefined) return { value: `[${number[1]}${unit}]`, negative };
 		const value = number[1].startsWith(".") ? `0${number[1]}` : number[1];
-		if ((kind === "px" || kind === "ms" || kind === "deg") && !Number.isInteger(count))
-			return { value: `[${value}${kind}]`, negative };
-		return { value, negative };
+		return numericCandidate(kind, value, negative);
 	}
 	if (kind === "spacing" && /^\d+\/\d+$/.test(text) && BigInt(text.split("/")[1]!) !== 0n)
 		return { value: text, negative };
@@ -303,15 +310,13 @@ export function stepLength(
 	if (!Number.isSafeInteger(units)) return null;
 	const literal = current?.value ?? "";
 	if (/^\d+(?:\.\d+)?$/.test(literal)) {
-		if (kind === "count" && !Number.isInteger(Number(literal))) return null;
+		if (kind === "count" && hasFraction(literal)) return null;
 		const next = decimalStep(literal, current?.negative ?? false, units);
-		if (next && (kind === "px" || kind === "ms" || kind === "deg") && next.value.includes("."))
-			return { ...next, value: `[${next.value}${kind}]` };
-		return next;
+		return next && numericCandidate(kind, next.value, next.negative);
 	}
 	const custom = /^\[([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)\]$/i.exec(literal);
 	if (custom) {
-		if (kind === "count" && (custom[2] !== "" || !Number.isInteger(Number(custom[1])))) return null;
+		if (kind === "count" && (custom[2] !== "" || hasFraction(custom[1]!))) return null;
 		const next = decimalStep(custom[1]!, current?.negative ?? false, units);
 		return next && { ...next, value: `[${next.value}${custom[2]}]` };
 	}

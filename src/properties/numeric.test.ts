@@ -22,7 +22,7 @@ it.each<[Kind, string, string, boolean]>([
 });
 
 it("refuses fractional counts, invalid ratios and nonfinite numbers without rounding them into another request", () => {
-	for (const typed of ["1.5", "1.5px", "Infinity", "NaN", "9".repeat(400)])
+	for (const typed of ["1.5", "1.000000000000000001", "1.5px", "Infinity", "NaN", "9".repeat(400)])
 		expect(parseTyped("count", typed)).toBeNull();
 	expect(parseTyped("spacing", "1/0")).toBeNull();
 });

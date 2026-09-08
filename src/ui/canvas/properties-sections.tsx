@@ -305,11 +305,24 @@ function BorderWidthRow({
 	const changed = view.fresh(readRow(row, view.scoped, view.theme).token);
 	const write = (next: RowValue) => view.put(editsFor(row, next, atOf(view)));
 	const stepBy = (units: number) => {
-		const now = held.shown === null ? 0 : Number.parseFloat(held.shown.replace(/[^\d.]/g, "")) || 1;
-		const next = Math.max(0, Math.round(now + units));
-		if (next === 0) write(null);
-		else write({ kind: "value", value: String(next) });
+		const parsed = takeApart(held.shown ?? "");
+		const from: Length | null =
+			parsed === null
+				? null
+				: {
+						family: "border",
+						kind: "px",
+						value: parsed.value,
+						negative: parsed.negative,
+						important: false,
+						token: "",
+					};
+		const next = stepLength("px", from, held.shown === null ? 0 : Number.NaN, units);
+		if (next === null || next.negative) return;
+		if (next.value === "0") write(null);
+		else write({ kind: "value", value: next.value });
 	};
+
 	return (
 		<Row name={name ?? row.property} ok={ok} changed={changed} onScrub={ok ? stepBy : undefined}>
 			<NumField
@@ -320,8 +333,11 @@ function BorderWidthRow({
 				faint={held.own === null}
 				changed={changed}
 				onCommit={(typed) => {
-					const next = parseTyped("px", typed.trim());
-					if (next === null || next.value === "0") return write(null);
+					const text = typed.trim();
+					if (text === "") return write(null);
+					const next = parseTyped("px", text);
+					if (next === null || next.negative) return;
+					if (next.value === "0") return write(null);
 					write({ kind: "value", value: next.value });
 				}}
 				onStep={stepBy}

@@ -66,6 +66,39 @@ it("takes a sign, a fraction, a unit and a bare count", async () => {
 	expect(turned.wrote()).toEqual([{ token: "rotate-[12deg]" }]);
 });
 
+it.each([
+	["border-[1.25px]", false, "border-[2.25px]"],
+	["border-[.333rem]", true, "border-[10.333rem]"],
+])("steps the actual border field without losing its unit: %s", async (source, shift, token) => {
+	const rail = await mount(source);
+	await step(rail, "border-width", "ArrowUp", shift);
+	expect(rail.wrote()).toEqual([{ token }]);
+});
+
+it("scrubs the actual border field in its fractional displayed unit", async () => {
+	const rail = await mount("border-[1.25px]");
+	const label = rowOf(rail, "border-width")?.firstElementChild;
+	if (!label) throw new Error("missing border label");
+	await act(async () =>
+		label.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, button: 0, clientX: 100, bubbles: true })),
+	);
+	await act(async () =>
+		document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 104, bubbles: true })),
+	);
+	expect(rail.wrote()).toEqual([{ token: "border-[2.25px]" }]);
+	await act(async () =>
+		document.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: 104, bubbles: true })),
+	);
+});
+
+it("does not save a positive substitute or remove the border for invalid signed input", async () => {
+	for (const typed of ["-1.25px", "invalid"]) {
+		const rail = await mount("border-2");
+		await type(rail, "border-width", typed);
+		expect(rail.wrote(), typed).toEqual([]);
+	}
+});
+
 it("reads the token in the box and what it measures beside it", async () => {
 	const rail = await mount("p-4 w-1/2 opacity-50");
 
