@@ -28,6 +28,8 @@ export function createPropertySession(actions: PropertySessionActions) {
 		value: SourcePropertyValue | undefined;
 		revision: number;
 		done: boolean;
+		/** this gesture asked to be saved, which no later control can take back */
+		saving: boolean;
 		completed: boolean;
 	};
 	let current: Held | undefined;
@@ -39,6 +41,7 @@ export function createPropertySession(actions: PropertySessionActions) {
 			return;
 		}
 		held.done = true;
+		held.saving = commit;
 		if (!commit) held.abort.abort();
 		const read = await held.read;
 		held.completed = true;
@@ -46,8 +49,12 @@ export function createPropertySession(actions: PropertySessionActions) {
 	}
 	function begin(property: string, scope: string, preview?: SourcePropertyValue): Held {
 		if (current && !current.done && current.property === property && current.scope === scope) return current;
-		void finish(false);
-		current?.abort.abort();
+		// A gesture that asked to be saved keeps its answer: this control takes the
+		// preview from here, and retiring that one is its own control's to say.
+		if (current && !current.saving) {
+			void finish(false);
+			current.abort.abort();
+		}
 		const held: Held = {
 			property,
 			scope,
@@ -55,6 +62,7 @@ export function createPropertySession(actions: PropertySessionActions) {
 			value: undefined,
 			revision: 0,
 			done: false,
+			saving: false,
 			completed: false,
 			abort: new AbortController(),
 		};

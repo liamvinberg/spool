@@ -248,3 +248,26 @@ it("previews current native samples before compiler replies and retires late fai
 		vi.unstubAllGlobals();
 	}
 });
+
+it("keeps a completed save when the next control takes over the preview", async () => {
+	let arrive = (_: SourceRead) => {};
+	const held = new Promise<SourceRead>((resolve) => {
+		arrive = resolve;
+	});
+	const begin = vi.fn(async (property: string) => (property === "color" ? await held : read(2)));
+	const finish = vi.fn();
+	const session = createPropertySession({
+		begin,
+		plan: async () => ({ ok: false, reason: "unused" }),
+		refused: vi.fn(),
+		preview: async () => true,
+		finish,
+	});
+	session.preview("color", "", { kind: "custom", value: "red" });
+	const saving = session.apply("color", "", { kind: "custom", value: "red" });
+	// A second control's first edit takes the preview, never the first save's intent.
+	session.begin("opacity", "");
+	arrive(read(1));
+	await saving;
+	expect(finish).toHaveBeenCalledExactlyOnceWith(read(1), { kind: "custom", value: "red" }, true);
+});
