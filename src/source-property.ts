@@ -4,6 +4,11 @@ export type SourcePropertyValue =
 	| { kind: "custom"; value: string }
 	| { kind: "remove" };
 
+export interface SourcePropertyEnvironment {
+	direction: "ltr" | "rtl";
+	writingMode: string;
+}
+
 /** Declarations and their nested conditions come from the captured project compiler. */
 export interface SourcePropertyEffect {
 	owner: string | null;

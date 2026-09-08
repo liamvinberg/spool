@@ -84,9 +84,6 @@ export async function compilePropertySource(
 		}
 	}
 	walk(ast, null, []);
-	for (const token of tokens)
-		if (!effects.some((effect) => effect.owner === token))
-			throw new Error(`this authored token has no attributable compiled declaration: ${token}`);
 	const cssCompiler = await compile(ROOT_CSS, sheets);
 	return { literal, effects, registrations, css: cssCompiler.build(tokens), stylesheets: [...sheets.stylesheets] };
 }
