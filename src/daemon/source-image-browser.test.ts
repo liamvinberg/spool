@@ -65,6 +65,17 @@ it("drops real image bytes through the original source owner and retains native 
 		if (!redo) expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(SOURCE);
 		expect(readFileSync(f.file("frames/home/chosen.svg"), "utf8")).toBe(SECOND);
 	}
+	const cold = await f.browser.newPage();
+	await cold.goto(await f.target.evaluate(() => location.href));
+	await expect
+		.poll(() =>
+			cold.locator("#hero").evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth),
+		)
+		.toBe(70);
+	expect(await cold.locator("#counter").textContent()).toBe("0");
+	expect(await cold.locator("#native").inputValue()).toBe("initial");
+	await check(70);
+
 	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
 });
 
@@ -241,5 +252,46 @@ it.each(["computed source", "failed decode"] as const)(
 		expect(await composer.inputValue()).toContain("frames/home/frame.tsx");
 		expect(sends).toEqual([]);
 		expect(f.writes).toEqual([]);
+	},
+);
+
+it.each(["absent", "empty literal"] as const)(
+	"uses the existing empty image control and restores original %s source on Undo",
+	{
+		timeout: 120000,
+	},
+	async (kind) => {
+		const source = `export default function Frame(){return <main style={{padding:40}}><img id="hero" ${kind === "absent" ? "" : 'src=""'} alt="empty image" style={{width:180,height:120}}/></main>}`;
+		const f = await originCanvas({ "shared/assets/second.svg": SECOND }, source, "#hero");
+		await f.select();
+		const control = f.page.getByRole("button", { name: "image", exact: true });
+		await expect.poll(() => control.count()).toBe(1);
+		expect(await control.textContent()).toContain("none");
+		await control.click();
+		const choice = f.page.locator('[data-menu-option="second.svg"]');
+		await expect.poll(() => choice.count()).toBe(1);
+		const saved = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
+		await choice.click();
+		expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
+		await expect
+			.poll(() => f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth))
+			.toBe(70);
+		await f.settled();
+		const undone = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "inverse",
+		);
+		await f.history();
+		expect(await (await undone).json()).toMatchObject({
+			ok: true,
+			source: "saved",
+			publication: { expected: { kind: "image", value: "", absent: kind === "absent" } },
+		});
+		await f.settled();
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+		expect(await f.target.getAttribute("src")).toBeNull();
+		expect(await f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1).rendered)).toBe("verified");
+		expect(f.writes).toEqual(["commit", "inverse"]);
 	},
 );
