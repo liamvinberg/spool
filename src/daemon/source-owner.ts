@@ -17,6 +17,7 @@ import {
 	sameSourceOperation,
 	type UseOutcome,
 } from "../source-edit";
+import type { SourcePropertyEnvironment } from "../source-property";
 import type { ExecutedEdit } from "./bundled-editor";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-path";
@@ -37,12 +38,22 @@ import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
-import { compilePropertySource } from "./source-property-compile";
+import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
+import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
+import { planPropertyLiteral } from "./source-property-literal";
+import { planPropertyValue } from "./source-property-plan";
+import { propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
+interface PropertyProof {
+	environment: SourcePropertyEnvironment;
+	roots: ReadonlySet<string>;
+}
 interface OriginalRead {
+	inverseExpected?: SourcePublication["expected"];
+	property?: PropertyProof;
 	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
@@ -55,6 +66,7 @@ interface OriginalRead {
 	file: string;
 }
 interface Receipt {
+	property?: PropertyProof;
 	purpose: SourceRead["operation"];
 	expected: SourcePublication["expected"];
 	required: RetainedCompilation;
@@ -540,7 +552,8 @@ export function createSourceOwner(
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
 			purpose: held.read.operation,
-			expected: {
+			...(held.property ? { property: held.property } : {}),
+			expected: held.inverseExpected ?? {
 				kind: "literal",
 				value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
 				absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
@@ -724,6 +737,60 @@ export function createSourceOwner(
 			return { ok: true, source: "saved", publication: null, receipt, reason: reason(error) };
 		}
 	}
+
+	async function checkPropertyChanges(held: OriginalRead, proof: PropertyProof) {
+		if (held.read.operation.kind !== "property") throw new Error("property proof has another operation purpose");
+		const operation = held.read.operation;
+		const inputs = new Map(held.compilation.inputs);
+		const original = inputs.get(held.file);
+		if (!original) throw new Error("the original property source input is missing");
+		const state = (source: string, snapshot: RetainedCompilation) =>
+			propertyState(
+				held.root,
+				snapshot,
+				inputs,
+				held.file,
+				source,
+				held.read.cell ?? held.read.original.cell,
+				operation,
+				proof.environment,
+				proof.roots,
+			);
+		let snapshot = held.compilation;
+		let before = await state(original.bytes.toString("utf8"), snapshot);
+		let frameBefore = await inspectPropertyCss(`${snapshot.packet.css}\n${snapshot.packet.bundledCss}`);
+		const steps = [...inputs]
+			.flatMap(([file, input]) => journal.changes(file, input).map((step) => ({ file, ...step })))
+			.sort((a, b) => a.order - b.order);
+		for (const step of steps) {
+			inputs.set(step.file, step.after);
+			const input = inputs.get(held.file);
+			if (!input) throw new Error("property source input disappeared");
+			snapshot = await compiler.compileSnapshot(
+				held.root,
+				held.frame,
+				inputs,
+				sequence,
+				held.compilation.absent,
+				held.compilation,
+			);
+			const after = await state(input.bytes.toString("utf8"), snapshot);
+			const frameAfter = await inspectPropertyCss(`${snapshot.packet.css}\n${snapshot.packet.bundledCss}`);
+			if (!step.canceled)
+				guardPropertyEffects(
+					before.certificate,
+					after.certificate,
+					proof.roots,
+					[],
+					proof.environment,
+					frameBefore.effects,
+					frameAfter.effects,
+				);
+			before = after;
+			frameBefore = frameAfter;
+		}
+		return { inputs, state: before, snapshot };
+	}
 	function commit(
 		root: string,
 		handle: string,
@@ -751,6 +818,50 @@ export function createSourceOwner(
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
+				if (change.kind === "property" && held.read.operation.kind === "property") {
+					const { target, environment } = resolvePropertySource(
+						root,
+						held.compilation,
+						original,
+						generation,
+						held.read.operation,
+					);
+					const plan = await planPropertyValue(
+						root,
+						held.compilation.inputs,
+						held.read.value,
+						held.read.operation,
+						change.value,
+						environment,
+						held.compilation.packet.bundledCss,
+					);
+					const proof = {
+						environment,
+						roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
+					};
+					const current = await checkPropertyChanges(held, proof);
+					const input = held.compilation.inputs.get(held.file);
+					if (!input) throw new Error("the original property source input is missing");
+					const patches = planPropertyLiteral(source, target, plan.before, plan.after);
+					const transformed = journal.transform(held.file, input, patches);
+					const currentSource = current.inputs.get(held.file)?.bytes.toString("utf8");
+					if (currentSource === undefined) throw new Error("the current property source input is missing");
+					const next = applySourcePatches(currentSource, transformed).text;
+					const after = await propertyState(
+						root,
+						current.snapshot,
+						current.inputs,
+						held.file,
+						next,
+						held.read.cell ?? original.cell,
+						held.read.operation,
+						environment,
+						proof.roots,
+					);
+					held.property = proof;
+					held.inverseExpected = current.state.expected;
+					return await publish(held, next, after.expected, transformed);
+				}
 				if (change.kind !== "literal") throw new Error("this read only authorizes literal values");
 				let patches: readonly SpanPatch[];
 				if (held.target?.syntax === "react-call")
@@ -860,34 +971,51 @@ export function createSourceOwner(
 				if (transformed.length === 0) throw new Error("the inverse source span is missing");
 				const cell = held.compilation.cells[held.cell];
 				if (!cell) throw new Error("the original source role changed");
-				return await publish(
-					{
-						observer: "",
-						sourceOnly,
-						coverage: held.coverage,
-						root,
-						frame,
-						file: held.file,
-						compilation,
-						history: held.required,
-						read: {
-							operation: held.purpose,
-							handle: "",
-							owner,
-							original,
-							generation: held.generation,
-							role: cell.field ? "literal-attribute" : "literal-child",
-							cell: held.cell,
-							...(reach ? { reach } : {}),
-							source: cell.source,
-							value: cell.value,
-						},
+				const inverseRead: OriginalRead = {
+					observer: "",
+					sourceOnly,
+					coverage: held.coverage,
+					root,
+					frame,
+					file: held.file,
+					compilation,
+					history: held.required,
+					read: {
+						operation: held.purpose,
+						handle: "",
+						owner,
+						original,
+						generation: held.generation,
+						role: cell.field ? "literal-attribute" : "literal-child",
+						cell: held.cell,
+						...(reach ? { reach } : {}),
+						source: cell.source,
+						value: cell.value,
 					},
-					applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
-					held.expected,
-					transformed,
-					held.operation,
-				);
+				};
+				const next = applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text;
+				let expected = held.expected;
+				if (held.property && held.purpose.kind === "property") {
+					const current = await checkPropertyChanges(
+						{ ...inverseRead, compilation: held.required },
+						held.property,
+					);
+					const after = await propertyState(
+						root,
+						current.snapshot,
+						current.inputs,
+						held.file,
+						next,
+						held.cell,
+						held.purpose,
+						held.property.environment,
+						held.property.roots,
+					);
+					inverseRead.property = held.property;
+					inverseRead.inverseExpected = current.state.expected;
+					expected = after.expected;
+				}
+				return await publish(inverseRead, next, expected, transformed, held.operation);
 			} catch (error) {
 				if (held) held.retired = true;
 				return { ok: false, reason: reason(error) };

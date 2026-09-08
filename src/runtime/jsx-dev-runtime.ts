@@ -267,7 +267,11 @@ function sourceContext(element: Element, field?: string): string {
 	const path: string[] = [];
 	let at: Element | null = element;
 	while (at) {
-		path.push(`${at.tagName}:${at.getAttribute("class") ?? ""}:${at.getAttribute("style") ?? ""}`);
+		const ownedClass = at === element && field === "className";
+		const className = ownedClass
+			? Object.getOwnPropertyDescriptor(committedFiber(at)?.memoizedProps ?? {}, "className")?.value
+			: at.getAttribute("class");
+		path.push(`${at.tagName}:${typeof className === "string" ? className : ""}:${at.getAttribute("style") ?? ""}`);
 		at = at.parentElement;
 	}
 	if (field !== "className") return JSON.stringify(path);
