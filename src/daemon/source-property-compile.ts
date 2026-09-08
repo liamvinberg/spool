@@ -1,4 +1,4 @@
-import { compile, compileAst } from "tailwindcss";
+import { __unstable__loadDesignSystem, compile, compileAst } from "tailwindcss";
 import type { SourcePropertyEffect } from "../source-property";
 import { splitClass } from "./class-write";
 import { realDesignDir } from "./design-path";
@@ -11,6 +11,7 @@ export interface PropertyCertificate {
 	literal: string;
 	effects: SourcePropertyEffect[];
 	registrations: Record<string, readonly SourcePropertyEffect[]>;
+	theme: Readonly<Record<string, { value: string; options: number }>>;
 	css: string;
 	stylesheets: readonly string[];
 }
@@ -85,5 +86,14 @@ export async function compilePropertySource(
 	}
 	walk(ast, null, []);
 	const cssCompiler = await compile(ROOT_CSS, sheets);
-	return { literal, effects, registrations, css: cssCompiler.build(tokens), stylesheets: [...sheets.stylesheets] };
+	const system = await __unstable__loadDesignSystem(ROOT_CSS, sheets);
+	const theme = Object.fromEntries(system.theme.entries());
+	return {
+		literal,
+		effects,
+		registrations,
+		theme,
+		css: cssCompiler.build(tokens),
+		stylesheets: [...sheets.stylesheets],
+	};
 }

@@ -101,6 +101,29 @@ export function externalPropertySignature(
 		),
 	].sort();
 	const names = new Set([...inputs, ...effects.flatMap(propertyInputs)]);
+	// Candidate-dependent @layer theme emission is not the definition table.
+	// Read the actual pinned compiler's complete entries, only along reached references.
+	const reached = new Set(inputs);
+	let growing = true;
+	while (growing) {
+		growing = false;
+		for (const name of reached) {
+			const entry = certificate.theme[name];
+			if (!entry) continue;
+			for (const dependency of propertyInputs({
+				owner: null,
+				path: [],
+				property: name,
+				value: entry.value,
+				important: false,
+			}))
+				if (!reached.has(dependency)) {
+					reached.add(dependency);
+					growing = true;
+				}
+		}
+	}
+	const theme = [...reached].sort().map((name) => [name, certificate.theme[name] ?? null]);
 	const registrations = [...names].sort().map((name) => [name, certificate.registrations[name] ?? null]);
-	return JSON.stringify({ declarations, registrations });
+	return JSON.stringify({ declarations, registrations, theme });
 }

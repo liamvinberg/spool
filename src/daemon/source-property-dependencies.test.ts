@@ -51,3 +51,24 @@ it("keeps authored variable dependencies and inactive consumers in the proof", a
 		externalPropertySignature(competing, roots, ["contrast-(--chosen)"], environment),
 	);
 });
+
+it("guards reached theme definitions independently of candidate emission and unrelated tokens", async () => {
+	const { root } = makeProject(makeTempDir());
+	const snapshot = (color: string, space: string) => {
+		writeDesignFile(root, "shared/tokens.css", `@theme {--color-chosen:${color};--spacing-unused:${space};}`);
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		return new Map([[file, readInput(file)]]);
+	};
+	const originalInputs = snapshot("#123456", "4px");
+	const unrelatedInputs = snapshot("#123456", "12px");
+	const changedInputs = snapshot("#abcdef", "12px");
+	const original = await compilePropertySource(root, originalInputs, "text-chosen");
+	const unrelated = await compilePropertySource(root, unrelatedInputs, "text-chosen");
+	const changed = await compilePropertySource(root, changedInputs, "text-chosen");
+	const roots = new Set(["color"]);
+	const signature = (certificate: typeof original) =>
+		externalPropertySignature(certificate, roots, ["text-chosen"], environment);
+	expect(signature(unrelated)).toBe(signature(original));
+	expect(signature(changed)).not.toBe(signature(original));
+	expect(original.theme["--color-chosen"]?.value).toBe("#123456");
+});
