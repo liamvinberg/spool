@@ -1,5 +1,6 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
+import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
 
 const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited: boolean }> = {
 	"text-align": { value: "start", inherited: true },
@@ -13,6 +14,21 @@ const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited:
 function keywordProperty(property: string): property is NativeKeywordProperty {
 	return Object.hasOwn(keywordDefaults, property);
 }
+
+const transformProperties: Readonly<Record<string, NativeTransformProperty>> = {
+	scale: "scale",
+	"scale-x": "scale",
+	"scale-y": "scale",
+	rotate: "rotate",
+	"rotate-x": "transform",
+	"rotate-y": "transform",
+	skew: "transform",
+	"skew-x": "transform",
+	"skew-y": "transform",
+	translate: "translate",
+	"translate-x": "translate",
+	"translate-y": "translate",
+};
 
 export interface PropertyOutcome {
 	rendered: "verified" | "mismatching" | "unverified" | "inactive";
@@ -32,11 +48,24 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("the selected property condition needs a native context proof");
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
+	const transform = Object.hasOwn(transformProperties, expected.property)
+		? transformProperties[expected.property]
+		: undefined;
+	if (transform) return transformOutcome(element, expected, transform);
 	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
 		return borderOutcome(element, expected);
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
 	const corner = isCorner(expected.property);
-	const color = expected.property === "color" || expected.property === "background-color";
+	const color = [
+		"color",
+		"background-color",
+		"outline-color",
+		"text-decoration-color",
+		"caret-color",
+		"accent-color",
+		"fill",
+		"stroke",
+	].includes(expected.property);
 	const weight = expected.property === "font-weight";
 	const leading = expected.property === "line-height";
 	const companion = weight ? "--tw-font-weight" : leading ? "--tw-leading" : undefined;
@@ -140,26 +169,41 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return { rendered: companionMatches && wanted === actual ? "verified" : "mismatching", observed };
 	}
 	if (color) {
-		let value: string | undefined;
 		if (
 			(!winner || winner.owner === null) &&
 			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
 				element.style.getPropertyValue(expected.property))
 		)
 			return unverified("this color has an independent inline context requiring proof");
-		if (winner && !(expected.property === "color" && winner.value.trim() === "inherit"))
-			value = resolvedValue(element, sheet, winner.value);
-		else {
-			if (expected.property === "background-color") value = "transparent";
+		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
+		if (winner && value === undefined) return unverified("this color needs a resolved variable context");
+		if (!winner || value === "inherit") {
+			if (expected.property === "caret-color")
+				return unverified("inherited caret color needs its original auto context");
+			if (!winner && expected.property === "background-color") value = "transparent";
+			else if (!winner && expected.property === "accent-color") value = "auto";
+			else if (!winner && ["outline-color", "text-decoration-color"].includes(expected.property))
+				value = "currentcolor";
 			else {
 				const parent = element.parentElement;
 				if (!parent) return unverified("this color needs a native inherited context proof");
-				value = view.getComputedStyle(parent).color;
+				value = view.getComputedStyle(parent).getPropertyValue(expected.property);
 			}
 		}
+		if (value?.toLowerCase() === "currentcolor") {
+			const context = expected.property === "color" ? element.parentElement : element;
+			if (!context) return unverified("this color needs an independent current color context");
+			value = view.getComputedStyle(context).color;
+		}
+		const context = paintContext(element, expected.property, value);
+		if (context) return unverified(context);
 		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
-		const wanted = value === undefined ? undefined : nativeColor(value);
-		const actual = nativeColor(observed);
+		const normalize = (color: string) =>
+			(expected.property === "fill" || expected.property === "stroke") && color.trim() === "none"
+				? "none"
+				: nativeColor(color);
+		const wanted = value === undefined ? undefined : normalize(value);
+		const actual = normalize(observed);
 		if (wanted === undefined || actual === undefined)
 			return unverified("this color needs a variable or native context proof");
 		return { rendered: wanted === actual ? "verified" : "mismatching", observed };
@@ -197,6 +241,169 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (observed === "" || !Number.isFinite(Number(observed)))
 		return unverified("this use has no resolved native opacity");
 	return { rendered: Number(observed) === wanted ? "verified" : "mismatching", observed };
+}
+
+/** Resolve the complete captured transform declaration, including independently owned companion axes. */
+function transformOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	property: NativeTransformProperty,
+): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const declarations = new Map<string, SourcePropertyEffect[]>();
+	const ownsVariable = (name: string) =>
+		property === "scale"
+			? /^--tw-scale-[xyz]$/.test(name)
+			: property === "translate"
+				? /^--tw-translate-[xyz]$/.test(name)
+				: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
+	for (const effect of expected.effects) {
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this transform needs a native condition proof");
+		if (effect.property !== property && !ownsVariable(effect.property))
+			return unverified("this transform has dependent effects requiring native proof");
+		const group = declarations.get(effect.property) ?? [];
+		group.push(effect);
+		declarations.set(effect.property, group);
+	}
+	let unresolved = false;
+	const resolve = (value: string, seen = new Set<string>()): string => {
+		const result = value.replace(
+			/var\((--[\w-]+)(?:,([^()]*))?\)/g,
+			(_reference, name: string, fallback: string | undefined) => {
+				if (seen.has(name)) {
+					unresolved = true;
+					return "";
+				}
+				const next = new Set([...seen, name]);
+				if (!ownsVariable(name)) {
+					const resolved = resolvedValue(element, sheet, `var(${name})`);
+					if (resolved === undefined) unresolved = true;
+					return resolved ?? "";
+				}
+				const selected = winningEffect(sheet, declarations.get(name) ?? []);
+				if (selected.reason) {
+					unresolved = true;
+					return "";
+				}
+				let definition = selected.winner?.value;
+				if (definition === undefined) {
+					const defaultOnly = (rules: CSSRuleList): boolean =>
+						[...rules].every((rule) => {
+							if (rule instanceof CSSSupportsRule && !CSS.supports(rule.conditionText)) return true;
+							if (rule instanceof CSSStyleRule && rule.style.getPropertyValue(name)) return false;
+							return !(rule instanceof CSSGroupingRule) || defaultOnly(rule.cssRules);
+						});
+					if (!defaultOnly(sheet.cssRules)) {
+						unresolved = true;
+						return "";
+					}
+					const registrations = [...sheet.cssRules].filter(
+						(rule) => rule instanceof CSSPropertyRule && rule.name === name,
+					);
+					const registration = registrations[0];
+					if (registrations.length !== 1 || !(registration instanceof CSSPropertyRule) || registration.inherits) {
+						unresolved = true;
+						return "";
+					}
+					definition = registration.initialValue ?? undefined;
+					if (definition === undefined || definition === "") {
+						if (fallback === undefined) unresolved = true;
+						return fallback === undefined ? "" : resolve(fallback, next);
+					}
+				}
+				const resolved = resolve(definition, next);
+				if (property === "translate") {
+					const length = nativeLength(element, sheet, property, resolved);
+					if (length === undefined) unresolved = true;
+					return length === undefined ? "" : `${length}px`;
+				}
+				return resolved;
+			},
+		);
+		if (/\b(?:var|env|attr)\(/i.test(result)) unresolved = true;
+		return result;
+	};
+	const selection = winningEffect(sheet, declarations.get(property) ?? []);
+	if (selection.reason) return unverified(selection.reason);
+	if (
+		!selection.winner &&
+		(element instanceof HTMLElement || element instanceof SVGElement) &&
+		element.style.getPropertyValue(property)
+	)
+		return unverified("this transform has an independent inline default context");
+	const value = resolve(selection.winner?.value ?? "none").trim();
+	if (unresolved) return unverified("this transform needs complete captured variable and companion evidence");
+	const result = nativeTransform(element, property, value);
+	return result.kind === "unknown"
+		? unverified(result.reason)
+		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
+}
+
+/** Additional paint channels need their own applicable native surface, separately from color equality. */
+function paintContext(element: Element, property: string, value: string | undefined): string | undefined {
+	if (property === "color" || property === "background-color") return;
+	const view = element.ownerDocument.defaultView;
+	if (!view || !element.isConnected || element.getClientRects().length === 0)
+		return "this paint has no rendered native surface";
+	const box = element.getBoundingClientRect();
+	if (!(box.width > 0 && box.height > 0)) return "this paint has no positive native surface";
+	const native = view.getComputedStyle(element);
+	for (let node: Element | null = element; node; node = node.parentElement) {
+		const style = view.getComputedStyle(node);
+		if (style.visibility !== "visible" || style.display === "none" || Number(style.opacity) === 0)
+			return "this paint needs a visible native context";
+	}
+	if (property === "outline-color") {
+		if (["none", "hidden", "auto"].includes(native.outlineStyle) || !(Number.parseFloat(native.outlineWidth) > 0))
+			return "this outline color needs an explicit visible outline";
+	} else if (property === "text-decoration-color") {
+		if (
+			!(element instanceof HTMLElement) ||
+			!Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) ||
+			native.textDecorationLine === "none"
+		)
+			return "this decoration color needs an authored native text decoration";
+		for (let parent = element.parentElement; parent; parent = parent.parentElement)
+			if (view.getComputedStyle(parent).textDecorationLine !== "none")
+				return "this decoration color needs an independent propagation context";
+	} else if (property === "caret-color") {
+		if (
+			!(
+				(element instanceof HTMLInputElement &&
+					["text", "search", "url", "tel", "email", "password"].includes(element.type)) ||
+				element instanceof HTMLTextAreaElement
+			) ||
+			element.disabled ||
+			element.readOnly ||
+			element.ownerDocument.activeElement !== element
+		)
+			return "this caret color needs a focused editable native text control";
+	} else if (property === "accent-color") {
+		if (
+			!(element instanceof HTMLInputElement) ||
+			!["checkbox", "radio"].includes(element.type) ||
+			!element.checked ||
+			element.disabled ||
+			native.appearance === "none"
+		)
+			return "this accent color needs a checked native control appearance";
+	} else if (property === "fill" || property === "stroke") {
+		if (!(element instanceof SVGGeometryElement) || !["rect", "circle", "ellipse"].includes(element.localName))
+			return "this SVG paint needs a known native geometry";
+		const bounds = element.getBBox();
+		if (!(bounds.width > 0 && bounds.height > 0)) return "this SVG paint has no positive native geometry";
+		if (value !== "none" && !(Number(property === "fill" ? native.fillOpacity : native.strokeOpacity) > 0))
+			return "this SVG paint needs positive native paint opacity";
+		if (property === "stroke" && value !== "none" && !(Number.parseFloat(native.strokeWidth) > 0))
+			return "this stroke color needs positive native stroke width";
+	}
+	return;
 }
 
 /** Width and style are one visible border component; compiler-owned siblings remain independent. */
