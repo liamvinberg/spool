@@ -3,6 +3,7 @@ import { nativeColor } from "./property-colors";
 import { nativeFilter } from "./property-filters";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
+import { type NativeTransitionProperty, nativeTransition } from "./property-transitions";
 
 const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited: boolean }> = {
 	"text-align": { value: "start", inherited: true },
@@ -32,6 +33,12 @@ const transformProperties: Readonly<Record<string, NativeTransformProperty>> = {
 	"translate-y": "translate",
 };
 
+function transitionProperty(property: string): property is NativeTransitionProperty {
+	return (
+		property === "transition-duration" || property === "transition-delay" || property === "transition-timing-function"
+	);
+}
+
 export interface PropertyOutcome {
 	rendered: "verified" | "mismatching" | "unverified" | "inactive";
 	observed?: string;
@@ -58,6 +65,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return composedOutcome(element, expected, "filter");
 	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
 		return borderOutcome(element, expected);
+	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
 	const corner = isCorner(expected.property);
 	const color = [
@@ -247,11 +255,38 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	return { rendered: Number(observed) === wanted ? "verified" : "mismatching", observed };
 }
 
+/** Read nested var fallbacks without resolving branches the selected declaration does not use. */
+function substituteVariables(
+	value: string,
+	replace: (name: string, fallback: string | undefined) => string,
+): string | undefined {
+	let result = "";
+	let cursor = 0;
+	for (const match of value.matchAll(/\bvar\(/g)) {
+		if (match.index < cursor) continue;
+		const start = match.index + 4;
+		let depth = 1;
+		let end = start;
+		let comma = -1;
+		for (; end < value.length; end++) {
+			if (value[end] === "(") depth++;
+			else if (value[end] === ")" && --depth === 0) break;
+			else if (value[end] === "," && depth === 1 && comma < 0) comma = end;
+		}
+		if (depth !== 0) return;
+		const name = value.slice(start, comma < 0 ? end : comma).trim();
+		if (!/^--[\w-]+$/.test(name)) return;
+		result += value.slice(cursor, match.index) + replace(name, comma < 0 ? undefined : value.slice(comma + 1, end));
+		cursor = end + 1;
+	}
+	return result + value.slice(cursor);
+}
+
 /** Resolve a complete captured native consumer, including independently owned companion inputs. */
 function composedOutcome(
 	element: Element,
 	expected: SourcePropertyExpectation,
-	property: NativeTransformProperty | "filter",
+	property: NativeTransformProperty | NativeTransitionProperty | "filter",
 ): PropertyOutcome {
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const sheet = new CSSStyleSheet();
@@ -265,7 +300,11 @@ function composedOutcome(
 				? /^--tw-translate-[xyz]$/.test(name)
 				: property === "filter"
 					? /^--tw-(?:blur|brightness|contrast|grayscale|hue-rotate|invert|saturate|sepia|drop-shadow)$/.test(name)
-					: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
+					: property === "transition-duration"
+						? name === "--tw-duration"
+						: property === "transition-timing-function"
+							? name === "--tw-ease"
+							: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
@@ -279,61 +318,63 @@ function composedOutcome(
 	}
 	let unresolved = false;
 	const resolve = (value: string, seen = new Set<string>()): string => {
-		const result = value.replace(
-			/var\((--[\w-]+)(?:,([^()]*))?\)/g,
-			(_reference, name: string, fallback: string | undefined) => {
-				if (seen.has(name)) {
+		const result = substituteVariables(value, (name, fallback) => {
+			if (seen.has(name)) {
+				unresolved = true;
+				return "";
+			}
+			const next = new Set([...seen, name]);
+			if (!ownsVariable(name)) {
+				const resolved = resolvedValue(element, sheet, `var(${name})`);
+				if (resolved === undefined) unresolved = true;
+				return resolved ?? "";
+			}
+			const selected = winningEffect(sheet, declarations.get(name) ?? []);
+			if (selected.reason) {
+				unresolved = true;
+				return "";
+			}
+			let definition = selected.winner?.value;
+			if (definition === undefined) {
+				const defaultOnly = (rules: CSSRuleList): boolean =>
+					[...rules].every((rule) => {
+						if (rule instanceof CSSSupportsRule && !CSS.supports(rule.conditionText)) return true;
+						if (rule instanceof CSSStyleRule && rule.style.getPropertyValue(name)) return false;
+						return !(rule instanceof CSSGroupingRule) || defaultOnly(rule.cssRules);
+					});
+				if (!defaultOnly(sheet.cssRules)) {
 					unresolved = true;
 					return "";
 				}
-				const next = new Set([...seen, name]);
-				if (!ownsVariable(name)) {
-					const resolved = resolvedValue(element, sheet, `var(${name})`);
-					if (resolved === undefined) unresolved = true;
-					return resolved ?? "";
+				const registrations = [...sheet.cssRules].filter(
+					(rule) => rule instanceof CSSPropertyRule && rule.name === name,
+				);
+				const registration = registrations[0];
+				// Transition utilities may reference an undeclared optional slot before its theme fallback.
+				if (registrations.length === 0 && transitionProperty(property) && fallback !== undefined) {
+					const native = element.ownerDocument.defaultView?.getComputedStyle(element).getPropertyValue(name);
+					if (native !== undefined && native.trim() === "") return resolve(fallback, next);
 				}
-				const selected = winningEffect(sheet, declarations.get(name) ?? []);
-				if (selected.reason) {
+				if (registrations.length !== 1 || !(registration instanceof CSSPropertyRule) || registration.inherits) {
 					unresolved = true;
 					return "";
 				}
-				let definition = selected.winner?.value;
-				if (definition === undefined) {
-					const defaultOnly = (rules: CSSRuleList): boolean =>
-						[...rules].every((rule) => {
-							if (rule instanceof CSSSupportsRule && !CSS.supports(rule.conditionText)) return true;
-							if (rule instanceof CSSStyleRule && rule.style.getPropertyValue(name)) return false;
-							return !(rule instanceof CSSGroupingRule) || defaultOnly(rule.cssRules);
-						});
-					if (!defaultOnly(sheet.cssRules)) {
-						unresolved = true;
-						return "";
-					}
-					const registrations = [...sheet.cssRules].filter(
-						(rule) => rule instanceof CSSPropertyRule && rule.name === name,
-					);
-					const registration = registrations[0];
-					if (registrations.length !== 1 || !(registration instanceof CSSPropertyRule) || registration.inherits) {
-						unresolved = true;
-						return "";
-					}
-					definition = registration.initialValue ?? undefined;
-					if (definition === undefined || definition === "") {
-						if (fallback === undefined) unresolved = true;
-						return fallback === undefined ? "" : resolve(fallback, next);
-					}
+				definition = registration.initialValue ?? undefined;
+				if (definition === undefined || definition === "") {
+					if (fallback === undefined) unresolved = true;
+					return fallback === undefined ? "" : resolve(fallback, next);
 				}
-				const resolved = resolve(definition, next);
-				if (property === "translate") {
-					const length = nativeLength(element, sheet, property, resolved);
-					if (length === undefined) unresolved = true;
-					return length === undefined ? "" : `${length}px`;
-				}
-				return resolved;
-			},
-		);
-		if (/\b(?:var|env|attr)\(/i.test(result)) unresolved = true;
-		return result;
+			}
+			const resolved = resolve(definition, next);
+			if (property === "translate") {
+				const length = nativeLength(element, sheet, property, resolved);
+				if (length === undefined) unresolved = true;
+				return length === undefined ? "" : `${length}px`;
+			}
+			return resolved;
+		});
+		if (result === undefined || /\b(?:var|env|attr)\(/i.test(result)) unresolved = true;
+		return result ?? "";
 	};
 	const selection = winningEffect(sheet, declarations.get(property) ?? []);
 	if (selection.reason) return unverified(selection.reason);
@@ -343,10 +384,18 @@ function composedOutcome(
 		element.style.getPropertyValue(property)
 	)
 		return unverified("this composed effect has an independent inline default context");
-	// A fully resolved empty fallback list has the initial none value for these non-inherited consumers.
-	const value = resolve(selection.winner?.value ?? "none").trim() || "none";
+	const transition = transitionProperty(property);
+	if (transition && element.ownerDocument.defaultView?.getComputedStyle(element).transitionProperty === "none")
+		return unverified("this transition has no active native property");
+	const initial = transition ? (property === "transition-timing-function" ? "ease" : "0s") : "none";
+	// A fully resolved empty fallback list computes to this non-inherited consumer's initial value.
+	const value = resolve(selection.winner?.value ?? initial).trim() || initial;
 	if (unresolved) return unverified("this composed effect needs complete captured variable and companion evidence");
-	const result = property === "filter" ? nativeFilter(element, value) : nativeTransform(element, property, value);
+	const result = transitionProperty(property)
+		? nativeTransition(element, property, value)
+		: property === "filter"
+			? nativeFilter(element, value)
+			: nativeTransform(element, property, value);
 	return result.kind === "unknown"
 		? unverified(result.reason)
 		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };

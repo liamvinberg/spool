@@ -1386,3 +1386,215 @@ it.each(["filter", "blur-xs"])("checks compiled %s default and outside variable 
 			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).filter)),
 	).toEqual(classes === "filter" ? ["none", "brightness(0.25)"] : ["blur(4px)", "blur(8px)"]);
 });
+
+it.each(
+	appearanceProperties
+		.filter((row) => [66, 67, 131].includes(row.index))
+		.flatMap((row) => [
+			{ ...row, companion: "" },
+			{ ...row, companion: "transition-opacity" },
+		]),
+)("verifies compiled $property with $companion and original default inverse", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const subject = (classes: string) => `<div data-subject class="${classes}">Configured native transition</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(original)}`,
+	);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next)}${subject(original)}`,
+	);
+	expect((await empty.inspect(removed)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.companion) {
+		expect(removal.next, "removal must preserve the independently authored transition property").not.toBe("");
+		expect(
+			await empty.page
+				.locator("[data-subject]")
+				.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).transitionProperty)),
+		).toEqual(["opacity", "opacity"]);
+		const companions = [
+			"transition-property",
+			"transition-duration",
+			"transition-delay",
+			"transition-timing-function",
+		].filter((property) => property !== row.property);
+		for (const native of [f, empty]) {
+			const values = await native.page
+				.locator("[data-subject]")
+				.evaluateAll(
+					(elements, properties) =>
+						elements.map((element) =>
+							properties.map((property) => getComputedStyle(element).getPropertyValue(property)),
+						),
+					companions,
+				);
+			expect(values[0]).toEqual(values[1]);
+		}
+	}
+	if (row.companion && row.property !== "transition-delay") {
+		const variable =
+			row.property === "transition-duration"
+				? "--default-transition-duration"
+				: "--default-transition-timing-function";
+		const value = row.property === "transition-duration" ? "3s" : "linear";
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate(
+				(element, context) => {
+					if (!(element instanceof HTMLElement)) throw new Error("missing native host");
+					element.style.setProperty(context.variable, context.value);
+				},
+				{ variable, value },
+			);
+		// The owned input wins before the nested default; its unused fallback grants no authority.
+		expect((await f.inspect(expected))[0]?.rendered).toBe("verified");
+	}
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native host");
+			element.style.transitionProperty = "none";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+it.each([
+	{ property: "transition-duration", before: "duration-2", after: "duration-[2.5ms]", native: "0.0025s" },
+	{ property: "transition-delay", before: "delay-2", after: "delay-[2.5ms]", native: "0.0025s" },
+	{ property: "transition-timing-function", before: "ease-in", after: "ease-project", native: "steps(4, jump-none)" },
+])("verifies compiled transition option $after without adopting changed theme context", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "@theme { --ease-project: steps(4, jump-none); }");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		row.before,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style><div data-subject class="${plan.next}">Desired</div><div data-subject class="${row.before}">Original</div>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), row.property),
+	).toBe(row.native);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: row.before,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.after === "ease-project") {
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => {
+				if (!(element instanceof HTMLElement)) throw new Error("missing native host");
+				element.style.setProperty("--ease-project", "linear");
+			});
+		expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+	}
+});
+
+it.each(["transition-duration", "transition-timing-function"])(
+	"guards actual compiled nested %s default context",
+	async (property) => {
+		const { root } = makeProject(makeTempDir());
+		writeDesignFile(root, "shared/tokens.css", "");
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+		const operation = { kind: "property", property, scope: "" } as const;
+		const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), "transition-opacity");
+		const expected: SourcePropertyExpectation = {
+			kind: "property",
+			property,
+			scope: "",
+			className: "transition-opacity",
+			absent: false,
+			css: certificate.css,
+			effects: nativePropertyEffects(certificate, new Set([property]), environment),
+			scopePaths: propertyScopePaths(certificate, certificate, operation, environment),
+		};
+		const variable =
+			property === "transition-duration" ? "--default-transition-duration" : "--default-transition-timing-function";
+		const value = property === "transition-duration" ? "3s" : "linear";
+		const f = await fixture(
+			`<!doctype html><style>${expected.css}</style><div data-subject class="transition-opacity">Original default</div><div data-subject class="transition-opacity" style="${variable}:${value}">Changed context</div><div data-subject class="transition-opacity" style="${property === "transition-duration" ? "--tw-duration:2s" : "--tw-ease:linear"}">Outside optional input</div>`,
+		);
+		const outcomes = await f.inspect(expected);
+		expect(
+			outcomes.map((outcome) => outcome.rendered),
+			JSON.stringify({ outcomes, effects: expected.effects, scopePaths: expected.scopePaths }),
+		).toEqual(["verified", "unverified", "unverified"]);
+	},
+);
