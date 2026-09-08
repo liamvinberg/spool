@@ -723,3 +723,40 @@ it("keeps shared source inverse authority after every consuming frame is removed
 	expect(redone).toMatchObject({ ok: true, source: "saved", publication: null });
 	expect(readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toContain("Changed");
 });
+
+it.each(["save", "undo"])("keeps a stale observed use unverified beside a valid use during %s", async (operation) => {
+	const f = await fixture();
+	let original = f.read.original;
+	let receipt: import("../source-edit").SourceReceipt | undefined;
+	if (operation === "undo") {
+		const saved = await f.commit(f.read, "After");
+		if (!saved.ok || !saved.publication) throw new Error("save did not publish");
+		receipt = saved.publication.receipt;
+		f.owner.delivered(saved.publication.packet.id);
+		original = { ...original, publication: saved.publication.packet.id, value: "After" };
+	}
+	const inventories = [
+		{
+			frame: "home",
+			publication: original.publication,
+			unknown: 0,
+			uses: [
+				{ original, visible: true },
+				{ original: { ...original, publication: "retired-publication", occurrence: "stale-node" }, visible: true },
+			],
+		},
+	];
+	if (operation === "save") {
+		const reached = await f.owner.reach(f.root, f.read.handle, inventories);
+		if (!reached.ok) throw new Error(reached.reason);
+		expect(reached.read.reach?.unknown).toContain("home");
+	}
+	const result = receipt ? await f.owner.inverse(f.root, receipt, inventories) : await f.commit(f.read, "After");
+	if (!result.ok || !result.publication) throw new Error("valid use was not published");
+	expect(result.publication.targets).toHaveLength(1);
+	expect(result.publication.failures).toContainEqual(
+		expect.objectContaining({ frame: "home", rendered: "unverified" }),
+	);
+	f.owner.delivered(result.publication.packet.id);
+	expect(readFileSync(f.file, "utf8")).toBe(operation === "undo" ? SOURCE : SOURCE.replace('"Hello"', '"After"'));
+});
