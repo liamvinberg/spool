@@ -63,7 +63,6 @@ import {
 	Fold,
 	IconField,
 	LABEL,
-	LinesIcon,
 	Menu,
 	NumField,
 	type Option,
@@ -1825,15 +1824,15 @@ function TextSection({ view }: { view: View }) {
 			) : null}
 			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<Row name="text-align" ok={okOf(view, alignRow)} changed={view.fresh(wordOf(view.scoped, "text-align"))}>
-				<IconField
-					value={align ?? "text-left"}
+				<Menu
+					label="text-align"
+					current={{ token: align, name: align?.replace(/^text-/, "") ?? "start" }}
+					faint={align === null}
 					ok={okOf(view, alignRow)}
-					options={[
-						{ token: "text-left", icon: <LinesIcon at="left" /> },
-						{ token: "text-center", icon: <LinesIcon at="center" /> },
-						{ token: "text-right", icon: <LinesIcon at="right" /> },
-					]}
-					onPick={(token) => writeValue(view, alignRow, { kind: "value", value: token })}
+					options={["start", "left", "center", "right"].map((value) => ({ token: `text-${value}`, name: value }))}
+					onPick={(token) => {
+						if (token) writeValue(view, alignRow, { kind: "value", value: token });
+					}}
 				/>
 			</Row>
 			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />

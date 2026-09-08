@@ -792,3 +792,16 @@ it("removes authored arbitrary gradient angles and fractional stops as one exist
 		{ token: "to-raised", remove: true },
 	]);
 });
+
+it("offers the approved start alignment through the typography menu and original property writer", async () => {
+	const rail = await mount("text-left");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="text-align"]');
+	expect(trigger).not.toBeNull();
+	await act(() => trigger?.click());
+	expect(
+		[...document.querySelectorAll("[data-menu-option]")].map((element) => element.getAttribute("data-menu-option")),
+	).toEqual(["start", "left", "center", "right"]);
+	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="start"]')?.click());
+	expect(rail.requests).toEqual([{ property: "text-align", value: { kind: "binding", tokens: ["text-start"] } }]);
+	expect(rail.legacy).toEqual([]);
+});
