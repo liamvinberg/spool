@@ -36,3 +36,19 @@ export interface SourcePropertyPreview {
 	value: string;
 	frames: readonly { publication: string; css: string; bundledCss: string }[];
 }
+
+/** Read-only original native presentation; it does not confer source authority. */
+export interface SourcePropertyNative {
+	property: string;
+	value: string;
+}
+
+export interface SourcePropertyReading {
+	tokens: readonly string[];
+	binding:
+		| { kind: "page" }
+		| { kind: "custom" }
+		| { kind: "reference"; name: string; value?: string }
+		| { kind: "mixed" };
+	native?: string;
+}

@@ -2291,6 +2291,10 @@ export function createDaemonApp({
 						absent: z.boolean().optional(),
 						value: z.string().max(100_000),
 						context: z.string().max(100_000),
+						propertyNative: z
+							.object({ property: z.string().max(200), value: z.string().max(100_000) })
+							.strict()
+							.optional(),
 					})
 					.strict();
 				const inventory = z

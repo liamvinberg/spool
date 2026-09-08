@@ -321,8 +321,13 @@ function inspectSource(
 		id = String(++occurrence);
 		nodes.set(element, id);
 	}
+	const nativeValue =
+		operation.kind === "property" ? getComputedStyle(element).getPropertyValue(operation.property) : "";
 	return {
 		...origin,
+		...(operation.kind === "property" && nativeValue
+			? { propertyNative: { property: operation.property, value: nativeValue } }
+			: {}),
 		// Retained props keep their original invocation/value even when React
 		// skips recreating them. This observation belongs to the installed packet.
 		publication: sourcePacket?.id ?? origin.publication,

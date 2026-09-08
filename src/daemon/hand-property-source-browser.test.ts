@@ -36,7 +36,8 @@ it("previews an unused property candidate, saves once and reverses retained sour
 		body: JSON.stringify({
 			action: "read",
 			frame: "home",
-			original,
+			// Presentation supplied by the client is not authority; the private observation owns this reading.
+			original: { ...original, propertyNative: { property: "color", value: "counterfeit" } },
 			generation: 9001,
 			observer,
 			operation: { kind: "property", property: "color", scope: "" },
@@ -44,6 +45,11 @@ it("previews an unused property candidate, saves once and reverses retained sour
 	});
 	const result = (await response.json()) as { ok: boolean; read?: SourceRead; reason?: string };
 	expect(result.ok, result.reason).toBe(true);
+	expect(result.read?.original.propertyNative).toEqual(original.propertyNative);
+	expect(result.read?.property).toMatchObject({
+		binding: { kind: "reference", name: "--color-red-500" },
+		native: await f.target.evaluate((element) => getComputedStyle(element).color),
+	});
 	expect(result.read).toMatchObject({
 		operation: { kind: "property", property: "color", scope: "" },
 		scope: "definition",

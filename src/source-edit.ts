@@ -1,4 +1,9 @@
-import type { SourcePropertyExpectation, SourcePropertyValue } from "./source-property";
+import type {
+	SourcePropertyExpectation,
+	SourcePropertyNative,
+	SourcePropertyReading,
+	SourcePropertyValue,
+} from "./source-property";
 import type { SourceStructuralExpectation } from "./source-structure";
 
 /** Purpose is captured before reading source and retained through completion and recovery. */
@@ -21,6 +26,8 @@ export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boo
 
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
+	/** Original native presentation, not part of source identity or write authority. */
+	propertyNative?: SourcePropertyNative | undefined;
 	absent?: boolean | undefined;
 	field?: string | undefined;
 	publication: string;
@@ -65,6 +72,7 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	property?: SourcePropertyReading;
 	operation: SourceOperation;
 	handle: string;
 	owner: string;

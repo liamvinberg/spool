@@ -17,7 +17,7 @@ import {
 	sameSourceOperation,
 	type UseOutcome,
 } from "../source-edit";
-import type { SourcePropertyEnvironment, SourcePropertyPreview } from "../source-property";
+import type { SourcePropertyEnvironment, SourcePropertyPreview, SourcePropertyReading } from "../source-property";
 import type { ExecutedEdit } from "./bundled-editor";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-path";
@@ -42,6 +42,7 @@ import { compilePropertySource, inspectPropertyCss } from "./source-property-com
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
 import { planPropertyValue } from "./source-property-plan";
+import { propertyReading } from "./source-property-reading";
 import { propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
 import { retryTextSource } from "./source-retry";
@@ -275,18 +276,32 @@ export function createSourceOwner(
 				throw new Error("this source operation has no admitted retry planner");
 			let resolved =
 				operation.kind === "property"
-					? resolvePropertySource(root, compilation, original, generation, operation)
-					: resolveTextSource(root, compilation, original, generation);
+					? {
+							kind: "property" as const,
+							...resolvePropertySource(root, compilation, original, generation, operation),
+						}
+					: { kind: "literal" as const, ...resolveTextSource(root, compilation, original, generation) };
 			if (retry) {
 				const current = await currentCompilation(root, frame, compilation);
 				if (readingCoverage !== (coverage.get(root) ?? 0))
 					throw new Error("source observation changed during retry");
-				resolved = retryTextSource(root, compilation, current, original, generation);
+				resolved = {
+					kind: "literal" as const,
+					...retryTextSource(root, compilation, current, original, generation),
+				};
 				compilation = current;
 			}
 			const { cellKey, cell, target } = resolved;
-			if (operation.kind === "property")
-				await compilePropertySource(root, compilation.inputs, cell.value, compilation.packet.bundledCss);
+			let property: SourcePropertyReading | undefined;
+			if (operation.kind === "property") {
+				if (resolved.kind !== "property") throw new Error("the original property environment is missing");
+				property = propertyReading(
+					await compilePropertySource(root, compilation.inputs, cell.value, compilation.packet.bundledCss),
+					operation,
+					resolved.environment,
+					observed.propertyNative,
+				);
+			}
 			const found = lookupFrame(root, frame);
 			if (found.kind !== "found") throw new Error("the original frame is no longer there");
 			const file = sourceTarget(root, cell.file, compilation.inputs).file;
@@ -295,7 +310,8 @@ export function createSourceOwner(
 				operation,
 				handle,
 				owner,
-				original: { ...original },
+				original: { ...observed },
+				...(property ? { property } : {}),
 				generation,
 				source: cell.source,
 				role:
@@ -341,18 +357,31 @@ export function createSourceOwner(
 				throw new Error("the source owner is no longer available");
 			valid(root, publication.compilation);
 			if (operation.kind === "delete") throw new Error("this source purpose has no admitted description planner");
-			const { cellKey, cell, target } =
+			const resolved =
 				operation.kind === "property"
-					? resolvePropertySource(root, publication.compilation, original, 0, operation)
-					: resolveTextSource(root, publication.compilation, original, 0);
-			if (operation.kind === "property")
-				await compilePropertySource(
-					root,
-					publication.compilation.inputs,
-					cell.value,
-					publication.compilation.packet.bundledCss,
+					? {
+							kind: "property" as const,
+							...resolvePropertySource(root, publication.compilation, original, 0, operation),
+						}
+					: { kind: "literal" as const, ...resolveTextSource(root, publication.compilation, original, 0) };
+			const { cellKey, cell, target } = resolved;
+			let property: SourcePropertyReading | undefined;
+			if (operation.kind === "property") {
+				if (resolved.kind !== "property") throw new Error("the original property environment is missing");
+				property = propertyReading(
+					await compilePropertySource(
+						root,
+						publication.compilation.inputs,
+						cell.value,
+						publication.compilation.packet.bundledCss,
+					),
+					operation,
+					resolved.environment,
+					original.propertyNative,
 				);
+			}
 			const read: SourceRead = {
+				...(property ? { property } : {}),
 				operation,
 				handle: "",
 				owner,
