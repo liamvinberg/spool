@@ -106,7 +106,6 @@ it.each([
 	{ actual: "brightness(1)", expected: "none" },
 	{ actual: "hue-rotate(360deg)", expected: "hue-rotate(0deg)" },
 	{ actual: "brightness(0.0000005)", expected: "brightness(0)" },
-	{ actual: "brightness(.5)", expected: "brightness(.5000005)" },
 	{ actual: "hue-rotate(0.0000005deg)", expected: "hue-rotate(0deg)" },
 	{ actual: "blur(0.0000005px)", expected: "blur(0px)" },
 ])("retains ordered, companion and native precision mismatches: $expected", async ({ actual, expected }) => {
@@ -242,3 +241,22 @@ it("preserves DOM, native filters, stylesheets and live input state across match
 		}),
 	).toEqual({ ...before, input: [true, true, "retained filter input", 2, 5], mutations: 0 });
 });
+
+it.each(["brightness", "hue-rotate", "blur"])(
+	"keeps indistinguishable native %s precision unknown for self and other values",
+	async (name) => {
+		const unit = name === "hue-rotate" ? "deg" : name === "blur" ? "px" : "";
+		const expected = `${name}(.5000005${unit})`;
+		const f = await fixture(
+			`<div data-subject style="filter:${expected}">Self</div><div data-subject style="filter:${name}(.5${unit})">Other</div>`,
+		);
+		const observed = await f.page
+			.locator("[data-subject]")
+			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).filter));
+		expect(observed[0]).toBe(observed[1]);
+		expect(await f.inspect(expected)).toEqual([
+			{ kind: "unknown", reason: "this filter needs observable native numeric precision" },
+			{ kind: "unknown", reason: "this filter needs observable native numeric precision" },
+		]);
+	},
+);
