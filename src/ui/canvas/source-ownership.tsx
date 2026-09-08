@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SourceDescription, SourceUse } from "../../source-edit";
 import { FAINT, VALUE } from "./properties-fields";
 
@@ -40,6 +40,7 @@ export function SourceOwnership({
 	const pending = described?.identity !== identity;
 	const description = !pending ? described?.value : undefined;
 	const [open, setOpen] = useState(false);
+	const panelHeight = useRef(0);
 	const { describe, highlight, reveal, release } = actions;
 	// biome-ignore lint/correctness/useExhaustiveDependencies(revision): refresh disclosure after acknowledged source changes.
 	useEffect(() => {
@@ -116,8 +117,15 @@ export function SourceOwnership({
 				)}
 			</div>
 
+			{open && pending && <div aria-hidden="true" style={{ height: panelHeight.current }} />}
 			{open && description && (
-				<div data-source-uses="" className="px-3 pt-1 pb-2.5">
+				<div
+					data-source-uses=""
+					className="px-3 pt-1 pb-2.5"
+					ref={(element) => {
+						if (element) panelHeight.current = element.getBoundingClientRect().height;
+					}}
+				>
 					<p className={`break-all pt-1 pb-[7px] ${FAINT}`}>
 						{label} · {description.source}
 					</p>

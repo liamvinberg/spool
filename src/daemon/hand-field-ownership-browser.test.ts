@@ -99,9 +99,13 @@ it("holds the ownership header footprint and rejects a late description after an
 	await f.select();
 	const disclosure = f.page.getByRole("button", { name: "Show affected uses", exact: true });
 	await expect.poll(() => disclosure.textContent()).toBe("1");
+	await disclosure.click();
 	const title = f.page.getByRole("textbox", { name: "title", exact: true });
 	await title.scrollIntoViewIfNeeded();
 	const before = await title.boundingBox();
+	const ownershipHeight = await f.page
+		.locator("[data-source-ownership]")
+		.evaluate((element) => element.getBoundingClientRect().height);
 	let arrived = false;
 	let release = () => {};
 	const held = new Promise<void>((resolve) => {
@@ -122,7 +126,11 @@ it("holds the ownership header footprint and rejects a late description after an
 		await title.focus();
 		await expect.poll(() => arrived).toBe(true);
 		expect(await disclosure.count()).toBe(0);
+		expect(await f.page.locator("[data-source-uses]").count()).toBe(0);
 		expect(await f.page.locator("[data-source-ownership]").count()).toBe(1);
+		expect(
+			await f.page.locator("[data-source-ownership]").evaluate((element) => element.getBoundingClientRect().height),
+		).toBe(ownershipHeight);
 		expect((await title.boundingBox())?.y).toBe(before?.y);
 		await f.page.getByRole("textbox", { name: "Text", exact: true }).focus();
 		await expect.poll(() => disclosure.textContent()).toBe("1");
