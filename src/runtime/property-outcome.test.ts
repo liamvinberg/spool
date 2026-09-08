@@ -298,24 +298,45 @@ it.each(["color", "background-color"])("keeps overridden and conditional %s vari
 	expect(await f.page.content()).toBe(before);
 });
 
-it.each(["rgb(1 2 3 / .50001)", "oklch(.704 .191 22.216)", "color-mix(in oklab, red 50%, transparent)"])(
+function custom(value: string): SourcePropertyExpectation {
+	return {
+		...opacity(".5"),
+		property: "background-color",
+		className: "custom",
+		effects: [
+			{ owner: "custom", path: ["@layer utilities", "$"], property: "background-color", value, important: false },
+		],
+		css: `@layer utilities {.custom {background-color:${value}}}`,
+	};
+}
+
+it.each(["rgb(1 2 3 / .51)", "oklch(.704 .191 22.216)", "color-mix(in oklab, red 50%, transparent)"])(
 	"uses native %s color precision without raster sampling",
 	async (value) => {
-		const expected: SourcePropertyExpectation = {
-			...opacity(".5"),
-			property: "background-color",
-			className: "custom",
-			effects: [
-				{ owner: "custom", path: ["@layer utilities", "$"], property: "background-color", value, important: false },
-			],
-			css: `@layer utilities {.custom {background-color:${value}}}`,
-		};
 		const f = await fixture(
 			`<!doctype html><div data-subject style="background-color:${value}">Healthy</div><div data-subject style="background-color:blue">Different</div>`,
 		);
-		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+		expect((await f.inspect(custom(value))).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
 	},
 );
+
+it("never certifies an expected color this engine cannot record distinguishably", async () => {
+	// Chromium records .50001 and .5 alike, so equal pixels here would prove nothing.
+	const value = "rgb(1 2 3 / .50001)";
+	const f = await fixture(
+		`<!doctype html><div data-subject style="background-color:${value}">Same record</div><div data-subject style="background-color:rgb(1 2 3 / .5)">Indistinguishable</div>`,
+	);
+	const outcomes = await f.inspect(custom(value));
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["unverified", "unverified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).backgroundColor)),
+	).toEqual(["rgba(1, 2, 3, 0.5)", "rgba(1, 2, 3, 0.5)"]);
+});
 
 it("verifies fractional compiled type while preserving independent line height", async () => {
 	const { root } = makeProject(makeTempDir());
@@ -1385,4 +1406,1060 @@ it.each(["filter", "blur-xs"])("checks compiled %s default and outside variable 
 			.locator("[data-subject]")
 			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).filter)),
 	).toEqual(classes === "filter" ? ["none", "brightness(0.25)"] : ["blur(4px)", "blur(8px)"]);
+});
+
+it.each(
+	appearanceProperties
+		.filter((row) => [66, 67, 131].includes(row.index))
+		.flatMap((row) => [
+			{ ...row, companion: "" },
+			{ ...row, companion: "transition-opacity" },
+		]),
+)("verifies compiled $property with $companion and original default inverse", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const subject = (classes: string) => `<div data-subject class="${classes}">Configured native transition</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(original)}`,
+	);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next)}${subject(original)}`,
+	);
+	expect((await empty.inspect(removed)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.companion) {
+		expect(removal.next, "removal must preserve the independently authored transition property").not.toBe("");
+		expect(
+			await empty.page
+				.locator("[data-subject]")
+				.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).transitionProperty)),
+		).toEqual(["opacity", "opacity"]);
+		const companions = [
+			"transition-property",
+			"transition-duration",
+			"transition-delay",
+			"transition-timing-function",
+		].filter((property) => property !== row.property);
+		for (const native of [f, empty]) {
+			const values = await native.page
+				.locator("[data-subject]")
+				.evaluateAll(
+					(elements, properties) =>
+						elements.map((element) =>
+							properties.map((property) => getComputedStyle(element).getPropertyValue(property)),
+						),
+					companions,
+				);
+			expect(values[0]).toEqual(values[1]);
+		}
+	}
+	if (row.companion && row.property !== "transition-delay") {
+		const variable =
+			row.property === "transition-duration"
+				? "--default-transition-duration"
+				: "--default-transition-timing-function";
+		const value = row.property === "transition-duration" ? "3s" : "linear";
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate(
+				(element, context) => {
+					if (!(element instanceof HTMLElement)) throw new Error("missing native host");
+					element.style.setProperty(context.variable, context.value);
+				},
+				{ variable, value },
+			);
+		// The owned input wins before the nested default; its unused fallback grants no authority.
+		expect((await f.inspect(expected))[0]?.rendered).toBe("verified");
+	}
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native host");
+			element.style.transitionProperty = "none";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+it.each([
+	{ property: "transition-duration", before: "duration-2", after: "duration-[2.5ms]", native: "0.0025s" },
+	{ property: "transition-delay", before: "delay-2", after: "delay-[2.5ms]", native: "0.0025s" },
+	{ property: "transition-timing-function", before: "ease-in", after: "ease-project", native: "steps(4, jump-none)" },
+])("verifies compiled transition option $after without adopting changed theme context", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "@theme { --ease-project: steps(4, jump-none); }");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		row.before,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style><div data-subject class="${plan.next}">Desired</div><div data-subject class="${row.before}">Original</div>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), row.property),
+	).toBe(row.native);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: row.before,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.after === "ease-project") {
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => {
+				if (!(element instanceof HTMLElement)) throw new Error("missing native host");
+				element.style.setProperty("--ease-project", "linear");
+			});
+		expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+	}
+});
+
+it.each(["transition-duration", "transition-timing-function"])(
+	"guards actual compiled nested %s default context",
+	async (property) => {
+		const { root } = makeProject(makeTempDir());
+		writeDesignFile(root, "shared/tokens.css", "");
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+		const operation = { kind: "property", property, scope: "" } as const;
+		const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), "transition-opacity");
+		const expected: SourcePropertyExpectation = {
+			kind: "property",
+			property,
+			scope: "",
+			className: "transition-opacity",
+			absent: false,
+			css: certificate.css,
+			effects: nativePropertyEffects(certificate, new Set([property]), environment),
+			scopePaths: propertyScopePaths(certificate, certificate, operation, environment),
+		};
+		const variable =
+			property === "transition-duration" ? "--default-transition-duration" : "--default-transition-timing-function";
+		const value = property === "transition-duration" ? "3s" : "linear";
+		const f = await fixture(
+			`<!doctype html><style>${expected.css}</style><div data-subject class="transition-opacity">Original default</div><div data-subject class="transition-opacity" style="${variable}:${value}">Changed context</div><div data-subject class="transition-opacity" style="${property === "transition-duration" ? "--tw-duration:2s" : "--tw-ease:linear"}">Outside optional input</div>`,
+		);
+		const outcomes = await f.inspect(expected);
+		expect(
+			outcomes.map((outcome) => outcome.rendered),
+			JSON.stringify({ outcomes, effects: expected.effects, scopePaths: expected.scopePaths }),
+		).toEqual(["verified", "unverified", "unverified"]);
+	},
+);
+
+it.each([
+	{ property: "box-shadow", before: "shadow-sm", after: "shadow-md", companion: "" },
+	{ property: "ring-width", before: "ring-2", after: "ring-4", companion: "" },
+	{ property: "ring-offset-width", before: "ring-offset-2", after: "ring-offset-4", companion: "ring-2" },
+	{ property: "ring-color", before: "ring-red-500", after: "ring-blue-500", companion: "ring-2" },
+	{ property: "box-shadow color", before: "shadow-red-500", after: "shadow-blue-500", companion: "shadow-sm" },
+])("verifies compiled shadow $property against its captured native box shadow", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const subject = (classes: string) =>
+		`<div data-subject class="${classes}" style="width:80px;height:40px;color:#123456">Native shadow</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(original)}`,
+	);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next)}${subject(original)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// An outside change to any captured native input is a mismatch, never a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native shadow host");
+			element.style.setProperty("--tw-inset-shadow", "0 0 0 3px #ff0000");
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native shadow host");
+			element.style.removeProperty("--tw-inset-shadow");
+			element.style.boxShadow = "none";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+});
+
+it.each([
+	{
+		property: "font-family",
+		before: "font-sans",
+		after: "font-serif",
+		outside: "--font-serif",
+		verdict: "unverified",
+	},
+	{
+		property: "font-variant-numeric",
+		before: "normal-nums",
+		after: "ordinal",
+		outside: "--tw-slashed-zero",
+		verdict: "mismatching",
+	},
+	{
+		property: "letter-spacing",
+		before: "tracking-normal",
+		after: "tracking-wide",
+		outside: "--tw-tracking",
+		verdict: "mismatching",
+	},
+])("verifies compiled typography $property against each native use", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		row.before,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	// An alias-free inherited family keeps the removal context independently provable.
+	const subject = (first: string, second: string) =>
+		`<section style="font-family:Georgia,serif"><p data-subject class="${first}">Native 1234 typography</p><p data-subject class="${second}">Native 1234 typography</p></section>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next, row.before)}`,
+	);
+	await f.page.evaluate(() => document.fonts.ready.then(() => undefined));
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: row.before,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	const original = await f.inspect(inverse);
+	// The retained sans list needs the comparator's platform alias proof, so it stays unverified.
+	expect(
+		original.map((outcome) => outcome.rendered),
+		JSON.stringify(original),
+	).toEqual(["mismatching", row.property === "font-family" ? "unverified" : "verified"]);
+	// Removing the authored value must read against the compiled initial or inherited context.
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next, plan.next)}`,
+	);
+	await empty.page.evaluate(() => document.fonts.ready.then(() => undefined));
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// An outside change to a captured input is never a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element, outside) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native typography host");
+			element.style.setProperty(
+				outside,
+				outside === "--tw-tracking" ? "1px" : outside === "--tw-slashed-zero" ? "slashed-zero" : "Verdana",
+			);
+		}, row.outside);
+	expect((await f.inspect(expected))[0]?.rendered).toBe(row.verdict);
+});
+
+it.each([
+	{ property: "border-inline-width", before: "border-x-2", after: "border-x-4", companion: "", side: "" },
+	{ property: "border-block-width", before: "border-y-2", after: "border-y-4", companion: "", side: "" },
+	{ property: "border-inline-start-width", before: "border-s-2", after: "border-s-4", companion: "", side: "right" },
+	{ property: "border-inline-end-width", before: "border-e-2", after: "border-e-4", companion: "", side: "left" },
+	{ property: "outline-width", before: "outline-2", after: "outline-4", companion: "outline-solid", side: "" },
+	{
+		property: "outline-offset",
+		before: "outline-offset-2",
+		after: "outline-offset-4",
+		companion: "outline-2 outline-solid",
+		side: "",
+	},
+	{ property: "stroke-width", before: "stroke-2", after: "stroke-4", companion: "stroke-red-500", side: "" },
+])("verifies compiled width $property against its own native side", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) =>
+		row.property === "stroke-width"
+			? `<svg width="60" height="60"><rect data-subject class="${classes}" x="6" y="6" width="40" height="40"/></svg>`
+			: `<div data-subject class="${classes}" style="width:60px;height:40px">Native width</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	// Only the outline width has no native length for its initial keyword; it stays unverified.
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(row.property === "outline-width" ? ["unverified", "unverified"] : ["verified", "mismatching"]);
+	if (row.property === "outline-width")
+		expect(cleared[0]?.reason, JSON.stringify({ cleared, effects: removed.effects })).toContain("initial");
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.side) {
+		// A right-to-left use must read the physical side its own native context selects.
+		const side = (extra: string) =>
+			`<div data-subject dir="rtl" class="${plan.next}" style="width:60px;height:40px;${extra}">Native width</div>`;
+		const rtl = await fixture(
+			`<!doctype html><style>${expected.css}</style>${side("")}${side(`border-${row.side}-width:9px;border-${row.side}-style:solid`)}`,
+		);
+		expect((await rtl.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	}
+});
+
+it.each([
+	{ property: "text-indent", before: "indent-2", after: "indent-4", companion: "", native: "16px", box: "" },
+	{
+		property: "text-decoration-thickness",
+		before: "decoration-2",
+		after: "decoration-4",
+		companion: "underline",
+		native: "4px",
+		box: "",
+	},
+	{
+		property: "text-underline-offset",
+		before: "underline-offset-2",
+		after: "underline-offset-4",
+		companion: "underline",
+		native: "4px",
+		box: "",
+	},
+	{
+		property: "-webkit-line-clamp",
+		before: "line-clamp-2",
+		after: "line-clamp-4",
+		companion: "",
+		native: "4",
+		box: "display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;",
+	},
+])("verifies compiled type length $property against its applicable native use", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) =>
+		`<p data-subject class="${classes}" style="${row.box}width:120px">Native retained type length</p>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), row.property),
+	).toBe(row.native);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// A native override outside the compiled closure is a mismatch, and losing the applicable
+	// native surface is unverified rather than a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element, context) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native type length host");
+			element.style.setProperty(context.property, context.property === "-webkit-line-clamp" ? "9" : "9px");
+		}, row);
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element, context) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native type length host");
+			element.style.removeProperty(context.property);
+			if (["-webkit-line-clamp", "text-indent"].includes(context.property)) element.style.display = "inline";
+			else element.style.textDecorationLine = "none";
+		}, row);
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+it("verifies the compiled all-corner radius against every native corner", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "border-radius", scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"rounded-[4px]",
+		operation,
+		{ kind: "binding", tokens: ["rounded-[8px]"] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "border-radius",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) => `<div data-subject class="${classes}" style="width:60px;height:40px">Radius</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host("rounded-[4px]")}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => getComputedStyle(element).borderRadius),
+	).toBe("8px");
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "rounded-[4px]",
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// A single outside corner is enough to refuse the whole row.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native radius host");
+			element.style.borderTopLeftRadius = "9px";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native radius host");
+			element.style.borderTopLeftRadius = "20% 30%";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+it("verifies the compiled placeholder color on its own native pseudo-element", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "placeholder color", scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"placeholder-red-500",
+		operation,
+		{ kind: "binding", tokens: ["placeholder-blue-500"] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "placeholder color",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) =>
+		`<input data-subject class="${classes}" placeholder="hint" style="color:rgb(20,30,40)">`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host("placeholder-red-500")}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => getComputedStyle(element, "::placeholder").color),
+	).toBe("oklch(0.623 0.214 259.815)");
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "placeholder-red-500",
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// The pseudo-element is only readable while its native placeholder is shown.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing native placeholder host");
+			element.value = "typed";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+it.each([
+	{ property: "border-color", before: "border-red-500", after: "border-blue-500", side: "" },
+	{ property: "border-top-color", before: "border-t-red-500", after: "border-t-blue-500", side: "" },
+	{ property: "border-right-color", before: "border-r-red-500", after: "border-r-blue-500", side: "" },
+	{ property: "border-bottom-color", before: "border-b-red-500", after: "border-b-blue-500", side: "" },
+	{ property: "border-left-color", before: "border-l-red-500", after: "border-l-blue-500", side: "" },
+	{ property: "border-inline-color", before: "border-x-red-500", after: "border-x-blue-500", side: "" },
+	{ property: "border-block-color", before: "border-y-red-500", after: "border-y-blue-500", side: "" },
+	{ property: "border-inline-start-color", before: "border-s-red-500", after: "border-s-blue-500", side: "right" },
+	{ property: "border-inline-end-color", before: "border-e-red-500", after: "border-e-blue-500", side: "left" },
+])("verifies compiled $property against its own native border side", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = `${row.before} border-2`;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string, extra = "", direction = "ltr") =>
+		`<div data-subject dir="${direction}" class="${classes}" style="width:60px;height:40px;color:rgb(20,30,40);${extra}">Border</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	// A cleared side falls back to the preflight current color, which is this element's own color.
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.side) {
+		// A right-to-left use must read the physical side its own native context selects.
+		const rtl = await fixture(
+			`<!doctype html><style>${expected.css}</style>${host(plan.next, "", "rtl")}${host(plan.next, `border-${row.side}-color:rgb(9,9,9)`, "rtl")}`,
+		);
+		expect((await rtl.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	}
+	// A side with no painted native border is unverified, never a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native border host");
+			element.style.borderStyle = "none";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+it("reports the compiled gradient's captured evidence and interpolation space honestly", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "background-image", scope: "" } as const;
+	const original = "bg-linear-to-r from-red-500 to-blue-500";
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: ["bg-linear-to-r", "from-green-500", "to-blue-500"] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "background-image",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: nativePropertyEffects(plan.desired, plan.roots, environment),
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	// The captured closure carries the direction and the closing stop the native consumer reads.
+	for (const input of ["--tw-gradient-position", "--tw-gradient-to", "--tw-gradient-stops"])
+		expect(
+			expected.effects.some((effect) => effect.owner !== null && effect.property === input),
+			input,
+		).toBe(true);
+	const host = (classes: string) => `<div data-subject class="${classes}" style="width:80px;height:40px"></div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	const interpolating = await f.page.evaluate(() =>
+		CSS.supports("background-image: linear-gradient(in lab, red, red)"),
+	);
+	if (interpolating) {
+		// This engine keeps the compiler's oklab branch but does not expose the space it used,
+		// so the comparator refuses instead of comparing with the space dropped.
+		expect(
+			outcomes.map((outcome) => outcome.rendered),
+			JSON.stringify(outcomes),
+		).toEqual(["unverified", "unverified"]);
+		expect(outcomes[0]?.reason).toContain("interpolation space");
+	} else {
+		expect(
+			outcomes.map((outcome) => outcome.rendered),
+			JSON.stringify(outcomes),
+		).toEqual(["verified", "mismatching"]);
+	}
+	// Losing any one captured companion is refused, never compared on partial evidence.
+	const closing = expected.effects.find((effect) => effect.owner !== null && effect.property === "--tw-gradient-to");
+	if (!closing) throw new Error("missing captured native gradient companion");
+	const partial = await f.inspect({
+		...expected,
+		effects: expected.effects.filter((effect) => effect !== closing),
+	});
+	expect(
+		partial.map((outcome) => outcome.rendered),
+		JSON.stringify(partial),
+	).toEqual(["unverified", "unverified"]);
+	expect(partial[0]?.reason).toContain("complete captured variable and companion evidence");
+});
+
+it("compares a compiled gradient whose own branch carries no interpolation space", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "background-image", scope: "" } as const;
+	const original = "bg-[linear-gradient(to_right,#00ff00_0%,#0000ff_100%)]";
+	const desired = "bg-[linear-gradient(to_right,#ff0000_0%,#0000ff_100%)]";
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [desired] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "background-image",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) => `<div data-subject class="${classes}" style="width:80px;height:40px"></div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => getComputedStyle(element).backgroundImage),
+	).toBe("linear-gradient(to right, rgb(255, 0, 0) 0%, rgb(0, 0, 255) 100%)");
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	// A cleared gradient computes to `none`, which the comparator reads as a value of its own.
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(cleared[0]?.observed).toBe("none");
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// An outside native image is a mismatch, and losing the paint surface is unverified.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native gradient host");
+			element.style.backgroundImage = "linear-gradient(to right, #ff0000 0%, #00ff00 100%)";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native gradient host");
+			element.style.removeProperty("background-image");
+			element.style.visibility = "hidden";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
 });
