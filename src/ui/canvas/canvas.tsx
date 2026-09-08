@@ -1862,16 +1862,22 @@ export function ProjectCanvas({
 			undo = false,
 			retainedIntent?: SourceIntent,
 		) => {
-			const intent: SourceIntent | undefined =
-				retainedIntent && result?.ok && result.publication
-					? {
-							...retainedIntent,
-							expected: result.publication.expected,
-							...(undo && result.publication.expected.kind === "literal"
-								? { change: { kind: "literal" as const, text: result.publication.expected.value } }
-								: {}),
-						}
-					: retainedIntent;
+			let intent = retainedIntent;
+			if (intent && result?.ok) {
+				if (result.publication) {
+					const expected = result.publication.expected;
+					intent = { ...intent, expected };
+					if (undo && expected.kind === "literal") intent.change = { kind: "literal", text: expected.value };
+				} else if (
+					result.source === "unchanged" &&
+					intent.operation.kind === "literal" &&
+					intent.change?.kind === "literal"
+				) {
+					// Acknowledged no-op still has the explicit request's literal result.
+					// It creates neither a source publication nor an Undo receipt.
+					intent = { ...intent, expected: { kind: "literal", value: intent.change.text, absent: false } };
+				}
+			}
 			observingSource.current = undefined;
 			if (!result) {
 				unappliedSource.current.add(frame);
@@ -1908,8 +1914,11 @@ export function ProjectCanvas({
 				if (
 					intent &&
 					(!checked ||
+						intent.expected?.kind !== "literal" ||
 						checked.description.cell !== intent.cell ||
-						checked.description.value !== intentText(intent) ||
+						checked.description.source !== intent.source ||
+						checked.description.value !== intent.expected.value ||
+						(checked.description.original.absent ?? false) !== intent.expected.absent ||
 						checked.outcome.rendered !== "verified")
 				) {
 					unappliedSource.current.add(frame);
