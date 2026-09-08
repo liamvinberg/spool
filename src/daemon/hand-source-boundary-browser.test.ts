@@ -64,7 +64,11 @@ it("keeps sibling-owned source, CSS and resources through inverse after deleting
 		await expect.poll(() => mounted.locator("#label").textContent()).toBe(redo ? "Sibling after" : "Sibling before");
 		await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 		expect(await mounted.locator("#label").evaluate((el) => getComputedStyle(el).color)).toBe("rgb(0, 100, 120)");
-		expect(await mounted.locator("img").evaluate((el) => el instanceof HTMLImageElement && el.complete && el.naturalWidth)).toBe(8);
+		expect(
+			await mounted
+				.locator("img")
+				.evaluate((el) => el instanceof HTMLImageElement && el.complete && el.naturalWidth),
+		).toBe(8);
 		expect(readFileSync(f.file(css), "utf8")).toBe(files[css]);
 		expect(readFileSync(f.file(resource), "utf8")).toBe(files[resource]);
 	}
