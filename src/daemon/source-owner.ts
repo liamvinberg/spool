@@ -34,7 +34,7 @@ import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
 import { sourceTarget } from "./source-syntax";
-import { resolveTextSource } from "./source-target";
+import { potentialTextSource, resolveTextSource } from "./source-target";
 
 interface OriginalRead {
 	sourceOnly?: boolean;
@@ -331,6 +331,7 @@ export function createSourceOwner(
 		try {
 			valid(root, held.compilation);
 			const uses: SourceUse[] = [];
+			const unverified: UseOutcome[] = [];
 			const unknown = new Set<string>();
 			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const cell = held.read.cell ?? held.read.original.cell;
@@ -363,15 +364,23 @@ export function createSourceOwner(
 							)
 						)
 							uses.push({ frame: inventory.frame, ...use });
-					} catch {
+					} catch (error) {
 						unknown.add(inventory.frame);
+						if (potentialTextSource(publication.compilation, use.original, cell))
+							unverified.push({
+								frame: inventory.frame,
+								occurrence: use.original.occurrence,
+								installation: "refused",
+								rendered: "unverified",
+								reason: `A potentially affected use could not be attributed: ${reason(error)}`,
+							});
 					}
 				}
 			}
 			const dependent = await dependencyFrames(root, held.file);
 			if (!dependent) unknown.add("source coverage");
 			const unmounted = (dependent ?? []).filter((frame) => !mounted.has(frame));
-			held.read = { ...held.read, reach: { uses, unmounted, unknown: [...unknown] } };
+			held.read = { ...held.read, reach: { uses, unmounted, unknown: [...unknown], unverified } };
 			return { ok: true, read: held.read };
 		} catch (error) {
 			return { ok: false, reason: reason(error) };
@@ -519,7 +528,7 @@ export function createSourceOwner(
 			});
 
 			const related: SourcePublication[] = [];
-			const failures: UseOutcome[] = [];
+			const failures: UseOutcome[] = [...(held.read.reach?.unverified ?? [])];
 			const uses = held.read.reach?.uses ?? [];
 			for (const frame of new Set(uses.map((use) => use.frame))) {
 				if (frame === held.frame) continue;
@@ -530,9 +539,18 @@ export function createSourceOwner(
 					const prior = compiler.publication(original.publication);
 					if (!prior || prior.root !== held.root || prior.frame !== frame)
 						throw new Error("the affected frame publication is no longer available");
-					const inputs = new Map(prior.compilation.inputs);
+					const inputs = new Map(
+						[...prior.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
+					);
 					if (!inputs.has(held.file)) throw new Error("the affected frame has no source dependency");
-					inputs.set(held.file, readInput(held.file));
+					const compatibleInputs = new Map(inputs);
+					compatibleInputs.set(held.file, input);
+					const compatibleBefore = compiler.matchingPublications(
+						held.root,
+						frame,
+						compatibleInputs,
+						prior.compilation.packet.shape,
+					);
 					valid(held.root, { ...prior.compilation, inputs });
 					const next = await compiler.compilePublication(
 						held.root,
@@ -570,6 +588,7 @@ export function createSourceOwner(
 						cell: held.read.cell ?? held.read.original.cell,
 						targets,
 						before: prior.compilation.packet.id,
+						compatibleBefore,
 						packet: next.packet,
 						generation: held.read.generation,
 						original,
@@ -704,6 +723,7 @@ export function createSourceOwner(
 				if (inventories) {
 					const uses: SourceUse[] = [],
 						unknown: string[] = [];
+					const unverified: UseOutcome[] = [];
 					for (const inventory of inventories) {
 						const publication = compiler.publication(inventory.publication);
 						if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
@@ -722,18 +742,27 @@ export function createSourceOwner(
 							if (use.original.publication !== inventory.publication) continue;
 							try {
 								if (
-									resolveTextSource(root, publication.compilation, use.original, held.generation, true)
+									resolveTextSource(root, publication.compilation, use.original, held.generation, held.cell)
 										.cellKey === held.cell
 								)
 									uses.push({ frame: inventory.frame, ...use });
-							} catch {
+							} catch (error) {
 								unknown.push(inventory.frame);
+								if (potentialTextSource(publication.compilation, use.original, held.cell))
+									unverified.push({
+										frame: inventory.frame,
+										occurrence: use.original.occurrence,
+										installation: "refused",
+										rendered: "unverified",
+										reason: `A potentially affected use could not be attributed: ${reason(error)}`,
+									});
 							}
 						}
 					}
 					const dependent = await dependencyFrames(root, held.file);
 					reach = {
 						uses,
+						unverified,
 						unmounted: (dependent ?? []).filter(
 							(frame) => !inventories.some((inventory) => inventory.frame === frame),
 						),

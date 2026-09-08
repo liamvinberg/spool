@@ -124,6 +124,14 @@ async function buildVendorReact(): Promise<string> {
 						);
 
 						replace(
+							"function logCaughtError(root, boundary, errorInfo) {",
+							"function logCaughtError(root, boundary, errorInfo) { globalThis.__SPOOL_REACT__?.caught(boundary);",
+						);
+						replace(
+							"function logUncaughtError(root, errorInfo) {",
+							"function logUncaughtError(root, errorInfo) { globalThis.__SPOOL_REACT__?.uncaught(root);",
+						);
+						replace(
 							"function coerceRef(workInProgress, element) {",
 							"function coerceRef(workInProgress, element) { globalThis.__SPOOL_RECONCILE__?.bind(workInProgress, element);",
 						);

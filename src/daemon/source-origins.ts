@@ -941,7 +941,16 @@ function containsSlot(call: Site, transported: Site, slot: string): boolean {
 	return attr?.value?.type === "JSXExpressionContainer" && matches(attr.value.expression);
 }
 
-function retainedLiteral(call: Call | undefined, field: string, site: Site): boolean {
+export interface InverseLiteral {
+	source: string;
+	field: string;
+}
+// Inverse delivery follows an already owned cell even when React retained or
+// displayed another string. It cannot authorize a fresh read or a different field.
+function inverseValue(history: InverseLiteral | undefined, source: string, field: string, value: unknown): boolean {
+	return history?.source === source && history.field === field && typeof value === "string";
+}
+function retainedLiteral(call: Call | undefined, field: string, site: Site, history?: InverseLiteral): boolean {
 	if (!call?.retainedProps) return true;
 	const current = call.values?.fields[field];
 	const rendered = call.renderedValues?.fields[field];
@@ -954,8 +963,8 @@ function retainedLiteral(call: Call | undefined, field: string, site: Site): boo
 		rendered?.origin.kind === "jsx" &&
 		current.origin.source === site.source &&
 		rendered.origin.source === site.source &&
-		current.value === text &&
-		rendered.value === text
+		(current.value === text || inverseValue(history, site.source, field, current.value)) &&
+		(rendered.value === text || inverseValue(history, site.source, field, rendered.value))
 	);
 }
 
@@ -1140,7 +1149,7 @@ function factoryLiteral(site: Creation, field: string, kind: "clone" | "create")
 	return value?.type === "ObjectProperty" && value.value.type === "StringLiteral" ? value.value.value : undefined;
 }
 
-function factoryRead(sources: Sources, selection: Selection, operation: Operation): Target {
+function factoryRead(sources: Sources, selection: Selection, operation: Operation, history?: InverseLiteral): Target {
 	if (selection.refusal) throw new Error(selection.refusal);
 	const leaf = selection.values!;
 	const calls = [...selection.chain].reverse();
@@ -1221,7 +1230,11 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 				incoming.origin.source !== rendered.origin.source ||
 				incoming.origin.kind !== rendered.origin.kind ||
 				incoming.origin.field !== rendered.origin.field ||
-				incoming.value !== rendered.value ||
+				(incoming.value !== rendered.value &&
+					!(
+						inverseValue(history, incoming.origin.source, incoming.origin.field, incoming.value) &&
+						inverseValue(history, rendered.origin.source, rendered.origin.field, rendered.value)
+					)) ||
 				JSON.stringify(incoming.origin.via.map((e) => [e.kind, e.source, e.replaced])) !==
 					JSON.stringify(rendered.origin.via.map((e) => [e.kind, e.source, e.replaced]))
 			)
@@ -1305,7 +1318,7 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 	}
 	if (expected === undefined)
 		throw new Error("authored field is not a supported literal; expression and inline-style ownership is preserved");
-	if (field !== "style" && cell.value !== expected)
+	if (field !== "style" && cell.value !== expected && !inverseValue(history, origin.source, field, cell.value))
 		throw new Error("committed input differs from the authored field literal");
 	// An overriding clone field belongs to the carrier definition; a preserved
 	// JSX prop stays at its own authored call site.
@@ -1323,7 +1336,12 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 	};
 }
 
-export function sourceRead(sources: Sources, selection: Selection, operation: Operation): Target {
+export function sourceRead(
+	sources: Sources,
+	selection: Selection,
+	operation: Operation,
+	history?: InverseLiteral,
+): Target {
 	if (
 		selection.values &&
 		((operation.kind === "attribute" && operation.attribute === "style") ||
@@ -1331,7 +1349,7 @@ export function sourceRead(sources: Sources, selection: Selection, operation: Op
 				(value) => value && value.kind !== "jsx",
 			))
 	)
-		return factoryRead(sources, selection, operation);
+		return factoryRead(sources, selection, operation, history);
 	const sites = sources.chain(selection);
 	let site = sites[0]!;
 	let role: Target["role"] = "definition";
@@ -1349,6 +1367,7 @@ export function sourceRead(sources: Sources, selection: Selection, operation: Op
 					selection.chain.find((call) => call.source === sites[i]!.source),
 					parameter,
 					sites[i]!,
+					history,
 				)
 			)
 				throw new Error("committed call is known but retained render props need a per-value origin proof");

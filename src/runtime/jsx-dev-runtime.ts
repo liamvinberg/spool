@@ -103,6 +103,7 @@ let intent = 0;
 const revoked = new Set<string>();
 function revokeSource(publication: SourcePublication): void {
 	revoked.add(publication.packet.id);
+	if (acceptedOutcome?.publication.packet.id === publication.packet.id) acceptedOutcome = undefined;
 	const held = leases.get(publication.generation);
 	if (held && sameSourceOccurrence(held.original, publication.original)) cancelSource(publication.generation);
 }
@@ -145,6 +146,13 @@ Object.assign(globalThis, {
 			};
 			visit(root, false);
 			committedClasses.set(root.stateNode, instances);
+			queueSourceOutcome();
+		},
+		caught(boundary: Fiber): void {
+			failSourceOutcome(boundary);
+		},
+		uncaught(root: { current: Fiber }): void {
+			failSourceOutcome(root.current);
 		},
 	},
 });
@@ -167,6 +175,7 @@ const subscription = (owner: string) => {
 };
 
 export function configureSource(packet: RetainedValues): void {
+	acceptedOutcome = undefined;
 	initialStamps = packet.stamps ?? {};
 	sourcePacket = packet;
 	Object.assign(sourceLocations, packet.locations);
@@ -443,6 +452,7 @@ function sourceRead(element: HTMLElement, generation: number, field?: string): S
 	if (generation <= intent) return;
 	for (const old of leases.keys()) cancelSource(old);
 	intent = generation;
+	acceptedOutcome = undefined;
 	const original = inspectSource(element, field);
 	if (!original || original.value !== renderedField(element, original.field)) return;
 	leases.set(generation, previewedUse(element, original));
@@ -488,6 +498,90 @@ function completeSource(generation: number): SourceOccurrence | undefined {
 function pendingIn(element: Element): boolean {
 	return committedHosts.get(element)?.pending ?? false;
 }
+interface AcceptedOutcome {
+	publication: SourcePublication;
+	targets: { original: SourceOccurrence; element: HTMLElement | undefined; ancestors: Fiber[] }[];
+	failed: Set<HTMLElement>;
+	ready: boolean;
+	last: string;
+}
+let acceptedOutcome: AcceptedOutcome | undefined;
+function observedOutcome(held: AcceptedOutcome): UseOutcome {
+	const { publication, targets, failed } = held;
+	const expected = publication.expected;
+	return combineUseOutcomes(
+		targets.map(({ original, element }) => {
+			const observed = element ? renderedField(element, original.field) : undefined;
+			const matches = original.field
+				? !!element &&
+					(expected.absent
+						? !element.hasAttribute(attributeName(original.field))
+						: element.hasAttribute(attributeName(original.field)) && observed === expected.value)
+				: observed === expected.value;
+			const rendered = !element?.isConnected
+				? element && failed.has(element)
+					? "failed"
+					: "unmounted"
+				: pendingIn(element)
+					? "pending"
+					: matches
+						? "verified"
+						: element && failed.has(element)
+							? "failed"
+							: "mismatching";
+			return {
+				occurrence: original.occurrence,
+				installation: "installed",
+				rendered,
+				...(observed === undefined ? {} : { observed }),
+			};
+		}),
+		publication.original.occurrence,
+	);
+}
+function queueSourceOutcome(): void {
+	const held = acceptedOutcome;
+	if (!held?.ready) return;
+	queueMicrotask(() => {
+		if (
+			acceptedOutcome !== held ||
+			sourcePacket?.id !== held.publication.packet.id ||
+			revoked.has(held.publication.packet.id)
+		)
+			return;
+		const result = observedOutcome(held);
+		const serialized = JSON.stringify(result);
+		if (serialized === held.last) return;
+		held.last = serialized;
+		const { publication } = held;
+		parent.postMessage(
+			{
+				spool: "source-outcome",
+				frame: publication.frame,
+				publication: publication.packet.id,
+				owner: publication.owner,
+				generation: publication.generation,
+				result,
+			},
+			"*",
+		);
+	});
+}
+function failSourceOutcome(boundary: Fiber): void {
+	const held = acceptedOutcome;
+	if (!held) return;
+	for (const { element, ancestors } of held.targets) {
+		if (!element) continue;
+		for (const at of ancestors) {
+			if (at === boundary || at.alternate === boundary || (at.stateNode === boundary.stateNode && at.tag === 3)) {
+				held.failed.add(element);
+				break;
+			}
+		}
+	}
+	queueSourceOutcome();
+}
+
 async function installSource(publication: SourcePublication, undo = false): Promise<UseOutcome> {
 	const original = publication.original;
 	const held = leases.get(publication.generation);
@@ -538,15 +632,22 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 		});
 	if (!undo && !((held && validLease(publication.generation)) || secondary))
 		return refused("the original element changed while saving");
-	const targets = (publication.targets ?? [original]).map((original) => ({
-		original,
-		element:
-			original.occurrence === publication.original.occurrence
-				? element
-				: [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find(
-						(element) => nodes.get(element) === original.occurrence,
-					),
-	}));
+	const sourceAncestry = (element: HTMLElement | undefined) => {
+		const ancestors: Fiber[] = [];
+		for (let at = element ? committedFiber(element) : undefined; at; at = at.return ?? undefined) ancestors.push(at);
+		return ancestors;
+	};
+	const targets = (publication.targets ?? [original])
+		.map((original) => ({
+			original,
+			element:
+				original.occurrence === publication.original.occurrence
+					? element
+					: [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find(
+							(element) => nodes.get(element) === original.occurrence,
+						),
+		}))
+		.map((target) => ({ ...target, ancestors: sourceAncestry(target.element) }));
 	if (undo && leases.size > 0) return refused("another edit is in progress");
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
@@ -555,11 +656,8 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	cancelSourceUses(publication.generation, false);
 	feedbackTimer = setTimeout(clearSourceFeedback, 450);
 	leases.delete(publication.generation);
-	let failed = false;
-	const onError = () => {
-		failed = true;
-	};
-	addEventListener("error", onError);
+	const observation: AcceptedOutcome = { publication, targets, failed: new Set(), ready: false, last: "" };
+	acceptedOutcome = observation;
 	try {
 		flushSync(() => {
 			const attributeAbsence = (packet: RetainedValues | undefined) =>
@@ -610,36 +708,10 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 		});
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		const expected = publication.expected;
-		return combineUseOutcomes(
-			targets.map(({ original, element }) => {
-				const observed = element ? renderedField(element, original.field) : undefined;
-				const matches = original.field
-					? !!element &&
-						(expected.absent
-							? !element.hasAttribute(attributeName(original.field))
-							: element.hasAttribute(attributeName(original.field)) && observed === expected.value)
-					: observed === expected.value;
-				const rendered = !element?.isConnected
-					? failed
-						? "failed"
-						: "unmounted"
-					: pendingIn(element)
-						? "pending"
-						: matches
-							? "verified"
-							: failed
-								? "failed"
-								: "mismatching";
-				return {
-					occurrence: original.occurrence,
-					installation: "installed",
-					rendered,
-					...(observed === undefined ? {} : { observed }),
-				};
-			}),
-			original.occurrence,
-		);
+		const result = observedOutcome(observation);
+		observation.last = JSON.stringify(result);
+		observation.ready = true;
+		return result;
 	} catch {
 		return {
 			occurrence: original.occurrence,
@@ -647,8 +719,6 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 			rendered: "failed",
 			reason: "the authored render failed",
 		};
-	} finally {
-		removeEventListener("error", onError);
 	}
 }
 
