@@ -750,3 +750,57 @@ it.each([
 	expect(await f.target.evaluate((element) => element === Reflect.get(window, "retainedStructuralTarget"))).toBe(true);
 	expect(await f.frame.locator('[data-name="B"]').textContent()).toBe("B:0");
 });
+
+it("reports independent shared outcomes when authored code resets one surviving native input", {
+	timeout: 120_000,
+}, async () => {
+	const removed = '<Counter key="a" name="A"/>';
+	const shared = `import {useRef,useLayoutEffect} from 'react';function Counter({name}){const input=useRef(null);useLayoutEffect(()=>{if(name==="B"&&window.resetSurvivor)input.current.value="authored reset"});return <section data-name={name} style={{padding:24}}><input ref={input} defaultValue="initial"/>{name}</section>}export function List(){return <main style={{padding:40}}>${removed}<Counter key="b" name="B"/></main>}`;
+	const source = 'import {List} from "../../shared/list";export default function Frame(){return <List/>}';
+	const f = await originCanvas({ "shared/list.tsx": shared }, source, '[data-name="A"]', true);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	for (const [frame, reset] of [
+		[f.frame, false],
+		[second, true],
+	] as const) {
+		await frame.locator('[data-name="B"] input').evaluate((element, reset) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing surviving input");
+			element.value = "dirty uncontrolled";
+			Reflect.set(window, "originalSurvivingInput", element);
+			Reflect.set(window, "resetSurvivor", reset);
+		}, reset);
+	}
+	await f.select();
+	const delivered = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+	);
+	await f.page.keyboard.press("Backspace");
+	await delivered;
+	await f.settled();
+	expect(readFileSync(f.file("shared/list.tsx"), "utf8")).toBe(shared.replace(removed, ""));
+	expect(f.writes).toEqual(["commit"]);
+	for (const frame of [f.frame, second]) {
+		expect(await frame.locator('[data-name="A"]').count()).toBe(0);
+		expect(
+			await frame
+				.locator('[data-name="B"] input')
+				.evaluate((element) => element === Reflect.get(window, "originalSurvivingInput")),
+		).toBe(true);
+	}
+	expect(await f.frame.locator('[data-name="B"] input').inputValue()).toBe("dirty uncontrolled");
+	expect(await second.locator('[data-name="B"] input').inputValue()).toBe("authored reset");
+	const outcomes = await f.page.evaluate(() => Reflect.get(window, "originOutcomes"));
+	expect(outcomes).toHaveLength(2);
+	expect(outcomes.map((outcome: { installation: string }) => outcome.installation)).toEqual([
+		"installed",
+		"installed",
+	]);
+	expect(outcomes.map((outcome: { rendered: string }) => outcome.rendered).sort()).toEqual([
+		"mismatching",
+		"verified",
+	]);
+	const mismatch = outcomes.find((outcome: { rendered: string }) => outcome.rendered === "mismatching");
+	expect(mismatch.uses).toHaveLength(1);
+	expect(mismatch.uses[0].reason).toContain("native");
+	await expect.poll(() => f.page.locator('[data-hand-notice="mismatching"]').count()).toBe(1);
+});
