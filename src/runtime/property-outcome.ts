@@ -18,12 +18,14 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("the selected property condition needs a native context proof");
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
-	if (expected.property !== "opacity") return unverified("this property needs a native effect proof");
+	const color = expected.property === "color" || expected.property === "background-color";
+	if (expected.property !== "opacity" && !color) return unverified("this property needs a native effect proof");
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
 	const applicable: SourcePropertyEffect[] = [];
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
-		if (effect.property !== "opacity") return unverified("this opacity has dependent effects requiring native proof");
+		if (effect.property !== expected.property)
+			return unverified("this property has dependent effects requiring native proof");
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
 		if (condition === "inactive") continue;
 		if (condition === "unverified")
@@ -59,6 +61,16 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	}
 	if (winner?.owner === null && applicable.some((effect) => effect.owner !== null))
 		return unverified("the expected utility is masked by another declaration");
+	if (color) {
+		if (!winner) return unverified("this color needs an inherited or default context proof");
+		const value = resolvedColor(element, sheet, winner.value);
+		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
+		const wanted = value === undefined ? undefined : nativeColor(value);
+		const actual = nativeColor(observed);
+		if (wanted === undefined || actual === undefined)
+			return unverified("this color needs a variable or native context proof");
+		return { rendered: wanted === actual ? "verified" : "mismatching", observed };
+	}
 	let wanted = 1;
 	if (winner) {
 		const index = sheet.insertRule(":root {}", sheet.cssRules.length);
@@ -131,4 +143,71 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 		}
 	}
 	return unknown || selectors === 0 ? "unverified" : "active";
+}
+
+/** Resolve only a unique unconditional compiler root definition, checked in this use's context. */
+function resolvedColor(
+	element: Element,
+	sheet: CSSStyleSheet,
+	value: string,
+	seen = new Set<string>(),
+): string | undefined {
+	let unresolved = false;
+	const result = value.replace(/var\((--[\w-]+)\)/g, (_reference, name: string) => {
+		if (seen.has(name)) {
+			unresolved = true;
+			return "";
+		}
+		const definitions: string[] = [];
+		const collect = (rules: CSSRuleList, unconditional: boolean) => {
+			for (const rule of rules) {
+				if (rule instanceof CSSStyleRule) {
+					const declaration = rule.style.getPropertyValue(name);
+					if (!declaration) continue;
+					if (!unconditional || !/^:root(?:,\s*:host)?$/.test(rule.selectorText)) {
+						unresolved = true;
+						continue;
+					}
+					definitions.push(declaration.trim());
+				} else if (rule instanceof CSSGroupingRule)
+					collect(rule.cssRules, unconditional && rule instanceof CSSLayerBlockRule);
+			}
+		};
+		collect(sheet.cssRules, true);
+		if (definitions.length !== 1) {
+			unresolved = true;
+			return "";
+		}
+		const resolved = resolvedColor(element, sheet, definitions[0]!, new Set([...seen, name]));
+		const actual = element.ownerDocument.defaultView?.getComputedStyle(element).getPropertyValue(name).trim();
+		if (resolved === undefined || actual !== resolved) {
+			unresolved = true;
+			return "";
+		}
+		return resolved;
+	});
+	return unresolved || /\b(?:var|env|attr)\(/i.test(result) ? undefined : result;
+}
+
+/** Native color serialization without drawing pixels or adopting styles into the application. */
+function nativeColor(value: string): string | undefined {
+	if (
+		/\b(?:currentcolor|inherit|initial|unset|revert|revert-layer)\b|\b(?:light-dark|contrast-color|var|env|attr)\(/i.test(
+			value,
+		)
+	)
+		return;
+	const context = new OffscreenCanvas(1, 1).getContext("2d");
+	if (!context) return;
+	const parse = (input: string): string | undefined => {
+		context.fillStyle = "#010203";
+		context.fillStyle = input;
+		const first = context.fillStyle;
+		context.fillStyle = "#040506";
+		context.fillStyle = input;
+		return typeof first === "string" && first === context.fillStyle ? first : undefined;
+	};
+	// Serialize once before changing color spaces, matching computed CSS precision.
+	const parsed = parse(value);
+	return parsed === undefined ? undefined : parse(`color(from ${parsed} srgb r g b / alpha)`);
 }
