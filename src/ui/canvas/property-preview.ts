@@ -9,7 +9,13 @@ export function samplePropertyPreview(
 ): SourcePropertyPreview | undefined {
 	const template = read.propertyPreview;
 	if (!template || read.operation.kind !== "property" || value === undefined || /[;{}]/.test(value)) return;
-	if (!CSS.supports(read.operation.property, value)) return;
+	if (
+		!template.declarations.length ||
+		!template.declarations.every((declaration) =>
+			CSS.supports(declaration.property, declaration.value.replaceAll(template.placeholder, value)),
+		)
+	)
+		return;
 	return {
 		...template.plan,
 		revision,

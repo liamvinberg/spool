@@ -56,6 +56,7 @@ import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
 import { planPropertyValue } from "./source-property-plan";
+import { propertyPreviewDeclarations } from "./source-property-preview";
 import { propertyReading } from "./source-property-reading";
 import { propertyScopePaths } from "./source-property-scope";
 import { propertyState } from "./source-property-state";
@@ -523,8 +524,18 @@ export function createSourceOwner(
 			planned.preview.frames.some(
 				(frame) => frame.css.includes(placeholder) || frame.bundledCss.includes(placeholder),
 			)
-		)
-			held.read = { ...held.read, propertyPreview: { placeholder, plan: planned.preview } };
+		) {
+			const declarations = (
+				await Promise.all(
+					planned.preview.frames.map(async (frame) => {
+						const compiled = await inspectPropertyCss(`${frame.css}\n${frame.bundledCss}`);
+						return propertyPreviewDeclarations(compiled.effects, placeholder);
+					}),
+				)
+			).flat();
+			if (declarations.length)
+				held.read = { ...held.read, propertyPreview: { placeholder, declarations, plan: planned.preview } };
+		}
 		return { ok: true as const, read: held.read };
 	}
 	async function describe(
