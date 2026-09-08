@@ -112,9 +112,13 @@ it.each([
 	expect(restored.next).toContain(row.before);
 });
 
-it("refuses unknown native shorthand arity instead of changing the other referenced corners", async () => {
+it.each([
+	{ value: "10px 20px", left: "10px", right: "20px" },
+	{ value: "10px/20px", left: "10px 20px", right: "10px 20px" },
+	{ value: "10px /20px", left: "10px 20px", right: "10px 20px" },
+])("refuses unknown native shorthand arity $value without changing other corners", async ({ value, left, right }) => {
 	const { root } = makeProject(makeTempDir());
-	writeDesignFile(root, "shared/tokens.css", ":root{font-size:20px} main{--radius-lg:10px 20px}");
+	writeDesignFile(root, "shared/tokens.css", `:root{font-size:20px} main{--radius-lg:${value}}`);
 	const file = realpathSync(join(root, "design/shared/tokens.css"));
 	const inputs = new Map([[file, readInput(file)]]);
 	const context = await browser.newContext();
@@ -124,8 +128,8 @@ it("refuses unknown native shorthand arity instead of changing the other referen
 	const literal = "rounded-lg z-10";
 	const original = await compilePropertySource(root, inputs, literal);
 	const before = await observePropertyNative(page, literal, original.css);
-	expect(before.subject["border-top-left-radius"]).toBe("10px");
-	expect(before.subject["border-top-right-radius"]).toBe("20px");
+	expect(before.subject["border-top-left-radius"]).toBe(left);
+	expect(before.subject["border-top-right-radius"]).toBe(right);
 	const environment = await propertyNativeEnvironment(page);
 	await expect(
 		planPropertyValue(

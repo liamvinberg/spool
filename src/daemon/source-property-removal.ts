@@ -34,7 +34,7 @@ function expand(value: string, count: number, certificate: PropertyCertificate):
 			definition,
 			...certificate.effects.filter((effect) => effect.property === name).map((effect) => effect.value),
 		];
-		if (definitions.some((one) => !one || parts(one).length !== 1 || one.includes("var(")))
+		if (definitions.some((one) => !one || parts(one).length !== 1 || one.includes("var(") || one.includes("/")))
 			throw new Error("this whole shorthand reference has no proven single-component arity");
 	}
 	if (values.length < 1 || values.length > count) throw new Error("this shorthand has no bounded component arity");
