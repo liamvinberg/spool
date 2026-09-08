@@ -2,7 +2,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { relative } from "node:path";
 import { expect, it } from "vitest";
 import { createFrameCompiler } from "./compile";
-import { originCanvas } from "./hand-origin-browser-helpers";
+import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
 import { Sources } from "./source-origins";
 import { deriveSourceDelete } from "./source-structure";
 
@@ -625,4 +625,96 @@ it("resends actual source-history retention when a frame reloads with the same h
 	await kept.evaluate(() => location.reload());
 	await expect.poll(() => kept.evaluate(() => Reflect.get(window, "structuralRetention").at(-1))).toEqual(generations);
 	expect(f.writes).toEqual(["commit"]);
+});
+
+it("matches ordinary React lifecycle, child shape and surviving native state through structural history", {
+	timeout: 120000,
+}, async () => {
+	const components = `import {useState,useEffect,useCallback} from 'react';
+window.structuralStats={initializers:{},refs:[],effects:[]};
+function Counter({name}){const [count,setCount]=useState(()=>{window.structuralStats.initializers[name]=(window.structuralStats.initializers[name]||0)+1;return 0});const ref=useCallback(node=>{window.structuralStats.refs.push([name,!!node])},[name]);useEffect(()=>{window.structuralStats.effects.push([name,true]);return()=>{window.structuralStats.effects.push([name,false])}},[name]);return <section data-name={name} ref={ref} style={{padding:24}}><button onClick={()=>setCount(n=>n+1)}>{name}:{count}</button><input defaultValue="initial"/></section>}
+function FrameBody({children}){return <main>{children}</main>}
+`;
+	const a = '<Counter key="a" name="A"/>',
+		b = '<Counter key="b" name="B"/>';
+	const tree = `<FrameBody>${a}${b}</FrameBody>`;
+	const source = `${components}export default function Frame(){return ${tree}}`;
+
+	const f = await originCanvas({}, source, '[data-name="A"]');
+	const oracleSource = `${components}window.structuralVisible=true;window.setStructuralVisible=value=>{window.structuralVisible=value;window.oracleRender()};export default function Frame(){return window.structuralVisible?${tree}:${tree.replace(a, "")}}`;
+	const oracle = await originOracle(f, { "shared/oracle.tsx": oracleSource }, "shared/oracle");
+	const targets = [f.frame.locator('[data-name="B"]'), oracle.locator('[data-name="B"]')];
+	for (const target of targets) {
+		await target.locator("button").evaluate((element) => (element as HTMLElement).click());
+		await target.locator("input").evaluate((element) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+			element.value = "dirty uncontrolled";
+			element.setSelectionRange(2, 5);
+			Reflect.set(window, "originalBInput", element);
+			Reflect.set(window, "originalBRoot", element.parentElement);
+		});
+	}
+	const checked = async (present: boolean) => {
+		await expect.poll(() => f.frame.locator('[data-name="B"] button').textContent()).toBe("B:1");
+		await expect.poll(() => f.frame.locator('[data-name="A"]').count()).toBe(present ? 1 : 0);
+		await expect
+			.poll(() => targets[0]!.evaluate(() => Reflect.get(window, "structuralStats")))
+			.toEqual(await oracle.evaluate(() => Reflect.get(window, "structuralStats")));
+		for (const target of targets) {
+			expect(
+				await target.evaluate((element) => {
+					const main = element.closest("main");
+					if (!main) throw new Error("missing rendered parent");
+					const key = Object.keys(main).find((key) => key.startsWith("__reactProps$"));
+					if (!key) throw new Error("missing ordinary React committed props");
+					const children = Reflect.get(main, key).children;
+					return Array.isArray(children) ? "array" : children === undefined ? "absent" : "single";
+				}),
+			).toBe(present ? "array" : "single");
+			expect(await target.evaluate((element) => element === Reflect.get(window, "originalBRoot"))).toBe(true);
+			expect(
+				await target.locator("input").evaluate((element) => {
+					if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+					return [
+						element === Reflect.get(window, "originalBInput"),
+						element.value,
+						element.selectionStart,
+						element.selectionEnd,
+					];
+				}),
+			).toEqual([true, "dirty uncontrolled", 2, 5]);
+		}
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(present ? source : source.replace(a, ""));
+		if (f.writes.length) {
+			const outcome = await f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1));
+			expect(outcome, JSON.stringify(outcome)).toMatchObject({ installation: "installed", rendered: "verified" });
+		}
+	};
+	await checked(true);
+
+	const delivered = () =>
+		f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+		);
+	await f.select();
+	const saved = delivered();
+	const reading = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "read",
+	);
+	void saved.catch(() => {});
+	await f.page.keyboard.press("Backspace");
+	const read = await (await reading).json();
+	expect(read, JSON.stringify(read)).toMatchObject({ ok: true, read: { operation: { kind: "delete" } } });
+	await saved;
+	await f.settled();
+	await oracle.evaluate(() => Reflect.get(window, "setStructuralVisible")(false));
+	await checked(false);
+	for (const redo of [false, true]) {
+		const inverse = delivered();
+		await f.history(redo);
+		await inverse;
+		await f.settled();
+		await oracle.evaluate((present) => Reflect.get(window, "setStructuralVisible")(present), !redo);
+		await checked(!redo);
+	}
 });
