@@ -57,8 +57,8 @@ export function PropertyNumberField({
 				.map((option) => `${scope}${prefixes[property]}-${option.name}`)
 				.find((token) => reading?.tokens.includes(token))
 		: undefined;
-	// A known value this field cannot number — `normal`, a calc() — is read out
-	// as it stands rather than shown blank beside a unit it never had.
+	// A known value this field cannot number, `normal` or a calc(), is read out as
+	// it stands rather than shown blank beside a unit it never had.
 	const presented = (reading?.authored ?? reading?.native ?? "").trim();
 	const initial = numberUnit(presented);
 	const keyword = initial || !presented ? undefined : presented;
