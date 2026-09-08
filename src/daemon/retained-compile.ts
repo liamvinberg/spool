@@ -233,7 +233,8 @@ export function lowerLiterals(
 				if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") continue;
 				const field = attribute.name.name;
 				if (/^(?:on[A-Z]|data-spool-)/.test(field)) continue;
-				if (["key", "ref", "data-go", "src", "className", "style"].includes(field)) continue;
+				if (["key", "ref", "data-go", "className", "style"].includes(field)) continue;
+				if (field === "src" && open.name.type === "JSXIdentifier" && open.name.name === "img") continue;
 				if (
 					open.attributes.filter(
 						(other) =>
@@ -272,8 +273,9 @@ export function lowerLiterals(
 			/^[a-z]/.test(open.name.name) &&
 			!open.attributes.some((attr) => attr.type === "JSXSpreadAttribute")
 		) {
-			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[open.name.name] ?? []), ...LITERAL_ATTRIBUTES_EVERY].filter(
-				(name) => name !== "src",
+			const tag = open.name.name;
+			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY].filter(
+				(name) => name !== "src" || tag !== "img",
 			);
 			for (const field of names) {
 				if (

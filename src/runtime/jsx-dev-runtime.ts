@@ -1,4 +1,5 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
 import { installObserver } from "./source-observer";
 import { installValueFlow } from "./source-values";
 
@@ -163,6 +164,7 @@ interface PreviewedUse {
 	original: SourceOccurrence;
 	preview: string;
 	children: { node: ChildNode; value: string | null }[];
+	restoreAttribute?: () => void;
 }
 const leases = new Map<number, PreviewedUse>();
 const subscription = (owner: string) => {
@@ -311,40 +313,25 @@ function inspectSource(element: HTMLElement, field?: string): SourceOccurrence |
 		...(provenance === undefined ? {} : { provenance }),
 	};
 }
-const attributeNames: Readonly<Record<string, string>> = {
-	htmlFor: "for",
-	className: "class",
-	tabIndex: "tabindex",
-	readOnly: "readonly",
-};
-const attributeName = (name: string) => attributeNames[name] ?? name;
 function renderedField(element: HTMLElement, field?: string): string {
-	if (field === undefined) return textOf(element);
-	if (field === "value" && "value" in element) return String(element.value);
-	return element.getAttribute(attributeName(field)) ?? "";
+	return field === undefined ? textOf(element) : renderedAttribute(element, field);
 }
 function previewField(element: HTMLElement, field: string | undefined, value: string): void {
-	if (field === undefined) {
-		element.textContent = value;
-		return;
-	}
-	if (field === "value" && "value" in element) {
-		element.value = value;
-		return;
-	}
-	element.setAttribute(attributeName(field), value);
+	if (field === undefined) element.textContent = value;
+	else previewAttribute(element, field, value, committedFiber(element)?.memoizedProps);
 }
-function restoreField(element: HTMLElement, original: SourceOccurrence, children: PreviewedUse["children"]): void {
+function restoreField(
+	element: HTMLElement,
+	original: SourceOccurrence,
+	children: PreviewedUse["children"],
+	restoreAttribute?: () => void,
+): void {
 	if (!original.field) {
 		for (const child of children) child.node.nodeValue = child.value;
 		element.replaceChildren(...children.map((child) => child.node));
 		return;
 	}
-	if (original.field && original.absent) {
-		element.removeAttribute(attributeName(original.field));
-		return;
-	}
-	previewField(element, original.field, original.value);
+	restoreAttribute?.();
 }
 function textOf(element: HTMLElement): string {
 	return element.innerText ?? element.textContent ?? "";
@@ -357,6 +344,7 @@ function previewedUse(element: HTMLElement, original: SourceOccurrence): Preview
 		original,
 		preview: original.value,
 		children: [...element.childNodes].map((node) => ({ node, value: node.nodeValue })),
+		...(original.field === undefined ? {} : { restoreAttribute: captureAttribute(element, original.field) }),
 	};
 }
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -444,7 +432,7 @@ function cancelSourceUses(generation: number, feedback = true): void {
 			renderedField(use.element, use.original.field) === use.preview &&
 			use.preview !== use.original.value
 		)
-			restoreField(use.element, use.original, use.children);
+			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
 	if (feedback) clearSourceFeedback();
 }
@@ -487,7 +475,7 @@ function cancelSource(generation: number): void {
 		renderedField(held.element, held.original.field) === held.preview &&
 		inspectSource(held.element, held.original.field)?.invocation === held.original.invocation
 	)
-		restoreField(held.element, held.original, held.children);
+		restoreField(held.element, held.original, held.children, held.restoreAttribute);
 }
 function completeSource(generation: number): SourceOccurrence | undefined {
 	const held = leases.get(generation);
@@ -515,8 +503,9 @@ function observedOutcome(held: AcceptedOutcome): UseOutcome {
 			const matches = original.field
 				? !!element &&
 					(expected.absent
-						? !element.hasAttribute(attributeName(original.field))
-						: element.hasAttribute(attributeName(original.field)) && observed === expected.value)
+						? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
+						: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
+							observed === expected.value)
 				: observed === expected.value;
 			const rendered = !element?.isConnected
 				? element && failed.has(element)
@@ -652,7 +641,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
 	if (held && renderedField(held.element, held.original.field) === held.preview)
-		restoreField(held.element, held.original, held.children);
+		restoreField(held.element, held.original, held.children, held.restoreAttribute);
 	cancelSourceUses(publication.generation, false);
 	feedbackTimer = setTimeout(clearSourceFeedback, 450);
 	leases.delete(publication.generation);
