@@ -79,7 +79,7 @@ export function Dock({
 	 * more.
 	 */
 	properties: (width: number, shut: () => void) => ReactNode;
-	agent: (width: number, shut: () => void) => ReactNode;
+	agent: (width: number, shut: () => void, active: boolean) => ReactNode;
 	/** a turn is in flight: the shut glyph says so, and says it landed once it has */
 	agentWorking: boolean;
 	/** the cog at the foot of the strip (#282): a door to the settings sheet, not a surface */
@@ -210,7 +210,7 @@ export function Dock({
 							)}
 						>
 							{surface === "agent"
-								? agent(up ? standing : agentWidth, shut)
+								? agent(up ? standing : agentWidth, shut, up)
 								: properties(up ? standing : propertiesWidth, shut)}
 						</div>
 					);
