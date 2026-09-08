@@ -3334,11 +3334,14 @@ export function createDaemonApp({
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();
-			const stoppedEngines = [...engines.values()].map((engine) => engine.close?.());
+			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			sourceOwner.close();
 			hub.close();
 			updateChecker.stop();
-			await Promise.all([compiled, ...stoppedEngines, shots.close(), goReader.close()]);
+			const closed = await Promise.allSettled([compiled, ...stoppedEngines, shots.close(), goReader.close()]);
+			const errors: unknown[] = [];
+			for (const result of closed) if (result.status === "rejected") errors.push(result.reason);
+			if (errors.length > 0) throw new AggregateError(errors, "Daemon resources could not close");
 		},
 	};
 }

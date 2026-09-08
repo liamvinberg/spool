@@ -101,8 +101,9 @@ export function serveDaemon({
 						server.close(() => done());
 						server.closeAllConnections();
 					});
-					closing = Promise.all([disconnected, daemon.close()]).then(() => {
+					closing = Promise.allSettled([disconnected, daemon.close()]).then((results) => {
 						clearDaemonState(spoolDir, process.pid);
+						for (const result of results) if (result.status === "rejected") throw result.reason;
 					});
 					return closing;
 				},

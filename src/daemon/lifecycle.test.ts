@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { SpoolError } from "../errors";
 import { makeTempDir } from "../test-helpers";
+import { createClaudeEngine } from "./agent-engine-claude";
+import { createSpoolEngine } from "./agent-engine-spool";
 import {
 	configuredPort,
 	ensureDaemon,
@@ -278,6 +280,64 @@ describe("serveDaemon", () => {
 			expect((await fetch(`${renderOrigin(daemon.url)}/vendor/spool.js`)).status).toBe(200);
 		},
 	);
+
+	it("waits for the remaining state writer before reporting another closer's failure", async () => {
+		const spoolDir = makeSpoolDir();
+		const failure = new Error("controlled closer failure");
+		let release = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const marker = join(spoolDir, "last-write");
+		const daemon = await serveDaemon({
+			spoolDir,
+			version: "test",
+			host: "127.0.0.1",
+			port: 0,
+			history: false,
+			agentEngines: [
+				{
+					...createClaudeEngine(() => {
+						throw new Error("No agent turn should start");
+					}),
+					close: async () => {
+						throw failure;
+					},
+				},
+				{
+					...createSpoolEngine(spoolDir),
+					close: async () => {
+						await held;
+						writeFileSync(marker, "finished");
+					},
+				},
+			],
+		});
+		let settled = false;
+		const closed = daemon.close().then(
+			() => {
+				settled = true;
+				return undefined;
+			},
+			(error: unknown) => {
+				settled = true;
+				return error;
+			},
+		);
+		onTestFinished(async () => {
+			release();
+			await closed;
+		});
+		// Let the immediate rejection and HTTP close callbacks propagate; the writer is still held.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(settled).toBe(false);
+		expect(existsSync(marker)).toBe(false);
+		release();
+		expect(await closed).toBeInstanceOf(AggregateError);
+		expect(await closed).toMatchObject({ errors: [failure] });
+		expect(readFileSync(marker, "utf8")).toBe("finished");
+		expect(readDaemonState(spoolDir)).toBeUndefined();
+	});
 
 	it("clears its state on close", async () => {
 		const spoolDir = makeSpoolDir();
