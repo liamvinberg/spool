@@ -36,6 +36,17 @@ function opacity(value: string): SourcePropertyExpectation {
 		css: `@layer utilities { .opacity-50 { opacity: ${value} } }`,
 	};
 }
+async function compiledOpacity(classes: string): Promise<SourcePropertyExpectation> {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), classes);
+	return {
+		...opacity("0.5"),
+		css: certificate.css,
+		effects: propertyConsumers(certificate, new Set(["opacity"]), { direction: "ltr", writingMode: "horizontal-tb" }),
+	};
+}
 async function fixture(markup: string) {
 	const page = await browser.newPage();
 	onTestFinished(() => page.close(), 35_000);
@@ -110,19 +121,11 @@ it("keeps unresolved variables and inactive scopes unverified", async () => {
 });
 
 it("uses the intended compiler candidate while preserving unrelated preflight effects", async () => {
-	const { root } = makeProject(makeTempDir());
-	writeDesignFile(root, "shared/tokens.css", "");
-	const file = realpathSync(join(root, "design/shared/tokens.css"));
-	const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), "opacity-50 opacity-75");
-	const effects = propertyConsumers(certificate, new Set(["opacity"]), {
-		direction: "ltr",
-		writingMode: "horizontal-tb",
-	});
-	const expected = { ...opacity("0.5"), css: certificate.css, effects };
+	const expected = await compiledOpacity("opacity-50 opacity-75");
 	const f = await fixture(
-		`<style>${certificate.css}</style><section data-subject class="opacity-50"></section><section data-subject class="opacity-75"></section><button data-subject class="opacity-50">Native control</button>`,
+		`<style>${expected.css}</style><section data-subject class="opacity-50"></section><section data-subject class="opacity-75"></section><button data-subject class="opacity-50">Native control</button>`,
 	);
-	expect(await f.inspect(expected), JSON.stringify(effects)).toEqual([
+	expect(await f.inspect(expected), JSON.stringify(expected.effects)).toEqual([
 		{ rendered: "verified", observed: "0.5" },
 		{ rendered: "mismatching", observed: "0.75" },
 		{ rendered: "verified", observed: "0.5" },
@@ -141,4 +144,14 @@ it("does not certify an intended utility that an important base declaration mask
 	expect(await f.inspect(expected)).toEqual([
 		{ rendered: "unverified", reason: "the expected utility is masked by another declaration" },
 	]);
+});
+
+it("keeps a retained different token separate from its independently matching native effect", async () => {
+	const expected = await compiledOpacity("opacity-50 opacity-[.5] p-4");
+	const f = await fixture(`<style>${expected.css}</style><div data-subject class="opacity-[.5] p-4"></div>`);
+	const before = await f.page.content();
+	expect(await f.inspect(expected)).toEqual([{ rendered: "verified", observed: "0.5" }]);
+	expect(await f.page.locator("[data-subject]").getAttribute("class")).toBe("opacity-[.5] p-4");
+	expect(expected.className).toBe("opacity-50");
+	expect(await f.page.content()).toBe(before);
 });
