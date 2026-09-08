@@ -705,8 +705,7 @@ it.each(["loader", "caller", "module", "absent-path", "generation", "directory"]
 				handle: read.handle,
 				generation: read.generation + (cause === "generation" ? 1 : 0),
 				original: read.original,
-				source: read.source,
-				text: "Must refuse",
+				change: { kind: "literal", text: "Must refuse" },
 			}),
 		});
 		expect(await result.json()).toMatchObject({ ok: false });

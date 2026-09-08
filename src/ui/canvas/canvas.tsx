@@ -1904,7 +1904,7 @@ export function ProjectCanvas({
 				});
 				const ran = history.current;
 				const operation = sourceDelivery
-					.inventory(entry.receipt.field)
+					.inventory(entry.receipt.field, entry.receipt.operation)
 					.then((inventories) => {
 						sourceDelivery.holdInverse(
 							entry.receipt.handle,
@@ -2681,7 +2681,7 @@ export function ProjectCanvas({
 				return;
 			}
 			setSaid({ kind: "source", frame: held.frame, status: "saving", text, says: "Saving…" });
-			const operation = commitSource(project, held.read, text).then(async (result) => {
+			const operation = commitSource(project, held.read, { kind: "literal", text }).then(async (result) => {
 				if (result?.ok && result.receipt)
 					recordEntry({ kind: "source", frame: held.frame, receipt: result.receipt });
 				if (!result?.ok || !result.publication) void sourceDelivery.cancel(held.frame, held.id);
@@ -2735,7 +2735,7 @@ export function ProjectCanvas({
 					});
 					return;
 				}
-				const result = await commitSource(project, read, text);
+				const result = await commitSource(project, read, { kind: "literal", text });
 				if (result?.ok && result.receipt) recordEntry({ kind: "source", frame, receipt: result.receipt });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(frame, read.generation);
 				await showSourceResult(frame, result, text);

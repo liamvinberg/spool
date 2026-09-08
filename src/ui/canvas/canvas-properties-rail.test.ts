@@ -396,8 +396,7 @@ it("draws a field for every string the element carries and writes one back", asy
 			handle: "attribute-read",
 			generation: sourceCalls("read")[0]?.generation,
 			original: ATTRIBUTE_ORIGINAL,
-			source: "frames/home/frame.tsx:12:3",
-			text: "pay later",
+			change: { kind: "literal", text: "pay later" },
 		},
 	]);
 	expect(await gates()).toBe(0);
@@ -920,7 +919,11 @@ function stubCanvasApis(refused = false): void {
 						ok: true,
 						source: "saved",
 						publication: null,
-						receipt: { owner: "owner", handle: "attribute-receipt" },
+						receipt: {
+							owner: "owner",
+							handle: "attribute-receipt",
+							operation: { kind: "literal", field: "title" },
+						},
 					});
 				return Response.json({ ok: true });
 			}
