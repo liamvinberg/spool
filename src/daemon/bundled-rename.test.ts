@@ -24,17 +24,23 @@ async function fixture() {
 	writeFrame(root, "home", "before");
 	const directory = join(spoolDir, "bundled");
 	const children: ChildProcess[] = [];
-	const client = new BundledHostClient(directory, (state) => {
-		const child = fork(fileURLToPath(new URL("./fixtures/bundled-recovery-provider-host.ts", import.meta.url)), [], {
-			cwd: state,
-			env: bundledEnvironment(state),
-			execArgv: ["--import", import.meta.resolve("tsx")],
-			stdio: ["ignore", "ignore", "ignore", "ipc"],
+	const newClient = () =>
+		new BundledHostClient(directory, (state) => {
+			const child = fork(
+				fileURLToPath(new URL("./fixtures/bundled-recovery-provider-host.ts", import.meta.url)),
+				[],
+				{
+					cwd: state,
+					env: bundledEnvironment(state),
+					execArgv: ["--import", import.meta.resolve("tsx")],
+					stdio: ["ignore", "ignore", "ignore", "ipc"],
+				},
+			);
+			children.push(child);
+			return child;
 		});
-		children.push(child);
-		return child;
-	});
-	const engine = createSpoolEngine(spoolDir, client);
+	let client = newClient();
+	let engine = createSpoolEngine(spoolDir, client);
 	const launch = () =>
 		serveDaemon({ spoolDir, version: "test", host: "127.0.0.1", port: 0, history: false, agentEngines: [engine] });
 	let daemon = await launch();
@@ -111,8 +117,12 @@ async function fixture() {
 		parent,
 		spoolDir,
 		directory,
-		client,
-		engine,
+		get client() {
+			return client;
+		},
+		get engine() {
+			return engine;
+		},
 		request,
 		thread,
 		turn,
@@ -120,7 +130,9 @@ async function fixture() {
 		rename: (name = "after") => request("/api/projects/rename", { root, name }),
 		restart: async () => {
 			await daemon.close();
-			await client.restart();
+			// A new daemon owns a new client; only durable state survives shutdown.
+			client = newClient();
+			engine = createSpoolEngine(spoolDir, client);
 			daemon = await launch();
 		},
 	};

@@ -73,6 +73,7 @@ export function serveDaemon({
 	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {
+		let closing: Promise<void> | undefined;
 		const server = serve({ fetch: daemon.app.fetch, hostname: host, port, createServer }, (info: AddressInfo) => {
 			// bound: the daemon can now dial itself (the thumb healer's shots)
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
@@ -94,19 +95,24 @@ export function serveDaemon({
 				port: info.port,
 				controlToken: daemon.controlToken,
 				announceUiBuild: daemon.announceUiBuild,
-				close: () =>
-					new Promise<void>((done) => {
-						daemon.close();
-						clearDaemonState(spoolDir, process.pid);
+				close: () => {
+					if (closing) return closing;
+					const disconnected = new Promise<void>((done) => {
 						server.close(() => done());
 						server.closeAllConnections();
-					}),
+					});
+					closing = Promise.allSettled([disconnected, daemon.close()]).then((results) => {
+						clearDaemonState(spoolDir, process.pid);
+						for (const result of results) if (result.status === "rejected") throw result.reason;
+					});
+					return closing;
+				},
 			});
 		}) as Server;
 		server.on("error", (error: NodeJS.ErrnoException) => {
 			// the app was already constructed — release its watchers and timers
 			// or the failed process never drains its event loop
-			daemon.close();
+			void daemon.close();
 			if (error.code === "EADDRINUSE") {
 				reject(new PortBusyError(`port ${port} on ${host} is already in use — is another spool daemon serving?`));
 			} else {

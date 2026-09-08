@@ -3337,19 +3337,21 @@ export function createDaemonApp({
 		announceUiBuild: () => {
 			emitAppEvent({ kind: "ui" });
 		},
-		close: () => {
+		close: async () => {
 			for (const stop of playerWarmers.values()) stop();
 			playerWarmers.clear();
-			void playerCompiler.close();
+			const compiled = playerCompiler.close();
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();
-			for (const engine of engines.values()) engine.close?.();
+			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			sourceOwner.close();
 			hub.close();
 			updateChecker.stop();
-			void shots.close();
-			void goReader.close();
+			const closed = await Promise.allSettled([compiled, ...stoppedEngines, shots.close(), goReader.close()]);
+			const errors: unknown[] = [];
+			for (const result of closed) if (result.status === "rejected") errors.push(result.reason);
+			if (errors.length > 0) throw new AggregateError(errors, "Daemon resources could not close");
 		},
 	};
 }

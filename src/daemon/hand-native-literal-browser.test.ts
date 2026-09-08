@@ -76,9 +76,9 @@ it.each(cases)(
 			const request = route.request();
 			const body = request.postDataJSON();
 			if (body?.action !== "commit") return route.continue();
-			if (typeof body.text !== "string" || typeof body.source !== "string")
+			if (body.change?.kind !== "literal" || typeof body.change.text !== "string")
 				throw new Error("unexpected literal operation");
-			body.text = requested;
+			body.change.text = requested;
 			await route.continue({ postData: JSON.stringify(body) });
 		});
 		await control.fill("new requested text");
