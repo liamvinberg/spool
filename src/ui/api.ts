@@ -33,6 +33,7 @@ import type {
 	SourceReceipt,
 	SourceResult,
 } from "../source-edit";
+import type { SourcePropertyPreview, SourcePropertyValue } from "../source-property";
 
 declare global {
 	interface Window {
@@ -1570,6 +1571,32 @@ export async function sourceReach(
 		});
 		return res.ok
 			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export async function previewPropertySource(
+	project: string,
+	read: SourceRead,
+	revision: number,
+	value: SourcePropertyValue,
+): Promise<{ ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string } | undefined> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: {
+				action: "preview",
+				handle: read.handle,
+				generation: read.generation,
+				revision,
+				original: read.original,
+				change: { kind: "property", value },
+			},
+		});
+		return res.ok
+			? ((await res.json()) as { ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string })
 			: undefined;
 	} catch {
 		return undefined;

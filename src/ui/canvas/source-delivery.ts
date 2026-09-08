@@ -10,6 +10,7 @@ import {
 	type SourceUse,
 	type UseOutcome,
 } from "../../source-edit";
+import type { SourcePropertyPreview } from "../../source-property";
 import { describeSource, respondSourceObservation, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 
@@ -367,6 +368,18 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			},
 			[iframes, request],
 		),
+		previewProperty: useCallback(
+			async (frame: string, plan: SourcePropertyPreview) => {
+				const targets = prepared.current.get(plan.generation)?.frames ?? [frame];
+				return (
+					await Promise.all(
+						targets.map((frame) => request<boolean>(frame, { action: "preview-property", preview: plan })),
+					)
+				).every(Boolean);
+			},
+			[request],
+		),
+
 		preview: useCallback(
 			async (frame: string, generation: number, text: string) => {
 				const targets = prepared.current.get(generation)?.frames ?? [frame];

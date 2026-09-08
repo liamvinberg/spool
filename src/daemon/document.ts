@@ -1532,6 +1532,7 @@ else if (m.action === "read") { const el = elementFor(m.selector); reply(el ? so
 				else if (m.action === "complete") reply(source.complete(m.generation));
 				else if (m.action === "cancel") { source.cancel(m.generation); reply(true); }
 				else if (m.action === "preview") reply(source.preview(m.generation, m.text));
+else if (m.action === "preview-property") reply(source.previewProperty(m.preview));
 				else if (m.action === "install") source.install(m.publication, m.undo === true).then(reply, () => reply(undefined));
 				else if (m.action === "revoke") { source.revoke(m.publication); reply(true); }
 			} catch { reply(undefined); }
