@@ -611,7 +611,7 @@ export function lowerLiterals(
 				if (typeof value === "object" && value !== null && attributes.has(value as Node))
 					return { type: "RetainedAttribute" };
 				if (typeof value === "object" && value !== null && eligible.has(value as Node))
-					return { ...value, children: [{ type: "RetainedLiteral" }] };
+					return { ...value, children: [{ type: "RetainedChildren" }] };
 				return value;
 			}),
 		);

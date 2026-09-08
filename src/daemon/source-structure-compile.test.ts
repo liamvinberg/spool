@@ -72,3 +72,17 @@ it("keeps authored comments outside canonical rendered membership", () => {
 	const b = Object.entries(original.cells).find(([, cell]) => cell.value === "B")!;
 	expect(removed.cells[b[0]]?.value).toBe("B");
 });
+
+it("keeps empty canonical parents compatible with literal text and last-child deletion", () => {
+	const compile = (children: string) =>
+		lowerLiterals("frame.tsx", `export default function Frame(){return <main>${children}</main>}`);
+	const empty = compile("");
+	const text = compile('{"next"}');
+	const child = compile('<button key="only">Only</button>');
+	expect(empty.shape).toBe(text.shape);
+	expect(empty.shape).toBe(child.shape);
+	expect(Object.values(empty.structure.lists)).toContainEqual([]);
+	expect(Object.values(child.structure.lists)).toContainEqual(["only"]);
+	expect(Object.values(empty.cells).find((cell) => cell.field === undefined)?.childValue).toBe(null);
+	expect(Object.values(text.cells).find((cell) => cell.field === undefined)?.childValue).toBe("next");
+});

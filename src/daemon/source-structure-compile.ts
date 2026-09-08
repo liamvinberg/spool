@@ -163,7 +163,7 @@ export function planStructureCompilation(ast: Node, file: string) {
 			if (list && node.type === "JSXElement")
 				return {
 					...node,
-					children: [],
+					children: [{ type: "RetainedChildren" }],
 					openingElement: { ...node.openingElement, selfClosing: false },
 					closingElement: { type: "JSXClosingElement", name: node.openingElement.name },
 				};
@@ -173,13 +173,17 @@ export function planStructureCompilation(ast: Node, file: string) {
 			prefix: string,
 			map: (offset: number, side: "start" | "end" | "content-end", node?: Node) => number,
 		): string {
-			const mapped = groups.map((group) => ({
-				...group,
-				span: {
-					start: map(group.span.start, "start"),
-					end: map(group.span.end, group.kind === "list" ? "content-end" : "end", group.node),
-				},
-			}));
+			// An empty canonical parent has no retained factory to evaluate. Keep its
+			// literal child observer intact so a later text edit can populate it.
+			const mapped = groups
+				.filter((group) => group.kind !== "list" || group.children.length > 0)
+				.map((group) => ({
+					...group,
+					span: {
+						start: map(group.span.start, "start"),
+						end: map(group.span.end, group.kind === "list" ? "content-end" : "end", group.node),
+					},
+				}));
 			function render(start: number, end: number, excluded?: Group): string {
 				const candidates = mapped
 					.filter((group) => group.id !== excluded?.id && group.span.start >= start && group.span.end <= end)
