@@ -1850,7 +1850,9 @@ export function ProjectCanvas({
 				says:
 					outcome?.reason ??
 					(outcome?.rendered === "mismatching"
-						? "Saved, but the running app kept different words."
+						? intent?.operation.kind === "image"
+							? "Saved, but the running app kept a different image."
+							: "Saved, but the running app kept different words."
 						: outcome?.rendered === "pending"
 							? "Saved. The app is still loading."
 							: "Saved. The running result could not be verified."),

@@ -365,6 +365,7 @@ it.each([false, true])(
 			.toBe(30);
 		const notice = f.page.locator('[data-properties-rail] [data-hand-notice="mismatching"]');
 		await expect.poll(() => notice.count()).toBe(1);
+		expect(await notice.textContent()).toContain("Saved, but the running app kept a different image.");
 		await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
 		const composer = f.page.locator("[data-agent-rail] textarea");
 		await expect.poll(() => composer.inputValue()).toContain("second.svg");
