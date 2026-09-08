@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import type { SourceImagePreview } from "../source-image";
 import type { SourceStructuralExpectation } from "../source-structure";
 import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
 import { decodeImage, observeImage } from "./source-image";
@@ -582,9 +583,9 @@ function previewSource(generation: number, value: string): boolean {
 	previewSourceUses(generation, value);
 	return true;
 }
-async function previewImage(generation: number, value: string): Promise<boolean> {
-	if (!(await decodeImage(value))) return false;
-	return previewSource(generation, value);
+async function previewImage(generation: number, value: string): Promise<SourceImagePreview> {
+	if (!(await decodeImage(value))) return "failed";
+	return previewSource(generation, value) ? "ready" : "unavailable";
 }
 function cancelSource(generation: number): void {
 	const held = leases.get(generation);

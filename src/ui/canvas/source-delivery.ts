@@ -10,6 +10,7 @@ import {
 	type SourceUse,
 	type UseOutcome,
 } from "../../source-edit";
+import type { SourceImagePreview } from "../../source-image";
 import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 import type { SourceIntent } from "./source-intent";
@@ -504,13 +505,15 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[iframes, request],
 		),
 		previewImage: useCallback(
-			async (frame: string, generation: number, value: string) => {
+			async (frame: string, generation: number, value: string): Promise<SourceImagePreview> => {
 				const targets = prepared.current.get(generation)?.frames ?? [frame];
-				return (
-					await Promise.all(
-						targets.map((frame) => request<boolean>(frame, { action: "preview-image", generation, value })),
-					)
-				).every(Boolean);
+				const results = await Promise.all(
+					targets.map((frame) =>
+						request<SourceImagePreview>(frame, { action: "preview-image", generation, value }),
+					),
+				);
+				if (results.includes("failed")) return "failed";
+				return results.every((result) => result === "ready") ? "ready" : "unavailable";
 			},
 			[request],
 		),

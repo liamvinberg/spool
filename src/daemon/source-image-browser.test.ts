@@ -201,33 +201,59 @@ it("cancels a real staged drop before its delayed response without a late save o
 	expect(readFileSync(f.file("frames/home/canceled.svg"), "utf8")).toBe(SECOND);
 });
 
-it.each(["computed source", "failed decode"] as const)(
+it.each(["computed source", "failed decode", "unavailable content"] as const)(
 	"keeps original image intent for explicit Agent preparation after %s",
 	{
 		timeout: 120000,
 	},
 	async (failure) => {
 		const source = failure === "computed source" ? SOURCE.replace("src={image}", "src={String(image)}") : SOURCE;
-		const f = await originCanvas({ "shared/assets/first.svg": SVG }, source, "#hero");
+		const f = await originCanvas({ "shared/assets/first.svg": SVG }, source, "#hero", false, async (page) => {
+			if (failure !== "unavailable content") return;
+			await page.addInitScript(() => {
+				addEventListener(
+					"message",
+					(event) => {
+						if (event.data?.spool === "source-request" && event.data.action === "preview-image") {
+							Reflect.set(window, "unavailableImageRequest", event.data.id);
+							event.stopImmediatePropagation();
+						}
+					},
+					true,
+				);
+			});
+		});
 		const sends: string[] = [];
 		f.page.on("request", (request) => {
 			if (request.url().endsWith("/agent/turn")) sends.push(request.url());
 		});
 		await f.select();
-		const transfer = await f.target.evaluateHandle(() => {
-			const data = new DataTransfer();
-			data.items.add(new File(["not an SVG image"], "requested-picture.svg", { type: "image/svg+xml" }));
-			return data;
-		});
+		const transfer = await f.target.evaluateHandle(
+			(_element, bytes) => {
+				const data = new DataTransfer();
+				data.items.add(new File([bytes], "requested-picture.svg", { type: "image/svg+xml" }));
+				return data;
+			},
+			failure === "unavailable content" ? SECOND : "not an SVG image",
+		);
 		await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+		if (failure === "unavailable content")
+			await expect
+				.poll(() => f.target.evaluate(() => typeof Reflect.get(window, "unavailableImageRequest")))
+				.toBe("string");
 		const notice = f.page.locator('[data-properties-rail] [data-hand-notice="blocked"]');
-		await expect.poll(() => notice.count()).toBe(1);
+		// Unavailable delivery is concluded by the existing four-second source request deadline.
+		await expect.poll(() => notice.count(), { timeout: failure === "unavailable content" ? 8000 : 1000 }).toBe(1);
 		expect(await notice.textContent()).toContain(
-			failure === "computed source" ? "image expression is not a direct imported binding" : "decode",
+			failure === "computed source"
+				? "image expression is not a direct imported binding"
+				: failure === "unavailable content"
+					? "unavailable"
+					: "decode",
 		);
 		expect(f.writes).toEqual([]);
 		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
-		expect(existsSync(f.file("frames/home/requested-picture.svg"))).toBe(failure === "failed decode");
+		expect(existsSync(f.file("frames/home/requested-picture.svg"))).toBe(failure !== "computed source");
 		expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(
 			30,
 		);
@@ -568,7 +594,7 @@ it.each(["escape", "reselect"] as const)(
 					id,
 				),
 			)
-			.toBe(false);
+			.toBe("unavailable");
 		expect(f.writes).toEqual([]);
 		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(SOURCE);
 		expect(readFileSync(f.file("frames/home/pending.svg"), "utf8")).toBe(SECOND);

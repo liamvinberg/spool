@@ -1534,7 +1534,7 @@ else if (m.action === "inspect") { const el=elementFor(m.selector); reply(el ? s
 else if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation, m.field,m.operation) : undefined); }
 				else if (m.action === "complete") reply(source.complete(m.generation));
 				else if (m.action === "cancel") { source.cancel(m.generation); reply(true); }
-				else if (m.action === "preview-image") source.previewImage(m.generation,m.value).then(reply,()=>reply(false));
+				else if (m.action === "preview-image") source.previewImage(m.generation,m.value).then(reply,()=>reply("unavailable"));
 else if (m.action === "preview") reply(source.preview(m.generation, m.text));
 				else if (m.action === "install") source.install(m.publication, m.undo === true).then(reply, () => reply(undefined));
 				else if (m.action === "revoke") { source.revoke(m.publication); reply(true); }

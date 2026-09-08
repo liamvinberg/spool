@@ -10,3 +10,5 @@ export interface SourceImageExpectation {
 }
 
 export type SourceImageStaged = { ok: true; path: string; value: string } | { ok: false; reason: string };
+
+export type SourceImagePreview = "ready" | "failed" | "unavailable";

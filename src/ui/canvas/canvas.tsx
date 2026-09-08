@@ -2903,8 +2903,12 @@ export function ProjectCanvas({
 					setSaid({ kind: "source", frame, status: "saving", text: "", says: "Decoding image…", intent });
 					const previewed = await sourceDelivery.previewImage(frame, generation, staged.value);
 					if (!current()) return;
-					if (!previewed) {
-						await failed("The chosen image could not decode in its original uses. Source was not changed.");
+					if (previewed !== "ready") {
+						await failed(
+							previewed === "failed"
+								? "The chosen image could not decode in its original uses. Source was not changed."
+								: "The original image content is unavailable for preview. Source was not changed.",
+						);
 						return;
 					}
 					imageEditing.current = undefined;
