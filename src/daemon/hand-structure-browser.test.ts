@@ -718,3 +718,35 @@ function FrameBody({children}){return <main>{children}</main>}
 		await checked(!redo);
 	}
 });
+
+it.each([
+	{
+		name: "a different retained expression with equal output",
+		input: '{next?<RetainedCounter name="A"/>:<RetainedCounter name="A"/>}',
+	},
+	{ name: "a changed retained field", input: '<RetainedCounter name={next?"Changed":"A"}/>' },
+])("refuses Delete from $name", { timeout: 120_000 }, async ({ input }) => {
+	const source = `import {memo} from 'react';${COMPONENTS}const RetainedCounter=memo(Counter,()=>true);function Pass({children}){return children}export default function Frame(){const [next,tick]=useState(false);window.advance=()=>tick(true);return <main data-next={next?"yes":"no"} style={{padding:40}}><Pass key="a">${input}</Pass><Counter key="b" name="B"/></main>}`;
+	const f = await originCanvas({}, source, '[data-name="A"]');
+	await f.target.evaluate((element) => {
+		Reflect.set(window, "retainedStructuralTarget", element);
+		Reflect.get(window, "advance")();
+	});
+	await expect.poll(() => f.frame.locator("main").getAttribute("data-next")).toBe("yes");
+	expect(await f.target.textContent()).toBe("A:0");
+	await f.select();
+	const reading = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "read",
+	);
+	await f.page.keyboard.press("Backspace");
+	const result = await (await reading).json();
+	expect(result, JSON.stringify(result)).toEqual({
+		ok: false,
+		reason: "the retained component still uses an earlier source expression or field value",
+	});
+	await expect.poll(() => f.page.locator('[data-hand-notice="blocked"]').count()).toBe(1);
+	expect(f.writes).toEqual([]);
+	expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+	expect(await f.target.evaluate((element) => element === Reflect.get(window, "retainedStructuralTarget"))).toBe(true);
+	expect(await f.frame.locator('[data-name="B"]').textContent()).toBe("B:0");
+});

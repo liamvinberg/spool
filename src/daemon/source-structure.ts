@@ -83,9 +83,7 @@ function retainedOwner(pick: Selection): void {
 				]),
 			});
 		if (origin(current) !== origin(rendered))
-			throw new Error(
-				"different-expression or changed-field retained structural owner; predecessor refusal preserved",
-			);
+			throw new Error("the retained component still uses an earlier source expression or field value");
 	}
 }
 function slotLocal(fn: ReturnType<Sources["valueCallee"]>["fn"], field: string): string | undefined {
