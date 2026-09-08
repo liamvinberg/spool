@@ -527,9 +527,10 @@ function usePropertyDescription(control: PropertyControls | null | undefined, pr
 	describe.current = control?.describe;
 	useEffect(() => {
 		let live = true;
-		void describe.current?.(properties).then((description) => {
-			if (live) setDescribed({ identity, description });
-		});
+		if (properties.length)
+			void describe.current?.(properties).then((description) => {
+				if (live) setDescribed({ identity, description });
+			});
 		return () => {
 			live = false;
 		};
@@ -544,12 +545,25 @@ function usePropertyDescription(control: PropertyControls | null | undefined, pr
  * that draws the source's value also needs that property's native measurement,
  * which the frame captures for the property the read names.
  */
-function useOwnReading(control: PropertyControls | null | undefined, property: string) {
-	const properties = useMemo(() => [property], [property]);
-	return usePropertyDescription(control, properties)?.readings?.[property];
+function useOwnReading(view: View, property: string) {
+	// The element's own description already measured the property it was read
+	// against; every other control asks for its own native reading.
+	const shared = view.described?.readings?.[property];
+	const measured = shared?.native !== undefined;
+	// Until that description lands there is nothing to ask about: a control that
+	// asked first would pay for a second reading of the same class cell.
+	const own = view.described !== undefined && !measured;
+	const properties = useMemo(() => (own ? [property] : []), [property, own]);
+	const asked = usePropertyDescription(view.property, properties)?.readings?.[property];
+	return measured ? shared : asked;
 }
 
-/** The controls that read the source's own value rather than the class it can see. */
+/**
+ * The controls that read the source's own value rather than the class it can see.
+ *
+ * The first is what the element's own read is measured against, so it is the one
+ * control this description can hand a native value to.
+ */
 const DESCRIBED_PROPERTIES: readonly string[] = [
 	"color",
 	"background-color",
@@ -586,7 +600,7 @@ function ColourRow({
 	const row = ruleRow(property, "colour");
 	const prefix = row.rule.prefix;
 	const { ok, reason } = rowAdmission(view, row);
-	const own = useOwnReading(control, property);
+	const own = useOwnReading(view, property);
 	const reading = property === "color" || property === "background-color" ? own : undefined;
 	const reader = read ?? ((scoped: string) => colourOf(scoped, prefix, view.theme));
 	const held = worn<Colour>(view, reader, (colour) => colour.token === null);
@@ -794,7 +808,7 @@ function SourceNumberRow({
 }) {
 	const control = view.property;
 	const { reason } = rowAdmission(view, modelRow(property));
-	const reading = useOwnReading(control, property);
+	const reading = useOwnReading(view, property);
 	return (
 		<PropertyNumberField
 			property={property}

@@ -445,8 +445,10 @@ it("admits every control from one description of the element, and reads each con
 		expect.arrayContaining(["color", "background-color", "font-size", "line-height", "border-radius"]),
 	);
 	expect(rail.asked.filter((asked) => asked.length > 1)).toHaveLength(1);
+	// Only the property that read was measured against carries a native, so the
+	// other controls that draw a value ask once for their own, and colour does not.
 	expect(new Set(rail.asked.filter((asked) => asked.length === 1).flat())).toEqual(
-		new Set(["color", "background-color", "font-size", "line-height", "border-radius"]),
+		new Set(["background-color", "font-size", "line-height", "border-radius"]),
 	);
 	expect(swatchIn(rail, "color")).toBe("#F5391A");
 	expect(swatchIn(rail, "background")).toBe("#282828");
@@ -561,7 +563,8 @@ async function mount(
 						(async (properties) => {
 							asked.push(properties);
 							const readings: Record<string, SourcePropertyReading> = {};
-							for (const property of properties) {
+							// The daemon measures the property the read names, which is the first.
+							for (const [index, property] of properties.entries()) {
 								const reading = colourOf(
 									scopedClass(className, scope),
 									property === "color" ? "text" : "bg",
@@ -575,7 +578,7 @@ async function mount(
 										: reading.token
 											? { kind: "custom" }
 											: { kind: "page" },
-									native: token?.value ?? reading.paint ?? "transparent",
+									...(index === 0 ? { native: token?.value ?? reading.paint ?? "transparent" } : {}),
 								};
 							}
 							return { readings };
