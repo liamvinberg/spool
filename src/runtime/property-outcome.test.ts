@@ -1799,3 +1799,99 @@ it.each([
 		}, row.outside);
 	expect((await f.inspect(expected))[0]?.rendered).toBe(row.verdict);
 });
+
+it.each([
+	{ property: "border-inline-width", before: "border-x-2", after: "border-x-4", companion: "", side: "" },
+	{ property: "border-block-width", before: "border-y-2", after: "border-y-4", companion: "", side: "" },
+	{ property: "border-inline-start-width", before: "border-s-2", after: "border-s-4", companion: "", side: "right" },
+	{ property: "border-inline-end-width", before: "border-e-2", after: "border-e-4", companion: "", side: "left" },
+	{ property: "outline-width", before: "outline-2", after: "outline-4", companion: "outline-solid", side: "" },
+	{
+		property: "outline-offset",
+		before: "outline-offset-2",
+		after: "outline-offset-4",
+		companion: "outline-2 outline-solid",
+		side: "",
+	},
+	{ property: "stroke-width", before: "stroke-2", after: "stroke-4", companion: "stroke-red-500", side: "" },
+])("verifies compiled width $property against its own native side", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) =>
+		row.property === "stroke-width"
+			? `<svg width="60" height="60"><rect data-subject class="${classes}" x="6" y="6" width="40" height="40"/></svg>`
+			: `<div data-subject class="${classes}" style="width:60px;height:40px">Native width</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	// Only the outline width has no native length for its initial keyword; it stays unverified.
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(row.property === "outline-width" ? ["unverified", "unverified"] : ["verified", "mismatching"]);
+	if (row.property === "outline-width")
+		expect(cleared[0]?.reason, JSON.stringify({ cleared, effects: removed.effects })).toContain("initial");
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	if (row.side) {
+		// A right-to-left use must read the physical side its own native context selects.
+		const side = (extra: string) =>
+			`<div data-subject dir="rtl" class="${plan.next}" style="width:60px;height:40px;${extra}">Native width</div>`;
+		const rtl = await fixture(
+			`<!doctype html><style>${expected.css}</style>${side("")}${side(`border-${row.side}-width:9px;border-${row.side}-style:solid`)}`,
+		);
+		expect((await rtl.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	}
+});

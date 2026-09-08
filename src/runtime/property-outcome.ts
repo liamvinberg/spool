@@ -20,6 +20,34 @@ function keywordProperty(property: string): property is NativeKeywordProperty {
 	return Object.hasOwn(keywordDefaults, property);
 }
 
+// Companions whose effect the native applicability guard reads directly from this use.
+const outlineGuards = ["outline-style", "--tw-outline-style", "outline-color"];
+const decorationGuards = ["text-decoration-line", "text-decoration-style", "text-decoration-color"];
+
+/** Retained single-length rows, with the initial declaration and keywords their native use can show. */
+const lengthRows: Readonly<
+	Record<string, { initial?: string; inherited: boolean; keywords: readonly string[]; guarded: readonly string[] }>
+> = {
+	// The initial outline width is a keyword with no native length, so a cleared use stays unverified.
+	"outline-width": { inherited: false, keywords: [], guarded: outlineGuards },
+	"outline-offset": { initial: "0px", inherited: false, keywords: [], guarded: outlineGuards },
+	"stroke-width": { inherited: true, keywords: [], guarded: ["stroke", "stroke-opacity"] },
+	"text-indent": { initial: "0px", inherited: true, keywords: [], guarded: [] },
+	"text-decoration-thickness": {
+		initial: "auto",
+		inherited: false,
+		keywords: ["auto", "from-font"],
+		guarded: decorationGuards,
+	},
+	"text-underline-offset": { initial: "auto", inherited: true, keywords: ["auto"], guarded: decorationGuards },
+	"-webkit-line-clamp": {
+		initial: "none",
+		inherited: false,
+		keywords: ["none"],
+		guarded: ["display", "overflow", "-webkit-box-orient"],
+	},
+};
+
 const transformProperties: Readonly<Record<string, NativeTransformProperty>> = {
 	scale: "scale",
 	"scale-x": "scale",
@@ -68,7 +96,10 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (transform) return composedOutcome(element, expected, transform);
 	if (["filter", "brightness", "contrast", "saturate", "hue-rotate"].includes(expected.property))
 		return composedOutcome(element, expected, "filter");
-	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
+	if (
+		expected.property === "border-width" ||
+		/^border-(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-width$/.test(expected.property)
+	)
 		return borderOutcome(element, expected);
 	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
 	if (shadowProperties.includes(expected.property)) return composedOutcome(element, expected, "box-shadow");
@@ -85,6 +116,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		"fill",
 		"stroke",
 	].includes(expected.property);
+	const length = Object.hasOwn(lengthRows, expected.property) ? lengthRows[expected.property] : undefined;
 	const family = expected.property === "font-family";
 	const weight = expected.property === "font-weight";
 	const leading = expected.property === "line-height";
@@ -96,6 +128,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		!color &&
 		!corner &&
 		!family &&
+		!length &&
 		!weight &&
 		!leading &&
 		!spacing &&
@@ -127,7 +160,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			const component = rule.style.getPropertyValue(expected.property);
 			if (!component) return unverified("this corner has no native shorthand component proof");
 			applicable.push({ ...effect, property: expected.property, value: component });
-		} else return unverified("this property has dependent effects requiring native proof");
+		} else if (!length?.guarded.includes(effect.property))
+			return unverified("this property has dependent effects requiring native proof");
 	}
 
 	const selection = winningEffect(sheet, applicable);
@@ -154,6 +188,55 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return result.kind === "unknown"
 			? unverified(result.reason)
 			: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
+	}
+	if (length) {
+		const context = lengthContext(element, expected.property);
+		if (context) return unverified(context);
+		if (
+			(!winner || winner.owner === null) &&
+			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
+				element.style.getPropertyValue(expected.property))
+		)
+			return unverified("this native length has an independent inline context requiring proof");
+		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
+		if (winner && value === undefined) return unverified("this native length needs a resolved variable context");
+		if (!winner || value === "inherit") {
+			if (length.inherited) {
+				const parent = element.parentElement;
+				if (!parent) return unverified("this native length needs a native inherited context proof");
+				value = view.getComputedStyle(parent).getPropertyValue(expected.property);
+			} else value = length.initial;
+		}
+		if (value === undefined) return unverified("this native length has no independent initial declaration");
+		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
+		const counted = expected.property === "-webkit-line-clamp";
+		// An SVG stroke width without a unit is a user unit, which is this document's pixel.
+		const number = (input: string) =>
+			counted
+				? nativeCount(input)
+				: nativeLength(
+						element,
+						sheet,
+						expected.property,
+						expected.property === "stroke-width" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(input.trim())
+							? `${input.trim()}px`
+							: input,
+					);
+		const keyword = (input: string) =>
+			length.keywords.includes(input.trim().toLowerCase()) ? input.trim().toLowerCase() : undefined;
+		const wanted = number(value);
+		const actual = number(observed);
+		const wantedKeyword = keyword(value);
+		const actualKeyword = keyword(observed);
+		if ((wanted === undefined) === (wantedKeyword === undefined))
+			return unverified("this native length has no independent expected declaration");
+		if ((actual === undefined) === (actualKeyword === undefined))
+			return unverified("this native length needs a native value context proof");
+		const matches =
+			wantedKeyword === undefined && actualKeyword === undefined
+				? wanted === actual
+				: wantedKeyword === actualKeyword;
+		return { rendered: matches ? "verified" : "mismatching", observed };
 	}
 	if (family) {
 		if (
@@ -556,6 +639,42 @@ function paintContext(element: Element, property: string, value: string | undefi
 }
 
 /** Width and style are one visible border component; compiler-owned siblings remain independent. */
+const borderGroups = [
+	"",
+	"top",
+	"right",
+	"bottom",
+	"left",
+	"inline",
+	"block",
+	"inline-start",
+	"inline-end",
+	"block-start",
+	"block-end",
+];
+
+/** The logical roles this use actually resolves, read from its own native writing context. */
+function physicalSides(style: CSSStyleDeclaration): Map<string, string> | undefined {
+	const mode = style.writingMode;
+	const rightToLeft = style.direction === "rtl";
+	if (style.direction !== "ltr" && !rightToLeft) return;
+	if (mode === "horizontal-tb")
+		return new Map([
+			["block-start", "top"],
+			["block-end", "bottom"],
+			["inline-start", rightToLeft ? "right" : "left"],
+			["inline-end", rightToLeft ? "left" : "right"],
+		]);
+	if (mode !== "vertical-rl" && mode !== "vertical-lr") return;
+	const sideways = mode === "vertical-rl";
+	return new Map([
+		["block-start", sideways ? "right" : "left"],
+		["block-end", sideways ? "left" : "right"],
+		["inline-start", rightToLeft ? "bottom" : "top"],
+		["inline-end", rightToLeft ? "top" : "bottom"],
+	]);
+}
+
 function borderOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const view = element.ownerDocument.defaultView;
@@ -563,20 +682,44 @@ function borderOutcome(element: Element, expected: SourcePropertyExpectation): P
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
-	const sides =
-		expected.property === "border-width" ? ["top", "right", "bottom", "left"] : [expected.property.split("-")[1]!];
 	const style = view.getComputedStyle(element);
+	const physical = physicalSides(style);
+	if (!physical) return unverified("this border needs a known native writing mode context");
+	const logical = new Map([...physical].map(([role, side]) => [side, role]));
+	const group = expected.property.slice(7, -6);
+	const sides =
+		group === ""
+			? ["top", "right", "bottom", "left"]
+			: group === "inline" || group === "block"
+				? [physical.get(`${group}-start`), physical.get(`${group}-end`)]
+				: physical.has(group)
+					? [physical.get(group)]
+					: [group];
+	if (sides.some((side) => side === undefined)) return unverified("this border has no known native side");
 	let matches = true;
 	const observed: string[] = [];
-	for (const side of sides) {
+	for (const side of sides as string[]) {
+		const role = logical.get(side);
 		for (const component of ["width", "style"] as const) {
 			const property = `border-${side}-${component}`;
 			const applicable = borderDefaults(sheet, property);
 			for (const effect of expected.effects) {
 				if (effect.owner !== null && !classes.has(effect.owner)) continue;
-				if (!/^border-(?:(?:top|right|bottom|left)-)?(?:width|style)$/.test(effect.property))
+				const parts = /^border-(.*?)-?(width|style)$/.exec(effect.property);
+				const declared = parts?.[1] ?? "";
+				if (!parts || !borderGroups.includes(declared))
 					return unverified("this border has dependent effects requiring native proof");
-				if (effect.property !== property && effect.property !== `border-${component}`) continue;
+				if (parts[2] !== component) continue;
+				// Each declaration is read back through its own family; only the side is mapped.
+				const target =
+					declared === "" || declared === side
+						? property
+						: declared === role
+							? `border-${role}-${component}`
+							: (declared === "inline" || declared === "block") && role?.startsWith(`${declared}-`)
+								? `border-${role}-${component}`
+								: undefined;
+				if (target === undefined) continue;
 				const condition = pathCondition(element, effect.path, effect.owner !== null);
 				if (condition === "inactive") continue;
 				if (condition === "unverified") return unverified("this border needs a native conditional context proof");
@@ -586,7 +729,7 @@ function borderOutcome(element: Element, expected: SourcePropertyExpectation): P
 				const rule = sheet.cssRules[index];
 				if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
 				rule.style.setProperty(effect.property, value);
-				const expanded = rule.style.getPropertyValue(property);
+				const expanded = rule.style.getPropertyValue(target);
 				if (!expanded) return unverified("this border has no native shorthand component proof");
 				applicable.push({ ...effect, property, value: expanded });
 			}
@@ -856,6 +999,49 @@ function nativeLineHeight(element: Element, sheet: CSSStyleSheet, value: string)
 /** The native computed letter spacing serializes an authored zero as its normal keyword. */
 function nativeSpacing(element: Element, sheet: CSSStyleSheet, value: string): number | undefined {
 	return value.trim().toLowerCase() === "normal" ? 0 : nativeLength(element, sheet, "letter-spacing", value);
+}
+
+function nativeCount(value: string): number | undefined {
+	return /^\+?\d+$/.test(value.trim()) ? Number(value.trim()) : undefined;
+}
+
+/** A retained length needs its own applicable native surface before any value comparison. */
+function lengthContext(element: Element, property: string): string | undefined {
+	const view = element.ownerDocument.defaultView;
+	if (!view || !element.isConnected || element.getClientRects().length === 0)
+		return "this native length has no rendered native surface";
+	const native = view.getComputedStyle(element);
+	const text = () =>
+		element instanceof HTMLElement &&
+		Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+	if (property === "outline-width" || property === "outline-offset") {
+		if (["none", "hidden", "auto"].includes(native.outlineStyle))
+			return "this outline length needs an explicit visible outline";
+	} else if (property === "stroke-width") {
+		if (!(element instanceof SVGGeometryElement) || !["rect", "circle", "ellipse"].includes(element.localName))
+			return "this stroke width needs a known native geometry";
+		const bounds = element.getBBox();
+		if (!(bounds.width > 0 && bounds.height > 0)) return "this stroke width has no positive native geometry";
+		if (native.stroke === "none") return "this stroke width needs an applied native stroke paint";
+	} else if (property === "text-decoration-thickness" || property === "text-underline-offset") {
+		if (!text()) return "this decoration length needs authored native text";
+		if (
+			native.textDecorationLine === "none" ||
+			(property === "text-underline-offset" && !native.textDecorationLine.split(/\s+/).includes("underline"))
+		)
+			return "this decoration length needs an authored native text decoration";
+	} else if (property === "text-indent") {
+		if (!text() || !["block", "flow-root", "list-item", "table-cell", "inline-block"].includes(native.display))
+			return "this indent needs a native block container with text";
+	} else if (property === "-webkit-line-clamp") {
+		if (
+			native.display !== "-webkit-box" ||
+			native.getPropertyValue("-webkit-box-orient") !== "vertical" ||
+			native.overflow !== "hidden"
+		)
+			return "this line clamp needs its native flexible box context";
+	}
+	return;
 }
 
 function nativeWeight(value: string): number | undefined {
