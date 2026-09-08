@@ -57,7 +57,7 @@ export interface AgentEngine {
 	readonly id: AgentEngineId;
 	readonly authentication: AgentAuthentication;
 	coordinateSource?(source: SourceAgentSupervisor): void;
-	close?(): void;
+	close?(): void | Promise<void>;
 	prepareRename?(
 		root: string,
 		target: string,

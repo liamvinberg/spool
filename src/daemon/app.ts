@@ -3327,19 +3327,18 @@ export function createDaemonApp({
 		announceUiBuild: () => {
 			emitAppEvent({ kind: "ui" });
 		},
-		close: () => {
+		close: async () => {
 			for (const stop of playerWarmers.values()) stop();
 			playerWarmers.clear();
-			void playerCompiler.close();
+			const compiled = playerCompiler.close();
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();
-			for (const engine of engines.values()) engine.close?.();
+			const stoppedEngines = [...engines.values()].map((engine) => engine.close?.());
 			sourceOwner.close();
 			hub.close();
 			updateChecker.stop();
-			void shots.close();
-			void goReader.close();
+			await Promise.all([compiled, ...stoppedEngines, shots.close(), goReader.close()]);
 		},
 	};
 }
