@@ -296,7 +296,9 @@ it.each(Object.entries(refusals))(
 		const commits = await f.label.evaluate(() => globalThis.__SPOOL_OBSERVER__.commits);
 		const box = await f.select();
 		await f.page.mouse.click(box.x + 10, box.y + box.height / 2);
-		await expect.poll(() => f.page.locator('[data-hand-notice="blocked"], [data-hand-refusal]').count()).toBe(1);
+		await expect.poll(() => f.page.locator("[data-hand-refusal]").count()).toBe(1);
+		expect(await f.page.locator('[data-hand-notice="blocked"]').count()).toBe(1);
+		expect(await f.page.locator('[data-hand-notice="blocked"] [data-hand-refusal]').count()).toBe(1);
 		expect(await f.label.getAttribute("contenteditable")).toBe(null);
 		expect(readFileSync(f.file, "utf8")).toBe(source);
 		expect(readFileSync(f.frameFile, "utf8")).toBe(f.frameSource);
