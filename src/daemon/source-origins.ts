@@ -67,7 +67,7 @@ export interface Selection {
 	refusal?: string;
 }
 export type Operation =
-	| { kind: "text" | "delete" | "reorder" | "asset" }
+	| { kind: "text" | "delete" | "reorder" | "asset" | "properties" }
 	| { kind: "attribute"; attribute: string }
 	| { kind: "property"; property: string; scope: string };
 export interface Target {
@@ -284,6 +284,43 @@ function immutableSlot(fn: Component, slot: string, unit: Unit): boolean {
 	};
 	return visit(body) && count === 1;
 }
+/** A retained consumer can transport its exact committed child without consuming the newer input. */
+function retainsSelectedChild(call: Call, selection: Selection): boolean {
+	const ownsChildrenField = (snapshot: ValueSnapshot | undefined): boolean => {
+		const origin = snapshot?.fields.children?.origin;
+		const via = origin?.via[0];
+		return (
+			snapshot?.kind === "jsx" &&
+			snapshot.source === call.source &&
+			origin?.kind === "jsx" &&
+			origin.source === call.source &&
+			origin.field === "children" &&
+			origin.slot === "prop" &&
+			origin.element === snapshot.id &&
+			origin.via.length === 1 &&
+			via?.kind === "jsx" &&
+			via.source === call.source &&
+			via.element === snapshot.id &&
+			!via.replaced
+		);
+	};
+	const child = call.renderedValues?.fields.children?.value;
+	return (
+		call.retainedProps === true &&
+		call.renderedSource === call.source &&
+		ownsChildrenField(call.values) &&
+		ownsChildrenField(call.renderedValues) &&
+		selection.values?.kind === "jsx" &&
+		selection.values.source === selection.source &&
+		child !== null &&
+		typeof child === "object" &&
+		"kind" in child &&
+		"id" in child &&
+		child.kind === "element" &&
+		child.id === selection.values.id
+	);
+}
+
 function sameFlowElement(call: Call, slot: string, selection: Selection): boolean {
 	const value = call.values?.fields[slot]?.value;
 	return (
@@ -766,9 +803,9 @@ export class Sources {
 			}
 			if (actual.unit.file !== current.unit.file || actual.fn.start !== owner(current).start) {
 				// Transport is separate from authorship. Prove both the exact
-				// incoming element identity and the bounded source forwarding form.
+				// incoming or retained element identity and the bounded source forwarding form.
 				const direct =
-					call.passedChild &&
+					(call.passedChild || retainsSelectedChild(call, selection)) &&
 					site.node.children.some(
 						(child) => child.start === transported.node.start && child.end === transported.node.end,
 					) &&
@@ -1344,7 +1381,12 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 		address: { file: origin.unit.file, start: origin.node.start!, end: origin.node.end! },
 		source: origin.source,
 		role,
-		slot: operation.kind === "property" ? "class" : field === "children" ? "text" : "attribute",
+		slot:
+			operation.kind === "property" || operation.kind === "properties"
+				? "class"
+				: field === "children"
+					? "text"
+					: "attribute",
 		...(field === "children" ? {} : { attribute: field }),
 		expected,
 		scope: operation.kind === "property" ? operation.scope : "",
@@ -1399,7 +1441,7 @@ export function sourceRead(
 		if (value === undefined) throw new Error("data or transformed text is not inverted");
 		expected = value;
 		slot = name === undefined ? "text" : "attribute";
-	} else if (operation.kind === "property") {
+	} else if (operation.kind === "property" || operation.kind === "properties") {
 		const attr = attribute(site, "className");
 		expected = attr === undefined ? null : (literal(site, "className") ?? null);
 		if (attr !== undefined && expected === null) throw new Error("class expression is preserved");

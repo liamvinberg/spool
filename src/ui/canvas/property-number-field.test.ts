@@ -106,3 +106,19 @@ it("keeps a custom fractional rem unit through Shift stepping and completes once
 	);
 	expect(finish).toHaveBeenCalledExactlyOnceWith(true);
 });
+
+it.each([true, false])("marks only the authored typography reference in its token menu: %s", async (linked) => {
+	const { host, apply } = await mount({
+		tokens: linked ? ["text-body"] : ["text-[17.25px]"],
+		binding: linked ? { kind: "reference", name: "--text-body", value: "17.25px" } : { kind: "custom" },
+		native: "17.25px",
+	});
+	const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="font-size token"]');
+	if (!trigger) throw new Error("missing token menu");
+	await act(() => trigger.click());
+	const option = document.querySelector<HTMLButtonElement>('[data-menu-option="body"]');
+	if (!option) throw new Error("missing project token");
+	expect(option.getAttribute("aria-selected")).toBe(String(linked));
+	await act(() => option.click());
+	expect(apply).toHaveBeenCalledExactlyOnceWith({ kind: "binding", tokens: ["text-body"] });
+});

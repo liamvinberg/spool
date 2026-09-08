@@ -1,0 +1,59 @@
+/* The rule sits outside layout so every control is centered at 22px. The
+ * selected tab extends down to it without lowering the label inside the tab. */
+.app-header::after {
+	content: "";
+	position: absolute;
+	inset: auto 0 0;
+	height: 1px;
+	background: var(--color-border);
+	pointer-events: none;
+}
+
+.app-home-zone {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	height: 100%;
+	margin-right: 12px;
+	padding-right: 16px;
+}
+
+.app-home-zone::after {
+	content: "";
+	position: absolute;
+	right: 0;
+	width: 1px;
+	height: 18px;
+	background: var(--color-border-raised);
+}
+
+.app-home {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	height: 32px;
+	padding: 0 4px 0 6px;
+	font: var(--type-control);
+	color: var(--color-muted);
+	cursor: pointer;
+}
+
+.app-home:is(:hover, [aria-current]) {
+	color: var(--color-text);
+}
+
+.app-home:active {
+	transform: translateY(1px);
+}
+
+.app-header button:focus-visible {
+	outline: 2px solid var(--color-muted);
+	outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.app-home:active {
+		transform: none;
+	}
+}

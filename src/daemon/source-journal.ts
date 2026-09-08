@@ -70,6 +70,10 @@ export function createSourceJournal() {
 		transform(file: string, original: SourceInput, patches: readonly SpanPatch[]): SpanPatch[] {
 			let result = patches.map((patch) => ({ ...patch }));
 			const boundaries = patches.map(() => new Map<symbol, "before" | "after">());
+			const coveredSpans = patches.map(
+				() => new Map<symbol, { startOffset: number; endOffset: number; before: string }>(),
+			);
+			const interiorEdits = patches.map(() => new Map<symbol, { before: string; after: string }[]>());
 			const route = path(file, original);
 			const canceled = canceledSteps(route);
 			for (const step of route) {
@@ -77,6 +81,30 @@ export function createSourceJournal() {
 					let shift = 0;
 					let length = patch.end - patch.start;
 					for (const edit of step.edits ?? []) {
+						const interiors = step.inverseOf ? interiorEdits[index]!.get(step.inverseOf) : undefined;
+						const restored =
+							interiors?.findIndex((held) => held.before === edit.text && held.after === edit.before) ?? -1;
+						if (
+							step.inverseOf &&
+							interiors &&
+							restored >= 0 &&
+							edit.start >= patch.start &&
+							edit.end <= patch.end
+						) {
+							length += edit.text.length - (edit.end - edit.start);
+							interiors.splice(restored, 1);
+							if (!interiors.length) interiorEdits[index]!.delete(step.inverseOf);
+							continue;
+						}
+						const covered = step.inverseOf ? coveredSpans[index]!.get(step.inverseOf) : undefined;
+						if (covered && edit.start === patch.start && edit.end === patch.end) {
+							if (edit.text !== covered.before)
+								throw new Error("the inverse did not restore its owned source span");
+							shift += covered.startOffset;
+							length = covered.endOffset - covered.startOffset;
+							coveredSpans[index]!.delete(step.inverseOf!);
+							continue;
+						}
 						const boundary = step.inverseOf ? boundaries[index]!.get(step.inverseOf) : undefined;
 						const restoresBoundary =
 							patch.start === patch.end &&
@@ -91,7 +119,7 @@ export function createSourceJournal() {
 							!(edit.start === patch.end && edit.start < edit.end && patch.start < patch.end)
 						) {
 							// Only a registered hand operation and its actual inverse may
-							// temporarily cover this exact literal. Intervening agent touches
+							// temporarily overlap this owned span. Intervening agent touches
 							// still refuse, even when they happen to restore the same bytes.
 							if (restoresBoundary) boundaries[index]!.delete(step.inverseOf!);
 							else if (canceledEdge && edit.start < edit.end && patch.start === patch.end)
@@ -99,9 +127,30 @@ export function createSourceJournal() {
 								boundaries[index]!.set(step.id, edit.start === patch.start ? "before" : "after");
 							else if (canceledEdge && patch.start < patch.end) {
 								// The paired insertion moves this intact span; its inverse moves it back.
-							} else if (canceled.has(step.id) && edit.start === patch.start && edit.end === patch.end)
+							} else if (
+								canceled.has(step.id) &&
+								edit.start <= patch.start &&
+								edit.end >= patch.end &&
+								(edit.start < edit.end || coveredSpans[index]!.size > 0)
+							) {
+								// An acknowledged removal may cover an earlier literal's interior.
+								// Track that interior only until its exact private inverse restores it.
+								coveredSpans[index]!.set(step.id, {
+									startOffset: patch.start - edit.start,
+									endOffset: patch.end - edit.start,
+									before: edit.before,
+								});
+								shift += edit.start - patch.start;
 								length = edit.text.length;
-							else throw new Error("another recorded operation touched these words");
+								continue;
+							} else if (canceled.has(step.id) && edit.start >= patch.start && edit.end <= patch.end) {
+								// A private edit inside the owned span must return its exact bytes.
+								const entries = interiorEdits[index]!.get(step.id) ?? [];
+								entries.push({ before: edit.before, after: edit.text });
+								interiorEdits[index]!.set(step.id, entries);
+								length += edit.text.length - (edit.end - edit.start);
+								continue;
+							} else throw new Error("another recorded operation touched these words");
 						}
 						if (edit.end <= patch.start && !(restoresBoundary && boundary === "before"))
 							shift += edit.text.length - (edit.end - edit.start);
@@ -109,6 +158,8 @@ export function createSourceJournal() {
 					return { ...patch, start: patch.start + shift, end: patch.start + shift + length };
 				});
 			}
+			if (coveredSpans.some((spans) => spans.size > 0) || interiorEdits.some((edits) => edits.size > 0))
+				throw new Error("the inverse did not restore its owned source span");
 			return result;
 		},
 		record(

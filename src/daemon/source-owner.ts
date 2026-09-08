@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative } from "node:path";
+import { basename, dirname, isAbsolute, relative } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import {
+	isPropertyOperation,
 	type SourceChange,
 	type SourceDescription,
 	type SourceInventory,
@@ -17,12 +18,20 @@ import {
 	sameSourceOperation,
 	type UseOutcome,
 } from "../source-edit";
+import type { SourceImagePut, SourceImageStaged } from "../source-image";
 import type { SourcePropertyEnvironment, SourcePropertyPreview, SourcePropertyReading } from "../source-property";
+import {
+	propertyGroupTarget,
+	type SourcePropertyGroupExpectation,
+	samePropertyGroupTarget,
+} from "../source-property-group";
+import { ASSET_FILTER } from "./assets";
 import type { ExecutedEdit } from "./bundled-editor";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-path";
 import type { SourceObservation } from "./events";
 import { planFactoryLiteral } from "./factory-literal";
+import { identifierHint, specifierFrom } from "./hand-asset";
 import { applySpan, type HandOp, planOps, type SpanPatch, spanBetween } from "./hand-write";
 import { lookupFrame } from "./projection";
 import {
@@ -35,13 +44,19 @@ import {
 } from "./retained-compile";
 import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from "./source-agent";
 import { sourceHistoryCompilation } from "./source-history";
+import { compileImageChange, compileImageInverse } from "./source-image-plan";
+import { type StagedImage, stageImageAsset } from "./source-image-stage";
+import { assertImageContext, resolveImageSource } from "./source-image-target";
+import { imageExpectation } from "./source-image-values";
 import { createSourceJournal } from "./source-journal";
 import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
+import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
 import { planPropertyValue } from "./source-property-plan";
+import { propertyPreviewDeclarations } from "./source-property-preview";
 import { propertyReading } from "./source-property-reading";
 import { propertyScopePaths } from "./source-property-scope";
 import { propertyState } from "./source-property-state";
@@ -59,6 +74,7 @@ import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
 interface PropertyProof {
+	selections?: SourcePropertyGroupExpectation["selections"];
 	environment: SourcePropertyEnvironment;
 	roots: ReadonlySet<string>;
 	scopePaths: Extract<SourcePublication["expected"], { kind: "property" }>["scopePaths"];
@@ -70,6 +86,8 @@ interface StructuralParent {
 interface OriginalRead {
 	inverseExpected?: SourcePublication["expected"];
 	property?: PropertyProof;
+	imageRestore?: RetainedCompilation;
+	image?: StagedImage;
 	structuralParents?: StructuralParent[];
 	retryFrom?: RetainedCompilation;
 	structure?: SourceDeleteTarget;
@@ -86,6 +104,7 @@ interface OriginalRead {
 }
 interface Receipt {
 	property?: PropertyProof;
+	imageRestore?: RetainedCompilation;
 	structuralAfter?: Extract<SourcePublication["expected"], { kind: "structure" }>;
 	structuralParents?: StructuralParent[];
 	purpose: SourceRead["operation"];
@@ -123,6 +142,24 @@ export function createSourceOwner(
 	const receipts = new Map<string, Receipt>();
 	const journal = createSourceJournal();
 	const continuity = new Map<string, SourceInput>();
+	const stagedAdditions = new Map<string, { root: string; input: SourceInput }>();
+	const stagedDirectories = new Map<string, Map<string, Map<string, string>>>();
+	function afterStaging(root: string, compilation: RetainedCompilation): RetainedCompilation {
+		const transitions = stagedDirectories.get(root);
+		if (!transitions) return compilation;
+		const directories = new Map(compilation.directories);
+		for (const [directory, changes] of transitions) {
+			if (compilation.globDiscoveries?.some((group) => group.directories.includes(directory))) continue;
+			let entries = directories.get(directory);
+			while (entries !== undefined && changes.has(entries)) entries = changes.get(entries);
+			if (entries !== undefined) directories.set(directory, entries);
+		}
+		return { ...compilation, directories };
+	}
+	function sourcePublication(id: string) {
+		const held = compiler.publication(id);
+		return held ? { ...held, compilation: afterStaging(held.root, held.compilation) } : undefined;
+	}
 	const tails = new Map<string, Promise<unknown>>();
 	const agentBarriers = new Map<string, Promise<void>>();
 	let sequence = 0;
@@ -134,6 +171,8 @@ export function createSourceOwner(
 	const losses = new Map<string, Set<(all?: boolean) => void>>();
 	let watchSource: ((root: string, listener: (event: SourceObservation) => void) => () => void) | undefined;
 	function retire(root: string): void {
+		stagedDirectories.delete(root);
+		for (const [file, addition] of stagedAdditions) if (addition.root === root) stagedAdditions.delete(file);
 		for (const [id, held] of deliveries) if (held.root === root) delivered(id);
 		for (const [handle, held] of reads) if (held.root === root) reads.delete(handle);
 		for (const held of receipts.values()) if (held.root === root) held.retired = true;
@@ -242,7 +281,7 @@ export function createSourceOwner(
 				throw new Error("compiler configuration changed since this edit was read");
 		for (const file of compilation.configurationAbsent)
 			if (existsSync(file)) throw new Error("compiler configuration resolution changed since this edit was read");
-		for (const [path, entries] of compilation.directories)
+		for (const [path, entries] of afterStaging(root, compilation).directories)
 			if (directoryEntries(path) !== entries) {
 				for (const receipt of receipts.values()) if (receipt.required.directories.has(path)) receipt.retired = true;
 				throw new Error("module resolution changed since this edit was read");
@@ -259,6 +298,7 @@ export function createSourceOwner(
 		return error instanceof Error ? error.message : "the source operation could not finish";
 	}
 	async function currentCompilation(root: string, frame: string, compilation: RetainedCompilation) {
+		compilation = afterStaging(root, compilation);
 		const inputs = new Map([...compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]));
 		const current = await compiler.compilePublication(root, frame, inputs, sequence, compilation.absent, compilation);
 		valid(root, current);
@@ -280,7 +320,7 @@ export function createSourceOwner(
 			const observed = await observe(root, frame, generation, observer);
 			if (!observed || !sameSourceOccurrence(observed, original))
 				throw new Error("the original committed occurrence is no longer eligible");
-			const publication = compiler.publication(original.publication);
+			const publication = sourcePublication(original.publication);
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the original source owner is no longer available");
 			let { compilation } = publication;
@@ -310,24 +350,30 @@ export function createSourceOwner(
 			}
 			if (operation.kind === "literal" && operation.field !== original.field)
 				throw new Error("the source purpose does not match the original field");
+			if (operation.kind === "image" && retry)
+				throw new Error("read the current image binding before trying this replacement again");
 			const retryFrom = retry ? compilation : undefined;
-			if (retry && operation.kind !== "literal")
+			if (retry && operation.kind !== "literal" && operation.kind !== "property")
 				throw new Error("this source operation has no admitted retry planner");
-			let resolved =
-				operation.kind === "property"
-					? {
-							kind: "property" as const,
-							...resolvePropertySource(root, compilation, original, generation, operation),
-						}
+			let resolved = isPropertyOperation(operation)
+				? {
+						kind: "property" as const,
+						...resolvePropertySource(root, compilation, original, generation, operation),
+					}
+				: operation.kind === "image"
+					? { kind: "image" as const, ...resolveImageSource(root, compilation, original, generation) }
 					: { kind: "literal" as const, ...resolveTextSource(root, compilation, original, generation) };
 			if (retry) {
 				const current = await currentCompilation(root, frame, compilation);
 				if (readingCoverage !== (coverage.get(root) ?? 0))
 					throw new Error("source observation changed during retry");
-				resolved = {
-					kind: "literal" as const,
-					...retryTextSource(root, compilation, current, original, generation),
-				};
+				resolved =
+					operation.kind === "property"
+						? {
+								kind: "property" as const,
+								...retryPropertySource(root, compilation, current, original, generation, operation),
+							}
+						: { kind: "literal" as const, ...retryTextSource(root, compilation, current, original, generation) };
 				compilation = current;
 			}
 			const { cellKey, cell, target } = resolved;
@@ -347,6 +393,7 @@ export function createSourceOwner(
 			const handle = randomUUID();
 			const read: SourceRead = {
 				operation,
+				...(target?.asset ? { asset: target.asset.path } : {}),
 				handle,
 				owner,
 				original: { ...observed },
@@ -354,7 +401,13 @@ export function createSourceOwner(
 				generation,
 				source: cell.source,
 				role:
-					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
+					operation.kind === "image"
+						? "image-binding"
+						: target?.syntax === "react-call"
+							? "factory-literal"
+							: cell.field
+								? "literal-attribute"
+								: "literal-child",
 				cell: cellKey,
 				...(cell?.field ? { field: cell.field } : {}),
 				scope: target?.role ?? "definition",
@@ -377,11 +430,116 @@ export function createSourceOwner(
 			return { ok: false, reason: reason(error) };
 		}
 	}
+	function stageImage(
+		root: string,
+		handle: string,
+		generation: number,
+		original: SourceOccurrence,
+		put: SourceImagePut,
+	): Promise<SourceImageStaged> {
+		return ordered(root, async () => {
+			try {
+				const held = reads.get(handle);
+				if (
+					!held ||
+					held.root !== root ||
+					held.read.operation.kind !== "image" ||
+					held.read.generation !== generation ||
+					!sameSourceOccurrence(held.read.original, original)
+				)
+					throw new Error("the original image edit is no longer eligible");
+				const observed = await observe(root, held.frame, generation, held.observer);
+				if (reads.get(handle) !== held || !observed || !sameSourceOccurrence(observed, original))
+					throw new Error("the original image changed before staging");
+				valid(root, held.compilation);
+				if (held.coverage !== (coverage.get(root) ?? 0))
+					throw new Error("source observation was lost before staging");
+				const found = lookupFrame(root, held.frame);
+				if (found.kind !== "found") throw new Error("the original image frame is no longer available");
+				const image = stageImageAsset(root, found.dir, put, (file) => {
+					const compilations = [
+						held.compilation,
+						...(held.read.reach?.uses ?? []).flatMap((use) => {
+							const known = sourcePublication(use.original.publication);
+							return known ? [known.compilation] : [];
+						}),
+					];
+					if (
+						compilations.some((compilation) =>
+							compilation.globDiscoveries?.some((group) => group.directories.includes(dirname(file))),
+						)
+					)
+						throw new Error("the new image could change an original computed import inventory");
+				});
+				if (image.created) {
+					const directories = new Map(held.compilation.directories);
+					const before = directories.get(image.created.directory);
+					if (before !== undefined && before !== image.created.before)
+						throw new Error("the original image directory changed");
+					if (before !== undefined) directories.set(image.created.directory, image.created.after);
+					held.compilation = { ...held.compilation, directories };
+				}
+				valid(root, held.compilation);
+				held.image = image;
+				if (image.created) {
+					stagedAdditions.set(image.file, { root, input: image.input });
+					const directories = stagedDirectories.get(root) ?? new Map<string, Map<string, string>>();
+					const changes = directories.get(image.created.directory) ?? new Map<string, string>();
+					changes.set(image.created.before, image.created.after);
+					directories.set(image.created.directory, changes);
+					stagedDirectories.set(root, directories);
+				}
+				return { ok: true, path: image.path, value: image.value };
+			} catch (error) {
+				return { ok: false, reason: reason(error) };
+			}
+		});
+	}
+	/** The watcher still observes source; only this unchanged new-file event owes no frame reload. */
+	function stagedAddition(root: string, file: string): (() => void) | undefined {
+		const held = stagedAdditions.get(file);
+		if (!held || held.root !== root) return undefined;
+		try {
+			assertDesignFile(realDesignDir(root), file);
+			if (!sameInput(held.input, readInput(file))) throw new Error("the staged addition changed");
+			return () => {
+				if (stagedAdditions.get(file) === held) stagedAdditions.delete(file);
+			};
+		} catch {
+			stagedAdditions.delete(file);
+			return undefined;
+		}
+	}
+
 	async function reach(root: string, handle: string, inventories: SourceInventory[]) {
 		const held = reads.get(handle);
 		if (!held || held.root !== root)
 			return { ok: false as const, reason: "the original source read is no longer available" };
-		return discover(root, held, inventories);
+		const found = await discover(root, held, inventories);
+		if (!found.ok || held.read.operation.kind !== "property") return found;
+		const placeholder = `var(--spool-property-sample-${held.read.handle})`;
+		const planned = await preview(root, handle, held.read.generation, 0, held.read.original, {
+			kind: "property",
+			value: { kind: "custom", value: placeholder },
+		});
+		if (
+			planned.ok &&
+			planned.preview.frames.some(
+				(frame) => frame.css.includes(placeholder) || frame.bundledCss.includes(placeholder),
+			)
+		) {
+			const declarations = (
+				await Promise.all(
+					planned.preview.frames.map(async (frame) => {
+						const compiled = await inspectPropertyCss(`${frame.css}\n${frame.bundledCss}`);
+						return propertyPreviewDeclarations(compiled.effects, placeholder);
+					}),
+				)
+			).flat();
+			if (declarations.length)
+				held.read = { ...held.read, propertyPreview: { placeholder, declarations, plan: planned.preview } };
+		}
+		return { ok: true as const, read: held.read };
 	}
 	async function describe(
 		root: string,
@@ -391,7 +549,7 @@ export function createSourceOwner(
 		operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
 	): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
 		try {
-			const publication = compiler.publication(original.publication);
+			const publication = sourcePublication(original.publication);
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the source owner is no longer available");
 			valid(root, publication.compilation);
@@ -416,12 +574,13 @@ export function createSourceOwner(
 				const { handle: _handle, owner: _owner, generation: _generation, ...description } = found.read;
 				return { ok: true, description };
 			}
-			const resolved =
-				operation.kind === "property"
-					? {
-							kind: "property" as const,
-							...resolvePropertySource(root, publication.compilation, original, 0, operation),
-						}
+			const resolved = isPropertyOperation(operation)
+				? {
+						kind: "property" as const,
+						...resolvePropertySource(root, publication.compilation, original, 0, operation),
+					}
+				: operation.kind === "image"
+					? { kind: "image" as const, ...resolveImageSource(root, publication.compilation, original, 0) }
 					: { kind: "literal" as const, ...resolveTextSource(root, publication.compilation, original, 0) };
 			const { cellKey, cell, target } = resolved;
 			let property: SourcePropertyReading | undefined;
@@ -442,6 +601,7 @@ export function createSourceOwner(
 			const read: SourceRead = {
 				...(property ? { property } : {}),
 				operation,
+				...(target?.asset ? { asset: target.asset.path } : {}),
 				handle: "",
 				owner,
 				generation: 0,
@@ -449,8 +609,13 @@ export function createSourceOwner(
 				source: cell.source,
 				cell: cellKey,
 				value: cell.value,
-				role:
-					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
+				role: cell.image
+					? "image-binding"
+					: target?.syntax === "react-call"
+						? "factory-literal"
+						: cell.field
+							? "literal-attribute"
+							: "literal-child",
 				scope: target?.role ?? "definition",
 				repeated: target?.repeated ?? false,
 				...(cell?.field ? { field: cell.field } : {}),
@@ -496,7 +661,7 @@ export function createSourceOwner(
 				reason: says,
 			});
 		for (const inventory of inventories) {
-			const publication = compiler.publication(inventory.publication);
+			const publication = sourcePublication(inventory.publication);
 			if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
 				unknown.add(inventory.frame);
 				continue;
@@ -525,23 +690,25 @@ export function createSourceOwner(
 				try {
 					// Only a receipt-owned inverse may resolve a retained old rendered value
 					// against this exact cell. Ordinary reads retain literal equality checks.
-					const target =
-						operation.kind === "property"
-							? resolvePropertySource(
-									root,
-									publication.compilation,
-									use.original,
-									generation,
-									operation,
-									mode === "inverse" ? { kind: "inverse", cell } : undefined,
-								)
-							: resolveTextSource(
-									root,
-									publication.compilation,
-									use.original,
-									generation,
-									mode === "inverse" ? cell : undefined,
-								);
+					const resolveSource = publication.compilation.cells[cell]?.image
+						? resolveImageSource
+						: resolveTextSource;
+					const target = isPropertyOperation(operation)
+						? resolvePropertySource(
+								root,
+								publication.compilation,
+								use.original,
+								generation,
+								operation,
+								mode === "inverse" ? { kind: "inverse", cell } : undefined,
+							)
+						: resolveSource(
+								root,
+								publication.compilation,
+								use.original,
+								generation,
+								mode === "inverse" ? cell : undefined,
+							);
 					if (
 						target.cellKey === cell &&
 						!uses.some(
@@ -682,6 +849,12 @@ export function createSourceOwner(
 		executed?: readonly SpanPatch[],
 		inverseOf?: symbol,
 	): Promise<SourceResult> {
+		held = {
+			...held,
+			compilation: afterStaging(held.root, held.compilation),
+			...(held.history ? { history: afterStaging(held.root, held.history) } : {}),
+			...(held.imageRestore ? { imageRestore: afterStaging(held.root, held.imageRestore) } : {}),
+		};
 		valid(held.root, held.history ?? held.compilation);
 		if (held.coverage !== (coverage.get(held.root) ?? 0))
 			throw new Error("source observation was lost before saving");
@@ -714,6 +887,65 @@ export function createSourceOwner(
 		const input = originalInput ? journal.current(held.file, originalInput) : undefined;
 		if (!input) throw new Error("the original compiler input is missing");
 		const before = input.bytes.toString("utf8");
+		let imageSnapshot: RetainedCompilation | undefined;
+		const imageRelated = new Map<string, RetainedCompilation>();
+		if (expected.kind === "image") {
+			const current = { ...held.compilation, inputs: rebased };
+			imageSnapshot = held.imageRestore
+				? await compileImageInverse(
+						compiler,
+						held.root,
+						held.frame,
+						current,
+						held.file,
+						next,
+						held.imageRestore,
+						held.sourceOnly,
+					)
+				: held.image
+					? await compileImageChange(compiler, held.root, held.frame, current, held.file, next, held.image)
+					: undefined;
+			if (!imageSnapshot) throw new Error("the original image staging evidence is missing");
+			const key = held.read.cell ?? held.read.original.cell;
+			const image = imageSnapshot.cells[key];
+			if (!image?.image || image.value !== expected.value || (image.absent === true) !== expected.absent)
+				throw new Error("the planned image no longer resolves to its requested source value");
+			expected = { ...expected, source: image.source };
+			if (held.imageRestore && JSON.stringify(image.image) !== JSON.stringify(held.imageRestore.cells[key]?.image))
+				throw new Error("the original inverse image import binding changed");
+			for (const use of held.read.reach?.uses ?? []) {
+				if (use.frame === held.frame || imageRelated.has(use.frame)) continue;
+				const prior = sourcePublication(use.original.publication);
+				if (!prior || prior.root !== held.root || prior.frame !== use.frame)
+					throw new Error("an affected image publication is no longer available");
+				valid(held.root, prior.compilation);
+				const inputs = new Map(
+					[...prior.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
+				);
+				const current = { ...prior.compilation, inputs };
+				const prospective = held.imageRestore
+					? await compileImageInverse(compiler, held.root, use.frame, current, held.file, next, held.imageRestore)
+					: held.image
+						? await compileImageChange(compiler, held.root, use.frame, current, held.file, next, held.image)
+						: undefined;
+				if (
+					!prospective ||
+					prospective.cells[key]?.value !== expected.value ||
+					(prospective.cells[key]?.absent === true) !== expected.absent
+				)
+					throw new Error("an affected image no longer resolves to the requested source value");
+				valid(held.root, prior.compilation);
+				imageRelated.set(use.frame, prospective);
+			}
+			valid(held.root, held.history ?? held.compilation);
+			for (const [path, input] of held.compilation.inputs)
+				if (ASSET_FILTER.test(path) && !sameInput(input, readInput(path)))
+					throw new Error("the original image dependency bytes changed before saving");
+			if (held.image && !sameInput(held.image.input, readInput(held.image.file)))
+				throw new Error("the staged image bytes changed before saving");
+			if (held.coverage !== (coverage.get(held.root) ?? 0))
+				throw new Error("source observation was lost before saving");
+		}
 		let structureBefore = held.read.structure;
 		if (held.structure && expected.kind === "structure") {
 			if (!structureBefore) throw new Error("the original structural parent guard is missing");
@@ -741,7 +973,12 @@ export function createSourceOwner(
 			held.compilation.packet.shape,
 		);
 		if (next === before) return { ok: true, source: "unchanged", publication: null };
-		const frozen = new Map([...held.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]));
+		const frozen = new Map(
+			[...(imageSnapshot ?? held.compilation).inputs].map(([file, captured]) => [
+				file,
+				file === held.file ? input : journal.current(file, captured),
+			]),
+		);
 		// Source remains ordinary files. This final synchronous check and rename
 		// cannot exclude an uncoordinated process saving after the check.
 		const forward = applySourcePatches(before, executed ?? [spanBetween(next, before)]);
@@ -763,11 +1000,14 @@ export function createSourceOwner(
 			handle: randomUUID(),
 			...(held.read.original.field ? { field: held.read.original.field } : {}),
 		};
-		const saved = { ...held.compilation, inputs: frozen };
+		const saved = { ...(imageSnapshot ?? held.compilation), inputs: frozen };
 		const inverse: Receipt = {
 			...(expected.kind === "structure" ? { structuralAfter: expected } : {}),
 			purpose: held.read.operation,
 			...(held.property ? { property: held.property } : {}),
+			...(expected.kind === "image"
+				? { imageRestore: sourceHistoryCompilation(held.root, held.compilation, held.file) }
+				: {}),
 			...(held.structure
 				? {
 						structure: held.structure,
@@ -801,13 +1041,14 @@ export function createSourceOwner(
 		};
 		receipts.set(receipt.handle, inverse);
 		if (held.sourceOnly) {
-			const cells: RetainedCompilation["cells"] = {};
-			for (const [file, input] of frozen)
-				if (/\.[cm]?[jt]sx?$/.test(file))
-					Object.assign(
-						cells,
-						lowerLiterals(relative(realDesignDir(held.root), file), input.bytes.toString("utf8")).cells,
-					);
+			const cells: RetainedCompilation["cells"] = imageSnapshot?.cells ?? {};
+			if (!imageSnapshot)
+				for (const [file, input] of frozen)
+					if (/\.[cm]?[jt]sx?$/.test(file))
+						Object.assign(
+							cells,
+							lowerLiterals(relative(realDesignDir(held.root), file), input.bytes.toString("utf8")).cells,
+						);
 			inverse.compilation = { ...saved, cells };
 			inverse.required = sourceHistoryCompilation(held.root, inverse.compilation, held.file);
 			return {
@@ -824,8 +1065,8 @@ export function createSourceOwner(
 				held.frame,
 				frozen,
 				++sequence,
-				held.compilation.absent,
-				held.compilation,
+				(imageSnapshot ?? held.compilation).absent,
+				imageSnapshot ?? held.compilation,
 			);
 			if (held.coverage !== (coverage.get(held.root) ?? 0))
 				throw new Error("source observation was lost after saving");
@@ -858,11 +1099,15 @@ export function createSourceOwner(
 				const original = targets[0];
 				if (!original) continue;
 				try {
-					const prior = compiler.publication(original.publication);
+					const prior = sourcePublication(original.publication);
 					if (!prior || prior.root !== held.root || prior.frame !== frame)
 						throw new Error("the affected frame publication is no longer available");
+					const image = imageRelated.get(frame);
 					const inputs = new Map(
-						[...prior.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
+						[...(image ?? prior.compilation).inputs].map(([file, input]) => [
+							file,
+							file === held.file ? after : journal.current(file, input),
+						]),
 					);
 					if (!inputs.has(held.file)) throw new Error("the affected frame has no source dependency");
 					const compatibleInputs = new Map(inputs);
@@ -873,14 +1118,14 @@ export function createSourceOwner(
 						compatibleInputs,
 						prior.compilation.packet.shape,
 					);
-					valid(held.root, { ...prior.compilation, inputs });
+					valid(held.root, { ...(image ?? prior.compilation), inputs });
 					const next = await compiler.compilePublication(
 						held.root,
 						frame,
 						inputs,
 						++sequence,
-						prior.compilation.absent,
-						prior.compilation,
+						(image ?? prior.compilation).absent,
+						image ?? prior.compilation,
 					);
 					if (next.packet.shape !== prior.compilation.packet.shape)
 						throw new Error("the affected frame changed executable shape");
@@ -965,8 +1210,66 @@ export function createSourceOwner(
 		}
 	}
 
-	async function checkPropertyChanges(held: OriginalRead, proof: PropertyProof) {
-		if (held.read.operation.kind !== "property") throw new Error("property proof has another operation purpose");
+	async function planReadProperty(held: OriginalRead, change: SourceChange) {
+		const operation = held.read.operation;
+		if (!isPropertyOperation(operation)) throw new Error("this read has no property purpose");
+		const { target, environment } = resolvePropertySource(
+			held.root,
+			held.compilation,
+			held.read.original,
+			held.read.generation,
+			operation,
+			held.retryFrom && held.read.cell
+				? { kind: "retry", cell: held.read.cell, before: held.read.original.value, after: held.read.value }
+				: undefined,
+		);
+		const planned = await (async () => {
+			if (operation.kind === "property" && change.kind === "property")
+				return {
+					plan: await planPropertyValue(
+						held.root,
+						held.compilation.inputs,
+						held.read.value,
+						operation,
+						change.value,
+						environment,
+						held.compilation.packet.bundledCss,
+					),
+					selections: undefined,
+				};
+			if (operation.kind === "properties" && change.kind === "properties") {
+				if (!samePropertyGroupTarget(operation.target, propertyGroupTarget(change.value)))
+					throw new Error("the grouped request differs from its original source purpose");
+				const plan = await planPropertyGroup(
+					held.root,
+					held.compilation.inputs,
+					held.read.value,
+					change.value,
+					environment,
+					held.compilation.packet.bundledCss,
+				);
+				return { plan, selections: plan.selections };
+			}
+			throw new Error("this source read does not authorize that property request");
+		})();
+		const plan = planned.plan;
+		const selections: SourcePropertyGroupExpectation["selections"] | undefined = planned.selections?.map(
+			({ consumers, roots, ...selection }) => ({ ...selection, roots: [...roots], effects: consumers }),
+		);
+		const proof: PropertyProof = {
+			environment,
+			roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
+			scopePaths:
+				operation.kind === "property"
+					? propertyScopePaths(plan.original, plan.desired, operation, environment)
+					: (selections?.flatMap((selection) => selection.scopePaths) ?? []),
+			...(selections ? { selections } : {}),
+		};
+		return { target, environment, plan, proof };
+	}
+
+	async function checkPropertyChanges(held: OriginalRead, proof: PropertyProof, compilerContext: RetainedCompilation) {
+		if (!isPropertyOperation(held.read.operation)) throw new Error("property proof has another operation purpose");
 		const operation = held.read.operation;
 		const inputs = new Map(held.compilation.inputs);
 		const original = inputs.get(held.file);
@@ -983,8 +1286,9 @@ export function createSourceOwner(
 				proof.environment,
 				proof.roots,
 				proof.scopePaths,
+				proof.selections,
 			);
-		let snapshot = held.compilation;
+		let snapshot = compilerContext;
 		let before = await state(original.bytes.toString("utf8"), snapshot);
 		let frameBefore = await inspectPropertyCss(`${snapshot.packet.css}\n${snapshot.packet.bundledCss}`);
 		const steps = [...inputs]
@@ -997,10 +1301,11 @@ export function createSourceOwner(
 			snapshot = await compiler.compileSnapshot(
 				held.root,
 				held.frame,
-				inputs,
+				// Required source identities stay narrow; compilation retains its original frozen closure.
+				new Map([...compilerContext.inputs, ...inputs]),
 				sequence,
-				held.compilation.absent,
-				held.compilation,
+				compilerContext.absent,
+				compilerContext,
 			);
 			const after = await state(input.bytes.toString("utf8"), snapshot);
 			const frameAfter = await inspectPropertyCss(`${snapshot.packet.css}\n${snapshot.packet.bundledCss}`);
@@ -1036,34 +1341,14 @@ export function createSourceOwner(
 				!sameSourceOccurrence(held.read.original, original)
 			)
 				throw new Error("the original property edit is no longer available");
-			if (change.kind !== "property" || held.read.operation.kind !== "property")
+			if (!isPropertyOperation(held.read.operation) || change.kind !== held.read.operation.kind)
 				throw new Error("this source read does not authorize a property preview");
 			const observed = await observe(root, held.frame, generation, held.observer);
 			if (!observed || !sameSourceOccurrence(observed, original))
 				throw new Error("the original property occurrence changed");
 			valid(root, held.compilation);
-			const { target, environment } = resolvePropertySource(
-				root,
-				held.compilation,
-				original,
-				generation,
-				held.read.operation,
-			);
-			const plan = await planPropertyValue(
-				root,
-				held.compilation.inputs,
-				held.read.value,
-				held.read.operation,
-				change.value,
-				environment,
-				held.compilation.packet.bundledCss,
-			);
-			const proof = {
-				environment,
-				roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
-				scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
-			};
-			const current = await checkPropertyChanges(held, proof);
+			const { target, plan, proof } = await planReadProperty(held, change);
+			const current = await checkPropertyChanges(held, proof, held.compilation);
 			const input = held.compilation.inputs.get(held.file);
 			if (!input) throw new Error("the original property source input is missing");
 			const patches = journal.transform(
@@ -1096,7 +1381,11 @@ export function createSourceOwner(
 					publication.compilation.absent,
 					publication.compilation,
 				);
-				const className = snapshot.packet.values[held.read.cell ?? original.cell];
+				const key = held.read.cell ?? original.cell;
+				const retained = snapshot.cells[key];
+				const className =
+					snapshot.packet.values[key] ??
+					(retained?.field === "className" && retained.absent ? retained.value : undefined);
 				if (className === undefined || (value !== undefined && value !== className))
 					throw new Error("property preview frames disagree about their source literal");
 				value = className;
@@ -1140,7 +1429,16 @@ export function createSourceOwner(
 				valid(root, held.compilation);
 				if (held.retryFrom) {
 					const current = await currentCompilation(root, held.frame, held.compilation);
-					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
+					if (held.read.operation.kind === "property")
+						retryPropertySource(
+							root,
+							held.retryFrom,
+							current,
+							held.read.original,
+							generation,
+							held.read.operation,
+						);
+					else retryTextSource(root, held.retryFrom, current, held.read.original, generation);
 				}
 				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");
@@ -1163,29 +1461,12 @@ export function createSourceOwner(
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
-				if (change.kind === "property" && held.read.operation.kind === "property") {
-					const { target, environment } = resolvePropertySource(
-						root,
-						held.compilation,
-						original,
-						generation,
-						held.read.operation,
-					);
-					const plan = await planPropertyValue(
-						root,
-						held.compilation.inputs,
-						held.read.value,
-						held.read.operation,
-						change.value,
-						environment,
-						held.compilation.packet.bundledCss,
-					);
-					const proof = {
-						environment,
-						roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
-						scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
-					};
-					const current = await checkPropertyChanges(held, proof);
+				if (
+					isPropertyOperation(held.read.operation) &&
+					(change.kind === "property" || change.kind === "properties")
+				) {
+					const { target, environment, plan, proof } = await planReadProperty(held, change);
+					const current = await checkPropertyChanges(held, proof, held.compilation);
 					const input = held.compilation.inputs.get(held.file);
 					if (!input) throw new Error("the original property source input is missing");
 					const patches = planPropertyLiteral(source, target, plan.before, plan.after);
@@ -1204,11 +1485,63 @@ export function createSourceOwner(
 						environment,
 						proof.roots,
 						proof.scopePaths,
+						proof.selections,
 					);
 					held.property = proof;
 					held.inverseExpected = current.state.expected;
 					return await publish(held, next, after.expected, transformed);
 				}
+				if (change.kind === "image") {
+					held.compilation = afterStaging(root, held.compilation);
+					const inputs = new Map(
+						[...held.compilation.inputs].map(([path, input]) => [path, journal.current(path, input)]),
+					);
+					const current = await compiler.compileSnapshot(
+						root,
+						held.frame,
+						inputs,
+						sequence,
+						held.compilation.absent,
+						held.compilation,
+					);
+					valid(root, current);
+					assertImageContext(held.compilation, current, original, held.read.cell ?? original.cell);
+					if (!held.image || held.image.path !== change.path)
+						throw new Error("the chosen image was not staged by this read");
+					if (!sameInput(held.image.input, readInput(held.image.file)))
+						throw new Error("the staged image bytes changed");
+					if (held.coverage !== (coverage.get(root) ?? 0))
+						throw new Error("source observation was lost before saving");
+					if (held.target?.asset?.file === held.image.file)
+						return { ok: true, source: "unchanged", publication: null };
+					const planned = planOps(source, [
+						{
+							kind: "set-asset",
+							source: held.read.source,
+							specifier: specifierFrom(held.file, held.image.file),
+							hint: identifierHint(basename(held.image.file)),
+						},
+					]);
+					if (!planned.ok) throw new Error(planned.refusal.says);
+					const input = held.compilation.inputs.get(held.file);
+					if (!input) throw new Error("the original image source input is missing");
+					const patches = journal.transform(held.file, input, planned.patches);
+					const cell = held.compilation.cells[held.read.cell ?? held.read.original.cell];
+					if (!cell?.image) throw new Error("the original image binding is missing");
+					return await publish(
+						{ ...held, inverseExpected: imageExpectation(cell, realDesignDir(root)) },
+						applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), patches).text,
+						{
+							kind: "image",
+							source: cell.source,
+							value: held.image.value,
+							absent: false,
+							asset: held.image.path,
+						},
+						patches,
+					);
+				}
+
 				if (change.kind !== "literal") throw new Error("this read only authorizes literal values");
 				let patches: readonly SpanPatch[];
 				if (held.target?.syntax === "react-call")
@@ -1310,7 +1643,7 @@ export function createSourceOwner(
 
 				valid(root, held.required);
 				let frame = held.frame;
-				let compilation = held.compilation;
+				let compilation = afterStaging(root, held.compilation);
 				let original = held.original;
 				let reach = held.reach;
 				if (inventories) {
@@ -1327,7 +1660,7 @@ export function createSourceOwner(
 						unknown: dependent ? [...unknown] : [...unknown, "source coverage"],
 					};
 					const consumer = uses.find((use) => use.frame === held.frame) ?? uses[0];
-					const publication = consumer ? compiler.publication(consumer.original.publication) : undefined;
+					const publication = consumer ? sourcePublication(consumer.original.publication) : undefined;
 					if (consumer && publication) {
 						frame = consumer.frame;
 						compilation = publication.compilation;
@@ -1336,7 +1669,7 @@ export function createSourceOwner(
 				}
 				if (lookupFrame(root, frame).kind !== "found") {
 					const consumer = reach?.uses.find((use) => lookupFrame(root, use.frame).kind === "found");
-					const publication = consumer ? compiler.publication(consumer.original.publication) : undefined;
+					const publication = consumer ? sourcePublication(consumer.original.publication) : undefined;
 					if (consumer && publication && publication.root === root) {
 						frame = consumer.frame;
 						compilation = publication.compilation;
@@ -1363,6 +1696,9 @@ export function createSourceOwner(
 				if (!cell && !held.structure) throw new Error("the original source role changed");
 				const inverseRead: OriginalRead = {
 					observer: "",
+					...(held.imageRestore
+						? { imageRestore: held.imageRestore, inverseExpected: imageExpectation(cell!, realDesignDir(root)) }
+						: {}),
 					...(held.structure
 						? {
 								structure: held.structure,
@@ -1391,7 +1727,7 @@ export function createSourceOwner(
 									owner,
 									original,
 									generation: held.generation,
-									role: cell?.field ? "literal-attribute" : "literal-child",
+									role: cell?.image ? "image-binding" : cell?.field ? "literal-attribute" : "literal-child",
 									cell: held.cell,
 									...(reach ? { reach } : {}),
 									source: cell!.source,
@@ -1400,10 +1736,11 @@ export function createSourceOwner(
 				};
 				const next = applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text;
 				let expected = held.expected;
-				if (held.property && held.purpose.kind === "property") {
+				if (held.property && isPropertyOperation(held.purpose)) {
 					const current = await checkPropertyChanges(
 						{ ...inverseRead, compilation: held.required },
 						held.property,
+						held.compilation,
 					);
 					const after = await propertyState(
 						root,
@@ -1416,6 +1753,7 @@ export function createSourceOwner(
 						held.property.environment,
 						held.property.roots,
 						held.property.scopePaths,
+						held.property.selections,
 					);
 					inverseRead.property = held.property;
 					inverseRead.inverseExpected = current.state.expected;
@@ -1429,7 +1767,7 @@ export function createSourceOwner(
 		});
 	}
 	function current(root: string, publication: string): boolean {
-		const held = compiler.publication(publication);
+		const held = sourcePublication(publication);
 		if (!held || held.root !== root) return false;
 		try {
 			valid(root, held.compilation);
@@ -1715,6 +2053,7 @@ export function createSourceOwner(
 		},
 		close: () => {
 			closed = true;
+			stagedAdditions.clear();
 			for (const root of revocations.keys()) for (const revoke of revocations.get(root) ?? []) revoke();
 			for (const root of new Set([...watching.keys(), ...losses.keys()])) retire(root);
 			for (const stop of watching.values()) stop();
@@ -1722,6 +2061,8 @@ export function createSourceOwner(
 		},
 		admit,
 		read,
+		stageImage,
+		stagedAddition,
 		reach,
 		describe,
 		commit,

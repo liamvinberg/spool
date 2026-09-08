@@ -145,7 +145,7 @@ async function complete(f: Canvas, expected: string) {
 	void delivered.catch(() => {});
 	await control(f).press("Enter");
 	const result = (await (await committed).json()) as SourceResult;
-	expect(result.ok, JSON.stringify(result)).toBe(true);
+	expect(result.ok, JSON.stringify({ result, writes: f.writes, source: f.bytes()[owner] })).toBe(true);
 	await delivered;
 	await expect.poll(() => f.bytes()[owner]).toBe(expected);
 	await f.settled();
@@ -284,9 +284,7 @@ it.each([
 		expect(await f.target.getAttribute("class")).toBeNull();
 		for (const redo of [false, true])
 			for (const step of [1, 2, 3]) {
-				const delivered = reply(f, "delivered");
-				await f.history(redo);
-				await delivered;
+				await inverse(f, redo);
 				await f.settled();
 				const index = redo ? step : 3 - step;
 				expect(f.bytes()[owner]).toBe(states[index]);
@@ -317,7 +315,7 @@ async function inverse(f: Canvas, redo: boolean) {
 	void delivered.catch(() => {});
 	await f.history(redo);
 	const result = (await (await response).json()) as SourceResult;
-	expect(result.ok, JSON.stringify(result)).toBe(true);
+	expect(result.ok, JSON.stringify({ result, writes: f.writes, source: f.bytes()[owner] })).toBe(true);
 	await delivered;
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	return result;
@@ -396,8 +394,9 @@ it("keeps a surviving shared consumer and unrelated source through inverse after
 it("reports each shared memo use against ordinary React without borrowing a healthy sibling's result", {
 	timeout: 120_000,
 }, async () => {
-	const authored = `${cards.replace("useState,useEffect", "useState,useEffect,memo")}export const Memo=memo(Card);`;
-	const frame = frameSource.replace("import {Card}", "import {Card,Memo}").replace('<Card key="b"', '<Memo key="b"');
+	// The source owner rerenders; only the separate consumer may retain its old prop.
+	const authored = `import {useState,useEffect,memo} from 'react';function State({label}){const [count,setCount]=useState(()=>{window.initializers=(window.initializers||0)+1;return 0});useEffect(()=>()=>{window.unmounts=(window.unmounts||0)+1},[]);return <><button onClick={()=>setCount(count=>count+1)}>{label}:{count}</button><input defaultValue="initial"/></>}const Leaf=memo(function Leaf({children}){return children},previous=>previous.hold);export function Card({label}){return <Leaf hold={label==='B'}><section data-subject={label} className="p-6 opacity-75"><State label={label}/></section></Leaf>}`;
+	const frame = frameSource.replace("</main>", '<i hidden className="opacity-75"/></main>');
 	const f = await propertyCanvas({ [owner]: authored }, frame, '[data-subject="A"]');
 	const oracle = await originOracle(
 		f,
@@ -412,7 +411,8 @@ it("reports each shared memo use against ordinary React without borrowing a heal
 	await f.select();
 	const reading = reply(f, "read");
 	await control(f).fill("50");
-	const original = await (await reading).json();
+	const readResponse = await reading;
+	const original = await readResponse.json();
 	expect(original, JSON.stringify(original)).toMatchObject({ ok: true, read: { scope: "definition" } });
 	expect(original.read.source).toMatch(/^shared\/card.tsx:/);
 	const saved = authored.replace("opacity-75", "opacity-50");
@@ -444,5 +444,32 @@ it("reports each shared memo use against ordinary React without borrowing a heal
 			)
 			.toEqual(redo === false ? ["verified", "verified"] : ["verified", "mismatching"]);
 	}
+	const operation = { kind: "property", property: "opacity", scope: "" } as const;
+	const stale = await f.frame
+		.locator('[data-subject="B"]')
+		.evaluate(
+			(element, purpose) => window.__SPOOL_SOURCE__?.read(element as HTMLElement, 9001, "className", purpose),
+			operation,
+		);
+	expect(stale?.value).toBe("p-6 opacity-75");
+	const refused = await fetch(`${f.project.url}/api/p/${f.project.name}/source`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "X-Spool-Control": f.project.controlToken },
+		body: JSON.stringify({
+			action: "read",
+			frame: "home",
+			original: stale,
+			generation: 9001,
+			observer: readResponse.request().postDataJSON().observer,
+			operation,
+			retry: false,
+		}),
+	});
+	expect(await refused.json()).toMatchObject({
+		ok: false,
+		reason: "the committed class differs from its original source literal",
+	});
+	await f.frame.locator('[data-subject="B"]').evaluate(() => window.__SPOOL_SOURCE__?.cancel(9001));
+	expect(f.bytes()[owner]).toBe(saved);
 	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
 });

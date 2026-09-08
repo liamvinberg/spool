@@ -3,6 +3,7 @@ import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { RowEdit, RowElement } from "../../properties/rows";
 import type { SourceDescription, SourceOperation, SourceRead } from "../../source-edit";
 import type { SourcePropertyPreview, SourcePropertyReading, SourcePropertyValue } from "../../source-property";
+import type { SourcePropertyGroupValue } from "../../source-property-group";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
@@ -25,7 +26,6 @@ import {
 } from "./properties-fields";
 import {
 	BASE,
-	bareToken,
 	type Scope,
 	sameScope,
 	scopedClass,
@@ -35,7 +35,6 @@ import {
 	scopeWhen,
 	type TokenState,
 	tokenState,
-	tokensUnder,
 	variantsOf,
 } from "./properties-scope";
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
@@ -43,6 +42,8 @@ import { createPropertySession, type PropertyPlanResult, type PropertyReadReques
 import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
 import { type OwnershipActions, SourceOwnership } from "./source-ownership";
+
+const IMAGE_OPERATION: SourceOperation = { kind: "image" };
 
 /**
  * The properties rail (#256): the right column, back, and holding one thing.
@@ -106,6 +107,7 @@ export interface PropertiesActs {
 	onAsk?: () => void;
 	ownership?: OwnershipActions;
 	text?: TextActions;
+	group?(frame: string, selector: string, value: SourcePropertyGroupValue, signal: AbortSignal): Promise<void>;
 	property?: {
 		describe(
 			frame: string,
@@ -135,19 +137,8 @@ export interface PropertiesActs {
 	onGeometryCommit: (name: string, before: Geometry) => void;
 	/** the write lane: gated, spliced, and recorded on the canvas's one undo stack */
 	onWrite: (frame: string, selector: string, ops: readonly HandOp[]) => void;
-	/**
-	 * The asset swap (#260): the one hand edit that writes a file.
-	 *
-	 * It carries the fingerprint the rail read the element out of rather than
-	 * being gated first, because the picture and the splice land together — a
-	 * gate would answer about a file the swap is about to rewrite anyway.
-	 */
-	onSwap: (
-		frame: string,
-		selector: string,
-		at: { source: string; fingerprint: string },
-		put: { file: File } | { asset: string },
-	) => void;
+	/** Image source reads and receipts belong to the common source owner. */
+	onSwap: (frame: string, selector: string, put: { file: File } | { asset: string }) => void;
 }
 
 export function PropertiesRail({
@@ -354,6 +345,7 @@ function Body({
 	const scopes = [...carried];
 	for (const extra of opened) if (!scopes.some((known) => sameScope(known, extra))) scopes.push(extra);
 	const live = scopes.some((known) => sameScope(known, scope)) ? scope : BASE;
+	const groupRead = useRef<AbortController | undefined>(undefined);
 	// A property session belongs to the originally selected project occurrence.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: actions stay bound to the project/occurrence that began this session
 	const propertySession = useMemo(() => {
@@ -361,13 +353,37 @@ function Body({
 		if (!actions || !element) return undefined;
 		const { frame, selector } = element;
 		return createPropertySession({
-			begin: (property, scope, request) => actions.begin(frame, selector, property, scope, request),
+			begin: (property, scope, request) => {
+				groupRead.current?.abort();
+				return actions.begin(frame, selector, property, scope, request);
+			},
 			plan: (read, revision, value) => actions.plan(frame, read, revision, value),
 			refused: (read, value, reason) => actions.refused(frame, read, value, reason),
 			preview: (plan) => actions.preview(frame, plan),
 			finish: (read, value, commit) => actions.finish(frame, read, value, commit),
 		});
 	}, [project, identity]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a pending group belongs to its original project and occurrence
+	useEffect(() => {
+		const cancel = (event: KeyboardEvent) => {
+			if (event.key !== "Escape" || !groupRead.current) return;
+			groupRead.current.abort();
+		};
+		window.addEventListener("keydown", cancel, true);
+		return () => {
+			window.removeEventListener("keydown", cancel, true);
+			groupRead.current?.abort();
+		};
+	}, [identity, project]);
+	const applyGroup = async (value: SourcePropertyGroupValue) => {
+		if (!element || !acts.group) return;
+		void propertySession?.finish(false);
+		groupRead.current?.abort();
+		const held = new AbortController();
+		groupRead.current = held;
+		await acts.group(element.frame, element.selector, value, held.signal);
+		if (groupRead.current === held) groupRead.current = undefined;
+	};
 	const propertyScope = scopeKey(live);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: changing scope retires its original pending property intent
 	useEffect(
@@ -403,7 +419,12 @@ function Body({
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
 	// the imports the swap may choose from, asked for only where a rung has a
 	// picture on it at all
-	const assets = useAssets(project, element?.frame ?? null, swappable(rowElement.tag), revision);
+	const { assets, refresh: refreshAssets } = useAssets(
+		project,
+		element?.frame ?? null,
+		swappable(rowElement.tag),
+		revision,
+	);
 	const view: View = {
 		property: propertySession
 			? {
@@ -415,7 +436,8 @@ function Body({
 					begin: (property) => {
 						propertySession.begin(property, propertyScope);
 					},
-					preview: (property, value) => propertySession.preview(property, propertyScope, value),
+					preview: (property, value, sampleValue) =>
+						propertySession.preview(property, propertyScope, value, sampleValue),
 					apply: (property, value) => {
 						void propertySession.apply(property, propertyScope, value);
 					},
@@ -466,8 +488,8 @@ function Body({
 					selector={element.selector}
 					name={read?.name ?? rowElement.tag}
 					revision={revision}
-					field={purpose?.field}
-					operation={purpose?.operation}
+					field={purpose ? purpose.field : rowElement.tag === "img" ? "src" : undefined}
+					operation={purpose?.operation ?? (rowElement.tag === "img" ? IMAGE_OPERATION : undefined)}
 					generation={purpose?.generation}
 					actions={acts.ownership}
 					onSupport={support}
@@ -478,23 +500,18 @@ function Body({
 					scopes={scopes}
 					variants={variantsOf(theme)}
 					scope={live}
-					ok={read?.refusal === undefined}
-					onScope={setScope}
+					ok={acts.group !== undefined && read?.refusal?.expression === undefined}
+					onScope={(next) => {
+						groupRead.current?.abort();
+						setScope(next);
+					}}
 					onAdd={(next) => {
+						groupRead.current?.abort();
 						setOpened((standing) => [...standing, next]);
 						setScope(next);
 					}}
 					onRemove={(gone) => {
-						const ops = tokensUnder(literal, gone).map(
-							(token): HandOp => ({
-								kind: "set-class",
-								source: read?.source ?? "",
-								token: bareToken(token),
-								scope: scopeKey(gone),
-								remove: true,
-							}),
-						);
-						if (ops.length > 0) acts.onWrite(element.frame, element.selector, ops);
+						void applyGroup({ kind: "remove-scope", scope: scopeKey(gone) });
 						setOpened((standing) => standing.filter((extra) => !sameScope(extra, gone)));
 						setScope(BASE);
 					}}
@@ -533,18 +550,11 @@ function Body({
 						read={read}
 						tag={rowElement.tag}
 						assets={assets}
+						refreshAssets={refreshAssets}
 						frame={element.frame}
 						selector={element.selector}
 						actions={acts.text}
-						onSwap={(put) => {
-							if (read.fingerprint === undefined) return;
-							acts.onSwap(
-								element.frame,
-								element.selector,
-								{ source: read.source, fingerprint: read.fingerprint },
-								put,
-							);
-						}}
+						onSwap={(put) => acts.onSwap(element.frame, element.selector, put)}
 					/>
 				)}
 				{element === null ? null : (
@@ -553,29 +563,15 @@ function Body({
 						scope={live}
 						original={original}
 						view={view}
-						onRemove={(token) =>
-							write([
-								{
-									kind: "set-class",
-									source: read?.source ?? "",
-									token: bareToken(token),
-									scope: scopeKey(anatomyOf(token).variants),
-									remove: true,
-								},
-							])
-						}
+						editable={acts.group !== undefined && read?.refusal?.expression === undefined}
+						onRemove={(token) => void applyGroup({ kind: "tokens", add: [], remove: [token] })}
 						onAdd={(token) => {
-							// a class typed with its own chain lands under that chain; one
-							// without lands under whichever the bar has open
 							const chain = anatomyOf(token).variants;
-							write([
-								{
-									kind: "set-class",
-									source: read?.source ?? "",
-									token: bareToken(token),
-									scope: chain.length > 0 ? scopeKey(chain) : scopeKey(live),
-								},
-							]);
+							void applyGroup({
+								kind: "tokens",
+								add: [chain.length > 0 ? token : `${scopeKey(live)}${token}`],
+								remove: [],
+							});
 						}}
 					/>
 				)}
@@ -1102,10 +1098,11 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
  *
  * Asked for only where a rung actually has a picture on it, because most
  * elements do not and a menu nobody opens should cost no round trip. Re-read
- * on a reload, since a swap of its own puts a new file in the folder the menu
- * lists.
+ * when the menu opens, including staged files retained after cancellation.
  */
-function useAssets(project: string, frame: string | null, wanted: boolean, revision: number): ProjectAsset[] {
+function useAssets(project: string, frame: string | null, wanted: boolean, revision: number) {
+	const [requested, setRequested] = useState(0);
+	const refresh = useCallback(() => setRequested((value) => value + 1), []);
 	const [assets, setAssets] = useState<ProjectAsset[]>([]);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a swap of its own puts a new file in the folder this lists
 	useEffect(() => {
@@ -1120,8 +1117,8 @@ function useAssets(project: string, frame: string | null, wanted: boolean, revis
 		return () => {
 			live = false;
 		};
-	}, [project, frame, wanted, revision]);
-	return assets;
+	}, [project, frame, wanted, revision, requested]);
+	return { assets, refresh };
 }
 
 /** The one option that is not a picture: the OS file dialog, as a row in the menu. */
@@ -1144,6 +1141,7 @@ function Attributes({
 	read,
 	tag,
 	assets,
+	refreshAssets,
 	frame,
 	selector,
 	actions,
@@ -1153,6 +1151,7 @@ function Attributes({
 	read: RungRead;
 	tag: string;
 	assets: readonly ProjectAsset[];
+	refreshAssets: () => void;
 	frame: string;
 	selector: string;
 	actions: TextActions | undefined;
@@ -1178,8 +1177,19 @@ function Attributes({
 		if (describe)
 			void Promise.all(
 				candidates
-					.filter((field) => !field.asset && !["className", "style", "data-go", "key", "ref"].includes(field.name))
-					.map(async (field) => [field.name, await describe(frame, selector, field.name)] as const),
+					.filter((field) => !["className", "style", "data-go", "key", "ref"].includes(field.name))
+					.map(
+						async (field) =>
+							[
+								field.name,
+								await describe(
+									frame,
+									selector,
+									field.name,
+									field.asset ? IMAGE_OPERATION : { kind: "literal", field: field.name },
+								),
+							] as const,
+					),
 			).then((entries) => {
 				if (live) setDescriptions(Object.fromEntries(entries));
 			});
@@ -1190,6 +1200,10 @@ function Attributes({
 	const fields = candidates.map((field) => {
 		const description = descriptions[field.name];
 		if (!description) return field;
+		if (field.asset && description.operation.kind === "image") {
+			const { reason: _reason, ...supported } = field;
+			return { ...supported, ...(description.asset ? { specifier: description.asset } : {}) };
+		}
 		return { name: field.name, value: description.value };
 	});
 	if (fields.length === 0) return null;
@@ -1198,7 +1212,7 @@ function Attributes({
 			{fields.map((field) => (
 				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
 					{field.asset === true ? (
-						<AssetField field={field} assets={assets} onSwap={onSwap} />
+						<AssetField field={field} assets={assets} onOpen={refreshAssets} onSwap={onSwap} />
 					) : field.reason === undefined && actions ? (
 						<LiteralField
 							frame={frame}
@@ -1229,9 +1243,11 @@ function AssetField({
 	field,
 	assets,
 	onSwap,
+	onOpen,
 }: {
 	field: AttributeField;
 	assets: readonly ProjectAsset[];
+	onOpen: () => void;
 	onSwap: (put: { file: File } | { asset: string }) => void;
 }) {
 	const picker = useRef<HTMLInputElement | null>(null);
@@ -1255,6 +1271,7 @@ function AssetField({
 				options={options}
 				ok={field.reason === undefined}
 				label="image"
+				onOpen={onOpen}
 				filter={assets.length > 8}
 				onPick={(token) => {
 					if (token === null) return;
@@ -1319,6 +1336,7 @@ function tokensWritten(className: string): { token: string; at: string }[] {
 }
 
 function SourceLine({
+	editable,
 	read,
 	scope,
 	original,
@@ -1326,6 +1344,7 @@ function SourceLine({
 	onRemove,
 	onAdd,
 }: {
+	editable: boolean;
 	read: RungRead | undefined;
 	scope: Scope;
 	/** the tokens the file was written with; anything else is the hands' own */
@@ -1338,7 +1357,7 @@ function SourceLine({
 	if (read === undefined) return null;
 	const tokens = tokensWritten(read.className);
 	const where = read.line === undefined ? read.path : `${read.path}:${read.line}`;
-	const ok = read.refusal === undefined;
+	const ok = editable;
 	return (
 		<Section name="className" {...(read.mapped === true ? { reason: "one row of many" } : {})}>
 			<div className="flex flex-col gap-1.5 px-2.5 py-2">
@@ -1376,7 +1395,12 @@ function SourceLine({
 					)}
 				</p>
 				<div className="flex items-center gap-2">
-					<AddClassRow view={view} taken={new Set(tokens.map((held) => held.token))} onAdd={onAdd} />
+					<AddClassRow
+						view={view}
+						editable={editable}
+						taken={new Set(tokens.map((held) => held.token))}
+						onAdd={onAdd}
+					/>
 					{where === undefined ? null : <span className={cn("min-w-0 truncate", FAINT)}>{where}</span>}
 				</div>
 			</div>

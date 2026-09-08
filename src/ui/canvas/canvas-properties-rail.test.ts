@@ -4,7 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
-import type { SourceOccurrence, SourceRead } from "../../source-edit";
+import type { SourceOccurrence, SourceOperation, SourceRead } from "../../source-edit";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
@@ -281,17 +281,16 @@ it("drops every token under a scope in one write, and falls back to the base", a
 	await pressChip(host, "hover:");
 
 	await press("×", {}, host.querySelector<HTMLElement>('[aria-label="remove hover:"]'));
-	const gated = await gatedOps();
-	expect(gated).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "bg-thread", scope: "hover:", remove: true },
-		{
-			kind: "set-class",
-			source: "frames/home/frame.tsx:12:3",
-			token: "text-on-thread",
-			scope: "hover:",
-			remove: true,
-		},
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("read")[0]?.operation).toEqual({
+		kind: "properties",
+		target: { kind: "remove-scope", scope: "hover:" },
+	});
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "properties",
+		value: { kind: "remove-scope", scope: "hover:" },
+	});
+	expect(await gatedOps()).toBeUndefined();
 	expect(chips(host).filter((chip) => chip === "hover:")).toHaveLength(1);
 });
 
@@ -333,17 +332,23 @@ it("writes a row's change to the lane as one op under the live scope", async () 
 	await pressChip(host, "hover:");
 
 	await typeInto(fieldFor(host, "opacity"), "60");
-	expect(await gatedOps()).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "opacity-60", scope: "hover:" },
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("read")[0]?.operation).toEqual({ kind: "property", property: "opacity", scope: "hover:" });
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "property",
+		value: { kind: "binding", tokens: ["hover:opacity-60"] },
+	});
+	expect(await gatedOps()).toBeUndefined();
 });
 
-it("keeps the rung it is editing when its own write reloads the frame", async () => {
+it("keeps the rung when a layout write reloads the frame", async () => {
 	const { host, canvas, frame } = await readyCanvas();
-	await descendTo(canvas, frame, 3);
+	const chain = CHAIN.map((hit) => ({ ...hit, tag: "div" }));
+	await descendTo(canvas, frame, 3, chain);
 	await until(() => crumbs(host).length === 4);
 
-	await typeInto(fieldFor(host, "opacity"), "60");
+	await until(() => fieldFor(host, "width") !== null);
+	await typeInto(fieldFor(host, "width"), "60");
 	await changed("home");
 	await frame.loaded();
 
@@ -353,28 +358,30 @@ it("keeps the rung it is editing when its own write reloads the frame", async ()
 	// and the fresh document is asked for the same element, so the geometry the
 	// overlay draws is the one the new render produced
 	expect(frame.asked()).toMatchObject({ spool: "kin", selector: "pay", step: "self" });
-	await frame.answer(CHAIN);
+	await frame.answer(chain);
 	expect(await heldElements()).toEqual(["pay"]);
 });
 
 it("reads a token the hands wrote in thread colour, and the author's own quietly", async () => {
 	const { host, canvas, frame } = await readyCanvas();
-	await descendTo(canvas, frame, 3);
+	const chain = CHAIN.map((hit) => ({ ...hit, tag: "div" }));
+	await descendTo(canvas, frame, 3, chain);
 	await until(() => crumbs(host).length === 4);
 
 	expect(splicedTokens(host)).toEqual([]);
 
-	await typeInto(fieldFor(host, "opacity"), "60");
-	payLiteral = `${RUNGS[2]?.className ?? ""} opacity-60`;
+	await until(() => fieldFor(host, "width") !== null);
+	await typeInto(fieldFor(host, "width"), "60");
+	payLiteral = `${RUNGS[2]?.className ?? ""} w-60`;
 	await changed("home");
 	await frame.loaded();
-	await frame.answer(CHAIN);
+	await frame.answer(chain);
 	await until(() => splicedTokens(host).length > 0);
 
 	// what you changed reads in thread colour and what the file was written with
 	// does not, which is how you tell your own work from the agent's
-	expect(splicedTokens(host)).toEqual(["opacity-60"]);
-	expect(rowLabel(host, "opacity")?.className).toContain("text-thread");
+	expect(splicedTokens(host)).toEqual(["w-60"]);
+	expect(rowLabel(host, "width")?.className).toContain("text-thread");
 	expect(rowLabel(host, "border-radius")?.className).not.toContain("text-thread");
 });
 
@@ -401,9 +408,12 @@ it("gates the `+` on the compiler, and lands what it accepts under the live scop
 
 	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "md:hidden");
 	await press("click", {}, candidate(host, "md:hidden"));
-	expect(await gatedOps()).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "hidden", scope: "md:" },
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "properties",
+		value: { kind: "tokens", add: ["md:hidden"], remove: [] },
+	});
+	expect(await gatedOps()).toBeUndefined();
 });
 
 it("removes a token from the source line, which is the only way back out for a `+`", async () => {
@@ -412,9 +422,12 @@ it("removes a token from the source line, which is the only way back out for a `
 	await until(() => crumbs(host).length === 4);
 
 	await press("click", {}, sourceToken(host, "hover:bg-thread"));
-	expect(await gatedOps()).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "bg-thread", scope: "hover:", remove: true },
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "properties",
+		value: { kind: "tokens", add: [], remove: ["hover:bg-thread"] },
+	});
+	expect(await gatedOps()).toBeUndefined();
 });
 
 // Literal attributes retain the original field read through the shared source lane.
@@ -486,10 +499,10 @@ it("offers an image the project's own pictures, and swaps to the one picked", as
 	await press("click", {}, option);
 
 	expect(await lastSwap()).toMatchObject({
-		frame: "home",
-		source: "frames/home/frame.tsx:12:3",
-		fingerprint: "f",
-		asset: "shared/assets/logo.svg",
+		action: "commit",
+		handle: "attribute-read",
+		original: IMAGE_ORIGINAL,
+		change: { kind: "image", path: "shared/assets/logo.svg" },
 	});
 });
 
@@ -634,11 +647,15 @@ async function gates(): Promise<number> {
 	return calls.filter(([input]) => String(input).endsWith("/patch/gate")).length;
 }
 
-/** the body of the last asset swap the canvas sent (#260) */
+/** The image control uses the same held source operation as the actual canvas. */
 async function lastSwap(): Promise<Record<string, unknown> | undefined> {
 	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
-	const last = calls.filter(([input]) => String(input).endsWith("/asset")).at(-1);
+	const last = calls
+		.filter(
+			([input, init]) => String(input).endsWith("/source") && JSON.parse(String(init?.body)).action === "commit",
+		)
+		.at(-1);
 	return last === undefined ? undefined : (JSON.parse(String(last[1]?.body)) as Record<string, unknown>);
 }
 
@@ -719,16 +736,19 @@ async function readyCanvas({ refused = false }: { refused?: boolean } = {}): Pro
 				contentWindow,
 				vi.spyOn(contentWindow, "postMessage").mockImplementation((message) => {
 					if (message?.spool !== "source-request") return;
+					const original = message.operation?.kind === "image" ? IMAGE_ORIGINAL : ATTRIBUTE_ORIGINAL;
 					const result =
 						message.action === "read" || message.action === "inspect" || message.action === "complete"
-							? ATTRIBUTE_ORIGINAL
+							? original
 							: message.action === "inventory"
 								? {
-										publication: ATTRIBUTE_ORIGINAL.publication,
-										uses: iframe.title === "home" ? [{ original: ATTRIBUTE_ORIGINAL, visible: true }] : [],
+										publication: original.publication,
+										uses: iframe.title === "home" ? [{ original, visible: true }] : [],
 										unknown: 0,
 									}
-								: true;
+								: message.action === "preview-image"
+									? "ready"
+									: true;
 					queueMicrotask(() =>
 						window.dispatchEvent(
 							new MessageEvent("message", {
@@ -898,6 +918,13 @@ const ATTRIBUTE_ORIGINAL: SourceOccurrence = {
 	value: "pay now",
 };
 
+const IMAGE_ORIGINAL: SourceOccurrence = {
+	...ATTRIBUTE_ORIGINAL,
+	field: "src",
+	cell: "image-binding",
+	value: "old.png",
+};
+
 function stubCanvasApis(refused = false): void {
 	let sourceRead: SourceRead | undefined;
 	events = null;
@@ -937,21 +964,37 @@ function stubCanvasApis(refused = false): void {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
 			}
 			if (url.pathname.endsWith("/source")) {
-				const body = JSON.parse(String(init?.body)) as { action: string; generation: number };
+				const body = JSON.parse(String(init?.body)) as {
+					action: string;
+					generation: number;
+					operation: SourceOperation;
+					original: SourceOccurrence;
+				};
 				if (body.action === "read") {
 					sourceRead = {
-						operation: { kind: "literal", field: "title" },
+						operation: body.operation,
 						handle: "attribute-read",
 						owner: "owner",
 						generation: body.generation,
-						original: ATTRIBUTE_ORIGINAL,
+						original: body.original,
 						source: "frames/home/frame.tsx:12:3",
-						role: "literal-attribute",
-						field: "title",
-						value: "pay now",
+						role: body.operation.kind === "image" ? "image-binding" : "literal-attribute",
+						...(body.original.field ? { field: body.original.field } : {}),
+						value: body.original.value,
 					};
 					return Response.json({ ok: true, read: sourceRead });
 				}
+				if (body.action === "preview")
+					return Response.json({
+						ok: true,
+						preview: { generation: sourceRead?.generation, revision: 1, value: "opacity-60", frames: [] },
+					});
+				if (body.action === "stage-image")
+					return Response.json({
+						ok: true,
+						path: "shared/assets/logo.svg",
+						value: "data:image/svg+xml;base64,PHN2Zy8+",
+					});
 				if (body.action === "reach")
 					return Response.json(sourceRead ? { ok: true, read: sourceRead } : { ok: false, reason: "no read" });
 				if (body.action === "commit" || body.action === "inverse")
@@ -992,16 +1035,6 @@ function stubCanvasApis(refused = false): void {
 						{ path: "frames/home/hero.png", bytes: 2048 },
 						{ path: "shared/assets/logo.svg", bytes: 512 },
 					],
-				});
-			}
-			if (url.pathname.endsWith("/asset")) {
-				return Response.json({
-					ok: true,
-					path: "design/frames/home/frame.tsx",
-					asset: "design/shared/assets/logo.svg",
-					fingerprint: "g",
-					mapped: false,
-					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 0, text: "", fingerprint: "g" },
 				});
 			}
 			if (url.pathname.endsWith("/patch/gate")) {

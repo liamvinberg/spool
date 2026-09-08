@@ -1,14 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	applySpan,
-	assetOp,
-	fingerprintOf,
-	type HandOp,
-	parseHandOps,
-	planOps,
-	readElements,
-	spanBetween,
-} from "./hand-write";
+import { applySpan, fingerprintOf, type HandOp, parseHandOps, planOps, readElements, spanBetween } from "./hand-write";
 import { readJsxText } from "./jsx-text";
 
 /**
@@ -221,20 +212,9 @@ describe("set-attribute", () => {
 });
 
 describe("the ops off the wire", () => {
-	it("never takes an asset swap, which only the lane's own door may form", () => {
+	it("never takes an asset swap outside the original source owner", () => {
 		const source = stamp(FRAME, "<img");
 		expect(parseHandOps([{ kind: "set-asset", source, specifier: "./hero.png", hint: "hero" }])).toBeUndefined();
-		// the door's own op is checked the same way, and refuses a specifier that
-		// is not a relative import of an image
-		expect(assetOp(source, "./hero.png", "hero")).toEqual({
-			kind: "set-asset",
-			source,
-			specifier: "./hero.png",
-			hint: "hero",
-		});
-		expect(assetOp(source, "/hero.png", "hero")).toBeUndefined();
-		expect(assetOp(source, "./clip.mp4", "clip")).toBeUndefined();
-		expect(assetOp(source, "./hero.png", "2bad")).toBeUndefined();
 	});
 });
 

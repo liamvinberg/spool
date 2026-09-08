@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode } from "react";
 import type { Life } from "../../lib/spool/agent-threads";
 import { cn } from "../../lib/utils";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
@@ -62,6 +62,8 @@ export function CanvasChrome({
 	life,
 	targets,
 	holding,
+	onSelectFrame,
+	onFocusFrame,
 	children,
 }: {
 	pages: readonly PageRow[];
@@ -90,12 +92,21 @@ export function CanvasChrome({
 	 */
 	holding?: readonly string[] | undefined;
 	children?: ReactNode;
+	onSelectFrame?: (name: string) => void;
+	onFocusFrame?: (name: string) => void;
 }) {
 	const shut = rail === null || railWidth === 0;
 	const lit: DockSurface | null = shut ? null : railLabel.toLowerCase() === "agent" ? "agent" : "properties";
 	return (
 		<div className="flex h-full w-full overflow-hidden bg-bg">
-			<PagesRail pages={pages} selected={selected} targets={targets} holding={holding} />
+			<PagesRail
+				pages={pages}
+				selected={selected}
+				targets={targets}
+				holding={holding}
+				onSelectFrame={onSelectFrame}
+				onFocusFrame={onFocusFrame}
+			/>
 			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
 				{children}
 				{tool === "none" ? null : <CanvasTools tool={tool} />}
@@ -117,11 +128,15 @@ function PagesRail({
 	selected,
 	targets = [],
 	holding = [],
+	onSelectFrame,
+	onFocusFrame,
 }: {
 	pages: readonly PageRow[];
 	selected?: string | undefined;
 	targets?: readonly Target[] | undefined;
 	holding?: readonly string[] | undefined;
+	onSelectFrame?: ((name: string) => void) | undefined;
+	onFocusFrame?: ((name: string) => void) | undefined;
 }) {
 	const reached = new Map(targets.map((target) => [target.frame, target]));
 	// null when nothing asked the rail to mark: the slot then takes no room in any row
@@ -141,13 +156,29 @@ function PagesRail({
 			</div>
 			<div className="min-h-0 flex-1 overflow-hidden py-2">
 				{listed.map((page) => (
-					<PageBlock key={page.name} page={page} selected={selected} reached={reached} held={held} />
+					<PageBlock
+						key={page.name}
+						page={page}
+						selected={selected}
+						reached={reached}
+						held={held}
+						onSelectFrame={onSelectFrame}
+						onFocusFrame={onFocusFrame}
+					/>
 				))}
 			</div>
 			{footed.length === 0 ? null : (
 				<div className="shrink-0 border-border border-t py-2">
 					{footed.map((page) => (
-						<PageBlock key={page.name} page={page} selected={selected} reached={reached} held={held} />
+						<PageBlock
+							key={page.name}
+							page={page}
+							selected={selected}
+							reached={reached}
+							held={held}
+							onSelectFrame={onSelectFrame}
+							onFocusFrame={onFocusFrame}
+						/>
 					))}
 				</div>
 			)}
@@ -160,11 +191,15 @@ function PageBlock({
 	selected,
 	reached,
 	held,
+	onSelectFrame,
+	onFocusFrame,
 }: {
 	page: PageRow;
 	selected?: string | undefined;
 	reached: Map<string, Target>;
 	held: ReadonlySet<string> | null;
+	onSelectFrame?: ((name: string) => void) | undefined;
+	onFocusFrame?: ((name: string) => void) | undefined;
 }) {
 	const litAs = page.litAs ?? "surface";
 	const named = page.lit === true && litAs === "name";
@@ -227,9 +262,16 @@ function PageBlock({
 					{page.frames.map((frame) => {
 						const target = reached.get(frame);
 						return (
-							<div
+							<button
+								type="button"
+								onClick={() => onSelectFrame?.(frame)}
+								onDoubleClick={() => onFocusFrame?.(frame)}
+								aria-label={`Select ${frame} in sidebar`}
 								key={frame}
-								className={cn("relative flex h-7 items-center", frame === selected && "bg-surface")}
+								className={cn(
+									"relative flex h-7 w-full items-center text-left",
+									frame === selected && "bg-surface",
+								)}
 							>
 								<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
 								{/* contentX(1) in `rail-rows.ts`: one indent step of 10, off the 24 margin */}
@@ -260,7 +302,7 @@ function PageBlock({
 										)}
 									/>
 								)}
-							</div>
+							</button>
 						);
 					})}
 				</div>

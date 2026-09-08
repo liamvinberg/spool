@@ -72,8 +72,13 @@ import {
 import type { Scope } from "./properties-scope";
 import { scopeKey } from "./properties-scope";
 import { PropertyColorField } from "./property-color-field";
-import { appearanceProperty, type PropertyControls, propertyControlValue } from "./property-controls";
-import { PropertyNumberField } from "./property-number-field";
+import {
+	appearanceProperty,
+	type PropertyControls,
+	propertyControlValue,
+	propertyNumericSample,
+} from "./property-controls";
+import { numericTokenProperty, PropertyNumberField } from "./property-number-field";
 
 /** Rows read candidate spellings from the shared property inventory.
  * Appearance controls retain an original source operation through preview and completion.
@@ -149,6 +154,7 @@ function usePropertyScrub(
 					control.preview(
 						row.property,
 						propertyControlValue(row, { kind: "value", value: next }, atOf(view), scope),
+						propertyNumericSample(row, { kind: "value", value: next }),
 					);
 				},
 				end: () => finish(true),
@@ -335,7 +341,11 @@ function LengthRow({
 				onPreview={(typed) => {
 					const next = typedValue(typed);
 					if (next !== undefined)
-						control?.preview(property, propertyControlValue(row, next, atOf(view), scopeKey(view.scope)));
+						control?.preview(
+							property,
+							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
+							propertyNumericSample(row, next),
+						);
 				}}
 				onCommit={(typed) => {
 					const next = typedValue(typed);
@@ -430,7 +440,11 @@ function BorderWidthRow({
 				onPreview={(typed) => {
 					const next = typedValue(typed);
 					if (next !== undefined)
-						control?.preview(property, propertyControlValue(row, next, atOf(view), scopeKey(view.scope)));
+						control?.preview(
+							property,
+							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
+							propertyNumericSample(row, next),
+						);
 				}}
 				onCommit={(typed) => {
 					const next = typedValue(typed);
@@ -698,6 +712,36 @@ function TypographyNumberRow({
 			preview={(value) => control?.preview(property, value)}
 			apply={(value) => control?.apply(property, value)}
 			finish={(commit) => control?.finish(commit)}
+		/>
+	);
+}
+
+function RadiusNumberRow({
+	view,
+	property,
+	name,
+	fold,
+}: {
+	view: View;
+	property: string;
+	name?: string;
+	fold: ReactNode;
+}) {
+	const control = view.property;
+	const reading = usePropertyReading(control, property);
+	if (!numericTokenProperty(property)) throw new Error("radius fold has no numeric property control");
+	return (
+		<PropertyNumberField
+			property={property}
+			{...(name ? { name } : {})}
+			reading={reading}
+			options={view.theme?.radius ?? []}
+			scope={scopeKey(view.scope)}
+			begin={() => control?.begin(property)}
+			preview={(value) => control?.preview(property, value)}
+			apply={(value) => control?.apply(property, value)}
+			finish={(commit) => control?.finish(commit)}
+			accessory={fold}
 		/>
 	);
 }
@@ -1531,24 +1575,24 @@ function AppearanceSection({ view }: { view: View }) {
 		...(opened ? ["filter", ...MORE_APPEARANCE, "transition-timing-function"] : []),
 	]);
 	return (
-		<Section name="appearance" reason={sectionReason(view, ["opacity"])}>
-			<LengthRow view={view} property="opacity" placeholder="100" fallback="100%" />
+		<Section name="Appearance" reason={sectionReason(view, ["opacity"])}>
 			<Folded
 				view={view}
 				fold={RADIUS_FOLD}
 				read={(scoped) => cornersAsSides(scoped, view.theme)}
 				draw={(entry, caret) => (
-					<TokenRow
+					<RadiusNumberRow
 						key={entry.property}
 						view={view}
 						property={entry.property}
 						{...(entry.name === undefined ? {} : { name: entry.name })}
-						absent={{ token: null, name: "rounded-none", value: "0" }}
-						clearTo="none"
 						fold={caret}
 					/>
 				)}
 			/>
+			<LengthRow view={view} property="opacity" placeholder="100" fallback="100%" />
+			<ColourRow view={view} property="color" absent="inherit" />
+			<ColourRow view={view} property="background-color" absent="transparent" />
 			{/* a shadow nobody had set used to be dead text with no way in: it is a menu */}
 			<TokenRow
 				view={view}
@@ -1585,17 +1629,9 @@ function AppearanceSection({ view }: { view: View }) {
 					</button>
 				</div>
 			)}
-			<Rest view={view} section="appearance" drawn={drawn} />
-		</Section>
-	);
-}
-
-function FillSection({ view }: { view: View }) {
-	return (
-		<Section name="fill" reason={sectionReason(view, ["background-color"])}>
-			<ColourRow view={view} property="background-color" absent="transparent" />
 			<GradientRows view={view} />
 			<Rest view={view} section="fill" drawn={new Set(["background-color", "background-image"])} />
+			<Rest view={view} section="appearance" drawn={drawn} />
 		</Section>
 	);
 }
@@ -1611,6 +1647,7 @@ function StrokeSection({ view }: { view: View }) {
 	const widths = borderWidthsOf(view.scoped);
 	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
 	const any = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
+	if (!any && !rowsIn("stroke").some((row) => readRow(row, view.scoped, view.theme).token !== null)) return null;
 	const drawn = new Set([
 		...BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property),
 		// `border-s` and `border-e` are the fold's left and right edges under
@@ -1679,12 +1716,13 @@ function TextSection({ view }: { view: View }) {
 		"font-variant-numeric",
 	]);
 	return (
-		<Section name="text" reason={sectionReason(view, ["font-size", "color"])}>
-			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />
+		<Section name="Typography" reason={sectionReason(view, ["font-size"])}>
 			<TypographyNumberRow view={view} property="font-size" />
-			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<TypographyNumberRow view={view} property="line-height" />
-			<TypographyNumberRow view={view} property="letter-spacing" />
+			{readRow(modelRow("letter-spacing"), view.scoped, view.theme).token !== null ? (
+				<TypographyNumberRow view={view} property="letter-spacing" />
+			) : null}
+			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<Row name="text-align" ok={okOf(view, alignRow)} changed={view.fresh(wordOf(view.scoped, "text-align"))}>
 				<IconField
 					value={align ?? "text-left"}
@@ -1697,24 +1735,48 @@ function TextSection({ view }: { view: View }) {
 					onPick={(token) => writeValue(view, alignRow, { kind: "value", value: token })}
 				/>
 			</Row>
-			<ColourRow view={view} property="color" absent="inherit" />
+			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />
 			<ToggleRow view={view} property="font-variant-numeric" />
 			<Rest view={view} section="text" drawn={drawn} />
 		</Section>
 	);
 }
 
-/** Every section, in Figma's order, which is the order the rail draws them. */
+function AddProperty({ view }: { view: View }) {
+	const options = ["letter-spacing", "border-width"].filter(
+		(property) => readRow(modelRow(property), view.scoped, view.theme).token === null,
+	);
+	return (
+		<div className="flex h-8 items-center border-border-raised border-t px-2.5">
+			<Menu
+				label="Add property"
+				current={{ token: null, name: "+ Add property" }}
+				options={options.map((property) => ({ token: property, name: property }))}
+				filter
+				ok={view.property !== null}
+				onPick={(property) => {
+					if (property)
+						view.property?.apply(property, {
+							kind: "custom",
+							value: property === "border-width" ? "1px" : "0px",
+						});
+				}}
+			/>
+		</div>
+	);
+}
+
+/** Typography and Appearance follow the approved editing controls; remaining layout rows retain their sections. */
 export function PropertySections({ view }: { view: View }) {
 	return (
 		<>
 			<PositionSection view={view} />
 			<SizeSection view={view} />
 			<LayoutSection view={view} />
-			<AppearanceSection view={view} />
-			<FillSection view={view} />
-			<StrokeSection view={view} />
 			<TextSection view={view} />
+			<AppearanceSection view={view} />
+			<StrokeSection view={view} />
+			<AddProperty view={view} />
 		</>
 	);
 }
@@ -1773,10 +1835,12 @@ const NOT_INLINE = /^(flex-1|min-h-0|size-full|aspect-square|self-center|order-f
 
 export function AddClassRow({
 	view,
+	editable,
 	taken,
 	onAdd,
 }: {
 	view: View;
+	editable: boolean;
 	/** the whole literal's tokens, so one the element already wears is not offered */
 	taken: ReadonlySet<string>;
 	onAdd: (token: string) => void;
@@ -1786,7 +1850,7 @@ export function AddClassRow({
 		<AddField
 			candidates={SEEDS.filter((token) => !(inline && NOT_INLINE.test(token))).map((token) => ({ token }))}
 			taken={taken}
-			ok={view.element.refusal === undefined}
+			ok={editable}
 			verdictOf={view.compiler.verdictOf}
 			onAsk={view.compiler.ask}
 			onAdd={onAdd}

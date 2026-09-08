@@ -1,5 +1,6 @@
 import type { SourceRead } from "../../source-edit";
 import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
+import { samplePropertyPreview } from "./property-preview";
 
 export type PropertyPlanResult = { ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string };
 
@@ -63,13 +64,23 @@ export function createPropertySession(actions: PropertySessionActions) {
 	return {
 		begin,
 		finish,
-		preview(property: string, scope: string, value: SourcePropertyValue): void {
+		preview(property: string, scope: string, value: SourcePropertyValue, sampleValue?: string): void {
 			const held = begin(property, scope);
 			held.value = value;
 			const revision = ++held.revision;
 			void held.read.then(async (read) => {
 				if (!read || held.done || current !== held || held.revision !== revision) return;
-				const plan = await actions.plan(read, revision, value);
+				// Reserve the earlier revision for the immediate sample; the full result
+				// may replace it only while this intent is still current.
+				const sampleRevision = revision * 2;
+				const pending = actions.plan(read, sampleRevision + 1, value);
+				const sample = samplePropertyPreview(
+					read,
+					sampleRevision,
+					sampleValue ?? (value.kind === "custom" ? value.value : undefined),
+				);
+				if (sample) await actions.preview(sample);
+				const plan = await pending;
 				if (held.done || current !== held || held.revision !== revision) return;
 				if (plan.ok) await actions.preview(plan.preview);
 				else actions.refused(read, value, plan.reason);

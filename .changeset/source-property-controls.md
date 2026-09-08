@@ -13,3 +13,19 @@ Typography fields preserve fractional custom units, step the current draft by on
 Property conflicts disclose the checked current declaration while retaining the original requested edit; changed source ancestry never supplies unchecked current values.
 
 Retain compiler scope conditions for removed declarations and distinguish inactive or constrained native results from verified uses.
+
+Creation, removal and earlier property edits remain reversible through the same history, including originally absent or empty class fields.
+
+Continuous numeric previews use the original compiler's temporary declaration immediately, without waiting for later compilation replies, and preserve outside stylesheet changes on cancellation.
+
+Keep memoized consumers in affected-use results through property Undo and Redo, while reporting the appearance each consumer actually retained.
+
+Typography menus mark the authored token reference without mistaking an equal custom value for a binding.
+
+Edit individual corner radii with exact numeric units, token choices, live preview and cancellation through the same source-owned history.
+
+Group the approved Typography and Appearance controls together, and add optional letter spacing or border width through the same source-owned save and Undo.
+
+Grouped property changes retain their original fields or written scope and use one source save and Undo receipt.
+
+Remove a written scope or add and remove raw classes through the same retained source owner, including cancellation while the original read is pending.
