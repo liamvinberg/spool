@@ -1,4 +1,5 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
+import { nativeFilter } from "./property-filters";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
 
@@ -51,7 +52,9 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const transform = Object.hasOwn(transformProperties, expected.property)
 		? transformProperties[expected.property]
 		: undefined;
-	if (transform) return transformOutcome(element, expected, transform);
+	if (transform) return composedOutcome(element, expected, transform);
+	if (["filter", "brightness", "contrast", "saturate", "hue-rotate"].includes(expected.property))
+		return composedOutcome(element, expected, "filter");
 	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
 		return borderOutcome(element, expected);
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
@@ -243,11 +246,11 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	return { rendered: Number(observed) === wanted ? "verified" : "mismatching", observed };
 }
 
-/** Resolve the complete captured transform declaration, including independently owned companion axes. */
-function transformOutcome(
+/** Resolve a complete captured native consumer, including independently owned companion inputs. */
+function composedOutcome(
 	element: Element,
 	expected: SourcePropertyExpectation,
-	property: NativeTransformProperty,
+	property: NativeTransformProperty | "filter",
 ): PropertyOutcome {
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const sheet = new CSSStyleSheet();
@@ -259,14 +262,16 @@ function transformOutcome(
 			? /^--tw-scale-[xyz]$/.test(name)
 			: property === "translate"
 				? /^--tw-translate-[xyz]$/.test(name)
-				: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
+				: property === "filter"
+					? /^--tw-(?:blur|brightness|contrast|grayscale|hue-rotate|invert|saturate|sepia|drop-shadow)$/.test(name)
+					: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
 		if (condition === "inactive") continue;
-		if (condition === "unverified") return unverified("this transform needs a native condition proof");
+		if (condition === "unverified") return unverified("this composed effect needs a native condition proof");
 		if (effect.property !== property && !ownsVariable(effect.property))
-			return unverified("this transform has dependent effects requiring native proof");
+			return unverified("this composed effect has dependent effects requiring native proof");
 		const group = declarations.get(effect.property) ?? [];
 		group.push(effect);
 		declarations.set(effect.property, group);
@@ -336,10 +341,11 @@ function transformOutcome(
 		(element instanceof HTMLElement || element instanceof SVGElement) &&
 		element.style.getPropertyValue(property)
 	)
-		return unverified("this transform has an independent inline default context");
-	const value = resolve(selection.winner?.value ?? "none").trim();
-	if (unresolved) return unverified("this transform needs complete captured variable and companion evidence");
-	const result = nativeTransform(element, property, value);
+		return unverified("this composed effect has an independent inline default context");
+	// A fully resolved empty fallback list has the initial none value for these non-inherited consumers.
+	const value = resolve(selection.winner?.value ?? "none").trim() || "none";
+	if (unresolved) return unverified("this composed effect needs complete captured variable and companion evidence");
+	const result = property === "filter" ? nativeFilter(element, value) : nativeTransform(element, property, value);
 	return result.kind === "unknown"
 		? unverified(result.reason)
 		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };

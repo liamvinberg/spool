@@ -9,6 +9,7 @@ import { compilePropertySource } from "../daemon/source-property-compile";
 import { nativePropertyEffects, propertyConsumers } from "../daemon/source-property-dependencies";
 import { planPropertyValue } from "../daemon/source-property-plan";
 import { propertyScopePaths } from "../daemon/source-property-scope";
+import { FILTER_SET } from "../properties/families";
 import type { SourcePropertyExpectation } from "../source-property";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import type { PropertyOutcome } from "./property-outcome";
@@ -1273,3 +1274,115 @@ it.each(appearanceProperties.filter((row) => row.index >= 50 && row.index <= 61)
 		expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
 	},
 );
+
+it.each([
+	...appearanceProperties.filter((row) => row.index >= 62 && row.index <= 65),
+	...FILTER_SET.groups.flat().map((token) => ({ property: "filter", before: "filter-none", after: token })),
+])("verifies compiled filter $property $after with native companions and inverse", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = row.property === "filter" ? row.before : `${row.before} grayscale`;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const subject = (classes: string) =>
+		`<div data-subject class="${classes}" style="width:80px;height:40px;background:#123456">Native filter</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(original)}`,
+	);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next)}${subject(plan.next)}`,
+	);
+	expect((await empty.inspect(removed)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it.each(["filter", "blur-xs"])("checks compiled %s default and outside variable context", async (classes) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: classes === "filter" ? "brightness" : "filter", scope: "" } as const;
+	const removal =
+		classes === "filter"
+			? await planPropertyValue(
+					root,
+					new Map([[file, readInput(file)]]),
+					"filter brightness-50",
+					operation,
+					{ kind: "remove" },
+					environment,
+				)
+			: undefined;
+	const certificate =
+		removal?.desired ?? (await compilePropertySource(root, new Map([[file, readInput(file)]]), classes));
+	if (removal) expect(removal.next).toBe("filter");
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: operation.property,
+		scope: "",
+		className: classes,
+		absent: false,
+		css: certificate.css,
+		effects: removal?.consumers ?? nativePropertyEffects(certificate, new Set(["filter"]), environment),
+		scopePaths: propertyScopePaths(removal?.original ?? certificate, certificate, operation, environment),
+	};
+	const outside = classes === "filter" ? "--tw-brightness:brightness(.25)" : "--blur-xs:8px";
+	const f = await fixture(
+		`<!doctype html><style>${expected.css}</style><div data-subject class="${classes}">Default</div><div data-subject class="${classes}" style="${outside}">Outside variable</div>`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", classes === "filter" ? "mismatching" : "unverified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).filter)),
+	).toEqual(classes === "filter" ? ["none", "brightness(0.25)"] : ["blur(4px)", "blur(8px)"]);
+});
