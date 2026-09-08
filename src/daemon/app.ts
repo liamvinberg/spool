@@ -2253,6 +2253,14 @@ export function createDaemonApp({
 		.post(
 			"/api/p/:project/source",
 			validator("json", (value, c) => {
+				const operation = z.discriminatedUnion("kind", [
+					z
+						.object({ kind: z.literal("literal"), field: z.string().optional() })
+						.strict()
+						.transform(({ kind, field }) => ({ kind, ...(field === undefined ? {} : { field }) })),
+					z.object({ kind: z.literal("property"), property: z.string(), scope: z.string() }).strict(),
+					z.object({ kind: z.literal("delete") }).strict(),
+				]);
 				const occurrence = z
 					.object({
 						publication: z.string(),
@@ -2287,6 +2295,7 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("read"),
+								operation,
 								observer: z.string(),
 								frame: z.string(),
 								original: occurrence,
@@ -2350,7 +2359,14 @@ export function createDaemonApp({
 				switch (body.action) {
 					case "read":
 						return c.json(
-							await sourceOwner.read(project.root, body.frame, body.original, body.generation, body.observer),
+							await sourceOwner.read(
+								project.root,
+								body.frame,
+								body.original,
+								body.generation,
+								body.observer,
+								body.operation,
+							),
 						);
 					case "reach":
 						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories));

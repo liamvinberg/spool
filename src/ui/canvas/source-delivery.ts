@@ -4,6 +4,7 @@ import {
 	combineUseOutcomes,
 	type SourceInventory,
 	type SourceOccurrence,
+	type SourceOperation,
 	type SourcePublication,
 	type SourceRead,
 	type SourceUse,
@@ -172,11 +173,15 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		[project, request],
 	);
 	const inventory = useCallback(
-		async (field?: string): Promise<SourceInventory[]> => {
+		async (
+			field?: string,
+			operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+		): Promise<SourceInventory[]> => {
 			return await Promise.all(
 				[...iframes.current].map(async ([name, iframe]): Promise<SourceInventory> => {
 					const inventory = await request<Omit<SourceInventory, "frame">>(name, {
 						action: "inventory",
+						operation,
 						field: field,
 					});
 					const rect = iframe.getBoundingClientRect();
@@ -197,7 +202,12 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		async (frame: string, selector: string, field?: string) => {
 			const version = ++descriptionVersion.current;
 			setLiveFrames(new Set(iframes.current.keys()));
-			const original = await request<SourceOccurrence>(frame, { action: "inspect", selector, field });
+			const original = await request<SourceOccurrence>(frame, {
+				action: "inspect",
+				selector,
+				field,
+				operation: { kind: "literal", ...(field ? { field } : {}) },
+			});
 			const description = original
 				? await describeSource(project, frame, original, await inventory(original.field))
 				: undefined;
@@ -211,7 +221,12 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	return {
 		describeField: useCallback(
 			async (frame: string, selector: string, field: string) => {
-				const original = await request<SourceOccurrence>(frame, { action: "inspect", selector, field });
+				const original = await request<SourceOccurrence>(frame, {
+					action: "inspect",
+					selector,
+					field,
+					operation: { kind: "literal", ...(field ? { field } : {}) },
+				});
 				return original ? describeSource(project, frame, original, []) : undefined;
 			},
 			[project, request],
@@ -247,7 +262,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		inventory,
 		prepare: useCallback(
 			async (frame: string, read: SourceRead): Promise<SourceRead> => {
-				const inventories = await inventory(read.original.field);
+				const inventories = await inventory(read.original.field, read.operation);
 				const result = await sourceReach(project, read.handle, inventories);
 				if (!result?.ok) return read;
 				const amended = result.read;
@@ -286,10 +301,16 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[request],
 		),
 		read: useCallback(
-			(frame: string, selector: string, generation: number, field?: string) => {
+			(
+				frame: string,
+				selector: string,
+				generation: number,
+				field?: string,
+				operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+			) => {
 				setActive({ frame, selector, generation, field });
 				outcomes.current = undefined;
-				return request<SourceOccurrence>(frame, { action: "read", selector, generation, field });
+				return request<SourceOccurrence>(frame, { action: "read", selector, generation, field, operation });
 			},
 			[request],
 		),
