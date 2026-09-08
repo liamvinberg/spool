@@ -69,29 +69,17 @@ import {
 	Section,
 } from "./properties-fields";
 import type { Scope } from "./properties-scope";
+import { scopeKey } from "./properties-scope";
+import { appearanceProperty, type PropertyControls, propertyControlValue } from "./property-controls";
 
-/**
- * The rail's rows (#258): every section, drawn out of the property model.
- *
- * The model (#257) already says what each of about 130 class families reads,
- * writes and refuses; this file is where those answers become controls. Nothing
- * here decides what a token means — a row asks `readRow` what it is wearing,
- * `optionsFor` what it may offer, `editsFor` what a change comes to, and
- * `verdictFor` whether it may be written at all. What comes back is handed to
- * the write lane as `set-class` ops, which is what keeps the spelling — the
- * fewest tokens, the logical sides, the zero that drops at the base and
- * overrides under a scope — in one place rather than two.
- *
- * The sections and their order are Figma's, and which rows each one leads with
- * is `design/frames/manipulate/properties--rail`. A section's other rows draw
- * themselves when the element wears one, and a `+ more` at its foot reaches the
- * rest: a rail of a hundred and thirty rows is not a surface anybody reads, and
- * a family with nowhere to be reached is exactly the absence this ticket exists
- * to remove.
+/** Rows read candidate spellings from the shared property inventory.
+ * Appearance controls retain an original source operation through preview and completion.
+ * Layout controls keep their existing writer until their operation-specific migration.
  */
 
 /** What every row is handed: the element under one scope, and how to write under it. */
 export interface View {
+	property: PropertyControls | null;
 	scope: Scope;
 	/** the tokens under the live scope, prefixes off, which is what the model reads */
 	scoped: string;
@@ -104,12 +92,18 @@ export interface View {
 	compiler: Compiler;
 	/** true when a bare token under this scope is not one the file was written with */
 	fresh: (token: string | null) => boolean;
-	/** the row's edits, as one patch under the live scope */
+	/** Remaining layout edits under the live scope. */
 	put: (edits: readonly RowEdit[]) => void;
 }
 
 function atOf(view: View): At {
 	return { scoped: view.scoped, theme: view.theme };
+}
+
+function writeValue(view: View, row: ModelRow, value: RowValue): void {
+	if (appearanceProperty(row)) {
+		view.property?.apply(row.property, propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
+	} else view.put(editsFor(row, value, atOf(view)));
 }
 
 /** The model row this property is, which is a programming error when it is missing. */
@@ -135,6 +129,7 @@ function ruleRow<K extends Rule["kind"]>(property: string, kind: K): ModelRow & 
 
 /** Whether this row may be written here, and the reason it may not. */
 function okOf(view: View, row: ModelRow): boolean {
+	if (appearanceProperty(row)) return view.property !== null;
 	return verdictFor(row, view.element, view.scoped).ok;
 }
 
@@ -243,7 +238,13 @@ function LengthRow({
 	const parsed = takeApart(value);
 	const readout = parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
 	const changed = view.fresh(lengthOf(view.scoped, family)?.token ?? null);
-	const write = (next: RowValue) => view.put(editsFor(row, next, atOf(view)));
+	const control = appearanceProperty(row) ? view.property : null;
+	const typedValue = (typed: string): RowValue | undefined => {
+		if (typed.trim() === "") return null;
+		const next = parseTyped(kind, typed);
+		return next ? { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` } : undefined;
+	};
+	const write = (next: RowValue) => writeValue(view, row, next);
 	const stepBy = (units: number) => {
 		const from: Length | null =
 			parsed === null
@@ -262,11 +263,17 @@ function LengthRow({
 				faint={held.own === null}
 				changed={changed}
 				placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
+				onBegin={() => control?.begin(property)}
+				onCancel={() => control?.finish(false)}
+				onPreview={(typed) => {
+					const next = typedValue(typed);
+					if (next !== undefined)
+						control?.preview(property, propertyControlValue(row, next, atOf(view), scopeKey(view.scope)));
+				}}
 				onCommit={(typed) => {
-					const text = typed.trim();
-					if (text === "") return write(null);
-					const next = parseTyped(kind, text);
-					if (next !== null) write({ kind: "value", value: `${next.negative ? "-" : ""}${next.value}` });
+					const next = typedValue(typed);
+					if (next !== undefined) write(next);
+					else control?.finish(false);
 				}}
 				onStep={stepBy}
 			/>
@@ -303,7 +310,7 @@ function BorderWidthRow({
 		(value) => value === null,
 	);
 	const changed = view.fresh(readRow(row, view.scoped, view.theme).token);
-	const write = (next: RowValue) => view.put(editsFor(row, next, atOf(view)));
+	const write = (next: RowValue) => writeValue(view, row, next);
 	const stepBy = (units: number) => {
 		const parsed = takeApart(held.shown ?? "");
 		const from: Length | null =
@@ -414,7 +421,7 @@ function ColourRow({
 			: { token: shown.name, name: shown.name, swatch: shown.paint ?? "" };
 	const write = (nextName: string | null, alpha: number | null) => {
 		if (onWrite !== undefined) return onWrite(nextName, alpha);
-		view.put(editsFor(row, nextName === null ? null : { kind: "colour", name: nextName, alpha }, atOf(view)));
+		writeValue(view, row, nextName === null ? null : { kind: "colour", name: nextName, alpha });
 	};
 	return (
 		<Row name={name ?? row.property} ok={ok} changed={changed}>
@@ -514,9 +521,7 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 				faint={held.own === null}
 				changed={changed}
 				label={name ?? row.property}
-				onPick={(token) =>
-					view.put(editsFor(row, token === null ? null : { kind: "value", value: token }, atOf(view)))
-				}
+				onPick={(token) => writeValue(view, row, token === null ? null : { kind: "value", value: token })}
 			/>
 		</Row>
 	);
@@ -595,7 +600,7 @@ function TokenRow({
 				arbitrary={(typed) => arbitraryOption(row, typed)}
 				onPick={(token) => {
 					const explicit = token === null && clearTo !== undefined && view.scope.length > 0 ? clearTo : token;
-					view.put(editsFor(row, explicit === null ? null : { kind: "value", value: explicit }, atOf(view)));
+					writeValue(view, row, explicit === null ? null : { kind: "value", value: explicit });
 				}}
 			/>
 			{fold}
@@ -637,8 +642,7 @@ function ToggleRow({
 	const chips = set.groups.filter((group) => group !== menuGroup).flat();
 	const menuOn = menuGroup === undefined ? null : (menuGroup.find((token) => on.has(token)) ?? null);
 	const none = `${menuGroup?.[0]?.split("-")[0] ?? ""}-none`;
-	const write = (token: string, next: boolean) =>
-		view.put(editsFor(row, { kind: "toggle", token, on: next }, atOf(view)));
+	const write = (token: string, next: boolean) => writeValue(view, row, { kind: "toggle", token, on: next });
 	return (
 		<Row name={row.property} ok={ok} tall changed={[...on].some((token) => view.fresh(token))}>
 			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
@@ -846,7 +850,7 @@ function GradientRows({ view }: { view: View }) {
 		(held) => held === null,
 	);
 	const changed = view.fresh(own?.token ?? null);
-	const write = (next: Gradient | null) => view.put(editsFor(row, { kind: "gradient", gradient: next }, atOf(view)));
+	const write = (next: Gradient | null) => writeValue(view, row, { kind: "gradient", gradient: next });
 	const current =
 		gradient === null ? SHAPES[0] : (SHAPES.find((shape) => shape.token === gradient.shape) ?? SHAPES[0]);
 	return (
@@ -1325,9 +1329,7 @@ function PlaceMenu({
 			faint={own === null}
 			changed={view.fresh(own)}
 			label={row.property}
-			onPick={(token) =>
-				view.put(editsFor(row, token === null ? null : { kind: "value", value: token }, atOf(view)))
-			}
+			onPick={(token) => writeValue(view, row, token === null ? null : { kind: "value", value: token })}
 		/>
 	);
 }
@@ -1517,7 +1519,7 @@ function TextSection({ view }: { view: View }) {
 						{ token: "text-center", icon: <LinesIcon at="center" /> },
 						{ token: "text-right", icon: <LinesIcon at="right" /> },
 					]}
-					onPick={(token) => view.put(editsFor(alignRow, { kind: "value", value: token }, atOf(view)))}
+					onPick={(token) => writeValue(view, alignRow, { kind: "value", value: token })}
 				/>
 			</Row>
 			<ColourRow view={view} property="color" absent="inherit" />

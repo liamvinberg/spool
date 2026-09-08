@@ -1,7 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { RowEdit, RowElement } from "../../properties/rows";
-import type { SourceDescription } from "../../source-edit";
+import type { SourceDescription, SourceRead } from "../../source-edit";
+import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
@@ -38,6 +39,7 @@ import {
 	variantsOf,
 } from "./properties-scope";
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
+import { createPropertySession, type PropertyPlanResult, type PropertyReadRequest } from "./property-session";
 import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
 import { type OwnershipActions, SourceOwnership } from "./source-ownership";
@@ -104,6 +106,19 @@ export interface PropertiesActs {
 	onAsk?: () => void;
 	ownership?: OwnershipActions;
 	text?: TextActions;
+	property?: {
+		begin(
+			frame: string,
+			selector: string,
+			property: string,
+			scope: string,
+			request: PropertyReadRequest,
+		): Promise<SourceRead | undefined>;
+		plan(frame: string, read: SourceRead, revision: number, value: SourcePropertyValue): Promise<PropertyPlanResult>;
+		refused(frame: string, read: SourceRead, value: SourcePropertyValue, reason: string): void;
+		preview(frame: string, plan: SourcePropertyPreview): Promise<boolean>;
+		finish(frame: string, read: SourceRead, value: SourcePropertyValue | undefined, commit: boolean): void;
+	};
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
 	/** the frame's own geometry, which is `frame.json` and never source */
@@ -332,6 +347,28 @@ function Body({
 	const scopes = [...carried];
 	for (const extra of opened) if (!scopes.some((known) => sameScope(known, extra))) scopes.push(extra);
 	const live = scopes.some((known) => sameScope(known, scope)) ? scope : BASE;
+	// A property session belongs to the originally selected project occurrence.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: actions stay bound to the project/occurrence that began this session
+	const propertySession = useMemo(() => {
+		const actions = acts.property;
+		if (!actions || !element) return undefined;
+		const { frame, selector } = element;
+		return createPropertySession({
+			begin: (property, scope, request) => actions.begin(frame, selector, property, scope, request),
+			plan: (read, revision, value) => actions.plan(frame, read, revision, value),
+			refused: (read, value, reason) => actions.refused(frame, read, value, reason),
+			preview: (plan) => actions.preview(frame, plan),
+			finish: (read, value, commit) => actions.finish(frame, read, value, commit),
+		});
+	}, [project, identity]);
+	const propertyScope = scopeKey(live);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: changing scope retires its original pending property intent
+	useEffect(
+		() => () => {
+			void propertySession?.finish(false);
+		},
+		[propertySession, propertyScope],
+	);
 
 	const write = (ops: readonly HandOp[]) => {
 		if (element === null || ops.length === 0) return;
@@ -361,6 +398,20 @@ function Body({
 	// picture on it at all
 	const assets = useAssets(project, element?.frame ?? null, swappable(rowElement.tag), revision);
 	const view: View = {
+		property: propertySession
+			? {
+					begin: (property) => {
+						propertySession.begin(property, propertyScope);
+					},
+					preview: (property, value) => propertySession.preview(property, propertyScope, value),
+					apply: (property, value) => {
+						void propertySession.apply(property, propertyScope, value);
+					},
+					finish: (commit) => {
+						void propertySession.finish(commit);
+					},
+				}
+			: null,
 		scope: live,
 		scoped: scopedClass(literal, live),
 		base: scopedClass(literal, BASE),

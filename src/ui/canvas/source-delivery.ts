@@ -301,10 +301,12 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		describe,
 		inventory,
 		prepare: useCallback(
-			async (frame: string, read: SourceRead): Promise<SourceRead> => {
+			async (frame: string, read: SourceRead, signal?: AbortSignal): Promise<SourceRead> => {
+				if (signal?.aborted) return read;
 				const inventories = await inventory(read.original.field, read.operation);
+				if (signal?.aborted) return read;
 				const result = await sourceReach(project, read.handle, inventories);
-				if (!result?.ok) return read;
+				if (signal?.aborted || !result?.ok) return read;
 				const amended = result.read;
 				const frames = [...new Set(amended.reach?.uses.map((use) => use.frame) ?? [frame])];
 				prepared.current.set(read.generation, { initiator: frame, frames });

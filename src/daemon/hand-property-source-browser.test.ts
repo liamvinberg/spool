@@ -244,3 +244,117 @@ it("previews an unused property candidate, saves once and reverses retained sour
 	expect(outside).toEqual({ accepted: false, kept: true });
 	await request({ action: "cancel", handle: cssRead.read.handle });
 });
+
+it("edits opacity through the actual Properties control with preview, one save and source inverse", async () => {
+	const f = await originCanvas(
+		{
+			"shared/button.tsx":
+				'export function Button(){return <button id="subject" className="opacity-75">Hello</button>}',
+		},
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+	);
+	await f.select();
+	const field = f.page.locator('[data-properties-row="opacity"] input').first();
+	await expect.poll(() => field.count()).toBe(1);
+	await field.fill("50");
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.5");
+	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+	expect(f.writes).toEqual([]);
+	await field.press("Enter");
+	await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-50");
+	await f.settled();
+	expect(f.writes).toEqual(["commit"]);
+	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-50");
+	await f.history();
+	await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+});
+
+it("retains the latest typed request when a held original computed-class read is refused", async () => {
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let reached = false;
+	const f = await originCanvas(
+		{
+			"shared/button.tsx":
+				'export function Button(){return <button id="subject" className={"opacity-" + 75}>Hello</button>}',
+		},
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		false,
+		async (page) => {
+			await page.route("**/source", async (route) => {
+				const body = route.request().postDataJSON();
+				if (body.action !== "read" || body.operation?.kind !== "property") return route.continue();
+				const response = await route.fetch();
+				expect((await response.json()).ok).toBe(false);
+				reached = true;
+				await held;
+				await route.fulfill({ response });
+			});
+		},
+	);
+	await f.select();
+	const field = f.page.locator('[data-properties-row="opacity"] input');
+	await field.fill("50");
+	await expect.poll(() => reached).toBe(true);
+	await field.fill("60");
+	release();
+	const notice = f.page.locator("[data-properties-rail] [data-hand-notice]");
+	await expect.poll(() => notice.getByRole("button", { name: "Ask agent", exact: true }).count()).toBe(1);
+	await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	const composer = f.page.locator("[data-agent-rail] textarea");
+	await expect.poll(() => composer.inputValue()).toContain("opacity-60");
+	expect(await composer.inputValue()).toContain("#subject");
+	expect(f.writes).toEqual([]);
+	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
+});
+
+it("does not prepare an old property read after Escape and a newer preview", async () => {
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let reached = false;
+	let replayed = false;
+	const f = await originCanvas(
+		{
+			"shared/button.tsx":
+				'export function Button(){return <button id="subject" className="opacity-75">Hello</button>}',
+		},
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		false,
+		async (page) => {
+			await page.route("**/source", async (route) => {
+				if (route.request().postDataJSON().action !== "reach" || reached) return route.continue();
+				const response = await route.fetch();
+				expect((await response.json()).ok).toBe(true);
+				reached = true;
+				await held;
+				await route.fulfill({ response });
+				replayed = true;
+			});
+		},
+	);
+	await f.select();
+	const field = f.page.locator('[data-properties-row="opacity"] input');
+	await field.fill("50");
+	await expect.poll(() => reached).toBe(true);
+	await field.press("Escape");
+	await field.fill("60");
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.6");
+	release();
+	await expect.poll(() => replayed).toBe(true);
+	await f.page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+	expect(await f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.6");
+	await field.press("Escape");
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+	expect(f.writes).toEqual([]);
+	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+});

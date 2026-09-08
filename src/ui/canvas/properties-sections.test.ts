@@ -3,20 +3,16 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
-import type { RowEdit, RowElement } from "../../properties/rows";
+import { editsFor, type RowEdit, type RowElement, rowFor } from "../../properties/rows";
+import type { SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import type { Compiler } from "./properties-compile";
 import { BASE, type Scope, scopedClass, scopeKey } from "./properties-scope";
 import { PropertySections, type View } from "./properties-sections";
 
-/**
- * The seven primitives, on the rows that need them (#258).
- *
- * What is proved here is what a control reads off a literal and what a change
- * to it comes to: the tokens handed to the write lane. The lane's own spelling
- * — the fewest tokens, the logical sides kept, the zero that drops at the base
- * — is `class-write.test.ts`'s, and the model behind these readings is
- * `properties-rows.test.ts`'s. This file is the surface between them.
+/** These surface tests verify displayed values and requested candidates.
+ * Appearance changes carry typed source requests; planner/native tests prove their effects.
+ * Layout rows retain their existing writer until their operation-specific migration.
  */
 
 /** kaffe's theme: its own colours, sizes and radii, and one breakpoint of its own. */
@@ -241,9 +237,6 @@ it("writes a gradient as a shape, a direction and stop rows", async () => {
 
 	await pick(linear, "gradient via", "raised");
 	expect(linear.wrote()).toEqual([
-		{ token: "bg-linear-to-br", remove: true },
-		{ token: "from-thread", remove: true },
-		{ token: "to-raised", remove: true },
 		{ token: "bg-linear-to-br" },
 		{ token: "from-thread" },
 		{ token: "via-raised" },
@@ -269,11 +262,7 @@ it("knocks out the exclusive group and its reset when a chip goes on", async () 
 	const rail = await mount("proportional-nums normal-nums");
 
 	await press(rail, chipIn(rail, "font-variant-numeric", "tabular-nums"));
-	expect(rail.wrote()).toEqual([
-		{ token: "proportional-nums", remove: true },
-		{ token: "normal-nums", remove: true },
-		{ token: "tabular-nums" },
-	]);
+	expect(rail.wrote()).toEqual([{ token: "tabular-nums" }]);
 
 	// a chip already on comes off on its own, without touching the rest
 	await press(rail, chipIn(rail, "font-variant-numeric", "proportional-nums"));
@@ -362,10 +351,25 @@ it("greys every row on a literal no hand may write", async () => {
 	expect(rowNames(rail, "padding")).toEqual(["padding"]);
 });
 
+it("sends appearance values to source operations without falling through to the legacy class writer", async () => {
+	const rail = await mount("opacity-75 text-thread border-2");
+	await type(rail, "opacity", "50");
+	await type(rail, "border-width", "3.5px");
+	await pick(rail, "color", "raised");
+	expect(rail.requests).toEqual([
+		{ property: "opacity", value: { kind: "binding", tokens: ["opacity-50"] } },
+		{ property: "border-width", value: { kind: "binding", tokens: ["border-[3.5px]"] } },
+		{ property: "color", value: { kind: "binding", tokens: ["text-raised"] } },
+	]);
+	expect(rail.legacy).toEqual([]);
+});
+
 /* ---------- the harness ---------- */
 
 interface Rail {
 	host: HTMLElement;
+	requests: { property: string; value: SourcePropertyValue }[];
+	legacy: RowEdit[][];
 	/** the edits the last change came to, as the write lane would be handed them */
 	wrote: () => RowEdit[];
 	/** the scope those edits were written under */
@@ -383,7 +387,27 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 		vi.unstubAllGlobals();
 	});
 	let wrote: RowEdit[] = [];
+	const requests: Rail["requests"] = [];
+	const legacy: RowEdit[][] = [];
 	const view: View = {
+		property: element?.refusal
+			? null
+			: {
+					begin: () => {},
+					preview: () => {},
+					finish: () => {},
+					apply: (property, value) => {
+						requests.push({ property, value });
+						const row = rowFor(property);
+						if (!row) throw new Error("unknown property request");
+						wrote =
+							value.kind === "binding"
+								? value.tokens.map((token) => ({ token: token.slice(scopeKey(scope).length) }))
+								: value.kind === "remove"
+									? editsFor(row, null, { scoped: scopedClass(className, scope), theme: THEME })
+									: [];
+					},
+				},
 		scope,
 		scoped: scopedClass(className, scope),
 		base: scopedClass(className, BASE),
@@ -393,13 +417,14 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 		compiler: stubCompiler(),
 		fresh: () => false,
 		put: (edits) => {
+			legacy.push([...edits]);
 			wrote = [...edits];
 		},
 	};
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
 	});
-	return { host, wrote: () => wrote, scoped: () => scopeKey(scope) };
+	return { host, requests, legacy, wrote: () => wrote, scoped: () => scopeKey(scope) };
 }
 
 function stubCompiler(): Compiler {
