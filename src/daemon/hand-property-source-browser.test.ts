@@ -528,7 +528,10 @@ it("uses the approved shared color menu with exact reference metadata and bindin
 	await trigger.click();
 	const search = f.page.getByRole("textbox", { name: "Find color token", exact: true });
 	await search.fill("missing-color-choice");
-	expect(await f.page.locator(".ep-color-options button").count()).toBe(0);
+	// No token answers that search; removing the declaration is not a search result.
+	expect(
+		await f.page.locator(".ep-color-options button").evaluateAll((buttons) => buttons.map((b) => b.textContent)),
+	).toEqual(["Remove color"]);
 	expect(f.writes).toEqual([]);
 	await search.fill("blue-500");
 	const blue = f.page.getByRole("button", { name: "Apply --color-blue-500", exact: true });
