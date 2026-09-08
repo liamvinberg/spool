@@ -1,6 +1,8 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import type { SourcePropertyPreview } from "../source-property";
 import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
 import { installObserver } from "./source-observer";
+import { previewPropertyStyles, restorePropertyStyles } from "./source-property-preview";
 import { installValueFlow } from "./source-values";
 
 /**
@@ -526,7 +528,16 @@ function previewSource(generation: number, value: string): boolean {
 	previewSourceUses(generation, value);
 	return true;
 }
+function previewProperty(plan: SourcePropertyPreview): boolean {
+	const uses = leases.has(plan.generation) ? [leases.get(plan.generation)!] : sharedPreviews.get(plan.generation);
+	if (!sourcePacket || !uses?.length || uses.some((use) => use.original.field !== "className")) return false;
+	if (leases.has(plan.generation) && !validLease(plan.generation)) return false;
+	if (!previewPropertyStyles(plan, sourcePacket)) return false;
+	return previewSource(plan.generation, plan.value);
+}
+
 function cancelSource(generation: number): void {
+	restorePropertyStyles(generation);
 	const held = leases.get(generation);
 	leases.delete(generation);
 	cancelSourceUses(generation);
@@ -708,6 +719,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	if (undo && leases.size > 0) return refused("another edit is in progress");
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
+	restorePropertyStyles(publication.generation);
 	if (held && ownsPreview(held)) restoreField(held.element, held.original, held.children, held.restoreAttribute);
 	cancelSourceUses(publication.generation, false);
 	feedbackTimer = setTimeout(clearGestureFeedback, 450);
@@ -790,6 +802,7 @@ declare global {
 			clearFeedback: typeof clearSourceFeedback;
 			valid: typeof validLease;
 			preview: typeof previewSource;
+			previewProperty: typeof previewProperty;
 			complete: typeof completeSource;
 			cancel: typeof cancelSource;
 			install: typeof installSource;
@@ -808,6 +821,7 @@ if (typeof window !== "undefined")
 		clearFeedback: clearSourceFeedback,
 		valid: validLease,
 		preview: previewSource,
+		previewProperty,
 		complete: completeSource,
 		cancel: cancelSource,
 		install: installSource,

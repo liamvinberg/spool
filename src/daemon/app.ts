@@ -2324,6 +2324,16 @@ export function createDaemonApp({
 							.strict(),
 						z
 							.object({
+								action: z.literal("preview"),
+								handle: z.string(),
+								generation: z.number().int().positive(),
+								revision: z.number().int().positive(),
+								original: occurrence,
+								change,
+							})
+							.strict(),
+						z
+							.object({
 								action: z.literal("commit"),
 								handle: z.string(),
 								generation: z.number().int().positive(),
@@ -2400,6 +2410,17 @@ export function createDaemonApp({
 								body.original,
 								body.inventories,
 								body.operation,
+							),
+						);
+					case "preview":
+						return c.json(
+							await sourceOwner.preview(
+								project.root,
+								body.handle,
+								body.generation,
+								body.revision,
+								body.original,
+								body.change,
 							),
 						);
 					case "commit":

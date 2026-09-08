@@ -17,7 +17,7 @@ import {
 	sameSourceOperation,
 	type UseOutcome,
 } from "../source-edit";
-import type { SourcePropertyEnvironment } from "../source-property";
+import type { SourcePropertyEnvironment, SourcePropertyPreview } from "../source-property";
 import type { ExecutedEdit } from "./bundled-editor";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-path";
@@ -791,6 +791,98 @@ export function createSourceOwner(
 		}
 		return { inputs, state: before, snapshot };
 	}
+	async function preview(
+		root: string,
+		handle: string,
+		generation: number,
+		revision: number,
+		original: SourceOccurrence,
+		change: SourceChange,
+	): Promise<{ ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string }> {
+		const held = reads.get(handle);
+		try {
+			if (
+				!held ||
+				held.root !== root ||
+				held.read.generation !== generation ||
+				!sameSourceOccurrence(held.read.original, original)
+			)
+				throw new Error("the original property edit is no longer available");
+			if (change.kind !== "property" || held.read.operation.kind !== "property")
+				throw new Error("this source read does not authorize a property preview");
+			const observed = await observe(root, held.frame, generation, held.observer);
+			if (!observed || !sameSourceOccurrence(observed, original))
+				throw new Error("the original property occurrence changed");
+			valid(root, held.compilation);
+			const { target, environment } = resolvePropertySource(
+				root,
+				held.compilation,
+				original,
+				generation,
+				held.read.operation,
+			);
+			const plan = await planPropertyValue(
+				root,
+				held.compilation.inputs,
+				held.read.value,
+				held.read.operation,
+				change.value,
+				environment,
+				held.compilation.packet.bundledCss,
+			);
+			const proof = { environment, roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment) };
+			const current = await checkPropertyChanges(held, proof);
+			const input = held.compilation.inputs.get(held.file);
+			if (!input) throw new Error("the original property source input is missing");
+			const patches = journal.transform(
+				held.file,
+				input,
+				planPropertyLiteral(input.bytes.toString("utf8"), target, plan.before, plan.after),
+			);
+			const now = current.inputs.get(held.file);
+			if (!now) throw new Error("the current property source input is missing");
+			const next = applySourcePatches(now.bytes.toString("utf8"), patches).text;
+			const frames: SourcePropertyPreview["frames"][number][] = [];
+			let value: string | undefined;
+			const seen = new Set<string>();
+			for (const use of [{ frame: held.frame, original }, ...(held.read.reach?.uses ?? [])]) {
+				if (seen.has(use.original.publication)) continue;
+				seen.add(use.original.publication);
+				const publication = compiler.publication(use.original.publication);
+				if (!publication || publication.root !== root || publication.frame !== use.frame)
+					throw new Error("a property preview frame changed");
+				valid(root, publication.compilation);
+				const inputs = new Map(
+					[...publication.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
+				);
+				inputs.set(held.file, { ...now, bytes: Buffer.from(next) });
+				const snapshot = await compiler.compileSnapshot(
+					root,
+					use.frame,
+					inputs,
+					sequence,
+					publication.compilation.absent,
+					publication.compilation,
+				);
+				const className = snapshot.packet.values[held.read.cell ?? original.cell];
+				if (className === undefined || (value !== undefined && value !== className))
+					throw new Error("property preview frames disagree about their source literal");
+				value = className;
+				frames.push({
+					publication: use.original.publication,
+					css: snapshot.packet.css,
+					bundledCss: snapshot.packet.bundledCss,
+				});
+			}
+			if (reads.get(handle) !== held) throw new Error("the property preview was cancelled");
+			valid(root, held.compilation);
+			if (value === undefined) throw new Error("no property preview frame was available");
+			return { ok: true, preview: { generation, revision, value, frames } };
+		} catch (error) {
+			return { ok: false, reason: reason(error) };
+		}
+	}
+
 	function commit(
 		root: string,
 		handle: string,
@@ -1317,6 +1409,7 @@ export function createSourceOwner(
 		reach,
 		describe,
 		commit,
+		preview,
 		inverse,
 		current,
 		delivered,

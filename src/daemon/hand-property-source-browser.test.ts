@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { SourceRead, SourceResult } from "../source-edit";
 import { originCanvas } from "./hand-origin-browser-helpers";
 
-it("reads a property from the actual committed shared class and captured native context", async () => {
+it("previews an unused property candidate, saves once and reverses retained source", async () => {
 	let observer = "";
 	const f = await originCanvas(
 		{
@@ -62,12 +62,52 @@ it("reads a property from the actual committed shared class and captured native 
 		});
 		return (await response.json()) as SourceResult;
 	};
-	const preview = await f.target.evaluate(() => {
-		const source = window.__SPOOL_SOURCE__;
-		return { accepted: source?.preview(9001, "text-blue-500 text-sm"), original: source?.complete(9001) };
+	const previewResponse = await fetch(`${f.project.url}/api/p/${f.project.name}/source`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "X-Spool-Control": f.project.controlToken },
+		body: JSON.stringify({
+			action: "preview",
+			handle: result.read.handle,
+			generation: 9001,
+			revision: 1,
+			original,
+			change: { kind: "property", value: { kind: "binding", tokens: ["text-blue-500"] } },
+		}),
 	});
+	const planned = await previewResponse.json();
+	expect(planned.ok, planned.reason).toBe(true);
+	const beforeColor = await f.target.evaluate((element) => getComputedStyle(element).color);
+	const preview = await f.target.evaluate((_element, planned) => {
+		const source = window.__SPOOL_SOURCE__;
+		return { accepted: source?.previewProperty(planned), original: source?.complete(9001) };
+	}, planned.preview);
 	expect(preview.accepted).toBe(true);
 	expect(preview.original).toEqual(original);
+	expect(await f.target.evaluate((element) => getComputedStyle(element).color)).not.toBe(beforeColor);
+
+	const secondPlanResponse = await fetch(`${f.project.url}/api/p/${f.project.name}/source`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "X-Spool-Control": f.project.controlToken },
+		body: JSON.stringify({
+			action: "preview",
+			handle: result.read.handle,
+			generation: 9001,
+			revision: 2,
+			original,
+			change: { kind: "property", value: { kind: "binding", tokens: ["text-green-500"] } },
+		}),
+	});
+	const secondPlan = await secondPlanResponse.json();
+	expect(secondPlan.ok, secondPlan.reason).toBe(true);
+	expect(
+		await f.target.evaluate((_element, plan) => window.__SPOOL_SOURCE__?.previewProperty(plan), secondPlan.preview),
+	).toBe(true);
+	const latestColor = await f.target.evaluate((element) => getComputedStyle(element).color);
+	expect(
+		await f.target.evaluate((_element, plan) => window.__SPOOL_SOURCE__?.previewProperty(plan), planned.preview),
+	).toBe(false);
+	expect(await f.target.evaluate((element) => getComputedStyle(element).color)).toBe(latestColor);
+
 	const saved = await post({
 		action: "commit",
 		handle: result.read.handle,
@@ -102,4 +142,63 @@ it("reads a property from the actual committed shared class and captured native 
 		expect(await f.target.getAttribute("class")).toBe(value);
 		receipt = inverse.publication.receipt;
 	}
+	expect(
+		await f.target.evaluate((_element, plan) => window.__SPOOL_SOURCE__?.previewProperty(plan), secondPlan.preview),
+	).toBe(false);
+	expect(await f.target.getAttribute("class")).toBe("text-blue-500 text-sm");
+	const cancelOriginal = await f.target.evaluate((element) =>
+		window.__SPOOL_SOURCE__?.read(element as HTMLElement, 9002, "className", {
+			kind: "property",
+			property: "color",
+			scope: "",
+		}),
+	);
+	const request = async (body: unknown) => {
+		const reply = await fetch(`${f.project.url}/api/p/${f.project.name}/source`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Spool-Control": f.project.controlToken },
+			body: JSON.stringify(body),
+		});
+		return reply.json();
+	};
+	const cancelRead = await request({
+		action: "read",
+		frame: "home",
+		original: cancelOriginal,
+		generation: 9002,
+		observer,
+		operation: { kind: "property", property: "color", scope: "" },
+	});
+	expect(cancelRead.ok, cancelRead.reason).toBe(true);
+	const cancelPlan = await request({
+		action: "preview",
+		handle: cancelRead.read.handle,
+		generation: 9002,
+		revision: 1,
+		original: cancelOriginal,
+		change: { kind: "property", value: { kind: "binding", tokens: ["text-yellow-500"] } },
+	});
+	expect(cancelPlan.ok, cancelPlan.reason).toBe(true);
+	const blue = await f.target.evaluate((element) => getComputedStyle(element).color);
+	expect(
+		await f.target.evaluate((_element, plan) => window.__SPOOL_SOURCE__?.previewProperty(plan), cancelPlan.preview),
+	).toBe(true);
+	expect(await f.target.evaluate((element) => getComputedStyle(element).color)).not.toBe(blue);
+	await f.target.evaluate(() => window.__SPOOL_SOURCE__?.cancel(9002));
+	await request({ action: "cancel", handle: cancelRead.read.handle });
+	expect(await f.target.getAttribute("class")).toBe("text-blue-500 text-sm");
+	expect(await f.target.evaluate((element) => getComputedStyle(element).color)).toBe(blue);
+	expect(
+		await f.target.evaluate((_element, plan) => window.__SPOOL_SOURCE__?.previewProperty(plan), cancelPlan.preview),
+	).toBe(false);
+	expect(
+		await request({
+			action: "preview",
+			handle: cancelRead.read.handle,
+			generation: 9002,
+			revision: 2,
+			original: cancelOriginal,
+			change: { kind: "property", value: { kind: "binding", tokens: ["text-yellow-500"] } },
+		}),
+	).toMatchObject({ ok: false });
 });

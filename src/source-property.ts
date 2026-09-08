@@ -28,3 +28,11 @@ export interface SourcePropertyExpectation {
 	effects: readonly SourcePropertyEffect[];
 	css: string;
 }
+
+/** Read-only proposed effects, bound to an existing edit and each installed frame. */
+export interface SourcePropertyPreview {
+	generation: number;
+	revision: number;
+	value: string;
+	frames: readonly { publication: string; css: string; bundledCss: string }[];
+}
