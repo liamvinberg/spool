@@ -7,9 +7,11 @@ import { changedStructure, compatibleStructure, structuralList, structuralOption
 import { createStructuralBaselines } from "./source-structure-baselines";
 import {
 	captureStructure,
+	observeStructuralParent,
 	refreshStructuralNative,
 	retainVerifiedRestorations,
 	type StructuralBasis,
+	verifyReloadedStructure,
 	verifyStructure,
 } from "./source-structure-verification";
 import { installValueFlow } from "./source-values";
@@ -109,6 +111,7 @@ interface Fiber {
 }
 let sourcePacket: RetainedValues | undefined;
 let initialStructure: RetainedValues["structure"];
+let sourceWasInstalled = false;
 let initialStamps: Record<string, string> = {};
 let sequence = 0;
 let call = 0;
@@ -200,6 +203,7 @@ export function configureSource(packet: RetainedValues): void {
 	structuralBases.clear();
 	initialStamps = packet.stamps ?? {};
 	initialStructure = packet.structure;
+	sourceWasInstalled = false;
 	sourcePacket = packet;
 	Object.assign(sourceLocations, packet.locations);
 	sequence = packet.sequence;
@@ -347,7 +351,8 @@ function inspectSource(
 			parentId = String(++occurrence);
 			nodes.set(parent, parentId);
 		}
-		structure = { parent: parentId };
+		const source = observeStructuralParent(parent, sourcePacket?.locations ?? {});
+		structure = { parent: parentId, ...(source ? { source } : {}) };
 	}
 	return {
 		...origin,
@@ -615,6 +620,15 @@ function observedUse(
 	expected: SourcePublication["expected"],
 	failed: ReadonlySet<HTMLElement>,
 ): UseOutcome {
+	if (expected.kind === "structure")
+		return combineUseOutcomes(
+			verifyReloadedStructure(expected, sourcePacket?.structure, sourceLocations, pendingIn).map((outcome) => ({
+				...outcome,
+				occurrence: original.occurrence,
+				installation: "installed",
+			})),
+			original.occurrence,
+		);
 	if (expected.kind !== "literal")
 		return {
 			occurrence: original.occurrence,
@@ -707,9 +721,36 @@ function observedOutcome(held: AcceptedOutcome): UseOutcome {
 	);
 }
 /** Read-only verification after an explicit reload; it never installs or previews. */
-function verifySource(original: SourceOccurrence, expected: SourcePublication["expected"]): UseOutcome {
+function verifySource(
+	original: SourceOccurrence,
+	expected: SourcePublication["expected"],
+	publication: string,
+): UseOutcome {
+	if (sourcePacket?.id !== publication)
+		return {
+			occurrence: original.occurrence,
+			installation: "refused",
+			rendered: "unverified",
+			reason: "the verified source publication changed",
+		};
+	if (expected.kind === "structure" && sourceWasInstalled) {
+		if (
+			acceptedOutcome?.publication.packet.id === publication &&
+			JSON.stringify(acceptedOutcome.publication.expected) === JSON.stringify(expected)
+		)
+			return observedOutcome(acceptedOutcome);
+		return {
+			occurrence: original.occurrence,
+			installation: "installed",
+			rendered: "unverified",
+			reason: "the still-running structural result has no original native verification basis",
+		};
+	}
+	if (expected.kind === "structure" && globalThis.__SPOOL_OBSERVER__.failure)
+		return { occurrence: original.occurrence, installation: "installed", rendered: "failed" };
 	const element = sourceElement(original);
 	if (
+		(expected.kind === "structure" && leases.size > 0) ||
 		[...leases.values()].some((lease) => lease.element === element) ||
 		[...sharedPreviews.values()].some((uses) => uses.some((use) => use.element === element && use.previewed))
 	)
@@ -902,6 +943,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 			for (const site of changedStructure(sourcePacket?.structure, publication.packet.structure))
 				changed.add(publication.packet.owners[site] ?? sourcePacket?.owners[site]);
 			sourcePacket = publication.packet;
+			sourceWasInstalled = true;
 			Object.assign(sourceLocations, publication.packet.locations);
 			sequence = publication.packet.sequence;
 			const css = document.getElementById("spool-compiled-css"),

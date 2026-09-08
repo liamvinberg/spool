@@ -1,5 +1,5 @@
 import type { RenderOutcome } from "../source-edit";
-import type { SourceStructuralExpectation, SourceStructureState } from "../source-structure";
+import type { SourceStructuralExpectation, SourceStructuralParent, SourceStructureState } from "../source-structure";
 
 type Observation = ReturnType<typeof globalThis.__SPOOL_OBSERVER__.observe>;
 interface Unit {
@@ -59,6 +59,24 @@ function roots(prefix: string, locations: Record<string, string>): HTMLElement[]
 	});
 	return all.filter((element) => !all.some((other) => other !== element && other.contains(element)));
 }
+/** Uses only the committed observer's original source sites, never native position. */
+export function observeStructuralParent(
+	element: HTMLElement,
+	locations: Record<string, string>,
+): SourceStructuralParent | undefined {
+	try {
+		const observed = globalThis.__SPOOL_OBSERVER__.observe(element);
+		if (observed.refusal) return;
+		const site = (source: string) => Object.entries(locations).find(([, value]) => value === source)?.[0];
+		const parent = site(observed.source);
+		const chain = observed.chain.map((call) => site(call.renderedSource ?? call.source));
+		if (!parent || chain.some((value) => value === undefined)) return;
+		return { site: parent, chain: chain.filter((value): value is string => value !== undefined) };
+	} catch {
+		return;
+	}
+}
+
 /** Snapshot complete attributed native roots and their original parents before publication. */
 export function captureStructure(
 	expected: SourceStructuralExpectation,
@@ -244,4 +262,74 @@ export function retainVerifiedRestorations(
 			unit.roots = restored;
 		}
 	}
+}
+
+/** Explicit reload discards native identity. Current source and attributed parent
+ * membership must agree with the saved expectation before recovery can retire. */
+export function verifyReloadedStructure(
+	expected: SourceStructuralExpectation,
+	current: SourceStructureState | undefined,
+	locations: Record<string, string>,
+	pending: (element: Element) => boolean,
+): { rendered: RenderOutcome; reason?: string }[] {
+	const unknown = (reason: string) => [{ rendered: "unverified" as const, reason }];
+	if (!current) return unknown("the current structural source packet is missing");
+	const membership = memberKeys(expected.site, expected.state);
+	const actualMembership = memberKeys(expected.site, current);
+	if (!membership || !actualMembership || JSON.stringify(membership) !== JSON.stringify(actualMembership))
+		return unknown("current source no longer has the saved structural membership");
+	const factories =
+		expected.site in expected.state.lists
+			? membership.map((key) => `${expected.site}/${key}`)
+			: membership.length
+				? [expected.site]
+				: [];
+	if (
+		factories.some(
+			(key) => !expected.state.factories[key] || current.factories[key] !== expected.state.factories[key],
+		)
+	)
+		return unknown("current source no longer has the saved structural factories");
+	const parentSite = expected.parent?.site ?? (expected.site in expected.state.lists ? expected.site : undefined);
+	if (!parentSite) return unknown("the original attributed parent has no source witness");
+	const parents = roots(parentSite, locations).filter((parent) => {
+		const witness = expected.parent;
+		if (!witness) return true;
+		const observed = observeStructuralParent(parent, locations);
+		return (
+			observed?.site === witness.site &&
+			witness.chain.every(
+				(call, index) => observed.chain[observed.chain.length - witness.chain.length + index] === call,
+			)
+		);
+	});
+	if (!parents.length) return unknown("the original source parent is unavailable after reload");
+	return parents.map((parent) => {
+		if (pending(parent)) return { rendered: "pending" };
+		if (expected.site in expected.state.lists) {
+			const children = membership.flatMap((key) =>
+				roots(`${expected.site}/children:${JSON.stringify(key)}`, locations).filter(
+					(root) => root.parentElement === parent,
+				),
+			);
+			if (
+				children.length !== membership.length ||
+				parent.childNodes.length !== children.length ||
+				children.some((child, index) => child !== parent.childNodes[index])
+			)
+				return { rendered: "mismatching", reason: "the reloaded source parent has different membership or order" };
+		} else {
+			const children = roots(expected.site.slice(0, -"/optional".length), locations).filter(
+				(root) => root.parentElement === parent,
+			);
+			if (children.length !== membership.length)
+				return { rendered: "mismatching", reason: "the reloaded source slot has different membership" };
+			if (expected.fallback && membership.length === 0) {
+				const fallback = roots(expected.fallback.source, locations).filter((root) => root.parentElement === parent);
+				if (fallback.length !== 1 || fallback[0]?.textContent !== expected.fallback.value)
+					return { rendered: "mismatching", reason: "the authored fallback did not render after reload" };
+			}
+		}
+		return { rendered: "verified" };
+	});
 }

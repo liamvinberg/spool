@@ -42,9 +42,22 @@ export function resolveSourceDelete(
 	const fallbackSite = plan.fallback
 		? Object.entries(compilation.packet.locations ?? {}).find(([, source]) => source === plan.fallback!.source)?.[0]
 		: undefined;
+	const observedParent = original.structure.source;
+	const ownerCall =
+		observedParent?.chain.findIndex((site) => compilation.packet.locations?.[site] === plan.parentCall) ?? -1;
+	const parent =
+		observedParent &&
+		[observedParent.site, ...observedParent.chain].every((site) => compilation.packet.locations?.[site])
+			? !plan.parentCall
+				? { site: observedParent.site, chain: [] }
+				: ownerCall >= 0
+					? { site: observedParent.site, chain: observedParent.chain.slice(ownerCall) }
+					: undefined
+			: undefined;
 	const expected: SourceStructuralExpectation = {
 		kind: "structure",
 		site: group.id,
+		...(parent ? { parent } : {}),
 		state: after.structure,
 		...(plan.fallback && fallbackSite ? { fallback: { source: fallbackSite, value: plan.fallback.value } } : {}),
 	};
@@ -75,7 +88,12 @@ export function potentialDeleteSource(original: SourceOccurrence, source: string
 export function describeDeleteTarget(original: SourceOccurrence, target: SourceDeleteTarget): SourceDescription {
 	return {
 		operation: { kind: "delete" },
-		structure: { kind: "structure", site: target.site, state: target.before },
+		structure: {
+			kind: "structure",
+			site: target.site,
+			...(target.expected.parent ? { parent: target.expected.parent } : {}),
+			state: target.before,
+		},
 		original,
 		source: target.source,
 		role: "structural-unit",

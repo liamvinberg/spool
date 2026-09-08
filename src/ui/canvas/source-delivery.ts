@@ -12,6 +12,7 @@ import {
 } from "../../source-edit";
 import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
+import type { SourceIntent } from "./source-intent";
 
 interface OutcomeGroup {
 	publication: SourcePublication;
@@ -259,21 +260,52 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[project, request],
 		),
 		verifyReload: useCallback(
-			async (frame: string, selector: string, field?: string) => {
+			async (intent: SourceIntent) => {
+				const { frame, selector, field, operation, expected } = intent;
+				if (operation.kind === "delete" && expected?.kind === "structure" && intent.original) {
+					const inventories = await inventory(undefined, operation);
+					const outcomes = await Promise.all(
+						(intent.recovery?.frames ?? [frame]).map(async (name): Promise<UseOutcome> => {
+							const observed = inventories.find((item) => item.frame === name);
+							if (!observed || observed.unknown || !(await sourceIsCurrent(project, observed.publication)))
+								return { frame: name, occurrence: "", installation: "refused", rendered: "unverified" };
+							return {
+								...((await request<UseOutcome>(name, {
+									action: "verify",
+									original: intent.original,
+									expected,
+									publication: observed.publication,
+								})) ?? { occurrence: "", installation: "refused", rendered: "unverified" }),
+								frame: name,
+							};
+						}),
+					);
+					if (intent.recovery?.unknown)
+						outcomes.push({ occurrence: "", installation: "refused", rendered: "unverified" });
+					return { kind: "structure" as const, outcome: combineUseOutcomes(outcomes, intent.original.occurrence) };
+				}
+				if (operation.kind !== "literal" || expected?.kind !== "literal") return;
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
 					field,
-					operation: { kind: "literal", ...(field ? { field } : {}) },
+					operation,
 				});
 				if (!original || !(await sourceIsCurrent(project, original.publication))) return;
-				const description = await describeSource(project, frame, original, await inventory(field));
+				const description = await describeSource(
+					project,
+					frame,
+					original,
+					await inventory(field, operation),
+					operation,
+				);
 				if (!description?.reach) return;
 				const outcomes = await Promise.all(
 					description.reach.uses.map(
 						async (use): Promise<UseOutcome> => ({
 							...((await request<UseOutcome>(use.frame, {
 								action: "verify",
+								publication: use.original.publication,
 								original: use.original,
 								expected: { kind: "literal", value: description.value, absent: original.absent ?? false },
 							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
@@ -286,7 +318,11 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
 				for (const name of description.reach.unmounted)
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unmounted" });
-				return { description, outcome: combineUseOutcomes(outcomes, original.occurrence) };
+				return {
+					kind: "literal" as const,
+					description,
+					outcome: combineUseOutcomes(outcomes, original.occurrence),
+				};
 			},
 			[project, request, inventory],
 		),

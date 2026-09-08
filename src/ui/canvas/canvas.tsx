@@ -1879,7 +1879,23 @@ export function ProjectCanvas({
 			if (intent && result?.ok) {
 				if (result.publication) {
 					const expected = result.publication.expected;
-					intent = { ...intent, expected };
+					intent = {
+						...intent,
+						expected,
+						recovery: {
+							frames: [
+								...new Set([
+									...(intent.recovery?.frames ?? []),
+									result.publication.frame,
+									...(result.publication.related ?? []).map((item) => item.frame),
+									...(result.publication.failures ?? []).flatMap((use) => (use.frame ? [use.frame] : [])),
+								]),
+							],
+							unknown:
+								intent.recovery?.unknown === true ||
+								(result.publication.failures ?? []).some((use) => !use.frame),
+						},
+					};
 					if (undo && expected.kind === "literal") intent.change = { kind: "literal", text: expected.value };
 				} else if (
 					result.source === "unchanged" &&
@@ -1921,12 +1937,10 @@ export function ProjectCanvas({
 			}
 			if (result.source === "unchanged") {
 				const checked =
-					intent?.operation.kind === "literal"
-						? await sourceDelivery.verifyReload(frame, intent.selector, intent.field)
-						: undefined;
+					intent?.operation.kind === "literal" ? await sourceDelivery.verifyReload(intent) : undefined;
 				if (
 					intent &&
-					(!checked ||
+					(checked?.kind !== "literal" ||
 						intent.expected?.kind !== "literal" ||
 						checked.description.cell !== intent.cell ||
 						checked.description.source !== intent.source ||
@@ -3008,16 +3022,16 @@ export function ProjectCanvas({
 			const intent = reloadedIntent.current;
 			if (!intent || intent.frame !== frame) return;
 			reloadedIntent.current = undefined;
-			if (intent.operation.kind !== "literal" || intent.expected?.kind !== "literal") return;
-			const checked = await sourceDelivery.verifyReload(frame, intent.selector, intent.field);
-			if (
-				checked &&
-				checked.description.cell === intent.cell &&
-				checked.description.source === intent.source &&
-				checked.description.value === intent.expected.value &&
-				(checked.description.original.absent ?? false) === intent.expected.absent &&
-				checked.outcome.rendered === "verified"
-			) {
+			const checked = await sourceDelivery.verifyReload(intent);
+			const matches =
+				checked?.kind === "structure" ||
+				(checked?.kind === "literal" &&
+					intent.expected?.kind === "literal" &&
+					checked.description.cell === intent.cell &&
+					checked.description.source === intent.source &&
+					checked.description.value === intent.expected.value &&
+					(checked.description.original.absent ?? false) === intent.expected.absent);
+			if (matches && checked?.outcome.rendered === "verified") {
 				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
 				resolveIntent(intent);
 			}

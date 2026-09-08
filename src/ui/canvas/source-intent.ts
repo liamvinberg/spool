@@ -18,6 +18,7 @@ export interface SourceIntent {
 	operation: SourceOperation;
 	change?: SourceChange;
 	expected?: SourcePublication["expected"];
+	recovery?: { frames: readonly string[]; unknown: boolean };
 	action: string;
 	field?: string;
 	original?: SourceOccurrence;
@@ -62,6 +63,22 @@ export function sourceIntent(pick: PickedSelection, entries: readonly SelectionE
 export function attributedIntent(intent: SourceIntent, read: SourceDescription): SourceIntent {
 	return {
 		...intent,
+		...(read.reach
+			? {
+					recovery: {
+						frames: [
+							...new Set([
+								intent.frame,
+								...read.reach.uses.map((use) => use.frame),
+								...read.reach.unmounted,
+								...read.reach.unknown,
+								...(read.reach.unverified ?? []).flatMap((use) => (use.frame ? [use.frame] : [])),
+							]),
+						],
+						unknown: (read.reach.unverified ?? []).some((use) => !use.frame),
+					},
+				}
+			: {}),
 		original: read.original,
 		source: read.source,
 		role: read.role,

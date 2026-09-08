@@ -1529,7 +1529,7 @@ else if(m.action === "reveal") {const el=source.element(m.original);if(el){el.sc
 else if(m.action === "clear-feedback") {source.clearFeedback();reply(true);}
 else if(m.action === "retain-structure") {source.retainStructures(m.generations);reply(true);}
 else if(m.action === "retire-structure") {source.retireStructure(m.generation);reply(true);}
-else if (m.action === "verify") reply(source.verify(m.original,m.expected));
+else if (m.action === "verify") reply(source.verify(m.original,m.expected,m.publication));
 else if (m.action === "inspect") { const el=elementFor(m.selector); reply(el ? source.inspect(el,m.field,m.operation) : undefined); }
 else if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation, m.field,m.operation) : undefined); }
 				else if (m.action === "complete") reply(source.complete(m.generation));

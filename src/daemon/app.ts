@@ -2287,7 +2287,16 @@ export function createDaemonApp({
 						occurrence: z.string(),
 						invocation: z.string(),
 						provenance: z.string().optional(),
-						structure: z.object({ parent: z.string() }).strict().optional(),
+						structure: z
+							.object({
+								parent: z.string(),
+								source: z
+									.object({ site: z.string(), chain: z.array(z.string()).readonly() })
+									.strict()
+									.optional(),
+							})
+							.strict()
+							.optional(),
 						field: z.string().optional(),
 						absent: z.boolean().optional(),
 						value: z.string().max(100_000),

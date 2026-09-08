@@ -1,5 +1,5 @@
 import type { SourcePropertyExpectation, SourcePropertyValue } from "./source-property";
-import type { SourceStructuralExpectation } from "./source-structure";
+import type { SourceStructuralExpectation, SourceStructuralParent } from "./source-structure";
 
 /** Purpose is captured before reading source and retained through completion and recovery. */
 export type SourceOperation =
@@ -21,7 +21,7 @@ export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boo
 
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
-	structure?: { parent: string } | undefined;
+	structure?: { parent: string; source?: SourceStructuralParent | undefined } | undefined;
 	absent?: boolean | undefined;
 	field?: string | undefined;
 	publication: string;
@@ -44,7 +44,8 @@ export function sameSourceOccurrence(a: SourceOccurrence, b: SourceOccurrence): 
 		a.provenance === b.provenance &&
 		a.field === b.field &&
 		a.absent === b.absent &&
-		a.structure?.parent === b.structure?.parent
+		a.structure?.parent === b.structure?.parent &&
+		JSON.stringify(a.structure?.source) === JSON.stringify(b.structure?.source)
 	);
 }
 

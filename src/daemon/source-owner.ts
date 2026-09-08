@@ -1117,7 +1117,9 @@ export function createSourceOwner(
 		if (!held || held.root !== root) return false;
 		try {
 			valid(root, held.compilation);
-			return [...held.compilation.inputs].every(([file, input]) => sameInput(input, readInput(file)));
+			return [...held.compilation.inputs].every(([file, input]) =>
+				journal.current(file, input).bytes.equals(input.bytes),
+			);
 		} catch {
 			return false;
 		}

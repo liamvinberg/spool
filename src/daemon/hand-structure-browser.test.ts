@@ -811,7 +811,37 @@ it("reports independent shared outcomes when authored code resets one surviving 
 	const mismatch = outcomes.find((outcome: { rendered: string }) => outcome.rendered === "mismatching");
 	expect(mismatch.uses).toHaveLength(1);
 	expect(mismatch.uses[0].reason).toContain("native");
-	await expect.poll(() => f.page.locator('[data-hand-notice="mismatching"]').count()).toBe(1);
+	const notice = f.page.locator('[data-properties-rail] [data-hand-notice="mismatching"]');
+	await expect.poll(() => notice.count()).toBe(1);
+	await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	const composer = f.page.locator("[data-agent-rail] textarea");
+	const prepared = await composer.inputValue();
+	expect(prepared).toContain("delete this element");
+	await f.page.locator('[data-dock-glyph="properties"]').click();
+	await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator('[data-name="B"] input').inputValue()).toBe("initial");
+	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(4);
+	expect(await second.locator('[data-name="B"] input').inputValue()).toBe("authored reset");
+	expect(await notice.count()).toBe(1);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	expect(await composer.inputValue()).toBe(prepared);
+	expect(readFileSync(f.file("shared/list.tsx"), "utf8")).toBe(shared.replace(removed, ""));
+	expect(f.writes).toEqual(["commit"]);
+	const secondElement = await f.page.locator('iframe[title="second"]').elementHandle();
+	const secondDocument = await secondElement?.contentFrame();
+	if (!secondDocument) throw new Error("the actual second frame is missing");
+	const reloaded = f.page.waitForEvent("framenavigated", (frame) => frame === secondDocument);
+	await second.locator('[data-name="B"]').evaluate(() => location.reload());
+	await reloaded;
+	await expect.poll(() => second.locator('[data-name="B"] input').inputValue()).toBe("initial");
+	await f.page.locator('[data-dock-glyph="properties"]').click();
+	await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(6);
+	await expect.poll(() => notice.count()).toBe(0);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	expect(await composer.inputValue()).toBe("");
+	expect(readFileSync(f.file("shared/list.tsx"), "utf8")).toBe(shared.replace(removed, ""));
+	expect(f.writes).toEqual(["commit"]);
 });
 
 it.each([
@@ -852,5 +882,92 @@ it.each([
 		expect(await f.frame.locator('[data-name="B"]').textContent()).toBe("B:0");
 		await notice.getByRole("button", { name: "Dismiss notice", exact: true }).click();
 		await expect.poll(() => notice.count()).toBe(0);
+	},
+);
+
+it.each([
+	{ name: "delete", inverse: false, fallback: false },
+	{ name: "inverse", inverse: true, fallback: false },
+	{ name: "fallback", inverse: false, fallback: true },
+])(
+	"retires only a resolved structural recovery after explicit reload ($name)",
+	{
+		timeout: 120_000,
+	},
+	async ({ inverse, fallback }) => {
+		const removed = fallback ? '<Counter name="A"/>' : '<Counter key="a" name="A"/>';
+		const replacement = fallback ? "null" : "";
+		const effect = fallback
+			? 'useLayoutEffect(()=>()=>{const input=document.querySelector("[data-neighbor]");if(name==="A"&&window.resetSurvivor&&input)input.value="authored reset"},[])'
+			: 'useLayoutEffect(()=>{if(name==="B"&&window.resetSurvivor)input.current.value="authored reset"})';
+		const source = `import {useRef,useLayoutEffect} from 'react';function Counter({name}){const input=useRef(null);${effect};return <section data-name={name} style={{padding:24}}><input ref={input} defaultValue="initial"/>{name}</section>}${fallback ? `function Pass({header}){return <section>{header ?? <i>Fallback</i>}<aside>Kept<input data-neighbor="" defaultValue="initial"/></aside></section>}function Contents(){return <main style={{padding:40}}><Pass key="a" header={${removed}}/><Pass key="b" header={<Counter name="B"/>}/></main>}export default function Frame(){return <Contents/>}` : `export default function Frame(){return <main style={{padding:40}}>${removed}<Counter key="b" name="B"/></main>}`}`;
+		const f = await originCanvas({}, source, '[data-name="A"]');
+		const sends: string[] = [];
+		f.page.on("request", (request) => {
+			if (request.url().endsWith("/agent/turn")) sends.push(request.url());
+		});
+		await f.page.locator('[data-dock-glyph="agent"]').click();
+		const composer = f.page.locator("[data-agent-rail] textarea");
+		await composer.fill("Keep my unrelated draft");
+		await f.page.locator('[data-dock-glyph="properties"]').click();
+		const reset = () =>
+			f.frame
+				.locator(fallback ? "[data-neighbor]" : '[data-name="B"] input')
+				.first()
+				.evaluate((element) => {
+					if (!(element instanceof HTMLInputElement)) throw new Error("missing surviving input");
+					element.value = "dirty uncontrolled";
+					Reflect.set(window, "resetSurvivor", true);
+				});
+		if (!inverse) await reset();
+		await f.select();
+		const delivered = () =>
+			f.page.waitForResponse(
+				(response) =>
+					response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+			);
+		const read = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "read",
+		);
+		const deleted = delivered();
+		void deleted.catch(() => {});
+		await f.page.keyboard.press("Backspace");
+		const readResult = await (await read).json();
+		expect(readResult, JSON.stringify(readResult)).toMatchObject({ ok: true });
+		await deleted;
+		await f.settled();
+		if (inverse) {
+			await reset();
+			const undone = delivered();
+			await f.history();
+			await undone;
+			await f.settled();
+		}
+		const notice = f.page.locator("[data-properties-rail] [data-hand-notice]");
+		const savedOutcome = await f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1));
+		expect(savedOutcome, JSON.stringify(savedOutcome)).toMatchObject({ rendered: "mismatching" });
+		await expect.poll(() => notice.getAttribute("data-hand-notice")).toBe("mismatching");
+		const saved = readFileSync(f.file("frames/home/frame.tsx"), "utf8");
+		expect(saved).toBe(inverse ? source : source.replace(removed, replacement));
+		await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+		await expect
+			.poll(() => composer.inputValue())
+			.toContain(inverse ? "undo delete this element" : "delete this element");
+		expect(await composer.inputValue()).toContain("Keep my unrelated draft");
+		await f.page.locator('[data-dock-glyph="properties"]').click();
+		await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+		await expect.poll(() => f.frame.locator('[data-name="B"] input').inputValue()).toBe("initial");
+		await expect.poll(() => f.target.count()).toBe(inverse ? 1 : 0);
+		if (fallback) {
+			expect(await f.frame.locator("i").textContent()).toBe("Fallback");
+			expect(await f.frame.locator("aside").allTextContents()).toEqual(["Kept", "Kept"]);
+		}
+
+		await expect.poll(() => notice.count()).toBe(0);
+		await f.page.locator('[data-dock-glyph="agent"]').click();
+		await expect.poll(() => composer.inputValue()).toBe("Keep my unrelated draft");
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(saved);
+		expect(sends).toEqual([]);
+		expect(f.writes).toEqual(inverse ? ["commit", "inverse"] : ["commit"]);
 	},
 );

@@ -109,6 +109,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 	let role =
 		originalTarget?.role ?? (selected.source === leaf.source ? ("definition" as const) : ("call-site" as const));
 	let fallbackEffect: { source: string; value: string } | undefined;
+	let parentCall: string | undefined;
 	const steps: string[] = [`actual ${value.kind} element -> authored type source`];
 	const carrier = inputFromCall ? pick.chain.at(-2) : pick.chain.at(-1);
 	if (value.kind === "clone" || (value.kind === "create" && !directFactory)) {
@@ -203,6 +204,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 				: "replace only selected named field value with null; preserve slot and branch",
 		);
 		parent = sources.creation(carrier.source).node;
+		parentCall = carrier.source;
 	} else if (parent?.type === "ConditionalExpression") {
 		if (parent.test.start === node.start) throw new Error("selected expression is the condition");
 
@@ -233,6 +235,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 		...(fallbackEffect ? { fallback: fallbackEffect } : {}),
 		selected: range(node),
 		parent: range(parent),
+		...(parentCall ? { parentCall } : {}),
 		replacement,
 		steps,
 		text: selected.unit.text,
