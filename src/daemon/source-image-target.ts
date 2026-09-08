@@ -34,3 +34,38 @@ export function resolveImageSource(
 		throw new Error("the image import binding changed");
 	return { cellKey, cell, target };
 }
+
+/** The unchanged executable tree may still hide a changed image import or call argument.
+ * Recheck those captured inputs while allowing unrelated source spans to move locations. */
+export function assertImageContext(
+	before: RetainedCompilation,
+	current: RetainedCompilation,
+	original: SourceOccurrence,
+	cellKey: string,
+): void {
+	if (before.packet.shape !== current.packet.shape) throw new Error("the original image executable context changed");
+	const previous = before.cells[cellKey];
+	const next = current.cells[cellKey];
+	const same = (a: typeof previous, b: typeof next) =>
+		!!a &&
+		!!b &&
+		a.file === b.file &&
+		a.owner === b.owner &&
+		a.field === b.field &&
+		a.value === b.value &&
+		(a.absent === true) === (b.absent === true) &&
+		JSON.stringify(a.image) === JSON.stringify(b.image);
+	if (!previous?.image || !same(previous, next)) throw new Error("the original image import binding changed");
+	const ancestry = new Set([previous.source]);
+	const collect = (value: unknown): void => {
+		if (!value || typeof value !== "object") return;
+		for (const [key, child] of Object.entries(value)) {
+			if (key === "source" && typeof child === "string") ancestry.add(child);
+			else collect(child);
+		}
+	};
+	if (original.provenance) collect(JSON.parse(original.provenance));
+	for (const [key, cell] of Object.entries(before.cells))
+		if (ancestry.has(cell.source) && !same(cell, current.cells[key]))
+			throw new Error("an input in the original image call ancestry changed");
+}

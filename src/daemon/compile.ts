@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { type BuildOptions, build, formatMessagesSync, type OnResolveResult, type Plugin } from "esbuild";
 import { isSafeName } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
@@ -23,6 +23,7 @@ import {
 	type SourceInput,
 	sameInput,
 } from "./retained-compile";
+import { resolveImageValues } from "./source-image-values";
 import { captureLazyGraph } from "./source-lazy-graph";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
@@ -695,18 +696,7 @@ export function describeCompileError(error: unknown): string {
 }
 
 function finishCompilation(compilation: RetainedCompilation, sequence: number, designDir: string): void {
-	for (const cell of Object.values(compilation.cells)) {
-		const specifier = cell.image?.specifier;
-		if (!specifier) continue;
-		const path = resolveDesignPath(
-			designDir,
-			resolve(specifier.startsWith("shared/") ? designDir : dirname(resolve(designDir, cell.file)), specifier),
-		);
-		const input = compilation.inputs.get(path);
-		const type = ASSET_MEDIA_TYPES[extname(path).toLowerCase()];
-		if (!input || !type) throw new Error("the image binding is outside the captured asset inputs");
-		cell.value = `data:${type};base64,${input.bytes.toString("base64")}`;
-	}
+	resolveImageValues(compilation, designDir);
 	compilation.packet.sequence = sequence;
 	compilation.packet.owners = Object.fromEntries(
 		Object.entries(compilation.cells).map(([id, cell]) => [id, cell.owner]),

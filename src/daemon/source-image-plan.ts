@@ -1,8 +1,10 @@
-import { dirname } from "node:path";
+import { dirname, relative } from "node:path";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir } from "./design-path";
 import { specifierFrom } from "./hand-asset";
-import { type RetainedCompilation, readInput, type SourceInput, sameInput } from "./retained-compile";
+import { lowerLiterals, type RetainedCompilation, readInput, type SourceInput, sameInput } from "./retained-compile";
+
+import { resolveImageValues } from "./source-image-values";
 
 /** An unregistered image preflight may add only the chosen asset's exact import resolution.
  * The owner still validates the original read and its planned spans before saving anything. */
@@ -50,5 +52,55 @@ export async function compileImageChange(
 	assertDesignFile(design, asset.file);
 	if (!sameInput(asset.input, readInput(asset.file)))
 		throw new Error("the staged image bytes changed during preflight");
+	return snapshot;
+}
+
+/** A receipt restores only import resolutions and bytes captured before its own write. */
+export async function compileImageInverse(
+	compiler: FrameCompiler,
+	root: string,
+	frame: string,
+	current: RetainedCompilation,
+	file: string,
+	next: string,
+	restore: RetainedCompilation,
+	sourceOnly = false,
+): Promise<RetainedCompilation> {
+	const source = current.inputs.get(file);
+	if (!source) throw new Error("the inverse image source input is missing");
+	const inputs = new Map(current.inputs);
+	for (const [path, input] of restore.inputs) {
+		if (!/\.(?:png|jpe?g|gif|webp|avif|svg)$/i.test(path)) continue;
+		assertDesignFile(realDesignDir(root), path);
+		if (!sameInput(input, readInput(path))) throw new Error("the original image bytes changed before undo");
+		inputs.set(path, input);
+	}
+	inputs.set(file, { ...source, bytes: Buffer.from(next) });
+	if (sourceOnly) {
+		const cells: RetainedCompilation["cells"] = {};
+		for (const [path, input] of inputs) {
+			if (!/\.[cm]?[jt]sx?$/.test(path)) continue;
+			const key = relative(realDesignDir(root), path);
+			const lowered = lowerLiterals(key, input.bytes.toString("utf8"));
+			if (lowered.shape !== current.shapes[key]) throw new Error("the inverse image changed executable shape");
+			Object.assign(cells, lowered.cells);
+		}
+		const snapshot = {
+			...current,
+			cells,
+			inputs,
+			resolutions: new Map([
+				...current.resolutions,
+				...[...restore.resolutions].filter(([key]) => inputs.has(JSON.parse(key)[1])),
+			]),
+		};
+		resolveImageValues(snapshot, realDesignDir(root));
+		return snapshot;
+	}
+	const snapshot = await compiler.compileSnapshot(root, frame, inputs, current.packet.sequence, current.absent, {
+		...current,
+		resolutions: new Map([...current.resolutions, ...restore.resolutions]),
+	});
+	if (snapshot.packet.shape !== current.packet.shape) throw new Error("the inverse image changed executable shape");
 	return snapshot;
 }
