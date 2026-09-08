@@ -88,3 +88,67 @@ it("orders acknowledged changes across separate dependency files", () => {
 	);
 	expect(ordered.map((change) => change.after.bytes.toString())).toEqual(["B", "A"]);
 });
+
+it.each([0, 1])("transports an inverse insertion at boundary %s through a canceled neighboring removal", (point) => {
+	const file = join(makeTempDir(), "source.ts");
+	writeFileSync(file, "BC");
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	writeAtomic(file, "C");
+	const removed = readInput(file);
+	const deletion = journal.record(file, original, removed, [{ start: 0, end: 1, before: "B", text: "" }]);
+	writeAtomic(file, "BC");
+	journal.record(file, removed, readInput(file), [{ start: 0, end: 0, before: "", text: "B" }], deletion);
+	expect(journal.transform(file, original, [{ start: point, end: point, text: "A" }])).toEqual([
+		{ start: point, end: point, text: "A" },
+	]);
+});
+
+it("keeps an agent insertion at the inverse boundary conflicting even beside a canceled owner pair", () => {
+	const file = join(makeTempDir(), "source.ts");
+	writeFileSync(file, "BC");
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	writeAtomic(file, "C");
+	const removed = readInput(file);
+	const deletion = journal.record(file, original, removed, [{ start: 0, end: 1, before: "B", text: "" }]);
+	writeAtomic(file, "XC");
+	const competing = readInput(file);
+	journal.record(file, removed, competing, [{ start: 0, end: 0, before: "", text: "X" }]);
+	writeAtomic(file, "BXC");
+	journal.record(file, competing, readInput(file), [{ start: 0, end: 0, before: "", text: "B" }], deletion);
+	expect(() => journal.transform(file, original, [{ start: 0, end: 0, text: "A" }])).toThrow("touched these words");
+});
+
+it("transports an intact neighbor through a canceled insertion at its boundary", () => {
+	const file = join(makeTempDir(), "source.ts");
+	writeFileSync(file, "BC");
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	writeAtomic(file, "ABC");
+	const inserted = readInput(file);
+	const insertion = journal.record(file, original, inserted, [{ start: 0, end: 0, before: "", text: "A" }]);
+	writeAtomic(file, "BC");
+	journal.record(file, inserted, readInput(file), [{ start: 0, end: 1, before: "A", text: "" }], insertion);
+	expect(journal.transform(file, original, [{ start: 0, end: 1, text: "" }])).toEqual([
+		{ start: 0, end: 1, text: "" },
+	]);
+});
+
+it("preserves an independent prefix while transporting a privately canceled insertion boundary", () => {
+	const file = join(makeTempDir(), "source.ts");
+	writeFileSync(file, "xx BC");
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	writeAtomic(file, "xx C");
+	const removed = readInput(file);
+	const deletion = journal.record(file, original, removed, [{ start: 3, end: 4, before: "B", text: "" }]);
+	writeAtomic(file, "!xx C");
+	const prefixed = readInput(file);
+	journal.record(file, removed, prefixed, [{ start: 0, end: 0, before: "", text: "!" }]);
+	writeAtomic(file, "!xx BC");
+	journal.record(file, prefixed, readInput(file), [{ start: 4, end: 4, before: "", text: "B" }], deletion);
+	expect(journal.transform(file, original, [{ start: 3, end: 3, text: "A" }])).toEqual([
+		{ start: 4, end: 4, text: "A" },
+	]);
+});
