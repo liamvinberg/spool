@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { originCanvas } from "./hand-origin-browser-helpers";
 
 it("shows the active literal field owner and its actual uses in the common disclosure", {
@@ -22,13 +22,53 @@ it("shows the active literal field owner and its actual uses in the common discl
 	await disclosure.click();
 	await expect.poll(() => panel.textContent()).toContain("repeated call site · shared/calls.tsx");
 	const title = f.page.getByRole("textbox", { name: "title", exact: true });
+	// The real owner reach may finish after the disclosure has already opened
+	// for the new field. Preparing its preview must not erase that disclosure.
+	let releaseReach = () => {};
+	const heldReach = new Promise<void>((resolve) => {
+		releaseReach = resolve;
+	});
+	onTestFinished(() => releaseReach());
+	let reachArrived = false;
+	await f.page.route("**/source", async (route) => {
+		if (route.request().postDataJSON()?.action !== "reach") return route.continue();
+		const response = await route.fetch();
+		reachArrived = true;
+		await heldReach;
+		await route.fulfill({ response });
+	});
+	await f.page.evaluate(() => {
+		Reflect.set(window, "preparedReplies", []);
+		addEventListener("message", (event) => {
+			if (event.data?.spool === "source-reply") Reflect.get(window, "preparedReplies").push(event.data.id);
+		});
+	});
+	await f.frame.locator("body").evaluate(() => {
+		Reflect.set(window, "preparedRequest", undefined);
+		addEventListener("message", (event) => {
+			if (event.data?.spool === "source-request" && event.data.action === "prepare")
+				Reflect.set(window, "preparedRequest", event.data.id);
+		});
+	});
 	await title.focus();
+	await expect.poll(() => reachArrived).toBe(true);
 	await expect.poll(() => disclosure.textContent()).toBe("4");
 	await expect.poll(() => panel.textContent()).toContain("shared definition · shared/button.tsx");
 	expect(await f.page.getByText("Content", { exact: true }).locator("..").textContent()).toBe(
 		"Contentrepeated call site",
 	);
 	await f.page.mouse.move(5, 5);
+	await expect.poll(() => second.locator("#other").getAttribute("data-spool-shared-use")).toBe("");
+	releaseReach();
+	await expect
+		.poll(async () => {
+			const id = await f.frame.locator("body").evaluate(() => Reflect.get(window, "preparedRequest"));
+			return (
+				typeof id === "string" &&
+				(await f.page.evaluate((id) => Reflect.get(window, "preparedReplies").includes(id), id))
+			);
+		})
+		.toBe(true);
 	for (const target of [f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
 		await expect.poll(() => target.getAttribute("data-spool-shared-use")).toBe("");
 	expect(await f.target.getAttribute("data-spool-shared-use")).toBeNull();
