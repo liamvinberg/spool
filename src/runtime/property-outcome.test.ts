@@ -2434,14 +2434,14 @@ it("compares a compiled gradient whose own branch carries no interpolation space
 	const empty = await fixture(
 		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
 	);
+	// A cleared gradient computes to `none`, which the comparator reads as a value of its own.
 	const cleared = await empty.inspect(removed);
-	// A cleared gradient computes to `none`, which this comparator does not read as an image.
 	expect(
 		cleared.map((outcome) => outcome.rendered),
 		JSON.stringify({ cleared, effects: removed.effects }),
-	).toEqual(["unverified", "unverified"]);
-	expect(cleared[0]?.reason).toContain("supported linear declaration");
-	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "verified"]);
+	).toEqual(["verified", "mismatching"]);
+	expect(cleared[0]?.observed).toBe("none");
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
 	// An outside native image is a mismatch, and losing the paint surface is unverified.
 	await f.page
 		.locator("[data-subject]")
