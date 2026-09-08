@@ -34,10 +34,12 @@ import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
+import { retryTextSource } from "./source-retry";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
 interface OriginalRead {
+	retryFrom?: RetainedCompilation;
 	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
@@ -223,6 +225,7 @@ export function createSourceOwner(
 		original: SourceOccurrence,
 		generation: number,
 		observer: string,
+		retry = false,
 	): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string }> {
 		try {
 			watch(root);
@@ -233,12 +236,32 @@ export function createSourceOwner(
 			const publication = compiler.publication(original.publication);
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the original source owner is no longer available");
-			const { compilation } = publication;
+			let { compilation } = publication;
 			if (readingCoverage !== (coverage.get(root) ?? 0))
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
-			const { cellKey, cell, target } = resolveTextSource(root, compilation, original, generation);
+			const retryFrom = retry ? compilation : undefined;
+			let resolved = resolveTextSource(root, compilation, original, generation);
+			if (retry) {
+				const inputs = new Map(
+					[...compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
+				);
+				const current = await compiler.compilePublication(
+					root,
+					frame,
+					inputs,
+					sequence,
+					compilation.absent,
+					compilation,
+				);
+				valid(root, current);
+				if (readingCoverage !== (coverage.get(root) ?? 0))
+					throw new Error("source observation changed during retry");
+				resolved = retryTextSource(root, compilation, current, original, generation);
+				compilation = current;
+			}
+			const { cellKey, cell, target } = resolved;
 			const found = lookupFrame(root, frame);
 			if (found.kind !== "found") throw new Error("the original frame is no longer there");
 			const file = sourceTarget(root, cell.file, compilation.inputs).file;
@@ -259,6 +282,7 @@ export function createSourceOwner(
 				value: cell.value,
 			};
 			reads.set(handle, {
+				...(retryFrom ? { retryFrom } : {}),
 				coverage: readingCoverage,
 				root,
 				frame,
@@ -664,7 +688,7 @@ export function createSourceOwner(
 					owner,
 					frame: held.frame,
 					...(held.read.cell ? { cell: held.read.cell } : {}),
-					before: held.compilation.packet.id,
+					before: held.read.original.publication,
 					compatibleBefore,
 					packet: retained.packet,
 					generation: held.read.generation,
@@ -699,6 +723,21 @@ export function createSourceOwner(
 				if (!observed || !sameSourceOccurrence(observed, held.read.original))
 					throw new Error("the original committed occurrence changed before saving");
 				valid(root, held.compilation);
+				if (held.retryFrom) {
+					const inputs = new Map(
+						[...held.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
+					);
+					const current = await compiler.compilePublication(
+						root,
+						held.frame,
+						inputs,
+						sequence,
+						held.compilation.absent,
+						held.compilation,
+					);
+					valid(root, current);
+					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
+				}
 				if (ops.length !== 1 || ops.some((op) => op.kind !== "set-text" || op.source !== held.read.source))
 					throw new Error("this source read does not authorize that operation");
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");

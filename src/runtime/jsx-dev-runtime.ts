@@ -535,47 +535,69 @@ interface AcceptedOutcome {
 	last: string;
 }
 let acceptedOutcome: AcceptedOutcome | undefined;
-function observedOutcome(held: AcceptedOutcome): UseOutcome {
-	const { publication, targets, failed } = held;
-	const expected = publication.expected;
-	if (expected.kind === "property" || expected.kind === "structure")
+function observedUse(
+	original: SourceOccurrence,
+	element: HTMLElement | undefined,
+	expected: SourcePublication["expected"],
+	failed: ReadonlySet<HTMLElement>,
+): UseOutcome {
+	if (expected.kind !== "literal")
 		return {
-			occurrence: publication.original.occurrence,
+			occurrence: original.occurrence,
 			installation: "installed",
 			rendered: "unverified",
 			reason: "this rendered source effect has no verifier",
 		};
-	return combineUseOutcomes(
-		targets.map(({ original, element }) => {
-			const observed = element ? renderedField(element, original.field) : undefined;
-			const matches = original.field
-				? !!element &&
-					(expected.absent
-						? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
-						: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
-							observed === expected.value)
-				: observed === expected.value;
-			const rendered = !element?.isConnected
-				? element && failed.has(element)
+	const observed = element ? renderedField(element, original.field) : undefined;
+	const matches = original.field
+		? !!element &&
+			(expected.absent
+				? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
+				: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
+					observed === expected.value)
+		: observed === expected.value;
+	const rendered = !element?.isConnected
+		? element && failed.has(element)
+			? "failed"
+			: "unmounted"
+		: pendingIn(element)
+			? "pending"
+			: matches
+				? "verified"
+				: element && failed.has(element)
 					? "failed"
-					: "unmounted"
-				: pendingIn(element)
-					? "pending"
-					: matches
-						? "verified"
-						: element && failed.has(element)
-							? "failed"
-							: "mismatching";
-			return {
-				occurrence: original.occurrence,
-				installation: "installed",
-				rendered,
-				...(observed === undefined ? {} : { observed }),
-			};
-		}),
-		publication.original.occurrence,
+					: "mismatching";
+	return {
+		occurrence: original.occurrence,
+		installation: "installed",
+		rendered,
+		...(observed === undefined ? {} : { observed }),
+	};
+}
+function observedOutcome(held: AcceptedOutcome): UseOutcome {
+	return combineUseOutcomes(
+		held.targets.map(({ original, element }) =>
+			observedUse(original, element, held.publication.expected, held.failed),
+		),
+		held.publication.original.occurrence,
 	);
 }
+/** Read-only verification after an explicit reload; it never installs or previews. */
+function verifySource(original: SourceOccurrence, expected: SourcePublication["expected"]): UseOutcome {
+	const element = sourceElement(original);
+	if (
+		[...leases.values()].some((lease) => lease.element === element) ||
+		[...sharedPreviews.values()].some((uses) => uses.some((use) => use.element === element && use.previewed))
+	)
+		return {
+			occurrence: original.occurrence,
+			installation: "installed",
+			rendered: "unverified",
+			reason: "an edit still owns this preview",
+		};
+	return observedUse(original, element, expected, new Set());
+}
+
 function queueSourceOutcome(): void {
 	const held = acceptedOutcome;
 	if (!held?.ready) return;
@@ -763,6 +785,7 @@ declare global {
 		__SPOOL_SOURCE__?: {
 			read: typeof sourceRead;
 			inspect: typeof inspectSource;
+			verify: typeof verifySource;
 			element: typeof sourceElement;
 			highlight: typeof highlightSource;
 			inventory: typeof inventorySource;
@@ -781,6 +804,7 @@ if (typeof window !== "undefined")
 	window.__SPOOL_SOURCE__ = {
 		read: sourceRead,
 		inspect: inspectSource,
+		verify: verifySource,
 		element: sourceElement,
 		highlight: highlightSource,
 		inventory: inventorySource,

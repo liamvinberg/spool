@@ -1,6 +1,7 @@
 import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import type { SourceReceipt } from "../../source-edit";
 import type { Geometry, HeldPatch, Place } from "../api";
+import type { SourceIntent } from "./source-intent";
 
 /**
  * One undo stack for the hands (#23, #230).
@@ -98,7 +99,12 @@ export type HistoryEntry =
 	// direction this entry currently sits: running it answers with its own
 	// inverse, and the entry is amended with what came back, because a file
 	// that has just changed has a new fingerprint and the old one would refuse
-	| { readonly kind: "source"; readonly frame: string; readonly receipt: SourceReceipt }
+	| {
+			readonly kind: "source";
+			readonly frame: string;
+			readonly receipt: SourceReceipt;
+			readonly intent?: SourceIntent;
+	  }
 	| { readonly kind: "patch"; readonly frame: string; readonly patch: HeldPatch }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {

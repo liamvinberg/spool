@@ -2287,6 +2287,7 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("read"),
+								retry: z.boolean().optional(),
 								observer: z.string(),
 								frame: z.string(),
 								original: occurrence,
@@ -2350,7 +2351,14 @@ export function createDaemonApp({
 				switch (body.action) {
 					case "read":
 						return c.json(
-							await sourceOwner.read(project.root, body.frame, body.original, body.generation, body.observer),
+							await sourceOwner.read(
+								project.root,
+								body.frame,
+								body.original,
+								body.generation,
+								body.observer,
+								body.retry,
+							),
 						);
 					case "reach":
 						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories));
