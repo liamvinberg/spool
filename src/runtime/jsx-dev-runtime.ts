@@ -694,13 +694,36 @@ function observedUse(
 			})),
 			original.occurrence,
 		);
-	if (expected.kind !== "literal" && expected.kind !== "property")
+	if (expected.kind === "properties") {
+		const outcomes = expected.selections.flatMap((selection) =>
+			(selection.kind === "field" ? [selection.property] : selection.roots).map((property) =>
+				observedUse(
+					original,
+					element,
+					{
+						kind: "property",
+						property,
+						scope: selection.scope,
+						className: expected.className,
+						absent: expected.absent,
+						css: expected.css,
+						scopePaths: selection.scopePaths,
+						effects: selection.effects,
+					},
+					failed,
+				),
+			),
+		);
+		const combined = combineUseOutcomes(outcomes, original.occurrence);
+		// These are effects of one use, not additional governed occurrences.
 		return {
 			occurrence: original.occurrence,
 			installation: "installed",
-			rendered: "unverified",
-			reason: "this rendered source effect has no verifier",
+			rendered: combined.rendered,
+			...(combined.observed === undefined ? {} : { observed: combined.observed }),
+			...(combined.reason === undefined ? {} : { reason: combined.reason }),
 		};
+	}
 	let property = expected.kind === "property" && element ? propertyOutcome(element, expected) : undefined;
 	if (property?.rendered === "verified" && expected.kind === "property" && element) {
 		const props = committedFiber(element)?.memoizedProps;

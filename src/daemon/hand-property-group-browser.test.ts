@@ -171,3 +171,105 @@ it.each([false, true])(
 		expect(f.bytes()["shared/button.tsx"]).toBe(source);
 	},
 );
+
+it.each([false, true])(
+	"verifies every shared use of a raw class removal (masked: %s)",
+	{ timeout: 120_000 },
+	async (masked) => {
+		const file = "shared/button.tsx";
+		const source = 'export function Button(){return <button id="subject" className="p-6 opacity-75">Hello</button>}';
+		const f = await originCanvas(
+			{ [file]: source },
+			'import {Button} from "shared/button";export default function Frame(){return <main className="p-10"><Button/><input id="native" defaultValue="initial"/></main>}',
+			"#subject",
+			true,
+			async (page) => {
+				await page.addInitScript(() => {
+					const outcomes: Record<string, unknown> = {};
+					Reflect.set(window, "groupOutcomes", outcomes);
+					addEventListener("message", (event) => {
+						if (event.data?.spool !== "source-reply" || !event.data.result?.installation) return;
+						const frame = [...document.querySelectorAll("iframe")].find(
+							(frame) => frame.contentWindow === event.source,
+						);
+						if (frame) outcomes[frame.title] = event.data.result;
+					});
+				});
+			},
+		);
+		const documents = [f.frame, f.page.frameLocator('iframe[title="second"]')];
+		if (masked)
+			await documents[1]!.locator("#subject").evaluate((element) => {
+				new MutationObserver(() => {
+					if (!element.classList.contains("opacity-75")) element.setAttribute("style", "opacity:.25");
+					else element.removeAttribute("style");
+				}).observe(element, { attributes: true, attributeFilter: ["class"] });
+			});
+		for (const document of documents)
+			await document.locator("#native").evaluate((element) => {
+				if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+				element.value = "kept group";
+				Reflect.set(window, "groupInput", element);
+			});
+		await f.select();
+		const committed = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
+		const delivered = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+		);
+		await f.page
+			.locator("[data-properties-source] button")
+			.filter({ hasText: /^opacity-75$/ })
+			.click();
+		expect(await (await committed).json()).toMatchObject({
+			ok: true,
+			source: "saved",
+			publication: { expected: { kind: "properties" } },
+		});
+		await delivered;
+		await f.settled();
+		expect(f.bytes()[file]).toBe(source.replace("opacity-75", ""));
+		for (const [index, document] of documents.entries())
+			expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).opacity)).toBe(
+				masked && index === 1 ? "0.25" : "1",
+			);
+		const result = await f.page.evaluate(() => {
+			const results = Reflect.get(window, "groupOutcomes");
+			return [results.home, results.second].flatMap((result) => result?.uses ?? []);
+		});
+		expect(result.map((use: { rendered: string }) => use.rendered)).toEqual(
+			masked ? ["verified", "mismatching"] : ["verified", "verified"],
+		);
+		const notice = f.page.locator("[data-properties-rail] [data-hand-notice]");
+		expect(await notice.count()).toBe(masked ? 1 : 0);
+		await f.page.keyboard.press("ControlOrMeta+z");
+		await f.settled();
+		expect(f.bytes()[file]).toBe(source);
+		for (const document of documents) {
+			expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).opacity)).toBe(
+				"0.75",
+			);
+			expect(
+				await document
+					.locator("#native")
+					.evaluate((element) => [
+						element === Reflect.get(window, "groupInput"),
+						element instanceof HTMLInputElement ? element.value : null,
+					]),
+			).toEqual([true, "kept group"]);
+		}
+		await expect
+			.poll(() =>
+				f.page.evaluate(() => {
+					const results = Reflect.get(window, "groupOutcomes");
+					return [results.home, results.second].flatMap(
+						(result) => result?.uses?.map((use: { rendered: string }) => use.rendered) ?? [],
+					);
+				}),
+			)
+			.toEqual(["verified", "verified"]);
+		await expect.poll(() => notice.count()).toBe(0);
+		expect(f.writes).toEqual(["commit", "inverse"]);
+	},
+);
