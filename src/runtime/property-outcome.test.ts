@@ -573,3 +573,122 @@ it.each([undefined, "initial"])("keeps root or system color %j unverified", asyn
 	);
 	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["unverified"]);
 });
+
+it.each(["top", "right", "bottom", "left", "all"] as const)(
+	"verifies compiled %s border changes, companions and inverse",
+	async (side) => {
+		const { root } = makeProject(makeTempDir());
+		writeDesignFile(root, "shared/tokens.css", "");
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		const operation = {
+			kind: "property",
+			property: side === "all" ? "border-width" : `border-${side}-width`,
+			scope: "",
+		} as const;
+		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+		const plan = await planPropertyValue(
+			root,
+			new Map([[file, readInput(file)]]),
+			"border-2",
+			operation,
+			{ kind: "custom", value: "4px" },
+			environment,
+		);
+		const expected: SourcePropertyExpectation = {
+			kind: "property",
+			property: operation.property,
+			scope: "",
+			className: plan.next,
+			absent: false,
+			scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+			effects: plan.consumers,
+			css: plan.desired.css,
+		};
+		const f = await fixture(
+			`<!doctype html><style>${plan.original.css}${expected.css}</style><div data-subject class="${plan.next}">Healthy</div><div data-subject class="border-2">Retained</div><div data-subject class="${plan.next}" style="--tw-border-style:dashed">Independent variable</div><div data-subject class="${plan.next}" style="${side === "all" ? "border-style" : `border-${side}-style`}:dashed">Independent style</div>`,
+		);
+		const before = await f.page.content();
+		expect(
+			(await f.inspect(expected)).map((outcome) => outcome.rendered),
+			JSON.stringify(expected.effects),
+		).toEqual(["verified", "mismatching", "unverified", "mismatching"]);
+		const widths = ["top", "right", "bottom", "left"].map((value) =>
+			side === "all" || value === side ? "4px" : "2px",
+		);
+		expect(
+			await f.page.locator("[data-subject]").evaluateAll((elements) =>
+				elements.slice(0, 2).map((element) => {
+					const style = getComputedStyle(element);
+					return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth];
+				}),
+			),
+		).toEqual([widths, ["2px", "2px", "2px", "2px"]]);
+		const inverse: SourcePropertyExpectation = {
+			...expected,
+			className: "border-2",
+			css: plan.original.css,
+			effects: propertyConsumers(plan.original, plan.roots, environment),
+		};
+		expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual([
+			"mismatching",
+			"verified",
+			"unverified",
+			"mismatching",
+		]);
+		expect(await f.page.content()).toBe(before);
+	},
+);
+
+it("verifies border component removal from captured native preflight while preserving other sides", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property: "border-top-width", scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"border-2",
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: operation.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style><div data-subject class="${plan.next}">Healthy</div><div data-subject class="border-2">Retained</div>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page.locator("[data-subject]").evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth];
+			}),
+		),
+	).toEqual([
+		["0px", "2px", "2px", "2px"],
+		["2px", "2px", "2px", "2px"],
+	]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "border-2",
+		css: plan.original.css,
+		effects: propertyConsumers(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const css = expected.css.replace(/border:\s*0 solid;/, "");
+	expect(css).not.toBe(expected.css);
+	expect((await f.inspect({ ...expected, css })).map((outcome) => outcome.rendered)).toEqual([
+		"unverified",
+		"unverified",
+	]);
+});
