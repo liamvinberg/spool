@@ -11,6 +11,7 @@ import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import type { SourceChange, SourceOccurrence, SourceOperation, SourceUse } from "../../source-edit";
 import { type SourceRead, type SourceResult, sameSourceOccurrence, type UseOutcome } from "../../source-edit";
+import { propertyGroupTarget } from "../../source-property-group";
 import type {
 	Camera,
 	FlowEdge,
@@ -159,7 +160,6 @@ import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import { swappable } from "./properties-attributes";
 import { type Held, PropertiesRail } from "./properties-rail";
-import type { PropertyReadRequest } from "./property-session";
 import {
 	clipboardCopyAllowed,
 	dropTargetMessage,
@@ -2955,7 +2955,7 @@ export function ProjectCanvas({
 			selector: string,
 			field?: string,
 			purpose: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
-			request?: PropertyReadRequest,
+			request?: { signal: AbortSignal; change(): SourceChange | undefined },
 		): Promise<SourceRead | undefined> => {
 			if (pendingSource.current.size > 0) return;
 			const pick = pickedRef.current.find((pick) => pick.frame === frame && pick.selector === selector);
@@ -2964,21 +2964,23 @@ export function ProjectCanvas({
 						...sourceIntent(pick, pointing.entries, field),
 						operation: purpose,
 						action:
-							purpose.kind === "property"
-								? `change ${purpose.property}`
-								: field
-									? `change ${field}`
-									: "change text",
+							purpose.kind === "properties"
+								? "change classes"
+								: purpose.kind === "property"
+									? `change ${purpose.property}`
+									: field
+										? `change ${field}`
+										: "change text",
 					}
 				: undefined;
 			const generation = ++pickSeq.current;
 			const requestedIntent = (original?: SourceOccurrence) => {
-				const value = request?.value();
+				const change = request?.change();
 				return intent
 					? {
 							...intent,
 							...(original ? { original } : {}),
-							...(value ? { change: { kind: "property" as const, value } } : {}),
+							...(change ? { change } : {}),
 						}
 					: undefined;
 			};
@@ -5741,6 +5743,20 @@ export function ProjectCanvas({
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
 							onWrite: writeOps,
+							group: async (frame, selector, value, signal) => {
+								const change: SourceChange = { kind: "properties", value };
+								const read = await beginRailText(
+									frame,
+									selector,
+									"className",
+									{
+										kind: "properties",
+										target: propertyGroupTarget(value),
+									},
+									{ signal, change: () => change },
+								);
+								if (read) finishRailSource(frame, read, change, !signal.aborted);
+							},
 							property: {
 								describe: async (frame, selector, property, scope) =>
 									(
@@ -5751,7 +5767,19 @@ export function ProjectCanvas({
 										})
 									)?.property,
 								begin: (frame, selector, property, scope, request) =>
-									beginRailText(frame, selector, "className", { kind: "property", property, scope }, request),
+									beginRailText(
+										frame,
+										selector,
+										"className",
+										{ kind: "property", property, scope },
+										{
+											signal: request.signal,
+											change: () => {
+												const value = request.value();
+												return value ? { kind: "property", value } : undefined;
+											},
+										},
+									),
 								plan: async (_frame, read, revision, value) =>
 									(await previewPropertySource(project, read, revision, value)) ?? {
 										ok: false,

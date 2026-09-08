@@ -1521,7 +1521,7 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			const reply = (result) => parent.postMessage({ spool: "source-reply", frame: config.frame, id: m.id, result }, "*");
 			if (!source) { reply(undefined); return; }
 			try {
-				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "delete"].includes(m.operation?.kind)) { reply(undefined); return; }
+				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "properties", "delete"].includes(m.operation?.kind)) { reply(undefined); return; }
 				if (m.action === "inventory") reply(source.inventory(m.field,m.operation));
 else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses,m.structure));
 else if(m.action === "highlight") {source.highlight(m.uses);reply(true);}

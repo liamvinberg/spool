@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import type { SourceRead, SourceResult } from "../source-edit";
 import { originCanvas } from "./hand-origin-browser-helpers";
 
@@ -78,5 +78,96 @@ it.each([false, true])(
 		expect(inverse, JSON.stringify(inverse)).toMatchObject({ ok: true, source: "saved" });
 		expect(f.bytes()["shared/button.tsx"]).toBe(source);
 		expect(f.writes).toEqual(["commit", "inverse"]);
+	},
+);
+
+it("removes an authored scope through one actual rail source operation and inverse", { timeout: 120_000 }, async () => {
+	const source =
+		'export function Button(){return <button id="subject" className="p-6 opacity-75 hover:opacity-50 hover:text-red-500 md:opacity-25">Hello</button>}';
+	const f = await originCanvas(
+		{ "shared/button.tsx": source },
+		'import {Button} from "shared/button";export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		false,
+	);
+	await f.select();
+	await f.page
+		.locator("[data-scope-chip]")
+		.filter({ hasText: /^hover:$/ })
+		.click();
+	const readReply = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "read",
+	);
+	await f.page.getByRole("button", { name: "remove hover:", exact: true }).click();
+	const reading = await (await readReply).json();
+	expect(reading, JSON.stringify(reading)).toMatchObject({ ok: true });
+	await expect.poll(() => f.writes).toEqual(["commit"]);
+	expect(f.bytes()["shared/button.tsx"]).toBe(
+		source.replace("hover:opacity-50", "").replace("hover:text-red-500", ""),
+	);
+	await f.settled();
+	await f.history();
+	await expect.poll(() => f.writes).toEqual(["commit", "inverse"]);
+	expect(f.bytes()["shared/button.tsx"]).toBe(source);
+});
+
+it.each([false, true])(
+	"retains a raw token request through its original rail read (cancel: %s)",
+	{ timeout: 120_000 },
+	async (cancel) => {
+		let release = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		onTestFinished(() => release());
+		let reading = false;
+		let returned = false;
+		const source =
+			'export function Button(){return <button id="subject" className="p-6 opacity-75 hover:opacity-50">Hello</button>}';
+		const f = await originCanvas(
+			{ "shared/button.tsx": source },
+			'import {Button} from "shared/button";export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+			"#subject",
+			false,
+			async (page) => {
+				await page.route("**/source", async (route) => {
+					const body = route.request().postDataJSON();
+					if (body?.action !== "read" || body.operation?.kind !== "properties") return route.continue();
+					const response = await route.fetch();
+					reading = true;
+					await held;
+					await route.fulfill({ response });
+					returned = true;
+				});
+			},
+		);
+		await f.select();
+		await f.page
+			.locator("[data-properties-source] button")
+			.filter({ hasText: /^hover:opacity-50$/ })
+			.click();
+		await expect.poll(() => reading).toBe(true);
+		expect(f.writes).toEqual([]);
+		const canceled = cancel
+			? f.page.waitForResponse(
+					(response) =>
+						response.url().endsWith("/source") && response.request().postDataJSON()?.action === "cancel",
+				)
+			: undefined;
+		if (cancel) await f.page.keyboard.press("Escape");
+		release();
+		await expect.poll(() => returned).toBe(true);
+		if (cancel) {
+			await canceled;
+			expect(f.bytes()["shared/button.tsx"]).toBe(source);
+			expect(f.writes).toEqual([]);
+			return;
+		}
+		await expect.poll(() => f.writes).toEqual(["commit"]);
+		await f.settled();
+		expect(f.bytes()["shared/button.tsx"]).toBe(source.replace("hover:opacity-50", ""));
+		await f.history();
+		await expect.poll(() => f.writes).toEqual(["commit", "inverse"]);
+		expect(f.bytes()["shared/button.tsx"]).toBe(source);
 	},
 );

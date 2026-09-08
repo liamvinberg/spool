@@ -3,6 +3,7 @@ import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { RowEdit, RowElement } from "../../properties/rows";
 import type { SourceDescription, SourceOperation, SourceRead } from "../../source-edit";
 import type { SourcePropertyPreview, SourcePropertyReading, SourcePropertyValue } from "../../source-property";
+import type { SourcePropertyGroupValue } from "../../source-property-group";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
@@ -25,7 +26,6 @@ import {
 } from "./properties-fields";
 import {
 	BASE,
-	bareToken,
 	type Scope,
 	sameScope,
 	scopedClass,
@@ -35,7 +35,6 @@ import {
 	scopeWhen,
 	type TokenState,
 	tokenState,
-	tokensUnder,
 	variantsOf,
 } from "./properties-scope";
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
@@ -106,6 +105,7 @@ export interface PropertiesActs {
 	onAsk?: () => void;
 	ownership?: OwnershipActions;
 	text?: TextActions;
+	group?(frame: string, selector: string, value: SourcePropertyGroupValue, signal: AbortSignal): Promise<void>;
 	property?: {
 		describe(
 			frame: string,
@@ -354,6 +354,7 @@ function Body({
 	const scopes = [...carried];
 	for (const extra of opened) if (!scopes.some((known) => sameScope(known, extra))) scopes.push(extra);
 	const live = scopes.some((known) => sameScope(known, scope)) ? scope : BASE;
+	const groupRead = useRef<AbortController | undefined>(undefined);
 	// A property session belongs to the originally selected project occurrence.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: actions stay bound to the project/occurrence that began this session
 	const propertySession = useMemo(() => {
@@ -361,13 +362,37 @@ function Body({
 		if (!actions || !element) return undefined;
 		const { frame, selector } = element;
 		return createPropertySession({
-			begin: (property, scope, request) => actions.begin(frame, selector, property, scope, request),
+			begin: (property, scope, request) => {
+				groupRead.current?.abort();
+				return actions.begin(frame, selector, property, scope, request);
+			},
 			plan: (read, revision, value) => actions.plan(frame, read, revision, value),
 			refused: (read, value, reason) => actions.refused(frame, read, value, reason),
 			preview: (plan) => actions.preview(frame, plan),
 			finish: (read, value, commit) => actions.finish(frame, read, value, commit),
 		});
 	}, [project, identity]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a pending group belongs to its original project and occurrence
+	useEffect(() => {
+		const cancel = (event: KeyboardEvent) => {
+			if (event.key !== "Escape" || !groupRead.current) return;
+			groupRead.current.abort();
+		};
+		window.addEventListener("keydown", cancel, true);
+		return () => {
+			window.removeEventListener("keydown", cancel, true);
+			groupRead.current?.abort();
+		};
+	}, [identity, project]);
+	const applyGroup = async (value: SourcePropertyGroupValue) => {
+		if (!element || !acts.group) return;
+		void propertySession?.finish(false);
+		groupRead.current?.abort();
+		const held = new AbortController();
+		groupRead.current = held;
+		await acts.group(element.frame, element.selector, value, held.signal);
+		if (groupRead.current === held) groupRead.current = undefined;
+	};
 	const propertyScope = scopeKey(live);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: changing scope retires its original pending property intent
 	useEffect(
@@ -479,23 +504,18 @@ function Body({
 					scopes={scopes}
 					variants={variantsOf(theme)}
 					scope={live}
-					ok={read?.refusal === undefined}
-					onScope={setScope}
+					ok={acts.group !== undefined && read?.refusal?.expression === undefined}
+					onScope={(next) => {
+						groupRead.current?.abort();
+						setScope(next);
+					}}
 					onAdd={(next) => {
+						groupRead.current?.abort();
 						setOpened((standing) => [...standing, next]);
 						setScope(next);
 					}}
 					onRemove={(gone) => {
-						const ops = tokensUnder(literal, gone).map(
-							(token): HandOp => ({
-								kind: "set-class",
-								source: read?.source ?? "",
-								token: bareToken(token),
-								scope: scopeKey(gone),
-								remove: true,
-							}),
-						);
-						if (ops.length > 0) acts.onWrite(element.frame, element.selector, ops);
+						void applyGroup({ kind: "remove-scope", scope: scopeKey(gone) });
 						setOpened((standing) => standing.filter((extra) => !sameScope(extra, gone)));
 						setScope(BASE);
 					}}
@@ -554,29 +574,15 @@ function Body({
 						scope={live}
 						original={original}
 						view={view}
-						onRemove={(token) =>
-							write([
-								{
-									kind: "set-class",
-									source: read?.source ?? "",
-									token: bareToken(token),
-									scope: scopeKey(anatomyOf(token).variants),
-									remove: true,
-								},
-							])
-						}
+						editable={acts.group !== undefined && read?.refusal?.expression === undefined}
+						onRemove={(token) => void applyGroup({ kind: "tokens", add: [], remove: [token] })}
 						onAdd={(token) => {
-							// a class typed with its own chain lands under that chain; one
-							// without lands under whichever the bar has open
 							const chain = anatomyOf(token).variants;
-							write([
-								{
-									kind: "set-class",
-									source: read?.source ?? "",
-									token: bareToken(token),
-									scope: chain.length > 0 ? scopeKey(chain) : scopeKey(live),
-								},
-							]);
+							void applyGroup({
+								kind: "tokens",
+								add: [chain.length > 0 ? token : `${scopeKey(live)}${token}`],
+								remove: [],
+							});
 						}}
 					/>
 				)}
@@ -1320,6 +1326,7 @@ function tokensWritten(className: string): { token: string; at: string }[] {
 }
 
 function SourceLine({
+	editable,
 	read,
 	scope,
 	original,
@@ -1327,6 +1334,7 @@ function SourceLine({
 	onRemove,
 	onAdd,
 }: {
+	editable: boolean;
 	read: RungRead | undefined;
 	scope: Scope;
 	/** the tokens the file was written with; anything else is the hands' own */
@@ -1339,7 +1347,7 @@ function SourceLine({
 	if (read === undefined) return null;
 	const tokens = tokensWritten(read.className);
 	const where = read.line === undefined ? read.path : `${read.path}:${read.line}`;
-	const ok = read.refusal === undefined;
+	const ok = editable;
 	return (
 		<Section name="className" {...(read.mapped === true ? { reason: "one row of many" } : {})}>
 			<div className="flex flex-col gap-1.5 px-2.5 py-2">
@@ -1377,7 +1385,12 @@ function SourceLine({
 					)}
 				</p>
 				<div className="flex items-center gap-2">
-					<AddClassRow view={view} taken={new Set(tokens.map((held) => held.token))} onAdd={onAdd} />
+					<AddClassRow
+						view={view}
+						editable={editable}
+						taken={new Set(tokens.map((held) => held.token))}
+						onAdd={onAdd}
+					/>
 					{where === undefined ? null : <span className={cn("min-w-0 truncate", FAINT)}>{where}</span>}
 				</div>
 			</div>
