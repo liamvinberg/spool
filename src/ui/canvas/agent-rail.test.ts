@@ -3905,6 +3905,19 @@ describe("closing a thread", () => {
  * turn's worth of typing can be sitting — and it was memory only, so a refresh took it.
  */
 describe("what the composer keeps", () => {
+	it("returns to the conversation when an unsent new chat was emptied", async () => {
+		const canvas = mount();
+		canvas.stored.served = [storedThread({ id: ONE, ask: "existing conversation" })];
+		await canvas.render();
+		await newThread(canvas.host);
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, "discard this draft"));
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, ""));
+		await canvas.leave();
+		await canvas.render();
+		await until(() => plateAsk(canvas.host)?.textContent?.includes("existing conversation") === true);
+		expect(field(canvas.host)?.value).toBe("");
+	});
+
 	it("restores an unsent new chat with every image after leaving the project", async () => {
 		const canvas = mount();
 		await canvas.render();

@@ -1016,6 +1016,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			for (const draft of drafts.entries.values()) {
 				if (threads.current.has(draft.id)) continue;
 				const saved = stored.find((one) => one.id === draft.id);
+				if (!saved && draft.text === "" && draft.attached.length === 0) continue;
 				const thread = saved ? restored(saved) : born(draft.id, { engine: draft.engine, at: draft.at });
 				thread.draft = draft.text;
 				thread.attached = draft.attached;
@@ -1389,7 +1390,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			)
 				return;
 			current.engine = engine;
-			keepDraft(current);
+			if (drafts.entries.has(current.id) || current.draft || current.attached.length > 0) keepDraft(current);
 			redraw();
 		},
 		threads: column,
