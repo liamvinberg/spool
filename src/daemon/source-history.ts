@@ -11,11 +11,10 @@ export function sourceHistoryCompilation(
 	const design = realDesignDir(root);
 	const required = new Set([...compilation.inputs.keys()].filter((file) => !file.startsWith(`${design}/frames/`)));
 	required.add(ownerFile);
-	const edges = [...compilation.resolutions].map(([key, result]) => ({
-		key,
-		parts: JSON.parse(key) as [string, string, string, string],
-		result,
-	}));
+	const edges = [...compilation.resolutions].map(([key, result]) => {
+		const [specifier, importer, resolveDir, kind] = JSON.parse(key) as [string, string, string, string];
+		return { key, specifier, importer, resolveDir, kind, result };
+	});
 	let changed = true;
 	while (changed) {
 		changed = false;
@@ -26,9 +25,9 @@ export function sourceHistoryCompilation(
 						required.add(file);
 						changed = true;
 					}
-		for (const { parts, result } of edges)
+		for (const { importer, result } of edges)
 			if (
-				required.has(parts[1]) &&
+				required.has(importer) &&
 				result.path &&
 				!result.external &&
 				compilation.inputs.has(result.path) &&
@@ -46,12 +45,12 @@ export function sourceHistoryCompilation(
 		(group) => required.has(group.importer) || group.files.some((file) => required.has(file)),
 	);
 	for (const group of globDiscoveries ?? []) for (const directory of group.directories) directories.add(directory);
-	for (const { parts } of edges)
+	for (const { specifier, importer, resolveDir } of edges)
 		if (
-			required.has(parts[1]) &&
-			(parts[0].startsWith(".") || parts[0].startsWith("shared/") || parts[0].startsWith("/"))
+			required.has(importer) &&
+			(specifier.startsWith(".") || specifier.startsWith("shared/") || specifier.startsWith("/"))
 		) {
-			const target = resolve(parts[0].startsWith("shared/") ? design : parts[2], parts[0]);
+			const target = resolve(specifier.startsWith("shared/") ? design : resolveDir, specifier);
 			if (!extname(target)) {
 				directories.add(target);
 				directories.add(dirname(target));
@@ -74,7 +73,7 @@ export function sourceHistoryCompilation(
 		cells: Object.fromEntries(
 			Object.entries(compilation.cells).filter(([, cell]) => required.has(resolve(design, cell.file))),
 		),
-		resolutions: new Map(edges.filter((edge) => required.has(edge.parts[1])).map((edge) => [edge.key, edge.result])),
+		resolutions: new Map(edges.filter((edge) => required.has(edge.importer)).map((edge) => [edge.key, edge.result])),
 		directories: new Map([...compilation.directories].filter(([file]) => directories.has(file))),
 		configuration: new Map([...compilation.configuration].filter(([file]) => keepsConfiguration(file))),
 		configurationAbsent: new Set([...compilation.configurationAbsent].filter(keepsConfiguration)),

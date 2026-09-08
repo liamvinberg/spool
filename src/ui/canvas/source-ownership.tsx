@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SourceDescription, SourceUse } from "../../source-edit";
 import { FAINT, VALUE } from "./properties-fields";
 
@@ -10,7 +10,8 @@ function ownershipLabel(description: SourceDescription, frame: string): string {
 }
 
 export interface OwnershipActions {
-	describe(frame: string, selector: string): Promise<SourceDescription | undefined>;
+	active?: { frame: string; selector: string; generation: number; field: string | undefined } | undefined;
+	describe(frame: string, selector: string, field?: string): Promise<SourceDescription | undefined>;
 	release(): void;
 	highlight(uses: SourceUse[]): void;
 	reveal(frame: string, use?: SourceUse): void;
@@ -20,6 +21,8 @@ export function SourceOwnership({
 	selector,
 	name,
 	revision,
+	field,
+	generation,
 	actions,
 	onSupport,
 }: {
@@ -27,25 +30,36 @@ export function SourceOwnership({
 	selector: string;
 	name: string;
 	revision: number;
+	field?: string | undefined;
+	generation?: number | undefined;
 	actions: OwnershipActions;
-	onSupport(value: { identity: string; label: string } | undefined): void;
+	onSupport(value: { identity: string; label: string } | undefined, field?: string): void;
 }) {
-	const [description, setDescription] = useState<SourceDescription>();
+	const [described, setDescribed] = useState<{ identity: string; value: SourceDescription | undefined }>();
+	const identity = JSON.stringify([frame, selector, field, generation, revision]);
+	const pending = described?.identity !== identity;
+	const description = !pending ? described?.value : undefined;
 	const [open, setOpen] = useState(false);
+	const panelHeight = useRef(0);
 	const { describe, highlight, reveal, release } = actions;
 	// biome-ignore lint/correctness/useExhaustiveDependencies(revision): refresh disclosure after acknowledged source changes.
 	useEffect(() => {
 		let live = true;
-		void describe(frame, selector).then((value) => {
+		highlight([]);
+		onSupport(undefined, field);
+		void describe(frame, selector, field).then((value) => {
 			if (live) {
-				setDescription(value);
-				onSupport(value ? { identity: `${frame} ${selector}`, label: ownershipLabel(value, frame) } : undefined);
+				setDescribed({ identity, value });
+				onSupport(
+					value ? { identity: `${frame} ${selector}`, label: ownershipLabel(value, frame) } : undefined,
+					field,
+				);
 			}
 		});
 		return () => {
 			live = false;
 		};
-	}, [describe, frame, selector, revision, onSupport]);
+	}, [describe, frame, selector, field, identity, revision, onSupport, highlight]);
 	useEffect(() => () => highlight([]), [highlight]);
 	useEffect(() => () => release(), [release]);
 	useEffect(() => {
@@ -70,39 +84,48 @@ export function SourceOwnership({
 				) ?? [],
 			);
 	}, [open, description, frame, highlight]);
-	if (!description) return null;
-	const reach = description.reach;
+	if (!description && !pending) return null;
+	const reach = description?.reach;
 	const uses = reach?.uses ?? [];
-	const label = ownershipLabel(description, frame);
+	const label = description ? ownershipLabel(description, frame) : undefined;
 	return (
 		<div data-source-ownership="" className="shrink-0 border-border border-b">
 			<div className="flex min-h-[42px] items-center gap-2 px-3 py-2">
 				<strong className="min-w-0 truncate type-title">{name}</strong>
-				<button
-					type="button"
-					aria-label="Show affected uses"
-					title={label}
-					aria-expanded={open}
-					onClick={() => setOpen(!open)}
-					onPointerEnter={() => highlight(otherUses)}
-					onPointerLeave={() => highlight(open ? otherUses : [])}
-					className={`inline-flex min-h-6 items-center gap-[5px] rounded px-1 py-[3px] text-muted hover:bg-surface hover:text-text ${FAINT}`}
-				>
-					<svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5 text-thread">
-						<path d="m8 2 6 6-6 6-6-6Z" fill="none" stroke="currentColor" strokeWidth="1.4" />
-					</svg>
-					<span>
-						{uses.length}
-						{reach?.unknown.length ? "+" : ""}
-					</span>
-					<svg aria-hidden="true" viewBox="0 0 12 12" className={`h-3 w-3 ${open ? "rotate-180" : ""}`}>
-						<path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" />
-					</svg>
-				</button>
+				{description && (
+					<button
+						type="button"
+						aria-label="Show affected uses"
+						title={label}
+						aria-expanded={open}
+						onClick={() => setOpen(!open)}
+						onPointerEnter={() => highlight(otherUses)}
+						onPointerLeave={() => highlight(open ? otherUses : [])}
+						className={`inline-flex min-h-6 items-center gap-[5px] rounded px-1 py-[3px] text-muted hover:bg-surface hover:text-text ${FAINT}`}
+					>
+						<svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5 text-thread">
+							<path d="m8 2 6 6-6 6-6-6Z" fill="none" stroke="currentColor" strokeWidth="1.4" />
+						</svg>
+						<span>
+							{uses.length}
+							{reach?.unknown.length ? "+" : ""}
+						</span>
+						<svg aria-hidden="true" viewBox="0 0 12 12" className={`h-3 w-3 ${open ? "rotate-180" : ""}`}>
+							<path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" />
+						</svg>
+					</button>
+				)}
 			</div>
 
-			{open && (
-				<div data-source-uses="" className="px-3 pt-1 pb-2.5">
+			{open && pending && <div aria-hidden="true" style={{ height: panelHeight.current }} />}
+			{open && description && (
+				<div
+					data-source-uses=""
+					className="px-3 pt-1 pb-2.5"
+					ref={(element) => {
+						if (element) panelHeight.current = element.getBoundingClientRect().height;
+					}}
+				>
 					<p className={`break-all pt-1 pb-[7px] ${FAINT}`}>
 						{label} · {description.source}
 					</p>

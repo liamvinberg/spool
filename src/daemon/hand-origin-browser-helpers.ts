@@ -55,6 +55,13 @@ export async function originCanvas(
 	const file = (path: string) => join(project.root, "design", path);
 	const bytes = () => Object.fromEntries(Object.keys(files).map((path) => [path, readFileSync(file(path), "utf8")]));
 	const select = async () => {
+		// A native edit closes before React releases the iframe's pointer.
+		// Canvas selection must start after that observable ownership transition.
+		await expect
+			.poll(() =>
+				page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents),
+			)
+			.toBe("none");
 		const box = await target.boundingBox();
 		if (!box) throw new Error("target has no box");
 		await page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");

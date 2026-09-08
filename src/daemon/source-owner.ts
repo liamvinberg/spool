@@ -323,6 +323,84 @@ export function createSourceOwner(
 			return { ok: false, reason: reason(error) };
 		}
 	}
+	/** Both fresh reads and receipt-owned inverses inspect the same frozen inventories. */
+	function observedUses(
+		root: string,
+		cell: string,
+		generation: number,
+		inventories: SourceInventory[],
+		mode: "read" | "inverse",
+	) {
+		const uses: SourceUse[] = [];
+		const unverified: UseOutcome[] = [];
+		const unknown = new Set<string>();
+		const refuse = (frame: string, occurrence: string, says: string) =>
+			unverified.push({
+				frame,
+				occurrence,
+				installation: "refused",
+				rendered: "unverified",
+				reason: says,
+			});
+		for (const inventory of inventories) {
+			const publication = compiler.publication(inventory.publication);
+			if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
+				unknown.add(inventory.frame);
+				continue;
+			}
+			if (!publication.compilation.cells[cell]) continue;
+			try {
+				valid(root, publication.compilation);
+			} catch {
+				unknown.add(inventory.frame);
+				continue;
+			}
+			if (inventory.unknown > 0) unknown.add(inventory.frame);
+			for (const use of inventory.uses) {
+				if (use.original.publication !== inventory.publication) {
+					unknown.add(inventory.frame);
+					// A stale candidate can establish uncertainty, never a current occurrence.
+					// Unrelated uninspectable leaves remain coverage, not attributed failures.
+					if (potentialTextSource(publication.compilation, use.original, cell))
+						refuse(
+							inventory.frame,
+							"",
+							"A potentially affected use belongs to another publication; its current coverage is unverified.",
+						);
+					continue;
+				}
+				try {
+					// Only a receipt-owned inverse may resolve a retained old rendered value
+					// against this exact cell. Ordinary reads retain literal equality checks.
+					const target = resolveTextSource(
+						root,
+						publication.compilation,
+						use.original,
+						generation,
+						mode === "inverse" ? cell : undefined,
+					);
+					if (
+						target.cellKey === cell &&
+						!uses.some(
+							(other) =>
+								other.frame === inventory.frame && other.original.occurrence === use.original.occurrence,
+						)
+					)
+						uses.push({ frame: inventory.frame, ...use });
+				} catch (error) {
+					unknown.add(inventory.frame);
+					if (potentialTextSource(publication.compilation, use.original, cell))
+						refuse(
+							inventory.frame,
+							use.original.occurrence,
+							`A potentially affected use could not be attributed: ${reason(error)}`,
+						);
+				}
+			}
+		}
+		return { uses, unverified, unknown };
+	}
+
 	async function discover(
 		root: string,
 		held: OriginalRead,
@@ -330,53 +408,9 @@ export function createSourceOwner(
 	): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string }> {
 		try {
 			valid(root, held.compilation);
-			const uses: SourceUse[] = [];
-			const unverified: UseOutcome[] = [];
-			const unknown = new Set<string>();
-			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const cell = held.read.cell ?? held.read.original.cell;
-			for (const inventory of inventories) {
-				const publication = compiler.publication(inventory.publication);
-				if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
-					unknown.add(inventory.frame);
-					continue;
-				}
-				if (!publication.compilation.cells[cell]) continue;
-				try {
-					valid(root, publication.compilation);
-				} catch {
-					unknown.add(inventory.frame);
-					continue;
-				}
-				if (inventory.unknown > 0) unknown.add(inventory.frame);
-				for (const use of inventory.uses) {
-					if (use.original.publication !== inventory.publication) {
-						unknown.add(inventory.frame);
-						continue;
-					}
-					try {
-						const target = resolveTextSource(root, publication.compilation, use.original, held.read.generation);
-						if (
-							target.cellKey === cell &&
-							!uses.some(
-								(other) =>
-									other.frame === inventory.frame && other.original.occurrence === use.original.occurrence,
-							)
-						)
-							uses.push({ frame: inventory.frame, ...use });
-					} catch (error) {
-						unknown.add(inventory.frame);
-						if (potentialTextSource(publication.compilation, use.original, cell))
-							unverified.push({
-								frame: inventory.frame,
-								occurrence: use.original.occurrence,
-								installation: "refused",
-								rendered: "unverified",
-								reason: `A potentially affected use could not be attributed: ${reason(error)}`,
-							});
-					}
-				}
-			}
+			const { uses, unverified, unknown } = observedUses(root, cell, held.read.generation, inventories, "read");
+			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const dependent = await dependencyFrames(root, held.file);
 			if (!dependent) unknown.add("source coverage");
 			const unmounted = (dependent ?? []).filter((frame) => !mounted.has(frame));
@@ -721,44 +755,13 @@ export function createSourceOwner(
 				let original = held.original;
 				let reach = held.reach;
 				if (inventories) {
-					const uses: SourceUse[] = [],
-						unknown: string[] = [];
-					const unverified: UseOutcome[] = [];
-					for (const inventory of inventories) {
-						const publication = compiler.publication(inventory.publication);
-						if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
-							unknown.push(inventory.frame);
-							continue;
-						}
-						if (!publication.compilation.cells[held.cell]) continue;
-						try {
-							valid(root, publication.compilation);
-						} catch {
-							unknown.push(inventory.frame);
-							continue;
-						}
-						if (inventory.unknown) unknown.push(inventory.frame);
-						for (const use of inventory.uses) {
-							if (use.original.publication !== inventory.publication) continue;
-							try {
-								if (
-									resolveTextSource(root, publication.compilation, use.original, held.generation, held.cell)
-										.cellKey === held.cell
-								)
-									uses.push({ frame: inventory.frame, ...use });
-							} catch (error) {
-								unknown.push(inventory.frame);
-								if (potentialTextSource(publication.compilation, use.original, held.cell))
-									unverified.push({
-										frame: inventory.frame,
-										occurrence: use.original.occurrence,
-										installation: "refused",
-										rendered: "unverified",
-										reason: `A potentially affected use could not be attributed: ${reason(error)}`,
-									});
-							}
-						}
-					}
+					const { uses, unverified, unknown } = observedUses(
+						root,
+						held.cell,
+						held.generation,
+						inventories,
+						"inverse",
+					);
 					const dependent = await dependencyFrames(root, held.file);
 					reach = {
 						uses,
@@ -766,7 +769,7 @@ export function createSourceOwner(
 						unmounted: (dependent ?? []).filter(
 							(frame) => !inventories.some((inventory) => inventory.frame === frame),
 						),
-						unknown: [...new Set(dependent ? unknown : [...unknown, "source coverage"])],
+						unknown: dependent ? [...unknown] : [...unknown, "source coverage"],
 					};
 					const consumer = uses.find((use) => use.frame === held.frame) ?? uses[0];
 					const publication = consumer ? compiler.publication(consumer.original.publication) : undefined;

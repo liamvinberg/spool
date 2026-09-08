@@ -31,6 +31,13 @@ async function served(source: string, client: BundledHostClient, directory: stri
 	const file = join(project.root, "design/frames/home/frame.tsx");
 	const select = async () => {
 		await expect.poll(() => page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+		// Native Escape restores the host before its parent has released iframe
+		// pointer ownership. The next canvas click belongs after that real release.
+		await expect
+			.poll(() =>
+				page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents),
+			)
+			.toBe("none");
 		const box = await frame.locator("#label").boundingBox();
 		if (!box) throw new Error("label has no native box");
 		await page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
@@ -52,10 +59,22 @@ async function served(source: string, client: BundledHostClient, directory: stri
 	};
 	const edit = async () => {
 		const box = await select();
+		const reading = page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "read",
+		);
 		await page.mouse.click(box.x + 40, box.y + box.height / 2);
+		const result = await (await reading).json();
+		expect(result.ok, result.reason).toBe(true);
 		await expect.poll(() => frame.locator("#label").getAttribute("contenteditable")).toBe("plaintext-only");
 	};
-	return { page, frame, file, select, edit, project };
+	const delivered = async (action: () => Promise<unknown>) => {
+		const reply = page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+		);
+		await action();
+		expect((await reply).ok()).toBe(true);
+	};
+	return { page, frame, file, select, edit, project, delivered };
 }
 for (const order of ["agent first", "hand first"] as const) {
 	it(`preserves actual bundled HTTP edits and hand Undo/Redo through the served canvas: ${order}`, {
@@ -143,7 +162,7 @@ for (const order of ["agent first", "hand first"] as const) {
 			expect(readFileSync(f.file, "utf8")).toContain("Agent body");
 			expect(readFileSync(f.file, "utf8")).toContain("Hello world");
 		}
-		await f.page.keyboard.press("Enter");
+		await f.delivered(() => f.page.keyboard.press("Enter"));
 		await expect
 			.poll(
 				async () => ({
@@ -166,11 +185,11 @@ for (const order of ["agent first", "hand first"] as const) {
 				notice: await f.page.locator("[data-hand-notice]").allTextContents(),
 			}))
 			.toMatchObject({ text: "My words" });
-		await f.page.keyboard.press("ControlOrMeta+z");
+		await f.delivered(() => f.page.keyboard.press("ControlOrMeta+z"));
 		await expect.poll(() => readFileSync(f.file, "utf8")).toContain("Hello world");
 		await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Hello world");
 		expect(await f.frame.locator("#body").textContent()).toBe("Agent body");
-		await f.page.keyboard.press("ControlOrMeta+Shift+z");
+		await f.delivered(() => f.page.keyboard.press("ControlOrMeta+Shift+z"));
 		await expect.poll(() => f.frame.locator("#label").textContent()).toBe("My words");
 		expect(readFileSync(f.file, "utf8")).toContain("Agent body");
 		const source = readFileSync(f.file, "utf8");
