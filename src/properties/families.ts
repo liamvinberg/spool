@@ -1,28 +1,10 @@
-import { anatomyOf, splitClass } from "../../daemon/class-write";
-import type { CompiledTheme } from "../api";
-import { knowsColour, paintOf, paintWith, type ThemeList, themeValue } from "./properties-theme";
+import { anatomyOf, splitClass } from "../daemon/class-write";
+import type { CompiledTheme } from "../daemon/theme";
+import { knowsColour, paintOf, paintWith, type ThemeList, themeValue } from "./theme";
 
-/**
- * What a Tailwind token is made of, family by family (#257).
- *
- * One rule decides what writes: **numbers and words write, tokens wait.** A
- * number on the scale (`h-11`, `p-4`, `opacity-50`) and a word from an enum
- * (`flex`, `items-center`, `absolute`) are each one token on a literal, and a
- * named token (`bg-thread`, `text-base`, `rounded-md`) is chosen from the
- * compiled theme and written as a token — editing the token's own definition
- * is a separate effort and stays out.
- *
- * This module is the reading half and the shape of the write. It never
- * rewrites a literal: the write lane (`daemon/class-write.ts`) owns that,
- * because the fewest-tokens spelling, the logical round-trip and the zero that
- * drops at the base but overrides under a scope are one set of rules and there
- * is one place for them. A row here says which token it means, and the lane
- * says what the literal looks like afterwards.
- *
- * Two readings the inventory found wrong are fixed by where the values come
- * from: menus read the compiled theme rather than Tailwind's defaults, and the
- * folds read logical spellings (`ps-`, `inset-x-`, `border-s-`, `rounded-ss-`)
- * as the sides they resolve to.
+/** Syntax and display values for the retained property controls.
+ * These helpers spell candidates and read existing tokens. The source owner uses
+ * actual compiler declarations to prove what a property operation may replace.
  */
 
 /* ---------- lengths: a sign, a fraction, a unit ---------- */

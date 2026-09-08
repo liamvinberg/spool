@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
+import type { RowEdit, RowElement } from "../../properties/rows";
 import type { SourceDescription } from "../../source-edit";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
@@ -21,7 +22,6 @@ import {
 	useCloseOnPressAway,
 	VALUE,
 } from "./properties-fields";
-import type { RowEdit, RowElement } from "./properties-rows";
 import {
 	BASE,
 	bareToken,
