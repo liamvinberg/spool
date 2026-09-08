@@ -31,3 +31,6 @@ Grouped property changes retain their original fields or written scope and use o
 Remove a written scope or add and remove raw classes through the same retained source owner, including cancellation while the original read is pending.
 
 Remove a color declaration from its existing menu and restore the original reference with Undo, without authoring an inherit token.
+
+
+Known literal inline weight and padding can supply read-only context for class color and opacity. Relevant inline properties and unknown style objects remain refused.
