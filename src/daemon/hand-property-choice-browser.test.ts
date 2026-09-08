@@ -137,3 +137,43 @@ it.each(["reference", "custom at reduced zoom"] as const)(
 		}
 	},
 );
+
+it("preserves a bound reference without a proved step scale until explicit custom typing", {
+	timeout: 120_000,
+}, async () => {
+	const original =
+		'export function Label(){return <button id="subject" className="text-tiny leading-6 p-6">Hello</button>}';
+	const f = await originCanvas({ [file]: original, "shared/tokens.css": theme }, frame, "#subject", true);
+	await f.select();
+	const field = f.page.getByRole("textbox", { name: "font-size", exact: true });
+	const trigger = f.page.getByRole("button", { name: "font-size token", exact: true });
+	await expect.poll(() => field.inputValue()).toBe("8");
+	await field.focus();
+	await field.press("ArrowUp");
+	expect(await field.inputValue()).toBe("8");
+	await field.press("Enter");
+	expect(f.bytes()[file]).toBe(original);
+	expect(f.writes).toEqual([]);
+	await expect.poll(() => trigger.textContent()).toContain("--text-tiny");
+	await field.fill("9.25");
+	await field.press("ArrowUp");
+	expect(await field.inputValue()).toBe("10.25");
+	const saved = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await field.press("Enter");
+	expect(await (await saved).json()).toMatchObject({ ok: true });
+	await f.settled();
+	expect(f.bytes()[file]).toBe(original.replace("text-tiny", "text-[10.25px]"));
+	for (const document of [f.frame, f.page.frameLocator('iframe[title="second"]')])
+		expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).fontSize)).toBe(
+			"10.25px",
+		);
+	await f.page.keyboard.press("ControlOrMeta+z");
+	await f.settled();
+	expect(f.bytes()[file]).toBe(original);
+	expect(f.writes).toEqual(["commit", "inverse"]);
+	await expect.poll(() => trigger.textContent()).toContain("--text-tiny");
+	for (const document of [f.frame, f.page.frameLocator('iframe[title="second"]')])
+		expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).fontSize)).toBe("8px");
+});

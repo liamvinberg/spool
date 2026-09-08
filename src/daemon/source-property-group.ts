@@ -6,7 +6,7 @@ import { compilePropertySource } from "./source-property-compile";
 import {
 	changedPropertyKeys,
 	externalPropertySignature,
-	propertyConsumers,
+	nativePropertyEffects,
 	propertySignature,
 } from "./source-property-dependencies";
 import { propertyKeys, readPropertyEffects } from "./source-property-effects";
@@ -157,11 +157,11 @@ export async function planPropertyGroup(
 		after: [...after],
 		next,
 		roots,
-		consumers: propertyConsumers(desired, roots, environment),
+		consumers: nativePropertyEffects(desired, roots, environment),
 		external: externalPropertySignature(original, roots, [...before], environment),
 		selections: selections.map((selection) => ({
 			...selection,
-			consumers: propertyConsumers(desired, selection.roots, environment),
+			consumers: nativePropertyEffects(desired, selection.roots, environment),
 		})),
 	};
 }

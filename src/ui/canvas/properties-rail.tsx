@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { RowEdit, RowElement } from "../../properties/rows";
 import type { SourceDescription, SourceOperation, SourceRead } from "../../source-edit";
-import type { SourcePropertyPreview, SourcePropertyReading, SourcePropertyValue } from "../../source-property";
+import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
 import type { SourcePropertyGroupValue } from "../../source-property-group";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
@@ -38,6 +38,7 @@ import {
 	variantsOf,
 } from "./properties-scope";
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
+import type { PropertyDescription } from "./property-controls";
 import { createPropertySession, type PropertyPlanResult, type PropertyReadRequest } from "./property-session";
 import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
@@ -114,7 +115,7 @@ export interface PropertiesActs {
 			selector: string,
 			property: string,
 			scope: string,
-		): Promise<SourcePropertyReading | undefined>;
+		): Promise<PropertyDescription | undefined>;
 		begin(
 			frame: string,
 			selector: string,

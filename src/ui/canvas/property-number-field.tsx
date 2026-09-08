@@ -28,6 +28,7 @@ function numberUnit(value: string): { number: string; unit: string } | undefined
 export function PropertyNumberField({
 	property,
 	reading,
+	reason,
 	options,
 	scope = "",
 	begin,
@@ -39,6 +40,7 @@ export function PropertyNumberField({
 }: {
 	property: Property;
 	reading: SourcePropertyReading | undefined;
+	reason?: string | undefined;
 	options: readonly ThemeToken[];
 	scope?: string;
 	begin(): void;
@@ -58,6 +60,7 @@ export function PropertyNumberField({
 	const initial = numberUnit(reading?.authored ?? reading?.native ?? "");
 	const unit = initial?.unit ?? "px";
 	const [scrubbed, setScrubbed] = useState<string>();
+	const customDraft = useRef(false);
 	const scrub = useRef<{ value: string; moved: boolean } | undefined>(undefined);
 	const finishScrub = (commit: boolean) => {
 		const held = scrub.current;
@@ -74,6 +77,8 @@ export function PropertyNumberField({
 		return CSS.supports(property, value) ? { kind: "custom", value } : undefined;
 	};
 	const step = (typed: string, units: number): string | undefined => {
+		// A displayed native value does not prove a compatible reference scale.
+		if (binding && !customDraft.current) return;
 		const parsed = numberUnit(typed);
 		if (!parsed) return;
 		const next = stepLength(
@@ -98,22 +103,28 @@ export function PropertyNumberField({
 	return (
 		<Row
 			name={name ?? property}
+			reason={reason ?? (binding ? "Choose a token or type a custom value to change this reference." : undefined)}
 			ok={reading !== undefined}
 			onScrubStart={() => {
+				customDraft.current = false;
 				scrub.current = { value: initial?.number ?? "", moved: false };
 				begin();
 			}}
-			onScrub={(units) => {
-				const held = scrub.current;
-				if (!held) return;
-				const next = step(held.value, units);
-				const value = next === undefined ? undefined : requested(next);
-				if (next === undefined || value === undefined) return;
-				held.value = next;
-				held.moved = true;
-				setScrubbed(next);
-				preview(value);
-			}}
+			onScrub={
+				binding
+					? undefined
+					: (units) => {
+							const held = scrub.current;
+							if (!held) return;
+							const next = step(held.value, units);
+							const value = next === undefined ? undefined : requested(next);
+							if (next === undefined || value === undefined) return;
+							held.value = next;
+							held.moved = true;
+							setScrubbed(next);
+							preview(value);
+						}
+			}
 			onScrubEnd={() => finishScrub(true)}
 			onScrubCancel={() => finishScrub(false)}
 		>
@@ -122,8 +133,12 @@ export function PropertyNumberField({
 				value={scrubbed ?? initial?.number ?? ""}
 				readout={unit}
 				ok={reading !== undefined}
-				onBegin={begin}
+				onBegin={() => {
+					customDraft.current = false;
+					begin();
+				}}
 				onPreview={(typed) => {
+					customDraft.current = true;
 					const value = requested(typed);
 					if (value) preview(value);
 				}}

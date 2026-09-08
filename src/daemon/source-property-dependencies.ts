@@ -138,3 +138,27 @@ export function externalPropertySignature(
 	const registrations = [...names].sort().map((name) => [name, certificate.registrations[name] ?? null]);
 	return JSON.stringify({ declarations, registrations, theme });
 }
+
+/** Native observation includes carried inputs without granting ownership of their source. */
+export function nativePropertyEffects(
+	certificate: PropertyCertificate,
+	roots: ReadonlySet<string>,
+	environment: SourcePropertyEnvironment,
+): SourcePropertyEffect[] {
+	const effects = new Set(propertyConsumers(certificate, roots, environment));
+	const inputs = new Set<string>();
+	for (const effect of effects)
+		if (["transform", "translate", "rotate", "scale", "filter", "backdrop-filter"].includes(effect.property))
+			for (const name of propertyInputs(effect)) if (name.startsWith("--tw-")) inputs.add(name);
+	let growing = true;
+	while (growing) {
+		growing = false;
+		for (const effect of certificate.effects) {
+			if (effects.has(effect) || !inputs.has(effect.property)) continue;
+			effects.add(effect);
+			growing = true;
+			for (const name of propertyInputs(effect)) if (name.startsWith("--tw-")) inputs.add(name);
+		}
+	}
+	return certificate.effects.filter((effect) => effects.has(effect));
+}

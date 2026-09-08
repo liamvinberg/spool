@@ -7,7 +7,7 @@ import { compilePropertySource } from "./source-property-compile";
 import {
 	changedPropertyKeys,
 	externalPropertySignature,
-	propertyConsumers,
+	nativePropertyEffects,
 	propertySignature,
 } from "./source-property-dependencies";
 import { propertyKeys, readPropertyEffects } from "./source-property-effects";
@@ -96,7 +96,7 @@ export async function planPropertyValue(
 		original,
 		desired,
 		roots,
-		consumers: propertyConsumers(desired, roots, environment),
+		consumers: nativePropertyEffects(desired, roots, environment),
 		external: externalPropertySignature(original, roots, before, environment),
 		next,
 	};
