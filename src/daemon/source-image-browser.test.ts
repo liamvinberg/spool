@@ -493,7 +493,11 @@ it("reloads a saved image inverse and prepares the actual restored asset", { tim
 	await f.page.getByRole("button", { name: "image", exact: true }).click();
 	const choice = f.page.locator('[data-menu-option="second.svg"]');
 	await expect.poll(() => choice.count()).toBe(1);
+	const saved = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
 	await choice.click();
+	expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
 	await expect
 		.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1)?.rendered))
 		.toBe("verified");
@@ -648,7 +652,11 @@ it("keeps shared image recovery until both original uses show the saved bytes", 
 	await f.page.getByRole("button", { name: "image", exact: true }).click();
 	const choice = f.page.locator('[data-menu-option="second.svg"]');
 	await expect.poll(() => choice.count()).toBe(1);
+	const savedReply = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
 	await choice.click();
+	expect(await (await savedReply).json()).toMatchObject({ ok: true, source: "saved" });
 	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(2);
 	const outcomes = await f.page.evaluate(() => Reflect.get(window, "originOutcomes"));
 	expect(outcomes.map((outcome: { rendered: string }) => outcome.rendered).sort()).toEqual([
@@ -804,7 +812,11 @@ it("retains an unknown image save without replay, reload, or an invented Undo re
 		data.items.add(new File([bytes], "uncertain.svg", { type: "image/svg+xml" }));
 		return data;
 	}, SECOND);
+	const failedRequest = f.page.waitForEvent("requestfailed", {
+		predicate: (request) => request.url().endsWith("/source") && request.postDataJSON()?.action === "commit",
+	});
 	await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+	await failedRequest;
 	const notice = f.page.locator('[data-hand-notice="unknown"]');
 	await expect.poll(() => notice.count()).toBe(1);
 	expect(acknowledgedOnServer).toBe(true);
@@ -974,7 +986,13 @@ it.each(["image budget", "document budget", "computed import inventory"] as cons
 			data.items.add(new File([bytes], "bounded.svg", { type: "image/svg+xml" }));
 			return data;
 		}, bytes);
+		const refused = f.page.waitForResponse(
+			(response) =>
+				response.url().endsWith("/source") &&
+				response.request().postDataJSON()?.action === (boundary === "document budget" ? "commit" : "stage-image"),
+		);
 		await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+		expect(await (await refused).json()).toMatchObject({ ok: false });
 		const notice = f.page.locator('[data-hand-notice="blocked"]');
 		await expect.poll(() => notice.count()).toBe(1);
 		expect(await notice.textContent()).toContain(
