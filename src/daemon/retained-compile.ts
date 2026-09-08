@@ -233,7 +233,7 @@ export function lowerLiterals(
 				if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") continue;
 				const field = attribute.name.name;
 				if (/^(?:on[A-Z]|data-spool-)/.test(field)) continue;
-				if (["key", "ref", "data-go", "className", "style"].includes(field)) continue;
+				if (["key", "ref", "data-go", "style"].includes(field)) continue;
 				if (field === "src" && open.name.type === "JSXIdentifier" && open.name.name === "img") continue;
 				if (
 					open.attributes.filter(
@@ -274,7 +274,7 @@ export function lowerLiterals(
 			!open.attributes.some((attr) => attr.type === "JSXSpreadAttribute")
 		) {
 			const tag = open.name.name;
-			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY].filter(
+			const names = ["className", ...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY].filter(
 				(name) => name !== "src" || tag !== "img",
 			);
 			for (const field of names) {
@@ -441,8 +441,7 @@ export function lowerLiterals(
 			return;
 		const owner = functions.get(fn) ?? `${file}#component:${functions.size}`;
 		const retain = (literal: Node, field: string) => {
-			if (literal.type !== "StringLiteral" || ["key", "ref", "data-go", "src", "className", "style"].includes(field))
-				return;
+			if (literal.type !== "StringLiteral" || ["key", "ref", "data-go", "src", "style"].includes(field)) return;
 			const key = `${id}@${field}`;
 			cells[key] = {
 				file,
