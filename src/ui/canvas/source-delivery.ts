@@ -14,6 +14,7 @@ import type { SourceImagePreview } from "../../source-image";
 import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 import type { SourceIntent } from "./source-intent";
+import type { DescriptionLifetime } from "./source-ownership";
 
 interface OutcomeGroup {
 	publication: SourcePublication;
@@ -54,7 +55,10 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	const sentStructures = useRef("[]");
 	const prepared = useRef(new Map<number, { initiator: string; frames: string[] }>());
 	const pending = useRef(
-		new Map<string, { window: Window; resolve: (value: unknown) => void; timer: ReturnType<typeof setTimeout> }>(),
+		new Map<
+			string,
+			{ window: Window; resolve: (value: unknown) => void; cancel(): void; timer: ReturnType<typeof setTimeout> }
+		>(),
 	);
 	useEffect(() => {
 		const waiting = pending.current;
@@ -142,23 +146,44 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		return () => {
 			removeEventListener("message", listener);
 			for (const call of waiting.values()) {
-				clearTimeout(call.timer);
-				call.resolve(undefined);
+				call.cancel();
 			}
 			waiting.clear();
 		};
 	}, [iframes]);
 	const request = useCallback(
-		<T>(frame: string, message: Record<string, unknown>): Promise<T | undefined> => {
+		<T>(frame: string, message: Record<string, unknown>, lifetime?: DescriptionLifetime): Promise<T | undefined> => {
 			const window = iframes.current.get(frame)?.contentWindow;
-			if (!window) return Promise.resolve(undefined);
+			if (!window || lifetime?.signal.aborted) return Promise.resolve(undefined);
 			return new Promise((resolve) => {
 				const id = crypto.randomUUID();
-				const timer = setTimeout(() => {
+				let expired = false;
+				const abort = () => {
 					pending.current.delete(id);
+					clearTimeout(timer);
+					lifetime?.signal.removeEventListener("abort", abort);
+					resolve(undefined);
+				};
+				const timer = setTimeout(() => {
+					expired = true;
+					// A live disclosure can request fresh proof when its frame responds again.
+					// Its expired reply is only a readiness signal, never the new description.
+					if (!lifetime) pending.current.delete(id);
 					resolve(undefined);
 				}, 4000);
-				pending.current.set(id, { window, timer, resolve: (value) => resolve(value as T | undefined) });
+				lifetime?.signal.addEventListener("abort", abort, { once: true });
+				pending.current.set(id, {
+					window,
+					timer,
+					cancel: abort,
+					resolve: (value) => {
+						lifetime?.signal.removeEventListener("abort", abort);
+						if (expired) {
+							if (!lifetime?.signal.aborted && iframes.current.get(frame)?.contentWindow === window)
+								lifetime?.onLateReply();
+						} else resolve(value as T | undefined);
+					},
+				});
 				window.postMessage({ spool: "source-request", id, ...message }, "*");
 			});
 		},
@@ -228,15 +253,20 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			selector: string,
 			field?: string,
 			operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+			lifetime?: DescriptionLifetime,
 		) => {
 			const version = ++descriptionVersion.current;
 			setLiveFrames(new Set(iframes.current.keys()));
-			const original = await request<SourceOccurrence>(frame, {
-				action: "inspect",
-				selector,
-				field,
-				operation,
-			});
+			const original = await request<SourceOccurrence>(
+				frame,
+				{
+					action: "inspect",
+					selector,
+					field,
+					operation,
+				},
+				lifetime,
+			);
 			const description = original
 				? await describeSource(project, frame, original, await inventory(original.field, operation), operation)
 				: undefined;

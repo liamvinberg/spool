@@ -1,12 +1,12 @@
 .project-picker {
 	outline: none;
 	position: fixed;
-	top: min(160px, 18vh);
-	margin: 0 auto;
+	inset: 0;
+	margin: auto;
 	padding: 0;
 	width: 520px;
 	max-width: calc(100vw - 48px);
-	max-height: 70vh;
+	max-height: calc(100dvh - 48px);
 	border: 1px solid var(--color-border-raised);
 	border-radius: var(--radius-lg);
 	color: var(--color-text);
@@ -242,7 +242,7 @@
 }
 .picker-folders {
 	padding: 0 0 6px;
-	max-height: 280px;
+	max-height: 50dvh;
 	overflow: auto;
 }
 .picker-folder-row {
@@ -338,6 +338,17 @@
 	width: 12px;
 	height: 12px;
 	accent-color: var(--color-thread);
+}
+.picker-native-default {
+	margin: 0 20px 18px;
+}
+.picker-native {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 20px;
+	font: var(--type-title);
 }
 .picker-nothing {
 	color: var(--color-muted);

@@ -133,9 +133,12 @@ describe("project creation and folder selection", () => {
 	it("initializes the exact codebase with one confirmation even when it has child folders", async () => {
 		const requests = disk();
 		const onOpened = vi.fn();
-		const host = mount(createElement(ProjectPicker, { location: "/Users/test/coffee", onOpened, onClose: vi.fn() }));
+		const host = mount(
+			createElement(ProjectPicker, { initial: "start", location: "/Users/test/coffee", onOpened, onClose: vi.fn() }),
+		);
+		await act(async () => host.querySelector<HTMLButtonElement>(".picker-choice")?.click());
 		await act(async () => {});
-		expect(host.querySelector(".picker-footer code")?.textContent).toBe("~/coffee");
+		await act(async () => type(host.querySelector("input"), "/Users/test/coffee"));
 		expect(requests).toEqual([]);
 		await act(async () => button(host, "Add spool here").click());
 		expect(requests).toEqual([{ path: "/api/projects/init", body: { path: "/Users/test/coffee" } }]);
@@ -209,9 +212,9 @@ describe("project creation and folder selection", () => {
 			body: { path: "/Users/test/coffee/src", name: "workshop" },
 		});
 	});
-	it("uses the custom picker in the desktop app too", async () => {
-		disk();
-		const chooseDirectory = vi.fn();
+	it("preserves the draft on native cancellation and creates inside the chosen location", async () => {
+		const requests = disk();
+		const chooseDirectory = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("/Users/test/ideas");
 		vi.stubGlobal("spoolCanvasWindow", { onCommand: () => () => {}, setCanvasActive: () => {}, chooseDirectory });
 		const host = mount(
 			createElement(ProjectPicker, {
@@ -222,9 +225,116 @@ describe("project creation and folder selection", () => {
 			}),
 		);
 		await act(async () => {});
+		act(() => type(host.querySelector("input"), "workshop"));
 		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Choose project location"]')?.click());
-		expect(document.activeElement).toBe(host.querySelector('[aria-label="Search folders or paste a path"]'));
-		expect(chooseDirectory).not.toHaveBeenCalled();
+		expect(chooseDirectory).toHaveBeenLastCalledWith({ purpose: "location", defaultPath: "/Users/test/coffee" });
+		expect(host.querySelector<HTMLInputElement>("input")?.value).toBe("workshop");
+		expect(requests).toEqual([]);
+		expect(host.querySelector(".picker-folders")).toBeNull();
+		await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Choose project location"]')?.click());
+		expect(requests).toEqual([]);
+		expect(host.querySelector<HTMLInputElement>("input")?.value).toBe("workshop");
+		await act(async () =>
+			host.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+		);
+		expect(requests).toEqual([
+			{ path: "/api/projects/create", body: { path: "/Users/test/ideas", name: "workshop" } },
+		]);
+	});
+	it.each([
+		["Add spool to a folder", "add", "/Users/test/coffee", "/api/projects/init"],
+		["Add spool to a folder", "add", "/Users/test/existing", "/api/projects/open"],
+		["Open a spool project", "open", "/Users/test/existing", "/api/projects/open"],
+	])("uses native selection for %s (%s, %s)", async (label, purpose, path, endpoint) => {
+		const requests = disk();
+		const chooseDirectory = vi.fn(async () => path);
+		vi.stubGlobal("spoolCanvasWindow", { onCommand: () => () => {}, setCanvasActive: () => {}, chooseDirectory });
+		const onOpened = vi.fn();
+		const host = mount(
+			createElement(ProjectPicker, { initial: "start", location: "/Users/test/coffee", onOpened, onClose: vi.fn() }),
+		);
+		await act(async () => {});
+		await act(async () =>
+			Array.from(host.querySelectorAll<HTMLButtonElement>(".picker-choice"))
+				.find((node) => node.querySelector("strong")?.textContent === label)
+				?.click(),
+		);
+		expect(chooseDirectory).toHaveBeenCalledExactlyOnceWith({ purpose, defaultPath: "~" });
+		expect(requests).toEqual([{ path: endpoint, body: { path } }]);
+		expect(onOpened).toHaveBeenCalledOnce();
+		expect(host.querySelector(".picker-folders")).toBeNull();
+	});
+	it("reports a non-project selected for native Open without initializing it, and lets the user retry", async () => {
+		const requests: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const path = new URL(String(input), window.location.href).pathname;
+				if (init?.method === "POST") requests.push(path);
+				if (path === "/api/projects/open") return new Response(null, { status: 404 });
+				return Response.json({ path: "/Users/test", parent: "/Users", isProject: false, dirs: [] });
+			}),
+		);
+		const chooseDirectory = vi.fn().mockResolvedValueOnce("/Users/test/codebase").mockResolvedValueOnce(null);
+		vi.stubGlobal("spoolCanvasWindow", { onCommand: () => () => {}, setCanvasActive: () => {}, chooseDirectory });
+		const onClose = vi.fn();
+		const host = mount(createElement(ProjectPicker, { onOpened: vi.fn(), onClose }));
+		await act(async () => {});
+		expect(host.querySelector('[role="alert"]')?.textContent).toContain("This folder has no Spool project");
+		expect(requests).toEqual(["/api/projects/open"]);
+		await act(async () => button(host, "Choose folder…").click());
+		expect(onClose).toHaveBeenCalledOnce();
+		expect(chooseDirectory).toHaveBeenCalledTimes(2);
+	});
+	it("opens the native settings location picker once and saves the selection", async () => {
+		disk();
+		const chooseDirectory = vi.fn(async () => "/Users/test/ideas");
+		vi.stubGlobal("spoolCanvasWindow", { onCommand: () => () => {}, setCanvasActive: () => {}, chooseDirectory });
+		const onLocation = vi.fn(async () => ({ ok: true }));
+		const onClose = vi.fn();
+		mount(
+			createElement(ProjectPicker, {
+				initial: "location",
+				location: "/Users/test/coffee",
+				onOpened: vi.fn(),
+				onLocation,
+				onClose,
+			}),
+		);
+		await act(async () => {});
+		expect(chooseDirectory).toHaveBeenCalledExactlyOnceWith({
+			purpose: "location",
+			defaultPath: "/Users/test/coffee",
+		});
+		expect(onLocation).toHaveBeenCalledExactlyOnceWith("/Users/test/ideas");
+		expect(onClose).toHaveBeenCalledOnce();
+	});
+	it("does not act on a native selection after its picker closes", async () => {
+		const requests = disk();
+		let finish: ((path: string | null) => void) | undefined;
+		const chooseDirectory = vi.fn(
+			() =>
+				new Promise<string | null>((resolve) => {
+					finish = resolve;
+				}),
+		);
+		vi.stubGlobal("spoolCanvasWindow", { onCommand: () => () => {}, setCanvasActive: () => {}, chooseDirectory });
+		const onOpened = vi.fn();
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			host.remove();
+			vi.unstubAllGlobals();
+		});
+		await act(async () => root.render(createElement(ProjectPicker, { onOpened, onClose: vi.fn() })));
+		expect(chooseDirectory).toHaveBeenCalledOnce();
+		act(() => root.unmount());
+		await act(async () => finish?.("/Users/test/existing"));
+		expect(requests).toEqual([]);
+		expect(onOpened).not.toHaveBeenCalled();
 	});
 	it("allows unnamed creation, prevents concurrent submits, and retains a failed draft", async () => {
 		let finish: ((response: Response) => void) | undefined;

@@ -1,0 +1,212 @@
+.sc-current {
+	--type-control: 400 13px / 18px "Familjen Grotesk", sans-serif;
+	--type-detail: 400 11px / 14px "Fragment Mono", monospace;
+	--type-value: 400 12px / 16px "Fragment Mono", monospace;
+	--color-thread-strong: var(--color-thread);
+}
+.sc-current .sc-viewport {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	outline: none;
+	touch-action: pan-y pinch-zoom;
+}
+.sc-viewport[data-tool="hand"] {
+	cursor: grab;
+}
+.sc-world {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: 0 0;
+}
+.sc-frame {
+	position: absolute;
+	width: 1200px;
+	height: 800px;
+}
+.sc-document {
+	width: 1200px;
+	height: 800px;
+	overflow: hidden;
+}
+.sc-current .sr-app-selection i {
+	width: 12px;
+	height: 12px;
+}
+.sc-current .sr-app-selection > span {
+	font-size: 20px;
+	line-height: 26px;
+	top: calc(100% + 20px);
+}
+.sc-dock-panel {
+	position: relative;
+	height: 100%;
+	flex-shrink: 0;
+	overflow: hidden;
+	transition: width 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.sc-dock-face {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 120ms ease-out;
+}
+.sc-dock-face[data-open="true"] {
+	opacity: 1;
+	pointer-events: auto;
+}
+.sc-dock-button {
+	transition:
+		background-color 140ms,
+		color 140ms,
+		transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.sc-dock-button:active {
+	transform: scale(0.9);
+}
+.sc-home {
+	padding: 80px;
+}
+.sc-home h2 {
+	font:
+		400 32px / 1.2 "Familjen Grotesk",
+		sans-serif;
+	margin-bottom: 32px;
+}
+.sc-home > button {
+	display: flex;
+	justify-content: space-between;
+	width: 480px;
+	padding: 22px 0;
+	border-block: 1px solid var(--color-border);
+	font: var(--type-control);
+}
+.sc-home p {
+	margin-top: 24px;
+	color: var(--color-muted);
+	font: var(--type-control);
+}
+.sc-settings {
+	width: 360px;
+	padding: 24px;
+	background: #141414;
+	color: #f0efed;
+	border: 1px solid #353535;
+	border-radius: 8px;
+	margin: auto;
+}
+.sc-settings::backdrop,
+.sc-player::backdrop {
+	background: #0009;
+}
+.sc-settings > div,
+.sc-settings label {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 32px;
+}
+.sc-settings h2 {
+	margin: 0;
+	font-size: 22px;
+}
+.sc-settings button svg {
+	width: 14px;
+	height: 14px;
+}
+.sc-settings label {
+	margin-top: 28px;
+}
+.sc-settings p {
+	margin-top: 10px;
+	color: #888;
+	font-size: 12px;
+}
+.sc-player {
+	width: min(1100px, 95vw);
+	max-width: 95vw;
+	max-height: 94vh;
+	margin: auto;
+	padding: 16px;
+	border: 1px solid #353535;
+	border-radius: 8px;
+	background: #141414;
+	color: #eee;
+	overflow: auto;
+}
+.sc-player-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding-bottom: 16px;
+	font: 12px / 1.3 monospace;
+}
+.sc-player-top button {
+	min-height: 44px;
+	padding-inline: 12px;
+}
+.sc-mobile-open {
+	display: none;
+}
+@media (max-width: 760px), (pointer: coarse) {
+	.sc-current > .sr-app-stage {
+		pointer-events: none;
+	}
+	.sc-mobile-open {
+		display: block;
+		position: absolute;
+		inset: auto 12px 12px;
+		min-height: 44px;
+		padding: 10px 16px;
+		border: 1px solid #494945;
+		border-radius: 4px;
+		background: #191919;
+		color: #f0efed;
+		font:
+			400 15px / 22px "Familjen Grotesk",
+			sans-serif;
+		touch-action: manipulation;
+	}
+	.sc-player {
+		width: 100%;
+		max-width: 100%;
+		height: 100dvh;
+		max-height: 100dvh;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		overscroll-behavior: contain;
+	}
+	.sc-player-top {
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		min-height: 56px;
+		padding: env(safe-area-inset-top) 12px 0;
+		background: #141414;
+	}
+}
+.sc-player .sg-product {
+	container-type: inline-size;
+	aspect-ratio: 3 / 2;
+}
+.sc-player .sg-product-inner {
+	transform: scale(tan(atan2(100cqw, 1200px)));
+}
+.sc-current[data-quiet="true"] .sc-dock-panel,
+.sc-current[data-quiet="true"] .sc-dock-face,
+.sc-current[data-quiet="true"] .sc-dock-button {
+	transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+	.sc-dock-panel,
+	.sc-dock-face,
+	.sc-dock-button {
+		transition: none;
+	}
+}

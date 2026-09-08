@@ -128,7 +128,14 @@ function revokeSource(publication: SourcePublication): void {
 		structuralBases.cancel(publication.generation);
 	}
 	const held = leases.get(publication.generation);
-	if (held && sameSourceOccurrence(held.original, publication.original)) cancelSource(publication.generation);
+	if (
+		held
+			? sameSourceOccurrence(held.original, publication.original)
+			: sharedPreviews
+					.get(publication.generation)
+					?.some((use) => sameSourceOccurrence(use.original, publication.original))
+	)
+		cancelSource(publication.generation);
 }
 const origins = new WeakMap<object, Origin>();
 const committedHosts = new WeakMap<Element, { fiber: Fiber; pending: boolean }>();

@@ -70,7 +70,7 @@ function Source() {
 }
 
 // Ported from spool’s demo-offprint--landing frame.
-export function EditorialContent({ direction, footerExtra }: { direction: "folio" | "margin"; footerExtra?: ReactNode }) {
+export function EditorialContent({ direction, footerExtra, opening, refinement }: { direction: "folio" | "margin"; footerExtra?: ReactNode; opening?: ReactNode; refinement?: string }) {
 	const root = useRef<HTMLDivElement>(null);
 
 	const dialog = useRef<HTMLDialogElement>(null);
@@ -141,6 +141,7 @@ export function EditorialContent({ direction, footerExtra }: { direction: "folio
 			className="sg-page sm-page dl-page"
 			data-take="play"
             data-editorial={direction}
+			data-refinement={refinement}
 			ref={root}
 			onPointerDownCapture={() => {
 				pointer.current = true;
@@ -151,16 +152,16 @@ export function EditorialContent({ direction, footerExtra }: { direction: "folio
 				if (root.current) root.current.dataset.input = "keyboard";
 			}}
 		>
-            <header className="ed-nav sg-width">
+            {!opening && <header className="ed-nav sg-width">
                 <button type="button" aria-label="spool home" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><Brand /></button>
                 <nav aria-label="Website navigation">
                     <a href={`${REPO}#readme`}>Documentation <GuideIcon name="arrow" /></a>
                     <a href={REPO}>GitHub <GuideIcon name="arrow" /></a>
                     <button type="button" onClick={() => jump("start")}>Get spool <GuideIcon name="down" /></button>
                 </nav>
-            </header>
+            </header>}
             <main>
-                <section className="ed-hero sg-width">
+                {opening ?? <><section className="ed-hero sg-width">
                     <h1>A canvas for<br />working things out.</h1>
                     <div className="ed-hero-bottom">
                         <p>Design websites, apps, and presentations with your agent. Try them live. Keep what works.</p>
@@ -178,7 +179,7 @@ export function EditorialContent({ direction, footerExtra }: { direction: "folio
                     </div>
                     <OffprintSurface view="canvas" />
                     <div className="sg-caption"><p>Offprint, on the canvas.</p><span>Interactive preview · changes stay here</span></div>
-                </section>
+                </section></>}
 				<nav className="sg-chapters" aria-label="Page chapters">
 					<div className="sg-width">
 						{CHAPTERS.map((chapter, index) => (

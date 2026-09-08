@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Offprint } from "./offprint";
 
@@ -11,7 +11,7 @@ export const DEMO_NAMES: Record<DemoTake, string> = {
 };
 
 // The website carries the same prototype in memory. Each embedded player owns its session.
-export function DemoProduct({ take }: { take: DemoTake }) {
+export function DemoProduct({ take, reduceMotion = false }: { take: DemoTake; reduceMotion?: boolean }) {
 	const [screen, setScreen] = useState(take);
 	const [time, setTime] = useState("10:00");
 	const [seats, setSeats] = useState(1);
@@ -19,6 +19,11 @@ export function DemoProduct({ take }: { take: DemoTake }) {
 	const pointer = useRef(false);
 	const transition = useRef<ViewTransition | null>(null);
 	useEffect(() => () => transition.current?.skipTransition(), []);
+	useLayoutEffect(() => {
+		// A new screen starts at the top of its player, never halfway down a shorter form.
+		const active = host.current?.querySelector(`[data-screen="${screen}"]`);
+		active?.closest("dialog")?.scrollTo({ top: 0, behavior: "instant" });
+	}, [screen]);
 	const go = (next: DemoTake, nextTime = time, nextSeats = seats) => {
 		const update = () => {
 			setScreen(next);
@@ -29,7 +34,9 @@ export function DemoProduct({ take }: { take: DemoTake }) {
 		transition.current?.skipTransition();
 		if (
 			!node ||
+			reduceMotion ||
 			!pointer.current ||
+			window.matchMedia("(max-width: 760px), (pointer: coarse)").matches ||
 			window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
 			!document.startViewTransition
 		) {
