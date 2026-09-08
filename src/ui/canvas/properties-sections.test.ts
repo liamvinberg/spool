@@ -674,3 +674,11 @@ it("keeps an explicit zero border request distinct from removing its source bind
 	await type(rail, "border-width", "0");
 	expect(rail.requests).toEqual([{ property: "border-width", value: { kind: "binding", tokens: ["border-0"] } }]);
 });
+
+it("routes the numeric typography control through one exact custom source gesture", async () => {
+	const rail = await mount("text-md leading-6");
+	await type(rail, "font-size", "7.999px");
+	expect(rail.previews.at(-1)).toEqual({ property: "font-size", value: { kind: "custom", value: "7.999px" } });
+	expect(rail.completions).toEqual([true]);
+	expect(rail.legacy).toEqual([]);
+});

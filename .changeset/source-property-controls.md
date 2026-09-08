@@ -7,3 +7,5 @@ Route appearance and typography property edits through retained source operation
 Numeric scrubs preview without writing source, save once on release, and cancel on Escape. An explicit zero border remains distinct from removing its binding.
 
 Color menus distinguish authored references from displayed colors, keep project and default choices searchable, and restore the original binding with Undo.
+
+Typography fields preserve fractional custom units, step the current draft by one or ten, and keep keyboard and scrub previews in one cancellable source gesture.

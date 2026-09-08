@@ -450,3 +450,50 @@ it("uses the approved shared color menu with exact reference metadata and bindin
 	expect(await second.evaluate((element) => getComputedStyle(element).color)).toBe(before);
 	await expect.poll(() => trigger.getAttribute("title")).toBe("Linked to --color-red-500");
 });
+
+it("previews fractional shared typography, steps its current draft and restores the binding through history", {
+	timeout: 120_000,
+}, async () => {
+	const original =
+		'export function Button(){return <button id="subject" className="text-sm leading-6 text-red-500">Hello</button>}';
+	const f = await originCanvas(
+		{ "shared/button.tsx": original },
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		true,
+	);
+	await f.select();
+	const second = f.page.frameLocator('iframe[title="second"]').locator("#subject");
+	const field = f.page.getByRole("textbox", { name: "font-size", exact: true });
+	await field.fill("7.999");
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).fontSize)).toBe("7.999px");
+	await field.press("ArrowUp");
+	await expect.poll(() => second.evaluate((element) => getComputedStyle(element).fontSize)).toBe("8.999px");
+	expect(f.bytes()["shared/button.tsx"]).toBe(original);
+	expect(f.writes).toEqual([]);
+	await field.press("Escape");
+	await expect.poll(() => second.evaluate((element) => getComputedStyle(element).fontSize)).toBe("14px");
+	expect(f.writes).toEqual([]);
+	await field.fill("7.999");
+	await field.press("ArrowUp");
+	const saved = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await field.press("Enter");
+	expect(await (await saved).json()).toMatchObject({ ok: true });
+	await f.settled();
+	expect(f.writes).toEqual(["commit"]);
+	expect(f.bytes()["shared/button.tsx"]).toContain("8.999px");
+	expect(f.bytes()["shared/button.tsx"]).toContain("leading-6 text-red-500");
+	expect(await second.evaluate((element) => getComputedStyle(element).fontSize)).toBe("8.999px");
+	expect(await second.evaluate((element) => getComputedStyle(element).lineHeight)).toBe("24px");
+	const changed = f.bytes()["shared/button.tsx"];
+	await f.history();
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toBe(original);
+	expect(await second.evaluate((element) => getComputedStyle(element).fontSize)).toBe("14px");
+	await f.history(true);
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toBe(changed);
+	expect(await second.evaluate((element) => getComputedStyle(element).fontSize)).toBe("8.999px");
+});

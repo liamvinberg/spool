@@ -73,6 +73,7 @@ import type { Scope } from "./properties-scope";
 import { scopeKey } from "./properties-scope";
 import { PropertyColorField } from "./property-color-field";
 import { appearanceProperty, type PropertyControls, propertyControlValue } from "./property-controls";
+import { PropertyNumberField } from "./property-number-field";
 
 /** Rows read candidate spellings from the shared property inventory.
  * Appearance controls retain an original source operation through preview and completion.
@@ -477,7 +478,25 @@ function colourTyped(theme: CompiledTheme | null, typed: string): Option | null 
 	return { token: name, name, group: "arbitrary", ...(paint === undefined ? {} : { swatch: paint }) };
 }
 
-/** the swatch, the name out of the compiled theme, and the alpha after the slash */
+/** Retire obsolete presentation immediately when source identity or scope changes. */
+function usePropertyReading(control: PropertyControls | null | undefined, property: string | undefined) {
+	const identity = JSON.stringify([control?.identity, property]);
+	const [described, setDescribed] = useState<{ identity: string; reading: SourcePropertyReading | undefined }>();
+	const describe = useRef(control?.describe);
+	describe.current = control?.describe;
+	useEffect(() => {
+		let live = true;
+		if (property)
+			void describe.current?.(property).then((reading) => {
+				if (live) setDescribed({ identity, reading });
+			});
+		return () => {
+			live = false;
+		};
+	}, [identity, property]);
+	return described?.identity === identity ? described.reading : undefined;
+}
+
 function ColourRow({
 	view,
 	property,
@@ -498,20 +517,10 @@ function ColourRow({
 	fold?: ReactNode;
 }) {
 	const control = view.property;
-	const identity = JSON.stringify([control?.identity, property]);
-	const [described, setDescribed] = useState<{ identity: string; reading: SourcePropertyReading | undefined }>();
-	const describe = useRef(control?.describe);
-	describe.current = control?.describe;
-	useEffect(() => {
-		let live = true;
-		if (property === "color" || property === "background-color")
-			void describe.current?.(property).then((reading) => {
-				if (live) setDescribed({ identity, reading });
-			});
-		return () => {
-			live = false;
-		};
-	}, [identity, property]);
+	const reading = usePropertyReading(
+		control,
+		property === "color" || property === "background-color" ? property : undefined,
+	);
 	const row = ruleRow(property, "colour");
 	const prefix = row.rule.prefix;
 	const ok = okOf(view, row);
@@ -531,7 +540,7 @@ function ColourRow({
 		return (
 			<PropertyColorField
 				property={property}
-				reading={described?.identity === identity ? described.reading : undefined}
+				reading={reading}
 				options={[
 					...(view.theme?.colour ?? []).map((token) => ({ ...token, reference: `--color-${token.name}` })),
 					...KEYWORD_COLOURS.map((color) => ({
@@ -661,6 +670,35 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 				onPick={(token) => writeValue(view, row, token === null ? null : { kind: "value", value: token })}
 			/>
 		</Row>
+	);
+}
+
+function TypographyNumberRow({
+	view,
+	property,
+}: {
+	view: View;
+	property: "font-size" | "line-height" | "letter-spacing";
+}) {
+	const control = view.property;
+	const reading = usePropertyReading(control, property);
+	const options =
+		property === "font-size"
+			? view.theme?.text
+			: property === "line-height"
+				? view.theme?.leading
+				: view.theme?.tracking;
+	return (
+		<PropertyNumberField
+			property={property}
+			reading={reading}
+			options={options ?? []}
+			scope={scopeKey(view.scope)}
+			begin={() => control?.begin(property)}
+			preview={(value) => control?.preview(property, value)}
+			apply={(value) => control?.apply(property, value)}
+			finish={(commit) => control?.finish(commit)}
+		/>
 	);
 }
 
@@ -1643,10 +1681,10 @@ function TextSection({ view }: { view: View }) {
 	return (
 		<Section name="text" reason={sectionReason(view, ["font-size", "color"])}>
 			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />
-			<TokenRow view={view} property="font-size" absent={{ token: null, name: "inherit" }} />
+			<TypographyNumberRow view={view} property="font-size" />
 			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
-			<TokenRow view={view} property="line-height" absent={{ token: null, name: "inherit" }} />
-			<TokenRow view={view} property="letter-spacing" absent={{ token: null, name: "inherit" }} />
+			<TypographyNumberRow view={view} property="line-height" />
+			<TypographyNumberRow view={view} property="letter-spacing" />
 			<Row name="text-align" ok={okOf(view, alignRow)} changed={view.fresh(wordOf(view.scoped, "text-align"))}>
 				<IconField
 					value={align ?? "text-left"}

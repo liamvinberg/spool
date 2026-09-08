@@ -205,6 +205,8 @@ export function NumField({
 	onCancel,
 	onCommit,
 	onStep,
+	stepDraft,
+	label,
 	className,
 }: {
 	value: string;
@@ -221,6 +223,9 @@ export function NumField({
 	onCommit: (typed: string) => void;
 	/** whole units, signed: arrows send 1, shift sends 10 */
 	onStep?: ((units: number) => void) | undefined;
+	/** Exact numeric gestures remain one preview until Enter or blur. */
+	stepDraft?: ((typed: string, units: number) => string | undefined) | undefined;
+	label?: string;
 	className?: string;
 }) {
 	const [draft, setDraft] = useState<string | null>(null);
@@ -274,6 +279,7 @@ export function NumField({
 	return (
 		<label className={cn("flex min-w-0 flex-1 items-center gap-1 px-1", BOX, className)}>
 			<input
+				aria-label={label}
 				value={draft ?? value}
 				placeholder={placeholder}
 				spellCheck={false}
@@ -302,11 +308,21 @@ export function NumField({
 						finish(true);
 						event.currentTarget.blur();
 					}
-					if ((event.key === "ArrowUp" || event.key === "ArrowDown") && onStep !== undefined) {
+					if ((event.key === "ArrowUp" || event.key === "ArrowDown") && (onStep || stepDraft)) {
 						event.preventDefault();
 						const held = begin();
+						const units = (event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1);
+						if (stepDraft) {
+							const next = stepDraft(held.draft ?? value, units);
+							if (next !== undefined && session.current === held) {
+								held.draft = next;
+								setDraft(next);
+								onPreview?.(next);
+							}
+							return;
+						}
 						clear();
-						onStep((event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1));
+						onStep?.(units);
 						if (session.current === held) session.current = null;
 					}
 				}}
