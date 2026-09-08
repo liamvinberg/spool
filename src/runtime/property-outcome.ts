@@ -3,6 +3,7 @@ import { type NativeBorderSide, nativeBorderColors } from "./property-border-col
 import { nativeColor } from "./property-colors";
 import { nativeFilter } from "./property-filters";
 import { nativeFont } from "./property-fonts";
+import { nativeGradient } from "./property-gradients";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
 import { nativeShadow } from "./property-shadows";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
@@ -126,6 +127,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
 	if (shadowProperties.includes(expected.property)) return composedOutcome(element, expected, "box-shadow");
 	if (expected.property === "font-variant-numeric") return composedOutcome(element, expected, expected.property);
+	if (expected.property === "background-image") return composedOutcome(element, expected, expected.property);
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
 	const corner = isCorner(expected.property);
 	const color = [
@@ -432,7 +434,13 @@ function substituteVariables(
 function composedOutcome(
 	element: Element,
 	expected: SourcePropertyExpectation,
-	property: NativeTransformProperty | NativeTransitionProperty | "filter" | "box-shadow" | "font-variant-numeric",
+	property:
+		| NativeTransformProperty
+		| NativeTransitionProperty
+		| "filter"
+		| "box-shadow"
+		| "font-variant-numeric"
+		| "background-image",
 ): PropertyOutcome {
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const sheet = new CSSStyleSheet();
@@ -452,11 +460,13 @@ function composedOutcome(
 							)
 						: property === "font-variant-numeric"
 							? /^--tw-(?:ordinal|slashed-zero|numeric-(?:figure|spacing|fraction))$/.test(name)
-							: property === "transition-duration"
-								? name === "--tw-duration"
-								: property === "transition-timing-function"
-									? name === "--tw-ease"
-									: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
+							: property === "background-image"
+								? /^--tw-gradient-(?:position|from|via|to|stops|via-stops|(?:from|via|to)-position)$/.test(name)
+								: property === "transition-duration"
+									? name === "--tw-duration"
+									: property === "transition-timing-function"
+										? name === "--tw-ease"
+										: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
@@ -565,7 +575,9 @@ function composedOutcome(
 				? nativeShadow(element, value)
 				: property === "font-variant-numeric"
 					? nativeFont(element, property, value)
-					: nativeTransform(element, property, value);
+					: property === "background-image"
+						? nativeGradient(element, value)
+						: nativeTransform(element, property, value);
 	return result.kind === "unknown"
 		? unverified(result.reason)
 		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };

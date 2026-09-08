@@ -2302,3 +2302,162 @@ it.each([
 		});
 	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
 });
+
+it("reports the compiled gradient's captured evidence and interpolation space honestly", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "background-image", scope: "" } as const;
+	const original = "bg-linear-to-r from-red-500 to-blue-500";
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: ["bg-linear-to-r", "from-green-500", "to-blue-500"] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "background-image",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: nativePropertyEffects(plan.desired, plan.roots, environment),
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) => `<div data-subject class="${classes}" style="width:80px;height:40px"></div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	// The captured closure for these roots omits the direction and the closing stop the native
+	// consumer reads, so the use is refused rather than compared on partial evidence.
+	const partial = await f.inspect(expected);
+	expect(
+		partial.map((outcome) => outcome.rendered),
+		JSON.stringify(partial),
+	).toEqual(["unverified", "unverified"]);
+	expect(partial[0]?.reason).toContain("complete captured variable and companion evidence");
+	const complete: SourcePropertyExpectation = {
+		...expected,
+		effects: nativePropertyEffects(
+			plan.desired,
+			new Set([...plan.roots, "--tw-gradient-position", "--tw-gradient-to", "--tw-gradient-stops"]),
+			environment,
+		),
+	};
+	const outcomes = await f.inspect(complete);
+	const interpolating = await f.page.evaluate(() =>
+		CSS.supports("background-image: linear-gradient(in lab, red, red)"),
+	);
+	if (interpolating) {
+		// This engine keeps the compiler's oklab branch but does not expose the space it used,
+		// so the comparator refuses instead of comparing with the space dropped.
+		expect(
+			outcomes.map((outcome) => outcome.rendered),
+			JSON.stringify(outcomes),
+		).toEqual(["unverified", "unverified"]);
+		expect(outcomes[0]?.reason).toContain("interpolation space");
+		return;
+	}
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", "mismatching"]);
+});
+
+it("compares a compiled gradient whose own branch carries no interpolation space", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "background-image", scope: "" } as const;
+	const original = "bg-[linear-gradient(to_right,#00ff00_0%,#0000ff_100%)]";
+	const desired = "bg-[linear-gradient(to_right,#ff0000_0%,#0000ff_100%)]";
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [desired] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "background-image",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) => `<div data-subject class="${classes}" style="width:80px;height:40px"></div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => getComputedStyle(element).backgroundImage),
+	).toBe("linear-gradient(to right, rgb(255, 0, 0) 0%, rgb(0, 0, 255) 100%)");
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	// A cleared gradient computes to `none`, which this comparator does not read as an image.
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["unverified", "unverified"]);
+	expect(cleared[0]?.reason).toContain("supported linear declaration");
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "verified"]);
+	// An outside native image is a mismatch, and losing the paint surface is unverified.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native gradient host");
+			element.style.backgroundImage = "linear-gradient(to right, #ff0000 0%, #00ff00 100%)";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native gradient host");
+			element.style.removeProperty("background-image");
+			element.style.visibility = "hidden";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
