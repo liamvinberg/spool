@@ -52,6 +52,26 @@ export function resolveSourceDelete(
 }
 export type SourceDeleteTarget = ReturnType<typeof resolveSourceDelete>;
 
+/** An original creation/field edge can expose uncertainty, never authorize deletion. */
+export function potentialDeleteSource(original: SourceOccurrence, source: string): boolean {
+	if (!original.provenance) return false;
+	try {
+		const selection = JSON.parse(original.provenance) as Selection;
+		return (
+			selection.source === source ||
+			selection.chain.some((call) => call.source === source || call.renderedSource === source) ||
+			[selection.values, ...selection.chain.flatMap((call) => [call.values, call.renderedValues])].some(
+				(value) =>
+					value &&
+					(value.type.origin.source === source ||
+						Object.values(value.fields).some((field) => field.origin.source === source)),
+			)
+		);
+	} catch {
+		return false;
+	}
+}
+
 export function describeDeleteTarget(original: SourceOccurrence, target: SourceDeleteTarget): SourceDescription {
 	return {
 		operation: { kind: "delete" },

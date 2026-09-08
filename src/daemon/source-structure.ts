@@ -112,17 +112,22 @@ function nullFallback(fn: ReturnType<Sources["valueCallee"]>["fn"], field: strin
 	return found.length === 1 ? found[0] : undefined;
 }
 
+/** Validate the committed creation chain, including copied React element types. */
+export function readStructuralAncestry(sources: Sources, pick: Selection) {
+	retainedOwner(pick);
+	try {
+		return sourceRead(sources, pick, { kind: "delete" });
+	} catch (error) {
+		if (!(error instanceof StructuralShapeRefusal)) throw error;
+		return undefined;
+	}
+}
+
 /** Derive a delete unit from the complete committed provenance and captured source.
  * The source owner separately owns observation continuity, source transport and admission. */
 export function deriveSourceDelete(sources: Sources, pick: Selection) {
-	let originalTarget: ReturnType<typeof sourceRead> | undefined;
-	try {
-		originalTarget = sourceRead(sources, pick, { kind: "delete" });
-	} catch (error) {
-		if (!(error instanceof StructuralShapeRefusal)) throw error;
-	}
+	const originalTarget = readStructuralAncestry(sources, pick);
 	const leaf = sources.creation(pick.source);
-	retainedOwner(pick);
 	const near = pick.chain.at(-1);
 	let value = pick.values;
 	let inputFromCall = false;

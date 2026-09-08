@@ -120,6 +120,7 @@ import {
 	drop,
 	emptyHistory,
 	entryOf,
+	type History,
 	type HistoryEntry,
 	type Liveness,
 	placeEntryOf,
@@ -127,6 +128,7 @@ import {
 	record,
 	rectsOf,
 	type Staging,
+	structuralGenerations,
 	takeRedo,
 	takeUndo,
 	type Way,
@@ -700,6 +702,14 @@ export function ProjectCanvas({
 	// the one undo/redo stack: per window, in memory, hands' writes only — the
 	// canvas's geometry and the rail's file operations on the same ⌘Z (#230)
 	const history = useRef(emptyHistory());
+	const retainStructureHistory = sourceDelivery.retainStructures;
+	const updateHistory = useCallback(
+		(next: History) => {
+			history.current = next;
+			retainStructureHistory(structuralGenerations(next));
+		},
+		[retainStructureHistory],
+	);
 	// the rail's runner, put here by the rail itself: it owns the stored order
 	// and the explorer calls, so an explorer entry has to be run from there
 	const runEntry = useRef<RunEntry | null>(null);
@@ -1520,7 +1530,7 @@ export function ProjectCanvas({
 			if (Object.keys(patch).length === 0) return;
 			if (before !== undefined) {
 				const entry = entryOf(before, patch);
-				if (entry !== undefined) history.current = record(history.current, entry);
+				if (entry !== undefined) updateHistory(record(history.current, entry));
 			}
 			setFrames((current) => {
 				return current.map((frame) => {
@@ -1534,7 +1544,7 @@ export function ProjectCanvas({
 				if (!ok) void refetchFrames();
 			});
 		},
-		[project, refetchFrames],
+		[project, refetchFrames, updateHistory],
 	);
 
 	/**
@@ -1622,10 +1632,10 @@ export function ProjectCanvas({
 			const after = { ...before, ...patch };
 			const entry = entryOf({ [name]: before }, { [name]: after });
 			if (entry === undefined) return;
-			history.current = record(history.current, entry);
+			updateHistory(record(history.current, entry));
 			applyRects({ [name]: after });
 		},
-		[applyRects],
+		[applyRects, updateHistory],
 	);
 
 	/**
@@ -1692,9 +1702,12 @@ export function ProjectCanvas({
 		[],
 	);
 
-	const recordEntry = useCallback((entry: HistoryEntry) => {
-		history.current = record(history.current, entry);
-	}, []);
+	const recordEntry = useCallback(
+		(entry: HistoryEntry) => {
+			updateHistory(record(history.current, entry));
+		},
+		[updateHistory],
+	);
 
 	// --- tidy: the layered drawing of the graph, laid over the field ------------
 
@@ -1715,9 +1728,9 @@ export function ProjectCanvas({
 		const rects = arrange(scope, edgesRef.current);
 		const entry = entryOf(before, rects);
 		if (entry === undefined) return; // already tidy: nothing to undo
-		history.current = record(history.current, entry);
+		updateHistory(record(history.current, entry));
 		applyRects(rects);
-	}, [applyRects, flushNudge]);
+	}, [applyRects, flushNudge, updateHistory]);
 
 	// --- trash (#23): instant canvas removal, disk move deferred on the toast ---
 
@@ -1999,7 +2012,7 @@ export function ProjectCanvas({
 			const alive = liveness();
 			const taken = way === "undo" ? takeUndo(held, alive) : takeRedo(held, alive);
 			if (taken === undefined) return;
-			history.current = taken.history;
+			updateHistory(taken.history);
 			const entry = taken.entry;
 			if (entry.kind === "geometry") {
 				applyRects(rectsOf(entry.rects, way));
@@ -2029,16 +2042,21 @@ export function ProjectCanvas({
 					says: way === "undo" ? "Undoing…" : "Redoing…",
 				});
 				const ran = history.current;
+				if (entry.structuralGeneration !== undefined)
+					sourceDelivery.holdInverse(entry.receipt.handle, [], entry.structuralGeneration);
 				const operation = sourceDelivery
 					.inventory(entry.receipt.field, entry.receipt.operation)
 					.then((inventories) => {
 						sourceDelivery.holdInverse(
 							entry.receipt.handle,
 							inventories.map((inventory) => inventory.frame),
+							entry.structuralGeneration,
 						);
 						return inverseSource(project, entry.receipt, inventories);
 					})
 					.then(async (result) => {
+						if (result && !result.ok && entry.structuralGeneration !== undefined)
+							sourceDelivery.retireStructure(entry.structuralGeneration);
 						if (history.current !== ran) {
 							if (result?.ok && result.receipt)
 								recordEntry({ ...entry, receipt: result.receipt, ...(intent ? { intent } : {}) });
@@ -2046,12 +2064,14 @@ export function ProjectCanvas({
 							return;
 						}
 						if (result?.ok && result.receipt)
-							history.current = amend(history.current, way, {
-								...entry,
-								receipt: result.receipt,
-								...(intent ? { intent } : {}),
-							});
-						else history.current = held; // an unavailable top inverse is explained, never skipped
+							updateHistory(
+								amend(history.current, way, {
+									...entry,
+									receipt: result.receipt,
+									...(intent ? { intent } : {}),
+								}),
+							);
+						else updateHistory(held); // an unavailable top inverse is explained, never skipped
 						await showSourceResult(entry.frame, result, "", true, intent);
 					});
 				pendingSource.current.set(entry.frame, operation);
@@ -2068,10 +2088,11 @@ export function ProjectCanvas({
 				void revertPatch(project, entry.patch).then((next) => {
 					// a press that landed after this one owns the stacks now
 					if (history.current !== ran) return;
-					history.current =
+					updateHistory(
 						next === undefined
 							? drop(history.current, way)
-							: amend(history.current, way, { ...entry, patch: next });
+							: amend(history.current, way, { ...entry, patch: next }),
+					);
 				});
 				return;
 			}
@@ -2089,7 +2110,7 @@ export function ProjectCanvas({
 				}
 				// a press that landed after this one owns the stacks now
 				if (history.current !== taking) return;
-				history.current = drop(history.current, way);
+				updateHistory(drop(history.current, way));
 				void refetchFrames();
 			});
 		},
@@ -2107,6 +2128,8 @@ export function ProjectCanvas({
 			sourceDelivery.inventory,
 			sourceDelivery.holdInverse,
 			sourceDelivery.releaseInverse,
+			updateHistory,
+			sourceDelivery.retireStructure,
 		],
 	);
 
@@ -2692,7 +2715,13 @@ export function ProjectCanvas({
 			setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
 			const saved = await commitSource(project, read, { kind: "delete" });
 			if (saved?.ok && saved.receipt)
-				recordEntry({ kind: "source", frame: pick.frame, receipt: saved.receipt, intent });
+				recordEntry({
+					kind: "source",
+					frame: pick.frame,
+					receipt: saved.receipt,
+					intent,
+					structuralGeneration: generation,
+				});
 			if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
 			await showSourceResult(pick.frame, saved, "", false, intent);
 		})();
@@ -2806,7 +2835,7 @@ export function ProjectCanvas({
 		(frame: string, selector: string) => {
 			const entry = history.current.undo.at(-1);
 			if (entry === undefined || entry.kind !== "patch" || entry.frame !== frame) return;
-			history.current = withdraw(history.current);
+			updateHistory(withdraw(history.current));
 			repick.current = { frame, selector };
 			setSaid({ kind: "clamped", frame });
 			void revertPatch(project, entry.patch).then((next) => {
@@ -2818,7 +2847,7 @@ export function ProjectCanvas({
 				holdNext.current.add(frame);
 			});
 		},
-		[project],
+		[project, updateHistory],
 	);
 
 	/**
@@ -3564,6 +3593,7 @@ export function ProjectCanvas({
 					return;
 				}
 				case "loaded": {
+					sourceDelivery.retainStructures(structuralGenerations(history.current), message.frame);
 					void verifyReloadedIntent(message.frame);
 					lifecycleRef.current.noteLoaded(message.frame);
 					// the document a hand edit was waiting on: the one held in front
@@ -3839,6 +3869,7 @@ export function ProjectCanvas({
 		verifyReloadedIntent,
 		rollBackResize,
 		swapPicture,
+		sourceDelivery.retainStructures,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -4651,7 +4682,7 @@ export function ProjectCanvas({
 		if (at === undefined) return;
 		const entry = placeEntryOf({ [page]: origin }, { [page]: at });
 		if (entry === undefined) return;
-		history.current = record(history.current, entry);
+		updateHistory(record(history.current, entry));
 		applyPlaces({ [page]: at });
 	};
 

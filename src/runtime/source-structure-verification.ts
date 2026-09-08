@@ -11,6 +11,7 @@ interface ParentGroup {
 	children: Node[];
 	units: Unit[];
 	native: Map<HTMLElement, string>;
+	focused: Element | null;
 }
 export interface StructuralBasis {
 	site: string;
@@ -76,7 +77,13 @@ export function captureStructure(
 			if (!parent) continue;
 			let group = groups.get(parent);
 			if (!group) {
-				group = { parent, children: [...parent.childNodes], units: [], native: new Map() };
+				group = {
+					parent,
+					children: [...parent.childNodes],
+					units: [],
+					native: new Map(),
+					focused: document.activeElement,
+				};
 				groups.set(parent, group);
 			}
 			let unit = group.units.find((unit) => unit.key === key);
@@ -116,6 +123,8 @@ export function verifyStructure(
 	pending: (element: Element) => boolean,
 	failed: (element: HTMLElement) => boolean,
 ): { parent?: HTMLElement; rendered: RenderOutcome; reason?: string }[] {
+	if (basis.site !== expected.site)
+		return [{ rendered: "unverified", reason: "the expectation belongs to another structural parent" }];
 	if (basis.reason || !basis.groups.length)
 		return [{ rendered: "unverified", reason: basis.reason ?? "missing original parent evidence" }];
 	const membership = memberKeys(expected.site, expected.state);
@@ -184,6 +193,12 @@ export function verifyStructure(
 				return result("mismatching", "unaffected neighboring output changed native identity");
 			survivors.add(element);
 		}
+		if (
+			group.focused instanceof HTMLElement &&
+			survivors.has(group.focused) &&
+			document.activeElement !== group.focused
+		)
+			return result("mismatching", "a surviving native field lost focus");
 		for (const element of survivors)
 			if (group.native.get(element) !== native(element))
 				return result("mismatching", "a surviving native field or scroll position changed");
@@ -192,6 +207,41 @@ export function verifyStructure(
 }
 
 export function refreshStructuralNative(basis: StructuralBasis): void {
-	for (const group of basis.groups)
+	for (const group of basis.groups) {
+		group.focused = document.activeElement;
 		for (const [element] of group.native) if (element.isConnected) group.native.set(element, native(element));
+	}
+}
+
+/** A verified owner inverse can restore a new native root. Older operations retain
+ * that restoration as their next survivor, without adopting outside replacements. */
+export function retainVerifiedRestorations(
+	basis: StructuralBasis,
+	expected: SourceStructuralExpectation,
+	before: SourceStructureState | undefined,
+	locations: Record<string, string>,
+	verifiedParents: ReadonlySet<HTMLElement>,
+): void {
+	if (basis.site !== expected.site || !before) return;
+	const previous = memberKeys(expected.site, before);
+	const membership = memberKeys(expected.site, expected.state);
+	if (!previous || !membership) return;
+	for (const group of basis.groups) {
+		if (!verifiedParents.has(group.parent)) continue;
+		for (const unit of group.units) {
+			if (previous.includes(unit.key) || !membership.includes(unit.key)) continue;
+			const prefix = basis.prefixes.get(unit.key);
+			if (!prefix) continue;
+			const restored = roots(prefix, locations).filter((root) => root.parentElement === group.parent);
+			if (restored.length !== unit.roots.length) continue;
+			for (const [index, root] of unit.roots.entries()) {
+				const replacement = restored[index]!;
+				group.children = group.children.map((child) => (child === root ? replacement : child));
+				for (const element of [root, ...root.querySelectorAll<HTMLElement>("*")]) group.native.delete(element);
+				for (const element of [replacement, ...replacement.querySelectorAll<HTMLElement>("*")])
+					group.native.set(element, native(element));
+			}
+			unit.roots = restored;
+		}
+	}
 }

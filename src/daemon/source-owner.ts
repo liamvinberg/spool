@@ -38,9 +38,11 @@ import { createSourceJournal } from "./source-journal";
 import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { retryTextSource } from "./source-retry";
+import { readStructuralAncestry } from "./source-structure";
 import {
 	certifyStructuralChange,
 	describeDeleteTarget,
+	potentialDeleteSource,
 	resolveSourceDelete,
 	type SourceDeleteTarget,
 } from "./source-structure-target";
@@ -509,7 +511,10 @@ export function createSourceOwner(
 			}
 			for (const use of inventory.uses) {
 				if (!use.original.structure) continue;
+				const current = use.original.publication === inventory.publication;
 				try {
+					if (!current) throw new Error("the candidate belongs to another publication");
+					valid(root, publication.compilation);
 					const candidate = resolveSourceDelete(root, publication.compilation, use.original, generation);
 					if (
 						candidate.file === target.file &&
@@ -518,8 +523,16 @@ export function createSourceOwner(
 						candidate.selected.end === target.selected.end
 					)
 						uses.push({ frame: inventory.frame, ...use });
-				} catch {
+				} catch (error) {
 					unknown.add(inventory.frame);
+					if (potentialDeleteSource(use.original, target.source))
+						unverified.push({
+							frame: inventory.frame,
+							occurrence: current ? use.original.occurrence : "",
+							installation: "refused",
+							rendered: "unverified",
+							reason: `A potentially affected structural use could not be attributed: ${reason(error)}`,
+						});
 				}
 			}
 		}
@@ -547,7 +560,7 @@ export function createSourceOwner(
 					const sources = new Sources(root, publication.compilation);
 					for (const file of publication.compilation.inputs.keys())
 						if (/\.[cm]?[jt]sx?$/.test(file)) sources.read(relative(realDesignDir(root), file));
-					sources.chain(JSON.parse(use.original.provenance) as Selection);
+					readStructuralAncestry(sources, JSON.parse(use.original.provenance) as Selection);
 					uses.push({ frame: inventory.frame, ...use });
 				} catch (error) {
 					unverified.push({
