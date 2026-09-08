@@ -480,8 +480,10 @@ function prepareSourceUses(
 	structure?: SourceStructuralExpectation,
 ): boolean {
 	if (structure) structuralBases.prepare(generation, captureStructure(structure, sourceLocations));
-	clearSourceFeedback();
-	for (const previous of sharedPreviews.keys()) cancelSourceUses(previous);
+	// A field's owner disclosure and its pending preview have separate lives.
+	// A late preparation must not erase the already-open disclosure.
+	clearGestureFeedback();
+	for (const previous of sharedPreviews.keys()) cancelSourceUses(previous, "prepare");
 	const prepared: PreviewedUse[] = [];
 	for (const original of uses) {
 		const element = [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
@@ -531,7 +533,7 @@ function ownsPreview(held: PreviewedUse): boolean {
 				!hasRenderedField(held.element, held.original.field, committedFiber(held.element)?.memoizedProps))
 	);
 }
-function cancelSourceUses(generation: number, feedback = true): void {
+function cancelSourceUses(generation: number, reason: "cancel" | "prepare" | "install" = "cancel"): void {
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
@@ -545,10 +547,9 @@ function cancelSourceUses(generation: number, feedback = true): void {
 		if (current && sameSourceOccurrence(current, use.original) && ownsPreview(use))
 			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
-	if (feedback) {
-		structuralBases.cancel(generation);
-		clearSourceFeedback();
-	}
+	if (reason !== "install") structuralBases.cancel(generation);
+	if (reason === "cancel") clearSourceFeedback();
+	else if (reason === "prepare") clearGestureFeedback();
 }
 function sourceRead(
 	element: HTMLElement,
@@ -871,7 +872,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
 	if (held && ownsPreview(held)) restoreField(held.element, held.original, held.children, held.restoreAttribute);
-	cancelSourceUses(publication.generation, false);
+	cancelSourceUses(publication.generation, "install");
 	feedbackTimer = setTimeout(clearGestureFeedback, 450);
 	leases.delete(publication.generation);
 	const basis = publication.expected.kind === "structure" ? structuralBases.get(publication.generation) : undefined;
