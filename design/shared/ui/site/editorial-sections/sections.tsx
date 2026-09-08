@@ -257,8 +257,8 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 								figuring out as I go.
 							</p>
 						</Heading>
-						<a href="https://x.com/liamv1nberg" target="_blank" rel="noreferrer">
-							Follow @liamv1nberg
+						<a href="https://x.com/liamvinberg" target="_blank" rel="noreferrer">
+							Follow @liamvinberg
 						</a>
 					</div>
 					<footer className="es-footer">

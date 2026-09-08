@@ -12,8 +12,8 @@ export function FollowUpdates() {
 					out as I go.
 				</p>
 			</div>
-			<a className="sm-follow" href="https://x.com/liamv1nberg" target="_blank" rel="noreferrer">
-				Follow @liamv1nberg <GuideIcon name="arrow" />
+			<a className="sm-follow" href="https://x.com/liamvinberg" target="_blank" rel="noreferrer">
+				Follow @liamvinberg <GuideIcon name="arrow" />
 			</a>
 		</section>
 	);
