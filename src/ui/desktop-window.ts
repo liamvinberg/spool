@@ -13,6 +13,12 @@ export type DesktopCommand =
 export interface DesktopWindow {
 	onCommand(listener: (command: DesktopCommand) => void): () => void;
 	setCanvasActive(active: boolean): void;
+	chooseDirectory?(request: DirectoryRequest): Promise<string | null>;
+}
+
+export interface DirectoryRequest {
+	purpose: "location" | "add" | "open";
+	defaultPath: string;
 }
 
 export function desktopWindow(

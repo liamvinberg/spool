@@ -13,6 +13,7 @@ import {
 	Tray,
 } from "electron";
 import * as daemon from "./daemon";
+import { directoryDialogOptions } from "./directory-dialog";
 import { log, openLog } from "./log";
 import { userPath } from "./path";
 import {
@@ -563,6 +564,20 @@ function updateCanvasMenu(): void {
 }
 
 function installCanvasChannels(): void {
+	let choosingDirectory: Promise<string | null> | undefined;
+	ipcMain.handle("spool:choose-directory", (event, request: unknown) => {
+		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
+			throw new Error("Only the canvas can choose a folder.");
+		const options = directoryDialogOptions(request);
+		if (choosingDirectory) return null;
+		choosingDirectory = dialog
+			.showOpenDialog(window, options)
+			.then((result) => (result.canceled ? null : (result.filePaths[0] ?? null)))
+			.finally(() => {
+				choosingDirectory = undefined;
+			});
+		return choosingDirectory;
+	});
 	ipcMain.on("spool:canvas-fullscreen", (event) => {
 		event.returnValue = window?.isFullScreen() ?? false;
 	});
