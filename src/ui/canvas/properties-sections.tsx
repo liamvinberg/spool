@@ -1575,8 +1575,7 @@ function AppearanceSection({ view }: { view: View }) {
 		...(opened ? ["filter", ...MORE_APPEARANCE, "transition-timing-function"] : []),
 	]);
 	return (
-		<Section name="appearance" reason={sectionReason(view, ["opacity"])}>
-			<LengthRow view={view} property="opacity" placeholder="100" fallback="100%" />
+		<Section name="Appearance" reason={sectionReason(view, ["opacity"])}>
 			<Folded
 				view={view}
 				fold={RADIUS_FOLD}
@@ -1591,6 +1590,9 @@ function AppearanceSection({ view }: { view: View }) {
 					/>
 				)}
 			/>
+			<LengthRow view={view} property="opacity" placeholder="100" fallback="100%" />
+			<ColourRow view={view} property="color" absent="inherit" />
+			<ColourRow view={view} property="background-color" absent="transparent" />
 			{/* a shadow nobody had set used to be dead text with no way in: it is a menu */}
 			<TokenRow
 				view={view}
@@ -1627,17 +1629,9 @@ function AppearanceSection({ view }: { view: View }) {
 					</button>
 				</div>
 			)}
-			<Rest view={view} section="appearance" drawn={drawn} />
-		</Section>
-	);
-}
-
-function FillSection({ view }: { view: View }) {
-	return (
-		<Section name="fill" reason={sectionReason(view, ["background-color"])}>
-			<ColourRow view={view} property="background-color" absent="transparent" />
 			<GradientRows view={view} />
 			<Rest view={view} section="fill" drawn={new Set(["background-color", "background-image"])} />
+			<Rest view={view} section="appearance" drawn={drawn} />
 		</Section>
 	);
 }
@@ -1653,6 +1647,7 @@ function StrokeSection({ view }: { view: View }) {
 	const widths = borderWidthsOf(view.scoped);
 	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
 	const any = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
+	if (!any && !rowsIn("stroke").some((row) => readRow(row, view.scoped, view.theme).token !== null)) return null;
 	const drawn = new Set([
 		...BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property),
 		// `border-s` and `border-e` are the fold's left and right edges under
@@ -1721,12 +1716,13 @@ function TextSection({ view }: { view: View }) {
 		"font-variant-numeric",
 	]);
 	return (
-		<Section name="text" reason={sectionReason(view, ["font-size", "color"])}>
-			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />
+		<Section name="Typography" reason={sectionReason(view, ["font-size"])}>
 			<TypographyNumberRow view={view} property="font-size" />
-			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<TypographyNumberRow view={view} property="line-height" />
-			<TypographyNumberRow view={view} property="letter-spacing" />
+			{readRow(modelRow("letter-spacing"), view.scoped, view.theme).token !== null ? (
+				<TypographyNumberRow view={view} property="letter-spacing" />
+			) : null}
+			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<Row name="text-align" ok={okOf(view, alignRow)} changed={view.fresh(wordOf(view.scoped, "text-align"))}>
 				<IconField
 					value={align ?? "text-left"}
@@ -1739,24 +1735,48 @@ function TextSection({ view }: { view: View }) {
 					onPick={(token) => writeValue(view, alignRow, { kind: "value", value: token })}
 				/>
 			</Row>
-			<ColourRow view={view} property="color" absent="inherit" />
+			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />
 			<ToggleRow view={view} property="font-variant-numeric" />
 			<Rest view={view} section="text" drawn={drawn} />
 		</Section>
 	);
 }
 
-/** Every section, in Figma's order, which is the order the rail draws them. */
+function AddProperty({ view }: { view: View }) {
+	const options = ["letter-spacing", "border-width"].filter(
+		(property) => readRow(modelRow(property), view.scoped, view.theme).token === null,
+	);
+	return (
+		<div className="flex h-8 items-center border-border-raised border-t px-2.5">
+			<Menu
+				label="Add property"
+				current={{ token: null, name: "+ Add property" }}
+				options={options.map((property) => ({ token: property, name: property }))}
+				filter
+				ok={view.property !== null}
+				onPick={(property) => {
+					if (property)
+						view.property?.apply(property, {
+							kind: "custom",
+							value: property === "border-width" ? "1px" : "0px",
+						});
+				}}
+			/>
+		</div>
+	);
+}
+
+/** Typography and Appearance follow the approved editing controls; remaining layout rows retain their sections. */
 export function PropertySections({ view }: { view: View }) {
 	return (
 		<>
 			<PositionSection view={view} />
 			<SizeSection view={view} />
 			<LayoutSection view={view} />
-			<AppearanceSection view={view} />
-			<FillSection view={view} />
-			<StrokeSection view={view} />
 			<TextSection view={view} />
+			<AppearanceSection view={view} />
+			<StrokeSection view={view} />
+			<AddProperty view={view} />
 		</>
 	);
 }

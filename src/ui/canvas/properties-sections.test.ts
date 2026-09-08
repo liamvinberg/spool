@@ -38,6 +38,44 @@ const THEME: CompiledTheme = {
 	step: 4,
 };
 
+it("groups the approved typography and appearance controls without duplicating color rows", async () => {
+	const rail = await mount("text-md leading-6 rounded-lg bg-raised text-thread");
+	const groups = [...rail.host.children];
+	const named = (name: string) =>
+		groups.find((group) => group.firstElementChild?.firstElementChild?.textContent === name);
+	const typography = named("Typography");
+	const appearance = named("Appearance");
+	expect(typography).toBeDefined();
+	expect(appearance).toBeDefined();
+	for (const property of ["font-size", "line-height", "font-weight", "text-align"])
+		expect(typography?.querySelector(`[data-properties-row="${property}"]`)).not.toBeNull();
+	for (const property of ["border-radius", "opacity"])
+		expect(appearance?.querySelector(`[data-properties-row="${property}"]`)).not.toBeNull();
+	for (const property of ["color", "background-color"]) {
+		expect(appearance?.querySelector(`button[aria-label="Choose ${property}"]`)).not.toBeNull();
+		expect(rail.host.querySelectorAll(`button[aria-label="Choose ${property}"]`)).toHaveLength(1);
+	}
+	expect(groups.indexOf(typography!)).toBeLessThan(groups.indexOf(appearance!));
+});
+
+it.each(["letter-spacing", "border-width"])(
+	"adds the optional %s through its typed source control",
+	async (property) => {
+		const rail = await mount("");
+		expect(rail.host.querySelector(`[data-properties-row="${property}"]`)).toBeNull();
+		const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+		expect(trigger).not.toBeNull();
+		await act(() => trigger?.click());
+		const option = document.querySelector<HTMLButtonElement>(`[data-menu-option="${property}"]`);
+		expect(option).not.toBeNull();
+		await act(() => option?.click());
+		expect(rail.requests).toEqual([
+			{ property, value: { kind: "custom", value: property === "border-width" ? "1px" : "0px" } },
+		]);
+		expect(rail.legacy).toEqual([]);
+	},
+);
+
 /* ---------- P6: a sign, a fraction and a unit in every number box ---------- */
 
 it("takes a sign, a fraction, a unit and a bare count", async () => {

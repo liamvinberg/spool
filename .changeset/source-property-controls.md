@@ -23,3 +23,5 @@ Keep memoized consumers in affected-use results through property Undo and Redo, 
 Typography menus mark the authored token reference without mistaking an equal custom value for a binding.
 
 Edit individual corner radii with exact numeric units, token choices, live preview and cancellation through the same source-owned history.
+
+Group the approved Typography and Appearance controls together, and add optional letter spacing or border width through the same source-owned save and Undo.

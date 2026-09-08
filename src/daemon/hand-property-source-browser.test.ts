@@ -798,3 +798,66 @@ it("edits one shared radius corner through the approved numeric control and pres
 	await check("3.25px");
 	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
 });
+
+it.each(["letter-spacing", "border-width"])(
+	"adds optional shared %s from the approved searchable entry and reverses source",
+	{ timeout: 120_000 },
+	async (property) => {
+		const original =
+			'export function Button(){return <button id="subject" className="p-6 text-sm bg-white">Hello</button>}';
+		const f = await originCanvas(
+			{ "shared/button.tsx": original },
+			'import {Button} from "shared/button";export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+			"#subject",
+			true,
+		);
+		await f.select();
+		expect(await f.page.getByRole("textbox", { name: property, exact: true }).count()).toBe(0);
+		await f.page.getByRole("button", { name: "Add property", exact: true }).click();
+		const option = f.page.locator(`[data-menu-option="${property}"]`);
+		await option.waitFor();
+		const saved = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
+		await option.click();
+		expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
+		await f.settled();
+		await expect.poll(() => f.page.locator(`[data-properties-row="${property}"]`).count()).toBe(1);
+		const after = f.bytes()["shared/button.tsx"];
+		expect(after).toContain(property === "border-width" ? "border-[1px]" : "tracking-[0px]");
+		const targets = [f.target, f.page.frameLocator('iframe[title="second"]').locator("#subject")];
+		for (const target of targets) {
+			const native = await target.evaluate((element, property) => {
+				const css = getComputedStyle(element);
+				return property === "border-width"
+					? [
+							css.borderTopWidth,
+							css.borderRightWidth,
+							css.borderBottomWidth,
+							css.borderLeftWidth,
+							css.borderTopStyle,
+						]
+					: [css.letterSpacing];
+			}, property);
+			expect(native).toEqual(property === "border-width" ? ["1px", "1px", "1px", "1px", "solid"] : ["normal"]);
+		}
+		const undone = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "inverse",
+		);
+		await f.history();
+		expect(await (await undone).json()).toMatchObject({ ok: true, source: "saved" });
+		await f.settled();
+		expect(f.bytes()["shared/button.tsx"]).toBe(original);
+		for (const target of targets)
+			expect(
+				await target.evaluate(
+					(element, property) =>
+						getComputedStyle(element).getPropertyValue(
+							property === "border-width" ? "border-top-width" : property,
+						),
+					property,
+				),
+			).toBe(property === "border-width" ? "0px" : "normal");
+		expect(f.writes).toEqual(["commit", "inverse"]);
+	},
+);
