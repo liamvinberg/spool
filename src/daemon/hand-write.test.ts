@@ -173,26 +173,8 @@ describe("set-text", () => {
 	});
 });
 
-describe("delete", () => {
-	it("takes the element's own lines and leaves no gap", () => {
-		const text = written([{ kind: "delete", source: stamp(FRAME, "<img") }]);
-		expect(text).not.toContain("<img");
-		expect(text).toContain("</button>\n\t\t\t<p className={busy");
-	});
-
-	it("takes a multi-line element whole", () => {
-		const text = written([{ kind: "delete", source: stamp(FRAME, "<button") }]);
-		expect(text).not.toContain("Pay now");
-		expect(text).toContain('<h1 className="text-lg">Cart</h1>\n\t\t\t<img');
-	});
-
-	it("refuses an element that is not a child of another", () => {
-		const source = `const x = <div className="p-4" />;\n`;
-		expect(refusal([{ kind: "delete", source: stamp(source, "<div") }], source)).toEqual({
-			code: "not-a-child",
-			says: "not a whole child of its parent",
-		});
-	});
+it("rejects Delete in the legacy operation parser", () => {
+	expect(parseHandOps([{ kind: "delete", source: stamp(FRAME, "<img") }])).toBeUndefined();
 });
 
 describe("set-attribute", () => {
@@ -268,9 +250,12 @@ describe("the stamp", () => {
 	});
 
 	it("refuses a file that does not parse rather than guessing at it", () => {
-		expect(refusal([{ kind: "delete", source: "frames/cart/frame.tsx:1:1" }], "const x = <div").code).toBe(
-			"unparsable",
-		);
+		expect(
+			refusal(
+				[{ kind: "set-class", source: "frames/cart/frame.tsx:1:1", token: "p-4", scope: "" }],
+				"const x = <div",
+			).code,
+		).toBe("unparsable");
 	});
 });
 
@@ -358,8 +343,7 @@ describe("the round trip an edit makes", () => {
 	});
 
 	it("takes an element's lines and puts them back byte for byte", () => {
-		const source = stamp(FRAME, "<img");
-		const after = written([{ kind: "delete", source }]);
+		const after = FRAME.replace(/\n\t+<img[^>]+\/>/, "");
 		expect(after).not.toContain("<img");
 		expect(applySpan(after, spanBetween(FRAME, after))).toBe(FRAME);
 	});
