@@ -13,9 +13,10 @@ export async function originCanvas(
 	selector: string,
 	shared = false,
 	beforeLoad?: (page: Page) => Promise<void>,
+	agentEngines?: NonNullable<Parameters<typeof serveProject>[0]>["agentEngines"],
 ) {
 	const uiDir = join(makeTempDir(), "ui");
-	const project = await serveProject({ uiDir });
+	const project = await serveProject({ uiDir, ...(agentEngines ? { agentEngines } : {}) });
 	for (const [path, source] of Object.entries(files)) writeDesignFile(project.root, path, source);
 	writeFrame(project.root, "home", frameSource);
 	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":650,"h":500}');
