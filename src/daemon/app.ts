@@ -2259,10 +2259,12 @@ export function createDaemonApp({
 						.strict()
 						.transform(({ kind, field }) => ({ kind, ...(field === undefined ? {} : { field }) })),
 					z.object({ kind: z.literal("property"), property: z.string(), scope: z.string() }).strict(),
+					z.object({ kind: z.literal("image") }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
 				]);
 				const change = z.discriminatedUnion("kind", [
 					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
+					z.object({ kind: z.literal("image"), path: z.string().max(10_000) }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
 					z
 						.object({

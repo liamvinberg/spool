@@ -34,6 +34,7 @@ import {
 } from "./retained-compile";
 import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from "./source-agent";
 import { sourceHistoryCompilation } from "./source-history";
+import { resolveImageSource } from "./source-image-target";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
@@ -253,11 +254,17 @@ export function createSourceOwner(
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
-			if (operation.kind !== "literal") throw new Error("this source operation has no admitted planner");
-			if (operation.field !== original.field)
+			if (operation.kind !== "literal" && operation.kind !== "image")
+				throw new Error("this source operation has no admitted planner");
+			if (operation.kind === "literal" && operation.field !== original.field)
 				throw new Error("the source purpose does not match the original field");
+			if (operation.kind === "image" && retry)
+				throw new Error("read the current image binding before trying this replacement again");
 			const retryFrom = retry ? compilation : undefined;
-			let resolved = resolveTextSource(root, compilation, original, generation);
+			let resolved =
+				operation.kind === "image"
+					? resolveImageSource(root, compilation, original, generation)
+					: resolveTextSource(root, compilation, original, generation);
 			if (retry) {
 				const current = await currentCompilation(root, frame, compilation);
 				if (readingCoverage !== (coverage.get(root) ?? 0))
@@ -278,7 +285,13 @@ export function createSourceOwner(
 				generation,
 				source: cell.source,
 				role:
-					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
+					operation.kind === "image"
+						? "image-binding"
+						: target?.syntax === "react-call"
+							? "factory-literal"
+							: cell.field
+								? "literal-attribute"
+								: "literal-child",
 				cell: cellKey,
 				...(cell.field ? { field: cell.field } : {}),
 				scope: target?.role ?? "definition",
@@ -403,7 +416,10 @@ export function createSourceOwner(
 				try {
 					// Only a receipt-owned inverse may resolve a retained old rendered value
 					// against this exact cell. Ordinary reads retain literal equality checks.
-					const target = resolveTextSource(
+					const resolveSource = publication.compilation.cells[cell]?.image
+						? resolveImageSource
+						: resolveTextSource;
+					const target = resolveSource(
 						root,
 						publication.compilation,
 						use.original,
