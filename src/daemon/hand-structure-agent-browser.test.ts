@@ -8,7 +8,7 @@ import { makeTempDir } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { originCanvas } from "./hand-origin-browser-helpers";
 
-async function structuralAgent() {
+async function structuralAgent(shared = false) {
 	const directory = makeTempDir();
 	const children: ChildProcess[] = [];
 	const client = new BundledHostClient(directory, (state) => {
@@ -32,9 +32,14 @@ async function structuralAgent() {
 	await client.request({ kind: "connect", provider: "openai", key: "fixture-key" });
 	const removed = '<Counter key="a" name="A"/>';
 	const source = `import {useState} from 'react';function Counter({name}){const [count,setCount]=useState(0);return <button data-name={name} onClick={()=>setCount(n=>n+1)}>{name}:{count}</button>}export default function Frame(){return <main style={{padding:40}}>${removed}<Counter key="b" name="B"/></main>}`;
-	const f = await originCanvas({}, source, '[data-name="A"]', false, undefined, [
-		createSpoolEngine(directory, client),
-	]);
+	const f = await originCanvas(
+		shared ? { "shared/structure.tsx": source } : {},
+		shared ? 'import Shared from "../../shared/structure";export default function Frame(){return <Shared/>}' : source,
+		'[data-name="A"]',
+		shared,
+		undefined,
+		[createSpoolEngine(directory, client)],
+	);
 	const supervisor = client.source;
 	if (!supervisor) throw new Error("daemon did not attach its source owner");
 	const acknowledged: string[] = [];
@@ -51,7 +56,7 @@ async function structuralAgent() {
 			};
 		},
 	};
-	const path = f.file("frames/home/frame.tsx");
+	const path = f.file(shared ? "shared/structure.tsx" : "frames/home/frame.tsx");
 	const edit = async (edits: { oldText: string; newText: string }[]) => {
 		const before = acknowledged.length;
 		const response = await fetch(`${f.project.url}/api/p/${f.project.name}/agent/turn`, {
@@ -220,3 +225,72 @@ it.each([
 		expect(readFileSync(f.path, "utf8")).toBe(changed);
 	},
 );
+
+it("retains every shared use when an acknowledged prefix precedes reach in a newer mounted publication", {
+	timeout: 120_000,
+}, async () => {
+	const f = await structuralAgent(true);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	await expect.poll(() => second.locator('[data-name="A"]').count()).toBe(1);
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	onTestFinished(() => release());
+	let readCompleted = false;
+	let originalPublication = "";
+	await f.page.route("**/source", async (route) => {
+		const request = route.request().postDataJSON();
+		if (request?.action === "read" && request.operation?.kind === "delete") {
+			const response = await route.fetch();
+			const result = await response.json();
+			expect(result).toMatchObject({ ok: true });
+			originalPublication = result.read.original.publication;
+			readCompleted = true;
+			await held;
+			await route.fulfill({ response });
+			return;
+		}
+		await route.continue();
+	});
+	await f.select();
+	await f.page.keyboard.press("Backspace");
+	await expect.poll(() => readCompleted).toBe(true);
+	const prefix = "// acknowledged prefix before structural reach\n";
+	await f.edit([{ oldText: "import", newText: `${prefix}import` }]);
+	expect(readFileSync(f.path, "utf8")).toBe(prefix + f.source);
+	await expect.poll(() => second.locator('[data-name="A"]').count()).toBe(1);
+	const secondElement = await f.page.locator('iframe[title="second"]').elementHandle();
+	const secondDocument = await secondElement?.contentFrame();
+	if (!secondDocument) throw new Error("the actual second frame is missing");
+	const reloaded = f.page.waitForEvent("framenavigated", (frame) => frame === secondDocument);
+	await second.locator('[data-name="A"]').evaluate(() => location.reload());
+	await reloaded;
+	await expect.poll(() => second.locator('[data-name="A"]').count()).toBe(1);
+	const reached = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "reach",
+	);
+	const delivered = f.delivered();
+	void delivered.catch(() => {});
+	release();
+	const reachResponse = await reached;
+	const inventories = reachResponse.request().postDataJSON().inventories;
+	expect(inventories.find((inventory: { frame: string }) => inventory.frame === "home").publication).toBe(
+		originalPublication,
+	);
+	expect(inventories.find((inventory: { frame: string }) => inventory.frame === "second").publication).not.toBe(
+		originalPublication,
+	);
+	const reach = await reachResponse.json();
+	expect(reach).toMatchObject({ ok: true });
+	expect(reach.read.reach.uses.map((use: { frame: string }) => use.frame).sort()).toEqual(["home", "second"]);
+	await delivered;
+	await f.settled();
+	const outcomes = await f.page.evaluate(() => Reflect.get(window, "originOutcomes"));
+	expect(outcomes, JSON.stringify(outcomes)).toHaveLength(2);
+	for (const outcome of outcomes)
+		expect(outcome, JSON.stringify(outcomes)).toMatchObject({ installation: "installed", rendered: "verified" });
+	await expect.poll(() => f.target.count()).toBe(0);
+	await expect.poll(() => second.locator('[data-name="A"]').count()).toBe(0);
+	expect(readFileSync(f.path, "utf8")).toBe(prefix + f.source.replace(f.removed, ""));
+});

@@ -496,9 +496,14 @@ export function createSourceOwner(
 	function structuralUses(
 		root: string,
 		target: SourceDeleteTarget,
+		compilation: RetainedCompilation,
 		generation: number,
 		inventories: SourceInventory[],
 	) {
+		const input = compilation.inputs.get(target.file);
+		if (!input) throw new Error("the structural target is outside its original compiler input");
+		const [selected] = journal.transform(target.file, input, [{ ...target.selected, text: target.replacement }]);
+		if (!selected) throw new Error("the original structural span is missing");
 		const uses: SourceUse[] = [],
 			unverified: UseOutcome[] = [];
 		const unknown = new Set<string>();
@@ -516,12 +521,13 @@ export function createSourceOwner(
 					if (!current) throw new Error("the candidate belongs to another publication");
 					valid(root, publication.compilation);
 					const candidate = resolveSourceDelete(root, publication.compilation, use.original, generation);
-					if (
-						candidate.file === target.file &&
-						candidate.site === target.site &&
-						candidate.selected.start === target.selected.start &&
-						candidate.selected.end === target.selected.end
-					)
+					if (candidate.file !== target.file || candidate.site !== target.site) continue;
+					const candidateInput = publication.compilation.inputs.get(candidate.file);
+					if (!candidateInput) throw new Error("the structural use is outside its original compiler input");
+					const [candidateSpan] = journal.transform(candidate.file, candidateInput, [
+						{ ...candidate.selected, text: candidate.replacement },
+					]);
+					if (candidateSpan?.start === selected.start && candidateSpan.end === selected.end)
 						uses.push({ frame: inventory.frame, ...use });
 				} catch (error) {
 					unknown.add(inventory.frame);
@@ -585,7 +591,7 @@ export function createSourceOwner(
 			valid(root, held.compilation);
 			const cell = held.read.cell ?? held.read.original.cell;
 			const { uses, unverified, unknown } = held.structure
-				? structuralUses(root, held.structure, held.read.generation, inventories)
+				? structuralUses(root, held.structure, held.compilation, held.read.generation, inventories)
 				: observedUses(root, cell, held.read.generation, inventories, "read");
 			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const dependent = await dependencyFrames(root, held.file);
