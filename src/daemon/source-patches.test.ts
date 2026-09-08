@@ -56,6 +56,23 @@ it("restores insertions and removals using their positions in the saved source",
 	expect(applySourcePatches(saved.text, saved.inverse).text).toBe(source);
 });
 
+it("round trips adjacent deletions and a deletion followed by an adjacent insertion", () => {
+	for (const patches of [
+		[
+			{ start: 0, end: 2, text: "" },
+			{ start: 2, end: 4, text: "" },
+		],
+		[
+			{ start: 0, end: 2, text: "" },
+			{ start: 2, end: 2, text: "inserted" },
+		],
+	]) {
+		const forward = applySourcePatches("abcd", patches);
+		expect(forward.patches).toHaveLength(1);
+		expect(applySourcePatches(forward.text, forward.inverse).text).toBe("abcd");
+	}
+});
+
 it("refuses ambiguous or invalid spans before producing a replacement", () => {
 	for (const patches of [
 		[{ start: -1, end: 1, text: "x" }],
