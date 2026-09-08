@@ -75,7 +75,11 @@ export function removalComponents(
 				return keys.some((key) => roots.has(key)) && keys.some((key) => !roots.has(key));
 			}) ||
 			(effects.some((effect) => effect.property.startsWith("--tw-") && roots.has(effect.property)) &&
-				effects.some((effect) => effect.property.startsWith("--tw-") && !roots.has(effect.property)));
+				effects.some((effect) => effect.property.startsWith("--tw-") && !roots.has(effect.property))) ||
+			// A declared transition target remains independently meaningful when
+			// removing one timing component from that same compiler utility.
+			(effects.some((effect) => effect.property === "transition-property" && !roots.has(effect.property)) &&
+				effects.some((effect) => propertyKeys(effect.property, environment).some((key) => roots.has(key))));
 		if (!partial) continue;
 		for (const effect of effects) {
 			const keys = propertyKeys(effect.property, environment);
