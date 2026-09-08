@@ -1523,7 +1523,7 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			try {
 				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "delete"].includes(m.operation?.kind)) { reply(undefined); return; }
 				if (m.action === "inventory") reply(source.inventory(m.field,m.operation));
-else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses));
+else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses,m.structure));
 else if(m.action === "highlight") {source.highlight(m.uses);reply(true);}
 else if(m.action === "reveal") {const el=source.element(m.original);if(el){el.scrollIntoView({block:"center",inline:"nearest"});reply(chainOf(el));}else reply(undefined);}
 else if(m.action === "clear-feedback") {source.clearFeedback();reply(true);}

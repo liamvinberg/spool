@@ -1,6 +1,15 @@
+import type { ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import type { SourceStructuralExpectation } from "../source-structure";
 import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
 import { installObserver } from "./source-observer";
+import { changedStructure, compatibleStructure, structuralList, structuralOptional } from "./source-structure";
+import {
+	captureStructure,
+	refreshStructuralNative,
+	type StructuralBasis,
+	verifyStructure,
+} from "./source-structure-verification";
 import { installValueFlow } from "./source-values";
 
 /**
@@ -97,6 +106,7 @@ interface Fiber {
 	sibling: Fiber | null;
 }
 let sourcePacket: RetainedValues | undefined;
+let initialStructure: RetainedValues["structure"];
 let initialStamps: Record<string, string> = {};
 let sequence = 0;
 let call = 0;
@@ -181,7 +191,9 @@ const subscription = (owner: string) => {
 
 export function configureSource(packet: RetainedValues): void {
 	acceptedOutcome = undefined;
+	structuralBases.clear();
 	initialStamps = packet.stamps ?? {};
+	initialStructure = packet.structure;
 	sourcePacket = packet;
 	Object.assign(sourceLocations, packet.locations);
 	sequence = packet.sequence;
@@ -191,6 +203,12 @@ export function sourceTypeFrom(element: Parameters<NonNullable<typeof globalThis
 }
 export function observeFactory<T>(site: string, action: () => T): T {
 	return globalThis.__SPOOL_VALUES__!.at(site, action);
+}
+export function sourceOptional(site: string, factory: () => ReactNode): ReactNode {
+	return structuralOptional(sourcePacket?.structure, site, factory);
+}
+export function sourceList(site: string, factories: Record<string, () => ReactNode>): { children?: ReactNode } {
+	return structuralList(sourcePacket?.structure, site, factories);
 }
 export function sourceValue(cell: string, initial: string): string {
 	return sourcePacket?.values[cell] ?? initial;
@@ -277,10 +295,11 @@ function inspectSource(
 	field?: string,
 	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 ): SourceOccurrence | undefined {
-	if (operation.kind !== "literal") return;
+	if (operation.kind === "property") return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
-	let origin = field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
+	let origin =
+		operation.kind === "literal" && field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
 	let provenance: string | undefined;
 	const value: unknown = fiber
 		? Object.getOwnPropertyDescriptor(fiber.memoizedProps, field ?? "children")?.value
@@ -293,8 +312,8 @@ function inspectSource(
 			!origin &&
 			sourcePacket &&
 			fiber &&
-			(field !== undefined || typeof value === "string") &&
-			(value === undefined || typeof value === "string")
+			(operation.kind === "delete" ||
+				((field !== undefined || typeof value === "string") && (value === undefined || typeof value === "string")))
 		)
 			origin = {
 				cell: observed.source,
@@ -302,7 +321,7 @@ function inspectSource(
 				invocation: JSON.stringify(
 					observed.chain.map((call) => [call.occurrence, call.invocation?.id, call.element]),
 				),
-				value: String(value ?? ""),
+				value: operation.kind === "delete" ? "" : String(value ?? ""),
 			};
 	} catch {
 		return;
@@ -313,8 +332,20 @@ function inspectSource(
 		id = String(++occurrence);
 		nodes.set(element, id);
 	}
+	let structure: SourceOccurrence["structure"];
+	if (operation.kind === "delete") {
+		const parent = element.parentElement;
+		if (!parent) return;
+		let parentId = nodes.get(parent);
+		if (!parentId) {
+			parentId = String(++occurrence);
+			nodes.set(parent, parentId);
+		}
+		structure = { parent: parentId };
+	}
 	return {
 		...origin,
+		...(structure ? { structure } : {}),
 		// Retained props keep their original invocation/value even when React
 		// skips recreating them. This observation belongs to the installed packet.
 		publication: sourcePacket?.id ?? origin.publication,
@@ -377,7 +408,13 @@ function clearGestureFeedback(): void {
 }
 function sourceElement(original: SourceOccurrence): HTMLElement | undefined {
 	return [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
-		const current = inspectSource(element, original.field);
+		const current = inspectSource(
+			element,
+			original.field,
+			original.structure
+				? { kind: "delete" }
+				: { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+		);
 		return current && sameSourceOccurrence(current, original);
 	});
 }
@@ -411,7 +448,7 @@ function inventorySource(
 	const uses: SourceInventory["uses"] = [];
 	let unknown = 0;
 	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-source]")) {
-		if (field === undefined && element.children.length > 0) continue;
+		if (operation.kind === "literal" && field === undefined && element.children.length > 0) continue;
 		const original = inspectSource(element, field, operation);
 		if (!original) {
 			if (field !== undefined || element.textContent) unknown++;
@@ -431,13 +468,24 @@ function inventorySource(
 	}
 	return { publication: sourcePacket?.id ?? "", uses, unknown };
 }
-function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolean {
+function prepareSourceUses(
+	generation: number,
+	uses: SourceOccurrence[],
+	structure?: SourceStructuralExpectation,
+): boolean {
+	if (structure) structuralBases.set(structure.site, captureStructure(structure, sourceLocations));
 	clearSourceFeedback();
 	for (const previous of sharedPreviews.keys()) cancelSourceUses(previous);
 	const prepared: PreviewedUse[] = [];
 	for (const original of uses) {
 		const element = [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
-			const current = inspectSource(element, original.field);
+			const current = inspectSource(
+				element,
+				original.field,
+				original.structure
+					? { kind: "delete" }
+					: { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+			);
 			return current && sameSourceOccurrence(current, original);
 		});
 		if (element) prepared.push(previewedUse(element, original));
@@ -448,7 +496,13 @@ function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolea
 }
 function previewSourceUses(generation: number, value: string): void {
 	for (const held of sharedPreviews.get(generation) ?? []) {
-		const current = inspectSource(held.element, held.original.field);
+		const current = inspectSource(
+			held.element,
+			held.original.field,
+			held.original.structure
+				? { kind: "delete" }
+				: { kind: "literal", ...(held.original.field ? { field: held.original.field } : {}) },
+		);
 		if (!current || !sameSourceOccurrence(current, held.original)) continue;
 		held.preview = value;
 		held.previewed = true;
@@ -475,7 +529,13 @@ function cancelSourceUses(generation: number, feedback = true): void {
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
-		const current = inspectSource(use.element, use.original.field);
+		const current = inspectSource(
+			use.element,
+			use.original.field,
+			use.original.structure
+				? { kind: "delete" }
+				: { kind: "literal", ...(use.original.field ? { field: use.original.field } : {}) },
+		);
 		if (current && sameSourceOccurrence(current, use.original) && ownsPreview(use))
 			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
@@ -492,18 +552,25 @@ function sourceRead(
 	intent = generation;
 	acceptedOutcome = undefined;
 	const original = inspectSource(element, field, operation);
-	if (!original || original.value !== renderedField(element, original.field)) return;
+	if (!original || (!original.structure && original.value !== renderedField(element, original.field))) return;
 	leases.set(generation, previewedUse(element, original));
 	return original;
 }
 function validLease(generation: number): boolean {
 	const held = leases.get(generation);
 	if (!held || generation !== intent) return false;
-	const current = inspectSource(held.element, held.original.field);
+	const current = inspectSource(
+		held.element,
+		held.original.field,
+		held.original.structure
+			? { kind: "delete" }
+			: { kind: "literal", ...(held.original.field ? { field: held.original.field } : {}) },
+	);
 	return current !== undefined && sameSourceOccurrence(current, held.original);
 }
 function previewSource(generation: number, value: string): boolean {
 	const held = leases.get(generation);
+	if (held?.original.structure) return false;
 	if (!held) {
 		previewSourceUses(generation, value);
 		return sharedPreviews.has(generation);
@@ -528,7 +595,13 @@ function cancelSource(generation: number): void {
 	if (
 		held.element.isConnected &&
 		ownsPreview(held) &&
-		inspectSource(held.element, held.original.field)?.invocation === held.original.invocation
+		inspectSource(
+			held.element,
+			held.original.field,
+			held.original.structure
+				? { kind: "delete" }
+				: { kind: "literal", ...(held.original.field ? { field: held.original.field } : {}) },
+		)?.invocation === held.original.invocation
 	)
 		restoreField(held.element, held.original, held.children, held.restoreAttribute);
 }
@@ -541,7 +614,13 @@ function completeSource(generation: number): SourceOccurrence | undefined {
 function pendingIn(element: Element): boolean {
 	return committedHosts.get(element)?.pending ?? false;
 }
+const structuralBases = new Map<string, StructuralBasis>();
 interface AcceptedOutcome {
+	structural?: {
+		basis: StructuralBasis;
+		before: RetainedValues["structure"];
+		originals: Map<HTMLElement, SourceOccurrence>;
+	};
 	publication: SourcePublication;
 	targets: { original: SourceOccurrence; element: HTMLElement | undefined; ancestors: Fiber[] }[];
 	failed: Set<HTMLElement>;
@@ -589,6 +668,37 @@ function observedUse(
 	};
 }
 function observedOutcome(held: AcceptedOutcome): UseOutcome {
+	const { publication, failed } = held;
+	const expected = publication.expected;
+	if (expected.kind === "structure") {
+		const structural = held.structural;
+		if (!structural)
+			return {
+				occurrence: publication.original.occurrence,
+				installation: "installed",
+				rendered: "unverified",
+				reason: "the original structural parent baseline is missing",
+			};
+		return combineUseOutcomes(
+			verifyStructure(structural.basis, expected, structural.before, sourceLocations, pendingIn, (element) =>
+				failed.has(element),
+			).map((outcome) => {
+				const original = outcome.parent ? structural.originals.get(outcome.parent) : undefined;
+				return {
+					occurrence: original?.occurrence ?? publication.original.occurrence,
+					installation: "installed" as const,
+					rendered: original ? outcome.rendered : ("unverified" as const),
+					...(!original
+						? { reason: outcome.reason ?? "the structural parent has no original affected-use attribution" }
+						: outcome.reason
+							? { reason: outcome.reason }
+							: {}),
+				};
+			}),
+			publication.original.occurrence,
+		);
+	}
+
 	return combineUseOutcomes(
 		held.targets.map(({ original, element }) =>
 			observedUse(original, element, held.publication.expected, held.failed),
@@ -692,6 +802,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 		!sourcePacket ||
 		(publication.before !== sourcePacket.id && !(undo && publication.compatibleBefore?.includes(sourcePacket.id))) ||
 		publication.packet.shape !== sourcePacket.shape ||
+		!compatibleStructure(initialStructure, publication.packet.structure) ||
 		publication.packet.sequence <= sequence
 	)
 		return refused("the running source generation changed");
@@ -700,7 +811,13 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	const secondary =
 		publication.targets &&
 		prepared?.some((use) => {
-			const current = inspectSource(use.element, use.original.field);
+			const current = inspectSource(
+				use.element,
+				use.original.field,
+				use.original.structure
+					? { kind: "delete" }
+					: { kind: "literal", ...(use.original.field ? { field: use.original.field } : {}) },
+			);
 			return current && sameSourceOccurrence(use.original, original) && sameSourceOccurrence(current, use.original);
 		});
 	if (!undo && !((held && validLease(publication.generation)) || secondary))
@@ -728,7 +845,27 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	cancelSourceUses(publication.generation, false);
 	feedbackTimer = setTimeout(clearGestureFeedback, 450);
 	leases.delete(publication.generation);
-	const observation: AcceptedOutcome = { publication, targets, failed: new Set(), ready: false, last: "" };
+	const basis = publication.expected.kind === "structure" ? structuralBases.get(publication.expected.site) : undefined;
+	if (basis) refreshStructuralNative(basis);
+	const structuralOriginals = new Map<HTMLElement, SourceOccurrence>();
+	for (const group of basis?.groups ?? []) {
+		const target = targets.find(
+			(target) => target.element === group.parent || target.original.structure?.parent === nodes.get(group.parent),
+		);
+		if (target) structuralOriginals.set(group.parent, target.original);
+	}
+	const structuralTargets = basis?.groups.flatMap((group) => {
+		const original = structuralOriginals.get(group.parent);
+		return original ? [{ original, element: group.parent, ancestors: sourceAncestry(group.parent) }] : [];
+	});
+	const observation: AcceptedOutcome = {
+		publication,
+		targets: structuralTargets ?? targets,
+		failed: new Set(),
+		ready: false,
+		last: "",
+		...(basis ? { structural: { basis, before: sourcePacket?.structure, originals: structuralOriginals } } : {}),
+	};
 	acceptedOutcome = observation;
 	try {
 		flushSync(() => {
@@ -758,6 +895,8 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 					)
 					.map((cell) => publication.packet.owners[cell]),
 			);
+			for (const site of changedStructure(sourcePacket?.structure, publication.packet.structure))
+				changed.add(publication.packet.owners[site] ?? sourcePacket?.owners[site]);
 			sourcePacket = publication.packet;
 			Object.assign(sourceLocations, publication.packet.locations);
 			sequence = publication.packet.sequence;

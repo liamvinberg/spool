@@ -311,6 +311,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					frames.map((name) =>
 						request<boolean>(name, {
 							action: "prepare",
+							structure: read.structure,
 							generation: read.generation,
 							uses: amended.reach?.uses.filter((use) => use.frame === name).map((use) => use.original) ?? [],
 						}),

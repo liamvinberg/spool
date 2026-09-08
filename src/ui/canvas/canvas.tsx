@@ -96,7 +96,7 @@ import {
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
-import { deleteGesture, GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
+import { GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
 import { HandNotice, type HandSaid } from "./hand-notice";
 import {
 	draggedAngle,
@@ -2583,45 +2583,85 @@ export function ProjectCanvas({
 		[project, settleWrite],
 	);
 
-	/**
-	 * The delete gesture (#255): ⌫ on a held element takes its lines.
-	 *
-	 * Silent, like every other patch — ⌘Z brings it back and no toast is owed
-	 * either way. Every held rung goes in one patch, so however many were
-	 * picked it is one press to put them back.
-	 */
+	/** Delete one original authored unit through the source owner and its inverse receipt. */
 	const deleteElements = useCallback((): boolean => {
-		const held = pickedRef.current[0];
-		const gesture = deleteGesture(pickedRef.current);
-		if (gesture === undefined || held === undefined) return false;
-		// a held ⌫ repeats: the second press would be gated against the file the
-		// first one is in the middle of rewriting, and would land nowhere
-		if (writing.current) return true;
-		if (!("ops" in gesture)) {
-			showRefusal(held.frame, held.selector, gesture);
+		const pick = pickedRef.current[0];
+		if (!pick) return false;
+		const initial: SourceIntent = {
+			...sourceIntent(pick, pointing.entries),
+			operation: { kind: "delete" },
+			action: "delete this element",
+		};
+		if (pickedRef.current.length !== 1) {
+			showRefusal(
+				pick.frame,
+				pick.selector,
+				{ code: "source", says: "Delete requires one identifiable authored source unit" },
+				initial,
+			);
 			return true;
 		}
-		setRefused(null);
+		if (writing.current || pendingSource.current.size > 0) return true;
 		writing.current = true;
-		void gatePatch(project, gesture.frame, gesture.ops).then((asked) => {
-			if (asked === undefined) {
-				writing.current = false;
-				setSaid({ kind: "failed", frame: gesture.frame });
+		setRefused(null);
+		const generation = ++pickSeq.current;
+		const completion = (async () => {
+			let intent = initial;
+			const original = await sourceDelivery.read(
+				pick.frame,
+				pick.selector,
+				generation,
+				undefined,
+				initial.operation,
+			);
+			if (!original) {
+				showRefusal(
+					pick.frame,
+					pick.selector,
+					{ code: "source", says: "this element has no committed structural source observation" },
+					intent,
+				);
 				return;
 			}
-			if (!asked.ok) {
-				writing.current = false;
-				showRefusal(gesture.on.frame, gesture.on.selector, asked.refusal);
+			intent = { ...intent, original };
+			const result = await readSource(
+				project,
+				pick.frame,
+				original,
+				generation,
+				sourceDelivery.observer,
+				initial.operation,
+			);
+			if (!result?.ok) {
+				await sourceDelivery.cancel(pick.frame, generation);
+				showRefusal(
+					pick.frame,
+					pick.selector,
+					{ code: "source", says: result?.reason ?? "the original structural read did not arrive" },
+					intent,
+				);
 				return;
 			}
-			writePatch(gesture.frame, asked.fingerprint, gesture.ops);
+			const read = await sourceDelivery.prepare(pick.frame, result.read);
+			intent = attributedIntent(intent, read);
+			retainedPublications.current.set(pick.frame, original.publication);
+			setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
+			const saved = await commitSource(project, read, { kind: "delete" });
+			if (saved?.ok && saved.receipt)
+				recordEntry({ kind: "source", frame: pick.frame, receipt: saved.receipt, intent });
+			if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
+			await showSourceResult(pick.frame, saved, "", false, intent);
+		})();
+		pendingSource.current.set(pick.frame, completion);
+		void completion.finally(() => {
+			writing.current = false;
+			pendingSource.current.delete(pick.frame);
 		});
 		return true;
-	}, [project, showRefusal, writePatch]);
+	}, [project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult]);
 
 	/**
-	 * The rail's own write (#256), which is the delete gesture's path with a
-	 * different surface asking.
+	 * The rail's legacy gated patch path (#256).
 	 *
 	 * Gated first, so a refusal lands on the element it is about rather than in
 	 * a field, and written as one patch so however many tokens a press moved it

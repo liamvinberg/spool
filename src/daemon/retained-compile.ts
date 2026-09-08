@@ -7,10 +7,12 @@ import { getBindingIdentifiers, type Node } from "@babel/types";
 import { type OnResolveResult, type Plugin, transformSync } from "esbuild";
 import { LITERAL_ATTRIBUTES_BY_TAG, LITERAL_ATTRIBUTES_EVERY } from "../literal-attributes";
 import type { RetainedValues } from "../source-edit";
+import type { SourceStructureState } from "../source-structure";
 import { TEXT_LOADERS } from "./assets";
 import { assertDesignFile } from "./design-path";
 import { observeCacheSource } from "./source-cache-compile";
 import { observeLazySource } from "./source-lazy-compile";
+import { planStructureCompilation } from "./source-structure-compile";
 
 export interface SourceInput {
 	bytes: Buffer;
@@ -27,6 +29,7 @@ export interface LiteralCell {
 	syntax?: "jsx" | "react-call";
 }
 export interface RetainedCompilation {
+	structureOwners?: Record<string, string>;
 	packet: RetainedValues;
 	cells: Record<string, LiteralCell>;
 	inputs: Map<string, SourceInput>;
@@ -151,6 +154,7 @@ interface Patch {
 	end: number;
 	text: string;
 	order?: number;
+	wrap?: Node;
 }
 function apply(source: string, patches: Patch[]): string {
 	let result = source;
@@ -171,6 +175,8 @@ export function lowerLiterals(
 	source: string,
 ): {
 	code: string;
+	structure: SourceStructureState;
+	structureOwners: Record<string, string>;
 	cells: Record<string, LiteralCell>;
 	shape: string;
 	stamps: Record<string, string>;
@@ -180,6 +186,7 @@ export function lowerLiterals(
 		sourceType: "module",
 		plugins: [...(/\.[jt]sx$/.test(file) ? ["jsx" as const] : []), "typescript", "decorators-legacy"],
 	}).program;
+	const structural = planStructureCompilation(ast, file);
 	const cells: Record<string, LiteralCell> = {};
 	const eligible = new Set<Node>();
 	const attributes = new Set<Node>();
@@ -191,7 +198,7 @@ export function lowerLiterals(
 	const prefix = `__spool_${digest(source).slice(0, 12)}`;
 	walk(ast, (node, ancestors) => {
 		if (node.type !== "JSXElement" || node.loc == null) return;
-		const id = `${file}#literal:${sites.length}`;
+		const id = `${structural.paths.get(node)}#literal`;
 		sites.push({ node, id });
 		const open = node.openingElement;
 
@@ -226,8 +233,9 @@ export function lowerLiterals(
 		)
 			return;
 
-		const owner = functions.get(fn) ?? `${file}#component:${functions.size}`;
+		const owner = functions.get(fn) ?? `${structural.paths.get(fn)}#owner`;
 		const retainOwner = () => functions.set(fn, owner);
+		if (structural.groupNodes.has(node)) retainOwner();
 		if (!open.attributes.some((attribute) => attribute.type === "JSXSpreadAttribute")) {
 			for (const attribute of open.attributes) {
 				if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") continue;
@@ -348,13 +356,24 @@ export function lowerLiterals(
 			end: contentEnd,
 			text: `{${prefix}Children(${JSON.stringify(id)},${JSON.stringify(childValue)})}`,
 		});
-		const jsxChild = ["JSXElement", "JSXFragment"].includes(ancestors.at(-1)?.type ?? "");
+		const jsxChild =
+			["JSXElement", "JSXFragment"].includes(ancestors.at(-1)?.type ?? "") &&
+			!structural.groups.some(
+				(group) => group.kind === "list" && group.children.some((child) => child.node === node),
+			);
 		patches.push({
 			start: position(node).start,
 			end: position(node).start,
+			wrap: node,
 			text: `${jsxChild ? "{" : ""}${prefix}Observe(${JSON.stringify(id)},`,
 		});
-		patches.push({ start: position(node).end, end: position(node).end, text: jsxChild ? ")}" : ")", order: 2 });
+		patches.push({
+			start: position(node).end,
+			end: position(node).end,
+			text: jsxChild ? ")}" : ")",
+			order: 2,
+			wrap: node,
+		});
 	});
 	const factories = new Map<string, string>();
 	for (const statement of ast.body)
@@ -398,14 +417,16 @@ export function lowerLiterals(
 			if (["AwaitExpression", "YieldExpression", "Super"].includes(part.type)) unsafe = true;
 		});
 		if (unsafe) return;
-		const id = `${file}#factory:${factory++}`;
+		factory++;
+		const id = `${structural.paths.get(node)}#factory`;
 		sites.push({ node, id });
 		patches.push({
 			start: position(node).start,
 			end: position(node).start,
+			wrap: node,
 			text: `${prefix}Factory(${JSON.stringify(id)},()=>`,
 		});
-		patches.push({ start: position(node).end, end: position(node).end, text: ")", order: 2 });
+		patches.push({ start: position(node).end, end: position(node).end, text: ")", order: 2, wrap: node });
 		if (api === "toArray") return;
 		const type = node.arguments[0];
 		if (
@@ -439,7 +460,7 @@ export function lowerLiterals(
 			fn.type !== "ClassMethod"
 		)
 			return;
-		const owner = functions.get(fn) ?? `${file}#component:${functions.size}`;
+		const owner = functions.get(fn) ?? `${structural.paths.get(fn)}#owner`;
 		const retain = (literal: Node, field: string) => {
 			if (literal.type !== "StringLiteral" || ["key", "ref", "data-go", "src", "className", "style"].includes(field))
 				return;
@@ -489,6 +510,13 @@ export function lowerLiterals(
 		if (node.arguments.length === 3 && node.arguments[2]) retain(node.arguments[2], "children");
 	});
 
+	const structureOwners: Record<string, string> = {};
+	walk(ast, (node, ancestors) => {
+		const groups = structural.groups.filter((group) => group.node === node);
+		if (!groups.length) return;
+		const fn = ancestors.find((parent) => functions.has(parent));
+		if (fn) for (const group of groups) structureOwners[group.id] = functions.get(fn)!;
+	});
 	for (const [fn, owner] of functions) {
 		if (
 			!(
@@ -546,7 +574,7 @@ export function lowerLiterals(
 			patches.unshift({ start: position(body).end, end: position(body).end, text: ");}" });
 		}
 	}
-	const transformed = apply(source, [...patches]);
+	let transformed = apply(source, [...patches]);
 	const stamps: Record<string, string> = {},
 		locations: Record<string, string> = {};
 	for (const { node, id } of sites) {
@@ -558,35 +586,69 @@ export function lowerLiterals(
 		locations[id] = `${file}:${node.loc!.start.line}:${node.loc!.start.column + 1}`;
 	}
 	Object.assign(cells, absentCells);
-	const shape = digest(
-		JSON.stringify(ast, (key, value: unknown) => {
-			if (
-				[
-					"start",
-					"end",
-					"loc",
-					"extra",
-					"leadingComments",
-					"trailingComments",
-					"innerComments",
-					"comments",
-				].includes(key)
-			)
-				return undefined;
-			if (key === "attributes" && Array.isArray(value))
-				return value.filter((attribute) => !retainedAttributes.has(attribute));
-			if (typeof value === "object" && value !== null && attributes.has(value as Node))
-				return { type: "RetainedAttribute" };
-			if (typeof value === "object" && value !== null && eligible.has(value as Node))
-				return { ...value, children: [{ type: "RetainedLiteral" }] };
-			return value;
-		}),
-	);
+	const normalize = (node: Node, retainRootOptional = true) =>
+		JSON.parse(
+			JSON.stringify(node, (key, value: unknown) => {
+				if (
+					[
+						"start",
+						"end",
+						"loc",
+						"extra",
+						"leadingComments",
+						"trailingComments",
+						"innerComments",
+						"comments",
+					].includes(key)
+				)
+					return undefined;
+				if (typeof value === "object" && value !== null && "type" in value) {
+					const shaped = structural.shape(value as Node, key !== "" || retainRootOptional);
+					if (shaped !== undefined) return shaped;
+				}
+				if (key === "attributes" && Array.isArray(value))
+					return value.filter((attribute) => !retainedAttributes.has(attribute));
+				if (typeof value === "object" && value !== null && attributes.has(value as Node))
+					return { type: "RetainedAttribute" };
+				if (typeof value === "object" && value !== null && eligible.has(value as Node))
+					return { ...value, children: [{ type: "RetainedLiteral" }] };
+				return value;
+			}),
+		);
+	const shape = digest(JSON.stringify(normalize(ast)));
+	const structure = structural.state((node) => normalize(node, false));
 	const imports =
-		functions.size || factory > 0
-			? `\nimport {sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom} from "spool/jsx-dev-runtime";`
+		functions.size || factory > 0 || structural.groups.length > 0
+			? `\nimport {sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom,sourceOptional as ${prefix}Optional,sourceList as ${prefix}List} from "spool/jsx-dev-runtime";`
 			: "";
-	return { code: transformed + imports, cells, shape, stamps, locations };
+	const priorStamps = Object.values(stamps);
+	transformed = structural.render(
+		transformed,
+		prefix,
+		(offset, side, node) =>
+			offset +
+			patches.reduce(
+				(shift, patch) =>
+					shift +
+					(patch.end < offset ||
+					(patch.end === offset &&
+						(patch.start !== patch.end || (patch.order === 2 && (side !== "content-end" || patch.wrap !== node))))
+						? patch.text.length - (patch.end - patch.start)
+						: 0),
+				0,
+			),
+	);
+	const finalStamps: Record<string, string> = {};
+	let ordinal = 0;
+	walk(
+		parse(transformed, { sourceType: "module", plugins: ["jsx", "typescript", "decorators-legacy"] }).program,
+		(node) => {
+			if (node.type !== "JSXElement" || !node.loc) return;
+			const id = priorStamps[ordinal++];
+			if (id) finalStamps[`${file}:${node.loc.start.line}:${node.loc.start.column + 1}`] = id;
+		},
+	);
+	return { code: transformed + imports, cells, shape, stamps: finalStamps, locations, structure, structureOwners };
 }
 
 export function retainedPlugin(
@@ -690,6 +752,11 @@ export function retainedPlugin(
 				);
 				lowered = { ...lowered, code: observed, stamps };
 				Object.assign(compilation.cells, lowered.cells);
+				compilation.structureOwners ??= {};
+				Object.assign(compilation.structureOwners, lowered.structureOwners);
+				compilation.packet.structure ??= { lists: {}, optional: {}, factories: {} };
+				for (const key of ["lists", "optional", "factories"] as const)
+					Object.assign(compilation.packet.structure[key], lowered.structure[key]);
 				compilation.packet.stamps ??= {};
 				compilation.packet.locations ??= {};
 				Object.assign(compilation.packet.stamps, lowered.stamps);
