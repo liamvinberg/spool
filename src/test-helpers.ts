@@ -23,6 +23,14 @@ export const COVER_PNG = Uint8Array.from(
 	),
 );
 
+/** Playwright allows 30s for graceful browser shutdown before killing and
+ * cleaning its process. Browser-owning fixtures must wait through that window
+ * plus final process/directory cleanup, rather than abandon a live resource at
+ * Vitest's default 10s. Errors still propagate; no close is retried. */
+export function closeAfterTest(resource: { close(): Promise<void> }): void {
+	onTestFinished(() => resource.close(), 35_000);
+}
+
 export function makeTempDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "spool-test-"));
 	onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
@@ -69,7 +77,7 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 		...options,
 	});
 	daemon.setSelfOrigin("http://localhost:7766");
-	onTestFinished(() => daemon.close());
+	closeAfterTest(daemon);
 	return {
 		historyNotices,
 		/** the raw door: no capability is added, so a test can assert one is required */
@@ -115,7 +123,7 @@ export async function serveProject(options?: Partial<Parameters<typeof serveDaem
 	// A Claude fixture names the engine this browser test intends to exercise.
 	if (options?.agentExecutor !== undefined) createSettingsStore(spoolDir).write("agent.engine", "claude", root);
 	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
-	onTestFinished(() => daemon.close());
+	closeAfterTest(daemon);
 	return {
 		spoolDir,
 		root,
