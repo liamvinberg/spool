@@ -29,13 +29,21 @@ export function changedPropertyKeys(
 	return changed;
 }
 
+/** Border width is rendered only through its corresponding native border style. */
+function nativeDependencies(roots: ReadonlySet<string>): Set<string> {
+	const keys = new Set(roots);
+	for (const property of roots)
+		if (/^border-(top|right|bottom|left)-width$/.test(property)) keys.add(property.replace(/width$/, "style"));
+	return keys;
+}
+
 /** Follow variable consumers across all emitted conditions, including inactive branches. */
 export function propertyConsumers(
 	certificate: PropertyCertificate,
 	roots: ReadonlySet<string>,
 	environment: SourcePropertyEnvironment,
 ): SourcePropertyEffect[] {
-	const keys = new Set(roots);
+	const keys = nativeDependencies(roots);
 	const effects = new Set<SourcePropertyEffect>();
 	let growing = true;
 	while (growing) {
@@ -60,7 +68,7 @@ export function propertyDependencies(
 	roots: ReadonlySet<string>,
 	environment: SourcePropertyEnvironment,
 ): Set<string> {
-	const keys = new Set(roots);
+	const keys = nativeDependencies(roots);
 	let growing = true;
 	while (growing) {
 		growing = false;
