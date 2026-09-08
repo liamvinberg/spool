@@ -14,33 +14,31 @@ function fixture() {
 	const file = realpathSync(join(root, "design/shared/tokens.css"));
 	return { root, inputs: new Map([[file, readInput(file)]]) };
 }
-it("plans every retained appearance source pair from actual declaration owners", async () => {
+it.each(appearanceProperties)("plans retained $property from actual declaration owners", async (row) => {
 	const f = fixture();
-	for (const row of appearanceProperties) {
-		const before = [row.before, row.companion, "z-10"].filter(Boolean).join(" ");
-		const operation = { kind: "property", property: row.property, scope: "" } as const;
-		const plan = await planPropertyValue(
-			f.root,
-			f.inputs,
-			before,
-			operation,
-			{ kind: "binding", tokens: row.after.split(" ") },
-			{ direction: "ltr", writingMode: "horizontal-tb" },
-		);
-		expect(new Set(plan.next.split(" ")), row.property).toEqual(
-			new Set([row.after, row.companion, "z-10"].filter(Boolean).join(" ").split(" ")),
-		);
-		expect(plan.roots.size, row.property).toBeGreaterThan(0);
-		const inverse = await planPropertyValue(
-			f.root,
-			f.inputs,
-			plan.next,
-			operation,
-			{ kind: "binding", tokens: row.before.split(" ") },
-			{ direction: "ltr", writingMode: "horizontal-tb" },
-		);
-		expect(new Set(inverse.next.split(" ")), row.property).toEqual(new Set(before.split(" ")));
-	}
+	const before = [row.before, row.companion, "z-10"].filter(Boolean).join(" ");
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const plan = await planPropertyValue(
+		f.root,
+		f.inputs,
+		before,
+		operation,
+		{ kind: "binding", tokens: row.after.split(" ") },
+		{ direction: "ltr", writingMode: "horizontal-tb" },
+	);
+	expect(new Set(plan.next.split(" ")), row.property).toEqual(
+		new Set([row.after, row.companion, "z-10"].filter(Boolean).join(" ").split(" ")),
+	);
+	expect(plan.roots.size, row.property).toBeGreaterThan(0);
+	const inverse = await planPropertyValue(
+		f.root,
+		f.inputs,
+		plan.next,
+		operation,
+		{ kind: "binding", tokens: row.before.split(" ") },
+		{ direction: "ltr", writingMode: "horizontal-tb" },
+	);
+	expect(new Set(inverse.next.split(" ")), row.property).toEqual(new Set(before.split(" ")));
 });
 it("keeps a size binding and independent filter inputs during focused component edits", async () => {
 	const f = fixture();

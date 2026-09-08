@@ -16,11 +16,15 @@ export function changedPropertyKeys(
 	environment: SourcePropertyEnvironment,
 ): Set<string> {
 	const changed = new Set<string>();
-	for (const effect of [...before, ...after]) {
-		const values = (effects: readonly SourcePropertyEffect[]) =>
-			JSON.stringify([...new Set(effects.filter((one) => key(one) === key(effect)).map(value))].sort());
-		if (values(before) !== values(after))
-			for (const name of propertyKeys(effect.property, environment)) changed.add(name);
+	const keys = new Set([...before, ...after].flatMap((effect) => propertyKeys(effect.property, environment)));
+	for (const name of keys) {
+		const declarations = (effects: readonly SourcePropertyEffect[]) =>
+			JSON.stringify(
+				effects
+					.filter((effect) => propertyKeys(effect.property, environment).includes(name))
+					.map((effect) => [key(effect), value(effect)]),
+			);
+		if (declarations(before) !== declarations(after)) changed.add(name);
 	}
 	return changed;
 }
@@ -73,7 +77,7 @@ export function propertyDependencies(
 }
 
 export function propertySignature(effects: readonly SourcePropertyEffect[]): string {
-	return JSON.stringify(effects.map((effect) => [effect.owner, key(effect), value(effect)]).sort());
+	return JSON.stringify(effects.map((effect) => [effect.owner, key(effect), value(effect)]));
 }
 
 /** Defaults and carried consumers are read dependencies even if masked before an inverse. */
@@ -90,16 +94,15 @@ export function externalPropertySignature(
 			propertyKeys(effect.property, environment).some((name) => inputs.has(name)),
 		),
 	];
-	const declarations = [
-		...new Set(
-			effects
-				.filter(
-					(effect) =>
-						!effect.path.includes("@layer theme") && (effect.owner === null || !owned.includes(effect.owner)),
-				)
-				.map((effect) => JSON.stringify([key(effect), value(effect)])),
-		),
-	].sort();
+	const considered = new Set(effects);
+	const declarations = certificate.effects
+		.filter(
+			(effect) =>
+				considered.has(effect) &&
+				!effect.path.includes("@layer theme") &&
+				(effect.owner === null || !owned.includes(effect.owner)),
+		)
+		.map((effect) => JSON.stringify([key(effect), value(effect)]));
 	const names = new Set([...inputs, ...effects.flatMap(propertyInputs)]);
 	// Candidate-dependent @layer theme emission is not the definition table.
 	// Read the actual pinned compiler's complete entries, only along reached references.
