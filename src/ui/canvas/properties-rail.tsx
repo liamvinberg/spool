@@ -400,6 +400,7 @@ function Body({
 					name={read?.name ?? rowElement.tag}
 					revision={revision}
 					field={purpose?.field}
+					operation={purpose?.operation}
 					generation={purpose?.generation}
 					actions={acts.ownership}
 					onSupport={support}

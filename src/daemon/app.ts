@@ -2306,6 +2306,7 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("describe"),
+								operation,
 								frame: z.string(),
 								original: occurrence,
 								inventories: z.array(inventory),
@@ -2392,7 +2393,15 @@ export function createDaemonApp({
 						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
 						return c.json({ ok: true });
 					case "describe":
-						return c.json(await sourceOwner.describe(project.root, body.frame, body.original, body.inventories));
+						return c.json(
+							await sourceOwner.describe(
+								project.root,
+								body.frame,
+								body.original,
+								body.inventories,
+								body.operation,
+							),
+						);
 					case "commit":
 						return c.json(
 							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, body.change),
