@@ -223,3 +223,93 @@ it.each(["", "<!doctype html>"])(
 		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["inactive", "mismatching"]);
 	},
 );
+
+it("verifies a compiled shared color binding against each actual use independently", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "@theme { --color-brand: #123456; }");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), "text-brand text-red-500");
+	const operation = { kind: "property", property: "color", scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "color",
+		scope: "",
+		className: "text-brand",
+		absent: false,
+		scopePaths: propertyScopePaths(certificate, certificate, operation, environment),
+		effects: propertyConsumers(certificate, new Set(["color"]), environment),
+		css: certificate.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${expected.css}</style><div data-subject class="text-brand">Healthy</div><div data-subject class="text-red-500">Retained</div>`,
+	);
+	const before = await f.page.content();
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => getComputedStyle(element).color),
+	).toBe("rgb(18, 52, 86)");
+	expect(await f.page.content()).toBe(before);
+});
+
+it("compares equal native colors independently of their authored color notation", async () => {
+	const expected: SourcePropertyExpectation = {
+		...opacity(".5"),
+		property: "color",
+		className: "text-red",
+		effects: [
+			{ owner: "text-red", path: ["@layer utilities", "$"], property: "color", value: "red", important: false },
+		],
+		css: "@layer utilities { .text-red { color:red } }",
+	};
+	const f = await fixture(
+		'<!doctype html><div data-subject style="color:color(srgb 1 0 0)">Same color</div><div data-subject style="color:color(srgb 0 0 1)">Different color</div>',
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+});
+
+it.each(["color", "background-color"])("keeps overridden and conditional %s variables unverified", async (property) => {
+	const expected: SourcePropertyExpectation = {
+		...opacity(".5"),
+		property,
+		className: "brand",
+		effects: [{ owner: "brand", path: ["@layer utilities", "$"], property, value: "var(--brand)", important: false }],
+		css: `@layer theme, utilities; @layer theme {:root {--brand: #123456}} @layer utilities {.brand {${property}:var(--brand)}}`,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${expected.css}</style><div data-subject class="brand">Root value</div><section style="--brand: blue"><div data-subject class="brand">Overridden</div></section>`,
+	);
+	const before = await f.page.content();
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "unverified"]);
+	expect(
+		(await f.inspect({ ...expected, css: expected.css + "@media (min-width:99999px) {:root {--brand: red}}" })).map(
+			(outcome) => outcome.rendered,
+		),
+	).toEqual(["unverified", "unverified"]);
+	expect(await f.page.content()).toBe(before);
+});
+
+it.each(["rgb(1 2 3 / .50001)", "oklch(.704 .191 22.216)", "color-mix(in oklab, red 50%, transparent)"])(
+	"uses native %s color precision without raster sampling",
+	async (value) => {
+		const expected: SourcePropertyExpectation = {
+			...opacity(".5"),
+			property: "background-color",
+			className: "custom",
+			effects: [
+				{ owner: "custom", path: ["@layer utilities", "$"], property: "background-color", value, important: false },
+			],
+			css: `@layer utilities {.custom {background-color:${value}}}`,
+		};
+		const f = await fixture(
+			`<!doctype html><div data-subject style="background-color:${value}">Healthy</div><div data-subject style="background-color:blue">Different</div>`,
+		);
+		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	},
+);
