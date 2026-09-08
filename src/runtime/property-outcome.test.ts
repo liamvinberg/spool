@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, it, onTestFinished } from "vitest";
 import { readInput } from "../daemon/retained-compile";
 import { compilePropertySource } from "../daemon/source-property-compile";
 import { propertyConsumers } from "../daemon/source-property-dependencies";
+import { planPropertyValue } from "../daemon/source-property-plan";
 import { propertyScopePaths } from "../daemon/source-property-scope";
 import type { SourcePropertyExpectation } from "../source-property";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
@@ -313,3 +314,189 @@ it.each(["rgb(1 2 3 / .50001)", "oklch(.704 .191 22.216)", "color-mix(in oklab, 
 		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
 	},
 );
+
+it("verifies fractional compiled type while preserving independent line height", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const certificate = await compilePropertySource(
+		root,
+		new Map([[file, readInput(file)]]),
+		"text-[1.375rem] text-[1rem] leading-[2rem]",
+	);
+	const operation = { kind: "property", property: "font-size", scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "font-size",
+		scope: "",
+		className: "text-[1.375rem] leading-[2rem]",
+		absent: false,
+		scopePaths: propertyScopePaths(certificate, certificate, operation, environment),
+		effects: propertyConsumers(certificate, new Set(["font-size"]), environment),
+		css: certificate.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${expected.css}html{font-size:20px}</style><div data-subject class="text-[1.375rem] leading-[2rem]">Healthy</div><div data-subject class="text-[1rem] leading-[2rem]">Retained</div>`,
+	);
+	const before = await f.page.content();
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.evaluateAll((elements) =>
+				elements.map((element) => [getComputedStyle(element).fontSize, getComputedStyle(element).lineHeight]),
+			),
+	).toEqual([
+		["27.5px", "40px"],
+		["20px", "40px"],
+	]);
+	expect(await f.page.content()).toBe(before);
+});
+
+it.each(["1.375em", "125%", "1.333333rem", ".1234567px"])(
+	"checks %s type size in each native parent context",
+	async (value) => {
+		const expected: SourcePropertyExpectation = {
+			...opacity(".5"),
+			property: "font-size",
+			className: "size",
+			effects: [{ owner: "size", path: ["@layer utilities", "$"], property: "font-size", value, important: false }],
+			css: `@layer utilities {.size {font-size:${value}}}`,
+		};
+		const f = await fixture(
+			`<!doctype html><style>${expected.css}html{font-size:20px}</style><section style="font-size:14px"><div data-subject class="size">First context</div></section><section style="font-size:20px"><div data-subject class="size">Second context</div><div data-subject style="font-size:10px">Retained</div></section>`,
+		);
+		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual([
+			"verified",
+			"verified",
+			"mismatching",
+		]);
+	},
+);
+
+it.each(["1.375rem", "calc(10px + 2vw)"])("does not guess an unresolved root type context for %s", async (value) => {
+	const expected: SourcePropertyExpectation = {
+		...opacity(".5"),
+		property: "font-size",
+		className: "size",
+		effects: [{ owner: "size", path: ["@layer utilities", "$"], property: "font-size", value, important: false }],
+		css: `@layer utilities {.size {font-size:${value}}}`,
+	};
+	const f = await fixture(
+		`<!doctype html><html data-subject class="size"><head><style>${expected.css}</style></head><body>Root context</body></html>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["unverified"]);
+});
+
+it("verifies a compiled corner change without losing the other authored radii", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property: "border-top-left-radius", scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"rounded-lg",
+		operation,
+		{ kind: "custom", value: "1.25rem" },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: operation.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${expected.css}</style><div data-subject class="${plan.next}">Healthy</div><div data-subject class="rounded-lg">Retained</div><div data-subject class="rounded-lg" style="border-top-left-radius:20px 4px">Different vertical radius</div><div data-subject class="${plan.next}" style="border-bottom-right-radius:99px">Independent corner</div>`,
+	);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching", "mismatching", "verified"]);
+	expect(
+		await f.page.locator("[data-subject]").evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return [
+					style.borderTopLeftRadius,
+					style.borderTopRightRadius,
+					style.borderBottomRightRadius,
+					style.borderBottomLeftRadius,
+				];
+			}),
+		),
+	).toEqual([
+		["20px", "8px", "8px", "8px"],
+		["8px", "8px", "8px", "8px"],
+		["20px 4px", "8px", "8px", "8px"],
+		["20px", "8px", "99px", "8px"],
+	]);
+});
+
+it.each([
+	{ property: "border-top-left-radius", radii: ["0px", "8px", "8px", "8px"] },
+	{ property: "border-top-right-radius", radii: ["8px", "0px", "8px", "8px"] },
+	{ property: "border-bottom-right-radius", radii: ["8px", "8px", "0px", "8px"] },
+	{ property: "border-bottom-left-radius", radii: ["8px", "8px", "8px", "0px"] },
+])("verifies $property removal and inverse with the other corners intact", async ({ property, radii }) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property, scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"rounded-lg",
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style><div data-subject class="${plan.next}">Removed</div><div data-subject class="rounded-lg">Restored</div>`,
+	);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(plan.consumers),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "rounded-lg",
+		effects: propertyConsumers(plan.original, plan.roots, environment),
+		css: plan.original.css,
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	expect(
+		await f.page.locator("[data-subject]").evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return [
+					style.borderTopLeftRadius,
+					style.borderTopRightRadius,
+					style.borderBottomRightRadius,
+					style.borderBottomLeftRadius,
+				];
+			}),
+		),
+	).toEqual([radii, ["8px", "8px", "8px", "8px"]]);
+});

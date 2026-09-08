@@ -18,23 +18,36 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("the selected property condition needs a native context proof");
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
+	const corner = isCorner(expected.property);
 	const color = expected.property === "color" || expected.property === "background-color";
-	if (expected.property !== "opacity" && !color) return unverified("this property needs a native effect proof");
+	if (expected.property !== "opacity" && expected.property !== "font-size" && !color && !corner)
+		return unverified("this property needs a native effect proof");
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
 	const applicable: SourcePropertyEffect[] = [];
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
-		if (effect.property !== expected.property)
-			return unverified("this property has dependent effects requiring native proof");
+		// Residual native corners are separate components; their source preservation is compiler-proved.
+		if (corner && isCorner(effect.property) && effect.property !== expected.property) continue;
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
 		if (condition === "inactive") continue;
 		if (condition === "unverified")
 			return unverified("this property effect needs a native selector or conditional context proof");
-		applicable.push(effect);
+		if (effect.property === expected.property) applicable.push(effect);
+		else if (corner && effect.property === "border-radius") {
+			const value = resolvedValue(element, sheet, effect.value);
+			if (value === undefined) return unverified("this corner needs a variable context proof");
+			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+			const rule = sheet.cssRules[index];
+			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+			rule.style.borderRadius = value;
+			const component = rule.style.getPropertyValue(expected.property);
+			if (!component) return unverified("this corner has no native shorthand component proof");
+			applicable.push({ ...effect, property: expected.property, value: component });
+		} else return unverified("this property has dependent effects requiring native proof");
 	}
 
-	const sheet = new CSSStyleSheet();
-	sheet.replaceSync(expected.css);
 	const layers: string[] = [];
 	for (const rule of sheet.cssRules) {
 		const names =
@@ -53,8 +66,13 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	for (const effect of applicable.filter((effect) => effect.important === important)) {
 		const next = priority(effect);
 		if (next === undefined) return unverified("this property effect needs a cascade layer proof");
-		if (next === rank) return unverified("competing property effects need a specificity proof");
-		if (next > rank) {
+		if (
+			next === rank &&
+			!(winner?.owner && effect.owner && JSON.stringify(winner.path) === JSON.stringify(effect.path))
+		)
+			return unverified("competing property effects need a specificity proof");
+		// Equal compiler utility subjects have equal specificity; declaration order decides.
+		if (next >= rank) {
 			winner = effect;
 			rank = next;
 		}
@@ -63,13 +81,30 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return unverified("the expected utility is masked by another declaration");
 	if (color) {
 		if (!winner) return unverified("this color needs an inherited or default context proof");
-		const value = resolvedColor(element, sheet, winner.value);
+		const value = resolvedValue(element, sheet, winner.value);
 		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
 		const wanted = value === undefined ? undefined : nativeColor(value);
 		const actual = nativeColor(observed);
 		if (wanted === undefined || actual === undefined)
 			return unverified("this color needs a variable or native context proof");
 		return { rendered: wanted === actual ? "verified" : "mismatching", observed };
+	}
+	if (expected.property === "font-size" || corner) {
+		if (!winner && !corner) return unverified("this type size needs an inherited context proof");
+		const value = resolvedValue(element, sheet, winner?.value ?? "0px");
+		const wanted = value === undefined ? undefined : nativeLength(element, sheet, expected.property, value);
+		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
+		const parts = observed.trim().split(/\s+/);
+		if (
+			wanted === undefined ||
+			parts.length > (corner ? 2 : 1) ||
+			parts.some((part) => !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?px$/i.test(part))
+		)
+			return unverified("this property needs a native length context proof");
+		return {
+			rendered: parts.every((part) => Number.parseFloat(part) === wanted) ? "verified" : "mismatching",
+			observed,
+		};
 	}
 	let wanted = 1;
 	if (winner) {
@@ -146,7 +181,7 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 }
 
 /** Resolve only a unique unconditional compiler root definition, checked in this use's context. */
-function resolvedColor(
+function resolvedValue(
 	element: Element,
 	sheet: CSSStyleSheet,
 	value: string,
@@ -178,7 +213,7 @@ function resolvedColor(
 			unresolved = true;
 			return "";
 		}
-		const resolved = resolvedColor(element, sheet, definitions[0]!, new Set([...seen, name]));
+		const resolved = resolvedValue(element, sheet, definitions[0]!, new Set([...seen, name]));
 		const actual = element.ownerDocument.defaultView?.getComputedStyle(element).getPropertyValue(name).trim();
 		if (resolved === undefined || actual !== resolved) {
 			unresolved = true;
@@ -210,4 +245,42 @@ function nativeColor(value: string): string | undefined {
 	// Serialize once before changing color spaces, matching computed CSS precision.
 	const parsed = parse(value);
 	return parsed === undefined ? undefined : parse(`color(from ${parsed} srgb r g b / alpha)`);
+}
+
+/** Relative font sizes use this native use's root or parent, never another selected use. */
+function nativeLength(element: Element, sheet: CSSStyleSheet, property: string, value: string): number | undefined {
+	const view = element.ownerDocument.defaultView;
+	if (!view) return;
+	const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+	const rule = sheet.cssRules[index];
+	if (!(rule instanceof CSSStyleRule)) return;
+	rule.style.setProperty(property, value);
+	if (!rule.style.getPropertyValue(property)) return;
+	const parsed = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(px|rem|em|%)$/i.exec(value.trim());
+	if (!parsed) return;
+	const number = Number(parsed[1]);
+	const unit = parsed[2]!.toLowerCase();
+	let computed = number;
+	if (unit !== "px") {
+		if (property === "font-size" && element === element.ownerDocument.documentElement) return;
+		if (property !== "font-size" && unit === "%") return;
+		const context =
+			unit === "rem"
+				? element.ownerDocument.documentElement
+				: property === "font-size"
+					? element.parentElement
+					: element;
+		if (!context) return;
+		const inherited = view.getComputedStyle(context).fontSize;
+		if (!inherited.endsWith("px")) return;
+		computed *= Number.parseFloat(inherited) / (unit === "%" ? 100 : 1);
+	}
+	if (!Number.isFinite(computed)) return;
+	// Preserve the authored precision during conversion; serialize only the final px value.
+	rule.style.setProperty(property, `${computed}px`);
+	return Number.parseFloat(rule.style.getPropertyValue(property));
+}
+
+function isCorner(property: string): boolean {
+	return /^border-(?:top|bottom)-(?:left|right)-radius$/.test(property);
 }
