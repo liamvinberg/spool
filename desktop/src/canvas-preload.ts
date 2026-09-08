@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { DirectoryRequest } from "./directory-dialog";
 import type { CanvasCommand } from "./main";
 
 // The canvas window's bridge.
@@ -53,4 +54,6 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 		return () => ipcRenderer.removeListener("spool:canvas-command", handler);
 	},
 	setCanvasActive: (active: boolean) => ipcRenderer.send("spool:canvas-active", active),
+	chooseDirectory: (request: DirectoryRequest): Promise<string | null> =>
+		ipcRenderer.invoke("spool:choose-directory", request),
 });

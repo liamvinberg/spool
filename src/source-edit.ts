@@ -1,3 +1,4 @@
+import type { SourceImageExpectation } from "./source-image";
 import type {
 	SourcePropertyExpectation,
 	SourcePropertyNative,
@@ -18,6 +19,7 @@ export type SourceOperation =
 	| { kind: "literal"; field?: string }
 	| { kind: "property"; property: string; scope: string }
 	| { kind: "properties"; target: SourcePropertyGroupTarget }
+	| { kind: "image" }
 	| { kind: "delete" };
 
 export function isPropertyOperation(
@@ -31,13 +33,14 @@ export type SourceChange =
 	| { kind: "literal"; text: string }
 	| { kind: "property"; value: SourcePropertyValue }
 	| { kind: "properties"; value: SourcePropertyGroupValue }
+	| { kind: "image"; path: string }
 	| { kind: "delete" };
 
 export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boolean {
 	if (a.kind === "literal") return b.kind === "literal" && a.field === b.field;
 	if (a.kind === "property") return b.kind === "property" && a.property === b.property && a.scope === b.scope;
 	if (a.kind === "properties") return b.kind === "properties" && samePropertyGroupTarget(a.target, b.target);
-	return b.kind === "delete";
+	return a.kind === b.kind;
 }
 
 /** Transient source authority shared by canvas input, frame delivery and history. */
@@ -93,6 +96,7 @@ export interface SourceReach {
 export interface SourceRead {
 	propertyPreview?: SourcePropertyPreviewTemplate;
 	property?: SourcePropertyReading;
+	asset?: string;
 	structure?: SourceStructuralExpectation;
 	operation: SourceOperation;
 	handle: string;
@@ -100,7 +104,7 @@ export interface SourceRead {
 	generation: number;
 	original: SourceOccurrence;
 	source: string;
-	role: "literal-child" | "literal-attribute" | "factory-literal" | "structural-unit";
+	role: "literal-child" | "literal-attribute" | "factory-literal" | "image-binding" | "structural-unit";
 	cell?: string;
 	field?: string;
 	scope?: "definition" | "call-site";
@@ -138,6 +142,7 @@ export interface SourcePublication {
 		| { kind: "literal"; value: string; absent: boolean }
 		| SourcePropertyExpectation
 		| SourcePropertyGroupExpectation
+		| SourceImageExpectation
 		| SourceStructuralExpectation;
 	admission: { token: string; expires: number };
 	owner: string;

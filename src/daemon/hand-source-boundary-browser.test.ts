@@ -1,5 +1,6 @@
 import { readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
 import type { SourceResult } from "../source-edit";
 import { serveProject, writeDesignFile, writeFrame } from "../test-helpers";
@@ -23,8 +24,8 @@ const files = {
 		'<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>',
 };
 
-async function saveSibling() {
-	const f = await originCanvas(files, consumer, "#label", true);
+async function saveSibling(beforeLoad?: (page: Page) => Promise<void>) {
+	const f = await originCanvas(files, consumer, "#label", true, beforeLoad);
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await second.locator("#label").waitFor();
 	await f.frame.locator("#draft").fill("first independent");
@@ -39,16 +40,17 @@ async function saveSibling() {
 		.poll(() => readFileSync(f.file(owner), "utf8"))
 		.toBe(authored.replace("Sibling before", "Sibling after"));
 	await f.settled();
+	expect(await f.page.evaluate(() => Reflect.get(window, "originOutcomes"))).toEqual([
+		expect.objectContaining({ installation: "installed", rendered: "verified" }),
+		expect.objectContaining({ installation: "installed", rendered: "verified" }),
+	]);
 	await expect.poll(() => second.locator("#label").textContent()).toBe("Sibling after");
 	expect(readFileSync(f.file(css), "utf8")).toBe(files[css]);
 	expect(readFileSync(f.file(resource), "utf8")).toBe(files[resource]);
 	return { ...f, second };
 }
 
-it("keeps sibling-owned source, CSS and resources through inverse after deleting its initiating consumer", {
-	timeout: 120000,
-}, async () => {
-	const f = await saveSibling();
+async function inverseAfterConsumerLoss(f: Awaited<ReturnType<typeof saveSibling>>) {
 	await f.page.getByRole("button", { name: "Show affected uses", exact: true }).click();
 	await f.page.locator("[data-source-uses]").getByRole("button", { name: "owner not mounted ↗", exact: true }).click();
 	const mounted = f.page.frameLocator('iframe[title="owner"]');
@@ -72,6 +74,93 @@ it("keeps sibling-owned source, CSS and resources through inverse after deleting
 		expect(readFileSync(f.file(css), "utf8")).toBe(files[css]);
 		expect(readFileSync(f.file(resource), "utf8")).toBe(files[resource]);
 	}
+}
+
+it("keeps sibling-owned source, CSS and resources through inverse after deleting its initiating consumer", {
+	timeout: 120000,
+}, async () => {
+	await inverseAfterConsumerLoss(await saveSibling());
+});
+
+async function holdSavedInspection(page: Page): Promise<void> {
+	await page.addInitScript(() => {
+		if (window !== window.top) return;
+		const replies = new Set<string>();
+		Reflect.set(window, "savedInspectionReplies", replies);
+		let held = false;
+		const hold = (event: MessageEvent) => {
+			const data = event.data;
+			if (
+				data?.spool !== "source-reply" ||
+				data.frame !== "home" ||
+				data.result?.value !== "Sibling after" ||
+				!data.result?.publication
+			)
+				return;
+			replies.add(data.id);
+			if (held) return;
+			held = true;
+			event.stopImmediatePropagation();
+			Reflect.set(window, "releaseSavedInspection", () => {
+				window.dispatchEvent(new MessageEvent("message", { data, origin: event.origin, source: event.source }));
+			});
+		};
+		window.addEventListener("message", hold, true);
+	});
+}
+
+async function waitForExpiredInspection(f: Awaited<ReturnType<typeof saveSibling>>) {
+	await f.page.waitForFunction(() => typeof Reflect.get(window, "releaseSavedInspection") === "function");
+	// The real request's unchanged deadline expires before its held native reply.
+	await f.page.locator("[data-source-ownership]").waitFor({ state: "detached" });
+}
+
+async function releaseSavedInspection(page: Page) {
+	await page.evaluate(() => {
+		const release = Reflect.get(window, "releaseSavedInspection");
+		if (typeof release !== "function") throw new Error("the saved inspection reply was not held");
+		release();
+	});
+}
+
+it("refreshes late source disclosure before sibling-owned inverse after consumer loss", {
+	timeout: 120000,
+}, async () => {
+	const f = await saveSibling(holdSavedInspection);
+	await waitForExpiredInspection(f);
+	await releaseSavedInspection(f.page);
+	await f.page.getByRole("button", { name: "Show affected uses", exact: true }).waitFor();
+	expect(await f.page.evaluate(() => Reflect.get(window, "savedInspectionReplies").size)).toBeGreaterThan(1);
+	await inverseAfterConsumerLoss(f);
+});
+
+it("retires a delayed source disclosure when its selection leaves", { timeout: 120000 }, async () => {
+	let descriptions = 0;
+	const f = await saveSibling(async (page) => {
+		await holdSavedInspection(page);
+		page.on("request", (request) => {
+			if (request.url().endsWith("/source") && request.postDataJSON()?.action === "describe") descriptions++;
+		});
+	});
+	await waitForExpiredInspection(f);
+	await f.page.mouse.click(800, 700);
+	await expect
+		.poll(async () => {
+			const response = await fetch(`${f.project.url}/api/p/${f.project.name}/selection`, {
+				headers: { "X-Spool-Control": f.project.controlToken },
+			});
+			return (await response.json()).selection;
+		})
+		.toEqual([]);
+	const before = descriptions;
+	await releaseSavedInspection(f.page);
+	await f.page.evaluate(
+		() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+	);
+	expect(descriptions).toBe(before);
+	expect(await f.page.getByRole("button", { name: "Show affected uses", exact: true }).count()).toBe(0);
+	expect(f.writes).toHaveLength(1);
+	expect(readFileSync(f.file(owner), "utf8")).toBe(authored.replace("Sibling before", "Sibling after"));
 });
 
 it.each([owner, css, resource])(

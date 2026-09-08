@@ -1835,10 +1835,12 @@ const NOT_INLINE = /^(flex-1|min-h-0|size-full|aspect-square|self-center|order-f
 
 export function AddClassRow({
 	view,
+	editable,
 	taken,
 	onAdd,
 }: {
 	view: View;
+	editable: boolean;
 	/** the whole literal's tokens, so one the element already wears is not offered */
 	taken: ReadonlySet<string>;
 	onAdd: (token: string) => void;
@@ -1848,7 +1850,7 @@ export function AddClassRow({
 		<AddField
 			candidates={SEEDS.filter((token) => !(inline && NOT_INLINE.test(token))).map((token) => ({ token }))}
 			taken={taken}
-			ok={view.element.refusal === undefined}
+			ok={editable}
 			verdictOf={view.compiler.verdictOf}
 			onAsk={view.compiler.ask}
 			onAdd={onAdd}
