@@ -12,11 +12,15 @@ export interface SourceStructuralParent {
 	chain: readonly string[];
 }
 
+/** An optional unit occupies one position among source-attributed native neighbors. */
+export type SourceStructuralChild = { kind: "unit" } | { kind: "neighbor"; source: string; value: string };
+
 /** Render verification uses the source owner's canonical result, not the installed packet as its oracle. */
 export interface SourceStructuralExpectation {
 	kind: "structure";
 	site: string;
 	parent?: SourceStructuralParent;
+	children?: readonly SourceStructuralChild[];
 	state: SourceStructureState;
 	fallback?: { source: string; value: string };
 }

@@ -319,6 +319,11 @@ export function verifyReloadedStructure(
 			)
 				return { rendered: "mismatching", reason: "the reloaded source parent has different membership or order" };
 		} else {
+			if (!expected.children)
+				return {
+					rendered: "unverified",
+					reason: "the original source parent has no bounded neighboring membership proof",
+				};
 			const children = roots(expected.site.slice(0, -"/optional".length), locations).filter(
 				(root) => root.parentElement === parent,
 			);
@@ -328,7 +333,29 @@ export function verifyReloadedStructure(
 				const fallback = roots(expected.fallback.source, locations).filter((root) => root.parentElement === parent);
 				if (fallback.length !== 1 || fallback[0]?.textContent !== expected.fallback.value)
 					return { rendered: "mismatching", reason: "the authored fallback did not render after reload" };
+				children.push(...fallback);
 			}
+			const ordered: Node[] = [];
+			for (const child of expected.children) {
+				if (child.kind === "unit") ordered.push(...children);
+				else {
+					const neighbors = roots(child.source, locations).filter((root) => root.parentElement === parent);
+					if (neighbors.length !== 1 || neighbors[0]?.textContent !== child.value)
+						return {
+							rendered: "mismatching",
+							reason: "an authored neighboring output is missing or changed after reload",
+						};
+					ordered.push(...neighbors);
+				}
+			}
+			if (
+				parent.childNodes.length !== ordered.length ||
+				ordered.some((child, index) => child !== parent.childNodes[index])
+			)
+				return {
+					rendered: "mismatching",
+					reason: "the reloaded source parent has different neighboring membership or order",
+				};
 		}
 		return { rendered: "verified" };
 	});

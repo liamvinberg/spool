@@ -54,10 +54,21 @@ export function resolveSourceDelete(
 					? { site: observedParent.site, chain: observedParent.chain.slice(ownerCall) }
 					: undefined
 			: undefined;
+	const children =
+		parent && plan.parentShape && plan.parentShape.source === compilation.packet.locations?.[parent.site]
+			? plan.parentShape.children.map((child) => {
+					if (child.kind === "unit") return child;
+					const site = Object.entries(compilation.packet.locations ?? {}).find(
+						([, source]) => source === child.source,
+					)?.[0];
+					return site ? { ...child, source: site } : undefined;
+				})
+			: undefined;
 	const expected: SourceStructuralExpectation = {
 		kind: "structure",
 		site: group.id,
 		...(parent ? { parent } : {}),
+		...(children?.every((child) => child !== undefined) ? { children } : {}),
 		state: after.structure,
 		...(plan.fallback && fallbackSite ? { fallback: { source: fallbackSite, value: plan.fallback.value } } : {}),
 	};
@@ -92,6 +103,7 @@ export function describeDeleteTarget(original: SourceOccurrence, target: SourceD
 			kind: "structure",
 			site: target.site,
 			...(target.expected.parent ? { parent: target.expected.parent } : {}),
+			...(target.expected.children ? { children: target.expected.children } : {}),
 			state: target.before,
 		},
 		original,

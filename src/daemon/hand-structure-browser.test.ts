@@ -886,21 +886,23 @@ it.each([
 );
 
 it.each([
-	{ name: "delete", inverse: false, fallback: false },
-	{ name: "inverse", inverse: true, fallback: false },
-	{ name: "fallback", inverse: false, fallback: true },
+	{ name: "delete", inverse: false, fallback: false, mutation: "" },
+	{ name: "inverse", inverse: true, fallback: false, mutation: "" },
+	{ name: "fallback", inverse: false, fallback: true, mutation: "" },
+	{ name: "fallback missing neighbor", inverse: false, fallback: true, mutation: "remove" },
+	{ name: "fallback reordered neighbor", inverse: false, fallback: true, mutation: "reorder" },
 ])(
 	"retires only a resolved structural recovery after explicit reload ($name)",
 	{
 		timeout: 120_000,
 	},
-	async ({ inverse, fallback }) => {
+	async ({ inverse, fallback, mutation }) => {
 		const removed = fallback ? '<Counter name="A"/>' : '<Counter key="a" name="A"/>';
 		const replacement = fallback ? "null" : "";
 		const effect = fallback
 			? 'useLayoutEffect(()=>()=>{const input=document.querySelector("[data-neighbor]");if(name==="A"&&window.resetSurvivor&&input)input.value="authored reset"},[])'
 			: 'useLayoutEffect(()=>{if(name==="B"&&window.resetSurvivor)input.current.value="authored reset"})';
-		const source = `import {useRef,useLayoutEffect} from 'react';function Counter({name}){const input=useRef(null);${effect};return <section data-name={name} style={{padding:24}}><input ref={input} defaultValue="initial"/>{name}</section>}${fallback ? `function Pass({header}){return <section>{header ?? <i>Fallback</i>}<aside>Kept<input data-neighbor="" defaultValue="initial"/></aside></section>}function Contents(){return <main style={{padding:40}}><Pass key="a" header={${removed}}/><Pass key="b" header={<Counter name="B"/>}/></main>}export default function Frame(){return <Contents/>}` : `export default function Frame(){return <main style={{padding:40}}>${removed}<Counter key="b" name="B"/></main>}`}`;
+		const source = `import {useRef,useLayoutEffect} from 'react';function Counter({name}){const input=useRef(null);${effect};return <section data-name={name} style={{padding:24}}><input ref={input} defaultValue="initial"/>{name}</section>}${fallback ? `function Pass({header}){return <section>{header ?? <i>Fallback</i>}<aside>Kept</aside><input data-neighbor="" defaultValue="initial"/></section>}function Contents(){return <main style={{padding:40}}><Pass key="a" header={${removed}}/><Pass key="b" header={<Counter name="B"/>}/></main>}export default function Frame(){return <Contents/>}` : `export default function Frame(){return <main style={{padding:40}}>${removed}<Counter key="b" name="B"/></main>}`}`;
 		const f = await originCanvas({}, source, '[data-name="A"]');
 		const sends: string[] = [];
 		f.page.on("request", (request) => {
@@ -954,18 +956,44 @@ it.each([
 			.poll(() => composer.inputValue())
 			.toContain(inverse ? "undo delete this element" : "delete this element");
 		expect(await composer.inputValue()).toContain("Keep my unrelated draft");
+		const prepared = await composer.inputValue();
+		if (mutation)
+			await f.page.addInitScript((mode) => {
+				addEventListener("message", (event) => {
+					if (event.data?.spool !== "source-request" || event.data.action !== "verify") return;
+					const fallback = document.querySelector("i"),
+						parent = fallback?.parentElement;
+					const neighbor = parent?.querySelector("aside");
+					if (!fallback || !parent || !neighbor) return;
+					if (mode === "remove") neighbor.remove();
+					else parent.append(fallback);
+					Reflect.set(window, "freshNeighborMutation", mode);
+				});
+			}, mutation);
 		await f.page.locator('[data-dock-glyph="properties"]').click();
 		await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
 		await expect.poll(() => f.frame.locator('[data-name="B"] input').inputValue()).toBe("initial");
 		await expect.poll(() => f.target.count()).toBe(inverse ? 1 : 0);
 		if (fallback) {
 			expect(await f.frame.locator("i").textContent()).toBe("Fallback");
-			expect(await f.frame.locator("aside").allTextContents()).toEqual(["Kept", "Kept"]);
+			if (!mutation) expect(await f.frame.locator("aside").allTextContents()).toEqual(["Kept", "Kept"]);
 		}
-
-		await expect.poll(() => notice.count()).toBe(0);
+		if (mutation) {
+			await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(2);
+			expect(await f.frame.locator("body").evaluate(() => Reflect.get(window, "freshNeighborMutation"))).toBe(
+				mutation,
+			);
+			const actual = await f.frame
+				.locator("i")
+				.evaluate((element) => [...element.parentElement!.children].map((child) => child.tagName));
+			expect(actual).toEqual(mutation === "remove" ? ["I", "INPUT"] : ["ASIDE", "INPUT", "I"]);
+			expect(await f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1))).toMatchObject({
+				rendered: "mismatching",
+			});
+			expect(await notice.count()).toBe(1);
+		} else await expect.poll(() => notice.count()).toBe(0);
 		await f.page.locator('[data-dock-glyph="agent"]').click();
-		await expect.poll(() => composer.inputValue()).toBe("Keep my unrelated draft");
+		await expect.poll(() => composer.inputValue()).toBe(mutation ? prepared : "Keep my unrelated draft");
 		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(saved);
 		expect(sends).toEqual([]);
 		expect(f.writes).toEqual(inverse ? ["commit", "inverse"] : ["commit"]);

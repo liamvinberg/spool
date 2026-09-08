@@ -226,6 +226,7 @@ it("requires the canonical empty parent or attributed fallback instead of target
 	const fallback: SourceStructuralExpectation = {
 		kind: "structure",
 		site: "slot/optional",
+		children: [{ kind: "unit" }],
 		parent: { site: "root-site", chain: [] },
 		state: { lists: {}, optional: { "slot/optional": false }, factories: {} },
 		fallback: { source: "fallback-site", value: "Fallback" },
@@ -258,6 +259,7 @@ it("scopes a reloaded named slot to its original authored parent call ancestry",
 	const saved: SourceStructuralExpectation = {
 		kind: "structure",
 		site: "slot/optional",
+		children: [{ kind: "unit" }],
 		parent: { site: "root", chain: ["a"] },
 		state: { lists: {}, optional: { "slot/optional": false }, factories: {} },
 		fallback: { source: "fallback", value: "Fallback" },
@@ -279,4 +281,36 @@ it("scopes a reloaded named slot to its original authored parent call ancestry",
 	expect(verify()[0]?.rendered).toBe("mismatching");
 	parent.dataset.call = "unknown-call";
 	expect(verify()[0]?.rendered).toBe("unverified");
+});
+
+it("requires the original optional parent's complete neighboring output and order after reload", () => {
+	const { parent } = fixture();
+	parent.dataset.spoolSource = "root";
+	parent.innerHTML = '<i data-spool-source="fallback">Fallback</i><aside data-spool-source="kept">Kept</aside>';
+	const saved: SourceStructuralExpectation = {
+		kind: "structure",
+		site: "slot/optional",
+		parent: { site: "root-site", chain: [] },
+		state: { lists: {}, optional: { "slot/optional": false }, factories: {} },
+		fallback: { source: "fallback-site", value: "Fallback" },
+		children: [{ kind: "unit" }, { kind: "neighbor", source: "kept-site", value: "Kept" }],
+	};
+	const mapped = { "root-site": "root", "fallback-site": "fallback", "kept-site": "kept" };
+	const verify = () => verifyReloadedStructure(saved, saved.state, mapped, () => false)[0]?.rendered;
+	expect(verify()).toBe("verified");
+	const fallback = parent.firstChild!,
+		kept = parent.lastChild!;
+	parent.append(fallback);
+	expect(verify()).toBe("mismatching");
+	parent.prepend(fallback);
+	kept.remove();
+	expect(verify()).toBe("mismatching");
+	parent.append(kept);
+	kept.textContent = "Different";
+	expect(verify()).toBe("mismatching");
+	kept.textContent = "Kept";
+	parent.append(document.createElement("span"));
+	expect(verify()).toBe("mismatching");
+	delete saved.children;
+	expect(verify()).toBe("unverified");
 });

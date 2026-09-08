@@ -1,4 +1,5 @@
 import type { JSXElement, Node } from "@babel/types";
+import type { SourceStructuralChild } from "../source-structure";
 import { walkNodes } from "./jsx-walk";
 import { literal, type Selection, type Sources, StructuralShapeRefusal, sourceRead } from "./source-origins";
 import { significantStructuralChildren, structuralKey } from "./source-structure-syntax";
@@ -70,6 +71,57 @@ function nullFallback(fn: ReturnType<Sources["valueCallee"]>["fn"], field: strin
 	return found.length === 1 ? found[0] : undefined;
 }
 
+/** Only a single transported slot with literal native neighbors has a fresh child-order proof. */
+function slotParentShape(
+	sources: Sources,
+	parent: Node | null | undefined,
+	path: string,
+	local: string | undefined,
+	fallback: JSXElement | undefined,
+) {
+	if (parent?.type !== "JSXElement" || !parent.loc || !local) return;
+	const source = `${path}:${parent.loc.start.line}:${parent.loc.start.column + 1}`;
+	const site = sources.site(source);
+	const children: SourceStructuralChild[] = [];
+	for (const child of parent.children) {
+		if (
+			child.type === "JSXText" ||
+			(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression")
+		) {
+			if (literal({ ...site, node: { ...site.node, children: [child] } }) === "") continue;
+			return;
+		}
+		if (child.type === "JSXExpressionContainer") {
+			const expression = child.expression;
+			if (
+				(expression.type === "Identifier" && expression.name === local) ||
+				(expression.type === "LogicalExpression" &&
+					expression.operator === "??" &&
+					expression.left.type === "Identifier" &&
+					expression.left.name === local &&
+					expression.right.start === fallback?.start)
+			) {
+				children.push({ kind: "unit" });
+				continue;
+			}
+			return;
+		}
+		if (
+			child.type !== "JSXElement" ||
+			child.openingElement.name.type !== "JSXIdentifier" ||
+			!/^[a-z]/.test(child.openingElement.name.name) ||
+			!child.loc
+		)
+			return;
+		const neighbor = `${path}:${child.loc.start.line}:${child.loc.start.column + 1}`;
+		const value = child.openingElement.selfClosing ? "" : literal(sources.site(neighbor));
+		if (value === undefined) return;
+		children.push({ kind: "neighbor", source: neighbor, value });
+	}
+	if (children.filter((child) => child.kind === "unit").length !== 1) return;
+	return { source, children };
+}
+
 /** Validate the committed creation chain, including copied React element types. */
 export function readStructuralAncestry(sources: Sources, pick: Selection) {
 	retainedOwner(pick);
@@ -110,6 +162,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 		originalTarget?.role ?? (selected.source === leaf.source ? ("definition" as const) : ("call-site" as const));
 	let fallbackEffect: { source: string; value: string } | undefined;
 	let parentCall: string | undefined;
+	let parentShape: ReturnType<typeof slotParentShape>;
 	const steps: string[] = [`actual ${value.kind} element -> authored type source`];
 	const carrier = inputFromCall ? pick.chain.at(-2) : pick.chain.at(-1);
 	if (value.kind === "clone" || (value.kind === "create" && !directFactory)) {
@@ -188,6 +241,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 		const conditional =
 			b?.type === "ConditionalExpression" && b.consequent.type === "Identifier" && b.alternate.type === "Identifier";
 		const fallback = nullFallback(fn, attr.name.name);
+		parentShape = slotParentShape(sources, b, definition.unit.path, local, fallback);
 		if (fallback?.loc && fallback.children.every((child) => child.type === "JSXText")) {
 			const source = `${definition.unit.path}:${fallback.loc.start.line}:${fallback.loc.start.column + 1}`;
 			const value = literal(sources.site(source));
@@ -236,6 +290,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 		selected: range(node),
 		parent: range(parent),
 		...(parentCall ? { parentCall } : {}),
+		...(parentShape ? { parentShape } : {}),
 		replacement,
 		steps,
 		text: selected.unit.text,
