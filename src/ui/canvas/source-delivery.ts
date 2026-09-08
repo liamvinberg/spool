@@ -324,7 +324,8 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				if (
 					!(
 						(operation.kind === "literal" && expected?.kind === "literal") ||
-						(operation.kind === "image" && expected?.kind === "image")
+						(operation.kind === "image" && expected?.kind === "image") ||
+						(operation.kind === "property" && expected?.kind === "property")
 					)
 				)
 					return;
@@ -351,7 +352,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 								publication: use.original.publication,
 								original: use.original,
 								expected:
-									expected.kind === "image"
+									expected.kind !== "literal"
 										? expected
 										: { kind: "literal", value: description.value, absent: original.absent ?? false },
 							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
@@ -359,7 +360,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 						}),
 					),
 				);
-				if (expected.kind === "image") {
+				if (expected.kind !== "literal") {
 					for (const name of intent.recovery?.frames ?? [frame]) {
 						const uses = description.reach.uses.filter((use) => use.frame === name);
 						if (!uses.length || !(await sourceIsCurrent(project, uses[0]!.original.publication)))

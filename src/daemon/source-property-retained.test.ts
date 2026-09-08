@@ -33,3 +33,24 @@ it("retains absent native classes without admitting expressions, duplicate attri
 	expect(after.shape).toBe(before.shape);
 	expect(Object.values(after.cells).filter((cell) => cell.field === "className" && !cell.absent)).toHaveLength(1);
 });
+
+it("observes direct literal style descriptors without lowering their members into source cells", () => {
+	const source =
+		'export default function Frame(){return <h1 style={{fontWeight:550,padding:4}} className="text-red-500">Words</h1>}';
+	const before = lowerLiterals("frames/home/frame.tsx", source);
+	expect(before.code).toContain("Style({fontWeight:550,padding:4})");
+	expect(Object.values(before.cells).some((cell) => cell.field === "style")).toBe(false);
+	expect(lowerLiterals("frames/home/frame.tsx", source.replace("550", "551")).shape).not.toBe(before.shape);
+});
+
+it.each([
+	"{...unknown}",
+	"{get fontWeight(){return 550}}",
+	"new Proxy({}, {})",
+	"{fontWeight:weight}",
+	"{fontWeight:550,fontWeight:600}",
+	"{__proto__:null}",
+])("does not inspect or mark an unknown style object: %s", (value) => {
+	const source = `export default function Frame(){return <h1 style={${value}} className="text-red-500">Words</h1>}`;
+	expect(lowerLiterals("frames/home/frame.tsx", source).code).not.toMatch(/Style\(/);
+});
