@@ -1,3 +1,12 @@
+import type { SourcePropertyExpectation } from "./source-property";
+import type { SourceStructuralExpectation } from "./source-structure";
+
+/** Purpose is captured before reading source and retained through completion and recovery. */
+export type SourceOperation =
+	| { kind: "literal"; field?: string }
+	| { kind: "property"; property: string; scope: string }
+	| { kind: "delete" };
+
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
 	absent?: boolean | undefined;
@@ -44,6 +53,7 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	operation?: SourceOperation;
 	handle: string;
 	owner: string;
 	generation: number;
@@ -81,7 +91,10 @@ export interface RetainedValues {
 }
 
 export interface SourcePublication {
-	expected: { value: string; absent: boolean };
+	expected:
+		| { kind?: "literal"; value: string; absent: boolean }
+		| SourcePropertyExpectation
+		| SourceStructuralExpectation;
 	admission: { token: string; expires: number };
 	owner: string;
 	frame: string;
