@@ -2915,7 +2915,15 @@ export function ProjectCanvas({
 			const original = await sourceDelivery.read(intent.frame, intent.selector, generation, intent.field);
 			const asked =
 				original && original.occurrence === intent.original?.occurrence
-					? await readSource(project, intent.frame, original, generation, sourceDelivery.observer, true)
+					? await readSource(
+							project,
+							intent.frame,
+							original,
+							generation,
+							sourceDelivery.observer,
+							intent.operation,
+							true,
+						)
 					: undefined;
 			if (asked?.ok) await cancelSource(project, asked.read.handle);
 			await sourceDelivery.cancel(intent.frame, generation);
@@ -2969,7 +2977,15 @@ export function ProjectCanvas({
 					);
 					return;
 				}
-				const asked = await readSource(project, intent.frame, original, generation, sourceDelivery.observer, true);
+				const asked = await readSource(
+					project,
+					intent.frame,
+					original,
+					generation,
+					sourceDelivery.observer,
+					intent.operation,
+					true,
+				);
 				if (!asked?.ok) {
 					await sourceDelivery.cancel(intent.frame, generation);
 					await showSourceResult(

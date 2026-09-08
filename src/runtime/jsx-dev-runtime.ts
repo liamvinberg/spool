@@ -74,6 +74,7 @@ import {
 	type RetainedValues,
 	type SourceInventory,
 	type SourceOccurrence,
+	type SourceOperation,
 	type SourcePublication,
 	sameSourceOccurrence,
 	type UseOutcome,
@@ -271,7 +272,12 @@ function sourceContext(element: Element): string {
 	}
 	return JSON.stringify(path);
 }
-function inspectSource(element: HTMLElement, field?: string): SourceOccurrence | undefined {
+function inspectSource(
+	element: HTMLElement,
+	field?: string,
+	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+): SourceOccurrence | undefined {
+	if (operation.kind !== "literal") return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
 	let origin = field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
@@ -398,12 +404,15 @@ function clearSourceFeedback(): void {
 	for (const element of document.querySelectorAll("[data-spool-shared-use]"))
 		element.removeAttribute("data-spool-shared-use");
 }
-function inventorySource(field?: string): Omit<SourceInventory, "frame"> {
+function inventorySource(
+	field?: string,
+	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+): Omit<SourceInventory, "frame"> {
 	const uses: SourceInventory["uses"] = [];
 	let unknown = 0;
 	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-source]")) {
 		if (field === undefined && element.children.length > 0) continue;
-		const original = inspectSource(element, field);
+		const original = inspectSource(element, field, operation);
 		if (!original) {
 			if (field !== undefined || element.textContent) unknown++;
 			continue;
@@ -472,12 +481,17 @@ function cancelSourceUses(generation: number, feedback = true): void {
 	}
 	if (feedback) clearSourceFeedback();
 }
-function sourceRead(element: HTMLElement, generation: number, field?: string): SourceOccurrence | undefined {
+function sourceRead(
+	element: HTMLElement,
+	generation: number,
+	field?: string,
+	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+): SourceOccurrence | undefined {
 	if (generation <= intent) return;
 	for (const old of leases.keys()) cancelSource(old);
 	intent = generation;
 	acceptedOutcome = undefined;
-	const original = inspectSource(element, field);
+	const original = inspectSource(element, field, operation);
 	if (!original || original.value !== renderedField(element, original.field)) return;
 	leases.set(generation, previewedUse(element, original));
 	return original;
