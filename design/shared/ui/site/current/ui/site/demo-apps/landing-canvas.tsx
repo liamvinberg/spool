@@ -1,5 +1,5 @@
 import "./landing-fit.css";
-import { type ReactNode, type PointerEvent, useEffect, useRef, useState } from "react";
+import { type ReactNode, type PointerEvent, memo, useCallback, useEffect, useRef, useState } from "react";
 import { CAPTURED, type ModelState, useModels } from "../../../lib/spool/agent-model";
 import { cn } from "../../../lib/utils";
 import { CanvasChrome } from "../../spool/canvas-chrome";
@@ -11,6 +11,7 @@ import "../../spool/app-header.css";
 import { Offprint } from "./offprint";
 import { type Camera, centerOn, entryCamera, fitCamera, zoomAt } from "./canvas-camera";
 import "./canvas-motion.css";
+import "./mobile-product.css";
 import { ModelMenu } from "../../spool/model-control";
 import { NumField, Row, Section, VALUE } from "../../spool/properties-fields";
 import { DEMO_TAKES, DemoProduct, type DemoTake } from "./landing-product";
@@ -28,6 +29,8 @@ const POSITIONS: Record<DemoTake, { x: number; y: number }> = {
 	booking: { x: 1320, y: 0 },
 	ticket: { x: 660, y: 1060 },
 };
+const CanvasProduct = memo(Offprint);
+const MOBILE_QUERY = "(max-width: 760px), (pointer: coarse)";
 const ASK = "Prototype a workshop booking app. Show finding a workshop, choosing a time, and the ticket.";
 
 function LandingShell({
@@ -143,13 +146,29 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 	const [session, setSession] = useState({ time: "10:00", seats: 1 });
 	const settings = useRef<HTMLDialogElement>(null);
 	const player = useRef<HTMLDialogElement>(null);
+	const playerReturn = useRef<HTMLElement | null>(null);
 	const [playing, setPlaying] = useState<DemoTake>("workshops");
 	const [quiet, setQuiet] = useState(false);
+	const [mobile, setMobile] = useState(false);
+	const navigation = useRef<(take: DemoTake) => void>(() => {});
+	const openWorkshop = useCallback(() => navigation.current("booking"), []);
+	const backToWorkshops = useCallback(() => navigation.current("workshops"), []);
+	const bookWorkshop = useCallback((time: string, seats: number) => {
+		setSession({ time, seats });
+		navigation.current("ticket");
+	}, []);
+	useEffect(() => {
+		const media = window.matchMedia(MOBILE_QUERY);
+		const update = () => setMobile(media.matches);
+		update();
+		media.addEventListener("change", update);
+		return () => media.removeEventListener("change", update);
+	}, []);
 	useEffect(() => setDock(view), [view]);
-	const put = (next: Camera) => {
+	const put = useCallback((next: Camera) => {
 		current.current = next;
 		setCameraState(next);
-	};
+	}, []);
 	const fly = (next: Camera) => {
 		cancelAnimationFrame(flight.current);
 		if (quiet || !pointer.current || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -171,7 +190,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 		flight.current = requestAnimationFrame(step);
 	};
 	const box = (take: DemoTake) => ({ ...geometry[take], w: 1200, h: 800 });
-	const fit = () => {
+	const fitAll = () => {
 		const node = viewport.current;
 		if (!node) return;
 		const xs = DEMO_TAKES.map((t) => geometry[t].x),
@@ -195,8 +214,9 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 		if (!node) return;
 		put(fitCamera({ x: 0, y: 0, w: 2520, h: 1860 }, node.clientWidth, node.clientHeight));
 		return () => cancelAnimationFrame(flight.current);
-	}, []);
+	}, [put]);
 	useEffect(() => {
+		if (home) return;
 		const node = viewport.current;
 		if (!node) return;
 		const wheel = (event: WheelEvent) => {
@@ -216,7 +236,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 		};
 		node.addEventListener("wheel", wheel, { passive: false });
 		return () => node.removeEventListener("wheel", wheel);
-	}, [home]);
+	}, [home, put]);
 	const pick = (take: DemoTake) => {
 		setSelected(take);
 		setEntered(null);
@@ -234,9 +254,12 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 		if (!node) return;
 		setEntered(take);
 		setSelected(null);
+		node.focus({ preventScroll: true });
 		fly(centerOn(current.current, box(take), node.clientWidth, node.clientHeight));
 	};
+	navigation.current = walk;
 	const startDrag = (event: PointerEvent<HTMLDivElement>) => {
+		if (event.pointerType === "touch" || !event.isPrimary) return;
 		if (event.button !== 0 && event.button !== 1) return;
 		const target = event.target;
 		if (!(target instanceof Element)) return;
@@ -285,9 +308,16 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 	};
 	const panelWidth = dock === "agent" ? 420 : dock === "properties" ? 300 : 0;
 	return (
-		<div className={cn("sr-app sc-current", className)} data-app-surface="" data-view={dock} data-quiet={quiet}>
+		<div
+			className={cn("sr-app sc-current", className)}
+			data-app-surface=""
+			data-view={dock}
+			data-quiet={quiet}
+			data-mobile={mobile}
+		>
 			<div
 				className="sr-app-stage"
+				inert={mobile}
 				data-input={pointer.current ? "pointer" : "keyboard"}
 				onPointerDownCapture={() => {
 					pointer.current = true;
@@ -310,13 +340,16 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 					if (event.key.toLowerCase() === "h") setTool("hand");
 					if (event.key.toLowerCase() === "v") setTool("select");
 					if (event.code === "Digit1" && event.shiftKey) {
-						fit();
+						fitAll();
 						event.preventDefault();
 					}
 					if (event.key === "Enter" && selected) {
 						enter(selected);
 						event.preventDefault();
 					}
+				}}
+				onBlurCapture={() => {
+					space.current = false;
 				}}
 				onKeyUpCapture={(event) => {
 					if (event.code === "Space") space.current = false;
@@ -327,7 +360,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 					home={home}
 					onHome={() => setHome(true)}
 					onOpen={() => setHome(false)}
-					onFit={fit}
+					onFit={fitAll}
 				>
 					<div className="flex h-full min-w-0">
 						<div className="sr-app-canvas min-w-0 flex-1">
@@ -349,7 +382,9 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 								<div
 									ref={viewport}
 									className="sc-viewport"
+									// biome-ignore lint/a11y/noNoninteractiveTabindex: The canvas owns keyboard navigation and Escape focus.
 									tabIndex={0}
+									role="application"
 									aria-label="Offprint canvas"
 									data-tool={tool}
 									onPointerDown={startDrag}
@@ -385,22 +420,20 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 													selected={selected === take}
 													hovered={false}
 													onPlay={() => {
+														playerReturn.current = viewport.current;
 														setPlaying(take);
 														player.current?.showModal();
 													}}
 												/>
 												<div className="sc-document" inert={entered !== take}>
-													<Offprint
+													<CanvasProduct
 														key={`${take}:${session.time}:${session.seats}`}
 														screen={take}
 														time={session.time}
 														seats={session.seats}
-														onOpen={() => walk("booking")}
-														onBook={(time, seats) => {
-															setSession({ time, seats });
-															walk("ticket");
-														}}
-														onBack={() => walk("workshops")}
+														onOpen={openWorkshop}
+														onBook={bookWorkshop}
+														onBack={backToWorkshops}
 													/>
 												</div>
 												{entered !== take && (
@@ -508,6 +541,17 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 					</div>
 				</LandingShell>
 			</div>
+			<button
+				type="button"
+				className="sc-mobile-open"
+				onClick={(event) => {
+					playerReturn.current = event.currentTarget;
+					setPlaying("workshops");
+					player.current?.showModal();
+				}}
+			>
+				Open interactive demo
+			</button>
 			<dialog ref={settings} className="sc-settings">
 				<div>
 					<h2>Settings</h2>
@@ -521,16 +565,21 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 				</label>
 				<p>Applies to this preview.</p>
 			</dialog>
-			<dialog ref={player} className="sc-player">
+			<dialog
+				ref={player}
+				className="sc-player"
+				data-mobile={mobile}
+				onClose={() => playerReturn.current?.focus({ preventScroll: true })}
+			>
 				<div className="sc-player-top">
 					<span>{NAMES[playing]}</span>
 					<button type="button" onClick={() => player.current?.close()}>
 						Close preview
 					</button>
 				</div>
-				<div className="sg-product">
+				<div className="sg-product sc-mobile-product">
 					<div className="sg-product-inner">
-						<DemoProduct key={playing} take={playing} />
+						<DemoProduct key={playing} take={playing} reduceMotion={quiet} />
 					</div>
 				</div>
 			</dialog>

@@ -9,7 +9,7 @@
 	inset: 0;
 	overflow: hidden;
 	outline: none;
-	touch-action: none;
+	touch-action: pan-y pinch-zoom;
 }
 .sc-viewport[data-tool="hand"] {
 	cursor: grab;
@@ -144,6 +144,52 @@
 	justify-content: space-between;
 	padding-bottom: 16px;
 	font: 12px / 1.3 monospace;
+}
+.sc-player-top button {
+	min-height: 44px;
+	padding-inline: 12px;
+}
+.sc-mobile-open {
+	display: none;
+}
+@media (max-width: 760px), (pointer: coarse) {
+	.sc-current > .sr-app-stage {
+		pointer-events: none;
+	}
+	.sc-mobile-open {
+		display: block;
+		position: absolute;
+		inset: auto 12px 12px;
+		min-height: 44px;
+		padding: 10px 16px;
+		border: 1px solid #494945;
+		border-radius: 4px;
+		background: #191919;
+		color: #f0efed;
+		font:
+			400 15px / 22px "Familjen Grotesk",
+			sans-serif;
+		touch-action: manipulation;
+	}
+	.sc-player {
+		width: 100%;
+		max-width: 100%;
+		height: 100dvh;
+		max-height: 100dvh;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		overscroll-behavior: contain;
+	}
+	.sc-player-top {
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		min-height: 56px;
+		padding: env(safe-area-inset-top) 12px 0;
+		background: #141414;
+	}
 }
 .sc-player .sg-product {
 	container-type: inline-size;

@@ -1,0 +1,228 @@
+/* Only live phone players reflow. Canvas documents keep their authored geometry. */
+@media (max-width: 760px), (pointer: coarse) {
+	.sc-mobile-product.sg-product {
+		aspect-ratio: auto;
+		overflow: visible;
+		container-type: normal;
+	}
+	.sc-mobile-product.sg-product > .sg-product-inner {
+		position: relative;
+		inset: auto;
+		width: 100%;
+		height: auto;
+		transform: none;
+	}
+	.sc-mobile-product .dl-product-session {
+		width: 100%;
+		height: auto;
+	}
+	.sc-mobile-product .op-app {
+		height: auto;
+		min-height: 0;
+		padding-bottom: max(20px, env(safe-area-inset-bottom));
+		overflow: hidden;
+	}
+	.sc-mobile-product .op-app button {
+		min-height: 44px;
+		touch-action: manipulation;
+	}
+	.sc-mobile-product .op-header {
+		height: auto;
+		min-height: 74px;
+		margin: 0 20px;
+		gap: 16px;
+		flex-wrap: wrap;
+	}
+	.sc-mobile-product .op-brand {
+		font-size: 27px;
+		gap: 6px;
+	}
+	.sc-mobile-product .op-brand i {
+		font-size: 32px;
+	}
+	.sc-mobile-product .op-header nav {
+		margin-left: auto;
+		gap: 16px;
+		font-size: 12px;
+	}
+	.sc-mobile-product .op-header nav button {
+		padding: 24px 0;
+	}
+	.sc-mobile-product .op-city,
+	.sc-mobile-product .op-avatar {
+		display: none;
+	}
+	.sc-mobile-product .op-workshops {
+		padding: 24px 20px 0;
+	}
+	.sc-mobile-product .op-title-row {
+		margin-bottom: 24px;
+	}
+	.sc-mobile-product .op-title-row h1 {
+		font-size: 40px;
+		letter-spacing: -2px;
+	}
+	.sc-mobile-product .op-title-row p {
+		display: none;
+	}
+	.sc-mobile-product .op-featured {
+		grid-template-columns: 1fr;
+		border: 0;
+	}
+	.sc-mobile-product .op-poster-button {
+		height: 330px;
+	}
+	.sc-mobile-product .op-print-type {
+		top: 22px;
+		left: 22px;
+		font-size: 76px;
+		letter-spacing: -5px;
+	}
+	.sc-mobile-product .op-print-type em {
+		letter-spacing: -5px;
+	}
+	.sc-mobile-product .op-print-art {
+		width: 168px;
+		height: 168px;
+		right: 20px;
+		bottom: 35px;
+	}
+	.sc-mobile-product .op-print-foot {
+		left: 22px;
+		font-size: 10px;
+	}
+	.sc-mobile-product .op-workshop-copy {
+		padding: 24px 0 0;
+		gap: 18px;
+	}
+	.sc-mobile-product .op-workshop-date {
+		right: 0;
+		top: 28px;
+	}
+	.sc-mobile-product .op-workshop-copy h2 {
+		margin-top: 0;
+	}
+	.sc-mobile-product .op-workshop-copy p {
+		font-size: 14px;
+		margin-top: 18px;
+	}
+	.sc-mobile-product .op-details-line {
+		font-size: 12px;
+	}
+	.sc-mobile-product .op-primary {
+		min-height: 50px;
+		font-size: 16px;
+	}
+	.sc-mobile-product .op-seats-note {
+		font-size: 12px;
+	}
+	.sc-mobile-product .op-workshops-footer {
+		font-size: 12px;
+		line-height: 1.5;
+		gap: 16px;
+	}
+	.sc-mobile-product .op-workshops-footer > span:last-child {
+		display: none;
+	}
+	.sc-mobile-product .op-booking {
+		padding: 0 20px;
+	}
+	.sc-mobile-product .op-back {
+		font-size: 14px;
+		padding: 16px 0;
+	}
+	.sc-mobile-product .op-booking-layout {
+		grid-template-columns: 1fr;
+		gap: 24px;
+	}
+	.sc-mobile-product .op-booking-left {
+		display: none;
+	}
+	.sc-mobile-product .op-booking-form {
+		padding: 0;
+	}
+	.sc-mobile-product .op-booking-form h1 {
+		font-size: 48px;
+	}
+	.sc-mobile-product .op-booking-form > p {
+		font-size: 14px;
+	}
+	.sc-mobile-product .op-booking-form legend {
+		font-size: 14px;
+	}
+	.sc-mobile-product .op-time-options button {
+		min-height: 76px;
+	}
+	.sc-mobile-product .op-time-options span {
+		font-size: 12px;
+	}
+	.sc-mobile-product .op-seat-stepper > div:last-child {
+		gap: 14px;
+	}
+	.sc-mobile-product .op-seat-stepper button {
+		width: 44px;
+		height: 44px;
+	}
+	.sc-mobile-product .op-seat-stepper > div > span {
+		font-size: 12px;
+	}
+	.sc-mobile-product .op-total > span {
+		font-size: 14px;
+	}
+	.sc-mobile-product .op-booking-foot {
+		font-size: 12px;
+		line-height: 1.5;
+	}
+	.sc-mobile-product .op-confirmation {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 24px;
+		padding: 24px 20px;
+	}
+	.sc-mobile-product .op-confirmation-copy {
+		padding: 0;
+	}
+	.sc-mobile-product .op-check {
+		margin-bottom: 20px;
+	}
+	.sc-mobile-product .op-confirmation h1 {
+		font-size: 45px;
+		letter-spacing: -2px;
+	}
+	.sc-mobile-product .op-confirmation-copy > p {
+		font-size: 14px;
+		margin-top: 20px;
+	}
+	.sc-mobile-product .op-reminder {
+		font-size: 14px;
+		margin-top: 20px;
+	}
+	.sc-mobile-product .op-confirmation-copy > .op-back {
+		margin-top: 10px;
+		font-size: 14px;
+	}
+	.sc-mobile-product .op-ticket {
+		width: 100%;
+		height: auto;
+		transform: none;
+	}
+	.sc-mobile-product .op-ticket-poster {
+		height: 240px;
+	}
+	.sc-mobile-product .op-print-small .op-print-type {
+		font-size: 61px;
+		letter-spacing: -3.9px;
+	}
+	.sc-mobile-product .op-print-small .op-print-art {
+		width: 130px;
+		height: 130px;
+	}
+	.sc-mobile-product .op-ticket-info > div {
+		font-size: 12px;
+	}
+	.sc-mobile-product .op-ticket-info strong {
+		font-size: 14px;
+	}
+	.sc-mobile-product .op-ticket-bottom {
+		font-size: 12px;
+	}
+}

@@ -25,7 +25,7 @@ export type SectionTake = "spread" | "stage" | "paper";
 const REPO = "https://github.com/liamvinberg/spool";
 function Product({ take = "workshops" }: { take?: DemoTake }) {
 	return (
-		<div className="sg-product">
+		<div className="sg-product sc-mobile-product">
 			<div className="sg-product-inner">
 				<DemoProduct take={take} />
 			</div>
@@ -293,7 +293,13 @@ function Bloom({ children, hero }: { children: ReactNode; hero?: "inline" | "tra
 				data-study={!hero}
 			>
 				{children}
-				<button type="button" className="bl-motion" aria-pressed={paused} onClick={() => setPaused(!paused)}>
+				<button
+					type="button"
+					className="bl-motion"
+					aria-label={paused ? "Play background motion" : "Pause background motion"}
+					aria-pressed={paused}
+					onClick={() => setPaused(!paused)}
+				>
 					{paused ? "motion off" : "motion on"}
 				</button>
 			</div>
