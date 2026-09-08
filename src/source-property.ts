@@ -57,6 +57,8 @@ export interface SourcePropertyReading {
 	native?: string;
 }
 
+export const propertySamplePlaceholder = "var(--spool-property-input)";
+
 /** A once-compiled temporary declaration; samples replace only its value marker. */
 export interface SourcePropertyPreviewTemplate {
 	placeholder: string;

@@ -2388,6 +2388,7 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("reach"),
+								preview: propertyValue.optional(),
 								handle: z.string(),
 								inventories: z.array(
 									z
@@ -2430,7 +2431,7 @@ export function createDaemonApp({
 							),
 						);
 					case "reach":
-						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories));
+						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories, body.preview));
 					case "observed":
 						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
 						return c.json({ ok: true });

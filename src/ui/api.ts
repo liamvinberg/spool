@@ -1565,11 +1565,12 @@ export async function sourceReach(
 	project: string,
 	handle: string,
 	inventories: SourceInventory[],
+	preview?: SourcePropertyValue,
 ): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "reach", handle, inventories },
+			json: { action: "reach", handle, inventories, ...(preview ? { preview } : {}) },
 		});
 		return res.ok
 			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })

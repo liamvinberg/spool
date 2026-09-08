@@ -434,8 +434,8 @@ function Body({
 						element
 							? acts.property?.describe(element.frame, element.selector, property, propertyScope)
 							: undefined,
-					begin: (property) => {
-						propertySession.begin(property, propertyScope);
+					begin: (property, preview) => {
+						propertySession.begin(property, propertyScope, preview);
 					},
 					preview: (property, value, sampleValue) =>
 						propertySession.preview(property, propertyScope, value, sampleValue),

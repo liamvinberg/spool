@@ -11,6 +11,7 @@ import {
 	type Gradient,
 	type GradientShape,
 	gapOf,
+	gradientAngle,
 	gradientCss,
 	gradientOf,
 	insetOf,
@@ -49,6 +50,7 @@ import {
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
+import { propertySamplePlaceholder } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -1113,6 +1115,30 @@ function GradientRows({ view }: { view: View }) {
 	);
 	const changed = view.fresh(own?.token ?? null);
 	const write = (next: Gradient | null) => writeValue(view, row, { kind: "gradient", gradient: next });
+	const control = view.property;
+	const preview = (next: Gradient, sample?: string) =>
+		control?.preview(
+			row.property,
+			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
+			sample,
+		);
+	const begin = (next: Gradient) =>
+		control?.begin(
+			row.property,
+			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
+		);
+	const direction = (typed: string): Gradient | undefined => {
+		const degrees = gradientAngle(typed.trim().replace(/deg$/, ""));
+		return gradient && degrees !== undefined ? { ...gradient, direction: String(degrees) } : undefined;
+	};
+	const position = (index: number, typed: string): Gradient | undefined => {
+		if (!gradient) return;
+		if (!typed.trim()) return withStop(gradient, index, (held) => ({ ...held, position: null }));
+		const value = gradientAngle(typed.trim().replace(/%$/, ""));
+		return value === undefined
+			? undefined
+			: withStop(gradient, index, (held) => ({ ...held, position: `${Math.max(0, Math.min(100, value))}%` }));
+	};
 	const current =
 		gradient === null ? SHAPES[0] : (SHAPES.find((shape) => shape.token === gradient.shape) ?? SHAPES[0]);
 	return (
@@ -1166,23 +1192,27 @@ function GradientRows({ view }: { view: View }) {
 							<span className="w-[48px] shrink-0">
 								<NumField
 									value={
-										gradient.direction !== null && /^\d+$/.test(gradient.direction) ? gradient.direction : ""
+										gradientAngle(gradient.direction) === undefined
+											? ""
+											: String(gradientAngle(gradient.direction))
 									}
 									placeholder="deg"
 									ok={ok}
 									faint
+									onBegin={() => begin({ ...gradient, direction: `[${propertySamplePlaceholder}]` })}
+									onCancel={() => control?.finish(false)}
+									onPreview={(typed) => {
+										const next = direction(typed);
+										if (next) preview(next, `${next.direction}deg`);
+									}}
 									onCommit={(typed) => {
-										const degrees = Number.parseInt(typed, 10);
-										if (!Number.isNaN(degrees))
-											write({ ...gradient, direction: String(((degrees % 360) + 360) % 360) });
+										const next = direction(typed);
+										if (next) write(next);
+										else control?.finish(false);
 									}}
-									onStep={(units) => {
-										const now =
-											gradient.direction !== null && /^\d+$/.test(gradient.direction)
-												? Number(gradient.direction)
-												: 90;
-										write({ ...gradient, direction: String((((now + units * 15) % 360) + 360) % 360) });
-									}}
+									stepDraft={(typed, units) =>
+										String(((((gradientAngle(typed) ?? 90) + units) % 360) + 360) % 360)
+									}
 								/>
 							</span>
 						</Row>
@@ -1230,6 +1260,15 @@ function GradientRows({ view }: { view: View }) {
 								alpha={stop.colour?.alpha ?? null}
 								ok={ok && stop.colour !== null}
 								faint={false}
+								onBegin={() => control?.begin(row.property)}
+								onCancel={() => control?.finish(false)}
+								onPreview={(alpha) =>
+									preview(
+										withStop(gradient, index, (held) =>
+											held.colour ? { ...held, colour: { ...held.colour, alpha } } : held,
+										),
+									)
+								}
 								onCommit={(alpha) =>
 									write({
 										...gradient,
@@ -1248,24 +1287,29 @@ function GradientRows({ view }: { view: View }) {
 									readout="%"
 									ok={ok && stop.colour !== null}
 									faint={stop.position === null}
-									onCommit={(typed) => {
-										const percent = Number.parseFloat(typed);
-										write(
+									onBegin={() =>
+										begin(
 											withStop(gradient, index, (held) => ({
 												...held,
-												position: Number.isNaN(percent) ? null : `${Math.max(0, Math.min(100, percent))}%`,
+												position: `[percentage:${propertySamplePlaceholder}]`,
 											})),
-										);
+										)
+									}
+									onCancel={() => control?.finish(false)}
+									onPreview={(typed) => {
+										const next = position(index, typed);
+										if (next) preview(next, next.stops[index]?.position ?? undefined);
 									}}
-									onStep={(units) => {
-										const now =
-											stop.position === null ? (SPACED[index] ?? 0) : Number.parseFloat(stop.position);
-										write(
-											withStop(gradient, index, (held) => ({
-												...held,
-												position: `${Math.max(0, Math.min(100, now + units * 5))}%`,
-											})),
-										);
+									onCommit={(typed) => {
+										const next = position(index, typed);
+										if (next) write(next);
+										else control?.finish(false);
+									}}
+									stepDraft={(typed, units) => {
+										const from = typed.trim()
+											? gradientAngle(typed.trim().replace(/%$/, ""))
+											: (SPACED[index] ?? 0);
+										return from === undefined ? undefined : String(Math.max(0, Math.min(100, from + units)));
 									}}
 								/>
 							</span>
