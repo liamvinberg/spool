@@ -444,3 +444,64 @@ it.each([false, true])(
 		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
 	},
 );
+
+it("reloads a saved image inverse and prepares the actual restored asset", { timeout: 120000 }, async () => {
+	const replacement = `data:image/svg+xml;base64,${Buffer.from(SECOND).toString("base64")}`;
+	const source = SOURCE.replace("{useState}", "{useState,useLayoutEffect,useRef}")
+		.replace(
+			"const [count,setCount]",
+			`const imageRef=useRef(null);useLayoutEffect(()=>{if(window.imageCorrupt)imageRef.current.src=${JSON.stringify(replacement)}});const [count,setCount]`,
+		)
+		.replace('<img id="hero"', '<img ref={imageRef} id="hero"');
+	const f = await originCanvas(
+		{ "shared/assets/first.svg": SVG, "shared/assets/second.svg": SECOND },
+		source,
+		"#hero",
+	);
+	const sends: string[] = [];
+	f.page.on("request", (request) => {
+		if (request.url().endsWith("/agent/turn")) sends.push(request.url());
+	});
+	await f.select();
+	await f.page.getByRole("button", { name: "image", exact: true }).click();
+	const choice = f.page.locator('[data-menu-option="second.svg"]');
+	await expect.poll(() => choice.count()).toBe(1);
+	await choice.click();
+	await expect
+		.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1)?.rendered))
+		.toBe("verified");
+	await expect
+		.poll(() => f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth))
+		.toBe(70);
+	await f.target.evaluate(() => Reflect.set(window, "imageCorrupt", true));
+	const undone = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "inverse",
+	);
+	await f.history();
+	expect(await (await undone).json()).toMatchObject({ ok: true, source: "saved" });
+	expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+	await expect
+		.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1)?.rendered))
+		.toBe("mismatching");
+	const notice = f.page.locator('[data-hand-notice="mismatching"]');
+	await expect.poll(() => notice.count()).toBe(1);
+	await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	const composer = f.page.locator("[data-agent-rail] textarea");
+	await expect
+		.poll(() => composer.inputValue())
+		.toContain('Requested result: image references "shared/assets/first.svg".');
+	expect(await composer.inputValue()).not.toContain("data:image/");
+	expect(await composer.inputValue()).toContain("#hero");
+	await f.page.locator('[data-dock-glyph="properties"]').click();
+	await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect
+		.poll(() => f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth))
+		.toBe(30);
+	await expect.poll(() => notice.count()).toBe(0);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	await expect.poll(() => composer.inputValue()).toBe("");
+	expect(f.writes).toEqual(["commit", "inverse"]);
+	expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+	expect(readFileSync(f.file("shared/assets/second.svg"), "utf8")).toBe(SECOND);
+	expect(sends).toEqual([]);
+});
