@@ -19,7 +19,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
 	const color = expected.property === "color" || expected.property === "background-color";
-	if (expected.property !== "opacity" && !color) return unverified("this property needs a native effect proof");
+	if (expected.property !== "opacity" && expected.property !== "font-size" && !color)
+		return unverified("this property needs a native effect proof");
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
 	const applicable: SourcePropertyEffect[] = [];
 	for (const effect of expected.effects) {
@@ -63,13 +64,22 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return unverified("the expected utility is masked by another declaration");
 	if (color) {
 		if (!winner) return unverified("this color needs an inherited or default context proof");
-		const value = resolvedColor(element, sheet, winner.value);
+		const value = resolvedValue(element, sheet, winner.value);
 		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
 		const wanted = value === undefined ? undefined : nativeColor(value);
 		const actual = nativeColor(observed);
 		if (wanted === undefined || actual === undefined)
 			return unverified("this color needs a variable or native context proof");
 		return { rendered: wanted === actual ? "verified" : "mismatching", observed };
+	}
+	if (expected.property === "font-size") {
+		if (!winner) return unverified("this type size needs an inherited context proof");
+		const value = resolvedValue(element, sheet, winner.value);
+		const wanted = value === undefined ? undefined : fontSize(element, sheet, value);
+		const observed = view.getComputedStyle(element).fontSize;
+		if (wanted === undefined || !observed.endsWith("px"))
+			return unverified("this type size needs a native length context proof");
+		return { rendered: Number.parseFloat(observed) === wanted ? "verified" : "mismatching", observed };
 	}
 	let wanted = 1;
 	if (winner) {
@@ -146,7 +156,7 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 }
 
 /** Resolve only a unique unconditional compiler root definition, checked in this use's context. */
-function resolvedColor(
+function resolvedValue(
 	element: Element,
 	sheet: CSSStyleSheet,
 	value: string,
@@ -178,7 +188,7 @@ function resolvedColor(
 			unresolved = true;
 			return "";
 		}
-		const resolved = resolvedColor(element, sheet, definitions[0]!, new Set([...seen, name]));
+		const resolved = resolvedValue(element, sheet, definitions[0]!, new Set([...seen, name]));
 		const actual = element.ownerDocument.defaultView?.getComputedStyle(element).getPropertyValue(name).trim();
 		if (resolved === undefined || actual !== resolved) {
 			unresolved = true;
@@ -210,4 +220,32 @@ function nativeColor(value: string): string | undefined {
 	// Serialize once before changing color spaces, matching computed CSS precision.
 	const parsed = parse(value);
 	return parsed === undefined ? undefined : parse(`color(from ${parsed} srgb r g b / alpha)`);
+}
+
+/** Relative font sizes use this native use's root or parent, never another selected use. */
+function fontSize(element: Element, sheet: CSSStyleSheet, value: string): number | undefined {
+	const view = element.ownerDocument.defaultView;
+	if (!view) return;
+	const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+	const rule = sheet.cssRules[index];
+	if (!(rule instanceof CSSStyleRule)) return;
+	rule.style.fontSize = value;
+	if (!rule.style.fontSize) return;
+	const parsed = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(px|rem|em|%)$/i.exec(value.trim());
+	if (!parsed) return;
+	const number = Number(parsed[1]);
+	const unit = parsed[2]!.toLowerCase();
+	let computed = number;
+	if (unit !== "px") {
+		if (element === element.ownerDocument.documentElement) return;
+		const context = unit === "rem" ? element.ownerDocument.documentElement : element.parentElement;
+		if (!context) return;
+		const inherited = view.getComputedStyle(context).fontSize;
+		if (!inherited.endsWith("px")) return;
+		computed *= Number.parseFloat(inherited) / (unit === "%" ? 100 : 1);
+	}
+	if (!Number.isFinite(computed)) return;
+	// Preserve the authored precision during conversion; serialize only the final px value.
+	rule.style.fontSize = `${computed}px`;
+	return Number.parseFloat(rule.style.fontSize);
 }
