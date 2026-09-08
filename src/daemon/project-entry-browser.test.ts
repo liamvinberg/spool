@@ -16,6 +16,7 @@ it("walks all three project jobs through the compact picker with one explicit co
 	const parent = realpathSync(makeTempDir());
 	const codebase = join(parent, "existing-codebase");
 	mkdirSync(join(codebase, "src"), { recursive: true });
+	for (let i = 0; i < 20; i++) mkdirSync(join(codebase, `folder-${i}`));
 	writeFileSync(join(codebase, "src", "index.ts"), "export const keep = true;\n");
 	const shared = join(parent, "shared-project");
 	mkdirSync(shared);
@@ -46,6 +47,17 @@ it("walks all three project jobs through the compact picker with one explicit co
 	expect(readdirSync(parent)).toEqual(["existing-codebase", "shared-project"]);
 	await projectName.fill("coffee");
 	await page.evaluate(() => document.fonts.ready);
+	const centered = async () => {
+		const rect = await page.locator("dialog[open]").boundingBox();
+		const viewport = page.viewportSize();
+		expect(rect).not.toBeNull();
+		expect(viewport).not.toBeNull();
+		if (rect && viewport) {
+			expect(Math.abs(rect.y + rect.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(1);
+			expect(Math.abs(rect.x + rect.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
+		}
+	};
+	await centered();
 	const evidence = process.env.SPOOL_ENTRY_EVIDENCE;
 	if (evidence) await page.screenshot({ path: join(evidence, "new-project.png") });
 	await creation.getByRole("button", { name: "Choose project location" }).click();
@@ -67,9 +79,18 @@ it("walks all three project jobs through the compact picker with one explicit co
 	expect(await page.locator("dialog").count()).toBe(0);
 
 	await page.getByRole("button", { name: "New project", exact: true }).click();
-	await creation.getByRole("button", { name: "Add spool to a folder", exact: false }).click();
+	await creation.getByRole("button", { name: "Open a spool project", exact: false }).click();
 	const picker = page.getByRole("dialog", { name: "Choose a project folder", exact: true });
 	const search = picker.getByRole("textbox");
+	await search.fill(codebase);
+	await expect.poll(() => picker.getByRole("button", { name: "Open project", exact: true }).isEnabled()).toBe(true);
+	await search.press("Enter");
+	await picker.getByRole("alert").waitFor();
+	expect(await picker.getByRole("alert").innerText()).toContain("This folder has no Spool project");
+	expect(existsSync(join(codebase, "design"))).toBe(false);
+	await search.fill("");
+	await picker.press("Escape");
+	await creation.getByRole("button", { name: "Add spool to a folder", exact: false }).click();
 	await search.fill(codebase);
 	await expect.poll(() => picker.getByRole("button", { name: "Add spool here", exact: true }).isEnabled()).toBe(true);
 	expect(existsSync(join(codebase, "design"))).toBe(false);
@@ -95,6 +116,8 @@ it("walks all three project jobs through the compact picker with one explicit co
 	await picker.getByRole("button", { name: `Browse ${parent.split("/").at(-1)}` }).click();
 	await picker.getByRole("button", { name: "Browse existing-codebase", exact: true }).click();
 	await expect.poll(() => picker.locator(".picker-footer code").getAttribute("title")).toBe(codebase);
+	await centered();
+	expect(await picker.locator(".picker-folders").evaluate((element) => element.clientHeight)).toBe(450);
 	await picker.getByRole("button", { name: "Parent folder", exact: true }).click();
 	await expect.poll(() => picker.locator(".picker-footer code").getAttribute("title")).toBe(parent);
 	await picker.getByRole("button", { name: "Browse existing-codebase", exact: true }).click();

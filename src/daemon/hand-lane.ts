@@ -2,21 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
-	assetChosen,
-	assetDestination,
-	assetName,
-	identifierHint,
-	imageSpend,
-	overBudget,
-	specifierFrom,
-} from "./hand-asset";
-import {
 	type AttributeRead,
-	assetOp,
 	type ElementRead,
 	fingerprintOf,
 	type HandOp,
-	imageImports,
 	type PatchRefusal,
 	planOps,
 	readElements,
@@ -140,150 +129,6 @@ function reachesAsset(root: string, file: string, specifier: string): boolean {
 		return true;
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) return false;
-		throw error;
-	}
-}
-
-/**
- * The picture an asset swap points at: bytes a hand just dropped, or a file
- * the project already holds (#260).
- */
-export type AssetPut = { kind: "new"; name: string; bytes: Buffer } | { kind: "held"; path: string };
-
-export type AssetSite =
-	| {
-			kind: "ok";
-			file: string;
-			path: string;
-			source: string;
-			text: string;
-			mapped: boolean;
-			fingerprint: string;
-			/** the picture, and whether its bytes still have to be put on disk */
-			asset: { file: string; path: string; write: boolean; bytes: Buffer | undefined };
-	  }
-	| { kind: "refusal"; refusal: PatchRefusal }
-	| { kind: "error"; status: 400 | 404; message: string };
-
-/**
- * The asset swap, from the picture to the characters (#260).
- *
- * Everything the write lane cannot know: where the file goes, what the import
- * may be called, and whether one document can carry it. What comes back is the
- * file as the swap would leave it and the bytes still owed to disk, so the
- * caller writes the picture first and the source second — a document that
- * reloads between them must never find an import of a file that is not there
- * yet.
- */
-export async function assetSite(
-	root: string,
-	frame: string,
-	stampedAt: string,
-	put: AssetPut,
-	deps: LaneDeps,
-	fingerprint?: string,
-): Promise<AssetSite> {
-	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const site = await oneSite(root, frameFolder(frame, found.page), stampedAt, deps, fingerprint);
-	if (site.kind !== "ok") return site;
-
-	const asset = resolveAsset(root, found.dir, put);
-	if ("refusal" in asset) return { kind: "refusal", refusal: asset.refusal };
-	if ("message" in asset) return { kind: "error", status: asset.status, message: asset.message };
-	const specifier = specifierFrom(site.file, asset.file);
-	const op = assetOp(stampedAt, specifier, identifierHint(asset.name));
-	if (op === undefined) return { kind: "error", status: 400, message: `design/${asset.path} is no import to write` };
-	const planned = planOps(site.source, [op]);
-	if (!planned.ok) return { kind: "refusal", refusal: planned.refusal };
-	/*
-	 * The budget is the document's, so it is asked of the file the swap would
-	 * leave rather than of the picture alone: the image being replaced is gone
-	 * from that reading, and an import the swap orphaned went with it.
-	 */
-	const designDir = realDesignDir(root);
-	const weighed = new Map(asset.bytes === undefined ? [] : [[asset.file, asset.bytes.length]]);
-	const over = overBudget(imageSpend(designDir, site.file, imageImports(planned.text), weighed));
-	if (over !== undefined) return { kind: "refusal", refusal: over };
-	return {
-		kind: "ok",
-		file: site.file,
-		path: site.path,
-		source: site.source,
-		text: planned.text,
-		mapped: planned.mapped,
-		fingerprint: site.fingerprint,
-		asset: { file: asset.file, path: asset.path, write: asset.write, bytes: asset.bytes },
-	};
-}
-
-type OneSite =
-	| { kind: "ok"; file: string; path: string; source: string; fingerprint: string }
-	| { kind: "refusal"; refusal: PatchRefusal }
-	| { kind: "error"; status: 400 | 404; message: string };
-
-/**
- * One stamp resolved to the file behind it: the lane's scope, and its promise.
- *
- * Every hand edit passes the same three questions before anything is planned —
- * does the stamp still point somewhere, is that somewhere this frame's own to
- * write, and is the file still the one the surface read. This is those three,
- * once.
- */
-async function oneSite(
-	root: string,
-	folder: string,
-	stampedAt: string,
-	deps: LaneDeps,
-	fingerprint: string | undefined,
-): Promise<OneSite> {
-	let stamp: ReturnType<typeof parseStamp>;
-	try {
-		stamp = parseStamp(root, stampedAt);
-	} catch (error) {
-		// a stamp that resolves out of design/ through a symlink is the
-		// boundary's answer, not a 500
-		if (error instanceof DesignBoundaryError) return { kind: "error", status: 400, message: error.message };
-		throw error;
-	}
-	if (stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	if (!stamp.rel.startsWith(`${folder}/`)) {
-		// v1 scopes writes to the frame's own file: a stamp anywhere else is a
-		// definition site, and editing one instance would edit them all
-		return { kind: "refusal", refusal: await definedElsewhere(deps, stamp.rel, stamp.line) };
-	}
-	let source: string;
-	try {
-		source = readFileSync(stamp.file, "utf8");
-	} catch {
-		return { kind: "refusal", refusal: STALE_STAMP };
-	}
-	const current = fingerprintOf(source);
-	// the fingerprint is what makes an agent and a hand safe in the same file: a
-	// mismatch refuses and re-picks rather than landing somewhere wrong
-	if (fingerprint !== undefined && fingerprint !== current) return { kind: "refusal", refusal: STALE_FILE };
-	return { kind: "ok", file: stamp.file, path: `design/${stamp.rel}`, source, fingerprint: current };
-}
-
-type ResolvedAsset =
-	| { file: string; path: string; name: string; write: boolean; bytes: Buffer | undefined }
-	| { refusal: PatchRefusal }
-	| { status: 400 | 404; message: string };
-
-function resolveAsset(root: string, frameDir: string, put: AssetPut): ResolvedAsset {
-	try {
-		if (put.kind === "held") {
-			const chosen = assetChosen(root, put.path);
-			if (chosen === undefined) return { status: 404, message: `no image at design/${put.path}` };
-			const name = put.path.split("/").at(-1) ?? put.path;
-			return { file: chosen.file, path: put.path, name, write: false, bytes: undefined };
-		}
-		const name = assetName(put.name);
-		if (name === undefined) return { status: 400, message: `"${put.name}" is not an image spool writes` };
-		const where = assetDestination(root, frameDir, name, put.bytes);
-		return { ...where, name, bytes: where.write ? put.bytes : undefined };
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
 		throw error;
 	}
 }

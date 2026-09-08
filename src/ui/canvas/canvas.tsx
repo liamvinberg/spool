@@ -48,14 +48,13 @@ import {
 	putPlaces,
 	putSelection,
 	putSetting,
-	readRungs,
 	readSource,
 	resolveFlows,
 	revertPatch,
 	sourceDelivered,
 	sourceIsCurrent,
+	stageImage,
 	subscribeSse,
-	swapAsset,
 } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
@@ -188,6 +187,7 @@ import {
 	attributedIntent,
 	intentText,
 	inverseIntent,
+	matchesIntentSource,
 	preparedHelp,
 	type SourceIntent,
 	sourceIntent,
@@ -1852,7 +1852,9 @@ export function ProjectCanvas({
 				says:
 					outcome?.reason ??
 					(outcome?.rendered === "mismatching"
-						? "Saved, but the running app kept different words."
+						? intent?.operation.kind === "image"
+							? "Saved, but the running app kept a different image."
+							: "Saved, but the running app kept different words."
 						: outcome?.rendered === "pending"
 							? "Saved. The app is still loading."
 							: "Saved. The running result could not be verified."),
@@ -1940,16 +1942,12 @@ export function ProjectCanvas({
 				return;
 			}
 			if (result.source === "unchanged") {
-				const checked =
-					intent?.operation.kind === "literal" ? await sourceDelivery.verifyReload(intent) : undefined;
+				const checked = intent ? await sourceDelivery.verifyReload(intent) : undefined;
 				if (
 					intent &&
-					(checked?.kind !== "literal" ||
-						intent.expected?.kind !== "literal" ||
-						checked.description.cell !== intent.cell ||
-						checked.description.source !== intent.source ||
-						checked.description.value !== intent.expected.value ||
-						(checked.description.original.absent ?? false) !== intent.expected.absent ||
+					(!checked ||
+						checked.kind === "structure" ||
+						!matchesIntentSource(intent, checked.description) ||
 						checked.outcome.rendered !== "verified")
 				) {
 					unappliedSource.current.add(frame);
@@ -2806,39 +2804,137 @@ export function ProjectCanvas({
 		iframes.current.get(target.frame)?.contentWindow?.postMessage(dropTargetMessage(target.selector), "*");
 	}, [picked]);
 
-	/**
-	 * The asset swap (#260), which is the rail's write with a file in front of it.
-	 *
-	 * Not gated first, unlike every other hand edit: the picture and the splice
-	 * land in one call, so a gate would be asking about a file the swap is about
-	 * to rewrite anyway. The fingerprint the rail read the element out of is
-	 * what stands in its place, which is the same promise — the write is
-	 * measured against the file the surface actually drew.
-	 *
-	 * The undo it records is the source half. The picture stays in the folder,
-	 * because a file spool put in somebody's repo is theirs to keep or delete;
-	 * an undo that took it away again would be spool deleting a file nobody
-	 * asked it to.
-	 */
+	const imageEditing = useRef<{ frame: string; selector: string; generation: number; read?: SourceRead } | undefined>(
+		undefined,
+	);
+	const cancelImage = useCallback(() => {
+		const held = imageEditing.current;
+		if (!held) return;
+		imageEditing.current = undefined;
+		if (held.read) void cancelSource(project, held.read.handle);
+		void sourceDelivery.cancel(held.frame, held.generation);
+		setSaid((current) =>
+			current?.kind === "source" && current.frame === held.frame && current.status === "saving" ? null : current,
+		);
+	}, [project, sourceDelivery]);
+	useEffect(() => {
+		const cancel = (event: KeyboardEvent) => {
+			if (event.key === "Escape" && imageEditing.current) {
+				event.preventDefault();
+				cancelImage();
+			}
+		};
+		window.addEventListener("keydown", cancel, true);
+		window.addEventListener("blur", cancelImage);
+		return () => {
+			window.removeEventListener("keydown", cancel, true);
+			window.removeEventListener("blur", cancelImage);
+		};
+	}, [cancelImage]);
+	useEffect(() => {
+		const held = imageEditing.current;
+		if (held && !picked.some((pick) => pick.frame === held.frame && pick.selector === held.selector)) cancelImage();
+	}, [picked, cancelImage]);
 	const swapPicture = useCallback(
-		(
-			frame: string,
-			selector: string,
-			at: { source: string; fingerprint: string },
-			put: { file: File } | { asset: string },
-		) => {
-			if (writing.current) return;
-			setRefused(null);
+		(frame: string, selector: string, put: { file: File } | { asset: string }) => {
+			if (writing.current || pendingSource.current.size || editingRef.current) return;
+			const pick = pickedRef.current.find((pick) => pick.frame === frame && pick.selector === selector);
+			if (!pick) return;
+			const generation = ++pickSeq.current;
+			const held: { frame: string; selector: string; generation: number; read?: SourceRead } = {
+				frame,
+				selector,
+				generation,
+			};
+			imageEditing.current = held;
+			let intent: SourceIntent = {
+				...sourceIntent(pick, pointing.entries, "src"),
+				operation: { kind: "image" },
+				action: `replace image with ${JSON.stringify("file" in put ? put.file.name : put.asset)}`,
+			};
 			writing.current = true;
-			repick.current = { frame, selector };
-			const bytes = "file" in put ? fileAsAsset(put.file).then((file) => ({ file })) : Promise.resolve(put);
-			void bytes
-				.then((body) => swapAsset(project, frame, at.source, at.fingerprint, body))
-				// nothing gated this one, so its no is the ordinary quiet refusal:
-				// it lands on the element it is about rather than interrupting
-				.then((written) => settleWrite(frame, written, (refusal) => showRefusal(frame, selector, refusal)));
+			setRefused(null);
+			setSaid({ kind: "source", frame, status: "saving", text: "", says: "Reading image source…", intent });
+			const completion = (async () => {
+				const current = () => imageEditing.current === held;
+				const failed = async (reason: string) => {
+					cancelImage();
+					await showSourceResult(frame, { ok: false, reason }, "", false, intent);
+				};
+				try {
+					const original = await sourceDelivery.read(frame, selector, generation, "src", { kind: "image" });
+					if (!current()) return;
+					if (!original) {
+						await failed("This image has no attributable committed source binding.");
+						return;
+					}
+					intent = { ...intent, original };
+					const asked = await readSource(project, frame, original, generation, sourceDelivery.observer, {
+						kind: "image",
+					});
+					if (!current()) {
+						if (asked?.ok) void cancelSource(project, asked.read.handle);
+						return;
+					}
+					if (!asked?.ok) {
+						await failed(asked?.reason ?? "The original image source read did not arrive.");
+						return;
+					}
+					held.read = asked.read;
+					const read = await sourceDelivery.prepare(frame, asked.read);
+					if (!current()) return;
+					intent = attributedIntent(intent, read);
+					const bytes =
+						"file" in put
+							? { kind: "file" as const, ...(await fileAsAsset(put.file)) }
+							: { kind: "existing" as const, path: put.asset.replace(/^design\//, "") };
+					if (!current()) return;
+					const staged = await stageImage(project, read, bytes);
+					if (!current()) return;
+					if (!staged?.ok) {
+						await failed(staged?.reason ?? "The image staging result did not arrive. Source was not changed.");
+						return;
+					}
+					intent = {
+						...intent,
+						change: { kind: "image", path: staged.path },
+						expected: {
+							kind: "image",
+							value: staged.value,
+							absent: false,
+							asset: staged.path,
+							source: read.source,
+						},
+					};
+					setSaid({ kind: "source", frame, status: "saving", text: "", says: "Decoding image…", intent });
+					const previewed = await sourceDelivery.previewImage(frame, generation, staged.value);
+					if (!current()) return;
+					if (previewed !== "ready") {
+						await failed(
+							previewed === "failed"
+								? "The chosen image could not decode in its original uses. Source was not changed."
+								: "The original image content is unavailable for preview. Source was not changed.",
+						);
+						return;
+					}
+					imageEditing.current = undefined;
+					retainedPublications.current.set(frame, original.publication);
+					const saved = await commitSource(project, read, { kind: "image", path: staged.path });
+					if (saved?.ok && saved.receipt) recordEntry({ kind: "source", frame, receipt: saved.receipt, intent });
+					if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(frame, generation);
+					await showSourceResult(frame, saved, "", false, intent);
+				} catch (error) {
+					if (current())
+						await failed(error instanceof Error ? error.message : "The image replacement could not finish.");
+				}
+			})();
+			pendingSource.current.set(frame, completion);
+			void completion.finally(() => {
+				writing.current = false;
+				pendingSource.current.delete(frame);
+			});
 		},
-		[project, settleWrite, showRefusal],
+		[project, pointing.entries, sourceDelivery, cancelImage, recordEntry, showSourceResult],
 	);
 
 	/**
@@ -3086,13 +3182,7 @@ export function ProjectCanvas({
 			reloadedIntent.current = undefined;
 			const checked = await sourceDelivery.verifyReload(intent);
 			const matches =
-				checked?.kind === "structure" ||
-				(checked?.kind === "literal" &&
-					intent.expected?.kind === "literal" &&
-					checked.description.cell === intent.cell &&
-					checked.description.source === intent.source &&
-					checked.description.value === intent.expected.value &&
-					(checked.description.original.absent ?? false) === intent.expected.absent);
+				checked?.kind === "structure" || (!!checked && matchesIntentSource(intent, checked.description));
 			if (matches && checked?.outcome.rendered === "verified") {
 				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
 				resolveIntent(intent);
@@ -3651,21 +3741,7 @@ export function ProjectCanvas({
 					return;
 				}
 				case "dropped": {
-					// the swap is measured against the file the surface read, like every
-					// other op, so the stamp's own rung is asked for before anything is
-					// written — a drop is the one gesture that arrives with no read
-					// behind it
-					const pick = pickedRef.current.find(
-						(candidate) => candidate.frame === message.frame && candidate.selector === message.selector,
-					);
-					const stamp = pick === undefined ? undefined : stampOf(pick);
-					if (pick === undefined || typeof stamp !== "string") return;
-					const file = message.file;
-					void readRungs(project, message.frame, [stamp]).then((rungs) => {
-						const fingerprint = rungs?.[0]?.fingerprint;
-						if (fingerprint === undefined) return;
-						swapPicture(message.frame, pick.selector, { source: stamp, fingerprint }, { file });
-					});
+					swapPicture(message.frame, message.selector, { file: message.file });
 					return;
 				}
 				case "loaded": {
@@ -3816,7 +3892,8 @@ export function ProjectCanvas({
 					// inside a frame, is exactly where ctrl+o is owed. Each chord
 					// runs its register entry, so the relay can never drift from
 					// what the same key does out here.
-					if (message.key === "Escape") runHotkey("canvas.leave");
+					if (message.key === "Escape" && imageEditing.current) cancelImage();
+					else if (message.key === "Escape") runHotkey("canvas.leave");
 					else if (message.key === "ctrl+o") runHotkey("canvas.jump-back");
 					else if (message.key === "ctrl+i") runHotkey("canvas.jump-forward");
 					return;
@@ -3945,6 +4022,7 @@ export function ProjectCanvas({
 		verifyReloadedIntent,
 		rollBackResize,
 		swapPicture,
+		cancelImage,
 		sourceDelivery.retainStructures,
 	]);
 

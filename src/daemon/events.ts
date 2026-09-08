@@ -70,6 +70,8 @@ export interface ChangeHubDeps {
 	 * nobody using it, so nothing means every frame.
 	 */
 	framesUsing(root: string, path: string): string[] | undefined;
+	/** Exact owner-created asset addition, released after its coalesced watch batch. */
+	stagedAddition?(root: string, file: string): (() => void) | undefined;
 }
 
 const DEBOUNCE_MS = 40;
@@ -131,6 +133,7 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 
 	function start(root: string, listeners = new Set<Listener>()): RootWatch {
 		const pending = new Map<string, ChangeEvent>();
+		const additions = new Set<() => void>();
 		let timer: NodeJS.Timeout | undefined;
 		const sources = new Set<SourceListener>();
 		const entry: RootWatch = {
@@ -166,15 +169,21 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 					) {
 						for (const emit of sources) emit({ kind: "named", path: join(designDir, filename) });
 					}
-					const event = classify(designDir, filename, (path) => deps.framesUsing(root, path));
-					if (event === undefined) return;
-					if (event.kind === "frame") pending.set(`frame ${event.frame}`, event);
+					const addition = filename === null ? undefined : deps.stagedAddition?.(root, join(designDir, filename));
+					if (addition) additions.add(addition);
+					const event = addition
+						? undefined
+						: classify(designDir, filename, (path) => deps.framesUsing(root, path));
+					if (event === undefined && !addition) return;
+					if (event?.kind === "frame") pending.set(`frame ${event.frame}`, event);
 					// a move and an edit to the same frame are two facts about it, so a
 					// sidecar keeps its own slot rather than collapsing into the source one
-					else if (event.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
-					else pending.set("shared", mergeShared(pending.get("shared"), event));
+					else if (event?.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
+					else if (event) pending.set("shared", mergeShared(pending.get("shared"), event));
 					timer ??= setTimeout(() => {
 						timer = undefined;
+						for (const release of additions) release();
+						additions.clear();
 						const batch = [...pending.values()];
 						pending.clear();
 						for (const change of batch) {
@@ -210,6 +219,8 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		}
 
 		function clear(): void {
+			for (const release of additions) release();
+			additions.clear();
 			watcher?.close();
 			watcher = undefined;
 			configuration?.close();

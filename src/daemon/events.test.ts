@@ -320,3 +320,38 @@ it("keeps an open canvas subscriber through source observation recovery and rele
 	await vi.advanceTimersByTimeAsync(11000);
 	expect(watcher.close).toHaveBeenCalledTimes(alreadyClosed + 2);
 });
+
+it("observes an owned staged addition without reloading its frame and releases its exact batch evidence", async () => {
+	vi.useFakeTimers();
+	const root = project();
+	const file = join(root, "design/frames/hello/new.svg");
+	const release = vi.fn();
+	const owns = vi.fn((_root: string, path: string) => (path === file ? release : undefined));
+	const hub = createChangeHub({ framesUsing: () => undefined, stagedAddition: owns });
+	onTestFinished(() => hub.close());
+	const changes: ChangeEvent[] = [];
+	const observations: SourceObservation[] = [];
+	hub.subscribe(root, (event) => changes.push(event));
+	hub.observeSource(root, (event) => observations.push(event));
+	onChange?.("frames/hello/new.svg");
+	onChange?.("frames/hello/new.svg");
+	await vi.advanceTimersByTimeAsync(100);
+	expect(observations).toEqual([
+		{ kind: "named", path: file },
+		{ kind: "named", path: file },
+	]);
+	expect(changes).toEqual([]);
+	expect(release).toHaveBeenCalledTimes(1);
+	onChange?.("frames/hello/frame.tsx");
+	await vi.advanceTimersByTimeAsync(100);
+	expect(changes).toEqual([{ kind: "frame", frame: "hello" }]);
+	changes.length = 0;
+	owns.mockReturnValue(undefined);
+	onChange?.("frames/hello/new.svg");
+	await vi.advanceTimersByTimeAsync(100);
+	expect(changes).toEqual([{ kind: "frame", frame: "hello" }]);
+	changes.length = 0;
+	onChange?.(null);
+	await vi.advanceTimersByTimeAsync(100);
+	expect(changes).toEqual([{ kind: "shared" }]);
+});

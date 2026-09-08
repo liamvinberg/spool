@@ -4,7 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
-import type { SourceOccurrence, SourceRead } from "../../source-edit";
+import type { SourceOccurrence, SourceOperation, SourceRead } from "../../source-edit";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
@@ -499,10 +499,10 @@ it("offers an image the project's own pictures, and swaps to the one picked", as
 	await press("click", {}, option);
 
 	expect(await lastSwap()).toMatchObject({
-		frame: "home",
-		source: "frames/home/frame.tsx:12:3",
-		fingerprint: "f",
-		asset: "shared/assets/logo.svg",
+		action: "commit",
+		handle: "attribute-read",
+		original: IMAGE_ORIGINAL,
+		change: { kind: "image", path: "shared/assets/logo.svg" },
 	});
 });
 
@@ -647,11 +647,15 @@ async function gates(): Promise<number> {
 	return calls.filter(([input]) => String(input).endsWith("/patch/gate")).length;
 }
 
-/** the body of the last asset swap the canvas sent (#260) */
+/** The image control uses the same held source operation as the actual canvas. */
 async function lastSwap(): Promise<Record<string, unknown> | undefined> {
 	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
-	const last = calls.filter(([input]) => String(input).endsWith("/asset")).at(-1);
+	const last = calls
+		.filter(
+			([input, init]) => String(input).endsWith("/source") && JSON.parse(String(init?.body)).action === "commit",
+		)
+		.at(-1);
 	return last === undefined ? undefined : (JSON.parse(String(last[1]?.body)) as Record<string, unknown>);
 }
 
@@ -732,16 +736,19 @@ async function readyCanvas({ refused = false }: { refused?: boolean } = {}): Pro
 				contentWindow,
 				vi.spyOn(contentWindow, "postMessage").mockImplementation((message) => {
 					if (message?.spool !== "source-request") return;
+					const original = message.operation?.kind === "image" ? IMAGE_ORIGINAL : ATTRIBUTE_ORIGINAL;
 					const result =
 						message.action === "read" || message.action === "inspect" || message.action === "complete"
-							? ATTRIBUTE_ORIGINAL
+							? original
 							: message.action === "inventory"
 								? {
-										publication: ATTRIBUTE_ORIGINAL.publication,
-										uses: iframe.title === "home" ? [{ original: ATTRIBUTE_ORIGINAL, visible: true }] : [],
+										publication: original.publication,
+										uses: iframe.title === "home" ? [{ original, visible: true }] : [],
 										unknown: 0,
 									}
-								: true;
+								: message.action === "preview-image"
+									? "ready"
+									: true;
 					queueMicrotask(() =>
 						window.dispatchEvent(
 							new MessageEvent("message", {
@@ -911,6 +918,13 @@ const ATTRIBUTE_ORIGINAL: SourceOccurrence = {
 	value: "pay now",
 };
 
+const IMAGE_ORIGINAL: SourceOccurrence = {
+	...ATTRIBUTE_ORIGINAL,
+	field: "src",
+	cell: "image-binding",
+	value: "old.png",
+};
+
 function stubCanvasApis(refused = false): void {
 	let sourceRead: SourceRead | undefined;
 	events = null;
@@ -950,18 +964,23 @@ function stubCanvasApis(refused = false): void {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
 			}
 			if (url.pathname.endsWith("/source")) {
-				const body = JSON.parse(String(init?.body)) as { action: string; generation: number };
+				const body = JSON.parse(String(init?.body)) as {
+					action: string;
+					generation: number;
+					operation: SourceOperation;
+					original: SourceOccurrence;
+				};
 				if (body.action === "read") {
 					sourceRead = {
-						operation: { kind: "literal", field: "title" },
+						operation: body.operation,
 						handle: "attribute-read",
 						owner: "owner",
 						generation: body.generation,
-						original: ATTRIBUTE_ORIGINAL,
+						original: body.original,
 						source: "frames/home/frame.tsx:12:3",
-						role: "literal-attribute",
-						field: "title",
-						value: "pay now",
+						role: body.operation.kind === "image" ? "image-binding" : "literal-attribute",
+						...(body.original.field ? { field: body.original.field } : {}),
+						value: body.original.value,
 					};
 					return Response.json({ ok: true, read: sourceRead });
 				}
@@ -969,6 +988,12 @@ function stubCanvasApis(refused = false): void {
 					return Response.json({
 						ok: true,
 						preview: { generation: sourceRead?.generation, revision: 1, value: "opacity-60", frames: [] },
+					});
+				if (body.action === "stage-image")
+					return Response.json({
+						ok: true,
+						path: "shared/assets/logo.svg",
+						value: "data:image/svg+xml;base64,PHN2Zy8+",
 					});
 				if (body.action === "reach")
 					return Response.json(sourceRead ? { ok: true, read: sourceRead } : { ok: false, reason: "no read" });
@@ -1010,16 +1035,6 @@ function stubCanvasApis(refused = false): void {
 						{ path: "frames/home/hero.png", bytes: 2048 },
 						{ path: "shared/assets/logo.svg", bytes: 512 },
 					],
-				});
-			}
-			if (url.pathname.endsWith("/asset")) {
-				return Response.json({
-					ok: true,
-					path: "design/frames/home/frame.tsx",
-					asset: "design/shared/assets/logo.svg",
-					fingerprint: "g",
-					mapped: false,
-					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 0, text: "", fingerprint: "g" },
 				});
 			}
 			if (url.pathname.endsWith("/patch/gate")) {
