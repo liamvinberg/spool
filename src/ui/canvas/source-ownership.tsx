@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { SourceDescription, SourceUse } from "../../source-edit";
+import type { SourceDescription, SourceOperation, SourceUse } from "../../source-edit";
 import { FAINT, VALUE } from "./properties-fields";
 
 function ownershipLabel(description: SourceDescription, frame: string): string {
@@ -10,8 +10,15 @@ function ownershipLabel(description: SourceDescription, frame: string): string {
 }
 
 export interface OwnershipActions {
-	active?: { frame: string; selector: string; generation: number; field: string | undefined } | undefined;
-	describe(frame: string, selector: string, field?: string): Promise<SourceDescription | undefined>;
+	active?:
+		| { frame: string; selector: string; generation: number; field: string | undefined; operation: SourceOperation }
+		| undefined;
+	describe(
+		frame: string,
+		selector: string,
+		field?: string,
+		operation?: SourceOperation,
+	): Promise<SourceDescription | undefined>;
 	release(): void;
 	highlight(uses: SourceUse[]): void;
 	reveal(frame: string, use?: SourceUse): void;
@@ -22,6 +29,7 @@ export function SourceOwnership({
 	name,
 	revision,
 	field,
+	operation,
 	generation,
 	actions,
 	onSupport,
@@ -31,12 +39,13 @@ export function SourceOwnership({
 	name: string;
 	revision: number;
 	field?: string | undefined;
+	operation?: SourceOperation | undefined;
 	generation?: number | undefined;
 	actions: OwnershipActions;
 	onSupport(value: { identity: string; label: string } | undefined, field?: string): void;
 }) {
 	const [described, setDescribed] = useState<{ identity: string; value: SourceDescription | undefined }>();
-	const identity = JSON.stringify([frame, selector, field, generation, revision]);
+	const identity = JSON.stringify([frame, selector, field, operation, generation, revision]);
 	const pending = described?.identity !== identity;
 	const description = !pending ? described?.value : undefined;
 	const [open, setOpen] = useState(false);
@@ -47,7 +56,7 @@ export function SourceOwnership({
 		let live = true;
 		highlight([]);
 		onSupport(undefined, field);
-		void describe(frame, selector, field).then((value) => {
+		void describe(frame, selector, field, operation).then((value) => {
 			if (live) {
 				setDescribed({ identity, value });
 				onSupport(
@@ -59,7 +68,7 @@ export function SourceOwnership({
 		return () => {
 			live = false;
 		};
-	}, [describe, frame, selector, field, identity, revision, onSupport, highlight]);
+	}, [describe, frame, selector, field, operation, identity, revision, onSupport, highlight]);
 	useEffect(() => () => highlight([]), [highlight]);
 	useEffect(() => () => release(), [release]);
 	useEffect(() => {

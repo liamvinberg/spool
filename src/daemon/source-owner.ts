@@ -289,15 +289,17 @@ export function createSourceOwner(
 		frame: string,
 		original: SourceOccurrence,
 		inventories: SourceInventory[],
+		operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
 	): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
 		try {
 			const publication = compiler.publication(original.publication);
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the source owner is no longer available");
 			valid(root, publication.compilation);
+			if (operation.kind !== "literal") throw new Error("this source purpose has no admitted description planner");
 			const { cellKey, cell, target } = resolveTextSource(root, publication.compilation, original, 0);
 			const read: SourceRead = {
-				operation: { kind: "literal", ...(cell.field ? { field: cell.field } : {}) },
+				operation,
 				handle: "",
 				owner,
 				generation: 0,

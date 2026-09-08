@@ -41,6 +41,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		selector: string;
 		generation: number;
 		field: string | undefined;
+		operation: SourceOperation;
 	}>();
 	const outcomes = useRef<OutcomeGroup | undefined>(undefined);
 	const outcomeListeners = useRef(new Set<(publication: string, outcome: UseOutcome) => void>());
@@ -199,17 +200,22 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		[iframes, request],
 	);
 	const describe = useCallback(
-		async (frame: string, selector: string, field?: string) => {
+		async (
+			frame: string,
+			selector: string,
+			field?: string,
+			operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+		) => {
 			const version = ++descriptionVersion.current;
 			setLiveFrames(new Set(iframes.current.keys()));
 			const original = await request<SourceOccurrence>(frame, {
 				action: "inspect",
 				selector,
 				field,
-				operation: { kind: "literal", ...(field ? { field } : {}) },
+				operation,
 			});
 			const description = original
-				? await describeSource(project, frame, original, await inventory(original.field))
+				? await describeSource(project, frame, original, await inventory(original.field, operation), operation)
 				: undefined;
 			if (version === descriptionVersion.current)
 				setLiveFrames(new Set(description?.reach?.uses.map((use) => use.frame) ?? []));
@@ -308,7 +314,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				field?: string,
 				operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 			) => {
-				setActive({ frame, selector, generation, field });
+				setActive({ frame, selector, generation, field, operation });
 				outcomes.current = undefined;
 				return request<SourceOccurrence>(frame, { action: "read", selector, generation, field, operation });
 			},
