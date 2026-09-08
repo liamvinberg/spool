@@ -45,6 +45,8 @@ export interface SourcePropertyNative {
 
 export interface SourcePropertyReading {
 	tokens: readonly string[];
+	/** One compiler-proven custom declaration, preserving its authored unit. */
+	authored?: string;
 	binding:
 		| { kind: "page" }
 		| { kind: "custom" }

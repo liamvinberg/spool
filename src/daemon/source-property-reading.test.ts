@@ -30,6 +30,7 @@ it("does not invent a theme binding from equal native pixels", async () => {
 	expect(await reading("text-[#123456]", "color", "rgb(18, 52, 86)")).toEqual({
 		tokens: ["text-[#123456]"],
 		binding: { kind: "custom" },
+		authored: "#123456",
 		native: "rgb(18, 52, 86)",
 	});
 });
@@ -48,4 +49,13 @@ it("retains the compiled color reference when an authored alpha wraps it", async
 	const color = await reading("text-brand/50", "color", "rgba(18, 52, 86, 0.5)");
 	expect(color.binding).toEqual({ kind: "reference", name: "--color-brand", value: "#123456" });
 	expect(color.native).toBe("rgba(18, 52, 86, 0.5)");
+});
+
+it("keeps the authored fractional unit separate from native pixels for numeric editing", async () => {
+	const size = await reading("text-[length:.333rem]", "font-size", "5.328px");
+	expect(size).toMatchObject({
+		binding: { kind: "custom" },
+		authored: ".333rem",
+		native: "5.328px",
+	});
 });

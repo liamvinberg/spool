@@ -20,5 +20,10 @@ export function propertyReading(
 	// A compiler fallback and its supported branch can retain one source reference.
 	else if (reference) binding = { kind: "reference", name: reference, ...(token ? { value: token.value } : {}) };
 	else if (values.length === 1 && !values[0]!.includes("var(")) binding = { kind: "custom" };
-	return { tokens: owners, binding, ...(native?.property === operation.property ? { native: native.value } : {}) };
+	return {
+		tokens: owners,
+		binding,
+		...(binding.kind === "custom" ? { authored: values[0]! } : {}),
+		...(native?.property === operation.property ? { native: native.value } : {}),
+	};
 }
