@@ -2,6 +2,7 @@ import { readFileSync, rmSync } from "node:fs";
 import type { FrameLocator, Page } from "playwright-core";
 import { expect, it } from "vitest";
 import type { SourceResult, UseOutcome } from "../source-edit";
+import type { SourcePropertyPreview } from "../source-property";
 import { writeDesignFile } from "../test-helpers";
 import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
 
@@ -10,6 +11,70 @@ const cards = `import {useState,useEffect} from 'react';export function Card({la
 const frameSource =
 	'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24}}><Card key="a" label="A"/><Card key="b" label="B"/></main>}';
 type Canvas = Awaited<ReturnType<typeof originCanvas>>;
+
+async function propertyCanvas(...args: Parameters<typeof originCanvas>) {
+	const beforeLoad = args[4];
+	args[4] = async (page) => {
+		await page.addInitScript(() => {
+			const messages: unknown[] = [];
+			Reflect.set(window, "propertyMessages", messages);
+			addEventListener("message", (event) => {
+				if (
+					event.data?.spool === "source-reply" ||
+					(event.data?.spool === "source-request" && event.data.action === "preview-property")
+				)
+					messages.push(event.data);
+			});
+		});
+		await beforeLoad?.(page);
+	};
+	return originCanvas(...args);
+}
+
+async function previewed(f: Canvas, response: ReturnType<typeof reply>, count: number) {
+	const result = (await (await response).json()) as { ok: boolean; preview?: SourcePropertyPreview };
+	expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+	const plan = result.preview;
+	if (!plan) throw new Error("missing authenticated property preview");
+	const requests = async () =>
+		(
+			await Promise.all(
+				f.page.frames().map((frame) =>
+					frame.evaluate((expected) => {
+						const messages = Reflect.get(window, "propertyMessages") as {
+							spool: string;
+							id: string;
+							preview?: SourcePropertyPreview;
+						}[];
+						return messages
+							.filter(
+								(message) =>
+									message.spool === "source-request" &&
+									message.preview?.generation === expected.generation &&
+									message.preview.revision === expected.revision,
+							)
+							.map((message) => message.id);
+					}, plan),
+				),
+			)
+		).flat();
+	await expect.poll(async () => (await requests()).length).toBe(count);
+	const ids = await requests();
+	await expect
+		.poll(() =>
+			f.page.evaluate((expectedIds) => {
+				const messages = Reflect.get(window, "propertyMessages") as {
+					spool: string;
+					id: string;
+					result: unknown;
+				}[];
+				return expectedIds.map(
+					(id) => messages.find((message) => message.spool === "source-reply" && message.id === id)?.result,
+				);
+			}, ids),
+		)
+		.toEqual(Array.from({ length: count }, () => true));
+}
 
 function reply(f: Canvas, action: string) {
 	return f.page.waitForResponse(
@@ -93,7 +158,7 @@ async function outcomes(f: Canvas) {
 it("edits all four shared property uses through source history without resetting native state", {
 	timeout: 120_000,
 }, async () => {
-	const f = await originCanvas({ [owner]: cards }, frameSource, '[data-subject="A"]', true);
+	const f = await propertyCanvas({ [owner]: cards }, frameSource, '[data-subject="A"]', true);
 	const second = f.page.frameLocator('iframe[title="second"]');
 	for (const frame of [f.frame, second]) await remember(frame);
 	await f.select();
@@ -139,7 +204,7 @@ it("discloses the shared property owner without replacing the separate call-owne
 	const authored = 'export function Card({label,id}){return <button id={id} className="opacity-75">{label}</button>}';
 	const calls =
 		'import {Card} from "./card";export function Calls(){return <><Card id="first" label="First"/><Card id="other" label="Other"/></>}';
-	const f = await originCanvas(
+	const f = await propertyCanvas(
 		{ [owner]: authored, "shared/calls.tsx": calls },
 		'import {Calls} from "shared/calls";export default function Frame(){return <main style={{padding:40}}><Calls/></main>}',
 		"#first",
@@ -163,14 +228,18 @@ it("discloses the shared property owner without replacing the separate call-owne
 	const description = await (await described).json();
 
 	await expect.poll(() => panel.textContent()).toContain("shared definition · shared/card.tsx");
-	expect.soft(await disclosure.textContent(), JSON.stringify(description)).toBe("4");
+	expect(description.description.reach.uses).toHaveLength(4);
+	expect(description.description.reach.unknown).toEqual(["home", "second"]);
+	expect(await disclosure.textContent()).toBe("4+");
 	expect(await f.page.getByText("Content", { exact: true }).locator("..").textContent()).toBe(
 		"Contentrepeated call site",
 	);
 	await f.page.mouse.move(5, 5);
 	for (const target of [f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
 		await expect.poll(() => target.getAttribute("data-spool-shared-use")).toBe("");
+	const preview = reply(f, "preview");
 	await control(f).fill("50");
+	await previewed(f, preview, 2);
 	for (const target of [f.target, f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
 		await expect.poll(() => target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.5");
 	await control(f).press("Escape");
@@ -188,7 +257,7 @@ it.each([
 	{ timeout: 120_000 },
 	async ({ attribute }) => {
 		const authored = `export function Card(){return <button id="subject"${attribute}>Hello</button>}`;
-		const f = await originCanvas(
+		const f = await propertyCanvas(
 			{ [owner]: authored },
 			'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:40}}><Card/></main>}',
 			"#subject",
@@ -203,10 +272,12 @@ it.each([
 			["", "1", removed],
 		]) {
 			await f.select();
-			const reading = reply(f, "read");
+			const reading = reply(f, "read"),
+				preview = reply(f, "preview");
 			await control(f).fill(text!);
 			const read = await (await reading).json();
 			expect(read, JSON.stringify(read)).toMatchObject({ ok: true });
+			await previewed(f, preview, 1);
 			await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe(opacity);
 			await complete(f, source!);
 		}
@@ -255,7 +326,7 @@ async function inverse(f: Canvas, redo: boolean) {
 it("opens a cold property consumer from saved source and includes it in subsequent source inverses", {
 	timeout: 120_000,
 }, async () => {
-	const f = await originCanvas(
+	const f = await propertyCanvas(
 		{ [owner]: cards, "frames/cold-page/cold/frame.tsx": frameSource },
 		frameSource,
 		'[data-subject="A"]',
@@ -293,7 +364,12 @@ it("keeps a surviving shared consumer and unrelated source through inverse after
 	timeout: 120_000,
 }, async () => {
 	const other = "export const unrelated = 'keep me';\n";
-	const f = await originCanvas({ [owner]: cards, "shared/other.ts": other }, frameSource, '[data-subject="A"]', true);
+	const f = await propertyCanvas(
+		{ [owner]: cards, "shared/other.ts": other },
+		frameSource,
+		'[data-subject="A"]',
+		true,
+	);
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await remember(second);
 	await f.select();
@@ -322,14 +398,14 @@ it("reports each shared memo use against ordinary React without borrowing a heal
 }, async () => {
 	const authored = `${cards.replace("useState,useEffect", "useState,useEffect,memo")}export const Memo=memo(Card);`;
 	const frame = frameSource.replace("import {Card}", "import {Card,Memo}").replace('<Card key="b"', '<Memo key="b"');
-	const f = await originCanvas({ [owner]: authored }, frame, '[data-subject="A"]');
+	const f = await propertyCanvas({ [owner]: authored }, frame, '[data-subject="A"]');
 	const oracle = await originOracle(
 		f,
 		{
 			[owner]: authored.replace('className="p-6 opacity-75"', 'className={window.oracleClass || "p-6 opacity-75"}'),
-			"frames/home/frame.tsx": frame,
+			"shared/oracle-frame.tsx": frame,
 		},
-		"./frames/home/frame.tsx",
+		"shared/oracle-frame",
 	);
 	await oracle.addStyleTag({ content: ".opacity-75{opacity:.75}.opacity-50{opacity:.5}" });
 	for (const document of [f.frame, oracle]) await remember(document);
