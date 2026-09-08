@@ -45,7 +45,16 @@ const nodeMachineStateWatch: MachineStateWatchAdapter = {
 	subscribe: (spoolDir, changed, failed) => {
 		const watcher = watch(spoolDir, { encoding: "utf8" }, (_type, filename) => changed(filename));
 		watcher.on("error", failed);
-		return { close: () => watcher.close() };
+		// Notifications are hints; also reconcile these two small state files
+		// when the OS drops or coalesces an atomic replacement notification.
+		const poll = setInterval(() => changed(null), 1000);
+		poll.unref();
+		return {
+			close: () => {
+				clearInterval(poll);
+				watcher.close();
+			},
+		};
 	},
 	schedule: (reconcile) => {
 		const timer = setTimeout(reconcile, DEBOUNCE_MS);
@@ -107,15 +116,7 @@ export function watchMachineState(
 			if (filename !== null && !filename.startsWith("registry.json") && !filename.startsWith(SESSION_FILE)) {
 				return;
 			}
-			if (pending === undefined) {
-				let ranSynchronously = false;
-				const scheduled = adapter.schedule(() => {
-					ranSynchronously = true;
-					pending = undefined;
-					reconcile();
-				});
-				if (!ranSynchronously) pending = scheduled;
-			}
+			scheduleReconcile();
 		},
 		(error) => {
 			if (stopped) return;
@@ -127,6 +128,20 @@ export function watchMachineState(
 	else {
 		subscription = startedSubscription;
 		reconcile();
+		// Native subscriptions can arm after fs.watch returns. Recheck writes
+		// made during startup even when their first notification was missed.
+		scheduleReconcile();
+	}
+
+	function scheduleReconcile(): void {
+		if (stopped || pending !== undefined) return;
+		let ranSynchronously = false;
+		const scheduled = adapter.schedule(() => {
+			ranSynchronously = true;
+			pending = undefined;
+			reconcile();
+		});
+		if (!ranSynchronously) pending = scheduled;
 	}
 
 	function reconcile(): void {
