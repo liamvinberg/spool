@@ -177,10 +177,26 @@ it("refuses a stop color the caller has not resolved", async () => {
 	]);
 });
 
+it("compares a cleared gradient against its native removal and inverse", async () => {
+	const f = await fixture(
+		`<div data-subject style="${box};background-color:red">Cleared</div>` +
+			`<div data-subject style="${box};background-image:linear-gradient(to right, red, blue)">Painted</div>`,
+	);
+	expect(await f.computed()).toEqual(["none", "linear-gradient(to right, rgb(255, 0, 0), rgb(0, 0, 255))"]);
+	expect(await f.inspect("none")).toEqual([
+		{ kind: "known", matches: true, observed: "none" },
+		{ kind: "known", matches: false, observed: expect.any(String) },
+	]);
+	expect(await f.inspect("linear-gradient(to right, red, blue)")).toEqual([
+		{ kind: "known", matches: false, observed: "none" },
+		{ kind: "known", matches: true, observed: expect.any(String) },
+	]);
+});
+
 it.each([
 	{ form: "a repeating gradient", style: "background-image:repeating-linear-gradient(to right, red, blue)" },
 	{ form: "a radial gradient", style: "background-image:radial-gradient(red, blue)" },
-	{ form: "no image", style: "background-color:red" },
+	{ form: "a url image", style: "background-image:url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)" },
 ])("refuses $form", async ({ style }) => {
 	const f = await fixture(`<div data-subject style="${box};${style}">Other image</div>`);
 	expect(await f.inspect("linear-gradient(to right, red, blue)")).toEqual([
@@ -285,6 +301,7 @@ it("compares without changing document, stylesheets or the active input", async 
 			"linear-gradient(to right, red, blue)",
 			"linear-gradient(to left, red, blue)",
 			"linear-gradient(to right in oklab, red, blue)",
+			"none",
 		].map((value) => evaluator.nativeGradient(input, value));
 		await Promise.resolve();
 		observer.disconnect();
@@ -296,6 +313,7 @@ it("compares without changing document, stylesheets or the active input", async 
 		{ kind: "known", matches: true, observed: expect.any(String) },
 		{ kind: "known", matches: false, observed: expect.any(String) },
 		{ kind: "unknown", reason: "this gradient needs a native interpolation space proof" },
+		{ kind: "known", matches: false, observed: expect.any(String) },
 	]);
 });
 

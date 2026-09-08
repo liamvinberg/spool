@@ -88,6 +88,11 @@ function gradient(value: string): Gradient | undefined {
 	return { direction, stops };
 }
 
+/** A cleared background image, or one plain linear gradient. */
+function image(value: string): "none" | Gradient | undefined {
+	return value.trim().toLowerCase() === "none" ? "none" : gradient(value);
+}
+
 function samePosition(left: Position | undefined, right: Position | undefined): boolean {
 	if (!left || !right) return !left && !right;
 	return left.unit === right.unit && left.amount === right.amount;
@@ -139,9 +144,11 @@ export function nativeGradient(element: Element, expectedValue: string): NativeG
 		return unknown("this gradient needs a single native image layer");
 	if (interpolated(expectedValue) || interpolated(observed))
 		return unknown("this gradient needs a native interpolation space proof");
-	const expected = gradient(expectedValue),
-		actual = gradient(observed);
+	const expected = image(expectedValue),
+		actual = image(observed);
 	if (!expected || !actual) return unknown("this gradient needs a resolved supported linear declaration");
+	// A cleared gradient is a value of its own, and no gradient is the removal it replaces.
+	if (expected === "none" || actual === "none") return { kind: "known", matches: expected === actual, observed };
 	let represented: Gradient | undefined;
 	try {
 		const sheet = new CSSStyleSheet();
