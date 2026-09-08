@@ -437,7 +437,9 @@ function Body({
 				{held === null ? <Empty says="select an element" /> : null}
 				{held?.kind === "frames" ? <Empty says={`${held.count} frames`} /> : null}
 				{held?.kind === "elements" ? <Empty says={`${held.count} elements`} /> : null}
-				{held?.kind === "frame" ? <FrameGeometry name={held.name} geometry={held.geometry} acts={acts} /> : null}
+				{held?.kind === "frame" ? (
+					<FrameGeometry key={held.name} name={held.name} geometry={held.geometry} acts={acts} />
+				) : null}
 				{held?.kind === "page" ? <PageFacts held={held} /> : null}
 				{/* keyed on the rung: a fold left open on one element is not an opinion
 				    about the next one, and a re-pick after this rail's own write is the
@@ -955,6 +957,11 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 		scrubbed.current = null;
 		if (before !== null) acts.onGeometryCommit(name, before);
 	};
+	const cancel = (key: "x" | "y" | "w" | "h") => {
+		const before = scrubbed.current;
+		scrubbed.current = null;
+		if (before !== null) acts.onGeometryPreview(name, { [key]: before[key] });
+	};
 	return (
 		<>
 			{(["position", "size"] as const).map((section) => (
@@ -965,6 +972,7 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 							name={axis.key}
 							onScrub={(units) => scrub(axis.key, geometry[axis.key] + units * 4)}
 							onScrubEnd={settle}
+							onScrubCancel={() => cancel(axis.key)}
 						>
 							<NumField
 								value={String(Math.round(geometry[axis.key]))}
