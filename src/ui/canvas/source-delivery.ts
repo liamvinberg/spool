@@ -227,14 +227,19 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 
 	return {
 		describeField: useCallback(
-			async (frame: string, selector: string, field: string) => {
+			async (
+				frame: string,
+				selector: string,
+				field: string,
+				operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+			) => {
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
 					field,
-					operation: { kind: "literal", ...(field ? { field } : {}) },
+					operation,
 				});
-				return original ? describeSource(project, frame, original, []) : undefined;
+				return original ? describeSource(project, frame, original, [], operation) : undefined;
 			},
 			[project, request],
 		),

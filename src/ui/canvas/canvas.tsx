@@ -5654,6 +5654,14 @@ export function ProjectCanvas({
 							onGeometryCommit: commitFrameGeometry,
 							onWrite: writeOps,
 							property: {
+								describe: async (frame, selector, property, scope) =>
+									(
+										await sourceDelivery.describeField(frame, selector, "className", {
+											kind: "property",
+											property,
+											scope,
+										})
+									)?.property,
 								begin: (frame, selector, property, scope, request) =>
 									beginRailText(frame, selector, "className", { kind: "property", property, scope }, request),
 								plan: async (_frame, read, revision, value) =>

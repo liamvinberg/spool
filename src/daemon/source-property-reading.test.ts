@@ -43,3 +43,9 @@ it("keeps a fractional size reference while identifying a missing authored color
 		native: "rgb(18, 52, 86)",
 	});
 });
+
+it("retains the compiled color reference when an authored alpha wraps it", async () => {
+	const color = await reading("text-brand/50", "color", "rgba(18, 52, 86, 0.5)");
+	expect(color.binding).toEqual({ kind: "reference", name: "--color-brand", value: "#123456" });
+	expect(color.native).toBe("rgba(18, 52, 86, 0.5)");
+});
