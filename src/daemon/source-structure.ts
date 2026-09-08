@@ -1,6 +1,7 @@
 import type { JSXElement, Node } from "@babel/types";
 import { walkNodes } from "./jsx-walk";
 import { literal, type Selection, type Sources, StructuralShapeRefusal, sourceRead } from "./source-origins";
+import { significantStructuralChildren, structuralKey } from "./source-structure-syntax";
 
 function range(node: Node) {
 	if (node.start == null || node.end == null) throw new Error("missing authored range");
@@ -11,51 +12,10 @@ function body(fn: ReturnType<Sources["valueCallee"]>["fn"]) {
 		? fn.body.body[0].argument
 		: fn.body;
 }
-function significant(node: JSXElement | Extract<Node, { type: "JSXFragment" }>) {
-	return node.children.filter(
-		(child) =>
-			(child.type !== "JSXText" || child.value.trim() !== "") &&
-			!(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression"),
-	);
-}
 function key(node: Node): string {
-	if (node.type === "JSXExpressionContainer") return key(node.expression);
-	if (node.type === "ConditionalExpression") {
-		if (node.consequent.type === "NullLiteral") return key(node.alternate);
-		if (node.alternate.type === "NullLiteral") return key(node.consequent);
-		const a = key(node.consequent),
-			b = key(node.alternate);
-		if (a !== b) throw new Error("conditional branches change key; movement identity unproved");
-		return a;
-	}
-	if (node.type === "CallExpression") {
-		if (node.arguments.some((argument) => argument.type === "SpreadElement"))
-			throw new Error("spread factory arguments have no stable structural identity");
-		const config = node.arguments[1];
-		if (
-			config?.type !== "ObjectExpression" ||
-			config.properties.some((property) => property.type !== "ObjectProperty" || property.computed)
-		)
-			throw new Error("factory key configuration is not a direct immutable object");
-		const fields = config.properties.filter(
-			(property) =>
-				property.type === "ObjectProperty" &&
-				((property.key.type === "Identifier" && property.key.name === "key") ||
-					(property.key.type === "StringLiteral" && property.key.value === "key")),
-		);
-		const field = fields[0];
-		if (fields.length !== 1 || field?.type !== "ObjectProperty" || field.value.type !== "StringLiteral")
-			throw new Error("stable authored factory keys required");
-		return field.value.value;
-	}
-	if (node.type !== "JSXElement") throw new Error("complete keyed JSX sibling required");
-	if (node.openingElement.attributes.some((a) => a.type === "JSXSpreadAttribute"))
-		throw new Error("spread key unproved");
-	const fields = node.openingElement.attributes.filter((a) => a.type === "JSXAttribute" && a.name.name === "key");
-	const field = fields[0];
-	if (fields.length !== 1 || field?.type !== "JSXAttribute" || field.value?.type !== "StringLiteral")
-		throw new Error("stable authored keys required; unsafe unkeyed state transfer");
-	return field.value.value;
+	const result = structuralKey(node);
+	if (!result.ok) throw new Error(result.reason);
+	return result.key;
 }
 function retainedOwner(pick: Selection): void {
 	for (const call of pick.chain) {
@@ -166,7 +126,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 			throw new Error("clone is not the complete carrier return");
 		selected = sources.creation(carrier.source);
 		role = "call-site";
-		if (selected.node.type !== "JSXElement" || significant(selected.node).length !== 1)
+		if (selected.node.type !== "JSXElement" || significantStructuralChildren(selected.node).length !== 1)
 			throw new Error("clone carrier does not own one complete input");
 		steps.push(`verified sole ${value.kind} return -> complete carrier call; required input remains inside it`);
 	}
@@ -260,7 +220,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 		throw new Error("no complete authored structural parent");
 	// Removing an unkeyed member can transfer positional state just like a swap.
 	if (replacement === "" && (parent.type === "JSXElement" || parent.type === "JSXFragment")) {
-		const siblings = significant(parent);
+		const siblings = significantStructuralChildren(parent);
 		if (siblings.length > 1) {
 			const keys = siblings.map(key);
 			if (new Set(keys).size !== keys.length) throw new Error("duplicate sibling keys");

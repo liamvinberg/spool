@@ -412,15 +412,14 @@ function clearGestureFeedback(): void {
 	gestureFeedback.clear();
 	renderSourceFeedback();
 }
+function sourceObservationOperation(original: SourceOccurrence): SourceOperation {
+	return original.structure
+		? { kind: "delete" }
+		: { kind: "literal", ...(original.field ? { field: original.field } : {}) };
+}
 function sourceElement(original: SourceOccurrence): HTMLElement | undefined {
 	return [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
-		const current = inspectSource(
-			element,
-			original.field,
-			original.structure
-				? { kind: "delete" }
-				: { kind: "literal", ...(original.field ? { field: original.field } : {}) },
-		);
+		const current = inspectSource(element, original.field, sourceObservationOperation(original));
 		return current && sameSourceOccurrence(current, original);
 	});
 }
@@ -487,13 +486,7 @@ function prepareSourceUses(
 	const prepared: PreviewedUse[] = [];
 	for (const original of uses) {
 		const element = [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
-			const current = inspectSource(
-				element,
-				original.field,
-				original.structure
-					? { kind: "delete" }
-					: { kind: "literal", ...(original.field ? { field: original.field } : {}) },
-			);
+			const current = inspectSource(element, original.field, sourceObservationOperation(original));
 			return current && sameSourceOccurrence(current, original);
 		});
 		if (element) prepared.push(previewedUse(element, original));
@@ -504,13 +497,7 @@ function prepareSourceUses(
 }
 function previewSourceUses(generation: number, value: string): void {
 	for (const held of sharedPreviews.get(generation) ?? []) {
-		const current = inspectSource(
-			held.element,
-			held.original.field,
-			held.original.structure
-				? { kind: "delete" }
-				: { kind: "literal", ...(held.original.field ? { field: held.original.field } : {}) },
-		);
+		const current = inspectSource(held.element, held.original.field, sourceObservationOperation(held.original));
 		if (!current || !sameSourceOccurrence(current, held.original)) continue;
 		held.preview = value;
 		held.previewed = true;
@@ -537,13 +524,7 @@ function cancelSourceUses(generation: number, reason: "cancel" | "prepare" | "in
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
-		const current = inspectSource(
-			use.element,
-			use.original.field,
-			use.original.structure
-				? { kind: "delete" }
-				: { kind: "literal", ...(use.original.field ? { field: use.original.field } : {}) },
-		);
+		const current = inspectSource(use.element, use.original.field, sourceObservationOperation(use.original));
 		if (current && sameSourceOccurrence(current, use.original) && ownsPreview(use))
 			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
@@ -569,13 +550,7 @@ function sourceRead(
 function validLease(generation: number): boolean {
 	const held = leases.get(generation);
 	if (!held || generation !== intent) return false;
-	const current = inspectSource(
-		held.element,
-		held.original.field,
-		held.original.structure
-			? { kind: "delete" }
-			: { kind: "literal", ...(held.original.field ? { field: held.original.field } : {}) },
-	);
+	const current = inspectSource(held.element, held.original.field, sourceObservationOperation(held.original));
 	return current !== undefined && sameSourceOccurrence(current, held.original);
 }
 function previewSource(generation: number, value: string): boolean {
@@ -605,13 +580,8 @@ function cancelSource(generation: number): void {
 	if (
 		held.element.isConnected &&
 		ownsPreview(held) &&
-		inspectSource(
-			held.element,
-			held.original.field,
-			held.original.structure
-				? { kind: "delete" }
-				: { kind: "literal", ...(held.original.field ? { field: held.original.field } : {}) },
-		)?.invocation === held.original.invocation
+		inspectSource(held.element, held.original.field, sourceObservationOperation(held.original))?.invocation ===
+			held.original.invocation
 	)
 		restoreField(held.element, held.original, held.children, held.restoreAttribute);
 }
@@ -841,13 +811,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	const secondary =
 		publication.targets &&
 		prepared?.some((use) => {
-			const current = inspectSource(
-				use.element,
-				use.original.field,
-				use.original.structure
-					? { kind: "delete" }
-					: { kind: "literal", ...(use.original.field ? { field: use.original.field } : {}) },
-			);
+			const current = inspectSource(use.element, use.original.field, sourceObservationOperation(use.original));
 			return current && sameSourceOccurrence(use.original, original) && sameSourceOccurrence(current, use.original);
 		});
 	if (!undo && !((held && validLease(publication.generation)) || secondary))

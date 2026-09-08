@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { type Node, VISITOR_KEYS } from "@babel/types";
 import type { SourceStructureState } from "../source-structure";
+import { significantStructuralChildren, structuralKey } from "./source-structure-syntax";
 
 type Span = { start: number; end: number };
 type Group =
@@ -10,51 +11,9 @@ const span = (node: Node): Span => {
 	if (node.start == null || node.end == null) throw new Error("structural compiler range missing");
 	return { start: node.start, end: node.end };
 };
-const significant = (node: Extract<Node, { type: "JSXElement" }>) =>
-	node.children.filter(
-		(child) =>
-			(child.type !== "JSXText" || child.value.trim() !== "") &&
-			!(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression"),
-	);
 function staticKey(node: Node): string | undefined {
-	if (node.type === "JSXExpressionContainer") return staticKey(node.expression);
-	if (node.type === "ConditionalExpression") {
-		const a = node.consequent.type === "NullLiteral" ? null : staticKey(node.consequent),
-			b = node.alternate.type === "NullLiteral" ? null : staticKey(node.alternate);
-		return a === null ? (b ?? undefined) : b === null ? a : a === b ? a : undefined;
-	}
-	if (node.type === "JSXElement") {
-		if (node.openingElement.attributes.some((attribute) => attribute.type === "JSXSpreadAttribute")) return;
-		const keys = node.openingElement.attributes.filter(
-			(attribute) =>
-				attribute.type === "JSXAttribute" &&
-				attribute.name.type === "JSXIdentifier" &&
-				attribute.name.name === "key",
-		);
-		const key = keys[0];
-		return keys.length === 1 && key?.type === "JSXAttribute" && key.value?.type === "StringLiteral"
-			? key.value.value
-			: undefined;
-	}
-	if (node.type === "CallExpression") {
-		if (node.arguments.some((argument) => argument.type === "SpreadElement")) return;
-		const config = node.arguments[1];
-		if (
-			config?.type !== "ObjectExpression" ||
-			config.properties.some((property) => property.type !== "ObjectProperty" || property.computed)
-		)
-			return;
-		const keys = config.properties.filter(
-			(property) =>
-				property.type === "ObjectProperty" &&
-				((property.key.type === "Identifier" && property.key.name === "key") ||
-					(property.key.type === "StringLiteral" && property.key.value === "key")),
-		);
-		const key = keys[0];
-		return keys.length === 1 && key?.type === "ObjectProperty" && key.value.type === "StringLiteral"
-			? key.value.value
-			: undefined;
-	}
+	const result = structuralKey(node);
+	return result.ok ? result.key : undefined;
 }
 
 /** Structural lowering changes evaluated membership, never the application's keys or values. */
@@ -78,7 +37,7 @@ export function planStructureCompilation(ast: Node, file: string) {
 		paths.set(node, `${file}#structure:${path}`);
 		let list: Group | undefined;
 		if (node.type === "JSXElement" && !node.openingElement.selfClosing && node.closingElement) {
-			const children = significant(node);
+			const children = significantStructuralChildren(node);
 			const keyed = children.map(staticKey);
 			const only = children.length === 1 && children[0]?.type === "JSXElement";
 			const blank = node.children.every(
