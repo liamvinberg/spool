@@ -287,7 +287,13 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 						outcomes.push({ occurrence: "", installation: "refused", rendered: "unverified" });
 					return { kind: "structure" as const, outcome: combineUseOutcomes(outcomes, intent.original.occurrence) };
 				}
-				if (operation.kind !== "literal" || expected?.kind !== "literal") return;
+				if (
+					!(
+						(operation.kind === "literal" && expected?.kind === "literal") ||
+						(operation.kind === "image" && expected?.kind === "image")
+					)
+				)
+					return;
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
@@ -310,19 +316,31 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 								action: "verify",
 								publication: use.original.publication,
 								original: use.original,
-								expected: { kind: "literal", value: description.value, absent: original.absent ?? false },
+								expected:
+									expected.kind === "image"
+										? expected
+										: { kind: "literal", value: description.value, absent: original.absent ?? false },
 							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
 							frame: use.frame,
 						}),
 					),
 				);
+				if (expected.kind === "image") {
+					for (const name of intent.recovery?.frames ?? [frame]) {
+						const uses = description.reach.uses.filter((use) => use.frame === name);
+						if (!uses.length || !(await sourceIsCurrent(project, uses[0]!.original.publication)))
+							outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
+					}
+					if (intent.recovery?.unknown)
+						outcomes.push({ occurrence: "", installation: "refused", rendered: "unverified" });
+				}
 				outcomes.push(...(description.reach.unverified ?? []));
 				for (const name of description.reach.unknown)
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
 				for (const name of description.reach.unmounted)
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unmounted" });
 				return {
-					kind: "literal" as const,
+					kind: expected.kind,
 					description,
 					outcome: combineUseOutcomes(outcomes, original.occurrence),
 				};

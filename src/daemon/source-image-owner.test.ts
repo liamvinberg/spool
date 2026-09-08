@@ -332,7 +332,13 @@ it("publishes the chosen shared image import to every captured consumer", async 
 	expect(saved.publication.related).toHaveLength(1);
 	const related = saved.publication.related?.[0];
 	if (!related) throw new Error("missing related publication");
-	expect(related.expected).toEqual({ kind: "image", value: staged.value, absent: false });
+	expect(related.expected).toEqual({
+		kind: "image",
+		value: staged.value,
+		absent: false,
+		asset: "shared/assets/second.svg",
+		source: expect.stringMatching(/^shared\/image\.tsx:1:\d+$/),
+	});
 	expect(related.packet.values[read.read.cell!]).toBe(staged.value);
 	expect(f.owner.admit(related.admission.token)).toBe(true);
 	f.owner.delivered(saved.publication.packet.id);

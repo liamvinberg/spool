@@ -40,6 +40,7 @@ import { sourceHistoryCompilation } from "./source-history";
 import { compileImageChange, compileImageInverse } from "./source-image-plan";
 import { type StagedImage, stageImageAsset } from "./source-image-stage";
 import { assertImageContext, resolveImageSource } from "./source-image-target";
+import { imageExpectation } from "./source-image-values";
 import { createSourceJournal } from "./source-journal";
 import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
@@ -810,6 +811,7 @@ export function createSourceOwner(
 			const image = imageSnapshot.cells[key];
 			if (!image?.image || image.value !== expected.value || (image.absent === true) !== expected.absent)
 				throw new Error("the planned image no longer resolves to its requested source value");
+			expected = { ...expected, source: image.source };
 			if (held.imageRestore && JSON.stringify(image.image) !== JSON.stringify(held.imageRestore.cells[key]?.image))
 				throw new Error("the original inverse image import binding changed");
 			for (const use of held.read.reach?.uses ?? []) {
@@ -1191,9 +1193,15 @@ export function createSourceOwner(
 					const cell = held.compilation.cells[held.read.cell ?? held.read.original.cell];
 					if (!cell?.image) throw new Error("the original image binding is missing");
 					return await publish(
-						{ ...held, inverseExpected: { kind: "image", value: cell.value, absent: cell.absent === true } },
+						{ ...held, inverseExpected: imageExpectation(cell, realDesignDir(root)) },
 						applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), patches).text,
-						{ kind: "image", value: held.image.value, absent: false },
+						{
+							kind: "image",
+							source: cell.source,
+							value: held.image.value,
+							absent: false,
+							asset: held.image.path,
+						},
 						patches,
 					);
 				}
@@ -1328,11 +1336,7 @@ export function createSourceOwner(
 						...(held.imageRestore
 							? {
 									imageRestore: held.imageRestore,
-									inverseExpected: {
-										kind: "image" as const,
-										value: cell!.value,
-										absent: cell!.absent === true,
-									},
+									inverseExpected: imageExpectation(cell!, realDesignDir(root)),
 								}
 							: {}),
 						...(held.structure

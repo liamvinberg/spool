@@ -3,6 +3,8 @@ export type SourceImagePut = { kind: "existing"; path: string } | { kind: "file"
 
 export interface SourceImageExpectation {
 	kind: "image";
+	asset?: string;
+	source: string;
 	value: string;
 	absent: boolean;
 }

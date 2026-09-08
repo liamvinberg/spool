@@ -2895,7 +2895,13 @@ export function ProjectCanvas({
 					intent = {
 						...intent,
 						change: { kind: "image", path: staged.path },
-						expected: { kind: "image", value: staged.value, absent: false },
+						expected: {
+							kind: "image",
+							value: staged.value,
+							absent: false,
+							asset: staged.path,
+							source: read.source,
+						},
 					};
 					setSaid({ kind: "source", frame, status: "saving", text: "", says: "Decoding image…", intent });
 					const previewed = await sourceDelivery.previewImage(frame, generation, staged.value);
@@ -3112,12 +3118,17 @@ export function ProjectCanvas({
 			const checked = await sourceDelivery.verifyReload(intent);
 			const matches =
 				checked?.kind === "structure" ||
-				(checked?.kind === "literal" &&
-					intent.expected?.kind === "literal" &&
+				((checked?.kind === "literal" || checked?.kind === "image") &&
+					intent.expected?.kind === checked.kind &&
 					checked.description.cell === intent.cell &&
-					checked.description.source === intent.source &&
+					checked.description.source ===
+						(intent.expected.kind === "image" ? intent.expected.source : intent.source) &&
 					checked.description.value === intent.expected.value &&
-					(checked.description.original.absent ?? false) === intent.expected.absent);
+					(checked.description.original.absent ?? false) === intent.expected.absent &&
+					(intent.expected.kind !== "image" ||
+						(checked.description.asset === intent.expected.asset &&
+							checked.description.role === intent.role &&
+							checked.description.scope === intent.scope)));
 			if (matches && checked?.outcome.rendered === "verified") {
 				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
 				resolveIntent(intent);
