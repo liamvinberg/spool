@@ -6,7 +6,7 @@ import { Row } from "./properties-fields";
 
 export type ColorOption = ThemeToken & { reference: string | null };
 
-export type ColorChoice = { kind: "binding"; name: string } | { kind: "custom"; value: string };
+export type ColorChoice = { kind: "binding"; name: string } | { kind: "custom"; value: string } | { kind: "remove" };
 
 function colorText(value: string): string {
 	if (value === "rgba(0, 0, 0, 0)") return "transparent";
@@ -231,6 +231,13 @@ export function PropertyColorField({
 							)
 						);
 					})}
+					{reading?.tokens.length ? (
+						<div className="ep-color-options">
+							<button type="button" onClick={() => choose({ kind: "remove" })}>
+								{property === "color" ? "Remove color" : "Remove background color"}
+							</button>
+						</div>
+					) : null}
 					<div className="ep-custom-color">
 						{binding ? (
 							<button

@@ -29,3 +29,5 @@ Group the approved Typography and Appearance controls together, and add optional
 Grouped property changes retain their original fields or written scope and use one source save and Undo receipt.
 
 Remove a written scope or add and remove raw classes through the same retained source owner, including cancellation while the original read is pending.
+
+Remove a color declaration from its existing menu and restore the original reference with Undo, without authoring an inherit token.
