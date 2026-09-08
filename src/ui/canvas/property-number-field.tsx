@@ -33,6 +33,11 @@ export function PropertyNumberField({
 	finish(commit: boolean): void;
 }) {
 	const binding = reading?.binding.kind === "reference" ? reading.binding : undefined;
+	const boundToken = binding
+		? options
+				.map((option) => `${scope}${prefixes[property]}-${option.name}`)
+				.find((token) => reading?.tokens.includes(token))
+		: undefined;
 	const initial = numberUnit(reading?.authored ?? reading?.native ?? "");
 	const unit = initial?.unit ?? "px";
 	const [scrubbed, setScrubbed] = useState<string>();
@@ -118,7 +123,7 @@ export function PropertyNumberField({
 			<Menu
 				label={`${property} token`}
 				current={{
-					token: binding?.name ?? null,
+					token: boundToken ?? null,
 					name: binding ? "↗" : "…",
 					value: binding?.name ?? "Custom value",
 				}}

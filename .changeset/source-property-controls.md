@@ -19,3 +19,5 @@ Creation, removal and earlier property edits remain reversible through the same 
 Continuous numeric previews use the original compiler's temporary declaration immediately, without waiting for later compilation replies, and preserve outside stylesheet changes on cancellation.
 
 Keep memoized consumers in affected-use results through property Undo and Redo, while reporting the appearance each consumer actually retained.
+
+Typography menus mark the authored token reference without mistaking an equal custom value for a binding.
