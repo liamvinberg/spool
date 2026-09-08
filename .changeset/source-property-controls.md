@@ -25,3 +25,5 @@ Typography menus mark the authored token reference without mistaking an equal cu
 Edit individual corner radii with exact numeric units, token choices, live preview and cancellation through the same source-owned history.
 
 Group the approved Typography and Appearance controls together, and add optional letter spacing or border width through the same source-owned save and Undo.
+
+Grouped property changes retain their original fields or written scope and use one source save and Undo receipt.

@@ -1,4 +1,5 @@
-import type { SourcePropertyEffect, SourcePropertyEnvironment, SourcePropertyValue } from "../source-property";
+import type { SourcePropertyEffect, SourcePropertyEnvironment } from "../source-property";
+import type { SourcePropertyGroupValue } from "../source-property-group";
 import { anatomyOf, splitClass } from "./class-write";
 import type { SourceInput } from "./retained-compile";
 import { compilePropertySource } from "./source-property-compile";
@@ -12,11 +13,6 @@ import { propertyKeys, readPropertyEffects } from "./source-property-effects";
 import { planPropertyValue } from "./source-property-plan";
 import { removalComponents } from "./source-property-removal";
 
-export type PropertyGroupRequest =
-	| { kind: "fields"; changes: readonly { property: string; scope: string; value: SourcePropertyValue }[] }
-	| { kind: "remove-scope"; scope: string }
-	| { kind: "tokens"; add: readonly string[]; remove: readonly string[] };
-
 type PropertyGroupSelection = ({ kind: "field"; property: string } | { kind: "effects" }) & {
 	scope: string;
 	roots: Set<string>;
@@ -28,7 +24,7 @@ export async function planPropertyGroup(
 	root: string,
 	inputs: ReadonlyMap<string, SourceInput>,
 	literal: string,
-	request: PropertyGroupRequest,
+	request: SourcePropertyGroupValue,
 	environment: SourcePropertyEnvironment,
 	bundledCss = "",
 ) {

@@ -1,10 +1,11 @@
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import type { SourcePropertyGroupValue } from "../source-property-group";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { readInput } from "./retained-compile";
 import { compilePropertySource } from "./source-property-compile";
-import { type PropertyGroupRequest, planPropertyGroup } from "./source-property-group";
+import { planPropertyGroup } from "./source-property-group";
 
 const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 function fixture() {
@@ -18,7 +19,7 @@ it.each([false, true])(
 	"plans size and color together while retaining independent leading and stacking (reverse: %s)",
 	async (reverse) => {
 		const f = fixture();
-		const request: Extract<PropertyGroupRequest, { kind: "fields" }> = {
+		const request: Extract<SourcePropertyGroupValue, { kind: "fields" }> = {
 			kind: "fields",
 			changes: [
 				{ property: "font-size", scope: "", value: { kind: "binding", tokens: ["text-lg"] } },
@@ -152,7 +153,7 @@ it.each([
 			{ property: "opacity", scope: "", value: { kind: "binding", tokens: ["opacity-25"] } },
 		],
 	},
-] satisfies PropertyGroupRequest[])("refuses ambiguous or unsupported group %#", async (request) => {
+] satisfies SourcePropertyGroupValue[])("refuses ambiguous or unsupported group %#", async (request) => {
 	const f = fixture();
 	await expect(
 		planPropertyGroup(f.root, f.inputs, "opacity-75 hover:opacity-50", request, environment),
@@ -219,7 +220,7 @@ it("removes two border sides from the original shorthand once", async () => {
 
 it.each([false, true])("groups deliberate size and leading (reverse: %s)", async (reverse) => {
 	const f = fixture();
-	const changes: Extract<PropertyGroupRequest, { kind: "fields" }>["changes"] = [
+	const changes: Extract<SourcePropertyGroupValue, { kind: "fields" }>["changes"] = [
 		{ property: "font-size", scope: "", value: { kind: "binding", tokens: ["text-lg"] } },
 		{ property: "line-height", scope: "", value: { kind: "binding", tokens: ["leading-tight"] } },
 	];
@@ -235,7 +236,7 @@ it.each([false, true])("groups deliberate size and leading (reverse: %s)", async
 
 it.each([false, true])("removes one border side while replacing another (reverse: %s)", async (reverse) => {
 	const f = fixture();
-	const changes: Extract<PropertyGroupRequest, { kind: "fields" }>["changes"] = [
+	const changes: Extract<SourcePropertyGroupValue, { kind: "fields" }>["changes"] = [
 		{ property: "border-top-width", scope: "", value: { kind: "remove" } },
 		{ property: "border-bottom-width", scope: "", value: { kind: "binding", tokens: ["border-b-4"] } },
 	];

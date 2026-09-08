@@ -12,11 +12,13 @@ export function resolvePropertySource(
 	compilation: RetainedCompilation,
 	original: SourceOccurrence,
 	generation: number,
-	operation: Extract<SourceOperation, { kind: "property" }>,
+	operation: Extract<SourceOperation, { kind: "property" | "properties" }>,
 	witness?: { kind: "inverse"; cell: string } | { kind: "retry"; cell: string; before: string; after: string },
 ) {
-	const row = rowFor(operation.property);
-	if (!row || row.primitive === "read") throw new Error("this property has no supported control");
+	if (operation.kind === "property") {
+		const row = rowFor(operation.property);
+		if (!row || row.primitive === "read") throw new Error("this property has no supported control");
+	}
 	if (original.field !== "className" || !original.provenance)
 		throw new Error("this property has no committed class source observation");
 	const { native: environment } = z

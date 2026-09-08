@@ -2253,32 +2253,61 @@ export function createDaemonApp({
 		.post(
 			"/api/p/:project/source",
 			validator("json", (value, c) => {
+				const propertyValue = z.discriminatedUnion("kind", [
+					z
+						.object({ kind: z.literal("binding"), tokens: z.array(z.string().max(10_000)).max(100).readonly() })
+						.strict(),
+					z.object({ kind: z.literal("custom"), value: z.string().max(10_000) }).strict(),
+					z.object({ kind: z.literal("remove") }).strict(),
+				]);
+				const groupTarget = z.discriminatedUnion("kind", [
+					z
+						.object({
+							kind: z.literal("fields"),
+							fields: z
+								.array(z.object({ property: z.string(), scope: z.string() }).strict())
+								.min(1)
+								.max(100)
+								.readonly(),
+						})
+						.strict(),
+					z.object({ kind: z.literal("remove-scope"), scope: z.string().min(1) }).strict(),
+					z.object({ kind: z.literal("tokens") }).strict(),
+				]);
+				const groupValue = z.discriminatedUnion("kind", [
+					z
+						.object({
+							kind: z.literal("fields"),
+							changes: z
+								.array(z.object({ property: z.string(), scope: z.string(), value: propertyValue }).strict())
+								.min(1)
+								.max(100)
+								.readonly(),
+						})
+						.strict(),
+					z.object({ kind: z.literal("remove-scope"), scope: z.string().min(1) }).strict(),
+					z
+						.object({
+							kind: z.literal("tokens"),
+							add: z.array(z.string().max(10_000)).max(100).readonly(),
+							remove: z.array(z.string().max(10_000)).max(100).readonly(),
+						})
+						.strict(),
+				]);
 				const operation = z.discriminatedUnion("kind", [
 					z
 						.object({ kind: z.literal("literal"), field: z.string().optional() })
 						.strict()
 						.transform(({ kind, field }) => ({ kind, ...(field === undefined ? {} : { field }) })),
 					z.object({ kind: z.literal("property"), property: z.string(), scope: z.string() }).strict(),
+					z.object({ kind: z.literal("properties"), target: groupTarget }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
 				]);
 				const change = z.discriminatedUnion("kind", [
 					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
-					z
-						.object({
-							kind: z.literal("property"),
-							value: z.discriminatedUnion("kind", [
-								z
-									.object({
-										kind: z.literal("binding"),
-										tokens: z.array(z.string().max(10_000)).max(100).readonly(),
-									})
-									.strict(),
-								z.object({ kind: z.literal("custom"), value: z.string().max(10_000) }).strict(),
-								z.object({ kind: z.literal("remove") }).strict(),
-							]),
-						})
-						.strict(),
+					z.object({ kind: z.literal("property"), value: propertyValue }).strict(),
+					z.object({ kind: z.literal("properties"), value: groupValue }).strict(),
 				]);
 				const occurrence = z
 					.object({

@@ -67,7 +67,7 @@ export interface Selection {
 	refusal?: string;
 }
 export type Operation =
-	| { kind: "text" | "delete" | "reorder" | "asset" }
+	| { kind: "text" | "delete" | "reorder" | "asset" | "properties" }
 	| { kind: "attribute"; attribute: string }
 	| { kind: "property"; property: string; scope: string };
 export interface Target {
@@ -1381,7 +1381,12 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 		address: { file: origin.unit.file, start: origin.node.start!, end: origin.node.end! },
 		source: origin.source,
 		role,
-		slot: operation.kind === "property" ? "class" : field === "children" ? "text" : "attribute",
+		slot:
+			operation.kind === "property" || operation.kind === "properties"
+				? "class"
+				: field === "children"
+					? "text"
+					: "attribute",
 		...(field === "children" ? {} : { attribute: field }),
 		expected,
 		scope: operation.kind === "property" ? operation.scope : "",
@@ -1436,7 +1441,7 @@ export function sourceRead(
 		if (value === undefined) throw new Error("data or transformed text is not inverted");
 		expected = value;
 		slot = name === undefined ? "text" : "attribute";
-	} else if (operation.kind === "property") {
+	} else if (operation.kind === "property" || operation.kind === "properties") {
 		const attr = attribute(site, "className");
 		expected = attr === undefined ? null : (literal(site, "className") ?? null);
 		if (attr !== undefined && expected === null) throw new Error("class expression is preserved");

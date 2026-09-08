@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import {
+	isPropertyOperation,
 	type SourceChange,
 	type SourceDescription,
 	type SourceInventory,
@@ -18,6 +19,11 @@ import {
 	type UseOutcome,
 } from "../source-edit";
 import type { SourcePropertyEnvironment, SourcePropertyPreview, SourcePropertyReading } from "../source-property";
+import {
+	propertyGroupTarget,
+	type SourcePropertyGroupExpectation,
+	samePropertyGroupTarget,
+} from "../source-property-group";
 import type { ExecutedEdit } from "./bundled-editor";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-path";
@@ -39,6 +45,7 @@ import { createSourceJournal } from "./source-journal";
 import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
+import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
 import { planPropertyValue } from "./source-property-plan";
@@ -59,6 +66,7 @@ import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
 interface PropertyProof {
+	selections?: SourcePropertyGroupExpectation["selections"];
 	environment: SourcePropertyEnvironment;
 	roots: ReadonlySet<string>;
 	scopePaths: Extract<SourcePublication["expected"], { kind: "property" }>["scopePaths"];
@@ -313,13 +321,12 @@ export function createSourceOwner(
 			const retryFrom = retry ? compilation : undefined;
 			if (retry && operation.kind !== "literal")
 				throw new Error("this source operation has no admitted retry planner");
-			let resolved =
-				operation.kind === "property"
-					? {
-							kind: "property" as const,
-							...resolvePropertySource(root, compilation, original, generation, operation),
-						}
-					: { kind: "literal" as const, ...resolveTextSource(root, compilation, original, generation) };
+			let resolved = isPropertyOperation(operation)
+				? {
+						kind: "property" as const,
+						...resolvePropertySource(root, compilation, original, generation, operation),
+					}
+				: { kind: "literal" as const, ...resolveTextSource(root, compilation, original, generation) };
 			if (retry) {
 				const current = await currentCompilation(root, frame, compilation);
 				if (readingCoverage !== (coverage.get(root) ?? 0))
@@ -430,13 +437,12 @@ export function createSourceOwner(
 				const { handle: _handle, owner: _owner, generation: _generation, ...description } = found.read;
 				return { ok: true, description };
 			}
-			const resolved =
-				operation.kind === "property"
-					? {
-							kind: "property" as const,
-							...resolvePropertySource(root, publication.compilation, original, 0, operation),
-						}
-					: { kind: "literal" as const, ...resolveTextSource(root, publication.compilation, original, 0) };
+			const resolved = isPropertyOperation(operation)
+				? {
+						kind: "property" as const,
+						...resolvePropertySource(root, publication.compilation, original, 0, operation),
+					}
+				: { kind: "literal" as const, ...resolveTextSource(root, publication.compilation, original, 0) };
 			const { cellKey, cell, target } = resolved;
 			let property: SourcePropertyReading | undefined;
 			if (operation.kind === "property") {
@@ -539,23 +545,22 @@ export function createSourceOwner(
 				try {
 					// Only a receipt-owned inverse may resolve a retained old rendered value
 					// against this exact cell. Ordinary reads retain literal equality checks.
-					const target =
-						operation.kind === "property"
-							? resolvePropertySource(
-									root,
-									publication.compilation,
-									use.original,
-									generation,
-									operation,
-									mode === "inverse" ? { kind: "inverse", cell } : undefined,
-								)
-							: resolveTextSource(
-									root,
-									publication.compilation,
-									use.original,
-									generation,
-									mode === "inverse" ? cell : undefined,
-								);
+					const target = isPropertyOperation(operation)
+						? resolvePropertySource(
+								root,
+								publication.compilation,
+								use.original,
+								generation,
+								operation,
+								mode === "inverse" ? { kind: "inverse", cell } : undefined,
+							)
+						: resolveTextSource(
+								root,
+								publication.compilation,
+								use.original,
+								generation,
+								mode === "inverse" ? cell : undefined,
+							);
 					if (
 						target.cellKey === cell &&
 						!uses.some(
@@ -979,8 +984,63 @@ export function createSourceOwner(
 		}
 	}
 
+	async function planReadProperty(held: OriginalRead, change: SourceChange) {
+		const operation = held.read.operation;
+		if (!isPropertyOperation(operation)) throw new Error("this read has no property purpose");
+		const { target, environment } = resolvePropertySource(
+			held.root,
+			held.compilation,
+			held.read.original,
+			held.read.generation,
+			operation,
+		);
+		const planned = await (async () => {
+			if (operation.kind === "property" && change.kind === "property")
+				return {
+					plan: await planPropertyValue(
+						held.root,
+						held.compilation.inputs,
+						held.read.value,
+						operation,
+						change.value,
+						environment,
+						held.compilation.packet.bundledCss,
+					),
+					selections: undefined,
+				};
+			if (operation.kind === "properties" && change.kind === "properties") {
+				if (!samePropertyGroupTarget(operation.target, propertyGroupTarget(change.value)))
+					throw new Error("the grouped request differs from its original source purpose");
+				const plan = await planPropertyGroup(
+					held.root,
+					held.compilation.inputs,
+					held.read.value,
+					change.value,
+					environment,
+					held.compilation.packet.bundledCss,
+				);
+				return { plan, selections: plan.selections };
+			}
+			throw new Error("this source read does not authorize that property request");
+		})();
+		const plan = planned.plan;
+		const selections: SourcePropertyGroupExpectation["selections"] | undefined = planned.selections?.map(
+			({ consumers, roots, ...selection }) => ({ ...selection, roots: [...roots], effects: consumers }),
+		);
+		const proof: PropertyProof = {
+			environment,
+			roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
+			scopePaths:
+				operation.kind === "property"
+					? propertyScopePaths(plan.original, plan.desired, operation, environment)
+					: (selections?.flatMap((selection) => selection.scopePaths) ?? []),
+			...(selections ? { selections } : {}),
+		};
+		return { target, environment, plan, proof };
+	}
+
 	async function checkPropertyChanges(held: OriginalRead, proof: PropertyProof, compilerContext: RetainedCompilation) {
-		if (held.read.operation.kind !== "property") throw new Error("property proof has another operation purpose");
+		if (!isPropertyOperation(held.read.operation)) throw new Error("property proof has another operation purpose");
 		const operation = held.read.operation;
 		const inputs = new Map(held.compilation.inputs);
 		const original = inputs.get(held.file);
@@ -997,6 +1057,7 @@ export function createSourceOwner(
 				proof.environment,
 				proof.roots,
 				proof.scopePaths,
+				proof.selections,
 			);
 		let snapshot = compilerContext;
 		let before = await state(original.bytes.toString("utf8"), snapshot);
@@ -1051,33 +1112,13 @@ export function createSourceOwner(
 				!sameSourceOccurrence(held.read.original, original)
 			)
 				throw new Error("the original property edit is no longer available");
-			if (change.kind !== "property" || held.read.operation.kind !== "property")
+			if (!isPropertyOperation(held.read.operation) || change.kind !== held.read.operation.kind)
 				throw new Error("this source read does not authorize a property preview");
 			const observed = await observe(root, held.frame, generation, held.observer);
 			if (!observed || !sameSourceOccurrence(observed, original))
 				throw new Error("the original property occurrence changed");
 			valid(root, held.compilation);
-			const { target, environment } = resolvePropertySource(
-				root,
-				held.compilation,
-				original,
-				generation,
-				held.read.operation,
-			);
-			const plan = await planPropertyValue(
-				root,
-				held.compilation.inputs,
-				held.read.value,
-				held.read.operation,
-				change.value,
-				environment,
-				held.compilation.packet.bundledCss,
-			);
-			const proof = {
-				environment,
-				roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
-				scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
-			};
+			const { target, plan, proof } = await planReadProperty(held, change);
 			const current = await checkPropertyChanges(held, proof, held.compilation);
 			const input = held.compilation.inputs.get(held.file);
 			if (!input) throw new Error("the original property source input is missing");
@@ -1182,28 +1223,11 @@ export function createSourceOwner(
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
-				if (change.kind === "property" && held.read.operation.kind === "property") {
-					const { target, environment } = resolvePropertySource(
-						root,
-						held.compilation,
-						original,
-						generation,
-						held.read.operation,
-					);
-					const plan = await planPropertyValue(
-						root,
-						held.compilation.inputs,
-						held.read.value,
-						held.read.operation,
-						change.value,
-						environment,
-						held.compilation.packet.bundledCss,
-					);
-					const proof = {
-						environment,
-						roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
-						scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
-					};
+				if (
+					isPropertyOperation(held.read.operation) &&
+					(change.kind === "property" || change.kind === "properties")
+				) {
+					const { target, environment, plan, proof } = await planReadProperty(held, change);
 					const current = await checkPropertyChanges(held, proof, held.compilation);
 					const input = held.compilation.inputs.get(held.file);
 					if (!input) throw new Error("the original property source input is missing");
@@ -1223,6 +1247,7 @@ export function createSourceOwner(
 						environment,
 						proof.roots,
 						proof.scopePaths,
+						proof.selections,
 					);
 					held.property = proof;
 					held.inverseExpected = current.state.expected;
@@ -1419,7 +1444,7 @@ export function createSourceOwner(
 				};
 				const next = applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text;
 				let expected = held.expected;
-				if (held.property && held.purpose.kind === "property") {
+				if (held.property && isPropertyOperation(held.purpose)) {
 					const current = await checkPropertyChanges(
 						{ ...inverseRead, compilation: held.required },
 						held.property,
@@ -1436,6 +1461,7 @@ export function createSourceOwner(
 						held.property.environment,
 						held.property.roots,
 						held.property.scopePaths,
+						held.property.selections,
 					);
 					inverseRead.property = held.property;
 					inverseRead.inverseExpected = current.state.expected;

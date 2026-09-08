@@ -314,7 +314,7 @@ function inspectSource(
 	field?: string,
 	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 ): SourceOccurrence | undefined {
-	if (operation.kind === "property" && field !== "className") return;
+	if ((operation.kind === "property" || operation.kind === "properties") && field !== "className") return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
 	let origin =

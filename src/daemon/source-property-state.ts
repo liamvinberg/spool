@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import type { SourceOperation } from "../source-edit";
 import type { SourcePropertyEnvironment, SourcePropertyExpectation } from "../source-property";
+import type { SourcePropertyGroupExpectation } from "../source-property-group";
 import { realDesignDir } from "./design-path";
 import { lowerLiterals, type RetainedCompilation, type SourceInput } from "./retained-compile";
 import { compilePropertySource } from "./source-property-compile";
@@ -14,10 +15,11 @@ export async function propertyState(
 	file: string,
 	source: string,
 	cellKey: string,
-	operation: Extract<SourceOperation, { kind: "property" }>,
+	operation: Extract<SourceOperation, { kind: "property" | "properties" }>,
 	environment: SourcePropertyEnvironment,
 	roots: ReadonlySet<string>,
 	scopePaths: SourcePropertyExpectation["scopePaths"],
+	selections?: SourcePropertyGroupExpectation["selections"],
 ) {
 	const path = relative(realDesignDir(root), file);
 	const lowered = lowerLiterals(path, source);
@@ -26,15 +28,27 @@ export async function propertyState(
 	const cell = lowered.cells[cellKey];
 	if (cell?.field !== "className") throw new Error("the original class source cell is no longer present");
 	const certificate = await compilePropertySource(root, inputs, cell.value, compilation.packet.bundledCss);
-	const expected: SourcePropertyExpectation = {
-		kind: "property",
-		property: operation.property,
-		scope: operation.scope,
-		className: cell.value,
-		absent: cell.absent === true,
-		scopePaths,
-		effects: propertyConsumers(certificate, roots, environment),
-		css: certificate.css,
-	};
+	const common = { className: cell.value, absent: cell.absent === true, css: certificate.css };
+	let expected: SourcePropertyExpectation | SourcePropertyGroupExpectation;
+	if (operation.kind === "property") {
+		expected = {
+			...common,
+			kind: "property",
+			property: operation.property,
+			scope: operation.scope,
+			scopePaths,
+			effects: propertyConsumers(certificate, roots, environment),
+		};
+	} else {
+		if (!selections) throw new Error("the grouped property selections are missing");
+		expected = {
+			...common,
+			kind: "properties",
+			selections: selections.map((selection) => ({
+				...selection,
+				effects: propertyConsumers(certificate, new Set(selection.roots), environment),
+			})),
+		};
+	}
 	return { certificate, expected };
 }
