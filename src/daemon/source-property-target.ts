@@ -13,7 +13,7 @@ export function resolvePropertySource(
 	original: SourceOccurrence,
 	generation: number,
 	operation: Extract<SourceOperation, { kind: "property" }>,
-	inverseCell?: string,
+	witness?: { kind: "inverse"; cell: string } | { kind: "retry"; cell: string; before: string; after: string },
 ) {
 	const row = rowFor(operation.property);
 	if (!row || row.primitive === "read") throw new Error("this property has no supported control");
@@ -30,12 +30,22 @@ export function resolvePropertySource(
 	for (const input of compilation.inputs.keys())
 		if (/\.[cm]?[jt]sx?$/.test(input)) sources.read(relative(realDesignDir(root), input));
 	const selection = JSON.parse(original.provenance) as Selection;
-	const previous = inverseCell ? compilation.cells[inverseCell] : undefined;
+	const previous = witness ? compilation.cells[witness.cell] : undefined;
 	const target = sourceRead(
 		sources,
 		{ ...selection, generation: String(generation) },
 		operation,
-		previous ? { kind: "inverse", source: previous.source, field: "className" } : undefined,
+		previous && witness
+			? witness.kind === "inverse"
+				? { kind: "inverse", source: previous.source, field: "className" }
+				: {
+						kind: "retry",
+						source: previous.source,
+						field: "className",
+						before: witness.before,
+						after: witness.after,
+					}
+			: undefined,
 	);
 	for (const unit of sources.revisions.values())
 		if (!compilation.inputs.has(unit.file))
@@ -45,7 +55,9 @@ export function resolvePropertySource(
 	);
 	if (!found) throw new Error("the committed class has no retained source cell");
 	const [cellKey, cell] = found;
-	if (cell.value !== original.value && inverseCell !== cellKey)
+	if (cell.value !== original.value && witness?.cell !== cellKey)
 		throw new Error("the committed class differs from its original source literal");
+	if (witness?.kind === "retry" && (original.value !== witness.before || cell.value !== witness.after))
+		throw new Error("the retried class differs from its checked source values");
 	return { cellKey, cell, target, environment };
 }

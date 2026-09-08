@@ -9,3 +9,5 @@ Numeric scrubs preview without writing source, save once on release, and cancel 
 Color menus distinguish authored references from displayed colors, keep project and default choices searchable, and restore the original binding with Undo.
 
 Typography fields preserve fractional custom units, step the current draft by one or ten, and keep keyboard and scrub previews in one cancellable source gesture.
+
+Property conflicts disclose the checked current declaration while retaining the original requested edit; changed source ancestry never supplies unchecked current values.

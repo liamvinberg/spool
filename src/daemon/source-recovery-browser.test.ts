@@ -763,3 +763,57 @@ it("distinguishes an inverse's absent title from another editor's empty title on
 	await f.page.locator('[data-dock-glyph="agent"]').click();
 	await expect.poll(() => f.composer.inputValue()).toBe("");
 });
+
+it("discloses checked current property source after a real competing edit without replacing the original intent", {
+	timeout: 180_000,
+}, async () => {
+	const f = await withAgent(APP.replace('<h1 id="label">', '<h1 id="label" className="opacity-75">'));
+	await f.select();
+	const field = f.page.locator('[data-properties-row="opacity"] input').first();
+	await field.fill("50");
+	await expect
+		.poll(() => f.frame.locator("#label").evaluate((element) => getComputedStyle(element).opacity))
+		.toBe("0.5");
+	await f.agentEdit("opacity-75", "opacity-25");
+	const replied = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await field.press("Enter");
+	const result = await (await replied).json();
+	expect(result).toMatchObject({
+		ok: false,
+		current: { kind: "property", value: { kind: "binding", tokens: ["opacity-25"] } },
+	});
+	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
+	expect(await f.notice.textContent()).toContain("opacity-25");
+	expect(readFileSync(f.file, "utf8")).toContain("opacity-25");
+	expect(await f.frame.locator("#label").evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+	const calls = f.calls();
+	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	await expect.poll(() => f.composer.inputValue()).toContain("opacity-50");
+	expect(await f.composer.inputValue()).toContain("Target: home, #label");
+	expect(f.calls()).toBe(calls);
+});
+
+it("withholds property current-source evidence when another original ancestry field changed", {
+	timeout: 180_000,
+}, async () => {
+	const f = await withAgent(APP.replace('<h1 id="label">', '<h1 id="label" className="opacity-75">'));
+	await f.select();
+	const field = f.page.locator('[data-properties-row="opacity"] input').first();
+	await field.fill("50");
+	await expect
+		.poll(() => f.frame.locator("#label").evaluate((element) => getComputedStyle(element).opacity))
+		.toBe("0.5");
+	await f.agentEdit('id="label" className="opacity-75"', 'id="changed" className="opacity-25"');
+	const replied = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await field.press("Enter");
+	const result = await (await replied).json();
+	expect(result).toMatchObject({ ok: false });
+	expect(result.current).toBeUndefined();
+	expect(readFileSync(f.file, "utf8")).toContain('id="changed" className="opacity-25"');
+	expect(await f.notice.textContent()).not.toContain("Checked current source");
+	expect(await f.frame.locator("#label").count()).toBe(1);
+});

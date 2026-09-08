@@ -45,7 +45,7 @@ import { planPropertyValue } from "./source-property-plan";
 import { propertyReading } from "./source-property-reading";
 import { propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
-import { retryTextSource } from "./source-retry";
+import { retryPropertySource, retryTextSource } from "./source-retry";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
@@ -474,7 +474,7 @@ export function createSourceOwner(
 									use.original,
 									generation,
 									operation,
-									mode === "inverse" ? cell : undefined,
+									mode === "inverse" ? { kind: "inverse", cell } : undefined,
 								)
 							: resolveTextSource(
 									root,
@@ -1048,19 +1048,47 @@ export function createSourceOwner(
 				// Read-only conflict evidence uses the original authenticated owner. It
 				// neither revives this consumed read nor grants authority for a retry.
 				let current: SourceChange | undefined;
-				if (authenticated && held?.read.operation.kind === "literal") {
+				if (authenticated && held) {
 					try {
 						valid(root, held.compilation);
 						const snapshot = await currentCompilation(root, held.frame, held.compilation);
-						const resolved = retryTextSource(
-							root,
-							held.retryFrom ?? held.compilation,
-							snapshot,
-							held.read.original,
-							generation,
-						);
-						if (held.coverage === (coverage.get(root) ?? 0))
-							current = { kind: "literal", text: resolved.cell.value };
+						if (held.read.operation.kind === "property") {
+							const resolved = retryPropertySource(
+								root,
+								held.compilation,
+								snapshot,
+								held.read.original,
+								generation,
+								held.read.operation,
+							);
+							const reading = propertyReading(
+								await compilePropertySource(
+									root,
+									snapshot.inputs,
+									resolved.cell.value,
+									snapshot.packet.bundledCss,
+								),
+								held.read.operation,
+								resolved.environment,
+							);
+							if (held.coverage === (coverage.get(root) ?? 0))
+								current = {
+									kind: "property",
+									value: reading.tokens.length
+										? { kind: "binding", tokens: reading.tokens }
+										: { kind: "remove" },
+								};
+						} else if (held.read.operation.kind === "literal") {
+							const resolved = retryTextSource(
+								root,
+								held.retryFrom ?? held.compilation,
+								snapshot,
+								held.read.original,
+								generation,
+							);
+							if (held.coverage === (coverage.get(root) ?? 0))
+								current = { kind: "literal", text: resolved.cell.value };
+						}
 					} catch {
 						// Lost continuity or changed ancestry is not a checked current value.
 					}

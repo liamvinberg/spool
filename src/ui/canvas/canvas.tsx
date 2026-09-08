@@ -1904,7 +1904,9 @@ export function ProjectCanvas({
 					says:
 						result.current?.kind === "literal"
 							? `${result.reason}. Checked current source: ${JSON.stringify(result.current.text)}.`
-							: result.reason,
+							: result.current?.kind === "property"
+								? `${result.reason}. Checked current source: ${result.current.value.kind === "binding" ? result.current.value.tokens.join(" ") : result.current.value.kind === "custom" ? result.current.value.value : "no authored declaration"}.`
+								: result.reason,
 				});
 				return;
 			}

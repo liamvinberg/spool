@@ -1,6 +1,7 @@
-import type { SourceOccurrence } from "../source-edit";
-import type { RetainedCompilation } from "./retained-compile";
+import type { SourceOccurrence, SourceOperation } from "../source-edit";
+import type { LiteralCell, RetainedCompilation } from "./retained-compile";
 import type { Selection } from "./source-origins";
+import { resolvePropertySource } from "./source-property-target";
 import { resolveTextSource } from "./source-target";
 
 /** Reconcile one explicitly retried literal, without relaxing ordinary reads. */
@@ -12,6 +13,30 @@ export function retryTextSource(
 	generation: number,
 ) {
 	const prior = resolveTextSource(root, before, original, generation);
+	const cell = checkedRetryCell(before, current, original, prior);
+	const target = resolveTextSource(root, current, original, generation, undefined, {
+		kind: "retry",
+		source: cell.source,
+		field: cell.field ?? "children",
+		before: prior.cell.value,
+		after: cell.value,
+	});
+	if (
+		target.cellKey !== prior.cellKey ||
+		target.target?.role !== prior.target?.role ||
+		target.target?.syntax !== prior.target?.syntax ||
+		target.target?.attribute !== prior.target?.attribute
+	)
+		throw new Error("The original owning declaration changed.");
+	return target;
+}
+
+function checkedRetryCell(
+	before: RetainedCompilation,
+	current: RetainedCompilation,
+	original: SourceOccurrence,
+	prior: { cellKey: string; cell: LiteralCell },
+): LiteralCell {
 	if (before.packet.shape !== current.packet.shape)
 		throw new Error("The original executable context changed. Confirm the target in current source.");
 	const cell = current.cells[prior.cellKey];
@@ -40,18 +65,31 @@ export function retryTextSource(
 				"Another input in the original call ancestry changed. Confirm the original target before retrying.",
 			);
 	}
-	const target = resolveTextSource(root, current, original, generation, undefined, {
+	return cell;
+}
+
+/** Read-only property reconciliation retains the original ancestry and exact class cell. */
+export function retryPropertySource(
+	root: string,
+	before: RetainedCompilation,
+	current: RetainedCompilation,
+	original: SourceOccurrence,
+	generation: number,
+	operation: Extract<SourceOperation, { kind: "property" }>,
+) {
+	const prior = resolvePropertySource(root, before, original, generation, operation);
+	const cell = checkedRetryCell(before, current, original, prior);
+	const target = resolvePropertySource(root, current, original, generation, operation, {
 		kind: "retry",
-		source: cell.source,
-		field: cell.field ?? "children",
+		cell: prior.cellKey,
 		before: prior.cell.value,
 		after: cell.value,
 	});
 	if (
 		target.cellKey !== prior.cellKey ||
-		target.target?.role !== prior.target?.role ||
-		target.target?.syntax !== prior.target?.syntax ||
-		target.target?.attribute !== prior.target?.attribute
+		target.target.role !== prior.target.role ||
+		target.target.syntax !== prior.target.syntax ||
+		target.target.attribute !== prior.target.attribute
 	)
 		throw new Error("The original owning declaration changed.");
 	return target;
