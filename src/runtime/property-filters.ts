@@ -36,6 +36,13 @@ function filterFunctions(value: string): FilterFunction[] | undefined {
 	return functions.length ? functions : undefined;
 }
 
+function sameFilters(left: readonly FilterFunction[], right: readonly FilterFunction[]): boolean {
+	return (
+		left.length === right.length &&
+		left.every((entry, index) => entry.name === right[index]!.name && entry.amount === right[index]!.amount)
+	);
+}
+
 /** The caller owns the complete resolved declaration, ordered companions and source/cascade proof. */
 export function nativeFilter(element: Element, expectedValue: string): NativeFilterResult {
 	const unknown = (reason: string): NativeFilterResult => ({ kind: "unknown", reason });
@@ -50,6 +57,19 @@ export function nativeFilter(element: Element, expectedValue: string): NativeFil
 	const expected = filterFunctions(expectedValue);
 	const actual = filterFunctions(observed);
 	if (!expected || !actual) return unknown("this filter needs a resolved supported declaration");
+	let represented: FilterFunction[] | undefined;
+	try {
+		const sheet = new CSSStyleSheet();
+		sheet.replaceSync(":root{}");
+		const rule = sheet.cssRules[0];
+		if (!(rule instanceof CSSStyleRule)) return unknown("this filter needs native declaration precision access");
+		rule.style.setProperty("filter", expectedValue);
+		represented = filterFunctions(rule.style.getPropertyValue("filter"));
+	} catch {
+		return unknown("this filter needs native declaration precision access");
+	}
+	if (!represented || !sameFilters(expected, represented))
+		return unknown("this filter needs observable native numeric precision");
 	const hasBlur = [...expected, ...actual].some((entry) => entry.name === "blur");
 	for (let host: Element | null = element; host; host = host.parentElement) {
 		const context = host === element ? style : view.getComputedStyle(host);
@@ -59,9 +79,7 @@ export function nativeFilter(element: Element, expectedValue: string): NativeFil
 	}
 	return {
 		kind: "known",
-		matches:
-			expected.length === actual.length &&
-			expected.every((entry, index) => entry.name === actual[index]!.name && entry.amount === actual[index]!.amount),
+		matches: sameFilters(expected, actual),
 		observed,
 	};
 }
