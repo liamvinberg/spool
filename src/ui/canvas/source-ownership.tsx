@@ -9,6 +9,11 @@ function ownershipLabel(description: SourceDescription, frame: string): string {
 	return description.repeated || multiple ? "repeated call site" : "this use";
 }
 
+export interface DescriptionLifetime {
+	signal: AbortSignal;
+	onLateReply(): void;
+}
+
 export interface OwnershipActions {
 	active?:
 		| { frame: string; selector: string; generation: number; field: string | undefined; operation: SourceOperation }
@@ -18,6 +23,7 @@ export interface OwnershipActions {
 		selector: string,
 		field?: string,
 		operation?: SourceOperation,
+		lifetime?: DescriptionLifetime,
 	): Promise<SourceDescription | undefined>;
 	release(): void;
 	highlight(uses: SourceUse[]): void;
@@ -45,18 +51,24 @@ export function SourceOwnership({
 	onSupport(value: { identity: string; label: string } | undefined, operation: SourceOperation): void;
 }) {
 	const [described, setDescribed] = useState<{ identity: string; value: SourceDescription | undefined }>();
-	const identity = JSON.stringify([frame, selector, field, operation, generation, revision]);
+	const [inspectionRevision, setInspectionRevision] = useState(0);
+	const identity = JSON.stringify([frame, selector, field, operation, generation, revision, inspectionRevision]);
 	const pending = described?.identity !== identity;
 	const description = !pending ? described?.value : undefined;
 	const [open, setOpen] = useState(false);
 	const panelHeight = useRef(0);
 	const { describe, highlight, reveal, release } = actions;
-	// biome-ignore lint/correctness/useExhaustiveDependencies(revision): refresh disclosure after acknowledged source changes.
 	useEffect(() => {
 		let live = true;
+		const controller = new AbortController();
 		highlight([]);
 		onSupport(undefined, operation ?? { kind: "literal", ...(field ? { field } : {}) });
-		void describe(frame, selector, field, operation).then((value) => {
+		void describe(frame, selector, field, operation, {
+			signal: controller.signal,
+			onLateReply: () => {
+				if (live) setInspectionRevision((revision) => revision + 1);
+			},
+		}).then((value) => {
 			if (live) {
 				setDescribed({ identity, value });
 				onSupport(
@@ -67,8 +79,9 @@ export function SourceOwnership({
 		});
 		return () => {
 			live = false;
+			controller.abort();
 		};
-	}, [describe, frame, selector, field, operation, identity, revision, onSupport, highlight]);
+	}, [describe, frame, selector, field, operation, identity, onSupport, highlight]);
 	useEffect(() => () => highlight([]), [highlight]);
 	useEffect(() => () => release(), [release]);
 	useEffect(() => {
