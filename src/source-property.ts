@@ -25,6 +25,8 @@ export interface SourcePropertyExpectation {
 	scope: string;
 	className: string;
 	absent: boolean;
+	/** Selected compiler paths, including conditions retained from removed declarations. */
+	scopePaths: readonly (readonly string[])[];
 	effects: readonly SourcePropertyEffect[];
 	css: string;
 }

@@ -43,6 +43,7 @@ import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard"
 import { planPropertyLiteral } from "./source-property-literal";
 import { planPropertyValue } from "./source-property-plan";
 import { propertyReading } from "./source-property-reading";
+import { propertyScopePaths } from "./source-property-scope";
 import { propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
 import { retryPropertySource, retryTextSource } from "./source-retry";
@@ -60,6 +61,7 @@ import { potentialTextSource, resolveTextSource } from "./source-target";
 interface PropertyProof {
 	environment: SourcePropertyEnvironment;
 	roots: ReadonlySet<string>;
+	scopePaths: Extract<SourcePublication["expected"], { kind: "property" }>["scopePaths"];
 }
 interface StructuralParent {
 	frame: string;
@@ -980,6 +982,7 @@ export function createSourceOwner(
 				operation,
 				proof.environment,
 				proof.roots,
+				proof.scopePaths,
 			);
 		let snapshot = held.compilation;
 		let before = await state(original.bytes.toString("utf8"), snapshot);
@@ -1055,7 +1058,11 @@ export function createSourceOwner(
 				environment,
 				held.compilation.packet.bundledCss,
 			);
-			const proof = { environment, roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment) };
+			const proof = {
+				environment,
+				roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
+				scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
+			};
 			const current = await checkPropertyChanges(held, proof);
 			const input = held.compilation.inputs.get(held.file);
 			if (!input) throw new Error("the original property source input is missing");
@@ -1176,6 +1183,7 @@ export function createSourceOwner(
 					const proof = {
 						environment,
 						roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
+						scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
 					};
 					const current = await checkPropertyChanges(held, proof);
 					const input = held.compilation.inputs.get(held.file);
@@ -1195,6 +1203,7 @@ export function createSourceOwner(
 						held.read.operation,
 						environment,
 						proof.roots,
+						proof.scopePaths,
 					);
 					held.property = proof;
 					held.inverseExpected = current.state.expected;
@@ -1406,6 +1415,7 @@ export function createSourceOwner(
 						held.purpose,
 						held.property.environment,
 						held.property.roots,
+						held.property.scopePaths,
 					);
 					inverseRead.property = held.property;
 					inverseRead.inverseExpected = current.state.expected;

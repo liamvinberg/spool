@@ -17,6 +17,7 @@ export async function propertyState(
 	operation: Extract<SourceOperation, { kind: "property" }>,
 	environment: SourcePropertyEnvironment,
 	roots: ReadonlySet<string>,
+	scopePaths: SourcePropertyExpectation["scopePaths"],
 ) {
 	const path = relative(realDesignDir(root), file);
 	const lowered = lowerLiterals(path, source);
@@ -31,6 +32,7 @@ export async function propertyState(
 		scope: operation.scope,
 		className: cell.value,
 		absent: cell.absent === true,
+		scopePaths,
 		effects: propertyConsumers(certificate, roots, environment),
 		css: certificate.css,
 	};

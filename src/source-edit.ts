@@ -136,7 +136,15 @@ export interface SourcePublication {
 	receipt: SourceReceipt;
 }
 
-export type RenderOutcome = "verified" | "mismatching" | "pending" | "failed" | "unverified" | "unmounted";
+export type RenderOutcome =
+	| "verified"
+	| "mismatching"
+	| "pending"
+	| "failed"
+	| "unverified"
+	| "unmounted"
+	| "inactive"
+	| "constrained";
 export interface UseOutcome {
 	frame?: string;
 	occurrence: string;
@@ -159,7 +167,16 @@ export type SourceResult =
 
 /** A successful occurrence cannot conceal another occurrence's delivery result. */
 export function combineUseOutcomes(uses: UseOutcome[], occurrence = ""): UseOutcome {
-	const order: RenderOutcome[] = ["failed", "mismatching", "pending", "unverified", "unmounted", "verified"];
+	const order: RenderOutcome[] = [
+		"failed",
+		"mismatching",
+		"pending",
+		"unverified",
+		"unmounted",
+		"constrained",
+		"inactive",
+		"verified",
+	];
 	const worst = order.map((state) => uses.find((use) => use.rendered === state)).find((use) => use !== undefined);
 	return { ...(worst ?? { occurrence, installation: "refused", rendered: "unverified" }), uses };
 }
