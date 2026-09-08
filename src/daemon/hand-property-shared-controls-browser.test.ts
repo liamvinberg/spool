@@ -145,7 +145,7 @@ async function complete(f: Canvas, expected: string) {
 	void delivered.catch(() => {});
 	await control(f).press("Enter");
 	const result = (await (await committed).json()) as SourceResult;
-	expect(result.ok, JSON.stringify(result)).toBe(true);
+	expect(result.ok, JSON.stringify({ result, writes: f.writes, source: f.bytes()[owner] })).toBe(true);
 	await delivered;
 	await expect.poll(() => f.bytes()[owner]).toBe(expected);
 	await f.settled();
@@ -284,9 +284,7 @@ it.each([
 		expect(await f.target.getAttribute("class")).toBeNull();
 		for (const redo of [false, true])
 			for (const step of [1, 2, 3]) {
-				const delivered = reply(f, "delivered");
-				await f.history(redo);
-				await delivered;
+				await inverse(f, redo);
 				await f.settled();
 				const index = redo ? step : 3 - step;
 				expect(f.bytes()[owner]).toBe(states[index]);
@@ -317,7 +315,7 @@ async function inverse(f: Canvas, redo: boolean) {
 	void delivered.catch(() => {});
 	await f.history(redo);
 	const result = (await (await response).json()) as SourceResult;
-	expect(result.ok, JSON.stringify(result)).toBe(true);
+	expect(result.ok, JSON.stringify({ result, writes: f.writes, source: f.bytes()[owner] })).toBe(true);
 	await delivered;
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	return result;

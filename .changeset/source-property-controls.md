@@ -13,3 +13,5 @@ Typography fields preserve fractional custom units, step the current draft by on
 Property conflicts disclose the checked current declaration while retaining the original requested edit; changed source ancestry never supplies unchecked current values.
 
 Retain compiler scope conditions for removed declarations and distinguish inactive or constrained native results from verified uses.
+
+Creation, removal and earlier property edits remain reversible through the same history, including originally absent or empty class fields.

@@ -152,3 +152,85 @@ it("preserves an independent prefix while transporting a privately canceled inse
 		{ start: 4, end: 4, text: "A" },
 	]);
 });
+
+it.each([
+	{ prefix: false, middle: "none" },
+	{ prefix: true, middle: "none" },
+	{ prefix: true, middle: "nested" },
+	{ prefix: false, middle: "competing" },
+])("transports an enclosed inverse with prefix $prefix and $middle edits", ({ prefix, middle }) => {
+	const file = join(makeTempDir(), "source.ts");
+	writeFileSync(file, 'x className="opacity-25" y');
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	const span = 'className="opacity-25"';
+	writeAtomic(file, "x  y");
+	const removed = readInput(file);
+	const deletion = journal.record(file, original, removed, [
+		{ start: 2, end: 2 + span.length, before: span, text: "" },
+	]);
+	let current = removed;
+	if (prefix) {
+		writeAtomic(file, "!x  y");
+		current = readInput(file);
+		journal.record(file, removed, current, [{ start: 0, end: 0, before: "", text: "!" }]);
+	}
+	const shift = prefix ? 1 : 0;
+	if (middle !== "none") {
+		const empty = current;
+		writeAtomic(file, `${prefix ? "!" : ""}x X y`);
+		current = readInput(file);
+		const insertion = journal.record(file, empty, current, [
+			{ start: 2 + shift, end: 2 + shift, before: "", text: "X" },
+		]);
+		writeAtomic(file, `${prefix ? "!" : ""}x  y`);
+		const restored = readInput(file);
+		journal.record(
+			file,
+			current,
+			restored,
+			[{ start: 2 + shift, end: 3 + shift, before: "X", text: "" }],
+			middle === "nested" ? insertion : undefined,
+		);
+		current = restored;
+	}
+	writeAtomic(file, `${prefix ? "!" : ""}x ${span} y`);
+	journal.record(
+		file,
+		current,
+		readInput(file),
+		[{ start: 2 + shift, end: 2 + shift, before: "", text: span }],
+		deletion,
+	);
+	const start = original.bytes.toString().indexOf("opacity-25");
+	const transform = () => journal.transform(file, original, [{ start, end: start + 10, text: "opacity-50" }]);
+	if (middle === "competing") {
+		expect(transform).toThrow("touched these words");
+		return;
+	}
+	expect(transform()).toEqual([{ start: start + shift, end: start + shift + 10, text: "opacity-50" }]);
+});
+
+it.each([true, false])("keeps an enclosing inverse across a paired interior edit: %s", (paired) => {
+	const file = join(makeTempDir(), "source.ts");
+	const span = 'className="opacity-25"';
+	const source = `x ${span} y`;
+	writeFileSync(file, source);
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	const start = source.indexOf("25");
+	writeAtomic(file, source.replace("25", "100"));
+	const changed = readInput(file);
+	const edit = journal.record(file, original, changed, [{ start, end: start + 2, before: "25", text: "100" }]);
+	writeAtomic(file, source);
+	journal.record(
+		file,
+		changed,
+		readInput(file),
+		[{ start, end: start + 3, before: "100", text: "25" }],
+		paired ? edit : undefined,
+	);
+	const inverse = [{ start: 2, end: 2 + span.length, text: "" }];
+	if (paired) expect(journal.transform(file, original, inverse)).toEqual(inverse);
+	else expect(() => journal.transform(file, original, inverse)).toThrow("touched these words");
+});

@@ -965,7 +965,7 @@ export function createSourceOwner(
 		}
 	}
 
-	async function checkPropertyChanges(held: OriginalRead, proof: PropertyProof) {
+	async function checkPropertyChanges(held: OriginalRead, proof: PropertyProof, compilerContext: RetainedCompilation) {
 		if (held.read.operation.kind !== "property") throw new Error("property proof has another operation purpose");
 		const operation = held.read.operation;
 		const inputs = new Map(held.compilation.inputs);
@@ -984,7 +984,7 @@ export function createSourceOwner(
 				proof.roots,
 				proof.scopePaths,
 			);
-		let snapshot = held.compilation;
+		let snapshot = compilerContext;
 		let before = await state(original.bytes.toString("utf8"), snapshot);
 		let frameBefore = await inspectPropertyCss(`${snapshot.packet.css}\n${snapshot.packet.bundledCss}`);
 		const steps = [...inputs]
@@ -997,10 +997,11 @@ export function createSourceOwner(
 			snapshot = await compiler.compileSnapshot(
 				held.root,
 				held.frame,
-				inputs,
+				// Required source identities stay narrow; compilation retains its original frozen closure.
+				new Map([...compilerContext.inputs, ...inputs]),
 				sequence,
-				held.compilation.absent,
-				held.compilation,
+				compilerContext.absent,
+				compilerContext,
 			);
 			const after = await state(input.bytes.toString("utf8"), snapshot);
 			const frameAfter = await inspectPropertyCss(`${snapshot.packet.css}\n${snapshot.packet.bundledCss}`);
@@ -1063,7 +1064,7 @@ export function createSourceOwner(
 				roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
 				scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
 			};
-			const current = await checkPropertyChanges(held, proof);
+			const current = await checkPropertyChanges(held, proof, held.compilation);
 			const input = held.compilation.inputs.get(held.file);
 			if (!input) throw new Error("the original property source input is missing");
 			const patches = journal.transform(
@@ -1096,7 +1097,11 @@ export function createSourceOwner(
 					publication.compilation.absent,
 					publication.compilation,
 				);
-				const className = snapshot.packet.values[held.read.cell ?? original.cell];
+				const key = held.read.cell ?? original.cell;
+				const retained = snapshot.cells[key];
+				const className =
+					snapshot.packet.values[key] ??
+					(retained?.field === "className" && retained.absent ? retained.value : undefined);
 				if (className === undefined || (value !== undefined && value !== className))
 					throw new Error("property preview frames disagree about their source literal");
 				value = className;
@@ -1185,7 +1190,7 @@ export function createSourceOwner(
 						roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
 						scopePaths: propertyScopePaths(plan.original, plan.desired, held.read.operation, environment),
 					};
-					const current = await checkPropertyChanges(held, proof);
+					const current = await checkPropertyChanges(held, proof, held.compilation);
 					const input = held.compilation.inputs.get(held.file);
 					if (!input) throw new Error("the original property source input is missing");
 					const patches = planPropertyLiteral(source, target, plan.before, plan.after);
@@ -1404,6 +1409,7 @@ export function createSourceOwner(
 					const current = await checkPropertyChanges(
 						{ ...inverseRead, compilation: held.required },
 						held.property,
+						held.compilation,
 					);
 					const after = await propertyState(
 						root,
