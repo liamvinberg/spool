@@ -1034,12 +1034,15 @@ function lengthContext(element: Element, property: string): string | undefined {
 		if (!text() || !["block", "flow-root", "list-item", "table-cell", "inline-block"].includes(native.display))
 			return "this indent needs a native block container with text";
 	} else if (property === "-webkit-line-clamp") {
+		// This engine may blockify the legacy box, so read the container it actually resolved.
 		if (
-			native.display !== "-webkit-box" ||
+			!["-webkit-box", "flow-root", "block", "list-item", "flow-root list-item", "inline-block"].includes(
+				native.display,
+			) ||
 			native.getPropertyValue("-webkit-box-orient") !== "vertical" ||
 			native.overflow !== "hidden"
 		)
-			return "this line clamp needs its native flexible box context";
+			return "this line clamp needs its native block container context";
 	}
 	return;
 }

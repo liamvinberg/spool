@@ -1895,3 +1895,123 @@ it.each([
 		expect((await rtl.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
 	}
 });
+
+it.each([
+	{ property: "text-indent", before: "indent-2", after: "indent-4", companion: "", native: "16px", box: "" },
+	{
+		property: "text-decoration-thickness",
+		before: "decoration-2",
+		after: "decoration-4",
+		companion: "underline",
+		native: "4px",
+		box: "",
+	},
+	{
+		property: "text-underline-offset",
+		before: "underline-offset-2",
+		after: "underline-offset-4",
+		companion: "underline",
+		native: "4px",
+		box: "",
+	},
+	{
+		property: "-webkit-line-clamp",
+		before: "line-clamp-2",
+		after: "line-clamp-4",
+		companion: "",
+		native: "4",
+		box: "display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;",
+	},
+])("verifies compiled type length $property against its applicable native use", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) =>
+		`<p data-subject class="${classes}" style="${row.box}width:120px">Native retained type length</p>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), row.property),
+	).toBe(row.native);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// A native override outside the compiled closure is a mismatch, and losing the applicable
+	// native surface is unverified rather than a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element, context) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native type length host");
+			element.style.setProperty(context.property, context.property === "-webkit-line-clamp" ? "9" : "9px");
+		}, row);
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element, context) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native type length host");
+			element.style.removeProperty(context.property);
+			if (["-webkit-line-clamp", "text-indent"].includes(context.property)) element.style.display = "inline";
+			else element.style.textDecorationLine = "none";
+		}, row);
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
