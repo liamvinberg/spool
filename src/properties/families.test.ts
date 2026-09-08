@@ -51,12 +51,12 @@ const theme: CompiledTheme = {
 describe("a number box takes a sign, a fraction and a unit", () => {
 	it("reads what was typed as what the class would say", () => {
 		expect(parseTyped("spacing", "-4")).toEqual({ value: "4", negative: true });
-		expect(parseTyped("spacing", "50%")).toEqual({ value: "1/2", negative: false });
+		expect(parseTyped("spacing", "50%")).toEqual({ value: "[50%]", negative: false });
 		expect(parseTyped("spacing", "1/2")).toEqual({ value: "1/2", negative: false });
 		expect(parseTyped("spacing", "347px")).toEqual({ value: "[347px]", negative: false });
-		expect(parseTyped("spacing", "16px")).toEqual({ value: "4", negative: false });
-		expect(parseTyped("deg", "12deg")).toEqual({ value: "12", negative: false });
-		expect(parseTyped("ms", ".3s")).toEqual({ value: "300", negative: false });
+		expect(parseTyped("spacing", "16px")).toEqual({ value: "[16px]", negative: false });
+		expect(parseTyped("deg", "12deg")).toEqual({ value: "[12deg]", negative: false });
+		expect(parseTyped("ms", ".3s")).toEqual({ value: "[.3s]", negative: false });
 		expect(parseTyped("count", "10")).toEqual({ value: "10", negative: false });
 		// `border-1.5` is a class Tailwind refuses, so a fraction of a pixel brackets
 		expect(parseTyped("px", "1.5px")).toEqual({ value: "[1.5px]", negative: false });
@@ -70,16 +70,16 @@ describe("a number box takes a sign, a fraction and a unit", () => {
 		expect(describeValue("spacing", "1/2")).toBe("50%");
 		expect(describeValue("spacing", "[347px]")).toBe("347px");
 		expect(describeValue("ms", "150")).toBe("150ms");
-		expect(parseTyped("spacing", "16px", 8)).toEqual({ value: "2", negative: false });
+		expect(parseTyped("spacing", "16px")).toEqual({ value: "[16px]", negative: false });
 	});
 
 	it("steps by one unit of what the row measures", () => {
 		expect(stepLength("spacing", lengthOf("p-4", "p"), 0, 1)).toEqual({ value: "5", negative: false });
 		expect(stepLength("spacing", lengthOf("-mt-2", "mt"), 0, 1)).toEqual({ value: "1", negative: true });
-		expect(stepLength("percent", lengthOf("opacity-50", "opacity"), 0, 1)).toEqual({ value: "55", negative: false });
-		expect(stepLength("ms", lengthOf("duration-150", "duration"), 0, 1)).toEqual({ value: "200", negative: false });
+		expect(stepLength("percent", lengthOf("opacity-50", "opacity"), 0, 1)).toEqual({ value: "51", negative: false });
+		expect(stepLength("ms", lengthOf("duration-150", "duration"), 0, 1)).toEqual({ value: "151", negative: false });
 		// nothing set yet: the step is off what the element measures
-		expect(stepLength("spacing", null, 44, 1)).toEqual({ value: "12", negative: false });
+		expect(stepLength("spacing", null, 44, 1)).toEqual({ value: "[45px]", negative: false });
 	});
 });
 

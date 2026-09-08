@@ -240,27 +240,25 @@ export function scaleValue(px: number, step = 4): string {
 	return rounded % step === 0 ? String(rounded / step) : `[${rounded}px]`;
 }
 
-const FRACTIONS: readonly (readonly [number, string])[] = [
-	[50, "1/2"],
-	[33.33, "1/3"],
-	[66.67, "2/3"],
-	[25, "1/4"],
-	[75, "3/4"],
-	[20, "1/5"],
-	[40, "2/5"],
-	[60, "3/5"],
-	[80, "4/5"],
-	[16.67, "1/6"],
-	[83.33, "5/6"],
-];
+function hasFraction(value: string): boolean {
+	const [mantissa = "", exponent = "0"] = value.toLowerCase().split("e");
+	const [whole = "", fraction = ""] = mantissa.replace(/^[+-]/, "").split(".");
+	const places = fraction.length - Number(exponent);
+	if (places <= 0) return false;
+	const digits = whole + fraction;
+	return /[1-9]/.test(places >= digits.length ? digits : digits.slice(-places));
+}
+function numericCandidate(kind: Kind, value: string, negative: boolean): { value: string; negative: boolean } {
+	if ((kind === "px" || kind === "ms" || kind === "deg") && value.includes("."))
+		return { value: `[${value}${kind}]`, negative };
+	return { value: kind === "count" ? value.replace(/\.0+$/, "") : value, negative };
+}
 
 /**
- * What a typed value becomes on the class (P6): a sign is kept, a fraction
- * stays a fraction, a unit decides the bracket. `-4` is `-mt-4`, `50%` is
- * `w-1/2`, `347px` is `w-[347px]`, `12deg` is `rotate-12`, `.3s` is
- * `duration-300`, `10` on z-index is `z-10`.
+ * Explicit units are custom values. Bare spacing numbers deliberately keep
+ * their scale reference; equal pixels never choose that reference for a person.
  */
-export function parseTyped(kind: Kind, typed: string, step = 4): { value: string; negative: boolean } | null {
+export function parseTyped(kind: Kind, typed: string): { value: string; negative: boolean } | null {
 	let text = typed.trim().replace(/\s+/g, "_");
 	if (text === "") return null;
 	let negative = false;
@@ -273,78 +271,76 @@ export function parseTyped(kind: Kind, typed: string, step = 4): { value: string
 	if (number?.[1] !== undefined) {
 		const count = Number(number[1]);
 		const unit = number[2];
-		switch (kind) {
-			case "spacing": {
-				if (unit === undefined) return { value: number[1], negative };
-				if (unit === "px") return { value: scaleValue(count, step), negative };
-				if (unit === "%") {
-					const fraction = FRACTIONS.find(([percent]) => Math.abs(percent - count) < 0.01);
-					return { value: fraction === undefined ? `[${count}%]` : fraction[1], negative };
-				}
-				if (unit === "rem") return { value: scaleValue(count * 16, step), negative };
-				return { value: `[${count}${unit}]`, negative };
-			}
-			case "count":
-				return unit === undefined ? { value: String(Math.round(count)), negative } : null;
-			case "percent":
-				return unit === undefined || unit === "%"
-					? { value: String(count), negative }
-					: { value: `[${count}${unit}]`, negative };
-			case "deg":
-				return unit === undefined || unit === "deg"
-					? { value: String(count), negative }
-					: { value: `[${count}${unit}]`, negative };
-			case "ms":
-				if (unit === undefined || unit === "ms") return { value: String(Math.round(count)), negative: false };
-				if (unit === "s") return { value: String(Math.round(count * 1000)), negative: false };
-				return null;
-			case "px":
-				if (unit === undefined || unit === "px") {
-					// `border-1.5` is a class Tailwind refuses, so a fraction brackets
-					return Number.isInteger(count)
-						? { value: String(count), negative: false }
-						: { value: `[${count}px]`, negative: false };
-				}
-				return { value: `[${count}${unit}]`, negative: false };
-		}
+		if (!Number.isFinite(count)) return null;
+		if (kind === "count" && (unit !== undefined || hasFraction(number[1]))) return null;
+		if (unit !== undefined) return { value: `[${number[1]}${unit}]`, negative };
+		const value = number[1].startsWith(".") ? `0${number[1]}` : number[1];
+		return numericCandidate(kind, value, negative);
 	}
-	if (kind === "spacing" && /^\d+\/\d+$/.test(text)) return { value: text, negative };
+	if (kind === "spacing" && /^\d+\/\d+$/.test(text) && BigInt(text.split("/")[1]!) !== 0n)
+		return { value: text, negative };
 	return LENGTH_WORDS[kind].includes(text) ? { value: text, negative: false } : null;
 }
 
-/**
- * One step for the arrows and the label's scrub: a scale unit on a measure,
- * one on a count, five on a percent, fifty on a duration.
- */
+/** Add whole displayed units without losing authored decimal places to binary arithmetic. */
+function decimalStep(value: string, negative: boolean, units: number): { value: string; negative: boolean } | null {
+	const match = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?$/i.exec(value);
+	if (!match || !Number.isFinite(Number(value))) return null;
+	if (Number(value) === 0) {
+		if (/[1-9]/.test(match[2]!)) return null;
+		return { value: String(Math.abs(units)), negative: units < 0 };
+	}
+	const [whole = "", fraction = ""] = match[2]!.split(".");
+	const places = fraction.length - Number(match[3] ?? 0);
+	const precision = Math.max(0, places);
+	const scale = 10n ** BigInt(precision);
+	const magnitude = BigInt(`${whole}${fraction}`) * 10n ** BigInt(Math.max(0, -places));
+	const signed = (match[1] === "-") !== negative ? -magnitude : magnitude;
+	const next = signed + BigInt(units) * scale;
+	const digits = (next < 0n ? -next : next).toString().padStart(precision + 1, "0");
+	const decimal = precision === 0 ? "" : digits.slice(-precision).replace(/0+$/, "");
+	return {
+		value: `${precision === 0 ? digits : digits.slice(0, -precision)}${decimal ? `.${decimal}` : ""}`,
+		negative: next < 0n,
+	};
+}
+
+/** One arrow is one displayed unit; Shift supplies ten. A custom value keeps its unit. */
 export function stepLength(
 	kind: Kind,
 	current: Length | null,
 	measured: number,
 	units: number,
-	step = 4,
-): { value: string; negative: boolean } {
-	const held = current === null ? null : lengthPx(kind, current.value, step);
-	const now = held === null ? measured : current?.negative === true ? -held : held;
-	switch (kind) {
-		case "spacing": {
-			const next = now + units * step;
-			return { value: scaleValue(Math.abs(next), step), negative: next < 0 };
-		}
-		case "count":
-		case "deg": {
-			const next = Math.round(now + units);
-			return { value: String(Math.abs(next)), negative: next < 0 };
-		}
-		case "percent": {
-			return { value: String(Math.max(0, Math.round(now + units * 5))), negative: false };
-		}
-		case "ms": {
-			return { value: String(Math.max(0, Math.round(now + units * 50))), negative: false };
-		}
-		case "px": {
-			return { value: String(Math.max(0, Math.round(now + units))), negative: false };
-		}
+): { value: string; negative: boolean } | null {
+	if (!Number.isSafeInteger(units)) return null;
+	const literal = current?.value ?? "";
+	if (/^\d+(?:\.\d+)?$/.test(literal)) {
+		if (kind === "count" && hasFraction(literal)) return null;
+		const next = decimalStep(literal, current?.negative ?? false, units);
+		return next && numericCandidate(kind, next.value, next.negative);
 	}
+	const custom = /^\[([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)\]$/i.exec(literal);
+	if (custom) {
+		if (kind === "count" && (custom[2] !== "" || hasFraction(custom[1]!))) return null;
+		const next = decimalStep(custom[1]!, current?.negative ?? false, units);
+		return next && { ...next, value: `[${next.value}${custom[2]}]` };
+	}
+	const fraction = /^(\d+)\/(\d+)$/.exec(literal);
+	if (fraction && BigInt(fraction[2]!) !== 0n) {
+		const numerator = BigInt(fraction[1]!) * (current?.negative ? -1n : 1n);
+		const denominator = BigInt(fraction[2]!);
+		const next = numerator * 100n + BigInt(units) * denominator;
+		let a = next < 0n ? -next : next,
+			b = denominator * 100n;
+		while (b !== 0n) [a, b] = [b, a % b];
+		return { value: `${(next < 0n ? -next : next) / a}/${(denominator * 100n) / a}`, negative: next < 0n };
+	}
+	// An unknown expression detaches to its actual measure, without guessing a theme binding.
+	if (kind === "count" && !Number.isInteger(measured)) return null;
+	const pixel = kind === "spacing" && literal === "px";
+	const next = decimalStep(pixel ? "1" : String(measured), pixel && (current?.negative ?? false), units);
+	const unit = kind === "spacing" || kind === "px" ? "px" : kind === "percent" ? "%" : kind === "count" ? "" : kind;
+	return next && { ...next, value: `[${next.value}${unit}]` };
 }
 
 /** A length as the token a `set-class` op carries: `-mt-2`, `w-[347px]`. */
