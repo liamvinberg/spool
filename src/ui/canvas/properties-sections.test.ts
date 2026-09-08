@@ -752,9 +752,66 @@ it("previews fractional alpha and cancels repeated steps without writing", async
 	if (!field) throw new Error("missing alpha field");
 	await put(field, "25.5");
 	await step(rail, "background-color", "ArrowUp", false);
-	expect(field.value).toBe("30.5");
+	expect(field.value).toBe("26.5");
 	expect(rail.requests).toEqual([]);
 	expect(rail.previews).toHaveLength(2);
+	await step(rail, "background-color", "ArrowUp", true);
+	expect(field.value).toBe("36.5");
 	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
 	expect(rail.completions).toEqual([false]);
+});
+
+it.each(["direction", "from"])("keeps fractional gradient %s arrows as a cancellable preview", async (row) => {
+	const rail = await mount("bg-linear-45 from-thread from-10% to-raised");
+	const fields = rowOf(rail, row)?.querySelectorAll<HTMLInputElement>("input");
+	const field = fields?.[fields.length - 1];
+	if (!field) throw new Error("missing gradient number");
+	await put(field, row === "direction" ? "45.1" : "12.5");
+	await act(() =>
+		field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })),
+	);
+	expect(field.value).toBe(row === "direction" ? "46.1" : "13.5");
+	expect(rail.requests).toEqual([]);
+	expect(rail.previews).toHaveLength(2);
+	expect(rail.previews[1]?.value).toMatchObject({
+		kind: "binding",
+		tokens: expect.arrayContaining([row === "direction" ? "bg-linear-[46.1deg]" : "from-[13.5%]"]),
+	});
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+	expect(rail.completions).toEqual([false]);
+	expect(rail.requests).toEqual([]);
+});
+
+it("removes authored arbitrary gradient angles and fractional stops as one existing gradient operation", async () => {
+	const rail = await mount("bg-linear-[45.5deg] from-thread from-[13.5%] to-raised");
+	await pick(rail, "background-image", "none");
+	expect(rail.wrote()).toEqual([
+		{ token: "bg-linear-[45.5deg]", remove: true },
+		{ token: "from-thread", remove: true },
+		{ token: "from-[13.5%]", remove: true },
+		{ token: "to-raised", remove: true },
+	]);
+});
+
+it("offers the approved start alignment through the typography menu and original property writer", async () => {
+	const rail = await mount("text-left");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="text-align"]');
+	expect(trigger).not.toBeNull();
+	await act(() => trigger?.click());
+	expect(
+		[...document.querySelectorAll("[data-menu-option]")].map((element) => element.getAttribute("data-menu-option")),
+	).toEqual(["start", "left", "center", "right"]);
+	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="start"]')?.click());
+	expect(rail.requests).toEqual([{ property: "text-align", value: { kind: "binding", tokens: ["text-start"] } }]);
+	expect(rail.legacy).toEqual([]);
+});
+
+it.each([false, true])("reads the authored start alignment in its selected scope (hover: %s)", async (hovered) => {
+	const rail = await mount(hovered ? "text-left hover:text-start" : "text-start", hovered ? ["hover"] : BASE);
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="text-align"]');
+	expect(trigger?.textContent).toContain("start");
+	await act(() => trigger?.click());
+	const option = document.querySelector('[data-menu-option="start"]');
+	expect(option?.getAttribute("aria-selected")).toBe("true");
+	expect(rail.requests).toEqual([]);
 });

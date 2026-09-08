@@ -10,7 +10,7 @@ export interface PropertyDescription {
 export interface PropertyControls {
 	identity: string;
 	describe(property: string): Promise<PropertyDescription | undefined>;
-	begin(property: string): void;
+	begin(property: string, preview?: SourcePropertyValue): void;
 	preview(property: string, value: SourcePropertyValue, sampleValue?: string): void;
 	apply(property: string, value: SourcePropertyValue): void;
 	finish(commit: boolean): void;

@@ -91,7 +91,7 @@ it("previews fractional reference alpha and repeated arrows as one cancellable e
 }, async () => {
 	const file = "shared/label.tsx";
 	const original = 'export function Label(){return <button id="subject" className="bg-brand/50 p-6">Hello</button>}';
-	const frame = `import 'shared/tokens.css';import {Label} from 'shared/label';export default function Frame(){return <main className="p-10"><Label/><span id="reference" style={{backgroundColor:'color-mix(in oklab, #123456 30.5%, transparent)'}}>Reference</span></main>}`;
+	const frame = `import 'shared/tokens.css';import {Label} from 'shared/label';export default function Frame(){return <main className="p-10"><Label/><span id="reference" style={{backgroundColor:'color-mix(in oklab, #123456 26.5%, transparent)'}}>Reference</span></main>}`;
 	const f = await originCanvas(
 		{ [file]: original, "shared/tokens.css": "@theme { --color-brand: #123456; }" },
 		frame,
@@ -124,7 +124,7 @@ it("previews fractional reference alpha and repeated arrows as one cancellable e
 	});
 	try {
 		await field.press("ArrowUp");
-		expect(await field.inputValue()).toBe("30.5");
+		expect(await field.inputValue()).toBe("26.5");
 		await expect.poll(() => waiting).toBe(true);
 		expect(f.writes).toEqual([]);
 		expect(f.bytes()[file]).toBe(original);
@@ -144,14 +144,15 @@ it("previews fractional reference alpha and repeated arrows as one cancellable e
 			.toBe(before);
 	expect(f.writes).toEqual([]);
 	await field.fill("25.5");
-	await field.press("ArrowUp");
+	await field.press("Shift+ArrowUp");
+	expect(await field.inputValue()).toBe("35.5");
 	const saved = f.page.waitForResponse(
 		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
 	);
 	await field.press("Enter");
 	expect(await (await saved).json()).toMatchObject({ ok: true });
 	await f.settled();
-	expect(f.bytes()[file]).toBe(original.replace("bg-brand/50", "bg-brand/[30.5%]"));
+	expect(f.bytes()[file]).toBe(original.replace("bg-brand/50", "bg-brand/[35.5%]"));
 	await expect
 		.poll(() => f.page.getByRole("button", { name: "Choose background-color", exact: true }).getAttribute("title"))
 		.toBe("Linked to --color-brand");

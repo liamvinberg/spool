@@ -169,7 +169,9 @@ export function PropertyColorField({
 							? `Linked to ${binding}`
 							: reading?.binding.kind === "custom"
 								? "Custom value"
-								: (reason ?? "Inspecting source binding…")
+								: reading
+									? "Resolved from the page"
+									: (reason ?? "Inspecting source binding…")
 					}
 					onClick={() => {
 						complete(false);

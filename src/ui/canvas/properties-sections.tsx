@@ -4,6 +4,7 @@ import {
 	borderWidthsOf,
 	type Colour,
 	colourOf,
+	colourToken,
 	cornersOf,
 	DIRECTIONS,
 	describe,
@@ -11,6 +12,7 @@ import {
 	type Gradient,
 	type GradientShape,
 	gapOf,
+	gradientAngle,
 	gradientCss,
 	gradientOf,
 	insetOf,
@@ -49,6 +51,7 @@ import {
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
+import { propertySamplePlaceholder } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -60,7 +63,6 @@ import {
 	Fold,
 	IconField,
 	LABEL,
-	LinesIcon,
 	Menu,
 	NumField,
 	type Option,
@@ -675,7 +677,7 @@ function AlphaField({
 				}}
 				stepDraft={(typed, units) => {
 					const value = parse(typed);
-					return value === undefined ? undefined : String(Math.min(100, Math.max(0, (value ?? 100) + units * 5)));
+					return value === undefined ? undefined : String(Math.min(100, Math.max(0, (value ?? 100) + units)));
 				}}
 			/>
 		</span>
@@ -1113,6 +1115,42 @@ function GradientRows({ view }: { view: View }) {
 	);
 	const changed = view.fresh(own?.token ?? null);
 	const write = (next: Gradient | null) => writeValue(view, row, { kind: "gradient", gradient: next });
+	const control = view.property;
+	const preview = (next: Gradient, sample?: string) =>
+		control?.preview(
+			row.property,
+			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
+			sample,
+		);
+	const begin = (next: Gradient) =>
+		control?.begin(
+			row.property,
+			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
+		);
+	const beginAlpha = (stop: Stop) => {
+		if (!gradient || !stop.colour?.name) return;
+		const value = propertyControlValue(row, { kind: "gradient", gradient }, atOf(view), scopeKey(view.scope));
+		if (value.kind !== "binding") return;
+		const prefix = scopeKey(view.scope);
+		const original = `${prefix}${colourToken(stop.at, stop.colour.name, stop.colour.alpha)}`;
+		const sample = `${prefix}${stop.at}-${stop.colour.name}/[${propertySamplePlaceholder}]`;
+		control?.begin(row.property, {
+			kind: "binding",
+			tokens: value.tokens.map((token) => (token === original ? sample : token)),
+		});
+	};
+	const direction = (typed: string): Gradient | undefined => {
+		const degrees = gradientAngle(typed.trim().replace(/deg$/, ""));
+		return gradient && degrees !== undefined ? { ...gradient, direction: String(degrees) } : undefined;
+	};
+	const position = (index: number, typed: string): Gradient | undefined => {
+		if (!gradient) return;
+		if (!typed.trim()) return withStop(gradient, index, (held) => ({ ...held, position: null }));
+		const value = gradientAngle(typed.trim().replace(/%$/, ""));
+		return value === undefined
+			? undefined
+			: withStop(gradient, index, (held) => ({ ...held, position: `${Math.max(0, Math.min(100, value))}%` }));
+	};
 	const current =
 		gradient === null ? SHAPES[0] : (SHAPES.find((shape) => shape.token === gradient.shape) ?? SHAPES[0]);
 	return (
@@ -1166,22 +1204,27 @@ function GradientRows({ view }: { view: View }) {
 							<span className="w-[48px] shrink-0">
 								<NumField
 									value={
-										gradient.direction !== null && /^\d+$/.test(gradient.direction) ? gradient.direction : ""
+										gradientAngle(gradient.direction) === undefined
+											? ""
+											: String(gradientAngle(gradient.direction))
 									}
 									placeholder="deg"
 									ok={ok}
 									faint
-									onCommit={(typed) => {
-										const degrees = Number.parseInt(typed, 10);
-										if (!Number.isNaN(degrees))
-											write({ ...gradient, direction: String(((degrees % 360) + 360) % 360) });
+									onBegin={() => begin({ ...gradient, direction: `[${propertySamplePlaceholder}]` })}
+									onCancel={() => control?.finish(false)}
+									onPreview={(typed) => {
+										const next = direction(typed);
+										if (next) preview(next, `${next.direction}deg`);
 									}}
-									onStep={(units) => {
-										const now =
-											gradient.direction !== null && /^\d+$/.test(gradient.direction)
-												? Number(gradient.direction)
-												: 90;
-										write({ ...gradient, direction: String((((now + units * 15) % 360) + 360) % 360) });
+									onCommit={(typed) => {
+										const next = direction(typed);
+										if (next) write(next);
+										else control?.finish(false);
+									}}
+									stepDraft={(typed, units) => {
+										const from = typed.trim() ? gradientAngle(typed.trim().replace(/deg$/, "")) : 90;
+										return from === undefined ? undefined : String(from + units);
 									}}
 								/>
 							</span>
@@ -1230,6 +1273,16 @@ function GradientRows({ view }: { view: View }) {
 								alpha={stop.colour?.alpha ?? null}
 								ok={ok && stop.colour !== null}
 								faint={false}
+								onBegin={() => beginAlpha(stop)}
+								onCancel={() => control?.finish(false)}
+								onPreview={(alpha) =>
+									preview(
+										withStop(gradient, index, (held) =>
+											held.colour ? { ...held, colour: { ...held.colour, alpha } } : held,
+										),
+										`${alpha ?? 100}%`,
+									)
+								}
 								onCommit={(alpha) =>
 									write({
 										...gradient,
@@ -1248,24 +1301,29 @@ function GradientRows({ view }: { view: View }) {
 									readout="%"
 									ok={ok && stop.colour !== null}
 									faint={stop.position === null}
-									onCommit={(typed) => {
-										const percent = Number.parseFloat(typed);
-										write(
+									onBegin={() =>
+										begin(
 											withStop(gradient, index, (held) => ({
 												...held,
-												position: Number.isNaN(percent) ? null : `${Math.max(0, Math.min(100, percent))}%`,
+												position: `[percentage:${propertySamplePlaceholder}]`,
 											})),
-										);
+										)
+									}
+									onCancel={() => control?.finish(false)}
+									onPreview={(typed) => {
+										const next = position(index, typed);
+										if (next) preview(next, next.stops[index]?.position ?? undefined);
 									}}
-									onStep={(units) => {
-										const now =
-											stop.position === null ? (SPACED[index] ?? 0) : Number.parseFloat(stop.position);
-										write(
-											withStop(gradient, index, (held) => ({
-												...held,
-												position: `${Math.max(0, Math.min(100, now + units * 5))}%`,
-											})),
-										);
+									onCommit={(typed) => {
+										const next = position(index, typed);
+										if (next) write(next);
+										else control?.finish(false);
+									}}
+									stepDraft={(typed, units) => {
+										const from = typed.trim()
+											? gradientAngle(typed.trim().replace(/%$/, ""))
+											: (SPACED[index] ?? 0);
+										return from === undefined ? undefined : String(Math.max(0, Math.min(100, from + units)));
 									}}
 								/>
 							</span>
@@ -1767,15 +1825,15 @@ function TextSection({ view }: { view: View }) {
 			) : null}
 			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<Row name="text-align" ok={okOf(view, alignRow)} changed={view.fresh(wordOf(view.scoped, "text-align"))}>
-				<IconField
-					value={align ?? "text-left"}
+				<Menu
+					label="text-align"
+					current={{ token: align, name: align?.replace(/^text-/, "") ?? "start" }}
+					faint={align === null}
 					ok={okOf(view, alignRow)}
-					options={[
-						{ token: "text-left", icon: <LinesIcon at="left" /> },
-						{ token: "text-center", icon: <LinesIcon at="center" /> },
-						{ token: "text-right", icon: <LinesIcon at="right" /> },
-					]}
-					onPick={(token) => writeValue(view, alignRow, { kind: "value", value: token })}
+					options={["start", "left", "center", "right"].map((value) => ({ token: `text-${value}`, name: value }))}
+					onPick={(token) => {
+						if (token) writeValue(view, alignRow, { kind: "value", value: token });
+					}}
 				/>
 			</Row>
 			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />

@@ -1205,7 +1205,7 @@ function factoryLiteral(site: Creation, field: string, kind: "clone" | "create")
 /** Read-only context: these literal members cannot author color or opacity. */
 function independentPropertyStyle(sources: Sources, selection: Selection, operation: Operation): void {
 	if (operation.kind !== "property" || !["color", "background-color", "opacity"].includes(operation.property))
-		throw new Error("inline style ownership is outside this property probe");
+		throw new Error("inline styles prevent proving ownership of this class property");
 	if (!selection.values?.fields.style) throw new Error("inline style has no original literal member descriptors");
 	// Reuse the full authored-origin and native descriptor check. This never
 	// admits a style member as an edit target or evaluates a style expression.

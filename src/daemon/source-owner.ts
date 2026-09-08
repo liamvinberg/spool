@@ -20,6 +20,7 @@ import {
 } from "../source-edit";
 import type { SourceImagePut, SourceImageStaged } from "../source-image";
 import type { SourcePropertyEnvironment, SourcePropertyPreview, SourcePropertyReading } from "../source-property";
+import { propertySamplePlaceholder, type SourcePropertyValue } from "../source-property";
 import {
 	propertyGroupTarget,
 	type SourcePropertyGroupExpectation,
@@ -511,7 +512,7 @@ export function createSourceOwner(
 		}
 	}
 
-	async function reach(root: string, handle: string, inventories: SourceInventory[]) {
+	async function reach(root: string, handle: string, inventories: SourceInventory[], sample?: SourcePropertyValue) {
 		const held = reads.get(handle);
 		if (!held || held.root !== root)
 			return { ok: false as const, reason: "the original source read is no longer available" };
@@ -520,7 +521,13 @@ export function createSourceOwner(
 		const placeholder = `var(--spool-property-sample-${held.read.handle})`;
 		const planned = await preview(root, handle, held.read.generation, 0, held.read.original, {
 			kind: "property",
-			value: { kind: "custom", value: placeholder },
+			value:
+				sample?.kind === "binding"
+					? {
+							kind: "binding",
+							tokens: sample.tokens.map((token) => token.replaceAll(propertySamplePlaceholder, placeholder)),
+						}
+					: { kind: "custom", value: placeholder },
 		});
 		if (
 			planned.ok &&

@@ -11,6 +11,7 @@ import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import type { SourceChange, SourceOccurrence, SourceOperation, SourceUse } from "../../source-edit";
 import { type SourceRead, type SourceResult, sameSourceOccurrence, type UseOutcome } from "../../source-edit";
+import type { SourcePropertyValue } from "../../source-property";
 import { propertyGroupTarget } from "../../source-property-group";
 import type {
 	Camera,
@@ -3051,7 +3052,7 @@ export function ProjectCanvas({
 			selector: string,
 			field?: string,
 			purpose: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
-			request?: { signal: AbortSignal; change(): SourceChange | undefined },
+			request?: { signal: AbortSignal; change(): SourceChange | undefined; preview?: SourcePropertyValue },
 		): Promise<SourceRead | undefined> => {
 			if (pendingSource.current.size > 0) return;
 			const pick = pickedRef.current.find((pick) => pick.frame === frame && pick.selector === selector);
@@ -3117,7 +3118,7 @@ export function ProjectCanvas({
 				return;
 			}
 			retainedPublications.current.set(frame, original.publication);
-			const ready = await sourceDelivery.prepare(frame, result.read, request?.signal);
+			const ready = await sourceDelivery.prepare(frame, result.read, request?.signal, request?.preview);
 			if (request?.signal.aborted) {
 				void cancelSource(project, ready.handle);
 				return;
@@ -5865,6 +5866,7 @@ export function ProjectCanvas({
 										{ kind: "property", property, scope },
 										{
 											signal: request.signal,
+											...(request.preview ? { preview: request.preview } : {}),
 											change: () => {
 												const value = request.value();
 												return value ? { kind: "property", value } : undefined;

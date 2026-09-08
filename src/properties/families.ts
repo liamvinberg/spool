@@ -609,6 +609,18 @@ export const DIRECTIONS: readonly { value: string; says: string }[] = [
 	{ value: "to-tl", says: "to top left" },
 ];
 
+function gradientPosition(value: string): string | undefined {
+	const raw = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+	return /^\d+(?:\.\d+)?%$/.test(raw) ? raw : undefined;
+}
+
+export function gradientPositionToken(at: Stop["at"], position: string): string {
+	const value = gradientPosition(position);
+	return value !== undefined && !Number.isInteger(Number(value.slice(0, -1)))
+		? `${at}-[${value}]`
+		: `${at}-${position}`;
+}
+
 const STOPS = ["from", "via", "to"] as const;
 
 function shapeOfToken(base: string): { shape: GradientShape; direction: string | null } | null {
@@ -640,8 +652,9 @@ export function gradientOf(scoped: string, theme: CompiledTheme | null): Gradien
 		for (const at of STOPS) {
 			if (!base.startsWith(`${at}-`)) continue;
 			const rest = base.slice(at.length + 1);
-			if (/^\d+(?:\.\d+)?%$/.test(rest)) {
-				stops[at] = { ...stops[at], position: rest };
+			const position = gradientPosition(rest);
+			if (position !== undefined) {
+				stops[at] = { ...stops[at], position };
 				continue;
 			}
 			const colour = colourOfToken(base, at, theme);
@@ -667,13 +680,27 @@ export function isGradientToken(base: string, theme: CompiledTheme | null): bool
 	return STOPS.some((at) => {
 		if (!base.startsWith(`${at}-`)) return false;
 		const rest = base.slice(at.length + 1);
-		return /^\d+(?:\.\d+)?%$/.test(rest) || colourOfToken(base, at, theme) !== null;
+		return gradientPosition(rest) !== undefined || colourOfToken(base, at, theme) !== null;
 	});
 }
 
-/** The shape token a gradient writes: `bg-linear-to-r`, `bg-radial`, `bg-conic-45`. */
+/** Numeric angles retain their fractional value, including authored arbitrary degrees. */
+export function gradientAngle(direction: string | null): number | undefined {
+	if (direction === null) return;
+	const raw = direction.replace(/^\[([+-]?(?:\d+(?:\.\d*)?|\.\d+))deg\]$/, "$1");
+	if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw)) return;
+	const angle = Number(raw);
+	return Number.isFinite(angle) ? angle : undefined;
+}
+
+/** The shape token a gradient writes, retaining arbitrary fractional angles. */
 export function gradientShapeToken(shape: GradientShape, direction: string | null): string {
-	if (shape === "linear") return `bg-linear-${direction ?? "to-r"}`;
+	if (shape === "linear") {
+		const angle = gradientAngle(direction);
+		return angle !== undefined && !Number.isInteger(angle)
+			? `bg-linear-[${angle}deg]`
+			: `bg-linear-${direction ?? "to-r"}`;
+	}
 	return direction === null ? `bg-${shape}` : `bg-${shape}-${direction}`;
 }
 
@@ -692,9 +719,11 @@ export function gradientCss(gradient: Gradient): string {
 		return `conic-gradient(${gradient.direction === null ? "" : `from ${gradient.direction}deg, `}${stops})`;
 	}
 	const direction = gradient.direction ?? "to-r";
-	const angle = /^\d+$/.test(direction)
-		? `${direction}deg`
-		: (DIRECTIONS.find((candidate) => candidate.value === direction)?.says ?? "to right");
+	const degrees = gradientAngle(direction);
+	const angle =
+		degrees !== undefined
+			? `${degrees}deg`
+			: (DIRECTIONS.find((candidate) => candidate.value === direction)?.says ?? "to right");
 	return `linear-gradient(${angle}, ${stops})`;
 }
 
@@ -897,6 +926,7 @@ export const WORDS: Readonly<Record<Word, WordFamily>> = {
 	"text-align": {
 		property: "text-align",
 		options: [
+			{ token: "text-start", says: "start" },
 			{ token: "text-left", says: "left" },
 			{ token: "text-center", says: "center" },
 			{ token: "text-right", says: "right" },

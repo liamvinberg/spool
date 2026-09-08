@@ -85,3 +85,31 @@ it("refuses whole-reference expansion when a captured declaration can supply mul
 		),
 	).rejects.toThrow("this whole shorthand reference has no proven single-component arity");
 });
+
+it.each([
+	["duration-2 transition-opacity", "transition-duration", "transition-timing-function"],
+	["ease-in transition-opacity", "transition-timing-function", "transition-duration"],
+])("preserves the other native declarations when removing from %s", async (literal, property, companion) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		literal,
+		{ kind: "property", property, scope: "" },
+		{ kind: "remove" },
+		{ direction: "ltr", writingMode: "horizontal-tb" },
+	);
+	const owned = (name: string) =>
+		plan.desired.effects
+			.filter((effect) => effect.owner !== null && effect.property === name)
+			.map((effect) => effect.value);
+	expect(owned("transition-property")).toEqual(["opacity"]);
+	expect(owned(companion)).toEqual(
+		plan.original.effects
+			.filter((effect) => effect.owner === "transition-opacity" && effect.property === companion)
+			.map((effect) => effect.value),
+	);
+	expect(owned(property)).toEqual([]);
+});

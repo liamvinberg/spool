@@ -6,6 +6,7 @@ export type PropertyPlanResult = { ok: true; preview: SourcePropertyPreview } | 
 
 export interface PropertyReadRequest {
 	signal: AbortSignal;
+	preview?: SourcePropertyValue;
 	value(): SourcePropertyValue | undefined;
 }
 
@@ -43,7 +44,7 @@ export function createPropertySession(actions: PropertySessionActions) {
 		held.completed = true;
 		if (read) actions.finish(read, held.value, commit && !held.abort.signal.aborted && held.value !== undefined);
 	}
-	function begin(property: string, scope: string): Held {
+	function begin(property: string, scope: string, preview?: SourcePropertyValue): Held {
 		if (current && !current.done && current.property === property && current.scope === scope) return current;
 		void finish(false);
 		current?.abort.abort();
@@ -58,7 +59,11 @@ export function createPropertySession(actions: PropertySessionActions) {
 			abort: new AbortController(),
 		};
 		current = held;
-		held.read = actions.begin(property, scope, { signal: held.abort.signal, value: () => held.value });
+		held.read = actions.begin(property, scope, {
+			signal: held.abort.signal,
+			value: () => held.value,
+			...(preview ? { preview } : {}),
+		});
 		return held;
 	}
 	return {

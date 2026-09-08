@@ -8,6 +8,7 @@ import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
 
 const owner = "shared/card.tsx";
 const cards = `import {useState,useEffect} from 'react';export function Card({label}){const [count,setCount]=useState(()=>{window.initializers=(window.initializers||0)+1;return 0});useEffect(()=>()=>{window.unmounts=(window.unmounts||0)+1},[]);return <section data-subject={label} className="p-6 opacity-75"><button onClick={()=>setCount(count=>count+1)}>{label}:{count}</button><input defaultValue="initial"/></section>}`;
+const memoCards = `import {useState,useEffect,memo} from 'react';function State({label}){const [count,setCount]=useState(()=>{window.initializers=(window.initializers||0)+1;return 0});useEffect(()=>()=>{window.unmounts=(window.unmounts||0)+1},[]);return <><button onClick={()=>setCount(count=>count+1)}>{label}:{count}</button><input defaultValue="initial"/></>}const Leaf=memo(function Leaf({children}){return children},previous=>previous.hold);export function Card({label}){return <Leaf hold={label==='B'}><section data-subject={label} className="p-6 opacity-75"><State label={label}/></section></Leaf>}`;
 const frameSource =
 	'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24}}><Card key="a" label="A"/><Card key="b" label="B"/></main>}';
 type Canvas = Awaited<ReturnType<typeof originCanvas>>;
@@ -400,7 +401,7 @@ it("reports each shared memo use against ordinary React without borrowing a heal
 	timeout: 120_000,
 }, async () => {
 	// The source owner rerenders; only the separate consumer may retain its old prop.
-	const authored = `import {useState,useEffect,memo} from 'react';function State({label}){const [count,setCount]=useState(()=>{window.initializers=(window.initializers||0)+1;return 0});useEffect(()=>()=>{window.unmounts=(window.unmounts||0)+1},[]);return <><button onClick={()=>setCount(count=>count+1)}>{label}:{count}</button><input defaultValue="initial"/></>}const Leaf=memo(function Leaf({children}){return children},previous=>previous.hold);export function Card({label}){return <Leaf hold={label==='B'}><section data-subject={label} className="p-6 opacity-75"><State label={label}/></section></Leaf>}`;
+	const authored = memoCards;
 	const frame = frameSource.replace("</main>", '<i hidden className="opacity-75"/></main>');
 	const f = await propertyCanvas({ [owner]: authored }, frame, '[data-subject="A"]');
 	const oracle = await originOracle(
@@ -477,4 +478,57 @@ it("reports each shared memo use against ordinary React without borrowing a heal
 	await f.frame.locator('[data-subject="B"]').evaluate(() => window.__SPOOL_SOURCE__?.cancel(9001));
 	expect(f.bytes()[owner]).toBe(saved);
 	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
+});
+
+it("keeps recovery when an equal native color hides a retained reference in a separate memo consumer", {
+	timeout: 120_000,
+}, async () => {
+	const authored = memoCards.replace("opacity-75", "text-brand");
+	const frame = `import 'shared/tokens.css';${frameSource.replace("</main>", '<i hidden className="text-brand"/></main>')}`;
+	const f = await propertyCanvas(
+		{ [owner]: authored, "shared/tokens.css": "@theme {--color-brand:#123456;--color-equal:#123456;}" },
+		frame,
+		'[data-subject="A"]',
+	);
+	await remember(f.frame);
+	await f.select();
+	const choose = f.page.getByRole("button", { name: "Choose color", exact: true });
+	await expect.poll(() => choose.getAttribute("title")).toBe("Linked to --color-brand");
+	await choose.click();
+	await f.page.getByRole("textbox", { name: "Find color token", exact: true }).fill("equal");
+	const committed = reply(f, "commit"),
+		delivered = reply(f, "delivered");
+	await f.page.getByRole("button", { name: "Apply --color-equal", exact: true }).click();
+	expect(await (await committed).json()).toMatchObject({ ok: true, source: "saved" });
+	await delivered;
+	await f.settled();
+	expect(f.bytes()[owner]).toBe(authored.replace("text-brand", "text-equal"));
+	expect(
+		await f.frame
+			.locator("[data-subject]")
+			.evaluateAll((elements) =>
+				elements.map((element) => ({ className: element.className, color: getComputedStyle(element).color })),
+			),
+	).toEqual([
+		{ className: "p-6 text-equal", color: "rgb(18, 52, 86)" },
+		{ className: "p-6 text-brand", color: "rgb(18, 52, 86)" },
+	]);
+	await retained(f.frame);
+	const result = (await outcomes(f)).at(-1);
+	expect
+		.soft(
+			result?.uses?.map((use) => use.rendered),
+			JSON.stringify(result),
+		)
+		.toEqual(["verified", "unverified"]);
+	const notice = f.page.locator("[data-properties-rail] [data-hand-notice]");
+	expect(await notice.count()).toBe(1);
+	expect(await notice.textContent()).toContain("Saved");
+	expect(result?.uses?.[1]?.reason).toContain("committed class declaration");
+	await f.page.keyboard.press("ControlOrMeta+z");
+	await f.settled();
+	expect(f.bytes()[owner]).toBe(authored);
+	await retained(f.frame);
+	expect((await outcomes(f)).at(-1)?.uses?.map((use) => use.rendered)).toEqual(["verified", "verified"]);
+	await expect.poll(() => notice.count()).toBe(0);
 });
