@@ -299,6 +299,13 @@ it("writes a gradient as a shape, a direction and stop rows", async () => {
 		{ token: "via-raised" },
 		{ token: "to-raised" },
 	]);
+	// The source plan owns one class per token, so the control sends them apart.
+	expect(linear.requests).toEqual([
+		{
+			property: "background-image",
+			value: { kind: "binding", tokens: ["bg-linear-to-br", "from-thread", "via-raised", "to-raised"] },
+		},
+	]);
 });
 
 it("drops every gradient token at once on none", async () => {
