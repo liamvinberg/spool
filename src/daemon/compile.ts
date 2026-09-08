@@ -126,7 +126,8 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 	}
 
-	async function compilePublication(
+	/** Compile captured bytes without publishing them or asserting that they are current. */
+	async function compileSnapshot(
 		root: string,
 		frame: string,
 		frozen: ReadonlyMap<string, SourceInput>,
@@ -159,7 +160,6 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 		for (const [file, input] of frozen) {
 			assertDesignFile(designDir, file);
-			if (!sameInput(input, readInput(file))) throw new Error("source changed during retained compilation");
 			retained.inputs.set(file, input);
 		}
 		const sheets = await buildFrameCss(designDir, built.sourceFiles, (file) => {
@@ -180,10 +180,18 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		for (const file of absent)
 			if (existsSync(resolveDesignPath(designDir, file))) throw new Error("an absent dependency was created");
 		finishCompilation(retained, sequence);
+		return retained;
+	}
+	async function compilePublication(...args: Parameters<typeof compileSnapshot>): Promise<RetainedCompilation> {
+		const [root, frame, frozen] = args;
+		const retained = await compileSnapshot(...args);
+		for (const [file, input] of frozen)
+			if (!sameInput(input, readInput(file))) throw new Error("source changed during retained compilation");
 		publications.set(retained.packet.id, { root, frame, compilation: retained });
 		return retained;
 	}
 	return {
+		compileSnapshot,
 		getDocument,
 		compilePublication,
 		publication: (id: string) => publications.get(id),
