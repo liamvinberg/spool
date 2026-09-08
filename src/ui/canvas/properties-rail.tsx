@@ -429,6 +429,7 @@ function Body({
 	const view: View = {
 		property: propertySession
 			? {
+					subject: JSON.stringify([project, identity, propertyScope]),
 					identity: JSON.stringify([project, identity, revision, propertyScope]),
 					describe: async (properties) =>
 						element

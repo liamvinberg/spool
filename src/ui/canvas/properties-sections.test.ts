@@ -10,7 +10,7 @@ import type { CompiledTheme } from "../api";
 import type { Compiler } from "./properties-compile";
 import { BASE, type Scope, scopedClass, scopeKey } from "./properties-scope";
 import { PropertySections, type View } from "./properties-sections";
-import type { PropertyControls } from "./property-controls";
+import type { PropertyControls, PropertyDescription } from "./property-controls";
 
 /** These surface tests verify displayed values and requested candidates.
  * Appearance changes carry typed source requests; planner/native tests prove their effects.
@@ -466,9 +466,21 @@ it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "backg
 	},
 );
 
-// Unknown ownership refuses at the control, before a request is ever made.
-// Unknown ownership refuses at the control, before a request is ever made, and
-// tabbing out of another control lands here: a field nobody has edited must not
+// A re-read of the same element replaces its description. It must not retire the
+// controls mid-gesture while the replacement is in flight, and it must retire
+// them when that read comes back with nothing.
+it("keeps its controls while the element is read again, and retires them when that read refuses", async () => {
+	const rail = await mount("opacity-75 border-2");
+	expect(fieldIn(rail, "opacity")).not.toBeNull();
+	const answer = await rail.reread("pending");
+	expect(fieldIn(rail, "opacity")).not.toBeNull();
+	expect(fieldIn(rail, "border-width")).not.toBeNull();
+	await answer(undefined);
+	expect(fieldIn(rail, "opacity")).toBeNull();
+	expect(fieldIn(rail, "border-width")).toBeNull();
+});
+
+// Tabbing out of another control lands here: a field nobody has edited must not
 // take the source lane and cancel the edit that is still saving.
 it("takes the source lane on an edit, never on focus alone", async () => {
 	const rail = await mount("opacity-75");
@@ -480,6 +492,7 @@ it("takes the source lane on an edit, never on focus alone", async () => {
 	expect(rail.begins).toEqual(["opacity"]);
 });
 
+// Unknown ownership refuses at the control, before a request is ever made.
 it("takes no request from a control whose source refuses the element", async () => {
 	const rail = await mount("opacity-75", BASE, undefined, async () => ({ reason: "className is an expression" }));
 	expect(fieldIn(rail, "opacity")).toBeNull();
@@ -540,6 +553,10 @@ interface Rail {
 	asked: (readonly string[])[];
 	/** every property that took the source lane, in order */
 	begins: string[];
+	/** re-read the same element: hold the new description, or answer it at once */
+	reread: (
+		answer: PropertyDescription | undefined | "pending",
+	) => Promise<(later: PropertyDescription | undefined) => Promise<void>>;
 	/** the edits the last change came to, as the write lane would be handed them */
 	wrote: () => RowEdit[];
 	/** the scope those edits were written under */
@@ -572,6 +589,7 @@ async function mount(
 		property: element?.refusal
 			? null
 			: {
+					subject: className,
 					identity: className,
 					// Surface fixture readings are supplied evidence, not source admission.
 					describe:
@@ -636,8 +654,37 @@ async function mount(
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
 	});
+	/** The same element read again, answered now or when this hands the answer over. */
+	const reread = async (answer: PropertyDescription | undefined | "pending") => {
+		let settle = (_: PropertyDescription | undefined) => {};
+		await act(async () => {
+			root.render(
+				createElement(PropertySections, {
+					view: {
+						...view,
+						property: view.property
+							? {
+									...view.property,
+									identity: `${className}:again`,
+									describe: () =>
+										answer === "pending"
+											? new Promise<PropertyDescription | undefined>((resolve) => {
+													settle = resolve;
+												})
+											: Promise.resolve(answer),
+								}
+							: null,
+					},
+				}),
+			);
+		});
+		return async (later: PropertyDescription | undefined) => {
+			await act(async () => settle(later));
+		};
+	};
 	return {
 		host,
+		reread,
 		requests,
 		legacy,
 		previews,

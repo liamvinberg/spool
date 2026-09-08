@@ -516,26 +516,36 @@ function colourTyped(theme: CompiledTheme | null, typed: string): Option | null 
 	return { token: name, name, group: "arbitrary", ...(paint === undefined ? {} : { swatch: paint }) };
 }
 
-/** Retire obsolete presentation immediately when source identity or scope changes. */
+/**
+ * What the source says about this element, kept while it is being read again.
+ *
+ * A description belongs to one element under one scope, so a different subject
+ * retires it immediately. A re-read of the same subject does not: dropping the
+ * description while its replacement is in flight would retire the controls it
+ * admits, and the gesture already under way with them. What that read answers
+ * stands in its place, including a read that retired or refused.
+ */
 function usePropertyDescription(control: PropertyControls | null | undefined, properties: readonly string[]) {
+	const subject = JSON.stringify([control?.subject, properties]);
 	const identity = JSON.stringify([control?.identity, properties]);
 	const [described, setDescribed] = useState<{
-		identity: string;
+		subject: string;
 		description: PropertyDescription | undefined;
 	}>();
 	const describe = useRef(control?.describe);
 	describe.current = control?.describe;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `identity` is not read in here, it is the trigger — the same element read again describes again
 	useEffect(() => {
 		let live = true;
 		if (properties.length)
 			void describe.current?.(properties).then((description) => {
-				if (live) setDescribed({ identity, description });
+				if (live) setDescribed({ subject, description });
 			});
 		return () => {
 			live = false;
 		};
-	}, [identity, properties]);
-	return described?.identity === identity ? described.description : undefined;
+	}, [subject, identity, properties]);
+	return described?.subject === subject ? described.description : undefined;
 }
 
 /**

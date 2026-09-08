@@ -9,6 +9,9 @@ export interface PropertyDescription {
 }
 
 export interface PropertyControls {
+	/** which element, under which scope, these controls are about */
+	subject: string;
+	/** that subject as this rail last read it, which is what a re-read replaces */
 	identity: string;
 	describe(properties: readonly string[]): Promise<PropertyDescription | undefined>;
 	begin(property: string, preview?: SourcePropertyValue): void;
