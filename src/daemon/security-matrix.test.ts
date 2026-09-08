@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
+import type { RetainedValues } from "../source-edit";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
 import { captureWorkerCsp } from "./document";
@@ -355,7 +356,17 @@ describe("daemon authority matrix", () => {
 		const frame = await render(framePath);
 		expect(frame.status).toBe(200);
 		expect(frame.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
-		expect(await frame.text()).toContain('"values":{"frames/home/frame.tsx#literal:0":"safe"}');
+		const frameHtml = await frame.text();
+		const serialized = frameHtml.match(/configureSource\((\{[^\n]*\})\);/)?.[1];
+		expect(serialized, "render document configures its current source packet").toBeDefined();
+		const packet: RetainedValues = JSON.parse(serialized ?? "{}");
+		const cells = Object.keys(packet.values);
+		expect(cells).toHaveLength(1);
+		const cell = cells[0];
+		if (cell === undefined) throw new Error("missing authored literal cell");
+		expect(packet.values[cell]).toBe("safe");
+		expect(packet.childValues?.[cell]).toBe("safe");
+		expect(packet.locations?.[cell]).toBe("frames/home/frame.tsx:1:41");
 
 		const shell = await request(CONTROL_HOST, playPath);
 		const shellHtml = await shell.text();
