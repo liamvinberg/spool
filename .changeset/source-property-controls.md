@@ -2,37 +2,14 @@
 "spool.page": minor
 ---
 
-Route appearance and typography property edits through retained source operations, preserving the original target through previews, cancellation, source saves and Undo.
+Edit appearance and typography in the properties rail and spool writes your source. Colors, sizes, corner radii, borders, opacity, transforms, filters, gradients and text properties become real class changes in the file that owns them, each with one save and one Undo.
 
-Numeric scrubs preview without writing source, save once on release, and cancel on Escape. An explicit zero border remains distinct from removing its binding.
+Typography and Appearance are grouped together, and letter spacing or border width can be added when a design needs one. Color menus show which choice is an authored reference and which is a value of its own, keep project and default colors searchable, and remove a declaration without inventing a token for it. Every corner radius can be edited on its own.
 
-Color menus distinguish authored references from displayed colors, keep project and default choices searchable, and restore the original binding with Undo.
+An edit made under a variant writes that variant. Removing a whole scope, taking off a raw class, or changing several properties at once is one change with one save and one Undo, and cancelling while the read is still open writes nothing.
 
-Typography fields preserve fractional custom units, step the current draft by one or ten, and keep keyboard and scrub previews in one cancellable source gesture.
+Every frame that shares the edited source shows the result, and the rail says what each use actually rendered instead of assuming they match. An uncertain save can be checked or retried, and recovery stays until every affected use verifies.
 
-Property conflicts disclose the checked current declaration while retaining the original requested edit; changed source ancestry never supplies unchecked current values.
+While an edit is in flight the rail previews it immediately, and if the file has moved on it discloses the current declaration rather than overwriting it. Inline styles it can read supply context for a class edit; the ones it cannot read are refused rather than guessed.
 
-Retain compiler scope conditions for removed declarations and distinguish inactive or constrained native results from verified uses.
-
-Creation, removal and earlier property edits remain reversible through the same history, including originally absent or empty class fields.
-
-Continuous numeric previews use the original compiler's temporary declaration immediately, without waiting for later compilation replies, and preserve outside stylesheet changes on cancellation.
-
-Keep memoized consumers in affected-use results through property Undo and Redo, while reporting the appearance each consumer actually retained.
-
-Typography menus mark the authored token reference without mistaking an equal custom value for a binding.
-
-Edit individual corner radii with exact numeric units, token choices, live preview and cancellation through the same source-owned history.
-
-Group the approved Typography and Appearance controls together, and add optional letter spacing or border width through the same source-owned save and Undo.
-
-Grouped property changes retain their original fields or written scope and use one source save and Undo receipt.
-
-Remove a written scope or add and remove raw classes through the same retained source owner, including cancellation while the original read is pending.
-
-Remove a color declaration from its existing menu and restore the original reference with Undo, without authoring an inherit token.
-
-
-Known literal inline weight and padding can supply read-only context for class color and opacity. Relevant inline properties and unknown style objects remain refused.
-
-Retry a property edit against checked current source, or check an uncertain save without replaying it. Shared recovery remains until every affected use verifies the saved result, including Undo's restored binding.
+Creating, changing and removing a property all reverse through the same history, including properties that started with no class at all.
