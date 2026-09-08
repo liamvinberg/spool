@@ -60,7 +60,7 @@ import { planPropertyValue } from "./source-property-plan";
 import { propertyPreviewDeclarations } from "./source-property-preview";
 import { propertyReading } from "./source-property-reading";
 import { propertyScopePaths } from "./source-property-scope";
-import { propertyState } from "./source-property-state";
+import { type PropertyContext, propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
 import { retryPropertySource, retryTextSource } from "./source-retry";
 import { readStructuralAncestry } from "./source-structure";
@@ -1293,20 +1293,19 @@ export function createSourceOwner(
 		const inputs = new Map(held.compilation.inputs);
 		const original = inputs.get(held.file);
 		if (!original) throw new Error("the original property source input is missing");
+		const context: PropertyContext = {
+			root: held.root,
+			inputs,
+			file: held.file,
+			cellKey: held.read.cell ?? held.read.original.cell,
+			operation,
+			environment: proof.environment,
+			roots: proof.roots,
+			scopePaths: proof.scopePaths,
+			selections: proof.selections,
+		};
 		const state = (source: string, snapshot: RetainedCompilation) =>
-			propertyState(
-				held.root,
-				snapshot,
-				inputs,
-				held.file,
-				source,
-				held.read.cell ?? held.read.original.cell,
-				operation,
-				proof.environment,
-				proof.roots,
-				proof.scopePaths,
-				proof.selections,
-			);
+			propertyState(context, { compilation: snapshot, source });
 		let snapshot = compilerContext;
 		let before = await state(original.bytes.toString("utf8"), snapshot);
 		let frameBefore = await inspectPropertyCss(`${snapshot.packet.css}\n${snapshot.packet.bundledCss}`);
@@ -1493,17 +1492,18 @@ export function createSourceOwner(
 					if (currentSource === undefined) throw new Error("the current property source input is missing");
 					const next = applySourcePatches(currentSource, transformed).text;
 					const after = await propertyState(
-						root,
-						current.snapshot,
-						current.inputs,
-						held.file,
-						next,
-						held.read.cell ?? original.cell,
-						held.read.operation,
-						environment,
-						proof.roots,
-						proof.scopePaths,
-						proof.selections,
+						{
+							root,
+							inputs: current.inputs,
+							file: held.file,
+							cellKey: held.read.cell ?? original.cell,
+							operation: held.read.operation,
+							environment,
+							roots: proof.roots,
+							scopePaths: proof.scopePaths,
+							selections: proof.selections,
+						},
+						{ compilation: current.snapshot, source: next },
 					);
 					held.property = proof;
 					held.inverseExpected = current.state.expected;
@@ -1761,17 +1761,18 @@ export function createSourceOwner(
 						held.compilation,
 					);
 					const after = await propertyState(
-						root,
-						current.snapshot,
-						current.inputs,
-						held.file,
-						next,
-						held.cell,
-						held.purpose,
-						held.property.environment,
-						held.property.roots,
-						held.property.scopePaths,
-						held.property.selections,
+						{
+							root,
+							inputs: current.inputs,
+							file: held.file,
+							cellKey: held.cell,
+							operation: held.purpose,
+							environment: held.property.environment,
+							roots: held.property.roots,
+							scopePaths: held.property.scopePaths,
+							selections: held.property.selections,
+						},
+						{ compilation: current.snapshot, source: next },
 					);
 					inverseRead.property = held.property;
 					inverseRead.inverseExpected = current.state.expected;

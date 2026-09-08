@@ -8,20 +8,26 @@ import { compilePropertySource } from "./source-property-compile";
 import { nativePropertyEffects } from "./source-property-dependencies";
 import { nativeConsumerEffects } from "./source-property-observation";
 
+/** The class cell a property read owns, and what that read selected inside it. */
+export interface PropertyContext {
+	root: string;
+	inputs: ReadonlyMap<string, SourceInput>;
+	file: string;
+	cellKey: string;
+	operation: Extract<SourceOperation, { kind: "property" | "properties" }>;
+	environment: SourcePropertyEnvironment;
+	roots: ReadonlySet<string>;
+	scopePaths: SourcePropertyExpectation["scopePaths"];
+	selections?: SourcePropertyGroupExpectation["selections"] | undefined;
+}
+
 /** Read the same retained class cell from a proposed or acknowledged source snapshot. */
 export async function propertyState(
-	root: string,
-	compilation: RetainedCompilation,
-	inputs: ReadonlyMap<string, SourceInput>,
-	file: string,
-	source: string,
-	cellKey: string,
-	operation: Extract<SourceOperation, { kind: "property" | "properties" }>,
-	environment: SourcePropertyEnvironment,
-	roots: ReadonlySet<string>,
-	scopePaths: SourcePropertyExpectation["scopePaths"],
-	selections?: SourcePropertyGroupExpectation["selections"],
+	context: PropertyContext,
+	snapshot: { compilation: RetainedCompilation; source: string },
 ) {
+	const { root, inputs, file, cellKey, operation, environment, roots, scopePaths, selections } = context;
+	const { compilation, source } = snapshot;
 	const path = relative(realDesignDir(root), file);
 	const lowered = lowerLiterals(path, source);
 	if (lowered.shape !== compilation.shapes[path])
