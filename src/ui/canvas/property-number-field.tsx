@@ -20,7 +20,7 @@ export function numericTokenProperty(property: string): property is Property {
 }
 
 function numberUnit(value: string): { number: string; unit: string } | undefined {
-	const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-z%]*)$/i.exec(value.trim());
+	const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$/i.exec(value.trim());
 	return match ? { number: match[1]!, unit: match[2]! } : undefined;
 }
 
@@ -57,7 +57,11 @@ export function PropertyNumberField({
 				.map((option) => `${scope}${prefixes[property]}-${option.name}`)
 				.find((token) => reading?.tokens.includes(token))
 		: undefined;
-	const initial = numberUnit(reading?.authored ?? reading?.native ?? "");
+	// A known value this field cannot number — `normal`, a calc() — is read out
+	// as it stands rather than shown blank beside a unit it never had.
+	const presented = (reading?.authored ?? reading?.native ?? "").trim();
+	const initial = numberUnit(presented);
+	const keyword = initial || !presented ? undefined : presented;
 	const unit = initial?.unit ?? "px";
 	const [scrubbed, setScrubbed] = useState<string>();
 	const customDraft = useRef(false);
@@ -131,7 +135,8 @@ export function PropertyNumberField({
 			<NumField
 				label={property}
 				value={scrubbed ?? initial?.number ?? ""}
-				readout={unit}
+				readout={keyword ? null : unit}
+				placeholder={keyword}
 				ok={reading !== undefined}
 				onBegin={() => {
 					customDraft.current = false;

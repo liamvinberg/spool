@@ -12,6 +12,7 @@ async function mount(
 		binding: { kind: "reference", name: "--text-body", value: "17.25px" },
 		native: "17.25px",
 	},
+	property: "font-size" | "line-height" = "font-size",
 ) {
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -27,7 +28,7 @@ async function mount(
 	await act(() =>
 		root.render(
 			createElement(PropertyNumberField, {
-				property: "font-size",
+				property,
 				reading,
 				options: [{ name: "body", value: "17.25px", from: "project" }],
 				begin,
@@ -37,7 +38,7 @@ async function mount(
 			}),
 		),
 	);
-	const field = host.querySelector<HTMLInputElement>('input[aria-label="font-size"]');
+	const field = host.querySelector<HTMLInputElement>(`input[aria-label="${property}"]`);
 	if (!field) throw new Error("missing numeric typography field");
 	return { host, field, begin, preview, apply, finish };
 }
@@ -155,4 +156,27 @@ it("does not detach a reference through untouched keyboard or scrub stepping", a
 	expect(finish.mock.calls).toEqual([[false]]);
 	expect(label.getAttribute("title")).toContain("Choose a token or type a custom value");
 	expect(label.classList.contains("cursor-ew-resize")).toBe(false);
+});
+
+it("presents an authored exponent length as its own number and unit", async () => {
+	const { host, field, preview } = await mount({
+		tokens: ["text-[1e2px]"],
+		binding: { kind: "custom" },
+		authored: "1e2px",
+		native: "100px",
+	});
+	expect(field.value).toBe("1e2");
+	expect(host.querySelector('[data-properties-row="font-size"]')?.textContent).toContain("px");
+	await act(() => field.focus());
+	await act(() =>
+		field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })),
+	);
+	expect(preview).toHaveBeenLastCalledWith({ kind: "custom", value: "101px" });
+});
+
+it("reads a known keyword value instead of blanking the field under an invented unit", async () => {
+	const { host, field } = await mount({ tokens: [], binding: { kind: "custom" }, native: "normal" }, "line-height");
+	expect(field.value).toBe("");
+	expect(field.placeholder).toBe("normal");
+	expect(host.querySelector('[data-properties-row="line-height"]')?.textContent).not.toContain("px");
 });
