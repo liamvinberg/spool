@@ -42,6 +42,11 @@ function transformMatrix(property: NativeTransformProperty, value: string): DOMM
 	}
 }
 
+function sameMatrix(left: DOMMatrix, right: DOMMatrix): boolean {
+	const values = right.toFloat64Array();
+	return left.toFloat64Array().every((value, index) => value === values[index]);
+}
+
 function affine(matrix: DOMMatrix): boolean {
 	return (
 		matrix.toFloat64Array().every(Number.isFinite) &&
@@ -87,9 +92,14 @@ export function nativeTransform(
 	if (!(rule instanceof CSSStyleRule)) return unknown("the native transform parser is unavailable");
 	rule.style.setProperty(property, expectedValue);
 	const declaration = rule.style.getPropertyValue(property).trim();
-	const expected = declaration ? transformMatrix(property, declaration) : undefined;
+	const expected = declaration ? transformMatrix(property, expectedValue.trim().toLowerCase()) : undefined;
 	if (!expected) return unknown("this transform needs a resolved absolute declaration");
 	if (!affine(expected)) return unknown("this transform needs a finite affine matrix proof");
+	if (property !== "transform") {
+		const represented = transformMatrix(property, declaration);
+		if (!represented || !sameMatrix(expected, represented))
+			return unknown("this transform needs observable native longhand precision");
+	}
 	const observed = style.getPropertyValue(property).trim();
 	let actual: DOMMatrix | undefined;
 	if (property === "transform") {
@@ -110,8 +120,7 @@ export function nativeTransform(
 	} else actual = observed ? transformMatrix(property, observed) : undefined;
 	if (!actual) return unknown("this native transform needs a resolved absolute value");
 	if (!affine(actual)) return unknown("this native transform needs a finite affine matrix proof");
-	const values = actual.toFloat64Array();
-	const matches = expected.toFloat64Array().every((value, index) => value === values[index]);
+	const matches = sameMatrix(expected, actual);
 	if (!matches && property !== "transform" && /(?:rad|grad|turn|cm|mm|in|pt|pc|q)\b/i.test(declaration))
 		return unknown("this absolute unit conversion needs a more precise native longhand value");
 	return { kind: "known", matches, observed };
