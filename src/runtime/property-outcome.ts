@@ -1,7 +1,7 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
 
 export interface PropertyOutcome {
-	rendered: "verified" | "mismatching" | "unverified";
+	rendered: "verified" | "mismatching" | "unverified" | "inactive";
 	observed?: string;
 	reason?: string;
 }
@@ -9,27 +9,25 @@ export interface PropertyOutcome {
 /** Read each use independently. Parsing never adopts a stylesheet or changes the authored document. */
 export function propertyOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
-	if (expected.property !== "opacity") return unverified("this property needs a native effect proof");
-	if (expected.scope !== "") return unverified("this conditional property scope needs a native effect proof");
 	const view = element.ownerDocument.defaultView;
 	if (!view) return unverified("this use has no native document context");
+	const scopes = expected.scopePaths.map((path) => pathCondition(element, path, true));
+	if (scopes.length === 0) return unverified("the selected property has no compiled condition proof");
+	if (!scopes.includes("active")) {
+		if (scopes.includes("unverified"))
+			return unverified("the selected property condition needs a native context proof");
+		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
+	}
+	if (expected.property !== "opacity") return unverified("this property needs a native effect proof");
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
 	const applicable: SourcePropertyEffect[] = [];
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		if (effect.property !== "opacity") return unverified("this opacity has dependent effects requiring native proof");
-		const selectors = effect.path.filter((part) => !part.startsWith("@"));
-		if (selectors.length !== 1) return unverified("this property effect needs a nested selector proof");
-		const selector = selectors[0]!;
-		if (effect.owner === null) {
-			try {
-				if (!element.matches(selector)) continue;
-			} catch {
-				return unverified("this property effect has no native selector proof");
-			}
-		} else if (selector !== "$") return unverified("this property effect needs a prospective selector proof");
-		if (effect.path.some((part) => part.startsWith("@") && !part.startsWith("@layer ")))
-			return unverified("this property effect needs a conditional context proof");
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified")
+			return unverified("this property effect needs a native selector or conditional context proof");
 		applicable.push(effect);
 	}
 
@@ -77,4 +75,60 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (observed === "" || !Number.isFinite(Number(observed)))
 		return unverified("this use has no resolved native opacity");
 	return { rendered: Number(observed) === wanted ? "verified" : "mismatching", observed };
+}
+
+type Condition = "active" | "inactive" | "unverified";
+
+/** Only the compiler's utility subject is replaced; every state is read from the actual use. */
+function pathCondition(element: Element, path: readonly string[], owned: boolean): Condition {
+	const view = element.ownerDocument.defaultView;
+	if (!view) return "unverified";
+	let unknown = false;
+	let selectors = 0;
+	for (const part of path) {
+		if (part.startsWith("@layer ")) continue;
+		if (part.startsWith("@media ")) {
+			if (!view.matchMedia(part.slice(7)).matches) return "inactive";
+			continue;
+		}
+		if (part.startsWith("@supports ")) {
+			if (!CSS.supports(part.slice(10))) return "inactive";
+			continue;
+		}
+		if (part.startsWith("@")) {
+			unknown = true;
+			continue;
+		}
+		selectors++;
+		let selector = part;
+		if (owned) {
+			const subject = selectors === 1 ? "$" : "&";
+			if (!part.startsWith(subject)) {
+				unknown = true;
+				continue;
+			}
+			const states = part.slice(1);
+			// Relations and authored class tests need prospective ancestry/cascade proof.
+			if (
+				!/^(?::(?:hover|focus|focus-visible|focus-within|active|disabled|enabled|checked|indeterminate|valid|invalid|required|optional|read-only|read-write|placeholder-shown|empty|first-child|last-child|only-child|first-of-type|last-of-type|only-of-type))*$/.test(
+					states,
+				)
+			) {
+				unknown = true;
+				continue;
+			}
+			// A universal :hover selector excludes non-links in quirks mode. The actual
+			// tag preserves native state matching without consulting retained classes.
+			selector = `${CSS.escape(element.localName)}${states}`;
+		} else if (selectors > 1) {
+			unknown = true;
+			continue;
+		}
+		try {
+			if (!element.matches(selector)) return "inactive";
+		} catch {
+			unknown = true;
+		}
+	}
+	return unknown || selectors === 0 ? "unverified" : "active";
 }
