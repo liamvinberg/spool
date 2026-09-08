@@ -68,6 +68,7 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	asset?: string;
 	operation: SourceOperation;
 	handle: string;
 	owner: string;

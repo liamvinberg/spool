@@ -201,15 +201,17 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	const describe = useCallback(
 		async (frame: string, selector: string, field?: string) => {
 			const version = ++descriptionVersion.current;
+			const operation: SourceOperation =
+				field === "src" ? { kind: "image" } : { kind: "literal", ...(field ? { field } : {}) };
 			setLiveFrames(new Set(iframes.current.keys()));
 			const original = await request<SourceOccurrence>(frame, {
 				action: "inspect",
 				selector,
 				field,
-				operation: { kind: "literal", ...(field ? { field } : {}) },
+				operation,
 			});
 			const description = original
-				? await describeSource(project, frame, original, await inventory(original.field))
+				? await describeSource(project, frame, original, await inventory(original.field, operation), operation)
 				: undefined;
 			if (version === descriptionVersion.current)
 				setLiveFrames(new Set(description?.reach?.uses.map((use) => use.frame) ?? []));
@@ -221,13 +223,14 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	return {
 		describeField: useCallback(
 			async (frame: string, selector: string, field: string) => {
+				const operation: SourceOperation = field === "src" ? { kind: "image" } : { kind: "literal", field };
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
 					field,
-					operation: { kind: "literal", ...(field ? { field } : {}) },
+					operation,
 				});
-				return original ? describeSource(project, frame, original, []) : undefined;
+				return original ? describeSource(project, frame, original, [], operation) : undefined;
 			},
 			[project, request],
 		),
@@ -393,6 +396,17 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				return groupOutcome(group);
 			},
 			[iframes, request],
+		),
+		previewImage: useCallback(
+			async (frame: string, generation: number, value: string) => {
+				const targets = prepared.current.get(generation)?.frames ?? [frame];
+				return (
+					await Promise.all(
+						targets.map((frame) => request<boolean>(frame, { action: "preview-image", generation, value })),
+					)
+				).every(Boolean);
+			},
+			[request],
 		),
 		preview: useCallback(
 			async (frame: string, generation: number, text: string) => {

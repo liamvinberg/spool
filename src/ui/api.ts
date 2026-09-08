@@ -33,6 +33,7 @@ import type {
 	SourceReceipt,
 	SourceResult,
 } from "../source-edit";
+import type { SourceImagePut, SourceImageStaged } from "../source-image";
 
 declare global {
 	interface Window {
@@ -329,10 +330,6 @@ export type PatchWritten =
  * is an import, so the swap is bytes on disk and a splice in the source, and
  * the undo it hands back is the source half, which is the half a hand made.
  */
-export type AssetSwapped =
-	| { ok: true; path: string; asset: string; fingerprint: string; mapped: boolean; undo: HeldPatch; uncaught?: true }
-	| { ok: false; refusal: PatchRefusal };
-
 /** A picture a hand dropped or chose, as bytes, because a browser never reveals its path. */
 export interface AssetFile {
 	name: string;
@@ -355,22 +352,26 @@ export async function fileAsAsset(file: File): Promise<AssetFile> {
 	return { name: file.name, data: btoa(binary) };
 }
 
-export async function swapAsset(
+export async function stageImage(
 	project: string,
-	frame: string,
-	source: string,
-	fingerprint: string,
-	put: { file: AssetFile; asset?: undefined } | { asset: string; file?: undefined },
-): Promise<AssetSwapped | undefined> {
+	read: SourceRead,
+	put: SourceImagePut,
+): Promise<SourceImageStaged | undefined> {
 	try {
-		const res = await client.api.p[":project"].asset.$post({
+		const response = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { frame, source, fingerprint, file: put.file, asset: put.asset },
+			json: {
+				action: "stage-image",
+				handle: read.handle,
+				generation: read.generation,
+				original: read.original,
+				put,
+			},
 		});
-		if (!res.ok && res.status !== 409) return undefined;
-		return (await res.json()) as AssetSwapped;
+		if (!response.ok) return;
+		return (await response.json()) as SourceImageStaged;
 	} catch {
-		return undefined;
+		return;
 	}
 }
 
@@ -1662,11 +1663,12 @@ export async function describeSource(
 	frame: string,
 	original: SourceOccurrence,
 	inventories: SourceInventory[],
+	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
 ): Promise<SourceDescription | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "describe", frame, original, inventories },
+			json: { action: "describe", frame, original, inventories, operation },
 		});
 		const result = (await res.json()) as { ok: boolean; description?: SourceDescription };
 		return res.ok && result.ok ? result.description : undefined;

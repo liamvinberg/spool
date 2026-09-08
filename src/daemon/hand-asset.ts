@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, sep } from "node:path";
 import { ASSET_EXTENSIONS, IMAGE_BUDGET_BYTES, kilobytes } from "./assets";
 import { designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import type { PatchRefusal } from "./hand-write";
@@ -42,20 +42,7 @@ export const ASSET_REQUEST_CAP = 16 * IMAGE_BUDGET_BYTES;
  */
 const DATA_URI_PREFIX = "data:image/svg+xml;base64,".length;
 
-/**
- * What the pictures a document would carry come to, or the reason it may not.
- *
- * The budget is the document's rather than the picture's — the compiler charges
- * every image it inlines against the same ceiling — so this is asked about the
- * whole set the swap would leave behind, the one being replaced already gone
- * from it.
- *
- * What it cannot see is an image imported by a shared component the frame
- * mounts: the closure is the compiler's answer and this reads one file. So a
- * swap that fits here can still bust the build, which the compile says in the
- * project's own words and names the file for. It is the common case this
- * catches, and catching it before the bytes are written is the point.
- */
+/** Asset staging checks its own cost; the prospective compiler checks the complete affected document. */
 export function overBudget(inlined: number): PatchRefusal | undefined {
 	if (inlined <= IMAGE_BUDGET_BYTES) return undefined;
 	return {
@@ -67,36 +54,6 @@ export function overBudget(inlined: number): PatchRefusal | undefined {
 /** What one file costs a document: its base64, and the `data:` head in front of it. */
 export function inlinedSize(bytes: number): number {
 	return base64Length(bytes) + DATA_URI_PREFIX;
-}
-
-/**
- * What the images a file imports weigh, once inlined.
- *
- * `known` stands in for a picture that is not on disk yet, which is the one a
- * drop is about. A specifier that resolves to nothing costs nothing: the
- * compile is where a missing import is somebody's answer, not here.
- */
-export function imageSpend(
-	designDir: string,
-	file: string,
-	specifiers: readonly string[],
-	known: ReadonlyMap<string, number>,
-): number {
-	let spent = 0;
-	for (const specifier of specifiers) {
-		const at = resolve(dirname(file), specifier);
-		const held = known.get(at);
-		if (held !== undefined) {
-			spent += inlinedSize(held);
-			continue;
-		}
-		try {
-			spent += inlinedSize(statSync(resolveDesignPath(designDir, at)).size);
-		} catch {
-			// nothing there to weigh, and the compile is where that is answered
-		}
-	}
-	return spent;
 }
 
 /**

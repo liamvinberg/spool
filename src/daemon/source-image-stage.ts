@@ -1,6 +1,5 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname } from "node:path";
-import { writeAtomic } from "../atomic-write";
 import type { SourceImagePut } from "../source-image";
 import { ASSET_MEDIA_TYPES } from "./assets";
 import { designRelativePath, realDesignDir } from "./design-path";
@@ -16,7 +15,12 @@ export interface StagedImage {
 }
 
 /** Only asset bytes are staged here. Source remains the original owner's separate operation. */
-export function stageImageAsset(root: string, frameDir: string, put: SourceImagePut): StagedImage {
+export function stageImageAsset(
+	root: string,
+	frameDir: string,
+	put: SourceImagePut,
+	beforeCreate?: (file: string) => void,
+): StagedImage {
 	let file: string;
 	let path: string;
 	let created: StagedImage["created"];
@@ -39,10 +43,13 @@ export function stageImageAsset(root: string, frameDir: string, put: SourceImage
 		const destination = assetDestination(root, frameDir, name, bytes);
 		({ file, path } = destination);
 		if (destination.write) {
+			beforeCreate?.(file);
 			const directory = dirname(file);
 			const before = directoryEntries(directory);
 			if (existsSync(file)) throw new Error("the image destination changed before staging");
-			writeAtomic(file, bytes);
+			// This is a new, unreferenced file. Exclusive creation avoids both an
+			// overwrite and temporary sibling events before the owner records it.
+			writeFileSync(file, bytes, { flag: "wx" });
 			const remaining = JSON.stringify(
 				readdirSync(directory)
 					.filter((name) => name !== basename(file))

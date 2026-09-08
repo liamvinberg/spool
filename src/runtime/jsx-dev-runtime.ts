@@ -1,5 +1,6 @@
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
+import { decodeImage, observeImage } from "./source-image";
 import { installObserver } from "./source-observer";
 import { installValueFlow } from "./source-values";
 
@@ -277,7 +278,8 @@ function inspectSource(
 	field?: string,
 	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 ): SourceOccurrence | undefined {
-	if (operation.kind !== "literal") return;
+	if (operation.kind !== "literal" && operation.kind !== "image") return;
+	if (operation.kind === "image" && (!(element instanceof HTMLImageElement) || field !== "src")) return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
 	let origin = field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
@@ -375,9 +377,14 @@ function clearGestureFeedback(): void {
 	gestureFeedback.clear();
 	renderSourceFeedback();
 }
+function sourceObservationOperation(original: SourceOccurrence): SourceOperation {
+	return original.field === "src"
+		? { kind: "image" }
+		: { kind: "literal", ...(original.field ? { field: original.field } : {}) };
+}
 function sourceElement(original: SourceOccurrence): HTMLElement | undefined {
 	return [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
-		const current = inspectSource(element, original.field);
+		const current = inspectSource(element, original.field, sourceObservationOperation(original));
 		return current && sameSourceOccurrence(current, original);
 	});
 }
@@ -411,6 +418,7 @@ function inventorySource(
 	const uses: SourceInventory["uses"] = [];
 	let unknown = 0;
 	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-source]")) {
+		if (operation.kind === "image" && !(element instanceof HTMLImageElement)) continue;
 		if (field === undefined && element.children.length > 0) continue;
 		const original = inspectSource(element, field, operation);
 		if (!original) {
@@ -439,7 +447,7 @@ function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolea
 	const prepared: PreviewedUse[] = [];
 	for (const original of uses) {
 		const element = [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
-			const current = inspectSource(element, original.field);
+			const current = inspectSource(element, original.field, sourceObservationOperation(original));
 			return current && sameSourceOccurrence(current, original);
 		});
 		if (element) prepared.push(previewedUse(element, original));
@@ -450,7 +458,7 @@ function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolea
 }
 function previewSourceUses(generation: number, value: string): void {
 	for (const held of sharedPreviews.get(generation) ?? []) {
-		const current = inspectSource(held.element, held.original.field);
+		const current = inspectSource(held.element, held.original.field, sourceObservationOperation(held.original));
 		if (!current || !sameSourceOccurrence(current, held.original)) continue;
 		held.preview = value;
 		held.previewed = true;
@@ -477,7 +485,7 @@ function cancelSourceUses(generation: number, reason: "cancel" | "prepare" | "in
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
-		const current = inspectSource(use.element, use.original.field);
+		const current = inspectSource(use.element, use.original.field, sourceObservationOperation(use.original));
 		if (current && sameSourceOccurrence(current, use.original) && ownsPreview(use))
 			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
@@ -502,7 +510,7 @@ function sourceRead(
 function validLease(generation: number): boolean {
 	const held = leases.get(generation);
 	if (!held || generation !== intent) return false;
-	const current = inspectSource(held.element, held.original.field);
+	const current = inspectSource(held.element, held.original.field, sourceObservationOperation(held.original));
 	return current !== undefined && sameSourceOccurrence(current, held.original);
 }
 function previewSource(generation: number, value: string): boolean {
@@ -523,6 +531,10 @@ function previewSource(generation: number, value: string): boolean {
 	previewSourceUses(generation, value);
 	return true;
 }
+async function previewImage(generation: number, value: string): Promise<boolean> {
+	if (!(await decodeImage(value))) return false;
+	return previewSource(generation, value);
+}
 function cancelSource(generation: number): void {
 	const held = leases.get(generation);
 	leases.delete(generation);
@@ -531,7 +543,8 @@ function cancelSource(generation: number): void {
 	if (
 		held.element.isConnected &&
 		ownsPreview(held) &&
-		inspectSource(held.element, held.original.field)?.invocation === held.original.invocation
+		inspectSource(held.element, held.original.field, sourceObservationOperation(held.original))?.invocation ===
+			held.original.invocation
 	)
 		restoreField(held.element, held.original, held.children, held.restoreAttribute);
 }
@@ -558,6 +571,14 @@ function observedUse(
 	expected: SourcePublication["expected"],
 	failed: ReadonlySet<HTMLElement>,
 ): UseOutcome {
+	if (expected.kind === "image") {
+		const result = !element?.isConnected
+			? { rendered: failed.has(element!) ? ("failed" as const) : ("unmounted" as const) }
+			: pendingIn(element)
+				? { rendered: "pending" as const }
+				: observeImage(element, expected);
+		return { occurrence: original.occurrence, installation: "installed", ...result };
+	}
 	if (expected.kind !== "literal")
 		return {
 			occurrence: original.occurrence,
@@ -703,7 +724,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	const secondary =
 		publication.targets &&
 		prepared?.some((use) => {
-			const current = inspectSource(use.element, use.original.field);
+			const current = inspectSource(use.element, use.original.field, sourceObservationOperation(use.original));
 			return current && sameSourceOccurrence(use.original, original) && sameSourceOccurrence(current, use.original);
 		});
 	if (!undo && !((held && validLease(publication.generation)) || secondary))
@@ -810,6 +831,7 @@ declare global {
 			clearFeedback: typeof clearSourceFeedback;
 			valid: typeof validLease;
 			preview: typeof previewSource;
+			previewImage: typeof previewImage;
 			complete: typeof completeSource;
 			cancel: typeof cancelSource;
 			install: typeof installSource;
@@ -829,8 +851,17 @@ if (typeof window !== "undefined")
 		clearFeedback: clearSourceFeedback,
 		valid: validLease,
 		preview: previewSource,
+		previewImage,
 		complete: completeSource,
 		cancel: cancelSource,
 		install: installSource,
 		revoke: revokeSource,
 	};
+
+if (typeof document !== "undefined") {
+	const imageSettled = (event: Event) => {
+		if (event.target instanceof HTMLImageElement) queueSourceOutcome();
+	};
+	document.addEventListener("load", imageSettled, true);
+	document.addEventListener("error", imageSettled, true);
+}

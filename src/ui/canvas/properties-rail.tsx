@@ -114,19 +114,8 @@ export interface PropertiesActs {
 	onGeometryCommit: (name: string, before: Geometry) => void;
 	/** the write lane: gated, spliced, and recorded on the canvas's one undo stack */
 	onWrite: (frame: string, selector: string, ops: readonly HandOp[]) => void;
-	/**
-	 * The asset swap (#260): the one hand edit that writes a file.
-	 *
-	 * It carries the fingerprint the rail read the element out of rather than
-	 * being gated first, because the picture and the splice land together — a
-	 * gate would answer about a file the swap is about to rewrite anyway.
-	 */
-	onSwap: (
-		frame: string,
-		selector: string,
-		at: { source: string; fingerprint: string },
-		put: { file: File } | { asset: string },
-	) => void;
+	/** Image source reads and receipts belong to the common source owner. */
+	onSwap: (frame: string, selector: string, put: { file: File } | { asset: string }) => void;
 }
 
 export function PropertiesRail({
@@ -359,7 +348,12 @@ function Body({
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
 	// the imports the swap may choose from, asked for only where a rung has a
 	// picture on it at all
-	const assets = useAssets(project, element?.frame ?? null, swappable(rowElement.tag), revision);
+	const { assets, refresh: refreshAssets } = useAssets(
+		project,
+		element?.frame ?? null,
+		swappable(rowElement.tag),
+		revision,
+	);
 	const view: View = {
 		scope: live,
 		scoped: scopedClass(literal, live),
@@ -403,7 +397,7 @@ function Body({
 					selector={element.selector}
 					name={read?.name ?? rowElement.tag}
 					revision={revision}
-					field={purpose?.field}
+					field={purpose ? purpose.field : rowElement.tag === "img" ? "src" : undefined}
 					generation={purpose?.generation}
 					actions={acts.ownership}
 					onSupport={support}
@@ -467,18 +461,11 @@ function Body({
 						read={read}
 						tag={rowElement.tag}
 						assets={assets}
+						refreshAssets={refreshAssets}
 						frame={element.frame}
 						selector={element.selector}
 						actions={acts.text}
-						onSwap={(put) => {
-							if (read.fingerprint === undefined) return;
-							acts.onSwap(
-								element.frame,
-								element.selector,
-								{ source: read.source, fingerprint: read.fingerprint },
-								put,
-							);
-						}}
+						onSwap={(put) => acts.onSwap(element.frame, element.selector, put)}
 					/>
 				)}
 				{element === null ? null : (
@@ -1030,10 +1017,11 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
  *
  * Asked for only where a rung actually has a picture on it, because most
  * elements do not and a menu nobody opens should cost no round trip. Re-read
- * on a reload, since a swap of its own puts a new file in the folder the menu
- * lists.
+ * when the menu opens, including staged files retained after cancellation.
  */
-function useAssets(project: string, frame: string | null, wanted: boolean, revision: number): ProjectAsset[] {
+function useAssets(project: string, frame: string | null, wanted: boolean, revision: number) {
+	const [requested, setRequested] = useState(0);
+	const refresh = useCallback(() => setRequested((value) => value + 1), []);
 	const [assets, setAssets] = useState<ProjectAsset[]>([]);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a swap of its own puts a new file in the folder this lists
 	useEffect(() => {
@@ -1048,8 +1036,8 @@ function useAssets(project: string, frame: string | null, wanted: boolean, revis
 		return () => {
 			live = false;
 		};
-	}, [project, frame, wanted, revision]);
-	return assets;
+	}, [project, frame, wanted, revision, requested]);
+	return { assets, refresh };
 }
 
 /** The one option that is not a picture: the OS file dialog, as a row in the menu. */
@@ -1072,6 +1060,7 @@ function Attributes({
 	read,
 	tag,
 	assets,
+	refreshAssets,
 	frame,
 	selector,
 	actions,
@@ -1081,6 +1070,7 @@ function Attributes({
 	read: RungRead;
 	tag: string;
 	assets: readonly ProjectAsset[];
+	refreshAssets: () => void;
 	frame: string;
 	selector: string;
 	actions: TextActions | undefined;
@@ -1106,7 +1096,7 @@ function Attributes({
 		if (describe)
 			void Promise.all(
 				candidates
-					.filter((field) => !field.asset && !["className", "style", "data-go", "key", "ref"].includes(field.name))
+					.filter((field) => !["className", "style", "data-go", "key", "ref"].includes(field.name))
 					.map(async (field) => [field.name, await describe(frame, selector, field.name)] as const),
 			).then((entries) => {
 				if (live) setDescriptions(Object.fromEntries(entries));
@@ -1118,6 +1108,10 @@ function Attributes({
 	const fields = candidates.map((field) => {
 		const description = descriptions[field.name];
 		if (!description) return field;
+		if (field.asset && description.operation.kind === "image") {
+			const { reason: _reason, ...supported } = field;
+			return { ...supported, ...(description.asset ? { specifier: description.asset } : {}) };
+		}
 		return { name: field.name, value: description.value };
 	});
 	if (fields.length === 0) return null;
@@ -1126,7 +1120,7 @@ function Attributes({
 			{fields.map((field) => (
 				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
 					{field.asset === true ? (
-						<AssetField field={field} assets={assets} onSwap={onSwap} />
+						<AssetField field={field} assets={assets} onOpen={refreshAssets} onSwap={onSwap} />
 					) : field.reason === undefined && actions ? (
 						<LiteralField
 							frame={frame}
@@ -1157,9 +1151,11 @@ function AssetField({
 	field,
 	assets,
 	onSwap,
+	onOpen,
 }: {
 	field: AttributeField;
 	assets: readonly ProjectAsset[];
+	onOpen: () => void;
 	onSwap: (put: { file: File } | { asset: string }) => void;
 }) {
 	const picker = useRef<HTMLInputElement | null>(null);
@@ -1183,6 +1179,7 @@ function AssetField({
 				options={options}
 				ok={field.reason === undefined}
 				label="image"
+				onOpen={onOpen}
 				filter={assets.length > 8}
 				onPick={(token) => {
 					if (token === null) return;

@@ -9,9 +9,9 @@ import { createSourceOwner } from "./source-owner";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2"/>';
 
-async function fixture(shared = false, transform = (source: string) => source) {
+async function fixture(shared = false, transform = (source: string) => source, firstImage = SVG) {
 	const { root } = makeProject(makeTempDir());
-	writeDesignFile(root, "shared/assets/first.svg", SVG);
+	writeDesignFile(root, "shared/assets/first.svg", firstImage);
 	writeDesignFile(root, "shared/assets/second.svg", SVG.replace('width="3"', 'width="7"'));
 	const source = transform(
 		'import picture from "shared/assets/first.svg"; export default function Frame(){return <img src={picture}/>}',
@@ -30,16 +30,17 @@ async function fixture(shared = false, transform = (source: string) => source) {
 	const id = /configureSource\(\{"id":"([^"]+)"/.exec(document.document)?.[1];
 	const compilation = id ? compiler.publication(id)?.compilation : undefined;
 	if (!compilation) throw new Error("no immutable publication");
-	const sourceAt = Object.values(compilation.cells).find((cell) => cell.image)?.source;
-	if (!sourceAt) throw new Error("missing compiled image source");
+	const cell = Object.values(compilation.cells).find((cell) => cell.field === "src");
+	if (!cell) throw new Error("missing compiled image source");
+	const sourceAt = cell.source;
 	const original = {
 		publication: compilation.packet.id,
 		cell: sourceAt,
 		occurrence: "image-node",
 		invocation: "render-call",
-		value: `data:image/svg+xml;base64,${Buffer.from(SVG).toString("base64")}`,
+		value: cell.value,
 		field: "src",
-		absent: false,
+		absent: cell.absent,
 		context: "original",
 		provenance: JSON.stringify({ source: sourceAt, occurrence: "image-node", generation: "1", chain: [] }),
 	};
@@ -350,3 +351,120 @@ it("does not rewrite an unchanged canonical image import or create history", asy
 	expect(saved).toEqual({ ok: true, source: "unchanged", publication: null });
 	expect(readFileSync(join(f.root, "design/frames/home/frame.tsx"), "utf8")).toBe(f.source);
 });
+
+it("reuses identical staged bytes and preserves a different same-name file", async () => {
+	const f = await fixture();
+	const read = await f.owner.read(f.root, "home", f.original, 1, "canvas", { kind: "image" });
+	if (!read.ok) throw new Error(read.reason);
+	const first = await f.owner.stageImage(f.root, read.read.handle, 1, f.original, {
+		kind: "file",
+		name: "picture.svg",
+		data: Buffer.from(SVG).toString("base64"),
+	});
+	expect(first).toMatchObject({ ok: true, path: "frames/home/picture.svg" });
+	const repeated = await f.owner.stageImage(f.root, read.read.handle, 1, f.original, {
+		kind: "file",
+		name: "picture.svg",
+		data: Buffer.from(SVG).toString("base64"),
+	});
+	expect(repeated).toEqual(first);
+	const changed = SVG.replace('width="3"', 'width="9"');
+	const second = await f.owner.stageImage(f.root, read.read.handle, 1, f.original, {
+		kind: "file",
+		name: "picture.svg",
+		data: Buffer.from(changed).toString("base64"),
+	});
+	expect(second).toMatchObject({ ok: true, path: "frames/home/picture-2.svg" });
+	expect(readFileSync(join(f.root, "design/frames/home/picture.svg"), "utf8")).toBe(SVG);
+	expect(readFileSync(join(f.root, "design/frames/home/picture-2.svg"), "utf8")).toBe(changed);
+	expect(readFileSync(join(f.root, "design/frames/home/frame.tsx"), "utf8")).toBe(f.source);
+});
+
+it("replaces an orphaned large import without counting its old bytes against the new document", async () => {
+	const { root, original, owner } = await fixture(false, (source) => source, "x".repeat(300 * 1024));
+	const result = await owner.read(root, "home", original, 1, "canvas", { kind: "image" });
+	if (!result.ok) throw new Error(result.reason);
+	const data = Buffer.from("y".repeat(300 * 1024)).toString("base64");
+	const staged = await owner.stageImage(root, result.read.handle, 1, original, {
+		kind: "file",
+		name: "fresh.svg",
+		data,
+	});
+	if (!staged.ok) throw new Error(staged.reason);
+	const saved = await owner.commit(root, result.read.handle, 1, original, { kind: "image", path: staged.path });
+	expect(saved).toMatchObject({ ok: true, source: "saved" });
+	const source = readFileSync(join(root, "design/frames/home/frame.tsx"), "utf8");
+	expect(source).toContain('from "./fresh.svg"');
+	expect(source).not.toContain("first.svg");
+	expect(readFileSync(join(root, "design/shared/assets/first.svg"), "utf8")).toBe("x".repeat(300 * 1024));
+	if (saved.ok && saved.publication) owner.delivered(saved.publication.packet.id);
+});
+
+it.each(["bytes", "equal-byte replacement"] as const)(
+	"never hides a staged asset watcher event after outside %s",
+	async (change) => {
+		const f = await fixture();
+		const result = await f.owner.read(f.root, "home", f.original, 1, "canvas", { kind: "image" });
+		if (!result.ok) throw new Error(result.reason);
+		const staged = await f.owner.stageImage(f.root, result.read.handle, 1, f.original, {
+			kind: "file",
+			name: "new.svg",
+			data: Buffer.from(SVG).toString("base64"),
+		});
+		if (!staged.ok) throw new Error(staged.reason);
+		const file = join(f.root, "design", staged.path);
+		expect(f.owner.stagedAddition(f.root, file)).toBeTypeOf("function");
+		if (change === "equal-byte replacement") rmSync(file);
+		writeFileSync(file, change === "bytes" ? `${SVG} ` : SVG);
+		expect(f.owner.stagedAddition(f.root, file)).toBeUndefined();
+	},
+);
+
+it("gives only new additions a bounded watcher exception, never existing asset selection", async () => {
+	const f = await fixture();
+	const result = await f.owner.read(f.root, "home", f.original, 1, "canvas", { kind: "image" });
+	if (!result.ok) throw new Error(result.reason);
+	await f.owner.stageImage(f.root, result.read.handle, 1, f.original, {
+		kind: "existing",
+		path: "shared/assets/second.svg",
+	});
+	expect(f.owner.stagedAddition(f.root, join(f.root, "design/shared/assets/second.svg"))).toBeUndefined();
+	const staged = await f.owner.stageImage(f.root, result.read.handle, 1, f.original, {
+		kind: "file",
+		name: "new.svg",
+		data: Buffer.from(SVG).toString("base64"),
+	});
+	if (!staged.ok) throw new Error(staged.reason);
+	const file = join(f.root, "design", staged.path);
+	const release = f.owner.stagedAddition(f.root, file);
+	expect(release).toBeTypeOf("function");
+	release?.();
+	expect(f.owner.stagedAddition(f.root, file)).toBeUndefined();
+	expect(readFileSync(file, "utf8")).toBe(SVG);
+});
+
+it.each([true, false])(
+	"keeps original computed import inventories strict when staged image matches=%s",
+	async (matches) => {
+		const pattern = matches ? "./" : "../../shared/assets/";
+		const f = await fixture(
+			false,
+			(source) => `${source};export function imageNamed(name){return import(\`${pattern}\${name}.svg\`)}`,
+		);
+		const captured = f.compiler.publication(f.original.publication)?.compilation;
+		expect(captured?.globDiscoveries?.length).toBe(1);
+		const result = await f.owner.read(f.root, "home", f.original, 1, "canvas", { kind: "image" });
+		if (!result.ok) throw new Error(result.reason);
+		const staged = await f.owner.stageImage(f.root, result.read.handle, 1, f.original, {
+			kind: "file",
+			name: "new.svg",
+			data: Buffer.from(SVG).toString("base64"),
+		});
+		expect(staged.ok).toBe(!matches);
+		expect(existsSync(join(f.root, "design/frames/home/new.svg"))).toBe(!matches);
+		expect(readFileSync(join(f.root, "design/frames/home/frame.tsx"), "utf8")).toBe(f.source);
+		f.owner.cancel(f.root, result.read.handle);
+		const next = await f.owner.read(f.root, "home", f.original, 2, "canvas", { kind: "image" });
+		expect(next).toMatchObject({ ok: true });
+	},
+);
