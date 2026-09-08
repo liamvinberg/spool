@@ -1,0 +1,124 @@
+.bl-page {
+	position: relative;
+	isolation: isolate;
+	min-height: 100vh;
+	overflow: clip;
+	background: #101010;
+}
+.bl-field {
+	position: absolute;
+	inset: 0 0 auto;
+	height: var(--bl-height, 100vh);
+	transform: translate3d(0, var(--bl-top, 0px), 0);
+	z-index: 0;
+	pointer-events: none;
+	background: #101010;
+}
+.bl-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+.bl-field[data-backend="fallback"] {
+	position: fixed;
+	inset: 0;
+	height: auto;
+	transform: none;
+	background: radial-gradient(ellipse at 83% 28%, #502015 0%, #24120e 25%, #101010 62%);
+}
+.bl-field[data-backend="fallback"] .bl-canvas {
+	visibility: hidden;
+}
+.bl-page > .sg-page {
+	position: relative;
+	z-index: 1;
+	background: transparent;
+	--sm-muted: #aaa6a1;
+	--sm-line: #8571682e;
+}
+.bl-page .sg-chapters {
+	background: #101010e8;
+	backdrop-filter: blur(16px);
+}
+.bl-page .sg-section {
+	border-color: #8571682e;
+}
+.bl-page .sg-install > button,
+.bl-page .sg-nav nav button {
+	background: #10101080;
+}
+.bl-page .sg-caption {
+	color: #aaa6a1;
+}
+.bl-page .sg-footer {
+	gap: 24px;
+}
+.bl-motion {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	flex: none;
+	font:
+		9px "Fragment Mono",
+		monospace;
+	color: #918982;
+	padding-block: 8px;
+}
+.bl-motion > span {
+	width: 5px;
+	height: 5px;
+	border: 1px solid currentColor;
+	border-radius: 50%;
+	background: currentColor;
+}
+.bl-motion[aria-pressed="true"] > span {
+	background: transparent;
+}
+.bl-motion:hover {
+	color: #ece7e0;
+}
+
+/* The most expansive take ends inside the pigment rather than on top of a red card. */
+.bl-page .sm-play-start {
+	padding-block: 118px 110px;
+}
+.bl-page .sm-play-top h2 > span,
+.bl-page .sm-play-top > svg {
+	color: #f1d0bf;
+}
+.bl-page .sm-play-bottom p,
+.bl-page .sm-play-bottom .sm-fine,
+.bl-page .sm-details > summary {
+	color: #f2e0d5;
+}
+.bl-page .sm-play-bottom,
+.bl-page .sm-play-install > .sm-command {
+	border-color: #edc6b333;
+}
+.bl-page .sm-play-install > .sm-command {
+	color: #ead3c5;
+	background: #17100c24;
+}
+.bl-page .sm-play-install .sm-download {
+	background: #f0e8dc;
+	--sm-bg: #25120d;
+	border-color: #f0e8dc;
+}
+@media (max-width: 760px) {
+	.bl-page .sg-footer {
+		column-gap: 18px;
+		row-gap: 12px;
+	}
+	.bl-page .bl-motion {
+		margin-left: auto;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.bl-motion {
+		display: none;
+	}
+}
+
+.bl-field[data-backend="fallback"] ~ .sg-page .bl-motion {
+	display: none;
+}
