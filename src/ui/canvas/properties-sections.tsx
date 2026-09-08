@@ -49,6 +49,7 @@ import {
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
+import type { SourcePropertyReading } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -70,6 +71,7 @@ import {
 } from "./properties-fields";
 import type { Scope } from "./properties-scope";
 import { scopeKey } from "./properties-scope";
+import { PropertyColorField } from "./property-color-field";
 import { appearanceProperty, type PropertyControls, propertyControlValue } from "./property-controls";
 
 /** Rows read candidate spellings from the shared property inventory.
@@ -495,6 +497,21 @@ function ColourRow({
 	onWrite?: ((name: string | null, alpha: number | null) => void) | undefined;
 	fold?: ReactNode;
 }) {
+	const control = view.property;
+	const identity = JSON.stringify([control?.identity, property]);
+	const [described, setDescribed] = useState<{ identity: string; reading: SourcePropertyReading | undefined }>();
+	const describe = useRef(control?.describe);
+	describe.current = control?.describe;
+	useEffect(() => {
+		let live = true;
+		if (property === "color" || property === "background-color")
+			void describe.current?.(property).then((reading) => {
+				if (live) setDescribed({ identity, reading });
+			});
+		return () => {
+			live = false;
+		};
+	}, [identity, property]);
 	const row = ruleRow(property, "colour");
 	const prefix = row.rule.prefix;
 	const ok = okOf(view, row);
@@ -510,6 +527,39 @@ function ColourRow({
 		if (onWrite !== undefined) return onWrite(nextName, alpha);
 		writeValue(view, row, nextName === null ? null : { kind: "colour", name: nextName, alpha });
 	};
+	if (property === "color" || property === "background-color")
+		return (
+			<PropertyColorField
+				property={property}
+				reading={described?.identity === identity ? described.reading : undefined}
+				options={[
+					...(view.theme?.colour ?? []).map((token) => ({ ...token, reference: `--color-${token.name}` })),
+					...KEYWORD_COLOURS.map((color) => ({
+						name: color.name,
+						value: color.paint,
+						from: "default" as const,
+						reference: null,
+					})),
+				]}
+				begin={() => control?.begin(property)}
+				preview={(value) => control?.preview(property, { kind: "custom", value })}
+				apply={(choice) =>
+					choice.kind === "binding" ? write(choice.name, shown.alpha) : control?.apply(property, choice)
+				}
+				finish={(commit) => control?.finish(commit)}
+				accessory={
+					<>
+						<AlphaField
+							alpha={shown.alpha}
+							ok={ok && shown.name !== null}
+							faint={held.own.token === null}
+							onCommit={(alpha) => write(shown.name, alpha)}
+						/>
+						{fold}
+					</>
+				}
+			/>
+		);
 	return (
 		<Row name={name ?? row.property} ok={ok} changed={changed}>
 			<Menu

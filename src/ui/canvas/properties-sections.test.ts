@@ -3,6 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { colourOf } from "../../properties/families";
 import { editsFor, type RowEdit, type RowElement, rowFor } from "../../properties/rows";
 import type { SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme } from "../api";
@@ -203,24 +204,33 @@ it("offers this project's colours first and Tailwind's under a default divider",
 	const rail = await mount("bg-thread");
 	await open(rail, "background-color");
 
-	// the absent reading heads it, then the project's own, then Tailwind's
-	expect(optionNames(rail, "background-color").slice(0, 3)).toEqual(["transparent", "thread", "raised"]);
-	expect(dividersIn(rail, "background-color")).toEqual(["default"]);
+	// The approved menu separates actual project choices from defaults.
+	expect(optionNames(rail, "background-color")).toEqual([
+		"thread",
+		"raised",
+		"red-500",
+		"transparent",
+		"current",
+		"inherit",
+	]);
+	expect(dividersIn(rail, "background-color")).toEqual(["Project", "Default"]);
 
 	await pick(rail, "background-color", "red-500");
 	expect(rail.wrote()).toEqual([{ token: "bg-red-500" }]);
 });
 
-it("takes an arbitrary colour typed into the same menu, and reads it back", async () => {
+it("previews and completes an explicit custom color in the approved menu", async () => {
 	const rail = await mount("");
 	await open(rail, "background-color");
-	await find(rail, "background-color", "#ff0044");
-
-	expect(optionNames(rail, "background-color")).toContain("[#ff0044]");
-	await pick(rail, "background-color", "[#ff0044]");
-	expect(rail.wrote()).toEqual([{ token: "bg-[#ff0044]" }]);
-
-	expect(shows(await mount("bg-[#ff0044]"), "background-color")).toBe("[#ff0044]");
+	const field = rail.host.querySelector<HTMLInputElement>('input[aria-label="background-color"]');
+	if (!field) throw new Error("missing custom color input");
+	await act(() => field.focus());
+	await put(field, "#ff0044");
+	expect(rail.previews).toEqual([{ property: "background-color", value: { kind: "custom", value: "#ff0044" } }]);
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+	expect(rail.completions).toEqual([true]);
+	expect(rail.legacy).toEqual([]);
+	expect(shows(await mount("bg-[#ff0044]"), "background-color")).toBe("#ff0044");
 });
 
 /* ---------- P3: the gradient, as rows ---------- */
@@ -420,6 +430,21 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 		property: element?.refusal
 			? null
 			: {
+					identity: className,
+					// Surface fixture readings are supplied evidence, not source admission.
+					describe: async (property) => {
+						const reading = colourOf(scopedClass(className, scope), property === "color" ? "text" : "bg", THEME);
+						const token = THEME.colour.find((token) => token.name === reading.name);
+						return {
+							tokens: reading.token ? [reading.token] : [],
+							binding: token
+								? { kind: "reference", name: `--color-${token.name}`, value: token.value }
+								: reading.token
+									? { kind: "custom" }
+									: { kind: "page" },
+							native: token?.value ?? reading.paint ?? "transparent",
+						};
+					},
 					begin: () => {},
 					preview: (property, value) => {
 						previews.push({ property, value });
@@ -464,7 +489,11 @@ function stubCompiler(): Compiler {
 
 /** Every drawn row whose label is this one, in the order the rail draws them. */
 function rowsFor(rail: Rail, name: string): HTMLElement[] {
-	return [...rail.host.querySelectorAll<HTMLElement>(`[data-properties-row="${name}"]`)];
+	return [
+		...rail.host.querySelectorAll<HTMLElement>(
+			`[data-properties-row="${name === "background-color" ? "background" : name}"]`,
+		),
+	];
 }
 
 function rowOf(rail: Rail, name: string): HTMLElement | null {
@@ -506,7 +535,7 @@ function fieldIn(rail: Rail, row: string): HTMLInputElement | null {
 
 /** What the row's first control is showing: a field's value, or a menu's name. */
 function shows(rail: Rail, row: string): string {
-	const held = rowOf(rail, row)?.querySelector("[data-menu-value], input");
+	const held = rowOf(rail, row)?.querySelector("[data-menu-value], .ep-color-trigger > span:nth-child(2), input");
 	if (held === null || held === undefined) return "";
 	return held instanceof HTMLInputElement ? held.value : (held.textContent ?? "");
 }
@@ -518,7 +547,11 @@ function asideOf(rail: Rail, row: string): string {
 }
 
 function swatchIn(rail: Rail, row: string): string {
-	return rowOf(rail, row)?.querySelector<HTMLElement>("[data-swatch]")?.dataset.swatch ?? "";
+	return (
+		rowOf(rail, row)?.querySelector<HTMLElement>("[data-swatch]")?.dataset.swatch ??
+		rowOf(rail, row)?.querySelector<HTMLElement>(".ep-swatch")?.style.background ??
+		""
+	);
 }
 
 function alphaOf(rail: Rail, row: string): string {
@@ -545,11 +578,15 @@ function sectionReason(rail: Rail, section: string): string {
 }
 
 function menuIn(rail: Rail, label: string): HTMLElement | null {
-	return rail.host.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+	return rail.host.querySelector<HTMLElement>(`button[aria-label="Choose ${label}"], [aria-label="${label}"]`);
 }
 
 function listFor(rail: Rail, label: string): HTMLElement | null {
-	return menuIn(rail, label)?.parentElement?.querySelector<HTMLElement>('[role="listbox"]') ?? null;
+	return (
+		rail.host.querySelector<HTMLElement>(`fieldset[aria-label="${label} options"]`) ??
+		menuIn(rail, label)?.parentElement?.querySelector<HTMLElement>('[role="listbox"]') ??
+		null
+	);
 }
 
 async function open(rail: Rail, label: string): Promise<void> {
@@ -557,28 +594,28 @@ async function open(rail: Rail, label: string): Promise<void> {
 }
 
 function optionNames(rail: Rail, label: string): string[] {
-	return [...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option]") ?? [])].map(
-		(option) => option.dataset.menuOption ?? "",
+	return [
+		...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option], .ep-color-options button") ?? []),
+	].map(
+		(option) =>
+			option.dataset.menuOption ?? option.getAttribute("aria-label")?.replace(/^Apply (?:--color-)?/, "") ?? "",
 	);
 }
 
 /** The `default` line above where Tailwind's own names begin. */
 function dividersIn(rail: Rail, label: string): string[] {
-	return [...(listFor(rail, label)?.querySelectorAll("[data-menu-divider]") ?? [])].map(
+	return [...(listFor(rail, label)?.querySelectorAll("[data-menu-divider], .ep-color-options > p") ?? [])].map(
 		(divider) => divider.textContent ?? "",
 	);
 }
 
-async function find(rail: Rail, label: string, typed: string): Promise<void> {
-	const field = listFor(rail, label)?.querySelector("input") ?? null;
-	if (field === null) throw new Error(`no find line on ${label}`);
-	await put(field, typed);
-}
-
 async function pick(rail: Rail, label: string, name: string): Promise<void> {
 	if (listFor(rail, label) === null) await open(rail, label);
-	const found = [...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option]") ?? [])].find(
-		(option) => option.dataset.menuOption === name,
+	const found = [
+		...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option], .ep-color-options button") ?? []),
+	].find(
+		(option) =>
+			(option.dataset.menuOption ?? option.getAttribute("aria-label")?.replace(/^Apply (?:--color-)?/, "")) === name,
 	);
 	if (found === undefined) throw new Error(`no option "${name}" on ${label}`);
 	await press(rail, found);

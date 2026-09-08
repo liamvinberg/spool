@@ -1,0 +1,199 @@
+/* Approved color control and menu, using the canvas token and type scale. */
+.ep-color-field .ep-swatch {
+	width: 10px;
+	height: 10px;
+	flex-shrink: 0;
+	border: 1px solid #777;
+}
+.ep-color-field .ep-color-trigger {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	padding: 3px 4px;
+	font: 11px var(--font-mono);
+	text-align: left;
+}
+.ep-color-field .ep-color-trigger > span:nth-child(2) {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ep-color-field .ep-color-kind {
+	margin-left: auto;
+	color: var(--color-muted);
+	font-size: 9px;
+}
+.ep-color-field .ep-color-trigger:hover {
+	background: var(--color-surface);
+}
+.ep-color-field .ep-color-menu {
+	position: fixed;
+	z-index: 50;
+	width: 264px;
+	min-width: 0;
+	max-height: min(440px, calc(100dvh - 24px));
+	overflow: auto;
+	overscroll-behavior: contain;
+	margin: 0;
+	background: var(--color-bg);
+	border-radius: 4px;
+	border: 1px solid var(--color-border);
+	padding: 8px 10px;
+}
+.ep-color-field .ep-token-search {
+	width: 100%;
+	border: 1px solid var(--color-border);
+	padding: 6px;
+	font-size: 11px;
+	background: var(--color-surface);
+}
+.ep-color-field .ep-color-options {
+	margin-top: 10px;
+}
+.ep-color-field .ep-color-options p {
+	margin: 0 0 4px;
+	font-size: 11px;
+	color: var(--color-muted);
+}
+.ep-color-field .ep-color-options button {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	width: 100%;
+	padding: 5px 3px;
+	text-align: left;
+	font: 10px var(--font-mono);
+}
+.ep-color-field .ep-color-options button > span:last-child {
+	margin-left: auto;
+	color: var(--color-muted);
+}
+.ep-color-field .ep-color-options button:hover,
+.ep-color-field .ep-color-options button[aria-pressed="true"] {
+	background: var(--color-surface);
+}
+.ep-color-field .ep-custom-color {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	align-items: end;
+	border-top: 1px solid var(--color-border);
+	margin-top: 10px;
+	padding-top: 10px;
+}
+.ep-color-field .ep-custom-color label {
+	flex: 1;
+	min-width: 0;
+	font-size: 11px;
+	color: var(--color-muted);
+}
+.ep-color-field .ep-custom-color label input {
+	display: block;
+	width: 100%;
+	padding: 5px;
+	margin-top: 5px;
+	border: 1px solid var(--color-border);
+	color: var(--color-text);
+	font: 11px var(--font-mono);
+	background: transparent;
+}
+.ep-color-field .ep-custom-color input[type="color"] {
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	background: none;
+}
+.ep-color-field .ep-unlink {
+	padding: 4px 0;
+	font-size: 11px;
+}
+.ep-color-field .ep-color-error {
+	color: var(--color-thread);
+	font-size: 11px;
+}
+.ep-color-field .ep-color-menu {
+	z-index: 60;
+	width: 256px;
+	max-height: min(432px, calc(100dvh - 16px));
+	padding: 6px;
+	border: 1px solid var(--color-border-raised);
+	border-radius: 6px;
+	background: var(--color-bg);
+	color: var(--color-text);
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+.ep-color-field .ep-color-options button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 30px;
+	padding: 6px;
+	border-radius: 3px;
+	text-align: left;
+	font: var(--type-detail);
+}
+.ep-color-field .ep-color-options button:hover,
+.ep-color-field .ep-color-options button:focus-visible {
+	background: var(--color-surface);
+	outline-offset: -1px;
+}
+.ep-color-field .ep-color-options button[aria-pressed="true"] {
+	background: var(--color-surface);
+}
+.ep-color-field .ep-token-search,
+.ep-color-field .ep-token-search {
+	padding: 8px 6px;
+	margin-bottom: 6px;
+	border: 0;
+	border-bottom: 1px solid var(--color-border);
+	border-radius: 0;
+	background: transparent;
+	font: var(--type-value);
+}
+.ep-color-field .ep-color-options {
+	margin-top: 2px;
+}
+.ep-color-field .ep-color-options p {
+	padding: 6px;
+	font-size: 11px;
+	color: var(--color-muted);
+}
+.ep-color-field .ep-color-options button > span:last-child {
+	font-size: 10px;
+}
+.ep-color-field .ei-color-heading {
+	display: flex;
+	justify-content: space-between;
+	padding: 6px 6px 9px;
+	font-size: 12px;
+}
+.ep-color-field .ei-color-heading > :last-child {
+	color: var(--color-muted);
+	font: var(--type-detail);
+}
+.ep-color-field .ep-custom-color {
+	margin: 6px 0 0;
+	padding: 9px 6px 4px;
+	border-top: 1px solid var(--color-border);
+}
+.ep-color-field .ep-unlink {
+	width: 100%;
+	text-align: left;
+}
+.ep-color-field .ep-color-trigger {
+	border-radius: 4px;
+}
+.ep-color-field .ep-color-menu {
+	animation: var(--animate-menu-in);
+	transform-origin: top right;
+}
+@media (prefers-reduced-motion: reduce) {
+	.ep-color-field .ep-color-menu {
+		animation: none;
+	}
+}

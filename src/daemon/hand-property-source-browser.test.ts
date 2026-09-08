@@ -400,3 +400,53 @@ it.each([true, false])("scrubs one retained opacity gesture and completes only o
 	} else expect(f.writes).toEqual([]);
 	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
 });
+
+it("uses the approved shared color menu with exact reference metadata and binding-restoring inverse", async () => {
+	const f = await originCanvas(
+		{
+			"shared/button.tsx":
+				'export function Button(){return <button id="subject" className="text-red-500 bg-white text-sm">Hello</button>}',
+		},
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		true,
+	);
+	await f.select();
+	const second = f.page.frameLocator('iframe[title="second"]').locator("#subject");
+	const before = await f.target.evaluate((element) => getComputedStyle(element).color);
+	const trigger = f.page.getByRole("button", { name: "Choose color", exact: true });
+	await expect.poll(() => trigger.count()).toBe(1);
+	await expect.poll(() => trigger.getAttribute("title")).toBe("Linked to --color-red-500");
+	await trigger.click();
+	const search = f.page.getByRole("textbox", { name: "Find color token", exact: true });
+	await search.fill("missing-color-choice");
+	expect(await f.page.locator(".ep-color-options button").count()).toBe(0);
+	expect(f.writes).toEqual([]);
+	await search.fill("blue-500");
+	const blue = f.page.getByRole("button", { name: "Apply --color-blue-500", exact: true });
+	expect(await blue.count()).toBe(1);
+	await search.press("ArrowDown");
+	expect(await blue.evaluate((element) => document.activeElement === element)).toBe(true);
+	const saved = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await f.page.keyboard.press("Enter");
+	const result = await (await saved).json();
+	expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+	await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("text-blue-500");
+	await f.settled();
+	expect(f.writes).toEqual(["commit"]);
+	expect(f.bytes()["shared/button.tsx"]).toContain("bg-white text-sm");
+	const after = await f.target.evaluate((element) => getComputedStyle(element).color);
+	expect(after).not.toBe(before);
+	expect(await second.evaluate((element) => getComputedStyle(element).color)).toBe(after);
+	const undone = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "inverse",
+	);
+	await f.page.keyboard.press("ControlOrMeta+z");
+	expect(await (await undone).json()).toMatchObject({ ok: true });
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toContain("text-red-500");
+	expect(await second.evaluate((element) => getComputedStyle(element).color)).toBe(before);
+	await expect.poll(() => trigger.getAttribute("title")).toBe("Linked to --color-red-500");
+});

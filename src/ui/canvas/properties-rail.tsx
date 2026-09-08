@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { RowEdit, RowElement } from "../../properties/rows";
 import type { SourceDescription, SourceRead } from "../../source-edit";
-import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
+import type { SourcePropertyPreview, SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
@@ -107,6 +107,12 @@ export interface PropertiesActs {
 	ownership?: OwnershipActions;
 	text?: TextActions;
 	property?: {
+		describe(
+			frame: string,
+			selector: string,
+			property: string,
+			scope: string,
+		): Promise<SourcePropertyReading | undefined>;
 		begin(
 			frame: string,
 			selector: string,
@@ -400,6 +406,11 @@ function Body({
 	const view: View = {
 		property: propertySession
 			? {
+					identity: JSON.stringify([project, identity, revision, propertyScope]),
+					describe: async (property) =>
+						element
+							? acts.property?.describe(element.frame, element.selector, property, propertyScope)
+							: undefined,
 					begin: (property) => {
 						propertySession.begin(property, propertyScope);
 					},
