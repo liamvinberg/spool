@@ -18,20 +18,20 @@ it("guards the chosen token definition as well as the original binding", async (
 	expect(keys.has("--color-chosen")).toBe(true);
 	writeDesignFile(root, "shared/tokens.css", "@theme {--color-old:#123456;--color-chosen:#999999;--spacing:3px}");
 	const changed = await compilePropertySource(root, new Map([[file, readInput(file)]]), "text-old");
-	expect(() => guardPropertyEffects(before, changed, keys, ["text-old"], env, [], [])).toThrow(
+	expect(() => guardPropertyEffects(before, changed, keys, env, [], [])).toThrow(
 		"binding, consumer or revealed default",
 	);
 	writeDesignFile(root, "shared/tokens.css", "@theme {--color-old:#123456;--color-chosen:#abcdef;--spacing:7px}");
 	const unrelated = await compilePropertySource(root, new Map([[file, readInput(file)]]), "text-old z-10");
-	expect(() => guardPropertyEffects(before, unrelated, keys, ["text-old"], env, [], [])).not.toThrow();
+	expect(() => guardPropertyEffects(before, unrelated, keys, env, [], [])).not.toThrow();
 	const frameBefore = await inspectPropertyCss(".parent {direction:ltr; z-index:1}");
 	const frameAfter = await inspectPropertyCss(".parent {direction:rtl; z-index:1}");
-	expect(() =>
-		guardPropertyEffects(before, before, keys, ["text-old"], env, frameBefore.effects, frameAfter.effects),
-	).toThrow("native context");
+	expect(() => guardPropertyEffects(before, before, keys, env, frameBefore.effects, frameAfter.effects)).toThrow(
+		"native context",
+	);
 	const frameIndependent = await inspectPropertyCss(".parent {direction:ltr; z-index:2}");
 	expect(() =>
-		guardPropertyEffects(before, before, keys, ["text-old"], env, frameBefore.effects, frameIndependent.effects),
+		guardPropertyEffects(before, before, keys, env, frameBefore.effects, frameIndependent.effects),
 	).not.toThrow();
 });
 
@@ -45,11 +45,11 @@ it.each([".host", ".alternate"])("refuses reversed competing declaration order b
 	const keys = propertyReadKeys(before, before, new Set(["color"]), env);
 	writeDesignFile(root, "shared/tokens.css", `${second}{color:blue}.host{color:red}.host{z-index:1}`);
 	const reversed = await compilePropertySource(root, new Map([[file, readInput(file)]]), "host");
-	expect(() => guardPropertyEffects(before, reversed, keys, [], env, [], [])).toThrow();
+	expect(() => guardPropertyEffects(before, reversed, keys, env, [], [])).toThrow();
 	const frameBefore = await inspectPropertyCss(source);
 	const frameAfter = await inspectPropertyCss(`${second}{color:blue}.host{color:red}.host{z-index:1}`);
-	expect(() => guardPropertyEffects(before, before, keys, [], env, frameBefore.effects, frameAfter.effects)).toThrow();
+	expect(() => guardPropertyEffects(before, before, keys, env, frameBefore.effects, frameAfter.effects)).toThrow();
 	writeDesignFile(root, "shared/tokens.css", `.host{color:red}${second}{color:blue}.host{z-index:2}`);
 	const independent = await compilePropertySource(root, new Map([[file, readInput(file)]]), "host");
-	expect(() => guardPropertyEffects(before, independent, keys, [], env, [], [])).not.toThrow();
+	expect(() => guardPropertyEffects(before, independent, keys, env, [], [])).not.toThrow();
 });

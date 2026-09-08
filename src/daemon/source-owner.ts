@@ -1333,7 +1333,6 @@ export function createSourceOwner(
 					before.certificate,
 					after.certificate,
 					proof.roots,
-					[],
 					proof.environment,
 					frameBefore.effects,
 					frameAfter.effects,

@@ -23,14 +23,15 @@ export function guardPropertyEffects(
 	before: PropertyCertificate,
 	after: PropertyCertificate,
 	keys: ReadonlySet<string>,
-	owned: readonly string[],
 	environment: SourcePropertyEnvironment,
 	frameBefore: readonly SourcePropertyEffect[],
 	frameAfter: readonly SourcePropertyEffect[],
 ): void {
+	// Every acknowledged state is guarded whole: this read owns no token another
+	// operation may change underneath it.
 	if (
-		externalPropertySignature(before, keys, owned, environment) !==
-		externalPropertySignature(after, keys, owned, environment)
+		externalPropertySignature(before, keys, [], environment) !==
+		externalPropertySignature(after, keys, [], environment)
 	)
 		throw new Error("another operation changed a property binding, consumer or revealed default");
 	const changed = changedPropertyKeys(frameBefore, frameAfter, environment);
