@@ -39,9 +39,12 @@
 [data-refinement="circle"] .ef-download { padding-bottom:12px; }
 [data-refinement="circle"] .ef-invitation { grid-template-columns:1fr 320px 44px; }
 [data-refinement="circle"] .ef-demo-link { border:1px solid #b7a79b70; border-radius:50%; padding:10px; }
-[data-refinement="tray"] .ef-download { background:#e9e4db; color:#25231f; justify-content:center; font-size:17px; padding:17px 20px; border:0; border-radius:3px; }
-[data-refinement="tray"] .ef-acquire a:hover { color:#25231f; background:#fff8ec; }
-[data-refinement="tray"] .ef-command { padding:5px 3px 0; }
+[data-refinement="tray"] .ef-download,
+[data-refinement="inline"] .ef-download { background:#e9e4db; color:#25231f; justify-content:center; font-size:17px; padding:17px 20px; border:0; border-radius:3px; }
+[data-refinement="tray"] .ef-acquire a:hover,
+[data-refinement="inline"] .ef-acquire a:hover { color:#25231f; background:#fff8ec; }
+[data-refinement="tray"] .ef-command,
+[data-refinement="inline"] .ef-command { padding:5px 3px 0; }
 [data-refinement="red"] .ef-download { color:#f36d50; border-bottom-color:#c9523770; }
 [data-refinement="red"] .ef-nav-get { padding-bottom:6px; border-bottom:1px solid #f36d50; }
 /* The invitation is a separate question, using the quiet control treatment. */
@@ -53,8 +56,6 @@
 [data-refinement="inline"] .ef-invitation h2 { font-size:17px; letter-spacing:-.015em; }
 [data-refinement="inline"] .ef-hero { padding-bottom:44px; }
 [data-refinement="inline"] .ef-nav { border:0; }
-[data-refinement="inline"] .ef-download { border:0; font-size:23px; padding-bottom:5px; }
-[data-refinement="inline"] .ef-command { justify-content:flex-start; gap:24px; }
 [data-refinement="aside"] .ef-preview { display:grid; grid-template-columns:245px 1fr; gap:0 40px; border-top:1px solid var(--ef-rule); padding-top:30px; }
 [data-refinement="aside"] .ef-invitation { display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; gap:60px; padding:0 0 25px; border:0; }
 [data-refinement="aside"] .ef-invitation h2 { font-size:39px; }

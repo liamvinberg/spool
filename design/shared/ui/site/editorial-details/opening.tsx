@@ -47,8 +47,9 @@ const invitations: Record<DetailTake, string> = {
 };
 
 export function EditorialOpening({ take }: { take: DetailTake }) {
- const icons = ["fine", "long", "circle", "tray"].includes(take);
- const downloadIcon = take === "tray" ? "tray" : "down";
+ const button = take === "tray" || take === "inline";
+ const icons = button || ["fine", "long", "circle"].includes(take);
+ const downloadIcon = button ? "tray" : "down";
  return <>
   <header className="ef-nav sg-width">
    <a href="#" aria-label="spool home" className="sg-brand"><SpoolMark /><span>spool</span></a>
@@ -59,7 +60,7 @@ export function EditorialOpening({ take }: { take: DetailTake }) {
    <div className="ef-bottom">
     <p>Design websites, apps, and presentations with your agent. Try them live. Keep what works.</p>
     <div className="ef-acquire">
-     <a className="ef-download" href={DOWNLOAD}>{take === "tray" && <Icon kind={downloadIcon} />}<span>Download for Mac</span>{icons && take !== "tray" && <span className="ef-download-symbol"><Icon kind={downloadIcon} /></span>}</a>
+     <a className="ef-download" href={DOWNLOAD}>{button && <Icon kind={downloadIcon} />}<span>Download for Mac</span>{icons && !button && <span className="ef-download-symbol"><Icon kind={downloadIcon} /></span>}</a>
      <Command icons={icons} />
     </div>
    </div>
