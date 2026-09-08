@@ -136,9 +136,15 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 						}
 					>
 						<p>
-							{take === "stage"
-								? "Lay out a short flow. Double-click a frame to enter it."
-								: "Three screens, laid out together. Try each one."}
+							{take === "stage" ? (
+								<>
+									Lay out a short flow.{" "}
+									<span className="es-desktop-copy">Double-click a frame to enter it.</span>
+									<span className="es-touch-copy">Open the demo to try it.</span>
+								</>
+							) : (
+								"Three screens, laid out together. Try each one."
+							)}
 						</p>
 						<p>
 							{take === "stage"
@@ -149,7 +155,14 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 					{take === "stage" ? (
 						<div className="es-visual">
 							<OffprintSurface view="canvas" />
-							<p className="es-caption">Double-click to enter. Follow the flow. Esc leaves the frame.</p>
+							<p className="es-caption">
+								<span className="es-desktop-copy">
+									Double-click to enter. Follow the flow. Esc leaves the frame.
+								</span>
+								<span className="es-touch-copy">
+									Open the demo. Follow the flow. Close the preview to return.
+								</span>
+							</p>
 						</div>
 					) : (
 						<div className="es-flow">

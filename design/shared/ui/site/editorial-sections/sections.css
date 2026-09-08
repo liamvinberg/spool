@@ -563,3 +563,15 @@
 .es-page:has([data-study="true"]) .bl-field {
 	opacity: 0.35;
 }
+
+.es-touch-copy {
+	display: none;
+}
+@media (max-width: 760px), (pointer: coarse) {
+	.es-desktop-copy {
+		display: none;
+	}
+	.es-touch-copy {
+		display: inline;
+	}
+}
