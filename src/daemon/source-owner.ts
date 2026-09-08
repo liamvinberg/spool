@@ -905,7 +905,9 @@ export function createSourceOwner(
 		const inverse: Receipt = {
 			...(expected.kind === "structure" ? { structuralAfter: expected } : {}),
 			purpose: held.read.operation,
-			...(expected.kind === "image" ? { imageRestore: held.compilation } : {}),
+			...(expected.kind === "image"
+				? { imageRestore: sourceHistoryCompilation(held.root, held.compilation, held.file) }
+				: {}),
 			...(held.structure
 				? {
 						structure: held.structure,

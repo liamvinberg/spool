@@ -9,7 +9,12 @@ import { createSourceOwner } from "./source-owner";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2"/>';
 
-async function fixture(shared = false, transform = (source: string) => source, firstImage = SVG) {
+async function fixture(
+	shared = false,
+	transform = (source: string) => source,
+	firstImage = SVG,
+	consumerImage = false,
+) {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/assets/first.svg", firstImage);
 	writeDesignFile(root, "shared/assets/second.svg", SVG.replace('width="3"', 'width="7"'));
@@ -21,6 +26,14 @@ async function fixture(shared = false, transform = (source: string) => source, f
 		writeFrame(root, "second", 'export {default} from "shared/image"');
 	}
 	writeFrame(root, "home", shared ? 'export {default} from "shared/image"' : source);
+	if (shared && consumerImage) {
+		writeDesignFile(root, "frames/home/consumer.svg", SVG);
+		writeFrame(
+			root,
+			"home",
+			'import Image from "shared/image";import local from "./consumer.svg";export default function Consumer(){return <><Image/><img src={local}/></>}',
+		);
+	}
 	const compiler = createFrameCompiler("test");
 	const document = await compiler.getDocument(root, "home", {
 		projectCapability: "test",
@@ -30,7 +43,9 @@ async function fixture(shared = false, transform = (source: string) => source, f
 	const id = /configureSource\(\{"id":"([^"]+)"/.exec(document.document)?.[1];
 	const compilation = id ? compiler.publication(id)?.compilation : undefined;
 	if (!compilation) throw new Error("no immutable publication");
-	const cell = Object.values(compilation.cells).find((cell) => cell.field === "src");
+	const cell = Object.values(compilation.cells).find(
+		(cell) => cell.field === "src" && (!shared || cell.file === "shared/image.tsx"),
+	);
 	if (!cell) throw new Error("missing compiled image source");
 	const sourceAt = cell.source;
 	const original = {
@@ -162,35 +177,68 @@ it.each(["staged", "original"] as const)("refuses changed %s image bytes before 
 	expect(readFileSync(join(root, "design/frames/home/frame.tsx"), "utf8")).toBe(source);
 });
 
-it("restores shared image source after the initiating frame is gone without deleting staged bytes", async () => {
-	const { root, source, original, owner } = await fixture(true);
-	const read = await owner.read(root, "home", original, 1, "canvas", { kind: "image" });
-	if (!read.ok) throw new Error(read.reason);
-	const staged = await owner.stageImage(root, read.read.handle, 1, original, {
-		kind: "existing",
-		path: "shared/assets/second.svg",
-	});
-	if (!staged.ok) throw new Error(staged.reason);
-	const saved = await owner.commit(root, read.read.handle, 1, original, { kind: "image", path: staged.path });
-	if (!saved.ok || !saved.publication) throw new Error(JSON.stringify(saved));
-	owner.delivered(saved.publication.packet.id);
-	rmSync(join(root, "design/frames/home"), { recursive: true });
-	const undone = await owner.inverse(root, saved.publication.receipt, []);
-	expect(undone, JSON.stringify(undone)).toMatchObject({
-		ok: true,
-		source: "saved",
-		publication: null,
-		receipt: { operation: { kind: "image" } },
-	});
-	expect(readFileSync(join(root, "design/shared/image.tsx"), "utf8")).toBe(source);
-	expect(readFileSync(join(root, "design/shared/assets/second.svg"), "utf8")).toBe(
-		SVG.replace('width="3"', 'width="7"'),
-	);
-	if (!undone.ok || !undone.receipt) throw new Error("missing source-owned inverse");
-	const redone = await owner.inverse(root, undone.receipt, []);
-	expect(redone, JSON.stringify(redone)).toMatchObject({ ok: true, source: "saved", publication: null });
-	expect(readFileSync(join(root, "design/shared/image.tsx"), "utf8")).toContain("second.svg");
-});
+it.each([false, true])(
+	"restores shared image source after the initiating frame is gone without deleting staged bytes (consumer asset: %s)",
+	async (consumerImage) => {
+		const { root, source, original, owner } = await fixture(true, undefined, SVG, consumerImage);
+		const read = await owner.read(root, "home", original, 1, "canvas", { kind: "image" });
+		if (!read.ok) throw new Error(read.reason);
+		const staged = await owner.stageImage(root, read.read.handle, 1, original, {
+			kind: "existing",
+			path: "shared/assets/second.svg",
+		});
+		if (!staged.ok) throw new Error(staged.reason);
+		const saved = await owner.commit(root, read.read.handle, 1, original, { kind: "image", path: staged.path });
+		if (!saved.ok || !saved.publication) throw new Error(JSON.stringify(saved));
+		owner.delivered(saved.publication.packet.id);
+		rmSync(join(root, "design/frames/home"), { recursive: true });
+		const undone = await owner.inverse(root, saved.publication.receipt, []);
+		expect(undone, JSON.stringify(undone)).toMatchObject({
+			ok: true,
+			source: "saved",
+			publication: null,
+			receipt: { operation: { kind: "image" } },
+		});
+		expect(readFileSync(join(root, "design/shared/image.tsx"), "utf8")).toBe(source);
+		expect(readFileSync(join(root, "design/shared/assets/second.svg"), "utf8")).toBe(
+			SVG.replace('width="3"', 'width="7"'),
+		);
+		if (!undone.ok || !undone.receipt) throw new Error("missing source-owned inverse");
+		const redone = await owner.inverse(root, undone.receipt, []);
+		expect(redone, JSON.stringify(redone)).toMatchObject({ ok: true, source: "saved", publication: null });
+		expect(readFileSync(join(root, "design/shared/image.tsx"), "utf8")).toContain("second.svg");
+	},
+);
+
+it.each(["changed", "removed"] as const)(
+	"refuses source-only image undo when a required asset is %s",
+	async (change) => {
+		const { root, original, owner } = await fixture(true, undefined, SVG, true);
+		const read = await owner.read(root, "home", original, 1, "canvas", { kind: "image" });
+		if (!read.ok) throw new Error(read.reason);
+		const staged = await owner.stageImage(root, read.read.handle, 1, original, {
+			kind: "existing",
+			path: "shared/assets/second.svg",
+		});
+		if (!staged.ok) throw new Error(staged.reason);
+		const saved = await owner.commit(root, read.read.handle, 1, original, { kind: "image", path: staged.path });
+		if (!saved.ok || !saved.publication) throw new Error(JSON.stringify(saved));
+		owner.delivered(saved.publication.packet.id);
+		const file = join(root, "design/shared/image.tsx");
+		const after = readFileSync(file, "utf8");
+		rmSync(join(root, "design/frames/home"), { recursive: true });
+		const asset = join(root, "design/shared/assets/first.svg");
+		if (change === "removed") rmSync(asset);
+		else writeFileSync(asset, SVG.replace('width="3"', 'width="9"'));
+		const undone = await owner.inverse(root, saved.publication.receipt, []);
+		expect(undone).toMatchObject({ ok: false });
+		expect(undone).not.toHaveProperty("receipt");
+		expect(readFileSync(file, "utf8")).toBe(after);
+		expect(readFileSync(join(root, "design/shared/assets/second.svg"), "utf8")).toBe(
+			SVG.replace('width="3"', 'width="7"'),
+		);
+	},
+);
 
 async function sdkEdit(f: Awaited<ReturnType<typeof fixture>>, oldText: string, newText: string) {
 	const runtime = await deterministicBundledRuntime(join(makeTempDir(), "bundled"));
