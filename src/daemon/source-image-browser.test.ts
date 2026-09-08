@@ -505,3 +505,86 @@ it("reloads a saved image inverse and prepares the actual restored asset", { tim
 	expect(readFileSync(f.file("shared/assets/second.svg"), "utf8")).toBe(SECOND);
 	expect(sends).toEqual([]);
 });
+
+it.each(["escape", "reselect"] as const)(
+	"retires a pending real image decode after %s without a late preview or save",
+	{ timeout: 120000 },
+	async (cancel) => {
+		const f = await originCanvas({ "shared/assets/first.svg": SVG }, SOURCE, "#hero");
+		await f.frame.locator("#native").evaluate((element) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+			element.value = "kept during decode";
+			element.setSelectionRange(2, 5);
+			Reflect.set(window, "decodeNative", element);
+		});
+		await f.select();
+		await f.page.evaluate(() => {
+			const replies: unknown[] = [];
+			Reflect.set(window, "decodeReplies", replies);
+			addEventListener("message", (event) => {
+				if (event.data?.spool === "source-reply") replies.push(event.data);
+			});
+		});
+		await f.target.evaluate(() => {
+			addEventListener("message", (event) => {
+				if (event.data?.spool === "source-request" && event.data.action === "preview-image")
+					Reflect.set(window, "decodeRequest", event.data.id);
+			});
+			const decode = HTMLImageElement.prototype.decode;
+			HTMLImageElement.prototype.decode = function () {
+				return decode
+					.call(this)
+					.then(() => new Promise<void>((resolve) => Reflect.set(window, "releaseDecode", resolve)));
+			};
+		});
+		const transfer = await f.target.evaluateHandle((_element, source) => {
+			const data = new DataTransfer();
+			data.items.add(new File([source], "pending.svg", { type: "image/svg+xml" }));
+			return data;
+		}, SECOND);
+		await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+		await expect.poll(() => f.target.evaluate(() => typeof Reflect.get(window, "releaseDecode"))).toBe("function");
+		await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').textContent()).toContain("Decoding image");
+		expect(readFileSync(f.file("frames/home/pending.svg"), "utf8")).toBe(SECOND);
+		const canceled = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "cancel",
+		);
+		if (cancel === "escape") await f.page.keyboard.press("Escape");
+		else {
+			const box = await f.frame.locator("#counter").boundingBox();
+			if (!box) throw new Error("missing new target");
+			await f.page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
+			await f.page.mouse.click(box.x + 8, box.y + box.height / 2);
+			await f.page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
+		}
+		await canceled;
+		await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+		const id: string = await f.target.evaluate(() => Reflect.get(window, "decodeRequest"));
+		await f.target.evaluate(() => Reflect.get(window, "releaseDecode")());
+		await expect
+			.poll(() =>
+				f.page.evaluate(
+					(id) => Reflect.get(window, "decodeReplies").find((reply: { id: string }) => reply.id === id)?.result,
+					id,
+				),
+			)
+			.toBe(false);
+		expect(f.writes).toEqual([]);
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(SOURCE);
+		expect(readFileSync(f.file("frames/home/pending.svg"), "utf8")).toBe(SECOND);
+		expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(
+			30,
+		);
+		expect(
+			await f.frame.locator("#native").evaluate((element) => {
+				if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+				return [
+					element === Reflect.get(window, "decodeNative"),
+					element.value,
+					element.selectionStart,
+					element.selectionEnd,
+				];
+			}),
+		).toEqual([true, "kept during decode", 2, 5]);
+	},
+);
