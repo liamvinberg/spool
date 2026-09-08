@@ -3,6 +3,7 @@ import type { SpanPatch } from "./hand-write";
 import { readInput, type SourceInput, sameInput } from "./retained-compile";
 
 interface Step {
+	order: number;
 	id: symbol;
 	inverseOf: symbol | undefined;
 	before: SourceInput;
@@ -24,6 +25,7 @@ function canceledSteps(route: readonly Step[]): Set<symbol> {
 
 /** Only acknowledged, observed operations bridge two source identities. */
 export function createSourceJournal() {
+	let order = 0;
 	const files = new Map<string, { current: SourceInput; steps: Step[] }>();
 	function observe(file: string): SourceInput {
 		const current = readInput(file);
@@ -55,10 +57,15 @@ export function createSourceJournal() {
 		changes(
 			file: string,
 			original: SourceInput,
-		): readonly { before: SourceInput; after: SourceInput; canceled: boolean }[] {
+		): readonly { order: number; before: SourceInput; after: SourceInput; canceled: boolean }[] {
 			const route = path(file, original);
 			const canceled = canceledSteps(route);
-			return route.map((step) => ({ before: step.before, after: step.after, canceled: canceled.has(step.id) }));
+			return route.map((step) => ({
+				order: step.order,
+				before: step.before,
+				after: step.after,
+				canceled: canceled.has(step.id),
+			}));
 		},
 		transform(file: string, original: SourceInput, patches: readonly SpanPatch[]): SpanPatch[] {
 			let result = patches.map((patch) => ({ ...patch }));
@@ -101,7 +108,7 @@ export function createSourceJournal() {
 			if (!held || !sameInput(held.current, before))
 				throw new Error("source observation was lost before replacement");
 			const id = Symbol();
-			held.steps.push({ id, inverseOf, before, after, edits });
+			held.steps.push({ order: ++order, id, inverseOf, before, after, edits });
 			held.current = after;
 			// Bounded transient evidence. A missing original record always refuses.
 			if (held.steps.length > 1024) held.steps.shift();
