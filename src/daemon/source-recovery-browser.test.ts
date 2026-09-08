@@ -626,45 +626,64 @@ it("preserves Properties scroll and field state across the approved reduced-moti
 	expect(f.calls()).toBe("");
 });
 
-it("reloads a saved-but-unapplied retry Undo to the agent's actual previous value and retires its own prompt", {
-	timeout: 180000,
-}, async () => {
-	const source =
-		'import {useMemo} from "react";export default function Frame(){const label=useMemo(()=><h1 id="label">Hello world</h1>,[]);return <main style={{padding:40}}>{label}<p id="other">Other target</p><input id="draft" defaultValue="initial" /></main>}';
-	const f = await withAgent(source);
-	await f.edit();
-	await f.page.keyboard.press("ControlOrMeta+a");
-	await f.page.keyboard.insertText("My retry words");
-	await f.agentEdit("Hello world", "Agent previous words");
-	await f.page.keyboard.press("Enter");
-	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
-	await f.notice.getByRole("button", { name: "Retry this edit" }).click();
-	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
-	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
-	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("My retry words");
-	await expect.poll(() => f.notice.count()).toBe(0);
-	await f.frame.locator("#draft").fill("Before explicit undo reload");
-	await f.page.mouse.click(5, 5);
-	await f.delivered(() => f.page.keyboard.press("ControlOrMeta+z"));
-	await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
-	expect(readFileSync(f.file, "utf8")).toContain("Agent previous words");
-	expect(await f.frame.locator("#label").textContent()).toBe("My retry words");
-	expect(await f.frame.locator("#draft").inputValue()).toBe("Before explicit undo reload");
-	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
-	await expect.poll(() => f.composer.inputValue()).toContain('undo change text to "Agent previous words"');
-	expect(await f.composer.inputValue()).not.toContain('to "My retry words"');
-	const beforeReload = readFileSync(f.file, "utf8");
-	const calls = f.calls();
-	await f.properties();
-	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
-	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Agent previous words");
-	await expect.poll(() => f.notice.count()).toBe(0);
-	expect(readFileSync(f.file, "utf8")).toBe(beforeReload);
-	expect(await f.frame.locator("#draft").inputValue()).toBe("initial");
-	await f.page.locator('[data-dock-glyph="agent"]').click();
-	await expect.poll(() => f.composer.inputValue()).toBe("");
-	expect(f.calls()).toBe(calls);
-});
+it.each(["reload", "redo"])(
+	"resolves a saved-but-unapplied retry Undo through %s using its actual expectation",
+	{
+		timeout: 180000,
+	},
+	async (recovery) => {
+		const source =
+			'import {useMemo} from "react";export default function Frame(){const label=useMemo(()=><h1 id="label">Hello world</h1>,[]);return <main style={{padding:40}}>{label}<p id="other">Other target</p><input id="draft" defaultValue="initial" /></main>}';
+		const f = await withAgent(source);
+		await f.page.locator('[data-dock-glyph="agent"]').click();
+		await f.composer.fill("Keep my unrelated draft");
+		await f.properties();
+		await f.edit();
+		await f.page.keyboard.press("ControlOrMeta+a");
+		await f.page.keyboard.insertText("My retry words");
+		await f.agentEdit("Hello world", "Agent previous words");
+		await f.page.keyboard.press("Enter");
+		await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("blocked");
+		await f.notice.getByRole("button", { name: "Retry this edit" }).click();
+		await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
+		await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+		await expect.poll(() => f.frame.locator("#label").textContent()).toBe("My retry words");
+		await expect.poll(() => f.notice.count()).toBe(0);
+		await f.frame.locator("#draft").fill("Before explicit undo reload");
+		await f.page.mouse.click(5, 5);
+		await f.delivered(() => f.page.keyboard.press("ControlOrMeta+z"));
+		await expect.poll(() => f.notice.getAttribute("data-hand-notice")).toBe("mismatching");
+		expect(readFileSync(f.file, "utf8")).toContain("Agent previous words");
+		expect(await f.frame.locator("#label").textContent()).toBe("My retry words");
+		expect(await f.frame.locator("#draft").inputValue()).toBe("Before explicit undo reload");
+		await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+		await expect.poll(() => f.composer.inputValue()).toContain('undo change text to "Agent previous words"');
+		expect(await f.composer.inputValue()).not.toContain('to "My retry words"');
+		const beforeReload = readFileSync(f.file, "utf8");
+		const calls = f.calls();
+		await f.properties();
+		if (recovery === "redo") {
+			await f.page.mouse.click(5, 5);
+			await f.delivered(() => f.page.keyboard.press("ControlOrMeta+Shift+z"));
+			await expect.poll(() => f.notice.count()).toBe(0);
+			expect(readFileSync(f.file, "utf8")).toContain("My retry words");
+			expect(await f.frame.locator("#label").textContent()).toBe("My retry words");
+			expect(await f.frame.locator("#draft").inputValue()).toBe("Before explicit undo reload");
+			await f.page.locator('[data-dock-glyph="agent"]').click();
+			await expect.poll(() => f.composer.inputValue()).toBe("Keep my unrelated draft");
+			expect(f.calls()).toBe(calls);
+			return;
+		}
+		await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+		await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Agent previous words");
+		await expect.poll(() => f.notice.count()).toBe(0);
+		expect(readFileSync(f.file, "utf8")).toBe(beforeReload);
+		expect(await f.frame.locator("#draft").inputValue()).toBe("initial");
+		await f.page.locator('[data-dock-glyph="agent"]').click();
+		await expect.poll(() => f.composer.inputValue()).toBe("Keep my unrelated draft");
+		expect(f.calls()).toBe(calls);
+	},
+);
 
 it("retires only the appended recovery segment when identical text already belongs to the person's draft", {
 	timeout: 180000,

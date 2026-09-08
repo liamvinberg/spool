@@ -23,7 +23,7 @@ export interface SourceIntent {
 	original?: SourceOccurrence;
 	source?: string;
 	cell?: string;
-	resolves?: string;
+	resolves?: readonly string[];
 	role?: SourceDescription["role"];
 	scope?: string;
 	inverse?: "undo" | "redo";
@@ -75,9 +75,8 @@ export function inverseIntent(intent: SourceIntent, way: "undo" | "redo"): Sourc
 	return {
 		...original,
 		id: crypto.randomUUID(),
-		resolves: intent.id,
+		resolves: [intent.id, ...(intent.resolves ?? [])],
 		inverse: way,
-		action: `${way} ${intent.action}`,
 	};
 }
 
@@ -87,7 +86,7 @@ export function intentText(intent: SourceIntent): string | undefined {
 
 export function preparedHelp(intent: SourceIntent, reason: string, saved: boolean): string {
 	return [
-		`I tried to ${intent.action}${intent.change?.kind === "literal" && !(intent.expected?.kind === "literal" && intent.expected.absent) ? ` to ${JSON.stringify(intent.change.text)}` : ""}. ${reason}`,
+		`I tried to ${intent.inverse ? `${intent.inverse} ` : ""}${intent.action}${intent.change?.kind === "literal" && !(intent.expected?.kind === "literal" && intent.expected.absent) ? ` to ${JSON.stringify(intent.change.text)}` : ""}. ${reason}`,
 		...(intent.operation.kind === "property"
 			? [`Property: ${intent.operation.property}. Property scope: ${intent.operation.scope}.`]
 			: []),
