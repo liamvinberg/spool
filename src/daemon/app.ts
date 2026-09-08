@@ -2336,6 +2336,7 @@ export function createDaemonApp({
 								frame: z.string(),
 								original: occurrence,
 								inventories: z.array(inventory),
+								readings: z.array(z.string()).optional(),
 							})
 							.strict(),
 						z
@@ -2443,6 +2444,7 @@ export function createDaemonApp({
 								body.original,
 								body.inventories,
 								body.operation,
+								body.readings ?? [],
 							),
 						);
 					case "preview":

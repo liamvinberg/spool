@@ -2,14 +2,15 @@ import { toggledOf } from "../../properties/families";
 import { type At, editsFor, type Row, type RowValue } from "../../properties/rows";
 import type { SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 
+/** One reading of this element's class cell: what each asked property is wearing, or why none can be. */
 export interface PropertyDescription {
-	reading?: SourcePropertyReading | undefined;
+	readings?: Readonly<Record<string, SourcePropertyReading>> | undefined;
 	reason?: string;
 }
 
 export interface PropertyControls {
 	identity: string;
-	describe(property: string): Promise<PropertyDescription | undefined>;
+	describe(properties: readonly string[]): Promise<PropertyDescription | undefined>;
 	begin(property: string, preview?: SourcePropertyValue): void;
 	preview(property: string, value: SourcePropertyValue, sampleValue?: string): void;
 	apply(property: string, value: SourcePropertyValue): void;

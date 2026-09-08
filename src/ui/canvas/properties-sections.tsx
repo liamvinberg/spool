@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
 	borderColoursOf,
 	borderWidthsOf,
@@ -102,8 +102,8 @@ export interface View {
 	compiler: Compiler;
 	/** true when a bare token under this scope is not one the file was written with */
 	fresh: (token: string | null) => boolean;
-	/** The source's own reason no class edit on this element can be written. */
-	sourceRefusal?: string | undefined;
+	/** What the source says this element's class cell wears, or why it cannot be written. */
+	described?: PropertyDescription | undefined;
 	/** Remaining layout edits under the live scope. */
 	put: (edits: readonly RowEdit[]) => void;
 }
@@ -195,17 +195,16 @@ function okOf(view: View, row: ModelRow): boolean {
 }
 
 /**
- * What an appearance control says about itself, in the source's own words.
+ * What an appearance control is allowed to write, in the source's own words.
  *
- * An open session is somewhere to send a request, never evidence that the
- * source will take one. The rail asks the source once whether this element's
- * class can be written, and every control repeats that answer rather than
- * looking ordinary. A refusal still arrives at the write, so a request the file
- * cannot take can still be made and handed to an agent.
+ * An open session is somewhere to send a request, never evidence that the source
+ * will take one: the element's own description says whether its class cell can
+ * be written and what each property is wearing, and a row that has no such
+ * reading refuses before it is used rather than at the write.
  */
 function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
 	if (!appearanceProperty(row)) return { ok: verdictFor(row, view.element, view.scoped).ok, reason: undefined };
-	return { ok: view.property !== null, reason: view.sourceRefusal };
+	return { ok: view.property !== null && view.described?.readings !== undefined, reason: view.described?.reason };
 }
 
 /**
@@ -515,8 +514,8 @@ function colourTyped(theme: CompiledTheme | null, typed: string): Option | null 
 }
 
 /** Retire obsolete presentation immediately when source identity or scope changes. */
-function usePropertyReading(control: PropertyControls | null | undefined, property: string | undefined) {
-	const identity = JSON.stringify([control?.identity, property]);
+function usePropertyDescription(control: PropertyControls | null | undefined, properties: readonly string[]) {
+	const identity = JSON.stringify([control?.identity, properties]);
 	const [described, setDescribed] = useState<{
 		identity: string;
 		description: PropertyDescription | undefined;
@@ -525,16 +524,41 @@ function usePropertyReading(control: PropertyControls | null | undefined, proper
 	describe.current = control?.describe;
 	useEffect(() => {
 		let live = true;
-		if (property)
-			void describe.current?.(property).then((description) => {
-				if (live) setDescribed({ identity, description });
-			});
+		void describe.current?.(properties).then((description) => {
+			if (live) setDescribed({ identity, description });
+		});
 		return () => {
 			live = false;
 		};
-	}, [identity, property]);
+	}, [identity, properties]);
 	return described?.identity === identity ? described.description : undefined;
 }
+
+/**
+ * One control's own reading, measured against its own property.
+ *
+ * The element's description says whether the cell can be written; a control
+ * that draws the source's value also needs that property's native measurement,
+ * which the frame captures for the property the read names.
+ */
+function useOwnReading(control: PropertyControls | null | undefined, property: string) {
+	const properties = useMemo(() => [property], [property]);
+	return usePropertyDescription(control, properties)?.readings?.[property];
+}
+
+/** The controls that read the source's own value rather than the class it can see. */
+const DESCRIBED_PROPERTIES: readonly string[] = [
+	"color",
+	"background-color",
+	"font-size",
+	"line-height",
+	"letter-spacing",
+	"border-radius",
+	"border-top-left-radius",
+	"border-top-right-radius",
+	"border-bottom-right-radius",
+	"border-bottom-left-radius",
+];
 
 function ColourRow({
 	view,
@@ -559,11 +583,8 @@ function ColourRow({
 	const row = ruleRow(property, "colour");
 	const prefix = row.rule.prefix;
 	const { ok, reason } = rowAdmission(view, row);
-	const described = usePropertyReading(
-		control,
-		property === "color" || property === "background-color" ? property : undefined,
-	);
-	const reading = described?.reading;
+	const own = useOwnReading(control, property);
+	const reading = property === "color" || property === "background-color" ? own : undefined;
 	const reader = read ?? ((scoped: string) => colourOf(scoped, prefix, view.theme));
 	const held = worn<Colour>(view, reader, (colour) => colour.token === null);
 	const shown = held.shown;
@@ -591,7 +612,7 @@ function ColourRow({
 			<PropertyColorField
 				property={property}
 				reading={reading}
-				reason={described?.reason ?? reason}
+				reason={reason}
 				options={[
 					...(view.theme?.colour ?? []).map((token) => ({ ...token, reference: `--color-${token.name}` })),
 					...KEYWORD_COLOURS.map((color) => ({
@@ -757,7 +778,8 @@ function TypographyNumberRow({
 	property: "font-size" | "line-height" | "letter-spacing";
 }) {
 	const control = view.property;
-	const reading = usePropertyReading(control, property);
+	const { reason } = rowAdmission(view, modelRow(property));
+	const reading = useOwnReading(control, property);
 	const options =
 		property === "font-size"
 			? view.theme?.text
@@ -767,8 +789,8 @@ function TypographyNumberRow({
 	return (
 		<PropertyNumberField
 			property={property}
-			reading={reading?.reading}
-			reason={reading?.reason}
+			reading={reading}
+			reason={reason}
 			options={options ?? []}
 			scope={scopeKey(view.scope)}
 			begin={() => control?.begin(property)}
@@ -791,14 +813,15 @@ function RadiusNumberRow({
 	fold: ReactNode;
 }) {
 	const control = view.property;
-	const reading = usePropertyReading(control, property);
+	const { reason } = rowAdmission(view, modelRow(property));
+	const reading = useOwnReading(control, property);
 	if (!numericTokenProperty(property)) throw new Error("radius fold has no numeric property control");
 	return (
 		<PropertyNumberField
 			property={property}
 			{...(name ? { name } : {})}
-			reading={reading?.reading}
-			reason={reading?.reason}
+			reading={reading}
+			reason={reason}
 			options={view.theme?.radius ?? []}
 			scope={scopeKey(view.scope)}
 			begin={() => control?.begin(property)}
@@ -1912,10 +1935,10 @@ function AddProperty({ view }: { view: View }) {
 
 /** Typography and Appearance follow the approved editing controls; remaining layout rows retain their sections. */
 export function PropertySections({ view }: { view: View }) {
-	// One description of this element's class says whether any property of it can
-	// be written; a refusal of a particular value still comes back at the write.
-	const refusal = usePropertyReading(view.property, "color")?.reason;
-	const held: View = { ...view, sourceRefusal: view.sourceRefusal ?? refusal };
+	// One description of this element's class cell: whether it can be written at
+	// all, and what each drawn control is wearing.
+	const described = usePropertyDescription(view.property, DESCRIBED_PROPERTIES);
+	const held: View = { ...view, described: view.described ?? described };
 	return (
 		<>
 			<PositionSection view={held} />

@@ -1692,11 +1692,12 @@ export async function describeSource(
 	original: SourceOccurrence,
 	inventories: SourceInventory[],
 	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+	readings: readonly string[] = [],
 ): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "describe", frame, original, inventories, operation },
+			json: { action: "describe", frame, original, inventories, operation, readings: [...readings] },
 		});
 		const result = (await res.json()) as { ok: boolean; description?: SourceDescription; reason?: string };
 		return res.ok && result.ok && result.description

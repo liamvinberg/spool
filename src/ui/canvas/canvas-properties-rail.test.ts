@@ -969,6 +969,7 @@ function stubCanvasApis(refused = false): void {
 					generation: number;
 					operation: SourceOperation;
 					original: SourceOccurrence;
+					readings?: string[];
 				};
 				if (body.action === "read") {
 					sourceRead = {
@@ -984,7 +985,8 @@ function stubCanvasApis(refused = false): void {
 					};
 					return Response.json({ ok: true, read: sourceRead });
 				}
-				// The daemon describes a property control before it may be written.
+				// The daemon describes this element's class cell before a control may
+				// write it, answering every property the rail asked for.
 				if (body.action === "describe" && body.operation.kind === "property")
 					return Response.json({
 						ok: true,
@@ -995,6 +997,12 @@ function stubCanvasApis(refused = false): void {
 							role: "literal-attribute",
 							value: body.original.value,
 							property: { tokens: [], binding: { kind: "page" }, native: "1" },
+							properties: Object.fromEntries(
+								(body.readings ?? []).map((property) => [
+									property,
+									{ tokens: [], binding: { kind: "page" }, native: "1" },
+								]),
+							),
 						},
 					});
 				if (body.action === "preview")

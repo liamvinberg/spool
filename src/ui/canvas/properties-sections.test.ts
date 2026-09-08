@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { colourOf } from "../../properties/families";
 import { editsFor, type RowEdit, type RowElement, rowFor } from "../../properties/rows";
-import type { SourcePropertyValue } from "../../source-property";
+import type { SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import type { Compiler } from "./properties-compile";
 import { BASE, type Scope, scopedClass, scopeKey } from "./properties-scope";
@@ -437,6 +437,21 @@ it("greys every row on a literal no hand may write", async () => {
 	expect(rowNames(rail, "padding")).toEqual(["padding"]);
 });
 
+it("admits every control from one description of the element, and reads each control's own property", async () => {
+	const rail = await mount("text-thread bg-raised");
+	// One description says whether this class cell can be written at all; the
+	// controls that draw the source's value read their own property beside it.
+	expect(rail.asked).toContainEqual(
+		expect.arrayContaining(["color", "background-color", "font-size", "line-height", "border-radius"]),
+	);
+	expect(rail.asked.filter((asked) => asked.length > 1)).toHaveLength(1);
+	expect(new Set(rail.asked.filter((asked) => asked.length === 1).flat())).toEqual(
+		new Set(["color", "background-color", "font-size", "line-height", "border-radius"]),
+	);
+	expect(swatchIn(rail, "color")).toBe("#F5391A");
+	expect(swatchIn(rail, "background")).toBe("#282828");
+});
+
 it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "background-image"])(
 	"carries the source's own refusal on the generic %s control, not a session's silence",
 	async (property) => {
@@ -449,11 +464,13 @@ it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "backg
 	},
 );
 
-// The write is where a refusal is answered, so the request stays reachable.
-it("still takes a refused generic request, which is what reaches the agent", async () => {
+// Unknown ownership refuses at the control, before a request is ever made.
+it("takes no request from a control whose source refuses the element", async () => {
 	const rail = await mount("opacity-75", BASE, undefined, async () => ({ reason: "className is an expression" }));
-	await type(rail, "opacity", "50");
-	expect(rail.requests).toEqual([{ property: "opacity", value: { kind: "binding", tokens: ["opacity-50"] } }]);
+	expect(fieldIn(rail, "opacity")).toBeNull();
+	expect(rowOf(rail, "opacity")?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
+	expect(rail.requests).toEqual([]);
+	expect(rail.legacy).toEqual([]);
 });
 
 it("says why an optional property would be refused before it is added", async () => {
@@ -504,6 +521,8 @@ interface Rail {
 	legacy: RowEdit[][];
 	previews: { property: string; value: SourcePropertyValue }[];
 	completions: boolean[];
+	/** every property list the rail asked one description for */
+	asked: (readonly string[])[];
 	/** the edits the last change came to, as the write lane would be handed them */
 	wrote: () => RowEdit[];
 	/** the scope those edits were written under */
@@ -530,6 +549,7 @@ async function mount(
 	const legacy: RowEdit[][] = [];
 	const previews: Rail["previews"] = [];
 	const completions: boolean[] = [];
+	const asked: (readonly string[])[] = [];
 	const view: View = {
 		property: element?.refusal
 			? null
@@ -538,15 +558,17 @@ async function mount(
 					// Surface fixture readings are supplied evidence, not source admission.
 					describe:
 						describe ??
-						(async (property) => {
-							const reading = colourOf(
-								scopedClass(className, scope),
-								property === "color" ? "text" : "bg",
-								THEME,
-							);
-							const token = THEME.colour.find((token) => token.name === reading.name);
-							return {
-								reading: {
+						(async (properties) => {
+							asked.push(properties);
+							const readings: Record<string, SourcePropertyReading> = {};
+							for (const property of properties) {
+								const reading = colourOf(
+									scopedClass(className, scope),
+									property === "color" ? "text" : "bg",
+									THEME,
+								);
+								const token = THEME.colour.find((token) => token.name === reading.name);
+								readings[property] = {
 									tokens: reading.token ? [reading.token] : [],
 									binding: token
 										? { kind: "reference", name: `--color-${token.name}`, value: token.value }
@@ -554,8 +576,9 @@ async function mount(
 											? { kind: "custom" }
 											: { kind: "page" },
 									native: token?.value ?? reading.paint ?? "transparent",
-								},
-							};
+								};
+							}
+							return { readings };
 						}),
 					begin: () => {},
 					preview: (property, value) => {
@@ -592,7 +615,7 @@ async function mount(
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
 	});
-	return { host, requests, legacy, previews, completions, wrote: () => wrote, scoped: () => scopeKey(scope) };
+	return { host, requests, legacy, previews, completions, asked, wrote: () => wrote, scoped: () => scopeKey(scope) };
 }
 
 function stubCompiler(): Compiler {

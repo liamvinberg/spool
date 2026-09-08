@@ -113,7 +113,7 @@ export interface PropertiesActs {
 		describe(
 			frame: string,
 			selector: string,
-			property: string,
+			properties: readonly string[],
 			scope: string,
 		): Promise<PropertyDescription | undefined>;
 		begin(
@@ -430,9 +430,9 @@ function Body({
 		property: propertySession
 			? {
 					identity: JSON.stringify([project, identity, revision, propertyScope]),
-					describe: async (property) =>
+					describe: async (properties) =>
 						element
-							? acts.property?.describe(element.frame, element.selector, property, propertyScope)
+							? acts.property?.describe(element.frame, element.selector, properties, propertyScope)
 							: undefined,
 					begin: (property, preview) => {
 						propertySession.begin(property, propertyScope, preview);

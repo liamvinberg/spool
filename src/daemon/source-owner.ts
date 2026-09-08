@@ -554,6 +554,7 @@ export function createSourceOwner(
 		original: SourceOccurrence,
 		inventories: SourceInventory[],
 		operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+		readings: readonly string[] = [],
 	): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
 		try {
 			const publication = sourcePublication(original.publication);
@@ -591,22 +592,33 @@ export function createSourceOwner(
 					: { kind: "literal" as const, ...resolveTextSource(root, publication.compilation, original, 0) };
 			const { cellKey, cell, target } = resolved;
 			let property: SourcePropertyReading | undefined;
+			let properties: Record<string, SourcePropertyReading> | undefined;
 			if (operation.kind === "property") {
 				if (resolved.kind !== "property") throw new Error("the original property environment is missing");
-				property = propertyReading(
-					await compilePropertySource(
-						root,
-						publication.compilation.inputs,
-						cell.value,
-						publication.compilation.packet.bundledCss,
-					),
-					operation,
-					resolved.environment,
-					original.propertyNative,
+				// One compile of this class cell answers every property the controls draw.
+				const certificate = await compilePropertySource(
+					root,
+					publication.compilation.inputs,
+					cell.value,
+					publication.compilation.packet.bundledCss,
 				);
+				property = propertyReading(certificate, operation, resolved.environment, original.propertyNative);
+				if (readings.length)
+					properties = Object.fromEntries(
+						readings.map((name) => [
+							name,
+							propertyReading(
+								certificate,
+								{ ...operation, property: name },
+								resolved.environment,
+								original.propertyNative,
+							),
+						]),
+					);
 			}
 			const read: SourceRead = {
 				...(property ? { property } : {}),
+				...(properties ? { properties } : {}),
 				operation,
 				...(target?.asset ? { asset: target.asset.path } : {}),
 				handle: "",

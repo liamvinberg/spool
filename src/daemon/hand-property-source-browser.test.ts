@@ -279,54 +279,11 @@ it("edits opacity through the actual Properties control with preview, one save a
 	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
 });
 
-it("retains the latest typed request when a held original computed-class read is refused", {
-	timeout: 120_000,
-}, async () => {
-	let release = () => {};
-	const held = new Promise<void>((resolve) => {
-		release = resolve;
-	});
-	let reached = false;
-	const f = await originCanvas(
-		{
-			"shared/button.tsx":
-				'export function Button(){return <button id="subject" className={"opacity-" + 75}>Hello</button>}',
-		},
-		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
-		"#subject",
-		false,
-		async (page) => {
-			await page.route("**/source", async (route) => {
-				const body = route.request().postDataJSON();
-				if (body.action !== "read" || body.operation?.kind !== "property") return route.continue();
-				const response = await route.fetch();
-				expect((await response.json()).ok).toBe(false);
-				reached = true;
-				await held;
-				await route.fulfill({ response });
-			});
-		},
-	);
-	await f.select();
-	const field = f.page.locator('[data-properties-row="opacity"] input');
-	await field.fill("50");
-	await expect.poll(() => reached).toBe(true);
-	await field.fill("60");
-	release();
-	const notice = f.page.locator("[data-properties-rail] [data-hand-notice]");
-	await expect.poll(() => notice.getByRole("button", { name: "Ask agent", exact: true }).count()).toBe(1);
-	await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
-	const composer = f.page.locator("[data-agent-rail] textarea");
-	await expect.poll(() => composer.inputValue()).toContain("opacity-60");
-	expect(await composer.inputValue()).toContain("#subject");
-	expect(f.writes).toEqual([]);
-	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
-});
-
 // A control the file cannot take says the source's own words for it, and the
 // optional additions it offers are named by that same description.
 it("says the source's own property refusal on the generic controls", { timeout: 120_000 }, async () => {
 	let refusal = "";
+	const reads: unknown[] = [];
 	const f = await originCanvas(
 		{
 			"shared/button.tsx":
@@ -336,6 +293,10 @@ it("says the source's own property refusal on the generic controls", { timeout: 
 		"#subject",
 		false,
 		async (page) => {
+			page.on("request", (request) => {
+				if (request.url().endsWith("/source") && request.postDataJSON()?.action === "read")
+					reads.push(request.postDataJSON());
+			});
 			page.on("response", (response) => {
 				if (!response.url().endsWith("/source")) return;
 				const body = response.request().postDataJSON();
@@ -352,6 +313,10 @@ it("says the source's own property refusal on the generic controls", { timeout: 
 		.poll(() => f.page.locator('[data-properties-row="opacity"] > span').first().getAttribute("title"))
 		.toBe(refusal);
 	await expect.poll(() => f.page.locator("[data-add-property]").getAttribute("title")).toBe(refusal);
+	// Nothing here takes a request: the refusal is at the control, so no read is
+	// attempted for a class cell the source will not write.
+	expect(await f.page.locator('[data-properties-row="opacity"] input').count()).toBe(0);
+	expect(reads).toEqual([]);
 	expect(f.writes).toEqual([]);
 	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
 });

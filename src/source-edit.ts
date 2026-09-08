@@ -96,6 +96,8 @@ export interface SourceReach {
 export interface SourceRead {
 	propertyPreview?: SourcePropertyPreviewTemplate;
 	property?: SourcePropertyReading;
+	/** What each asked property reads on this same class cell, for the controls that draw it. */
+	properties?: Record<string, SourcePropertyReading>;
 	asset?: string;
 	structure?: SourceStructuralExpectation;
 	operation: SourceOperation;

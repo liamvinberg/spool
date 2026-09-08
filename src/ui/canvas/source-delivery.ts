@@ -281,8 +281,9 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 
 	return {
 		describeProperty: useCallback(
-			async (frame: string, selector: string, property: string, scope: string) => {
-				const operation: SourceOperation = { kind: "property", property, scope };
+			async (frame: string, selector: string, properties: readonly string[], scope: string) => {
+				// One inspection and one compile answer every control this element draws.
+				const operation: SourceOperation = { kind: "property", property: properties[0] ?? "color", scope };
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
@@ -290,8 +291,8 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					operation,
 				});
 				if (!original) return { reason: "The selected source could not be inspected." };
-				const result = await describeSource(project, frame, original, [], operation);
-				return result.ok ? { reading: result.description.property } : { reason: result.reason };
+				const result = await describeSource(project, frame, original, [], operation, properties);
+				return result.ok ? { readings: result.description.properties ?? {} } : { reason: result.reason };
 			},
 			[project, request],
 		),
