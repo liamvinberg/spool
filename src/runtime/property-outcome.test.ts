@@ -2104,3 +2104,85 @@ it("verifies the compiled all-corner radius against every native corner", async 
 		});
 	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
 });
+
+it("verifies the compiled placeholder color on its own native pseudo-element", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "placeholder color", scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"placeholder-red-500",
+		operation,
+		{ kind: "binding", tokens: ["placeholder-blue-500"] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "placeholder color",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) =>
+		`<input data-subject class="${classes}" placeholder="hint" style="color:rgb(20,30,40)">`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host("placeholder-red-500")}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => getComputedStyle(element, "::placeholder").color),
+	).toBe("oklch(0.623 0.214 259.815)");
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "placeholder-red-500",
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// The pseudo-element is only readable while its native placeholder is shown.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing native placeholder host");
+			element.value = "typed";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});

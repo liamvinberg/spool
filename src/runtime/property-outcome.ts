@@ -83,7 +83,12 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const view = element.ownerDocument.defaultView;
 	if (!view) return unverified("this use has no native document context");
-	const scopes = expected.scopePaths.map((path) => pathCondition(element, path, true));
+	if (expected.property === "placeholder color") return propertyOutcome(element, { ...expected, property: "color" });
+	const pseudo = selectedPseudo(expected.scopePaths);
+	if (pseudo === undefined) return unverified("this property has no single native pseudo-element context");
+	if (pseudo !== "" && !supportedPseudos.includes(pseudo))
+		return unverified("this pseudo-element needs its own native context proof");
+	const scopes = expected.scopePaths.map((path) => pathCondition(element, path, true, pseudo));
 	if (scopes.length === 0) return unverified("the selected property has no compiled condition proof");
 	if (!scopes.includes("active")) {
 		if (scopes.includes("unverified"))
@@ -150,6 +155,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		!keyword
 	)
 		return unverified("this property needs a native effect proof");
+	if (pseudo !== "" && !color) return unverified("this property has no native pseudo-element reading");
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
@@ -159,7 +165,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		// Residual native corners are separate components; their source preservation is compiler-proved.
 		if (corner && isCorner(effect.property) && effect.property !== expected.property) continue;
-		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		const condition = pathCondition(element, effect.path, effect.owner !== null, pseudo);
 		if (condition === "inactive") continue;
 		if (condition === "unverified")
 			return unverified("this property effect needs a native selector or conditional context proof");
@@ -315,7 +321,9 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return { rendered: companionMatches && wanted === actual ? "verified" : "mismatching", observed };
 	}
 	if (color) {
+		// An inline declaration cannot target a pseudo-element, so it is not a competing context there.
 		if (
+			!pseudo &&
 			(!winner || winner.owner === null) &&
 			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
 				element.style.getPropertyValue(expected.property))
@@ -331,19 +339,21 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			else if (!winner && ["outline-color", "text-decoration-color"].includes(expected.property))
 				value = "currentcolor";
 			else {
-				const parent = element.parentElement;
+				// A pseudo-element inherits from the element it originates on.
+				const parent = pseudo ? element : element.parentElement;
 				if (!parent) return unverified("this color needs a native inherited context proof");
 				value = view.getComputedStyle(parent).getPropertyValue(expected.property);
 			}
 		}
-		if (value?.toLowerCase() === "currentcolor") {
-			const context = expected.property === "color" ? element.parentElement : element;
+		if (value !== undefined && /(?<![\w-])currentcolor(?![\w-])/i.test(value)) {
+			// The current color of a pseudo-element is the one it inherits from its originating element.
+			const context = pseudo || expected.property !== "color" ? element : element.parentElement;
 			if (!context) return unverified("this color needs an independent current color context");
-			value = view.getComputedStyle(context).color;
+			value = value.replace(/(?<![\w-])currentcolor(?![\w-])/gi, view.getComputedStyle(context).color);
 		}
-		const context = paintContext(element, expected.property, value);
+		const context = paintContext(element, expected.property, value, pseudo);
 		if (context) return unverified(context);
-		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
+		const observed = view.getComputedStyle(element, pseudo || null).getPropertyValue(expected.property);
 		const normalize = (color: string) =>
 			(expected.property === "fill" || expected.property === "stroke") && color.trim() === "none"
 				? "none"
@@ -593,7 +603,12 @@ function absoluteLengths(value: string): string | undefined {
 }
 
 /** Additional paint channels need their own applicable native surface, separately from color equality. */
-function paintContext(element: Element, property: string, value: string | undefined): string | undefined {
+function paintContext(element: Element, property: string, value: string | undefined, pseudo = ""): string | undefined {
+	if (pseudo === "::placeholder")
+		return (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) &&
+			element.matches(":placeholder-shown")
+			? undefined
+			: "this placeholder color needs a shown native placeholder";
 	if (property === "color" || property === "background-color") return;
 	const view = element.ownerDocument.defaultView;
 	if (!view || !element.isConnected || element.getClientRects().length === 0)
@@ -654,6 +669,17 @@ function paintContext(element: Element, property: string, value: string | undefi
 }
 
 /** Width and style are one visible border component; compiler-owned siblings remain independent. */
+const supportedPseudos = ["::placeholder"];
+
+/** The one pseudo-element every compiled condition selects, or "" when they select the element. */
+function selectedPseudo(paths: readonly (readonly string[])[]): string | undefined {
+	const carried = new Set<string>();
+	for (const path of paths)
+		for (const part of path) if (!part.startsWith("@")) carried.add(/::[\w-]+$/.exec(part)?.[0] ?? "");
+	if (carried.size === 0) return "";
+	return carried.size === 1 ? [...carried][0] : undefined;
+}
+
 const borderGroups = [
 	"",
 	"top",
@@ -821,7 +847,7 @@ function winningEffect(
 	for (const effect of applicable.filter((effect) => effect.important === important)) {
 		const next = priority(effect);
 		if (next === undefined) return { reason: "this property effect needs a cascade layer proof" };
-		if (next === rank && !(winner?.owner && effect.owner && subject(winner) === subject(effect)))
+		if (next === rank && !(winner && subject(winner) === subject(effect)))
 			return { reason: "competing property effects need a specificity proof" };
 		// Equal compiler utility subjects have equal specificity; declaration order decides.
 		if (next >= rank) {
@@ -837,7 +863,7 @@ function winningEffect(
 type Condition = "active" | "inactive" | "unverified";
 
 /** Only the compiler's utility subject is replaced; every state is read from the actual use. */
-function pathCondition(element: Element, path: readonly string[], owned: boolean): Condition {
+function pathCondition(element: Element, path: readonly string[], owned: boolean, pseudo = ""): Condition {
 	const view = element.ownerDocument.defaultView;
 	if (!view) return "unverified";
 	let unknown = false;
@@ -859,12 +885,16 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 		selectors++;
 		let selector = part;
 		if (owned) {
+			const carried = /::[\w-]+$/.exec(part)?.[0] ?? "";
+			// A declaration on another origin is not part of this pseudo-element's cascade.
+			if (carried !== pseudo) return "inactive";
+			const body = carried ? part.slice(0, -carried.length) : part;
 			const subject = selectors === 1 ? "$" : "&";
-			if (!part.startsWith(subject)) {
+			if (!body.startsWith(subject)) {
 				unknown = true;
 				continue;
 			}
-			const states = part.slice(1);
+			const states = body.slice(1);
 			// Relations and authored class tests need prospective ancestry/cascade proof.
 			if (
 				!/^(?::(?:hover|focus|focus-visible|focus-within|active|disabled|enabled|checked|indeterminate|valid|invalid|required|optional|read-only|read-write|placeholder-shown|empty|first-child|last-child|only-child|first-of-type|last-of-type|only-of-type))*$/.test(
@@ -880,6 +910,17 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 		} else if (selectors > 1) {
 			unknown = true;
 			continue;
+		} else if (pseudo) {
+			const origins = selectorList(part);
+			if (!origins) {
+				unknown = true;
+				continue;
+			}
+			const carried = origins.filter((item) => (/::[\w-]+$/.exec(item)?.[0] ?? "") === pseudo);
+			if (carried.length === 0) return "inactive";
+			const bases = carried.map((item) => item.slice(0, -pseudo.length).trim());
+			if (bases.some((base) => base === "")) continue;
+			selector = bases.join(", ");
 		}
 		try {
 			if (!element.matches(selector)) return "inactive";
@@ -890,6 +931,25 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 		}
 	}
 	return unknown || selectors === 0 ? "unverified" : "active";
+}
+
+/** Split a selector list on its own top-level commas, leaving functional selectors intact. */
+function selectorList(part: string): string[] | undefined {
+	const items: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let index = 0; index < part.length; index++) {
+		const character = part[index];
+		if (character === "(" || character === "[") depth++;
+		else if (character === ")" || character === "]") depth--;
+		else if (character === "," && depth === 0) {
+			items.push(part.slice(start, index).trim());
+			start = index + 1;
+		}
+		if (depth < 0) return;
+	}
+	items.push(part.slice(start).trim());
+	return depth === 0 && items.every(Boolean) ? items : undefined;
 }
 
 /** Resolve only a unique unconditional compiler root definition, checked in this use's context. */
