@@ -17,12 +17,12 @@ it.each([
 	await f.frame.locator("#draft").fill("kept");
 	await f.edit();
 	await replace(f.page, "After");
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain("After");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	expect(await f.frame.locator("#draft").inputValue()).toBe("kept");
 	await f.page.mouse.click(5, 5);
-	await f.page.keyboard.press("ControlOrMeta+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
 	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Before");
 	expect(await f.frame.locator("#draft").inputValue()).toBe("kept");
@@ -92,6 +92,15 @@ async function served(source = APP, configure?: (root: string) => void, devtools
 	};
 	return { page, frame, file, select, edit, root: project.root };
 }
+// A preview or saved source bytes can precede retained installation. Positive
+// mounted operations must finish their real delivery before state/history checks.
+async function delivered(page: Page, action: () => Promise<unknown>): Promise<void> {
+	const acknowledgement = page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+	);
+	await action();
+	expect((await acknowledgement).ok()).toBe(true);
+}
 async function replace(page: Page, text: string): Promise<void> {
 	await page.keyboard.press("ControlOrMeta+a");
 	await page.keyboard.insertText(text);
@@ -132,7 +141,7 @@ it("saves native and Properties text without resetting source-unrelated state, a
 		};
 		requestAnimationFrame(sample);
 	});
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain("Saved &amp; &#123;literal&#125;");
 	await expect.poll(() => label.textContent()).toBe("Saved & {literal}");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
@@ -151,11 +160,11 @@ it("saves native and Properties text without resetting source-unrelated state, a
 	expect(await f.frame.locator("#draft").inputValue()).toBe("my unsaved form input");
 	expect(await f.frame.locator("#count").textContent()).toBe("1");
 	expect(await f.frame.locator("#scroll").evaluate((el) => el.scrollTop)).toBe(90);
-	await f.page.keyboard.press("ControlOrMeta+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => label.textContent()).toBe("Hello world");
 	expect(readFileSync(f.file, "utf8")).toBe(APP);
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
-	await f.page.keyboard.press("ControlOrMeta+Shift+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+Shift+z"));
 	await expect.poll(() => label.textContent()).toBe("Saved & {literal}");
 	await f.edit();
 	await replace(f.page, "cancel me");
@@ -167,7 +176,7 @@ it("saves native and Properties text without resetting source-unrelated state, a
 	const field = f.page.getByRole("textbox", { name: "Text", exact: true });
 	await expect.poll(() => field.count()).toBe(1);
 	await field.fill('Rail "quote"\nsecond line');
-	await field.press("Tab");
+	await delivered(f.page, () => field.press("Tab"));
 	expect(await field.evaluate((el) => el === document.activeElement)).toBe(false);
 	await expect.poll(() => label.textContent()).toBe('Rail "quote"\nsecond line');
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain(JSON.stringify('Rail "quote"\nsecond line'));
@@ -182,14 +191,29 @@ it("reports a real retained memo mismatch after saving without reloading it away
 	const f = await served(memo);
 	await f.edit();
 	await replace(f.page, "Saved but memoized");
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain("Saved but memoized");
 	await expect.poll(() => f.page.locator('[data-hand-notice="mismatching"]').count()).toBe(1);
 	expect(await f.frame.locator("#label").textContent()).toBe("Hello world");
 	expect(await f.frame.locator("#label").evaluate(() => (window as unknown as { mounts: number }).mounts)).toBe(1);
-	await f.page.keyboard.press("ControlOrMeta+z");
+	const box = await f.select();
+	const freshRead = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "read",
+	);
+	await f.page.mouse.click(box.x + 40, box.y + box.height / 2);
+	const refused = await (await freshRead).json();
+	expect(refused.ok).toBe(false);
+	expect(refused.reason).toBe("the selected words have no proven literal source");
+	expect(await f.frame.locator("#label").getAttribute("contenteditable")).toBeNull();
+	expect(readFileSync(f.file, "utf8")).toContain("Saved but memoized");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(memo);
 	expect(await f.frame.locator("#label").textContent()).toBe("Hello world");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+Shift+z"));
+	expect(readFileSync(f.file, "utf8")).toContain("Saved but memoized");
+	expect(await f.frame.locator("#label").textContent()).toBe("Hello world");
+	await expect.poll(() => f.page.locator('[data-hand-notice="mismatching"]').count()).toBe(1);
+	expect(await f.frame.locator("#label").evaluate(() => (window as unknown as { mounts: number }).mounts)).toBe(1);
 });
 
 it.each([
@@ -202,7 +226,7 @@ function Content(){const label=<h1 id="label">Hello world</h1>;if(label.props.ch
 export default function Frame(){return <Suspense fallback={<p id="loading">loading</p>}><Content/></Suspense>}`);
 	await f.edit();
 	await replace(f.page, text);
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain(`>${text}</h1>`);
 	await expect.poll(() => f.page.locator(`[data-hand-notice="${outcome}"]`).count()).toBe(1);
 	if (outcome === "pending") expect(await f.frame.locator("#loading").textContent()).toBe("loading");
@@ -225,7 +249,7 @@ it("keeps native composition, late cancellation and application key ownership in
 	await cdp.send("Input.imeSetComposition", { text: "intermediate", selectionStart: 12, selectionEnd: 12 });
 	expect(readFileSync(f.file, "utf8")).not.toContain("intermediate</h1>");
 	await cdp.send("Input.insertText", { text: "完成" });
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain("完成</h1>");
 	await expect.poll(() => label.textContent()).toBe("完成");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
@@ -259,7 +283,7 @@ it("retains a class instance and leaves direct uppercase helper calls as ordinar
 		.toBe("none");
 	await f.edit();
 	await replace(f.page, "Class saved");
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => label.textContent()).toBe("Class saved");
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain("Class saved</h1>");
 	expect(await f.frame.locator("#count").textContent()).toBe("1");
@@ -290,7 +314,7 @@ it("lets an authored effect reset state exactly as an ordinary React update does
 	await ordinary.frame.locator("#label").evaluate(() => (window as unknown as { changeWords(): void }).changeWords());
 	await retained.edit();
 	await replace(retained.page, "Effect saved");
-	await retained.page.keyboard.press("Enter");
+	await delivered(retained.page, () => retained.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(retained.file, "utf8")).toContain("Effect saved</h1>");
 	for (const f of [retained, ordinary]) {
 		await expect.poll(() => f.frame.locator("#count").textContent()).toBe("0");
@@ -383,17 +407,17 @@ it("writes one supplied literal label without aliasing an equal call and keeps i
 	const f = await served(source);
 	await f.edit();
 	await replace(f.page, 'Changed "label"');
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => f.frame.locator("#label").textContent()).toBe('Changed "label"');
 	expect(await f.frame.locator("#other").textContent()).toBe("Before");
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain("Changed &quot;label&quot;");
 	expect(readFileSync(f.file, "utf8")).toContain('label="Before"');
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
-	await f.page.keyboard.press("ControlOrMeta+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
 	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Before");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
-	await f.page.keyboard.press("ControlOrMeta+Shift+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+Shift+z"));
 	await expect.poll(() => f.frame.locator("#label").textContent()).toBe('Changed "label"');
 });
 
@@ -421,12 +445,12 @@ export default function Frame() { return <main style={{padding:40}}>{${expressio
 	const f = await served(source);
 	await f.edit();
 	await replace(f.page, "Changed");
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain('"Changed"');
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	expect(await f.frame.locator("#label").textContent()).toBe("Changed");
 	expect(await f.frame.locator("#other").textContent()).toBe("Before");
-	await f.page.keyboard.press("ControlOrMeta+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
 	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Before");
 });
@@ -479,7 +503,7 @@ export default function Frame(){useEffect(()=>{window.mounts=(window.mounts||0)+
 	expect(await f.frame.locator("#unrelated").textContent()).toBe("Before");
 	expect(readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
 	expect(await second.locator("#second-label").getAttribute("data-spool-shared-use")).toBe("");
-	await f.page.keyboard.press("Enter");
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toContain("Shared draft");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	expect(await second.locator("#second-label").textContent()).toBe("Shared draft");
@@ -487,7 +511,7 @@ export default function Frame(){useEffect(()=>{window.mounts=(window.mounts||0)+
 	expect(await f.frame.locator("#draft").inputValue()).toBe("unsaved first");
 	expect(await second.locator("#draft").inputValue()).toBe("unsaved second");
 	await expect.poll(() => second.locator("#second-label").getAttribute("data-spool-shared-use")).toBe(null);
-	await f.page.keyboard.press("ControlOrMeta+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
 	await expect.poll(() => second.locator("#second-label").textContent()).toBe("Before");
 	expect(await f.frame.locator("#unrelated").textContent()).toBe("Before");
@@ -506,12 +530,12 @@ it("retains a literal attribute through the actual Properties field, preview, sa
 	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe('A "quoted" & <literal>');
 	expect(await f.frame.locator("#label").textContent()).toBe("Before");
 	expect(readFileSync(f.file, "utf8")).toBe(source);
-	await field.press("Enter");
+	await delivered(f.page, () => field.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).not.toBe(source);
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	expect(await f.frame.locator("#draft").inputValue()).toBe("unsaved input");
 	expect(await f.frame.locator("#label").getAttribute("title")).toBe('A "quoted" & <literal>');
-	await f.page.keyboard.press("ControlOrMeta+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
 	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe("Old title");
 });
@@ -559,11 +583,11 @@ it("adds a missing supported attribute with no initial prop change and removes i
 	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe(null);
 	expect(readFileSync(f.file, "utf8")).toBe(source);
 	await field.fill("New title");
-	await field.press("Enter");
+	await delivered(f.page, () => field.press("Enter"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toContain('title="New title"');
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	expect(await f.frame.locator("#label").getAttribute("title")).toBe("New title");
-	await f.page.keyboard.press("ControlOrMeta+z");
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(source);
 	await expect.poll(() => f.frame.locator("#label").getAttribute("title")).toBe(null);
 });
@@ -582,13 +606,7 @@ it("undoes a shared source after normal page navigation and deletion of its init
 	});
 	await f.edit();
 	await replace(f.page, "Saved shared");
-	const delivered = () =>
-		f.page.waitForResponse(
-			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
-		);
-	let acknowledgement = delivered();
-	await f.page.keyboard.press("Enter");
-	expect((await acknowledgement).ok()).toBe(true);
+	await delivered(f.page, () => f.page.keyboard.press("Enter"));
 	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toContain("Saved shared");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	await f.select();
@@ -599,15 +617,11 @@ it("undoes a shared source after normal page navigation and deletion of its init
 	expect(await f.page.locator('iframe[title="home"]').count()).toBe(0);
 	rmSync(join(f.root, "design/frames/home"), { recursive: true });
 	await f.page.mouse.click(5, 5);
-	acknowledgement = delivered();
-	await f.page.keyboard.press("ControlOrMeta+z");
-	expect((await acknowledgement).ok()).toBe(true);
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+z"));
 	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
 	await expect.poll(() => cold.locator("#label").textContent()).toBe("Before");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
-	acknowledgement = delivered();
-	await f.page.keyboard.press("ControlOrMeta+Shift+z");
-	expect((await acknowledgement).ok()).toBe(true);
+	await delivered(f.page, () => f.page.keyboard.press("ControlOrMeta+Shift+z"));
 	await expect.poll(() => cold.locator("#label").textContent()).toBe("Saved shared");
 });
 

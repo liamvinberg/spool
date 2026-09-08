@@ -309,6 +309,9 @@ function inspectSource(element: HTMLElement, field?: string): SourceOccurrence |
 	}
 	return {
 		...origin,
+		// Retained props keep their original invocation/value even when React
+		// skips recreating them. This observation belongs to the installed packet.
+		publication: sourcePacket?.id ?? origin.publication,
 		occurrence: id,
 		...(field === undefined ? {} : { field, absent: value === undefined }),
 		context: sourceContext(element),
