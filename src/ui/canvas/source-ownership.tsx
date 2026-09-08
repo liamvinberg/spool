@@ -130,7 +130,8 @@ export function SourceOwnership({
 						</svg>
 						<span>
 							{uses.length}
-							{reach?.unknown.length ? "+" : ""}
+							{/* A use this reach cannot speak for is not counted: unknown to it, or unverified. */}
+							{reach?.unknown.length || reach?.unverified?.length ? "+" : ""}
 						</span>
 						<svg aria-hidden="true" viewBox="0 0 12 12" className={`h-3 w-3 ${open ? "rotate-180" : ""}`}>
 							<path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" />
