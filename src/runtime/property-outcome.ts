@@ -18,6 +18,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("the selected property condition needs a native context proof");
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
+	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
+		return borderOutcome(element, expected);
 	const corner = isCorner(expected.property);
 	const color = expected.property === "color" || expected.property === "background-color";
 	if (expected.property !== "opacity" && expected.property !== "font-size" && !color && !corner)
@@ -48,37 +50,9 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		} else return unverified("this property has dependent effects requiring native proof");
 	}
 
-	const layers: string[] = [];
-	for (const rule of sheet.cssRules) {
-		const names =
-			rule instanceof CSSLayerStatementRule ? rule.nameList : rule instanceof CSSLayerBlockRule ? [rule.name] : [];
-		for (const name of names) if (!layers.includes(name)) layers.push(name);
-	}
-	const important = applicable.some((effect) => effect.important);
-	const priority = (effect: SourcePropertyEffect) => {
-		const names = effect.path.filter((part) => part.startsWith("@layer ")).map((part) => part.slice(7));
-		if (names.length > 1 || names.some((name) => !layers.includes(name))) return undefined;
-		const order = names.length === 0 ? layers.length : layers.indexOf(names[0]!);
-		return important ? -order : order;
-	};
-	let winner: SourcePropertyEffect | undefined;
-	let rank = Number.NEGATIVE_INFINITY;
-	for (const effect of applicable.filter((effect) => effect.important === important)) {
-		const next = priority(effect);
-		if (next === undefined) return unverified("this property effect needs a cascade layer proof");
-		if (
-			next === rank &&
-			!(winner?.owner && effect.owner && JSON.stringify(winner.path) === JSON.stringify(effect.path))
-		)
-			return unverified("competing property effects need a specificity proof");
-		// Equal compiler utility subjects have equal specificity; declaration order decides.
-		if (next >= rank) {
-			winner = effect;
-			rank = next;
-		}
-	}
-	if (winner?.owner === null && applicable.some((effect) => effect.owner !== null))
-		return unverified("the expected utility is masked by another declaration");
+	const selection = winningEffect(sheet, applicable);
+	if (selection.reason) return unverified(selection.reason);
+	const winner = selection.winner;
 	if (color) {
 		let value: string | undefined;
 		if (
@@ -137,6 +111,127 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (observed === "" || !Number.isFinite(Number(observed)))
 		return unverified("this use has no resolved native opacity");
 	return { rendered: Number(observed) === wanted ? "verified" : "mismatching", observed };
+}
+
+/** Width and style are one visible border component; compiler-owned siblings remain independent. */
+function borderOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this border has no native document context");
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const sides =
+		expected.property === "border-width" ? ["top", "right", "bottom", "left"] : [expected.property.split("-")[1]!];
+	const style = view.getComputedStyle(element);
+	let matches = true;
+	const observed: string[] = [];
+	for (const side of sides) {
+		for (const component of ["width", "style"] as const) {
+			const property = `border-${side}-${component}`;
+			const applicable = borderDefaults(sheet, property);
+			for (const effect of expected.effects) {
+				if (effect.owner !== null && !classes.has(effect.owner)) continue;
+				if (!/^border-(?:(?:top|right|bottom|left)-)?(?:width|style)$/.test(effect.property))
+					return unverified("this border has dependent effects requiring native proof");
+				if (effect.property !== property && effect.property !== `border-${component}`) continue;
+				const condition = pathCondition(element, effect.path, effect.owner !== null);
+				if (condition === "inactive") continue;
+				if (condition === "unverified") return unverified("this border needs a native conditional context proof");
+				const value = resolvedValue(element, sheet, effect.value);
+				if (value === undefined) return unverified("this border needs a variable context proof");
+				const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+				const rule = sheet.cssRules[index];
+				if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+				rule.style.setProperty(effect.property, value);
+				const expanded = rule.style.getPropertyValue(property);
+				if (!expanded) return unverified("this border has no native shorthand component proof");
+				applicable.push({ ...effect, property, value: expanded });
+			}
+			const selection = winningEffect(sheet, applicable);
+			if (selection.reason) return unverified(selection.reason);
+			if (!selection.winner) return unverified("this border needs an initial declaration proof");
+			const wanted =
+				component === "width"
+					? nativeLength(element, sheet, property, selection.winner.value)
+					: selection.winner.value;
+			const actual = style.getPropertyValue(property);
+			if (
+				wanted === undefined ||
+				(component === "width" && (typeof wanted !== "number" || !Number.isInteger(wanted)))
+			)
+				return unverified("this border needs a native width context proof");
+			if (component === "width" && !actual.endsWith("px"))
+				return unverified("this border has no resolved native width");
+			matches &&= component === "width" ? Number.parseFloat(actual) === wanted : actual === wanted;
+			observed.push(actual);
+		}
+	}
+	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
+}
+
+/** The compiler closure includes native preflight shorthands outside the selected utility roots. */
+function borderDefaults(sheet: CSSStyleSheet, property: string): SourcePropertyEffect[] {
+	const effects: SourcePropertyEffect[] = [];
+	const visit = (rules: CSSRuleList, path: readonly string[]) => {
+		for (const rule of rules) {
+			if (rule instanceof CSSLayerBlockRule) visit(rule.cssRules, [...path, `@layer ${rule.name}`]);
+			else if (rule instanceof CSSStyleRule && /^\*(?:,\s*::[\w-]+)*$/.test(rule.selectorText)) {
+				const value = rule.style.getPropertyValue(property);
+				if (value)
+					effects.push({
+						owner: null,
+						path: [...path, rule.selectorText],
+						property,
+						value,
+						important: rule.style.getPropertyPriority(property) === "important",
+					});
+			}
+		}
+	};
+	visit(sheet.cssRules, []);
+	return effects;
+}
+
+function winningEffect(
+	sheet: CSSStyleSheet,
+	applicable: readonly SourcePropertyEffect[],
+): {
+	winner?: SourcePropertyEffect;
+	reason?: string;
+} {
+	const layers: string[] = [];
+	for (const rule of sheet.cssRules) {
+		const names =
+			rule instanceof CSSLayerStatementRule ? rule.nameList : rule instanceof CSSLayerBlockRule ? [rule.name] : [];
+		for (const name of names) if (!layers.includes(name)) layers.push(name);
+	}
+	const important = applicable.some((effect) => effect.important);
+	const priority = (effect: SourcePropertyEffect) => {
+		const names = effect.path.filter((part) => part.startsWith("@layer ")).map((part) => part.slice(7));
+		if (names.length > 1 || names.some((name) => !layers.includes(name))) return undefined;
+		const order = names.length === 0 ? layers.length : layers.indexOf(names[0]!);
+		return important ? -order : order;
+	};
+	let winner: SourcePropertyEffect | undefined;
+	let rank = Number.NEGATIVE_INFINITY;
+	for (const effect of applicable.filter((effect) => effect.important === important)) {
+		const next = priority(effect);
+		if (next === undefined) return { reason: "this property effect needs a cascade layer proof" };
+		if (
+			next === rank &&
+			!(winner?.owner && effect.owner && JSON.stringify(winner.path) === JSON.stringify(effect.path))
+		)
+			return { reason: "competing property effects need a specificity proof" };
+		// Equal compiler utility subjects have equal specificity; declaration order decides.
+		if (next >= rank) {
+			winner = effect;
+			rank = next;
+		}
+	}
+	if (winner?.owner === null && applicable.some((effect) => effect.owner !== null))
+		return { reason: "the expected utility is masked by another declaration" };
+	return winner ? { winner } : {};
 }
 
 type Condition = "active" | "inactive" | "unverified";
@@ -209,9 +304,14 @@ function resolvedValue(
 			return "";
 		}
 		const definitions: string[] = [];
+		const registered = [...sheet.cssRules].some((rule) => rule instanceof CSSPropertyRule && rule.name === name);
 		const collect = (rules: CSSRuleList, unconditional: boolean) => {
 			for (const rule of rules) {
-				if (rule instanceof CSSStyleRule) {
+				if (registered && rule instanceof CSSSupportsRule && !CSS.supports(rule.conditionText)) continue;
+				if (rule instanceof CSSPropertyRule && rule.name === name) {
+					if (!unconditional || !rule.initialValue) unresolved = true;
+					else definitions.push(rule.initialValue.trim());
+				} else if (rule instanceof CSSStyleRule) {
 					const declaration = rule.style.getPropertyValue(name);
 					if (!declaration) continue;
 					if (!unconditional || !/^:root(?:,\s*:host)?$/.test(rule.selectorText)) {
