@@ -101,23 +101,28 @@ export function PropertyNumberField({
 	return (
 		<Row
 			name={name ?? property}
+			reason={binding ? "Choose a token or type a custom value to change this reference." : undefined}
 			ok={reading !== undefined}
 			onScrubStart={() => {
 				customDraft.current = false;
 				scrub.current = { value: initial?.number ?? "", moved: false };
 				begin();
 			}}
-			onScrub={(units) => {
-				const held = scrub.current;
-				if (!held) return;
-				const next = step(held.value, units);
-				const value = next === undefined ? undefined : requested(next);
-				if (next === undefined || value === undefined) return;
-				held.value = next;
-				held.moved = true;
-				setScrubbed(next);
-				preview(value);
-			}}
+			onScrub={
+				binding
+					? undefined
+					: (units) => {
+							const held = scrub.current;
+							if (!held) return;
+							const next = step(held.value, units);
+							const value = next === undefined ? undefined : requested(next);
+							if (next === undefined || value === undefined) return;
+							held.value = next;
+							held.moved = true;
+							setScrubbed(next);
+							preview(value);
+						}
+			}
 			onScrubEnd={() => finishScrub(true)}
 			onScrubCancel={() => finishScrub(false)}
 		>

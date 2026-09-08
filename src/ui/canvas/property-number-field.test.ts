@@ -152,5 +152,7 @@ it("does not detach a reference through untouched keyboard or scrub stepping", a
 	);
 	expect(field.value).toBe("17.25");
 	expect(preview).not.toHaveBeenCalled();
-	expect(finish.mock.calls).toEqual([[false], [false]]);
+	expect(finish.mock.calls).toEqual([[false]]);
+	expect(label.getAttribute("title")).toContain("Choose a token or type a custom value");
+	expect(label.classList.contains("cursor-ew-resize")).toBe(false);
 });
