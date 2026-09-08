@@ -301,19 +301,27 @@ it("swaps the panel from the one strip, and shuts the column from the lit glyph"
 	// the strip is the column's index and stands whatever is up
 	expect(rail(host)?.style.width).toBe("300px");
 	expect(host.querySelector("[data-dock-strip]")).not.toBeNull();
-	expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
+	const agent = host.querySelector('[aria-label="Agent"]');
+	const properties = rail(host);
+	expect(agent?.parentElement?.hasAttribute("inert")).toBe(true);
+	expect(agent?.parentElement?.style.visibility).toBe("hidden");
 
 	await press("click", {}, host.querySelector<HTMLElement>('[aria-label="Expand agent"]'));
 	// one panel, one surface: properties leave the column rather than shrinking to a strip of their own
 	expect(host.querySelector<HTMLElement>('[aria-label="Agent"]')?.style.width).toBe("420px");
-	await until(() => rail(host) === null);
+	await until(() => properties?.parentElement?.style.visibility === "hidden");
+	expect(properties?.parentElement?.hasAttribute("inert")).toBe(true);
+	expect(rail(host)).toBe(properties);
 
 	await press("click", {}, host.querySelector<HTMLElement>('[aria-label="Expand properties"]'));
 	expect(rail(host)?.style.width).toBe("300px");
+	expect(properties?.parentElement?.hasAttribute("inert")).toBe(false);
 
 	// the lit glyph is the shut: the panel goes and the index stays where it was
 	await press("click", {}, host.querySelector<HTMLElement>('[aria-label="Shut properties"]'));
-	await until(() => rail(host) === null);
+	await until(() => properties?.parentElement?.style.visibility === "hidden");
+	expect(properties?.parentElement?.hasAttribute("inert")).toBe(true);
+	expect(rail(host)).toBe(properties);
 	expect(host.querySelector<HTMLElement>("[data-dock-panel]")?.style.width).toBe("0px");
 	expect(host.querySelector("[data-dock-strip]")).not.toBeNull();
 });

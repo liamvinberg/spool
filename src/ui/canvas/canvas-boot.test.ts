@@ -113,11 +113,16 @@ describe("canvas boot", () => {
 		// standing, and properties have the panel until something is pressed
 		const glyph = host.querySelector<HTMLElement>('[data-dock-glyph="agent"]');
 		expect(glyph).not.toBeNull();
-		expect(host.querySelector("[data-agent-rail]")).toBeNull();
+		const agent = host.querySelector("[data-agent-rail]");
+		expect(agent).not.toBeNull();
+		expect(agent?.parentElement?.hasAttribute("inert")).toBe(true);
+		expect(agent?.parentElement?.getAttribute("aria-hidden")).toBe("true");
+		expect(agent?.parentElement?.style.visibility).toBe("hidden");
 		expect(host.querySelector("[data-properties-rail]")).not.toBeNull();
 
 		await act(async () => glyph?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-		expect(host.querySelector("[data-agent-rail]")).not.toBeNull();
+		expect(host.querySelector("[data-agent-rail]")).toBe(agent);
+		expect(agent?.parentElement?.hasAttribute("inert")).toBe(false);
 	});
 });
 

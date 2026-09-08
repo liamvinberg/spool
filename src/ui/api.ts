@@ -1546,11 +1546,12 @@ export async function readSource(
 	generation: number,
 	observer: string,
 	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+	retry = false,
 ): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "read", frame, original, generation, observer, operation },
+			json: { action: "read", frame, original, generation, observer, operation, retry },
 		});
 		return res.ok
 			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })

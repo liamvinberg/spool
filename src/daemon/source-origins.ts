@@ -942,15 +942,30 @@ function containsSlot(call: Site, transported: Site, slot: string): boolean {
 }
 
 export interface InverseLiteral {
+	kind: "inverse";
 	source: string;
 	field: string;
 }
-// Inverse delivery follows an already owned cell even when React retained or
-// displayed another string. It cannot authorize a fresh read or a different field.
-function inverseValue(history: InverseLiteral | undefined, source: string, field: string, value: unknown): boolean {
-	return history?.source === source && history.field === field && typeof value === "string";
+export interface RetryLiteral {
+	kind: "retry";
+	source: string;
+	field: string;
+	before: string;
+	after: string;
 }
-function retainedLiteral(call: Call | undefined, field: string, site: Site, history?: InverseLiteral): boolean {
+type OwnedLiteral = InverseLiteral | RetryLiteral;
+// A receipt follows its exact owned cell. An explicit retry instead has a newly
+// captured source snapshot and admits only the two proven values of that cell.
+// All other committed call/value ancestry remains subject to the ordinary checks.
+function ownedLiteralValue(history: OwnedLiteral | undefined, source: string, field: string, value: unknown): boolean {
+	return (
+		history?.source === source &&
+		history.field === field &&
+		typeof value === "string" &&
+		(history.kind === "inverse" || value === history.before || value === history.after)
+	);
+}
+function retainedLiteral(call: Call | undefined, field: string, site: Site, history?: OwnedLiteral): boolean {
 	if (!call?.retainedProps) return true;
 	const current = call.values?.fields[field];
 	const rendered = call.renderedValues?.fields[field];
@@ -963,8 +978,8 @@ function retainedLiteral(call: Call | undefined, field: string, site: Site, hist
 		rendered?.origin.kind === "jsx" &&
 		current.origin.source === site.source &&
 		rendered.origin.source === site.source &&
-		(current.value === text || inverseValue(history, site.source, field, current.value)) &&
-		(rendered.value === text || inverseValue(history, site.source, field, rendered.value))
+		(current.value === text || ownedLiteralValue(history, site.source, field, current.value)) &&
+		(rendered.value === text || ownedLiteralValue(history, site.source, field, rendered.value))
 	);
 }
 
@@ -1149,7 +1164,7 @@ function factoryLiteral(site: Creation, field: string, kind: "clone" | "create")
 	return value?.type === "ObjectProperty" && value.value.type === "StringLiteral" ? value.value.value : undefined;
 }
 
-function factoryRead(sources: Sources, selection: Selection, operation: Operation, history?: InverseLiteral): Target {
+function factoryRead(sources: Sources, selection: Selection, operation: Operation, history?: OwnedLiteral): Target {
 	if (selection.refusal) throw new Error(selection.refusal);
 	const leaf = selection.values!;
 	const calls = [...selection.chain].reverse();
@@ -1232,8 +1247,8 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 				incoming.origin.field !== rendered.origin.field ||
 				(incoming.value !== rendered.value &&
 					!(
-						inverseValue(history, incoming.origin.source, incoming.origin.field, incoming.value) &&
-						inverseValue(history, rendered.origin.source, rendered.origin.field, rendered.value)
+						ownedLiteralValue(history, incoming.origin.source, incoming.origin.field, incoming.value) &&
+						ownedLiteralValue(history, rendered.origin.source, rendered.origin.field, rendered.value)
 					)) ||
 				JSON.stringify(incoming.origin.via.map((e) => [e.kind, e.source, e.replaced])) !==
 					JSON.stringify(rendered.origin.via.map((e) => [e.kind, e.source, e.replaced]))
@@ -1318,7 +1333,7 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 	}
 	if (expected === undefined)
 		throw new Error("authored field is not a supported literal; expression and inline-style ownership is preserved");
-	if (field !== "style" && cell.value !== expected && !inverseValue(history, origin.source, field, cell.value))
+	if (field !== "style" && cell.value !== expected && !ownedLiteralValue(history, origin.source, field, cell.value))
 		throw new Error("committed input differs from the authored field literal");
 	// An overriding clone field belongs to the carrier definition; a preserved
 	// JSX prop stays at its own authored call site.
@@ -1340,7 +1355,7 @@ export function sourceRead(
 	sources: Sources,
 	selection: Selection,
 	operation: Operation,
-	history?: InverseLiteral,
+	history?: OwnedLiteral,
 ): Target {
 	if (
 		selection.values &&

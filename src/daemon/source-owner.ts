@@ -44,6 +44,7 @@ import { planPropertyLiteral } from "./source-property-literal";
 import { planPropertyValue } from "./source-property-plan";
 import { propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
+import { retryTextSource } from "./source-retry";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
@@ -54,6 +55,7 @@ interface PropertyProof {
 interface OriginalRead {
 	inverseExpected?: SourcePublication["expected"];
 	property?: PropertyProof;
+	retryFrom?: RetainedCompilation;
 	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
@@ -235,6 +237,13 @@ export function createSourceOwner(
 	function reason(error: unknown): string {
 		return error instanceof Error ? error.message : "the source operation could not finish";
 	}
+	async function currentCompilation(root: string, frame: string, compilation: RetainedCompilation) {
+		const inputs = new Map([...compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]));
+		const current = await compiler.compilePublication(root, frame, inputs, sequence, compilation.absent, compilation);
+		valid(root, current);
+		return current;
+	}
+
 	async function read(
 		root: string,
 		frame: string,
@@ -242,6 +251,7 @@ export function createSourceOwner(
 		generation: number,
 		observer: string,
 		operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+		retry = false,
 	): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string }> {
 		try {
 			watch(root);
@@ -252,7 +262,7 @@ export function createSourceOwner(
 			const publication = compiler.publication(original.publication);
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the original source owner is no longer available");
-			const { compilation } = publication;
+			let { compilation } = publication;
 			if (readingCoverage !== (coverage.get(root) ?? 0))
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
@@ -260,10 +270,21 @@ export function createSourceOwner(
 			if (operation.kind === "delete") throw new Error("this source operation has no admitted planner");
 			if (operation.kind === "literal" && operation.field !== original.field)
 				throw new Error("the source purpose does not match the original field");
-			const { cellKey, cell, target } =
+			const retryFrom = retry ? compilation : undefined;
+			if (retry && operation.kind !== "literal")
+				throw new Error("this source operation has no admitted retry planner");
+			let resolved =
 				operation.kind === "property"
 					? resolvePropertySource(root, compilation, original, generation, operation)
 					: resolveTextSource(root, compilation, original, generation);
+			if (retry) {
+				const current = await currentCompilation(root, frame, compilation);
+				if (readingCoverage !== (coverage.get(root) ?? 0))
+					throw new Error("source observation changed during retry");
+				resolved = retryTextSource(root, compilation, current, original, generation);
+				compilation = current;
+			}
+			const { cellKey, cell, target } = resolved;
 			if (operation.kind === "property")
 				await compilePropertySource(root, compilation.inputs, cell.value, compilation.packet.bundledCss);
 			const found = lookupFrame(root, frame);
@@ -286,6 +307,7 @@ export function createSourceOwner(
 				value: cell.value,
 			};
 			reads.set(handle, {
+				...(retryFrom ? { retryFrom } : {}),
 				coverage: readingCoverage,
 				root,
 				frame,
@@ -724,7 +746,7 @@ export function createSourceOwner(
 					owner,
 					frame: held.frame,
 					...(held.read.cell ? { cell: held.read.cell } : {}),
-					before: held.compilation.packet.id,
+					before: held.read.original.publication,
 					compatibleBefore,
 					packet: retained.packet,
 					generation: held.read.generation,
@@ -893,6 +915,7 @@ export function createSourceOwner(
 		return ordered(root, async () => {
 			const held = reads.get(handle);
 			reads.delete(handle); // exactly one completion, including a failed or unknown attempt
+			let authenticated = false;
 			try {
 				if (
 					!held ||
@@ -905,8 +928,13 @@ export function createSourceOwner(
 				if (!observed || !sameSourceOccurrence(observed, held.read.original))
 					throw new Error("the original committed occurrence changed before saving");
 				valid(root, held.compilation);
+				if (held.retryFrom) {
+					const current = await currentCompilation(root, held.frame, held.compilation);
+					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
+				}
 				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");
+				authenticated = true;
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
@@ -988,7 +1016,27 @@ export function createSourceOwner(
 					transformed,
 				);
 			} catch (error) {
-				return { ok: false, reason: reason(error) };
+				// Read-only conflict evidence uses the original authenticated owner. It
+				// neither revives this consumed read nor grants authority for a retry.
+				let current: SourceChange | undefined;
+				if (authenticated && held?.read.operation.kind === "literal") {
+					try {
+						valid(root, held.compilation);
+						const snapshot = await currentCompilation(root, held.frame, held.compilation);
+						const resolved = retryTextSource(
+							root,
+							held.retryFrom ?? held.compilation,
+							snapshot,
+							held.read.original,
+							generation,
+						);
+						if (held.coverage === (coverage.get(root) ?? 0))
+							current = { kind: "literal", text: resolved.cell.value };
+					} catch {
+						// Lost continuity or changed ancestry is not a checked current value.
+					}
+				}
+				return { ok: false, reason: reason(error), ...(current ? { current } : {}) };
 			}
 		});
 	}

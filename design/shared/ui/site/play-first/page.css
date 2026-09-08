@@ -1,0 +1,373 @@
+.pf-root {
+	--color-bg: #0e0e0e;
+	--color-canvas: #161616;
+	--color-surface: #1c1c1c;
+	--color-raised: #282828;
+	--color-border: #262626;
+	--color-border-raised: #363636;
+	--color-text: #f0efed;
+	--color-muted: #8e8c88;
+	--color-thread: #f5391a;
+	--color-on-thread: #fff;
+	--font-sans: Familjen Grotesk;
+	--font-mono: Fragment Mono;
+	--text-xs: 11px;
+	--text-sm: 12px;
+	--text-base: 13px;
+	--text-md: 14px;
+	--text-lg: 18px;
+	--text-2xs: 10px;
+	--leading-xs: 16px;
+	--leading-sm: 18px;
+	--leading-base: 20px;
+	--leading-md: 22px;
+	--leading-lg: 26px;
+}
+.pf-root .pf-page {
+	font-family: "Instrument Sans", sans-serif;
+	color: #f5f5f5;
+	height: auto;
+	overflow: clip;
+}
+.pf-root .pf-width {
+	width: calc(100% - 128px);
+	max-width: 1248px;
+	margin-inline: auto;
+}
+.pf-root :where(a) {
+	color: inherit;
+	text-decoration: none;
+}
+.pf-root :where(button, a) {
+	cursor: pointer;
+}
+.pf-root :where(button, a):focus-visible {
+	outline: 2px solid #f5391a;
+	outline-offset: 5px;
+}
+.pf-root .pf-nav {
+	height: 88px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.pf-root .pf-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 25px;
+	font-weight: 600;
+	letter-spacing: -1px;
+}
+.pf-root .pf-brand svg {
+	width: 20px;
+	height: 29px;
+	color: #f5391a;
+}
+.pf-root .pf-nav nav {
+	display: flex;
+	align-items: center;
+	gap: 32px;
+	font-size: 13px;
+}
+.pf-root .pf-nav-download {
+	display: flex;
+	align-items: center;
+	gap: 38px;
+	border-bottom: 1px solid #b4a29980;
+	padding: 12px 0;
+}
+.pf-root .pf-hero {
+	padding-block: 65px 48px;
+}
+.pf-root .pf-hero h1 {
+	font-size: clamp(58px, 7.5vw, 108px);
+	line-height: 0.99;
+	font-weight: 500;
+	letter-spacing: -0.04em;
+}
+.pf-root .pf-invitation {
+	margin-top: 37px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 60px;
+}
+.pf-root .pf-invitation p {
+	max-width: 460px;
+	font-size: 18px;
+	line-height: 1.55;
+	color: #aaa6a1;
+}
+.pf-root .pf-enter {
+	width: 405px;
+	min-height: 102px;
+	display: flex;
+	align-items: center;
+	gap: 21px;
+	padding: 19px 22px;
+	background: #ece8df;
+	color: #211813;
+	text-align: left;
+	border-radius: 2px;
+}
+.pf-root .pf-play-glyph {
+	font-size: 26px;
+}
+.pf-root .pf-enter > span:nth-child(2) {
+	font-size: 23px;
+	letter-spacing: -0.6px;
+}
+.pf-root .pf-enter small {
+	display: block;
+	margin-top: 7px;
+	font-size: 12px;
+	letter-spacing: 0;
+	color: #766b63;
+}
+.pf-root .pf-enter-arrow {
+	margin-left: auto;
+	font-size: 27px;
+}
+.pf-root .pf-enter:hover {
+	background: #fff8ec;
+}
+.pf-root .pf-preview {
+	scroll-margin-top: 22px;
+	outline: 0;
+}
+.pf-root .pf-preview-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 18px 0;
+	border-top: 1px solid #bc988b35;
+}
+.pf-root .pf-preview-top p {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 14px;
+}
+.pf-root .pf-live-dot {
+	width: 6px;
+	height: 6px;
+	background: #f5391a;
+	border-radius: 50%;
+}
+.pf-root .pf-preview-top > span {
+	font:
+		10px "Fragment Mono",
+		monospace;
+	color: #a99b92;
+}
+.pf-root .pf-preview .sr-app {
+	border-radius: 2px;
+}
+.pf-root .pf-preview-foot {
+	display: flex;
+	justify-content: space-between;
+	gap: 25px;
+	margin-top: 16px;
+	color: #aaa6a1;
+	font-size: 12px;
+}
+.pf-root .pf-preview-foot > span {
+	font-size: 11px;
+}
+.pf-root .pf-description {
+	margin-top: 34px;
+	font-size: 18px;
+	line-height: 1.55;
+	color: #aaa6a1;
+}
+.pf-root[data-take="threshold"] .pf-hero {
+	padding-bottom: 55px;
+}
+.pf-root .pf-threshold {
+	border-top: 1px solid #bd9e9240;
+	padding: 27px 0 25px;
+	display: grid;
+	grid-template-columns: 1.2fr 1fr;
+	gap: 50px;
+	align-items: center;
+}
+.pf-root .pf-threshold button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 20px;
+	font-size: 39px;
+	line-height: 1.12;
+	letter-spacing: -1.8px;
+	text-align: left;
+}
+.pf-root .pf-threshold button span {
+	font-size: 48px;
+	color: #f1ac88;
+}
+.pf-root .pf-threshold p {
+	font-size: 14px;
+	line-height: 1.65;
+	color: #b5aaa4;
+	padding-left: 50px;
+	border-left: 1px solid #bd9e9240;
+}
+.pf-root .pf-explain {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 100px;
+	padding-block: 118px;
+	border-bottom: 1px solid #85716840;
+}
+.pf-root .pf-explain h2,
+.pf-root .pf-start h2 {
+	font-size: 68px;
+	line-height: 1.02;
+	letter-spacing: -3px;
+	font-weight: 500;
+}
+.pf-root .pf-explain > div {
+	max-width: 450px;
+	padding-top: 7px;
+}
+.pf-root .pf-explain p {
+	font-size: 20px;
+	line-height: 1.5;
+	margin-bottom: 25px;
+	color: #b8b0a8;
+}
+.pf-root .pf-explain a {
+	display: inline-block;
+	padding-bottom: 7px;
+	border-bottom: 1px solid #9c81755c;
+	margin-top: 18px;
+	font-size: 14px;
+}
+.pf-root .pf-start {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 60px;
+	padding-block: 115px;
+}
+.pf-root .pf-start p {
+	margin-top: 25px;
+	color: #ccb6a7;
+	font-size: 17px;
+}
+.pf-root .pf-install {
+	width: 370px;
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+.pf-root .pf-install > a,
+.pf-root .pf-install > button {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 19px 21px;
+}
+.pf-root .pf-install > a {
+	background: #eee6da;
+	color: #27150e;
+	font-size: 17px;
+}
+.pf-root .pf-install > button {
+	border: 1px solid #c596793d;
+	font:
+		12px "Fragment Mono",
+		monospace;
+	color: #d3bcb0;
+}
+.pf-root .pf-install svg {
+	width: 14px;
+	height: 14px;
+}
+.pf-root .pf-install small {
+	color: #c3a99b;
+	font-size: 11px;
+}
+.pf-root .pf-footer {
+	border-top: 1px solid #85716840;
+	padding-block: 30px;
+	display: flex;
+	align-items: center;
+	gap: 27px;
+	font-size: 12px;
+	color: #aaa099;
+}
+.pf-root .pf-footer > span {
+	margin-right: auto;
+}
+.pf-root .pf-footer button {
+	font:
+		10px "Fragment Mono",
+		monospace;
+}
+@media (max-width: 760px) {
+	.pf-root .pf-width {
+		width: calc(100% - 40px);
+	}
+	.pf-root .pf-nav nav {
+		gap: 15px;
+	}
+	.pf-root .pf-nav nav > a:first-child {
+		display: none;
+	}
+	.pf-root .pf-hero h1 {
+		font-size: clamp(40px, 10.7vw, 80px);
+	}
+	.pf-root .pf-hero {
+		padding-top: 40px;
+	}
+	.pf-root .pf-invitation {
+		align-items: stretch;
+		flex-direction: column;
+		gap: 24px;
+	}
+	.pf-root .pf-enter {
+		width: 100%;
+	}
+	.pf-root .pf-threshold {
+		display: block;
+	}
+	.pf-root .pf-threshold button {
+		font-size: 29px;
+		width: 100%;
+	}
+	.pf-root .pf-threshold p {
+		margin-top: 20px;
+		border: 0;
+		padding: 0;
+	}
+	.pf-root .pf-preview-top > span {
+		display: none;
+	}
+	.pf-root .pf-preview-foot {
+		flex-direction: column;
+		gap: 7px;
+	}
+	.pf-root .pf-explain {
+		grid-template-columns: 1fr;
+		gap: 30px;
+		padding-block: 70px;
+	}
+	.pf-root .pf-explain h2,
+	.pf-root .pf-start h2 {
+		font-size: 48px;
+	}
+	.pf-root .pf-start {
+		flex-direction: column;
+		align-items: stretch;
+		padding-block: 70px;
+	}
+	.pf-root .pf-install {
+		width: 100%;
+	}
+	.pf-root .pf-footer {
+		flex-wrap: wrap;
+	}
+}

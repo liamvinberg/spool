@@ -47,6 +47,8 @@ function launch(directory: string): ChildProcess {
 /** One lazy child, supervised by the daemon. A crash settles turns and never replays them. */
 export class BundledHostClient {
 	private child: ChildProcess | undefined;
+	private closing: Promise<void> | undefined;
+	private closed = false;
 	private generation = "";
 	public source: SourceAgentSupervisor | undefined;
 	private readonly authorities = new Map<string, SourceAgentAuthority>();
@@ -60,6 +62,7 @@ export class BundledHostClient {
 		private readonly start = launch,
 	) {}
 	private host(): ChildProcess {
+		if (this.closed) throw new Error("The bundled engine is closed.");
 		if (this.child !== undefined) return this.child;
 		privateDirectory(this.directory);
 		const child = this.start(this.directory);
@@ -249,13 +252,22 @@ export class BundledHostClient {
 		child.kill();
 		await exited;
 	}
-	close(): void {
+	close(): Promise<void> {
+		if (this.closing) return this.closing;
 		const child = this.child;
-		if (child === undefined) return;
+		if (child === undefined) {
+			this.closed = true;
+			this.closing = Promise.resolve();
+			return this.closing;
+		}
+		// The close reply precedes disconnect cleanup. Only exit releases the state directory.
+		const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
 		void this.request({ kind: "close" }).catch(() => child.kill());
+		this.closed = true;
 		const timeout = setTimeout(() => child.kill(), 5_000);
 		timeout.unref();
-		child.once("exit", () => clearTimeout(timeout));
+		this.closing = exited.finally(() => clearTimeout(timeout));
+		return this.closing;
 	}
 }
 

@@ -35,7 +35,7 @@ export function resolvePropertySource(
 		sources,
 		{ ...selection, generation: String(generation) },
 		operation,
-		previous ? { source: previous.source, field: "className" } : undefined,
+		previous ? { kind: "inverse", source: previous.source, field: "className" } : undefined,
 	);
 	for (const unit of sources.revisions.values())
 		if (!compilation.inputs.has(unit.file))

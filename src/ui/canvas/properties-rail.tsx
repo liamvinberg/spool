@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { RowEdit, RowElement } from "../../properties/rows";
 import type { SourceDescription } from "../../source-edit";
@@ -101,6 +101,7 @@ export interface RailPreview {
 }
 
 export interface PropertiesActs {
+	onAsk?: () => void;
 	ownership?: OwnershipActions;
 	text?: TextActions;
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
@@ -129,6 +130,7 @@ export interface PropertiesActs {
 }
 
 export function PropertiesRail({
+	recovery,
 	project,
 	held,
 	acts,
@@ -137,6 +139,7 @@ export function PropertiesRail({
 	width,
 	onCollapse,
 }: {
+	recovery?: ReactNode;
 	project: string;
 	held: Held | null;
 	acts: PropertiesActs;
@@ -164,6 +167,7 @@ export function PropertiesRail({
 				preview={preview}
 				onCollapse={onCollapse}
 			/>
+			{recovery}
 		</section>
 	);
 }
@@ -579,6 +583,16 @@ function Head({
 					<Trail steps={steps} />
 				)}
 				{element === null ? null : <span className={cn("shrink-0", FAINT)}>{element.chain[rung]?.tag ?? ""}</span>}
+				{acts.onAsk && held ? (
+					<Menu
+						label="Element actions"
+						current={{ name: "⋯", token: null }}
+						options={[{ name: "Ask agent", token: "ask" }]}
+						ok
+						onPick={() => acts.onAsk?.()}
+						className="w-6 shrink-0"
+					/>
+				) : null}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
 			{read?.refusal === undefined || (sourceSupported && read.refusal.code === "shared-definition") ? null : (

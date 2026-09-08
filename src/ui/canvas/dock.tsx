@@ -44,8 +44,7 @@ import {
  * edge travelling rather than a card being dealt. Each surface is laid out at
  * the width it will settle at and the panel clips it, which is what keeps a
  * rail from re-laying on the way in: the alternative is watching the properties
- * rows squash through 120px to say a button was pressed. The pair is mounted
- * together only while they cross.
+ * rows squash through 120px to say a button was pressed. Both surfaces stay mounted so drafts, native fields and scroll survive the cross.
  */
 
 export type DockSurface = "properties" | "agent";
@@ -71,6 +70,7 @@ export function Dock({
 	agent,
 	agentWorking,
 	onSettings,
+	request,
 }: {
 	/**
 	 * Each surface, drawn at the width it will settle at and handed the one act
@@ -79,11 +79,12 @@ export function Dock({
 	 * more.
 	 */
 	properties: (width: number, shut: () => void) => ReactNode;
-	agent: (width: number, shut: () => void) => ReactNode;
+	agent: (width: number, shut: () => void, active: boolean) => ReactNode;
 	/** a turn is in flight: the shut glyph says so, and says it landed once it has */
 	agentWorking: boolean;
 	/** the cog at the foot of the strip (#282): a door to the settings sheet, not a surface */
 	onSettings?: (() => void) | undefined;
+	request?: string | undefined;
 }) {
 	const [kept, setKept] = useRemembered<DockHeld>("dock.open", "properties", isHeld);
 	const open: DockSurface | null = kept === "shut" ? null : kept;
@@ -105,6 +106,10 @@ export function Dock({
 		const timer = setTimeout(() => setLeaving(null), CROSS_MS);
 		return () => clearTimeout(timer);
 	}, [shown]);
+
+	useEffect(() => {
+		if (request) setKept("agent");
+	}, [request, setKept]);
 
 	const widthOf = (surface: DockSurface) => (surface === "agent" ? agentWidth : propertiesWidth);
 	const setWidthOf = (surface: DockSurface) => (surface === "agent" ? setAgentWidth : setPropertiesWidth);
@@ -190,10 +195,13 @@ export function Dock({
 			>
 				{surfaces.map((surface) => {
 					const up = shown === surface;
-					if (!up && leaving !== surface) return null;
+
 					return (
 						<div
 							key={surface}
+							inert={!up}
+							aria-hidden={!up}
+							style={{ visibility: up || leaving === surface ? "visible" : "hidden" }}
 							// the surface is placed against the strip and carries its own width, so
 							// the panel's edge is the only thing that moves
 							className={cn(
@@ -202,7 +210,7 @@ export function Dock({
 							)}
 						>
 							{surface === "agent"
-								? agent(up ? standing : agentWidth, shut)
+								? agent(up ? standing : agentWidth, shut, up)
 								: properties(up ? standing : propertiesWidth, shut)}
 						</div>
 					);

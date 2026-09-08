@@ -3,6 +3,7 @@ import type { SourceDescription, SourceRead } from "../../source-edit";
 import { BOX, Row, Section, VALUE } from "./properties-fields";
 
 export interface TextActions {
+	refused?(frame: string, selector: string, text: string, field?: string): void;
 	describe?(frame: string, selector: string, field: string): Promise<SourceDescription | undefined>;
 	begin(frame: string, selector: string, field?: string): Promise<SourceRead | undefined>;
 	preview(frame: string, read: SourceRead, text: string): void;
@@ -66,6 +67,7 @@ export function LiteralField({
 		held.done = true;
 		void held.reading.then((read) => {
 			if (read) actions.finish(frame, read, held.text, commit && (held.dirty || !read.original.absent));
+			else if (commit && held.dirty) actions.refused?.(frame, selector, held.text, field);
 			if (!commit) setText(read?.value ?? initial);
 		});
 	};

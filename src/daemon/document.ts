@@ -1527,6 +1527,7 @@ else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses));
 else if(m.action === "highlight") {source.highlight(m.uses);reply(true);}
 else if(m.action === "reveal") {const el=source.element(m.original);if(el){el.scrollIntoView({block:"center",inline:"nearest"});reply(chainOf(el));}else reply(undefined);}
 else if(m.action === "clear-feedback") {source.clearFeedback();reply(true);}
+else if (m.action === "verify") reply(source.verify(m.original,m.expected));
 else if (m.action === "inspect") { const el=elementFor(m.selector); reply(el ? source.inspect(el,m.field,m.operation) : undefined); }
 else if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation, m.field,m.operation) : undefined); }
 				else if (m.action === "complete") reply(source.complete(m.generation));

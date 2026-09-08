@@ -773,3 +773,30 @@ it.each(["save", "undo"])("keeps a stale observed use unverified beside a valid 
 	f.owner.delivered(result.publication.packet.id);
 	expect(readFileSync(f.file, "utf8")).toBe(operation === "undo" ? SOURCE : SOURCE.replace('"Hello"', '"After"'));
 });
+
+it.each(["dependency", "coverage", "owner restart"])(
+	"does not let an explicit fresh retry survive %s loss",
+	async (loss) => {
+		const f = await fixture();
+		const agent = await actualAgent(f);
+		expect(
+			(await agent.run([agentRead(f.file), agentEdit(f.file, "Hello", "Agent current")])).every(
+				(result) => !result.failed,
+			),
+		).toBe(true);
+		const fresh = await f.owner.read(f.root, "home", f.read.original, 2, "canvas", { kind: "literal" }, true);
+		if (!fresh.ok) throw new Error(fresh.reason);
+		expect(fresh.read.value).toBe("Agent current");
+		if (loss === "dependency") writeDesignFile(f.root, "shared/importmap.json", "{}");
+		if (loss === "coverage") f.owner.observe(f.root, { kind: "lost" });
+		const owner =
+			loss === "owner restart" ? createSourceOwner(f.compiler, async () => f.observation.current) : f.owner;
+		expect(
+			await owner.commit(f.root, fresh.read.handle, fresh.read.generation, fresh.read.original, {
+				kind: "literal",
+				text: "Requested retry",
+			}),
+		).toEqual({ ok: false, reason: expect.any(String) });
+		expect(readFileSync(f.file, "utf8")).toBe(SOURCE.replace("Hello", "Agent current"));
+	},
+);

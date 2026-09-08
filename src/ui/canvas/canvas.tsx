@@ -179,6 +179,15 @@ import {
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { useSourceDelivery } from "./source-delivery";
+import {
+	type AgentRequest,
+	attributedIntent,
+	intentText,
+	inverseIntent,
+	preparedHelp,
+	type SourceIntent,
+	sourceIntent,
+} from "./source-intent";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
@@ -402,6 +411,9 @@ export function ProjectCanvas({
 	const [editing, setEditing] = useState<HandEdit | null>(null);
 	const [refused, setRefused] = useState<ShownRefusal | null>(null);
 	const [said, setSaid] = useState<HandSaid | null>(null);
+	const [agentRequest, setAgentRequest] = useState<AgentRequest>();
+	const railIntents = useRef(new WeakMap<SourceRead, SourceIntent>());
+	const reloadedIntent = useRef<SourceIntent | undefined>(undefined);
 	/**
 	 * The element drag in flight (#259), as the ring draws it.
 	 *
@@ -1772,46 +1784,106 @@ export function ProjectCanvas({
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
-	const observingSource = useRef<{ publication: string; frame: string; text: string } | undefined>(undefined);
-	const presentSourceOutcome = useCallback((frame: string, outcome: UseOutcome | undefined, text: string) => {
-		for (const name of new Set(outcome?.uses?.map((use) => use.frame).filter((name): name is string => !!name) ?? []))
-			if (outcome?.uses?.filter((use) => use.frame === name).every((use) => use.rendered === "verified"))
-				unappliedSource.current.delete(name);
-		if (outcome?.rendered === "verified") {
-			unappliedSource.current.delete(frame);
-			setSaid(null);
-			return;
-		}
-		setSaid({
-			kind: "source",
-			frame,
-			status: outcome?.rendered ?? "unverified",
-			text,
-			says:
-				outcome?.reason ??
-				(outcome?.rendered === "mismatching"
-					? "Saved, but the running app kept different words."
-					: outcome?.rendered === "pending"
-						? "Saved. The app is still loading."
-						: "Saved. The running result could not be verified."),
-		});
+	const observingSource = useRef<
+		{ publication: string; frame: string; text: string; intent?: SourceIntent } | undefined
+	>(undefined);
+	const askAgent = useCallback(
+		(failure?: Extract<HandSaid, { kind: "source" }>) => {
+			const intent = failure?.intent;
+			setAgentRequest({
+				id: crypto.randomUUID(),
+				thread: deck.open,
+				...(intent
+					? {
+							prepared: {
+								intent: intent.id,
+								text: preparedHelp(
+									intent,
+									failure.says,
+									!failure.sourceUnchanged && !["blocked", "unknown"].includes(failure.status),
+								),
+								selection: intent.selection,
+							},
+						}
+					: {}),
+			});
+		},
+		[deck.open],
+	);
+	const resolveIntent = useCallback((intent?: SourceIntent) => {
+		if (!intent) return;
+		setAgentRequest({ id: crypto.randomUUID(), retire: [intent.id, ...(intent.resolves ?? [])] });
 	}, []);
+	const presentSourceOutcome = useCallback(
+		(frame: string, outcome: UseOutcome | undefined, text: string, intent?: SourceIntent) => {
+			for (const name of new Set(
+				outcome?.uses?.map((use) => use.frame).filter((name): name is string => !!name) ?? [],
+			))
+				if (outcome?.uses?.filter((use) => use.frame === name).every((use) => use.rendered === "verified"))
+					unappliedSource.current.delete(name);
+			if (outcome?.rendered === "verified") {
+				unappliedSource.current.delete(frame);
+				setSaid((current) => (current?.kind === "source" && current.intent?.id !== intent?.id ? current : null));
+				resolveIntent(intent);
+				return;
+			}
+			setSaid((current) => ({
+				kind: "source",
+				frame,
+				...(intent ? { intent } : {}),
+				dismissed: current?.kind === "source" && current.intent?.id === intent?.id && current.dismissed === true,
+				status: outcome?.rendered ?? "unverified",
+				text,
+				says:
+					outcome?.reason ??
+					(outcome?.rendered === "mismatching"
+						? "Saved, but the running app kept different words."
+						: outcome?.rendered === "pending"
+							? "Saved. The app is still loading."
+							: "Saved. The running result could not be verified."),
+			}));
+		},
+		[resolveIntent],
+	);
 	useEffect(
 		() =>
 			sourceDelivery.observeOutcomes((publication, outcome) => {
 				const held = observingSource.current;
-				if (held?.publication === publication) presentSourceOutcome(held.frame, outcome, held.text);
+				if (held?.publication === publication) presentSourceOutcome(held.frame, outcome, held.text, held.intent);
 			}),
 		[sourceDelivery, presentSourceOutcome],
 	);
 
 	const showSourceResult = useCallback(
-		async (frame: string, result: SourceResult | undefined, text = "", undo = false) => {
+		async (
+			frame: string,
+			result: SourceResult | undefined,
+			text = "",
+			undo = false,
+			retainedIntent?: SourceIntent,
+		) => {
+			let intent = retainedIntent;
+			if (intent && result?.ok) {
+				if (result.publication) {
+					const expected = result.publication.expected;
+					intent = { ...intent, expected };
+					if (undo && expected.kind === "literal") intent.change = { kind: "literal", text: expected.value };
+				} else if (
+					result.source === "unchanged" &&
+					intent.operation.kind === "literal" &&
+					intent.change?.kind === "literal"
+				) {
+					// Acknowledged no-op still has the explicit request's literal result.
+					// It creates neither a source publication nor an Undo receipt.
+					intent = { ...intent, expected: { kind: "literal", value: intent.change.text, absent: false } };
+				}
+			}
 			observingSource.current = undefined;
 			if (!result) {
 				unappliedSource.current.add(frame);
 				setSaid({
 					kind: "source",
+					...(intent ? { intent } : {}),
 					frame,
 					status: "unknown",
 					text,
@@ -1820,14 +1892,56 @@ export function ProjectCanvas({
 				return;
 			}
 			if (!result.ok) {
-				setSaid({ kind: "source", frame, status: "blocked", text, says: result.reason });
+				unappliedSource.current.add(frame);
+				setSaid({
+					kind: "source",
+					...(intent ? { intent } : {}),
+					frame,
+					status: "blocked",
+					text,
+					says:
+						result.current?.kind === "literal"
+							? `${result.reason}. Checked current source: ${JSON.stringify(result.current.text)}.`
+							: result.reason,
+				});
 				return;
 			}
-			if (result.source === "unchanged") return;
+			if (result.source === "unchanged") {
+				const checked =
+					intent?.operation.kind === "literal"
+						? await sourceDelivery.verifyReload(frame, intent.selector, intent.field)
+						: undefined;
+				if (
+					intent &&
+					(!checked ||
+						intent.expected?.kind !== "literal" ||
+						checked.description.cell !== intent.cell ||
+						checked.description.source !== intent.source ||
+						checked.description.value !== intent.expected.value ||
+						(checked.description.original.absent ?? false) !== intent.expected.absent ||
+						checked.outcome.rendered !== "verified")
+				) {
+					unappliedSource.current.add(frame);
+					setSaid({
+						kind: "source",
+						frame,
+						status: "unverified",
+						sourceUnchanged: true,
+						text,
+						intent,
+						says: "Current source already has this value. No new edit was saved; the running result is not verified.",
+					});
+					return;
+				}
+				resolveIntent(intent);
+				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent?.id ? null : current));
+				return;
+			}
 			if (!result.publication) {
 				unappliedSource.current.add(frame);
 				setSaid({
 					kind: "source",
+					...(intent ? { intent } : {}),
 					frame,
 					status: "unverified",
 					text,
@@ -1836,7 +1950,12 @@ export function ProjectCanvas({
 				return;
 			}
 
-			observingSource.current = { publication: result.publication.packet.id, frame, text };
+			observingSource.current = {
+				publication: result.publication.packet.id,
+				frame,
+				text,
+				...(intent ? { intent } : {}),
+			};
 			for (const publication of [result.publication, ...(result.publication.related ?? [])]) {
 				retainedPublications.current.set(publication.frame, publication.packet.id);
 				unappliedSource.current.add(publication.frame);
@@ -1849,9 +1968,14 @@ export function ProjectCanvas({
 			setSourceRevision((value) => value + 1);
 
 			if (observingSource.current?.publication === result.publication.packet.id)
-				presentSourceOutcome(frame, sourceDelivery.currentOutcome(result.publication.packet.id) ?? outcome, text);
+				presentSourceOutcome(
+					frame,
+					sourceDelivery.currentOutcome(result.publication.packet.id) ?? outcome,
+					text,
+					intent,
+				);
 		},
-		[sourceDelivery, project, presentSourceOutcome],
+		[sourceDelivery, project, presentSourceOutcome, resolveIntent],
 	);
 
 	/**
@@ -1895,8 +2019,10 @@ export function ProjectCanvas({
 			// comes back is the inverse this entry carries from here on. A refusal
 			// means the file moved since — the entry is not a future anybody has
 			if (entry.kind === "source") {
+				const intent = entry.intent ? inverseIntent(entry.intent, way) : undefined;
 				setSaid({
 					kind: "source",
+					...(intent ? { intent } : {}),
 					frame: entry.frame,
 					status: "saving",
 					text: "",
@@ -1914,14 +2040,19 @@ export function ProjectCanvas({
 					})
 					.then(async (result) => {
 						if (history.current !== ran) {
-							if (result?.ok && result.receipt) recordEntry({ ...entry, receipt: result.receipt });
-							await showSourceResult(entry.frame, result, "", true);
+							if (result?.ok && result.receipt)
+								recordEntry({ ...entry, receipt: result.receipt, ...(intent ? { intent } : {}) });
+							await showSourceResult(entry.frame, result, "", true, intent);
 							return;
 						}
 						if (result?.ok && result.receipt)
-							history.current = amend(history.current, way, { ...entry, receipt: result.receipt });
+							history.current = amend(history.current, way, {
+								...entry,
+								receipt: result.receipt,
+								...(intent ? { intent } : {}),
+							});
 						else history.current = held; // an unavailable top inverse is explained, never skipped
-						await showSourceResult(entry.frame, result, "", true);
+						await showSourceResult(entry.frame, result, "", true, intent);
 					});
 				pendingSource.current.set(entry.frame, operation);
 				void operation.finally(() => {
@@ -2312,8 +2443,18 @@ export function ProjectCanvas({
 	}, []);
 
 	/** Why the gesture just tried does not apply, on the element it was about. */
-	const showRefusal = useCallback((frame: string, selector: string, refusal: Refusal) => {
-		setRefused({ frame, selector, refusal });
+	const showRefusal = useCallback((frame: string, selector: string, refusal: Refusal, intent?: SourceIntent) => {
+		setRefused(intent ? null : { frame, selector, refusal });
+		if (intent)
+			setSaid({
+				kind: "source",
+				frame,
+				status: "blocked",
+				text: intentText(intent) ?? "",
+				says: refusal.says,
+				refusal: refusal.code,
+				intent,
+			});
 	}, []);
 
 	/**
@@ -2358,9 +2499,10 @@ export function ProjectCanvas({
 	const beginTextEdit = useCallback(
 		(pick: PickedSelection, local: Point) => {
 			if (pendingSource.current.size > 0) return;
+			const intent = sourceIntent(pick, pointing.entries);
 			const stamp = stampOf(pick);
 			if (typeof stamp !== "string") {
-				showRefusal(pick.frame, pick.selector, stamp);
+				showRefusal(pick.frame, pick.selector, stamp, intent);
 				return;
 			}
 			const id = ++pickSeq.current;
@@ -2372,6 +2514,7 @@ export function ProjectCanvas({
 				fingerprint: "",
 				phase: "asking",
 				start: "",
+				intent,
 			};
 			setEdit(asking);
 			setRefused(null);
@@ -2379,10 +2522,15 @@ export function ProjectCanvas({
 				if (editingRef.current?.id !== id) return;
 				if (!original) {
 					setEdit(null);
-					showRefusal(pick.frame, pick.selector, {
-						code: "source",
-						says: "these words have no editable local literal source",
-					});
+					showRefusal(
+						pick.frame,
+						pick.selector,
+						{
+							code: "source",
+							says: "these words have no editable local literal source",
+						},
+						intent,
+					);
 					return;
 				}
 				const asked = await readSource(project, pick.frame, original, id, sourceDelivery.observer);
@@ -2393,10 +2541,15 @@ export function ProjectCanvas({
 				if (!asked?.ok) {
 					setEdit(null);
 					void sourceDelivery.cancel(pick.frame, id);
-					showRefusal(pick.frame, pick.selector, {
-						code: "source",
-						says: asked?.reason ?? "the original source read did not arrive",
-					});
+					showRefusal(
+						pick.frame,
+						pick.selector,
+						{
+							code: "source",
+							says: asked?.reason ?? "the original source read did not arrive",
+						},
+						{ ...intent, original },
+					);
 					return;
 				}
 				const ready = await sourceDelivery.prepare(pick.frame, asked.read);
@@ -2405,7 +2558,7 @@ export function ProjectCanvas({
 					void sourceDelivery.cancel(pick.frame, id);
 					return;
 				}
-				setEdit({ ...asking, read: ready });
+				setEdit({ ...asking, read: ready, intent: attributedIntent(intent, ready) });
 				retainedPublications.current.set(pick.frame, original.publication);
 				iframes.current
 					.get(pick.frame)
@@ -2416,7 +2569,7 @@ export function ProjectCanvas({
 				iframes.current.get(pick.frame)?.focus();
 			});
 		},
-		[project, setEdit, showRefusal, sourceDelivery],
+		[project, setEdit, showRefusal, sourceDelivery, pointing.entries],
 	);
 
 	/**
@@ -2680,12 +2833,27 @@ export function ProjectCanvas({
 				void sourceDelivery.cancel(held.frame, held.id);
 				return;
 			}
-			setSaid({ kind: "source", frame: held.frame, status: "saving", text, says: "Saving…" });
+			const intent: SourceIntent | undefined = held.intent
+				? { ...held.intent, change: { kind: "literal", text } }
+				: undefined;
+			setSaid({
+				kind: "source",
+				frame: held.frame,
+				status: "saving",
+				text,
+				says: "Saving…",
+				...(intent ? { intent } : {}),
+			});
 			const operation = commitSource(project, held.read, { kind: "literal", text }).then(async (result) => {
 				if (result?.ok && result.receipt)
-					recordEntry({ kind: "source", frame: held.frame, receipt: result.receipt });
+					recordEntry({
+						kind: "source",
+						frame: held.frame,
+						receipt: result.receipt,
+						...(intent ? { intent } : {}),
+					});
 				if (!result?.ok || !result.publication) void sourceDelivery.cancel(held.frame, held.id);
-				await showSourceResult(held.frame, result, text);
+				await showSourceResult(held.frame, result, text, false, intent);
 			});
 			pendingSource.current.set(held.frame, operation);
 			void operation.finally(() => pendingSource.current.delete(held.frame));
@@ -2696,24 +2864,38 @@ export function ProjectCanvas({
 	const beginRailText = useCallback(
 		async (frame: string, selector: string, field?: string): Promise<SourceRead | undefined> => {
 			if (pendingSource.current.size > 0) return;
+			const pick = pickedRef.current.find((pick) => pick.frame === frame && pick.selector === selector);
+			const intent = pick ? sourceIntent(pick, pointing.entries, field) : undefined;
 			const generation = ++pickSeq.current;
 			const original = await sourceDelivery.read(frame, selector, generation, field);
 			if (!original) {
-				showRefusal(frame, selector, { code: "source", says: "these words have no editable local literal source" });
+				showRefusal(
+					frame,
+					selector,
+					{ code: "source", says: "these words have no editable local literal source" },
+					intent,
+				);
 				return;
 			}
 			const result = await readSource(project, frame, original, generation, sourceDelivery.observer);
 			if (!result?.ok) {
-				showRefusal(frame, selector, {
-					code: "source",
-					says: result?.reason ?? "the original read did not arrive",
-				});
+				showRefusal(
+					frame,
+					selector,
+					{
+						code: "source",
+						says: result?.reason ?? "the original read did not arrive",
+					},
+					intent ? { ...intent, original } : undefined,
+				);
 				return;
 			}
 			retainedPublications.current.set(frame, original.publication);
-			return await sourceDelivery.prepare(frame, result.read);
+			const ready = await sourceDelivery.prepare(frame, result.read);
+			if (intent) railIntents.current.set(ready, attributedIntent(intent, ready));
+			return ready;
 		},
-		[project, sourceDelivery, showRefusal],
+		[project, sourceDelivery, showRefusal, pointing.entries],
 	);
 	const finishRailText = useCallback(
 		(frame: string, read: SourceRead, text: string, commit: boolean) => {
@@ -2722,12 +2904,15 @@ export function ProjectCanvas({
 				void sourceDelivery.cancel(frame, read.generation);
 				return;
 			}
+			const before = railIntents.current.get(read);
+			const intent: SourceIntent | undefined = before ? { ...before, change: { kind: "literal", text } } : undefined;
 			const operation = sourceDelivery.complete(frame, read.generation).then(async (original) => {
 				if (!original || !sameSourceOccurrence(original, read.original)) {
 					void cancelSource(project, read.handle);
 					await sourceDelivery.cancel(frame, read.generation);
 					setSaid({
 						kind: "source",
+						...(intent ? { intent } : {}),
 						frame,
 						status: "blocked",
 						text,
@@ -2736,15 +2921,165 @@ export function ProjectCanvas({
 					return;
 				}
 				const result = await commitSource(project, read, { kind: "literal", text });
-				if (result?.ok && result.receipt) recordEntry({ kind: "source", frame, receipt: result.receipt });
+				if (result?.ok && result.receipt)
+					recordEntry({ kind: "source", ...(intent ? { intent } : {}), frame, receipt: result.receipt });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(frame, read.generation);
-				await showSourceResult(frame, result, text);
+				await showSourceResult(frame, result, text, false, intent);
 			});
-			setSaid({ kind: "source", frame, status: "saving", text, says: "Saving…" });
+			setSaid({ kind: "source", ...(intent ? { intent } : {}), frame, status: "saving", text, says: "Saving…" });
 			pendingSource.current.set(frame, operation);
 			void operation.finally(() => pendingSource.current.delete(frame));
 		},
 		[project, sourceDelivery, recordEntry, showSourceResult],
+	);
+
+	const verifyReloadedIntent = useCallback(
+		async (frame: string) => {
+			const intent = reloadedIntent.current;
+			if (!intent || intent.frame !== frame) return;
+			reloadedIntent.current = undefined;
+			if (intent.operation.kind !== "literal" || intent.expected?.kind !== "literal") return;
+			const checked = await sourceDelivery.verifyReload(frame, intent.selector, intent.field);
+			if (
+				checked &&
+				checked.description.cell === intent.cell &&
+				checked.description.source === intent.source &&
+				checked.description.value === intent.expected.value &&
+				(checked.description.original.absent ?? false) === intent.expected.absent &&
+				checked.outcome.rendered === "verified"
+			) {
+				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
+				resolveIntent(intent);
+			}
+		},
+		[sourceDelivery, resolveIntent],
+	);
+
+	const checkUnknownSource = useCallback(
+		async (intent: SourceIntent) => {
+			if (intent.operation.kind !== "literal" || pendingSource.current.size || editingRef.current) return;
+			const generation = ++pickSeq.current;
+			const original = await sourceDelivery.read(intent.frame, intent.selector, generation, intent.field);
+			const asked =
+				original && original.occurrence === intent.original?.occurrence
+					? await readSource(
+							project,
+							intent.frame,
+							original,
+							generation,
+							sourceDelivery.observer,
+							intent.operation,
+							true,
+						)
+					: undefined;
+			if (asked?.ok) await cancelSource(project, asked.read.handle);
+			await sourceDelivery.cancel(intent.frame, generation);
+			const text =
+				asked?.ok && asked.read.source === intent.source && asked.read.cell === intent.cell
+					? `Current source says ${JSON.stringify(asked.read.value)}. The earlier save remains unacknowledged; no edit was replayed and its Undo cannot be recovered.`
+					: `The original target could not be checked. ${asked && !asked.ok ? asked.reason : "Locate it in current source."} The earlier save remains unacknowledged.`;
+			setSaid((current) =>
+				current?.kind === "source" && current.status === "unknown" && current.intent?.id === intent.id
+					? { ...current, says: text }
+					: current,
+			);
+		},
+		[project, sourceDelivery],
+	);
+
+	const retrySource = useCallback(
+		async (intent: SourceIntent) => {
+			if (
+				pendingSource.current.size ||
+				editingRef.current ||
+				intent.operation.kind !== "literal" ||
+				intent.change?.kind !== "literal" ||
+				!intent.original ||
+				intent.inverse
+			)
+				return;
+			const change = intent.change;
+			const generation = ++pickSeq.current;
+			setSaid({
+				kind: "source",
+				frame: intent.frame,
+				text: change.text,
+				status: "saving",
+				says: "Checking the original target…",
+				intent,
+			});
+			const operation = (async () => {
+				const original = await sourceDelivery.read(intent.frame, intent.selector, generation, intent.field);
+				if (!original || original.occurrence !== intent.original?.occurrence) {
+					await sourceDelivery.cancel(intent.frame, generation);
+					await showSourceResult(
+						intent.frame,
+						{
+							ok: false,
+							reason:
+								"The original target is no longer available. Locate it in current source before trying again.",
+						},
+						change.text,
+						false,
+						intent,
+					);
+					return;
+				}
+				const asked = await readSource(
+					project,
+					intent.frame,
+					original,
+					generation,
+					sourceDelivery.observer,
+					intent.operation,
+					true,
+				);
+				if (!asked?.ok) {
+					await sourceDelivery.cancel(intent.frame, generation);
+					await showSourceResult(
+						intent.frame,
+						{ ok: false, reason: asked?.reason ?? "The fresh source read did not arrive. Nothing was retried." },
+						change.text,
+						false,
+						intent,
+					);
+					return;
+				}
+				const read = await sourceDelivery.prepare(intent.frame, asked.read);
+				if (
+					read.role !== intent.role ||
+					read.scope !== intent.scope ||
+					read.source !== intent.source ||
+					read.cell !== intent.cell
+				) {
+					await cancelSource(project, read.handle);
+					await sourceDelivery.cancel(intent.frame, generation);
+					await showSourceResult(
+						intent.frame,
+						{
+							ok: false,
+							reason: "The original source owner changed. Confirm it in current source before retrying.",
+						},
+						change.text,
+						false,
+						intent,
+					);
+					return;
+				}
+				const result = await commitSource(project, read, change);
+				if (result?.ok && result.receipt)
+					recordEntry({ kind: "source", frame: intent.frame, receipt: result.receipt, intent });
+				if (!result?.ok || !result.publication) await sourceDelivery.cancel(intent.frame, generation);
+				await showSourceResult(intent.frame, result, change.text, false, intent);
+			})();
+			pendingSource.current.set(intent.frame, operation);
+			try {
+				await operation;
+			} finally {
+				pendingSource.current.delete(intent.frame);
+			}
+		},
+		[project, sourceDelivery, showSourceResult, recordEntry],
 	);
 
 	// A refusal is about the element it was refused on, so it goes when the
@@ -3188,6 +3523,7 @@ export function ProjectCanvas({
 					return;
 				}
 				case "loaded": {
+					void verifyReloadedIntent(message.frame);
 					lifecycleRef.current.noteLoaded(message.frame);
 					// the document a hand edit was waiting on: the one held in front
 					// of it has done its job and lets go (#253's no blink)
@@ -3459,6 +3795,7 @@ export function ProjectCanvas({
 		finishEdit,
 		askChain,
 		applyPick,
+		verifyReloadedIntent,
 		rollBackResize,
 		swapPicture,
 	]);
@@ -5127,10 +5464,10 @@ export function ProjectCanvas({
 
 				{notice !== null ? <Toast notice={notice} /> : null}
 
-				{(collisions.length > 0 || said !== null) && (
+				{(collisions.length > 0 || (said !== null && said.kind !== "source")) && (
 					<NoticeStrip>
 						{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
-						{said !== null && (
+						{said !== null && said.kind !== "source" && (
 							<HandNotice
 								said={said}
 								onDismiss={() => setSaid(null)}
@@ -5196,10 +5533,48 @@ export function ProjectCanvas({
 			    Properties by default, the agent one glyph below, one of them in the
 			    panel at a time. */}
 			<Dock
+				request={agentRequest?.retire ? undefined : agentRequest?.id}
 				agentWorking={turn.phase === "playing"}
 				onSettings={onSettings}
 				properties={(width, shut) => (
 					<PropertiesRail
+						recovery={
+							said?.kind === "source" ? (
+								<HandNotice
+									said={said}
+									onDismiss={() => {
+										setSaid((current) =>
+											current?.kind === "source" ? { ...current, dismissed: true } : current,
+										);
+										viewportRef.current?.focus({ preventScroll: true });
+									}}
+									onAsk={() => askAgent(said)}
+									onCheck={
+										said.intent?.operation.kind === "literal"
+											? () => {
+													if (said.intent) void checkUnknownSource(said.intent);
+												}
+											: undefined
+									}
+									onRetry={
+										said.intent?.operation.kind === "literal" &&
+										said.intent.original &&
+										intentText(said.intent) !== undefined &&
+										!said.intent.inverse
+											? () => {
+													if (said.intent) void retrySource(said.intent);
+												}
+											: undefined
+									}
+									onReload={(frame) => {
+										reloadedIntent.current = said.intent;
+										retainedPublications.current.delete(frame);
+										unappliedSource.current.delete(frame);
+										reloadFrameDocument(frame);
+									}}
+								/>
+							) : undefined
+						}
 						project={project}
 						held={railHeld}
 						revision={sourceRevision + (railFrame === null ? 0 : (docNonces[railFrame] ?? 0))}
@@ -5207,6 +5582,7 @@ export function ProjectCanvas({
 						onCollapse={shut}
 						preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
 						acts={{
+							onAsk: () => askAgent(),
 							ownership: {
 								active: sourceDelivery.active,
 								describe: sourceDelivery.describe,
@@ -5226,13 +5602,29 @@ export function ProjectCanvas({
 									void sourceDelivery.preview(frame, read.generation, text);
 								},
 								finish: finishRailText,
+								refused: (frame, selector, text, field) =>
+									setSaid((current) =>
+										current?.kind === "source" &&
+										current.intent?.frame === frame &&
+										current.intent.selector === selector &&
+										current.intent.field === field
+											? {
+													...current,
+													dismissed: false,
+													text,
+													intent: { ...current.intent, change: { kind: "literal", text } },
+												}
+											: current,
+									),
 							},
 							onSwap: swapPicture,
 						}}
 					/>
 				)}
-				agent={(width, shut) => (
+				agent={(width, shut, active) => (
 					<AgentRail
+						active={active}
+						request={agentRequest}
 						permissions={permissions}
 						width={width}
 						onCollapse={shut}
