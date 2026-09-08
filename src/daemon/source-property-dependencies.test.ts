@@ -110,3 +110,24 @@ it.each([
 		expect(propertyDependencies(certificate, roots, environment).has(property)).toBe(false);
 	},
 );
+
+it.each([
+	["ring-4 ring-offset-2 shadow-sm", "--tw-ring-shadow", "shadow-sm", "--tw-shadow"],
+	["ring-2 ring-offset-4 shadow-sm", "--tw-ring-offset-width", "shadow-sm", "--tw-shadow"],
+	["ring-2 ring-offset-2 shadow-md", "--tw-shadow", "ring-offset-2", "--tw-ring-offset-width"],
+])(
+	"captures independent shadow inputs without expanding source ownership: %s",
+	async (literal, root, owner, property) => {
+		const certificate = await fixture()(literal);
+		const roots = new Set([root]);
+		const originalConsumers = propertyConsumers(certificate, roots, environment);
+		const signature = externalPropertySignature(certificate, roots, [], environment);
+		expect(nativePropertyEffects(certificate, roots, environment)).toContainEqual(
+			expect.objectContaining({ owner, property }),
+		);
+		expect(propertyConsumers(certificate, roots, environment)).toEqual(originalConsumers);
+		expect(propertyDependencies(certificate, roots, environment).has(property)).toBe(false);
+		expect(externalPropertySignature(certificate, roots, [], environment)).toBe(signature);
+		expect([...roots]).toEqual([root]);
+	},
+);

@@ -148,7 +148,11 @@ export function nativePropertyEffects(
 	const effects = new Set(propertyConsumers(certificate, roots, environment));
 	const inputs = new Set<string>();
 	for (const effect of effects)
-		if (["transform", "translate", "rotate", "scale", "filter", "backdrop-filter"].includes(effect.property))
+		if (
+			["transform", "translate", "rotate", "scale", "filter", "backdrop-filter", "box-shadow"].includes(
+				effect.property,
+			)
+		)
 			for (const name of propertyInputs(effect)) if (name.startsWith("--tw-")) inputs.add(name);
 	let growing = true;
 	while (growing) {
