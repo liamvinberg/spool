@@ -65,6 +65,13 @@ async function served(source = APP, configure?: (root: string) => void, devtools
 	await expect.poll(() => frame.locator("#label").count(), { timeout: 30_000 }).toBe(1);
 	const file = join(project.root, "design/frames/home/frame.tsx");
 	const select = async () => {
+		// A native edit closes before React releases the iframe's pointer.
+		// Canvas selection must start after that observable ownership transition.
+		await expect
+			.poll(() =>
+				page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents),
+			)
+			.toBe("none");
 		await expect.poll(() => page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 		const box = await frame.locator("#label").boundingBox();
 		if (!box) throw new Error("label has no native box");
