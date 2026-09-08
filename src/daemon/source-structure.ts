@@ -1,6 +1,6 @@
 import type { JSXElement, Node } from "@babel/types";
 import { walkNodes } from "./jsx-walk";
-import { type Selection, type Sources, StructuralShapeRefusal, sourceRead } from "./source-origins";
+import { literal, type Selection, type Sources, StructuralShapeRefusal, sourceRead } from "./source-origins";
 
 function range(node: Node) {
 	if (node.start == null || node.end == null) throw new Error("missing authored range");
@@ -228,10 +228,10 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 			b?.type === "ConditionalExpression" && b.consequent.type === "Identifier" && b.alternate.type === "Identifier";
 		const fallback = nullFallback(fn, attr.name.name);
 		if (fallback?.loc && fallback.children.every((child) => child.type === "JSXText")) {
-			fallbackEffect = {
-				source: `${definition.unit.path}:${fallback.loc.start.line}:${fallback.loc.start.column + 1}`,
-				value: fallback.children.map((child) => (child.type === "JSXText" ? child.value : "")).join(""),
-			};
+			const source = `${definition.unit.path}:${fallback.loc.start.line}:${fallback.loc.start.column + 1}`;
+			const value = literal(sources.site(source));
+			if (value === undefined) throw new Error("the authored fallback has no literal text expectation");
+			fallbackEffect = { source, value };
 		}
 		role = "call-site";
 		if (!direct && !conditional && !fallback) throw new Error("named slot placement lacks a bounded operation proof");

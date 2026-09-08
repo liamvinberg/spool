@@ -132,6 +132,15 @@ const carriers = [
 		fallback: true,
 	},
 	{
+		name: "a multiline literal fallback with neighboring output",
+		definition:
+			"function Pass({header}){return <section>{header ?? <i>\n  Fallback\n</i>}<aside>Kept</aside></section>}",
+		a: '<Pass key="a" header={<Counter name="A"/>}/>',
+		b: '<Pass key="b" header={<Counter name="B"/>}/>',
+		removed: '<Pass key="a" header={null}/>',
+		fallback: true,
+	},
+	{
 		name: "a conditional slot arm",
 		definition: "const shown=true;function Pass({header}){return <section>{header}</section>}",
 		a: '<Pass key="a" header={shown?<Counter name="A"/>:null}/>',
