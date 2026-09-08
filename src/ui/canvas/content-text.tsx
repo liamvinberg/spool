@@ -65,7 +65,7 @@ export function LiteralField({
 		}
 		held.done = true;
 		void held.reading.then((read) => {
-			if (read) actions.finish(frame, read, held.text, commit);
+			if (read) actions.finish(frame, read, held.text, commit && (held.dirty || !read.original.absent));
 			if (!commit) setText(read?.value ?? initial);
 		});
 	};

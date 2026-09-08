@@ -10,13 +10,13 @@ export function resolveTextSource(
 	compilation: RetainedCompilation,
 	original: SourceOccurrence,
 	generation: number,
-	allowRenderedMismatch = false,
+	inverseCell?: string,
 ) {
 	if (
 		original.field &&
 		(!/^[A-Za-z][A-Za-z0-9:-]*$/.test(original.field) ||
 			/^(?:on[A-Z]|data-spool-)/.test(original.field) ||
-			["key", "ref", "children", "className", "style", "src", "data-go"].includes(original.field))
+			["key", "ref", "children", "className", "style", "data-go"].includes(original.field))
 	)
 		throw new Error("this field requires its dedicated source operation");
 	let cellKey = original.cell;
@@ -26,10 +26,21 @@ export function resolveTextSource(
 		for (const input of compilation.inputs.keys())
 			if (/\.[cm]?[jt]sx?$/.test(input)) sources.read(relative(realDesignDir(root), input));
 		const selection = JSON.parse(original.provenance) as Selection;
+		if (original.field === "src") {
+			const leaf = sources.creation(selection.source).node;
+			const tag = leaf.type === "JSXElement" ? leaf.openingElement.name : leaf.arguments[0];
+			if (
+				(tag?.type === "JSXIdentifier" && tag.name === "img") ||
+				(tag?.type === "StringLiteral" && tag.value === "img")
+			)
+				throw new Error("this image requires its dedicated source operation");
+		}
+		const previous = inverseCell ? compilation.cells[inverseCell] : undefined;
 		target = sourceRead(
 			sources,
 			{ ...selection, generation: String(generation) },
 			original.field ? { kind: "attribute", attribute: original.field } : { kind: "text" },
+			previous ? { source: previous.source, field: previous.field ?? "children" } : undefined,
 		);
 		for (const unit of sources.revisions.values())
 			if (!compilation.inputs.has(unit.file))
@@ -42,7 +53,31 @@ export function resolveTextSource(
 		cellKey = found[0];
 	}
 	const cell = compilation.cells[cellKey];
-	if (!cell || (!allowRenderedMismatch && cell.value !== original.value))
+	if (!cell || (cell.value !== original.value && inverseCell !== cellKey))
 		throw new Error("the selected words have no proven literal source");
 	return { cellKey, cell, target };
+}
+
+/** A recorded field edge can disclose uncertainty without admitting its transport. */
+export function potentialTextSource(
+	compilation: RetainedCompilation,
+	original: SourceOccurrence,
+	cellKey: string,
+): boolean {
+	const cell = compilation.cells[cellKey];
+	if (!cell) return false;
+	if (original.cell === cellKey) return true;
+	if (!original.provenance) return false;
+	try {
+		const selection = JSON.parse(original.provenance) as Selection;
+		return [selection.values, ...selection.chain.flatMap((call) => [call.values, call.renderedValues])].some(
+			(value) =>
+				value &&
+				Object.values(value.fields).some(
+					(field) => field.origin.source === cell.source && field.origin.field === (cell.field ?? "children"),
+				),
+		);
+	} catch {
+		return false;
+	}
 }

@@ -9,7 +9,7 @@ import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import type { SourceUse } from "../../source-edit";
-import { type SourceRead, type SourceResult, sameSourceOccurrence } from "../../source-edit";
+import { type SourceRead, type SourceResult, sameSourceOccurrence, type UseOutcome } from "../../source-edit";
 import type {
 	Camera,
 	FlowEdge,
@@ -1772,8 +1772,42 @@ export function ProjectCanvas({
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
+	const observingSource = useRef<{ publication: string; frame: string; text: string } | undefined>(undefined);
+	const presentSourceOutcome = useCallback((frame: string, outcome: UseOutcome | undefined, text: string) => {
+		for (const name of new Set(outcome?.uses?.map((use) => use.frame).filter((name): name is string => !!name) ?? []))
+			if (outcome?.uses?.filter((use) => use.frame === name).every((use) => use.rendered === "verified"))
+				unappliedSource.current.delete(name);
+		if (outcome?.rendered === "verified") {
+			unappliedSource.current.delete(frame);
+			setSaid(null);
+			return;
+		}
+		setSaid({
+			kind: "source",
+			frame,
+			status: outcome?.rendered ?? "unverified",
+			text,
+			says:
+				outcome?.reason ??
+				(outcome?.rendered === "mismatching"
+					? "Saved, but the running app kept different words."
+					: outcome?.rendered === "pending"
+						? "Saved. The app is still loading."
+						: "Saved. The running result could not be verified."),
+		});
+	}, []);
+	useEffect(
+		() =>
+			sourceDelivery.observeOutcomes((publication, outcome) => {
+				const held = observingSource.current;
+				if (held?.publication === publication) presentSourceOutcome(held.frame, outcome, held.text);
+			}),
+		[sourceDelivery, presentSourceOutcome],
+	);
+
 	const showSourceResult = useCallback(
 		async (frame: string, result: SourceResult | undefined, text = "", undo = false) => {
+			observingSource.current = undefined;
 			if (!result) {
 				unappliedSource.current.add(frame);
 				setSaid({
@@ -1802,6 +1836,7 @@ export function ProjectCanvas({
 				return;
 			}
 
+			observingSource.current = { publication: result.publication.packet.id, frame, text };
 			for (const publication of [result.publication, ...(result.publication.related ?? [])]) {
 				retainedPublications.current.set(publication.frame, publication.packet.id);
 				unappliedSource.current.add(publication.frame);
@@ -1813,31 +1848,10 @@ export function ProjectCanvas({
 			await sourceDelivered(project, result.publication.packet.id);
 			setSourceRevision((value) => value + 1);
 
-			for (const name of new Set(
-				outcome?.uses?.map((use) => use.frame).filter((name): name is string => !!name) ?? [],
-			))
-				if (outcome?.uses?.filter((use) => use.frame === name).every((use) => use.rendered === "verified"))
-					unappliedSource.current.delete(name);
-			if (outcome?.rendered === "verified") {
-				unappliedSource.current.delete(frame);
-				setSaid(null);
-				return;
-			}
-			setSaid({
-				kind: "source",
-				frame,
-				status: outcome?.rendered ?? "unverified",
-				text,
-				says:
-					outcome?.reason ??
-					(outcome?.rendered === "mismatching"
-						? "Saved, but the running app kept different words."
-						: outcome?.rendered === "pending"
-							? "Saved. The app is still loading."
-							: "Saved. The running result could not be verified."),
-			});
+			if (observingSource.current?.publication === result.publication.packet.id)
+				presentSourceOutcome(frame, sourceDelivery.currentOutcome(result.publication.packet.id) ?? outcome, text);
 		},
-		[sourceDelivery, project],
+		[sourceDelivery, project, presentSourceOutcome],
 	);
 
 	/**
@@ -2703,7 +2717,7 @@ export function ProjectCanvas({
 	);
 	const finishRailText = useCallback(
 		(frame: string, read: SourceRead, text: string, commit: boolean) => {
-			if (!commit || text === read.value) {
+			if (!commit || (text === read.value && !(read.field && read.original.absent))) {
 				void cancelSource(project, read.handle);
 				void sourceDelivery.cancel(frame, read.generation);
 				return;

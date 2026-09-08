@@ -37,6 +37,7 @@ export interface SourceInventory {
 	unknown: number;
 }
 export interface SourceReach {
+	unverified?: UseOutcome[];
 	uses: SourceUse[];
 	unmounted: string[];
 	unknown: string[];

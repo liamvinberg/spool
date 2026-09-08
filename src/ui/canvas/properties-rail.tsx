@@ -1072,10 +1072,7 @@ function Attributes({
 		if (describe)
 			void Promise.all(
 				candidates
-					.filter(
-						(field) =>
-							!field.asset && !["src", "className", "style", "data-go", "key", "ref"].includes(field.name),
-					)
+					.filter((field) => !field.asset && !["className", "style", "data-go", "key", "ref"].includes(field.name))
 					.map(async (field) => [field.name, await describe(frame, selector, field.name)] as const),
 			).then((entries) => {
 				if (live) setDescriptions(Object.fromEntries(entries));

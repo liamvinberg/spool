@@ -630,3 +630,36 @@ it.each(["primary", "secondary"])(
 		expect(await changed.locator("#label").textContent()).toBe("Outside");
 	},
 );
+
+it.each([
+	{ name: "authored template", content: "{`Before`}" },
+	{ name: "nested parent", content: '<span style={{pointerEvents:"none"}}>Before</span>' },
+	{ name: "String call", content: '{String("Before")}' },
+	{ name: "conditional text", content: '{true ? "Before" : "Other"}' },
+])("keeps native $name outside literal source writes", { timeout: 120000 }, async ({ content }) => {
+	const source = `export default function Frame(){return <main style={{padding:40}}><h1 id="label" style={{margin:0,fontSize:30}}>${content}</h1></main>}`;
+	const f = await served(source);
+	const box = await f.select();
+	let commits = 0;
+	f.page.on("request", (request) => {
+		if (
+			request.url().endsWith("/source") &&
+			request.method() === "POST" &&
+			request.postDataJSON()?.action === "commit"
+		)
+			commits++;
+	});
+	await f.page.mouse.click(box.x + 40, box.y + box.height / 2);
+	expect(await f.frame.locator("#label").getAttribute("contenteditable")).toBeNull();
+	const control = f.page.getByRole("textbox", { name: "Text", exact: true });
+	await control.fill("Must remain refused");
+	await control.press("Enter");
+	await expect
+		.poll(() =>
+			f.page.getByText(/no editable local literal source|not a direct immutable parameter|not inverted/).count(),
+		)
+		.toBeGreaterThan(0);
+	expect(readFileSync(f.file, "utf8")).toBe(source);
+	expect(await f.frame.locator("#label").textContent()).toBe("Before");
+	expect(commits).toBe(0);
+});

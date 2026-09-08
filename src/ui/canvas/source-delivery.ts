@@ -12,9 +12,31 @@ import {
 import { describeSource, respondSourceObservation, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 
+interface OutcomeGroup {
+	publication: SourcePublication;
+	ready: boolean;
+	frames: Map<
+		string,
+		{ packet: SourcePublication; window: Window | null | undefined; result?: UseOutcome; revision: number }
+	>;
+}
+function groupOutcome(group: OutcomeGroup): UseOutcome {
+	return combineUseOutcomes(
+		[...group.frames]
+			.flatMap<UseOutcome>(([frame, entry]) => {
+				const result = entry.result;
+				return result ? (result.uses?.length ? result.uses : [result]).map((use) => ({ ...use, frame })) : [];
+			})
+			.concat(group.publication.failures ?? []),
+		group.publication.original.occurrence,
+	);
+}
+
 /** Calls belong to the original iframe WindowProxy, never just a frame name. */
 export function useSourceDelivery(project: string, iframes: RefObject<Map<string, HTMLIFrameElement>>) {
 	const observer = useRef(crypto.randomUUID());
+	const outcomes = useRef<OutcomeGroup | undefined>(undefined);
+	const outcomeListeners = useRef(new Set<(publication: string, outcome: UseOutcome) => void>());
 	const [liveFrames, setLiveFrames] = useState<ReadonlySet<string>>(new Set());
 	const descriptionVersion = useRef(0);
 	const inverseHolds = useRef(new Map<string, string[]>());
@@ -26,6 +48,39 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		const waiting = pending.current;
 		const listener = (event: MessageEvent) => {
 			const data: unknown = event.data;
+			if (
+				typeof data === "object" &&
+				data !== null &&
+				"spool" in data &&
+				data.spool === "source-outcome" &&
+				"frame" in data &&
+				typeof data.frame === "string" &&
+				"publication" in data &&
+				"owner" in data &&
+				"generation" in data &&
+				"result" in data
+			) {
+				const group = outcomes.current;
+				const entry = group?.frames.get(data.frame);
+				if (
+					!group ||
+					!entry ||
+					event.source !== entry.window ||
+					iframes.current.get(data.frame)?.contentWindow !== entry.window ||
+					data.publication !== entry.packet.packet.id ||
+					data.owner !== entry.packet.owner ||
+					data.generation !== entry.packet.generation
+				)
+					return;
+				const result = data.result as UseOutcome | undefined;
+				if (!result || typeof result.rendered !== "string" || typeof result.installation !== "string") return;
+				entry.result = result;
+				entry.revision++;
+				if (group.ready)
+					for (const listener of outcomeListeners.current)
+						listener(group.publication.packet.id, groupOutcome(group));
+				return;
+			}
 			if (
 				typeof data === "object" &&
 				data !== null &&
@@ -221,39 +276,58 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[request],
 		),
 		read: useCallback(
-			(frame: string, selector: string, generation: number, field?: string) =>
-				request<SourceOccurrence>(frame, { action: "read", selector, generation, field }),
+			(frame: string, selector: string, generation: number, field?: string) => {
+				outcomes.current = undefined;
+				return request<SourceOccurrence>(frame, { action: "read", selector, generation, field });
+			},
 			[request],
 		),
+		observeOutcomes: useCallback((listener: (publication: string, outcome: UseOutcome) => void) => {
+			outcomeListeners.current.add(listener);
+			return () => {
+				outcomeListeners.current.delete(listener);
+			};
+		}, []),
+		currentOutcome: useCallback((publication: string) => {
+			const group = outcomes.current;
+			return group?.publication.packet.id === publication && group.ready ? groupOutcome(group) : undefined;
+		}, []),
 		install: useCallback(
 			async (publication: SourcePublication, undo = false) => {
-				const results = await Promise.all(
-					[publication, ...(publication.related ?? [])].map(async (packet) => {
-						const result = await request<UseOutcome>(packet.frame, {
-							action: "install",
-							publication: packet,
-							undo,
-						});
-						if (!result) await request<boolean>(packet.frame, { action: "revoke", publication: packet });
-						const uses =
-							result?.uses ??
-							(result
-								? [result]
-								: (packet.targets ?? [packet.original]).map((original) => ({
+				const group: OutcomeGroup = {
+					publication,
+					ready: false,
+					frames: new Map(
+						[publication, ...(publication.related ?? [])].map((packet) => [
+							packet.frame,
+							{ packet, window: iframes.current.get(packet.frame)?.contentWindow, revision: 0 },
+						]),
+					),
+				};
+				outcomes.current = group;
+				await Promise.all(
+					[...group.frames].map(async ([frame, entry]) => {
+						const { packet } = entry;
+						const result = await request<UseOutcome>(frame, { action: "install", publication: packet, undo });
+						if (!result) await request<boolean>(frame, { action: "revoke", publication: packet });
+						if (entry.revision === 0)
+							entry.result =
+								result ??
+								combineUseOutcomes(
+									(packet.targets ?? [packet.original]).map((original) => ({
 										occurrence: original.occurrence,
-										installation: "refused" as const,
-										rendered: "unverified" as const,
-									})));
-						return uses.map((use) => ({ ...use, frame: packet.frame }));
+										installation: "refused",
+										rendered: "unverified",
+									})),
+									packet.original.occurrence,
+								);
 					}),
 				);
 				prepared.current.delete(publication.generation);
-				return combineUseOutcomes(
-					[...results.flat(), ...(publication.failures ?? [])],
-					publication.original.occurrence,
-				);
+				group.ready = true;
+				return groupOutcome(group);
 			},
-			[request],
+			[iframes, request],
 		),
 		preview: useCallback(
 			async (frame: string, generation: number, text: string) => {
