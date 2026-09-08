@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
+import type { SourceOccurrence, SourceRead } from "../../source-edit";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
@@ -376,10 +377,7 @@ it("removes a token from the source line, which is the only way back out for a `
 	]);
 });
 
-/*
- * The string fields (#260). Same mechanics and same gate as the text edit out
- * on the canvas: one typed op, spliced into the characters between the quotes.
- */
+// Literal attributes retain the original field read through the shared source lane.
 
 it("draws a field for every string the element carries and writes one back", async () => {
 	const { host, canvas, frame } = await readyCanvas();
@@ -388,10 +386,24 @@ it("draws a field for every string the element carries and writes one back", asy
 	await until(() => attributeRow(host, "title") !== null);
 
 	expect(fieldFor(host, "title")?.value).toBe("pay now");
+	await act(async () => fieldFor(host, "title")?.focus());
 	await typeInto(fieldFor(host, "title"), "pay later");
-	expect(await gatedOps()).toEqual([
-		{ kind: "set-attribute", source: "frames/home/frame.tsx:12:3", name: "title", value: "pay later" },
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("read").at(-1)).toMatchObject({ frame: "home", original: ATTRIBUTE_ORIGINAL });
+	expect(sourceCalls("commit")).toEqual([
+		{
+			action: "commit",
+			handle: "attribute-read",
+			generation: sourceCalls("read")[0]?.generation,
+			original: ATTRIBUTE_ORIGINAL,
+			source: "frames/home/frame.tsx:12:3",
+			text: "pay later",
+		},
 	]);
+	expect(await gates()).toBe(0);
+	await press("z", ACCEL);
+	await until(() => sourceCalls("inverse").length === 1);
+	expect(sourceCalls("inverse")[0]).toMatchObject({ receipt: { owner: "owner", handle: "attribute-receipt" } });
 });
 
 it("shows a walk target and refuses to write it, because the arrow lives in flows", async () => {
@@ -604,6 +616,14 @@ async function gatedOps(): Promise<unknown> {
 	return last === undefined ? undefined : (JSON.parse(String(last[1]?.body)) as { ops: unknown }).ops;
 }
 
+function sourceCalls(action: string): Record<string, unknown>[] {
+	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
+	return calls
+		.filter(([input]) => String(input).endsWith("/source"))
+		.map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>)
+		.filter((body) => body.action === action);
+}
+
 interface FramePlayer {
 	answer: (chain: readonly PickedHit[]) => Promise<void>;
 	/** what the canvas last asked this frame for */
@@ -653,11 +673,35 @@ async function readyCanvas({ refused = false }: { refused?: boolean } = {}): Pro
 
 	const spies = new Map<Window, { mock: { calls: unknown[][] } }>();
 	const live = (): Window | null => {
-		const contentWindow = host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.contentWindow ?? null;
-		if (contentWindow !== null && !spies.has(contentWindow)) {
-			spies.set(contentWindow, vi.spyOn(contentWindow, "postMessage"));
+		for (const iframe of host.querySelectorAll("iframe")) {
+			const contentWindow = iframe.contentWindow;
+			if (contentWindow === null || spies.has(contentWindow)) continue;
+			spies.set(
+				contentWindow,
+				vi.spyOn(contentWindow, "postMessage").mockImplementation((message) => {
+					if (message?.spool !== "source-request") return;
+					const result =
+						message.action === "read" || message.action === "inspect" || message.action === "complete"
+							? ATTRIBUTE_ORIGINAL
+							: message.action === "inventory"
+								? {
+										publication: ATTRIBUTE_ORIGINAL.publication,
+										uses: iframe.title === "home" ? [{ original: ATTRIBUTE_ORIGINAL, visible: true }] : [],
+										unknown: 0,
+									}
+								: true;
+					queueMicrotask(() =>
+						window.dispatchEvent(
+							new MessageEvent("message", {
+								source: contentWindow,
+								data: { spool: "source-reply", id: message.id, result },
+							}),
+						),
+					);
+				}),
+			);
 		}
-		return contentWindow;
+		return host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.contentWindow ?? null;
 	};
 	await act(async () => {
 		window.dispatchEvent(new MessageEvent("message", { data: { spool: "loaded", frame: "home" }, source: live() }));
@@ -805,7 +849,18 @@ let payLiteral = "";
 /** the attributes the file writes on the held rung (#260) */
 let payAttributes: { name: string; value?: string; expression?: string; asset?: string }[] = [];
 
+const ATTRIBUTE_ORIGINAL: SourceOccurrence = {
+	publication: "publication",
+	cell: "title-literal",
+	occurrence: "pay-occurrence",
+	invocation: "pay-invocation",
+	context: "context",
+	field: "title",
+	value: "pay now",
+};
+
 function stubCanvasApis(refused = false): void {
+	let sourceRead: SourceRead | undefined;
 	events = null;
 	filed = RUNGS;
 	payLiteral = RUNGS[2]?.className ?? "";
@@ -822,7 +877,7 @@ function stubCanvasApis(refused = false): void {
 	});
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(async (input: RequestInfo | URL) => {
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const raw = input instanceof Request ? input.url : String(input);
 			const url = new URL(raw, window.location.href);
 			if (url.pathname.endsWith("/events")) {
@@ -841,6 +896,32 @@ function stubCanvasApis(refused = false): void {
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
+			}
+			if (url.pathname.endsWith("/source")) {
+				const body = JSON.parse(String(init?.body)) as { action: string; generation: number };
+				if (body.action === "read") {
+					sourceRead = {
+						handle: "attribute-read",
+						owner: "owner",
+						generation: body.generation,
+						original: ATTRIBUTE_ORIGINAL,
+						source: "frames/home/frame.tsx:12:3",
+						role: "literal-attribute",
+						field: "title",
+						value: "pay now",
+					};
+					return Response.json({ ok: true, read: sourceRead });
+				}
+				if (body.action === "reach")
+					return Response.json(sourceRead ? { ok: true, read: sourceRead } : { ok: false, reason: "no read" });
+				if (body.action === "commit" || body.action === "inverse")
+					return Response.json({
+						ok: true,
+						source: "saved",
+						publication: null,
+						receipt: { owner: "owner", handle: "attribute-receipt" },
+					});
+				return Response.json({ ok: true });
 			}
 			if (url.pathname.endsWith("/theme")) {
 				return Response.json({ theme: THEME });
