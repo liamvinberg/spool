@@ -1222,9 +1222,10 @@ function GradientRows({ view }: { view: View }) {
 										if (next) write(next);
 										else control?.finish(false);
 									}}
-									stepDraft={(typed, units) =>
-										String(((((gradientAngle(typed) ?? 90) + units) % 360) + 360) % 360)
-									}
+									stepDraft={(typed, units) => {
+										const from = typed.trim() ? gradientAngle(typed.trim().replace(/deg$/, "")) : 90;
+										return from === undefined ? undefined : String(from + units);
+									}}
 								/>
 							</span>
 						</Row>

@@ -766,16 +766,16 @@ it.each(["direction", "from"])("keeps fractional gradient %s arrows as a cancell
 	const fields = rowOf(rail, row)?.querySelectorAll<HTMLInputElement>("input");
 	const field = fields?.[fields.length - 1];
 	if (!field) throw new Error("missing gradient number");
-	await put(field, row === "direction" ? "45.5" : "12.5");
+	await put(field, row === "direction" ? "45.1" : "12.5");
 	await act(() =>
 		field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })),
 	);
-	expect(field.value).toBe(row === "direction" ? "46.5" : "13.5");
+	expect(field.value).toBe(row === "direction" ? "46.1" : "13.5");
 	expect(rail.requests).toEqual([]);
 	expect(rail.previews).toHaveLength(2);
 	expect(rail.previews[1]?.value).toMatchObject({
 		kind: "binding",
-		tokens: expect.arrayContaining([row === "direction" ? "bg-linear-[46.5deg]" : "from-[13.5%]"]),
+		tokens: expect.arrayContaining([row === "direction" ? "bg-linear-[46.1deg]" : "from-[13.5%]"]),
 	});
 	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
 	expect(rail.completions).toEqual([false]);
