@@ -263,21 +263,23 @@ export function observeSource<T>(cell: string, element: T): T {
 function committedFiber(element: Element): Fiber | undefined {
 	return committedHosts.get(element)?.fiber;
 }
-function sourceContext(element: Element): string {
+function sourceContext(element: Element, field?: string): string {
 	const path: string[] = [];
 	let at: Element | null = element;
 	while (at) {
 		path.push(`${at.tagName}:${at.getAttribute("class") ?? ""}:${at.getAttribute("style") ?? ""}`);
 		at = at.parentElement;
 	}
-	return JSON.stringify(path);
+	if (field !== "className") return JSON.stringify(path);
+	const native = getComputedStyle(element);
+	return JSON.stringify({ path, native: { direction: native.direction, writingMode: native.writingMode } });
 }
 function inspectSource(
 	element: HTMLElement,
 	field?: string,
 	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 ): SourceOccurrence | undefined {
-	if (operation.kind !== "literal") return;
+	if (operation.kind !== "literal" && !(operation.kind === "property" && field === "className")) return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
 	let origin = field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
@@ -320,7 +322,7 @@ function inspectSource(
 		publication: sourcePacket?.id ?? origin.publication,
 		occurrence: id,
 		...(field === undefined ? {} : { field, absent: value === undefined }),
-		context: sourceContext(element),
+		context: sourceContext(element, field),
 		...(provenance === undefined ? {} : { provenance }),
 	};
 }

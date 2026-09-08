@@ -37,6 +37,8 @@ import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
+import { compilePropertySource } from "./source-property-compile";
+import { resolvePropertySource } from "./source-property-target";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
@@ -243,10 +245,15 @@ export function createSourceOwner(
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
-			if (operation.kind !== "literal") throw new Error("this source operation has no admitted planner");
-			if (operation.field !== original.field)
+			if (operation.kind === "delete") throw new Error("this source operation has no admitted planner");
+			if (operation.kind === "literal" && operation.field !== original.field)
 				throw new Error("the source purpose does not match the original field");
-			const { cellKey, cell, target } = resolveTextSource(root, compilation, original, generation);
+			const { cellKey, cell, target } =
+				operation.kind === "property"
+					? resolvePropertySource(root, compilation, original, generation, operation)
+					: resolveTextSource(root, compilation, original, generation);
+			if (operation.kind === "property")
+				await compilePropertySource(root, compilation.inputs, cell.value, compilation.packet.bundledCss);
 			const found = lookupFrame(root, frame);
 			if (found.kind !== "found") throw new Error("the original frame is no longer there");
 			const file = sourceTarget(root, cell.file, compilation.inputs).file;
@@ -299,8 +306,18 @@ export function createSourceOwner(
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the source owner is no longer available");
 			valid(root, publication.compilation);
-			if (operation.kind !== "literal") throw new Error("this source purpose has no admitted description planner");
-			const { cellKey, cell, target } = resolveTextSource(root, publication.compilation, original, 0);
+			if (operation.kind === "delete") throw new Error("this source purpose has no admitted description planner");
+			const { cellKey, cell, target } =
+				operation.kind === "property"
+					? resolvePropertySource(root, publication.compilation, original, 0, operation)
+					: resolveTextSource(root, publication.compilation, original, 0);
+			if (operation.kind === "property")
+				await compilePropertySource(
+					root,
+					publication.compilation.inputs,
+					cell.value,
+					publication.compilation.packet.bundledCss,
+				);
 			const read: SourceRead = {
 				operation,
 				handle: "",
@@ -343,6 +360,7 @@ export function createSourceOwner(
 		generation: number,
 		inventories: SourceInventory[],
 		mode: "read" | "inverse",
+		operation: SourceOperation,
 	) {
 		const uses: SourceUse[] = [];
 		const unverified: UseOutcome[] = [];
@@ -385,13 +403,23 @@ export function createSourceOwner(
 				try {
 					// Only a receipt-owned inverse may resolve a retained old rendered value
 					// against this exact cell. Ordinary reads retain literal equality checks.
-					const target = resolveTextSource(
-						root,
-						publication.compilation,
-						use.original,
-						generation,
-						mode === "inverse" ? cell : undefined,
-					);
+					const target =
+						operation.kind === "property"
+							? resolvePropertySource(
+									root,
+									publication.compilation,
+									use.original,
+									generation,
+									operation,
+									mode === "inverse" ? cell : undefined,
+								)
+							: resolveTextSource(
+									root,
+									publication.compilation,
+									use.original,
+									generation,
+									mode === "inverse" ? cell : undefined,
+								);
 					if (
 						target.cellKey === cell &&
 						!uses.some(
@@ -422,7 +450,14 @@ export function createSourceOwner(
 		try {
 			valid(root, held.compilation);
 			const cell = held.read.cell ?? held.read.original.cell;
-			const { uses, unverified, unknown } = observedUses(root, cell, held.read.generation, inventories, "read");
+			const { uses, unverified, unknown } = observedUses(
+				root,
+				cell,
+				held.read.generation,
+				inventories,
+				"read",
+				held.read.operation,
+			);
 			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const dependent = await dependencyFrames(root, held.file);
 			if (!dependent) unknown.add("source coverage");
@@ -779,6 +814,7 @@ export function createSourceOwner(
 						held.generation,
 						inventories,
 						"inverse",
+						held.purpose,
 					);
 					const dependent = await dependencyFrames(root, held.file);
 					reach = {
