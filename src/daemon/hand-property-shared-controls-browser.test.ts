@@ -1,0 +1,372 @@
+import { readFileSync, rmSync } from "node:fs";
+import type { FrameLocator, Page } from "playwright-core";
+import { expect, it } from "vitest";
+import type { SourceResult, UseOutcome } from "../source-edit";
+import { writeDesignFile } from "../test-helpers";
+import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
+
+const owner = "shared/card.tsx";
+const cards = `import {useState,useEffect} from 'react';export function Card({label}){const [count,setCount]=useState(()=>{window.initializers=(window.initializers||0)+1;return 0});useEffect(()=>()=>{window.unmounts=(window.unmounts||0)+1},[]);return <section data-subject={label} className="p-6 opacity-75"><button onClick={()=>setCount(count=>count+1)}>{label}:{count}</button><input defaultValue="initial"/></section>}`;
+const frameSource =
+	'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24}}><Card key="a" label="A"/><Card key="b" label="B"/></main>}';
+type Canvas = Awaited<ReturnType<typeof originCanvas>>;
+
+function reply(f: Canvas, action: string) {
+	return f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === action,
+	);
+}
+function control(f: Canvas) {
+	return f.page.locator('[data-properties-row="opacity"] input').first();
+}
+async function native(frame: FrameLocator | Page, opacity: string) {
+	await expect
+		.poll(() =>
+			frame
+				.locator("[data-subject]")
+				.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).opacity)),
+		)
+		.toEqual([opacity, opacity]);
+}
+async function remember(frame: FrameLocator | Page) {
+	await frame.locator("[data-subject]").first().waitFor();
+	await frame.locator("body").evaluate(() => {
+		const nodes = [...document.querySelectorAll<HTMLElement>("[data-subject]")].map((element, index) => {
+			const input = element.querySelector("input"),
+				button = element.querySelector("button");
+			if (!input || !button) throw new Error("missing authored native controls");
+			for (let n = 0; n <= index; n++) button.click();
+			input.value = `dirty ${index}`;
+			input.setSelectionRange(2, 4);
+			return { element, input, button };
+		});
+		Reflect.set(window, "sharedControlNodes", nodes);
+	});
+	await expect.poll(() => frame.locator("[data-subject] button").allTextContents()).toEqual(["A:1", "B:2"]);
+}
+async function retained(frame: FrameLocator | Page) {
+	const result = await frame.locator("body").evaluate(() => {
+		const nodes = Reflect.get(window, "sharedControlNodes") as {
+			element: HTMLElement;
+			input: HTMLInputElement;
+			button: HTMLButtonElement;
+		}[];
+		return {
+			initializers: Reflect.get(window, "initializers"),
+			unmounts: Reflect.get(window, "unmounts") ?? 0,
+			uses: nodes.map(({ element, input, button }, index) => ({
+				identity:
+					document.querySelectorAll("[data-subject]")[index] === element &&
+					element.querySelector("input") === input &&
+					element.querySelector("button") === button,
+				value: input.value,
+				caret: [input.selectionStart, input.selectionEnd],
+				text: button.textContent,
+			})),
+		};
+	});
+	expect(result).toEqual({
+		initializers: 2,
+		unmounts: 0,
+		uses: [
+			{ identity: true, value: "dirty 0", caret: [2, 4], text: "A:1" },
+			{ identity: true, value: "dirty 1", caret: [2, 4], text: "B:2" },
+		],
+	});
+}
+async function complete(f: Canvas, expected: string) {
+	const committed = reply(f, "commit"),
+		delivered = reply(f, "delivered");
+	void delivered.catch(() => {});
+	await control(f).press("Enter");
+	const result = (await (await committed).json()) as SourceResult;
+	expect(result.ok, JSON.stringify(result)).toBe(true);
+	await delivered;
+	await expect.poll(() => f.bytes()[owner]).toBe(expected);
+	await f.settled();
+	return result;
+}
+async function outcomes(f: Canvas) {
+	return f.page.evaluate(() => Reflect.get(window, "originOutcomes")) as Promise<UseOutcome[]>;
+}
+
+it("edits all four shared property uses through source history without resetting native state", {
+	timeout: 120_000,
+}, async () => {
+	const f = await originCanvas({ [owner]: cards }, frameSource, '[data-subject="A"]', true);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	for (const frame of [f.frame, second]) await remember(frame);
+	await f.select();
+	const reading = reply(f, "read");
+	await control(f).fill("50");
+	const original = await (await reading).json();
+	expect(original, JSON.stringify(original)).toMatchObject({
+		ok: true,
+		read: { operation: { kind: "property", property: "opacity", scope: "" }, scope: "definition" },
+	});
+	expect(original.read.source).toMatch(/^shared\/card.tsx:/);
+	for (const frame of [f.frame, second]) await native(frame, "0.5");
+	expect(f.bytes()[owner]).toBe(cards);
+	expect(f.writes).toEqual([]);
+	const saved = cards.replace("opacity-75", "opacity-50");
+	await complete(f, saved);
+	for (const redo of [undefined, false, true]) {
+		if (redo !== undefined) {
+			const delivered = reply(f, "delivered");
+			await f.history(redo);
+			await delivered;
+			await f.settled();
+		}
+		expect(f.bytes()[owner]).toBe(redo === false ? cards : saved);
+		for (const frame of [f.frame, second]) {
+			await native(frame, redo === false ? "0.75" : "0.5");
+			await retained(frame);
+		}
+		const latest = (await outcomes(f)).slice(-2);
+		expect
+			.soft(
+				latest.flatMap((result) => result.uses ?? [result]).map((use) => use.rendered),
+				JSON.stringify(latest),
+			)
+			.toEqual(["verified", "verified", "verified", "verified"]);
+	}
+	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
+});
+
+it("discloses the shared property owner without replacing the separate call-owned text scope", {
+	timeout: 120_000,
+}, async () => {
+	const authored = 'export function Card({label,id}){return <button id={id} className="opacity-75">{label}</button>}';
+	const calls =
+		'import {Card} from "./card";export function Calls(){return <><Card id="first" label="First"/><Card id="other" label="Other"/></>}';
+	const f = await originCanvas(
+		{ [owner]: authored, "shared/calls.tsx": calls },
+		'import {Calls} from "shared/calls";export default function Frame(){return <main style={{padding:40}}><Calls/></main>}',
+		"#first",
+		true,
+	);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	await second.locator("#other").waitFor();
+	await f.select();
+	const disclosure = f.page.getByRole("button", { name: "Show affected uses", exact: true });
+	await expect.poll(() => disclosure.textContent()).toBe("2");
+	await disclosure.click();
+	const panel = f.page.locator("[data-source-uses]");
+	await expect.poll(() => panel.textContent()).toContain("repeated call site · shared/calls.tsx");
+	const described = f.page.waitForResponse(
+		(response) =>
+			response.url().endsWith("/source") &&
+			response.request().postDataJSON()?.action === "describe" &&
+			response.request().postDataJSON()?.operation?.kind === "property",
+	);
+	await control(f).focus();
+	const description = await (await described).json();
+
+	await expect.poll(() => panel.textContent()).toContain("shared definition · shared/card.tsx");
+	expect.soft(await disclosure.textContent(), JSON.stringify(description)).toBe("4");
+	expect(await f.page.getByText("Content", { exact: true }).locator("..").textContent()).toBe(
+		"Contentrepeated call site",
+	);
+	await f.page.mouse.move(5, 5);
+	for (const target of [f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
+		await expect.poll(() => target.getAttribute("data-spool-shared-use")).toBe("");
+	await control(f).fill("50");
+	for (const target of [f.target, f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
+		await expect.poll(() => target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.5");
+	await control(f).press("Escape");
+	for (const target of [f.target, f.frame.locator("#other"), second.locator("#first"), second.locator("#other")])
+		await expect.poll(() => target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+	expect(f.bytes()).toEqual({ [owner]: authored, "shared/calls.tsx": calls });
+	expect(f.writes).toEqual([]);
+});
+
+it.each([
+	{ name: "absent", attribute: "" },
+	{ name: "empty", attribute: ' className=""' },
+])(
+	"creates, changes and removes opacity while restoring the original $name class field",
+	{ timeout: 120_000 },
+	async ({ attribute }) => {
+		const authored = `export function Card(){return <button id="subject"${attribute}>Hello</button>}`;
+		const f = await originCanvas(
+			{ [owner]: authored },
+			'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:40}}><Card/></main>}',
+			"#subject",
+		);
+		const created = authored.replace(`id="subject"${attribute}`, 'id="subject" className="opacity-50"');
+		const changed = created.replace("opacity-50", "opacity-25"),
+			removed = changed.replace('className="opacity-25"', "");
+		const states = [authored, created, changed, removed];
+		for (const [text, opacity, source] of [
+			["50", "0.5", created],
+			["25", "0.25", changed],
+			["", "1", removed],
+		]) {
+			await f.select();
+			const reading = reply(f, "read");
+			await control(f).fill(text!);
+			const read = await (await reading).json();
+			expect(read, JSON.stringify(read)).toMatchObject({ ok: true });
+			await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe(opacity);
+			await complete(f, source!);
+		}
+		expect(await f.target.getAttribute("class")).toBeNull();
+		for (const redo of [false, true])
+			for (const step of [1, 2, 3]) {
+				const delivered = reply(f, "delivered");
+				await f.history(redo);
+				await delivered;
+				await f.settled();
+				const index = redo ? step : 3 - step;
+				expect(f.bytes()[owner]).toBe(states[index]);
+				await expect
+					.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity))
+					.toBe(["1", "0.5", "0.25", "1"][index]);
+				if (index === 0) expect(await f.target.getAttribute("class")).toBe(attribute ? "" : null);
+				const latest = (await outcomes(f)).at(-1);
+				expect.soft(latest, JSON.stringify(latest)).toMatchObject({ rendered: "verified" });
+			}
+		expect(f.writes).toEqual([
+			"commit",
+			"commit",
+			"commit",
+			"inverse",
+			"inverse",
+			"inverse",
+			"inverse",
+			"inverse",
+			"inverse",
+		]);
+	},
+);
+
+async function inverse(f: Canvas, redo: boolean) {
+	const response = reply(f, "inverse"),
+		delivered = reply(f, "delivered");
+	void delivered.catch(() => {});
+	await f.history(redo);
+	const result = (await (await response).json()) as SourceResult;
+	expect(result.ok, JSON.stringify(result)).toBe(true);
+	await delivered;
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	return result;
+}
+
+it("opens a cold property consumer from saved source and includes it in subsequent source inverses", {
+	timeout: 120_000,
+}, async () => {
+	const f = await originCanvas(
+		{ [owner]: cards, "frames/cold-page/cold/frame.tsx": frameSource },
+		frameSource,
+		'[data-subject="A"]',
+	);
+	await f.select();
+	await control(f).fill("50");
+	await native(f.frame, "0.5");
+	const saved = cards.replace("opacity-75", "opacity-50");
+	await complete(f, saved);
+	const installed = await outcomes(f);
+	expect(installed).toHaveLength(1);
+	expect(await f.page.locator('iframe[title="cold"]').count()).toBe(0);
+	await f.select();
+	await control(f).focus();
+	await f.page.getByRole("button", { name: "Show affected uses", exact: true }).click();
+	const panel = f.page.locator("[data-source-uses]");
+	await expect.poll(() => panel.textContent()).toContain("1 unmounted source-dependent frame");
+	await panel.getByRole("button", { name: "cold not mounted ↗", exact: true }).click();
+	const cold = f.page.frameLocator('iframe[title="cold"]');
+	await native(cold, "0.5");
+	expect(await outcomes(f)).toEqual(installed);
+	await remember(cold);
+	for (const redo of [false, true]) {
+		await inverse(f, redo);
+		await expect.poll(() => f.bytes()[owner]).toBe(redo ? saved : cards);
+		await native(cold, redo ? "0.5" : "0.75");
+		await retained(cold);
+		const latest = (await outcomes(f)).at(-1);
+		expect.soft(latest, JSON.stringify(latest)).toMatchObject({ rendered: "verified" });
+	}
+	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
+});
+
+it("keeps a surviving shared consumer and unrelated source through inverse after the initiator disappears", {
+	timeout: 120_000,
+}, async () => {
+	const other = "export const unrelated = 'keep me';\n";
+	const f = await originCanvas({ [owner]: cards, "shared/other.ts": other }, frameSource, '[data-subject="A"]', true);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	await remember(second);
+	await f.select();
+	await control(f).fill("50");
+	await native(second, "0.5");
+	const saved = cards.replace("opacity-75", "opacity-50");
+	await complete(f, saved);
+	const changedOther = `${other}// independent edit\n`;
+	writeDesignFile(f.project.root, "shared/other.ts", changedOther);
+	rmSync(f.file("frames/home"), { recursive: true });
+	await expect.poll(() => f.page.locator('iframe[title="home"]').count()).toBe(0);
+	for (const redo of [false, true]) {
+		await inverse(f, redo);
+		await expect.poll(() => f.bytes()[owner]).toBe(redo ? saved : cards);
+		await native(second, redo ? "0.5" : "0.75");
+		await retained(second);
+		expect(readFileSync(f.file("shared/other.ts"), "utf8")).toBe(changedOther);
+		const latest = (await outcomes(f)).at(-1);
+		expect.soft(latest, JSON.stringify(latest)).toMatchObject({ rendered: "verified" });
+	}
+	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
+});
+
+it("reports each shared memo use against ordinary React without borrowing a healthy sibling's result", {
+	timeout: 120_000,
+}, async () => {
+	const authored = `${cards.replace("useState,useEffect", "useState,useEffect,memo")}export const Memo=memo(Card);`;
+	const frame = frameSource.replace("import {Card}", "import {Card,Memo}").replace('<Card key="b"', '<Memo key="b"');
+	const f = await originCanvas({ [owner]: authored }, frame, '[data-subject="A"]');
+	const oracle = await originOracle(
+		f,
+		{
+			[owner]: authored.replace('className="p-6 opacity-75"', 'className={window.oracleClass || "p-6 opacity-75"}'),
+			"frames/home/frame.tsx": frame,
+		},
+		"./frames/home/frame.tsx",
+	);
+	await oracle.addStyleTag({ content: ".opacity-75{opacity:.75}.opacity-50{opacity:.5}" });
+	for (const document of [f.frame, oracle]) await remember(document);
+	await f.select();
+	const reading = reply(f, "read");
+	await control(f).fill("50");
+	const original = await (await reading).json();
+	expect(original, JSON.stringify(original)).toMatchObject({ ok: true, read: { scope: "definition" } });
+	expect(original.read.source).toMatch(/^shared\/card.tsx:/);
+	const saved = authored.replace("opacity-75", "opacity-50");
+	await complete(f, saved);
+	for (const redo of [undefined, false, true]) {
+		if (redo !== undefined) await inverse(f, redo);
+		await oracle.evaluate(
+			(value) => {
+				Reflect.set(window, "oracleClass", value);
+				Reflect.get(window, "oracleRender")();
+			},
+			redo === false ? "p-6 opacity-75" : "p-6 opacity-50",
+		);
+		const ordinary = await oracle
+			.locator("[data-subject]")
+			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).opacity));
+		expect(ordinary).toEqual(redo === false ? ["0.75", "0.75"] : ["0.5", "0.75"]);
+		const actual = await f.frame
+			.locator("[data-subject]")
+			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).opacity));
+		expect.soft(actual).toEqual(ordinary);
+		for (const document of [f.frame, oracle]) await retained(document);
+		expect(f.bytes()[owner]).toBe(redo === false ? authored : saved);
+		const latest = (await outcomes(f)).at(-1);
+		expect
+			.soft(
+				(latest?.uses ?? []).map((use) => use.rendered),
+				JSON.stringify(latest),
+			)
+			.toEqual(redo === false ? ["verified", "verified"] : ["verified", "mismatching"]);
+	}
+	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
+});
