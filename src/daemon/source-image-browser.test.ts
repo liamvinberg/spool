@@ -996,3 +996,82 @@ it.each(["image budget", "document budget", "computed import inventory"] as cons
 		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
 	},
 );
+
+it.each(["pending", "failed"] as const)(
+	"reports an authored %s image render independently from a verified shared use",
+	{ timeout: 120000 },
+	async (ending) => {
+		const component =
+			"import image from './assets/first.svg';const gate=new Promise(resolve=>{window.finishImage=()=>{window.imageFault=undefined;resolve()}});export function Photo(){if(window.imageFault==='pending')throw gate;if(window.imageFault==='failed')throw Error('authored image failure');return <img id='hero' src={image} style={{width:180,height:120}}/>}";
+		const source =
+			"import {Component,Suspense} from 'react';import {Photo} from 'shared/photo';class Boundary extends Component{state={failed:false};static getDerivedStateFromError(){return {failed:true}}componentDidCatch(){}render(){return this.state.failed?<p id='failed'>Failed</p>:<Suspense fallback={<p id='waiting'>Waiting</p>}><Photo/></Suspense>}}export default function Frame(){return <main style={{padding:40}}><Boundary/><input id='native' defaultValue='initial'/></main>}";
+		const f = await originCanvas(
+			{ "shared/photo.tsx": component, "shared/assets/first.svg": SVG, "shared/assets/second.svg": SECOND },
+			source,
+			"#hero",
+			true,
+		);
+		const second = f.page.frameLocator('iframe[title="second"]');
+		for (const frame of [f.frame, second]) {
+			await frame.locator("#native").evaluate((element) => {
+				if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+				element.value = "retained beside image";
+				Reflect.set(window, "renderImageInput", element);
+			});
+		}
+		await second.locator("#hero").evaluate((_element, ending) => Reflect.set(window, "imageFault", ending), ending);
+		await f.select();
+		await f.page.getByRole("button", { name: "image", exact: true }).click();
+		const choice = f.page.locator('[data-menu-option="second.svg"]');
+		await expect.poll(() => choice.count()).toBe(1);
+		const saved = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
+		await choice.click();
+		expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
+		await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(2);
+		const outcomes = await f.page.evaluate(() => Reflect.get(window, "originOutcomes"));
+		expect(outcomes.map((outcome: { installation: string }) => outcome.installation)).toEqual([
+			"installed",
+			"installed",
+		]);
+		expect(outcomes.map((outcome: { rendered: string }) => outcome.rendered).sort()).toEqual([ending, "verified"]);
+		await expect
+			.poll(() => second.locator(ending === "pending" ? "#waiting" : "#failed").textContent())
+			.toBe(ending === "pending" ? "Waiting" : "Failed");
+		expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(
+			70,
+		);
+		for (const frame of [f.frame, second]) {
+			expect(
+				await frame.locator("#native").evaluate((element) => element === Reflect.get(window, "renderImageInput")),
+			).toBe(true);
+			expect(await frame.locator("#native").inputValue()).toBe("retained beside image");
+		}
+		const notice = f.page.locator(`[data-hand-notice="${ending}"]`);
+		await expect.poll(() => notice.count()).toBe(1);
+		await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+		const composer = f.page.locator("[data-agent-rail] textarea");
+		await expect.poll(() => composer.inputValue()).toContain("second.svg");
+		expect(await composer.inputValue()).toContain("#hero");
+		expect(f.writes).toEqual(["commit"]);
+		expect(readFileSync(f.file("shared/photo.tsx"), "utf8")).toBe(
+			component
+				.replace("import image from './assets/first.svg';", 'import second from "./assets/second.svg";')
+				.replace("src={image}", "src={second}"),
+		);
+		if (ending === "pending") {
+			await second.locator("#native").evaluate(() => Reflect.get(window, "finishImage")());
+			await expect
+				.poll(() =>
+					second
+						.locator("#hero")
+						.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth),
+				)
+				.toBe(70);
+			await expect.poll(() => notice.count()).toBe(0);
+			await expect.poll(() => composer.inputValue()).toBe("");
+			expect(f.writes).toEqual(["commit"]);
+		}
+	},
+);
