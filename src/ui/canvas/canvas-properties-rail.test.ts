@@ -145,6 +145,38 @@ it("scrubs a frame's w against the screen alone, and writes once at release", as
 	expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 640, h: 480 } });
 });
 
+it.each(["pointercancel", "Escape", "reselection"])(
+	"cancels frame geometry on %s without saving late pointer work",
+	async (ending) => {
+		const { host, canvas } = await readyCanvas();
+		await clickAt(canvas, 40, 40);
+		const label = rowLabel(host, "w");
+		if (!label) throw new Error("missing width label");
+		await act(() => {
+			label.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, pointerId: 7 }));
+			label.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 140, pointerId: 7 }));
+		});
+		expect(fieldFor(host, "w")?.value).toBe("680");
+		if (ending === "Escape") await press("Escape");
+		else if (ending === "reselection") await clickAt(canvas, 940, 40);
+		else await act(() => label.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 7 })));
+		await act(() => {
+			document.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 180, pointerId: 7 }));
+			document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 7 }));
+		});
+		if (ending === "reselection") {
+			expect(fieldFor(host, "w")?.value).toBe("390");
+			await clickAt(canvas, 40, 40);
+		}
+		expect(fieldFor(host, "w")?.value).toBe("640");
+		expect(await geometryPut()).toBeUndefined();
+		await typeInto(fieldFor(host, "w"), "644");
+		expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 644, h: 480 } });
+		await press("z", ACCEL);
+		expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 640, h: 480 } });
+	},
+);
+
 it("crumbs the frame and every rung above the one held, by the names the file gave them", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await descendTo(canvas, frame, 3);
