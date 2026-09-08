@@ -12,10 +12,7 @@ export function resolveImageValues(
 	for (const cell of Object.values(compilation.cells)) {
 		const specifier = cell.image?.specifier;
 		if (!specifier) continue;
-		const path = resolveDesignPath(
-			designDir,
-			resolve(specifier.startsWith("shared/") ? designDir : dirname(resolve(designDir, cell.file)), specifier),
-		);
+		const path = imageImport(designDir, cell.file, specifier);
 		const input = compilation.inputs.get(path);
 		const type = ASSET_MEDIA_TYPES[extname(path).toLowerCase()];
 		if (!input || !type) throw new Error("the image binding is outside the captured asset inputs");
@@ -26,15 +23,7 @@ export function resolveImageValues(
 /** The source-owned requested result retains canonical import identity as well as bytes. */
 export function imageExpectation(cell: LiteralCell, designDir: string): SourceImageExpectation {
 	const specifier = cell.image?.specifier;
-	const asset = specifier
-		? designRelativePath(
-				designDir,
-				resolveDesignPath(
-					designDir,
-					resolve(specifier.startsWith("shared/") ? designDir : dirname(resolve(designDir, cell.file)), specifier),
-				),
-			)
-		: undefined;
+	const asset = specifier ? designRelativePath(designDir, imageImport(designDir, cell.file, specifier)) : undefined;
 	return {
 		kind: "image",
 		source: cell.source,
@@ -42,4 +31,11 @@ export function imageExpectation(cell: LiteralCell, designDir: string): SourceIm
 		absent: cell.absent === true,
 		...(asset ? { asset } : {}),
 	};
+}
+
+function imageImport(designDir: string, file: string, specifier: string): string {
+	return resolveDesignPath(
+		designDir,
+		resolve(specifier.startsWith("shared/") ? designDir : dirname(resolve(designDir, file)), specifier),
+	);
 }
