@@ -80,8 +80,23 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (winner?.owner === null && applicable.some((effect) => effect.owner !== null))
 		return unverified("the expected utility is masked by another declaration");
 	if (color) {
-		if (!winner) return unverified("this color needs an inherited or default context proof");
-		const value = resolvedValue(element, sheet, winner.value);
+		let value: string | undefined;
+		if (
+			(!winner || winner.owner === null) &&
+			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
+				element.style.getPropertyValue(expected.property))
+		)
+			return unverified("this color has an independent inline context requiring proof");
+		if (winner && !(expected.property === "color" && winner.value.trim() === "inherit"))
+			value = resolvedValue(element, sheet, winner.value);
+		else {
+			if (expected.property === "background-color") value = "transparent";
+			else {
+				const parent = element.parentElement;
+				if (!parent) return unverified("this color needs a native inherited context proof");
+				value = view.getComputedStyle(parent).color;
+			}
+		}
 		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
 		const wanted = value === undefined ? undefined : nativeColor(value);
 		const actual = nativeColor(observed);
