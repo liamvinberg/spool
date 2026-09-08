@@ -102,12 +102,14 @@ it("removes an authored scope through one actual rail source operation and inver
 	const reading = await (await readReply).json();
 	expect(reading, JSON.stringify(reading)).toMatchObject({ ok: true });
 	await expect.poll(() => f.writes).toEqual(["commit"]);
+	// A recorded request is not a landed write: read the file once its save settles.
+	await f.settled();
 	expect(f.bytes()["shared/button.tsx"]).toBe(
 		source.replace("hover:opacity-50", "").replace("hover:text-red-500", ""),
 	);
-	await f.settled();
 	await f.history();
 	await expect.poll(() => f.writes).toEqual(["commit", "inverse"]);
+	await f.settled();
 	expect(f.bytes()["shared/button.tsx"]).toBe(source);
 });
 
@@ -168,6 +170,7 @@ it.each([false, true])(
 		expect(f.bytes()["shared/button.tsx"]).toBe(source.replace("hover:opacity-50", ""));
 		await f.history();
 		await expect.poll(() => f.writes).toEqual(["commit", "inverse"]);
+		await f.settled();
 		expect(f.bytes()["shared/button.tsx"]).toBe(source);
 	},
 );
