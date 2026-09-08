@@ -467,6 +467,19 @@ it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "backg
 );
 
 // Unknown ownership refuses at the control, before a request is ever made.
+// Unknown ownership refuses at the control, before a request is ever made, and
+// tabbing out of another control lands here: a field nobody has edited must not
+// take the source lane and cancel the edit that is still saving.
+it("takes the source lane on an edit, never on focus alone", async () => {
+	const rail = await mount("opacity-75");
+	const field = fieldIn(rail, "opacity");
+	if (!field) throw new Error("missing opacity field");
+	await act(() => field.focus());
+	expect(rail.begins).toEqual([]);
+	await put(field, "50");
+	expect(rail.begins).toEqual(["opacity"]);
+});
+
 it("takes no request from a control whose source refuses the element", async () => {
 	const rail = await mount("opacity-75", BASE, undefined, async () => ({ reason: "className is an expression" }));
 	expect(fieldIn(rail, "opacity")).toBeNull();
@@ -525,6 +538,8 @@ interface Rail {
 	completions: boolean[];
 	/** every property list the rail asked one description for */
 	asked: (readonly string[])[];
+	/** every property that took the source lane, in order */
+	begins: string[];
 	/** the edits the last change came to, as the write lane would be handed them */
 	wrote: () => RowEdit[];
 	/** the scope those edits were written under */
@@ -552,6 +567,7 @@ async function mount(
 	const previews: Rail["previews"] = [];
 	const completions: boolean[] = [];
 	const asked: (readonly string[])[] = [];
+	const begins: string[] = [];
 	const view: View = {
 		property: element?.refusal
 			? null
@@ -583,7 +599,9 @@ async function mount(
 							}
 							return { readings };
 						}),
-					begin: () => {},
+					begin: (property) => {
+						begins.push(property);
+					},
 					preview: (property, value) => {
 						previews.push({ property, value });
 					},
@@ -618,7 +636,17 @@ async function mount(
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
 	});
-	return { host, requests, legacy, previews, completions, asked, wrote: () => wrote, scoped: () => scopeKey(scope) };
+	return {
+		host,
+		requests,
+		legacy,
+		previews,
+		completions,
+		asked,
+		begins,
+		wrote: () => wrote,
+		scoped: () => scopeKey(scope),
+	};
 }
 
 function stubCompiler(): Compiler {

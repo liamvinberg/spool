@@ -293,10 +293,9 @@ export function NumField({
 					setDraft(event.target.value);
 					onPreview?.(event.target.value);
 				}}
-				onFocus={(event) => {
-					begin();
-					event.target.select();
-				}}
+				// Focus alone selects the number to type over. Taking the source lane
+				// waits for an edit, so tabbing through the rail cancels nothing.
+				onFocus={(event) => event.target.select()}
 				onBlur={() => finish(false)}
 				onKeyDown={(event) => {
 					event.stopPropagation();

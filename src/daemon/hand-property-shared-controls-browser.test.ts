@@ -229,7 +229,10 @@ it.each([false, true])(
 				response.request().postDataJSON()?.action === "describe" &&
 				response.request().postDataJSON()?.operation?.kind === "property",
 		);
+		// The disclosure follows the gesture, and a control takes the source lane on
+		// an edit rather than on focus, so this steps the value it is about to change.
 		await control(f).focus();
+		await control(f).press("ArrowUp");
 		const description = await (await described).json();
 
 		await expect.poll(() => panel.textContent()).toContain("shared definition · shared/card.tsx");
