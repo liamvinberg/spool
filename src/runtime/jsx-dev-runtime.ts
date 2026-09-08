@@ -163,6 +163,8 @@ interface PreviewedUse {
 	element: HTMLElement;
 	original: SourceOccurrence;
 	preview: string;
+	previewed: boolean;
+	previewAbsent?: boolean | undefined;
 	children: { node: ChildNode; value: string | null }[];
 	restoreAttribute?: () => void;
 }
@@ -343,11 +345,27 @@ function previewedUse(element: HTMLElement, original: SourceOccurrence): Preview
 		element,
 		original,
 		preview: original.value,
+		previewed: false,
 		children: [...element.childNodes].map((node) => ({ node, value: node.nodeValue })),
 		...(original.field === undefined ? {} : { restoreAttribute: captureAttribute(element, original.field) }),
 	};
 }
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+const disclosureFeedback = new Set<HTMLElement>();
+const gestureFeedback = new Set<HTMLElement>();
+function renderSourceFeedback(): void {
+	ensureSourceFeedback();
+	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-shared-use]"))
+		if (!disclosureFeedback.has(element) && !gestureFeedback.has(element))
+			element.removeAttribute("data-spool-shared-use");
+	for (const element of [...disclosureFeedback, ...gestureFeedback])
+		if (element.isConnected) element.setAttribute("data-spool-shared-use", "");
+}
+function clearGestureFeedback(): void {
+	clearTimeout(feedbackTimer);
+	gestureFeedback.clear();
+	renderSourceFeedback();
+}
 function sourceElement(original: SourceOccurrence): HTMLElement | undefined {
 	return [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
 		const current = inspectSource(element, original.field);
@@ -355,9 +373,12 @@ function sourceElement(original: SourceOccurrence): HTMLElement | undefined {
 	});
 }
 function highlightSource(uses: SourceOccurrence[]): void {
-	clearSourceFeedback();
-	ensureSourceFeedback();
-	for (const original of uses) sourceElement(original)?.setAttribute("data-spool-shared-use", "");
+	disclosureFeedback.clear();
+	for (const original of uses) {
+		const element = sourceElement(original);
+		if (element) disclosureFeedback.add(element);
+	}
+	renderSourceFeedback();
 }
 function ensureSourceFeedback(): void {
 	if (document.getElementById("spool-shared-use-outline")) return;
@@ -368,6 +389,8 @@ function ensureSourceFeedback(): void {
 	document.head.append(style);
 }
 function clearSourceFeedback(): void {
+	disclosureFeedback.clear();
+	gestureFeedback.clear();
 	clearTimeout(feedbackTimer);
 	for (const element of document.querySelectorAll("[data-spool-shared-use]"))
 		element.removeAttribute("data-spool-shared-use");
@@ -416,22 +439,32 @@ function previewSourceUses(generation: number, value: string): void {
 		const current = inspectSource(held.element, held.original.field);
 		if (!current || !sameSourceOccurrence(current, held.original)) continue;
 		held.preview = value;
+		held.previewed = true;
 		if (renderedField(held.element, held.original.field) !== value)
 			previewField(held.element, held.original.field, value);
-		if (leases.get(generation)?.element !== held.element) held.element.setAttribute("data-spool-shared-use", "");
+		held.previewAbsent =
+			held.original.field === undefined
+				? undefined
+				: !hasRenderedField(held.element, held.original.field, committedFiber(held.element)?.memoizedProps);
+		if (leases.get(generation)?.element !== held.element) gestureFeedback.add(held.element);
 	}
+	renderSourceFeedback();
+}
+function ownsPreview(held: PreviewedUse): boolean {
+	return (
+		held.previewed &&
+		renderedField(held.element, held.original.field) === held.preview &&
+		(held.original.field === undefined ||
+			held.previewAbsent ===
+				!hasRenderedField(held.element, held.original.field, committedFiber(held.element)?.memoizedProps))
+	);
 }
 function cancelSourceUses(generation: number, feedback = true): void {
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
 		const current = inspectSource(use.element, use.original.field);
-		if (
-			current &&
-			sameSourceOccurrence(current, use.original) &&
-			renderedField(use.element, use.original.field) === use.preview &&
-			use.preview !== use.original.value
-		)
+		if (current && sameSourceOccurrence(current, use.original) && ownsPreview(use))
 			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
 	if (feedback) clearSourceFeedback();
@@ -460,8 +493,13 @@ function previewSource(generation: number, value: string): boolean {
 	}
 	if (!validLease(generation)) return false;
 	held.preview = value;
+	held.previewed = true;
 	if (renderedField(held.element, held.original.field) !== value)
 		previewField(held.element, held.original.field, value);
+	held.previewAbsent =
+		held.original.field === undefined
+			? undefined
+			: !hasRenderedField(held.element, held.original.field, committedFiber(held.element)?.memoizedProps);
 	previewSourceUses(generation, value);
 	return true;
 }
@@ -472,7 +510,7 @@ function cancelSource(generation: number): void {
 	if (!held) return;
 	if (
 		held.element.isConnected &&
-		renderedField(held.element, held.original.field) === held.preview &&
+		ownsPreview(held) &&
 		inspectSource(held.element, held.original.field)?.invocation === held.original.invocation
 	)
 		restoreField(held.element, held.original, held.children, held.restoreAttribute);
@@ -640,10 +678,9 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	if (undo && leases.size > 0) return refused("another edit is in progress");
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
-	if (held && renderedField(held.element, held.original.field) === held.preview)
-		restoreField(held.element, held.original, held.children, held.restoreAttribute);
+	if (held && ownsPreview(held)) restoreField(held.element, held.original, held.children, held.restoreAttribute);
 	cancelSourceUses(publication.generation, false);
-	feedbackTimer = setTimeout(clearSourceFeedback, 450);
+	feedbackTimer = setTimeout(clearGestureFeedback, 450);
 	leases.delete(publication.generation);
 	const observation: AcceptedOutcome = { publication, targets, failed: new Set(), ready: false, last: "" };
 	acceptedOutcome = observation;

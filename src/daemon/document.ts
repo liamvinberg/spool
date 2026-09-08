@@ -1244,7 +1244,10 @@ const canvasShimJs = `(() => {
 		if (kind === "submit") event.preventDefault();
 if(kind === "input" && editing.sourceGeneration) {
 const config=window.__SPOOL__ || {};
-parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing.sourceGeneration,text:editing.el.innerText ?? editing.el.textContent ?? ""},"*");
+// Native input belongs to this intent before the asynchronous parent echo.
+const text=editing.el.innerText ?? editing.el.textContent ?? "";
+window.__SPOOL_SOURCE__?.preview(editing.sourceGeneration,text);
+parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing.sourceGeneration,text},"*");
 }
 	}, true);
 

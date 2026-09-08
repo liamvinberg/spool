@@ -82,3 +82,56 @@ it("keeps open disclosure feedback beyond the gesture interval and clears it wit
 	await f.page.keyboard.press("Escape");
 	await expect.poll(() => f.second.locator("#label").getAttribute("data-spool-shared-use")).toBeNull();
 });
+
+it("cancels native input before the shared preview echo arrives", { timeout: 120000 }, async () => {
+	const source = 'export function Label(){return <h1 id="label">Before</h1>}';
+	const f = await originCanvas(
+		{ "shared/label.tsx": source },
+		'import {Label} from "shared/label";export default function Frame(){return <main style={{padding:40}}><Label/></main>}',
+		"#label",
+		true,
+	);
+	await f.page.evaluate(() => {
+		addEventListener(
+			"message",
+			(event) => {
+				if (event.data?.spool === "source-preview") event.stopImmediatePropagation();
+			},
+			{ capture: true },
+		);
+	});
+	await f.edit();
+	await f.page.keyboard.press("ControlOrMeta+a");
+	await f.page.keyboard.insertText("Cancel me");
+	expect(await f.target.textContent()).toBe("Cancel me");
+	await f.page.keyboard.press("Escape");
+	await expect.poll(() => f.target.getAttribute("contenteditable")).toBeNull();
+	expect(f.bytes()).toEqual({ "shared/label.tsx": source });
+	expect(f.writes).toEqual([]);
+	expect(await f.target.textContent()).toBe("Before");
+});
+
+it.each(["primary", "secondary"])(
+	"preserves an outside attribute-presence change in the %s preview",
+	{ timeout: 120000 },
+	async (target) => {
+		const source = 'export function Label(){return <h1 id="label" title="">Before</h1>}';
+		const f = await originCanvas({ [file]: source }, consumer, "#label", true);
+		const second = f.page.frameLocator('iframe[title="second"]');
+		await second.locator("#label").waitFor();
+		await f.select();
+		const title = f.page.getByRole("textbox", { name: "title", exact: true });
+		await title.fill("Temporary");
+		await expect.poll(() => second.locator("#label").getAttribute("title")).toBe("Temporary");
+		await title.fill("");
+		await expect.poll(() => second.locator("#label").getAttribute("title")).toBe("");
+		const changed = target === "primary" ? f.target : second.locator("#label");
+		const other = target === "primary" ? second.locator("#label") : f.target;
+		await changed.evaluate((element) => element.removeAttribute("title"));
+		await title.press("Escape");
+		await expect.poll(() => other.getAttribute("title")).toBe("");
+		expect(await changed.getAttribute("title")).toBeNull();
+		expect(f.bytes()[file]).toBe(source);
+		expect(f.writes).toEqual([]);
+	},
+);
