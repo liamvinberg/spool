@@ -22,12 +22,14 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return borderOutcome(element, expected);
 	const corner = isCorner(expected.property);
 	const color = expected.property === "color" || expected.property === "background-color";
-	if (expected.property !== "opacity" && expected.property !== "font-size" && !color && !corner)
+	const weight = expected.property === "font-weight";
+	if (expected.property !== "opacity" && expected.property !== "font-size" && !color && !corner && !weight)
 		return unverified("this property needs a native effect proof");
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
 	const applicable: SourcePropertyEffect[] = [];
+	const companions: SourcePropertyEffect[] = [];
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		// Residual native corners are separate components; their source preservation is compiler-proved.
@@ -36,7 +38,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		if (condition === "inactive") continue;
 		if (condition === "unverified")
 			return unverified("this property effect needs a native selector or conditional context proof");
-		if (effect.property === expected.property) applicable.push(effect);
+		if (weight && effect.property === "--tw-font-weight") companions.push(effect);
+		else if (effect.property === expected.property) applicable.push(effect);
 		else if (corner && effect.property === "border-radius") {
 			const value = resolvedValue(element, sheet, effect.value);
 			if (value === undefined) return unverified("this corner needs a variable context proof");
@@ -53,6 +56,35 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const selection = winningEffect(sheet, applicable);
 	if (selection.reason) return unverified(selection.reason);
 	const winner = selection.winner;
+	if (weight) {
+		const result = winningEffect(sheet, companions);
+		if (result.reason) return unverified(result.reason);
+		const native = view.getComputedStyle(element);
+		let companionMatches = true;
+		if (result.winner) {
+			const value = resolvedValue(element, sheet, result.winner.value);
+			const wanted = value === undefined ? undefined : nativeWeight(value);
+			const observed = native.getPropertyValue("--tw-font-weight").trim();
+			const actual = nativeWeight(observed);
+			if (wanted === undefined || (actual === undefined && observed !== ""))
+				return unverified("this weight companion needs a native value proof");
+			companionMatches = wanted === actual;
+		}
+		let value: string | undefined;
+		if (!winner || winner.value.trim() === "inherit") {
+			if (!(element instanceof HTMLElement || element instanceof SVGElement) || element.style.fontWeight)
+				return unverified("this weight has an independent inline context requiring proof");
+			const parent = element.parentElement;
+			if (!parent) return unverified("this weight needs an inherited context proof");
+			value = view.getComputedStyle(parent).fontWeight;
+		} else value = resolvedValue(element, sheet, winner.value);
+		const wanted = value === undefined ? undefined : nativeWeight(value);
+		const observed = native.fontWeight;
+		const actual = nativeWeight(observed);
+		if (wanted === undefined || actual === undefined)
+			return unverified("this weight needs a native value context proof");
+		return { rendered: companionMatches && wanted === actual ? "verified" : "mismatching", observed };
+	}
 	if (color) {
 		let value: string | undefined;
 		if (
@@ -394,6 +426,15 @@ function nativeLength(element: Element, sheet: CSSStyleSheet, property: string, 
 	// Preserve the authored precision during conversion; serialize only the final px value.
 	rule.style.setProperty(property, `${computed}px`);
 	return Number.parseFloat(rule.style.getPropertyValue(property));
+}
+
+function nativeWeight(value: string): number | undefined {
+	const normalized = value.trim();
+	if (normalized === "normal") return 400;
+	if (normalized === "bold") return 700;
+	if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return;
+	const number = Number(normalized);
+	return number >= 1 && number <= 1000 ? number : undefined;
 }
 
 function isCorner(property: string): boolean {

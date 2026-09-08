@@ -692,3 +692,108 @@ it("verifies border component removal from captured native preflight while prese
 		"unverified",
 	]);
 });
+
+it.each(["custom", "binding"] as const)(
+	"verifies compiled %s font weight independently of native size and leading",
+	async (kind) => {
+		const { root } = makeProject(makeTempDir());
+		writeDesignFile(root, "shared/tokens.css", "");
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		const operation = { kind: "property", property: "font-weight", scope: "" } as const;
+		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+		const plan = await planPropertyValue(
+			root,
+			new Map([[file, readInput(file)]]),
+			"font-medium text-xl leading-10",
+			operation,
+			kind === "custom" ? { kind: "custom", value: "700" } : { kind: "binding", tokens: ["font-bold"] },
+			environment,
+		);
+		const expected: SourcePropertyExpectation = {
+			kind: "property",
+			property: operation.property,
+			scope: "",
+			className: plan.next,
+			absent: false,
+			scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+			effects: plan.consumers,
+			css: plan.desired.css,
+		};
+		const f = await fixture(
+			`<!doctype html><style>${plan.original.css}${expected.css}</style><div data-subject class="${plan.next}">Healthy</div><div data-subject class="font-medium text-xl leading-10">Retained</div><div data-subject class="${plan.next}" style="--tw-font-weight:500">Wrong companion</div><div data-subject class="${plan.next}" style="--font-weight-bold:600">Outside reference</div>`,
+		);
+		expect(
+			(await f.inspect(expected)).map((outcome) => outcome.rendered),
+			JSON.stringify(expected.effects),
+		).toEqual(["verified", "mismatching", "mismatching", kind === "binding" ? "unverified" : "verified"]);
+		expect(
+			await f.page.locator("[data-subject]").evaluateAll((elements) =>
+				elements.slice(0, 2).map((element) => {
+					const style = getComputedStyle(element);
+					return [style.fontWeight, style.fontSize, style.lineHeight];
+				}),
+			),
+		).toEqual([
+			["700", "20px", "40px"],
+			["500", "20px", "40px"],
+		]);
+		const inverse: SourcePropertyExpectation = {
+			...expected,
+			className: "font-medium text-xl leading-10",
+			css: plan.original.css,
+			effects: propertyConsumers(plan.original, plan.roots, environment),
+		};
+		expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual([
+			"mismatching",
+			"verified",
+			"mismatching",
+			"mismatching",
+		]);
+	},
+);
+
+it("verifies font weight removal from each native parent and retains its inverse companion", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property: "font-weight", scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"font-medium",
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: operation.property,
+		scope: "",
+		className: plan.next,
+		absent: !plan.next,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style><section style="font-weight:300"><div data-subject class="${plan.next}">First</div></section><section style="font-weight:600"><h1 data-subject class="${plan.next}">Second</h1><div data-subject class="font-medium">Retained</div></section>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"verified",
+		"mismatching",
+	]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "font-medium",
+		absent: false,
+		css: plan.original.css,
+		effects: propertyConsumers(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"mismatching",
+		"verified",
+	]);
+});
