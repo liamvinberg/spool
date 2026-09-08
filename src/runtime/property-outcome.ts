@@ -1,6 +1,7 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
 import { nativeColor } from "./property-colors";
 import { nativeFilter } from "./property-filters";
+import { nativeFont } from "./property-fonts";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
 import { nativeShadow } from "./property-shadows";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
@@ -71,6 +72,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return borderOutcome(element, expected);
 	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
 	if (shadowProperties.includes(expected.property)) return composedOutcome(element, expected, "box-shadow");
+	if (expected.property === "font-variant-numeric") return composedOutcome(element, expected, expected.property);
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
 	const corner = isCorner(expected.property);
 	const color = [
@@ -83,16 +85,20 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		"fill",
 		"stroke",
 	].includes(expected.property);
+	const family = expected.property === "font-family";
 	const weight = expected.property === "font-weight";
 	const leading = expected.property === "line-height";
-	const companion = weight ? "--tw-font-weight" : leading ? "--tw-leading" : undefined;
+	const spacing = expected.property === "letter-spacing";
+	const companion = weight ? "--tw-font-weight" : leading ? "--tw-leading" : spacing ? "--tw-tracking" : undefined;
 	if (
 		expected.property !== "opacity" &&
 		expected.property !== "font-size" &&
 		!color &&
 		!corner &&
+		!family &&
 		!weight &&
 		!leading &&
+		!spacing &&
 		!keyword
 	)
 		return unverified("this property needs a native effect proof");
@@ -149,8 +155,33 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			? unverified(result.reason)
 			: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
 	}
-	if (weight || leading) {
-		const number = (value: string) => (weight ? nativeWeight(value) : nativeLineHeight(element, sheet, value));
+	if (family) {
+		if (
+			(!winner || winner.owner === null) &&
+			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
+				element.style.getPropertyValue("font-family"))
+		)
+			return unverified("this font family has an independent inline context requiring proof");
+		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
+		if (winner && value === undefined) return unverified("this font family needs a resolved variable context");
+		if (!winner || value === "inherit") {
+			const parent = element.parentElement;
+			if (!parent) return unverified("this font family needs a native inherited context proof");
+			value = view.getComputedStyle(parent).fontFamily;
+		}
+		if (value === undefined) return unverified("this font family has no independent expected declaration");
+		const result = nativeFont(element, "font-family", value);
+		return result.kind === "unknown"
+			? unverified(result.reason)
+			: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
+	}
+	if (weight || leading || spacing) {
+		const number = (value: string) =>
+			weight
+				? nativeWeight(value)
+				: spacing
+					? nativeSpacing(element, sheet, value)
+					: nativeLineHeight(element, sheet, value);
 		const result = winningEffect(sheet, companions);
 		if (result.reason) return unverified(result.reason);
 		const native = view.getComputedStyle(element);
@@ -291,7 +322,7 @@ function substituteVariables(
 function composedOutcome(
 	element: Element,
 	expected: SourcePropertyExpectation,
-	property: NativeTransformProperty | NativeTransitionProperty | "filter" | "box-shadow",
+	property: NativeTransformProperty | NativeTransitionProperty | "filter" | "box-shadow" | "font-variant-numeric",
 ): PropertyOutcome {
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const sheet = new CSSStyleSheet();
@@ -309,11 +340,13 @@ function composedOutcome(
 						? /^--tw-(?:inset-)?(?:ring-(?:inset|color|offset-(?:width|color|shadow)|shadow)|shadow(?:-color|-alpha)?)$/.test(
 								name,
 							)
-						: property === "transition-duration"
-							? name === "--tw-duration"
-							: property === "transition-timing-function"
-								? name === "--tw-ease"
-								: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
+						: property === "font-variant-numeric"
+							? /^--tw-(?:ordinal|slashed-zero|numeric-(?:figure|spacing|fraction))$/.test(name)
+							: property === "transition-duration"
+								? name === "--tw-duration"
+								: property === "transition-timing-function"
+									? name === "--tw-ease"
+									: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
@@ -396,7 +429,13 @@ function composedOutcome(
 	const transition = transitionProperty(property);
 	if (transition && element.ownerDocument.defaultView?.getComputedStyle(element).transitionProperty === "none")
 		return unverified("this transition has no active native property");
-	const initial = transition ? (property === "transition-timing-function" ? "ease" : "0s") : "none";
+	const initial = transition
+		? property === "transition-timing-function"
+			? "ease"
+			: "0s"
+		: property === "font-variant-numeric"
+			? "normal"
+			: "none";
 	// A fully resolved empty fallback list computes to this non-inherited consumer's initial value.
 	let value = resolve(selection.winner?.value ?? initial).trim() || initial;
 	if (property === "box-shadow" && !unresolved) {
@@ -414,7 +453,9 @@ function composedOutcome(
 			? nativeFilter(element, value)
 			: property === "box-shadow"
 				? nativeShadow(element, value)
-				: nativeTransform(element, property, value);
+				: property === "font-variant-numeric"
+					? nativeFont(element, property, value)
+					: nativeTransform(element, property, value);
 	return result.kind === "unknown"
 		? unverified(result.reason)
 		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
@@ -810,6 +851,11 @@ function nativeLineHeight(element: Element, sheet: CSSStyleSheet, value: string)
 			: undefined;
 	}
 	return nativeLength(element, sheet, "line-height", value);
+}
+
+/** The native computed letter spacing serializes an authored zero as its normal keyword. */
+function nativeSpacing(element: Element, sheet: CSSStyleSheet, value: string): number | undefined {
+	return value.trim().toLowerCase() === "normal" ? 0 : nativeLength(element, sheet, "letter-spacing", value);
 }
 
 function nativeWeight(value: string): number | undefined {

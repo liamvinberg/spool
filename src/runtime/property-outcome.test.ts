@@ -1689,3 +1689,113 @@ it.each([
 		});
 	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
 });
+
+it.each([
+	{
+		property: "font-family",
+		before: "font-sans",
+		after: "font-serif",
+		outside: "--font-serif",
+		verdict: "unverified",
+	},
+	{
+		property: "font-variant-numeric",
+		before: "normal-nums",
+		after: "ordinal",
+		outside: "--tw-slashed-zero",
+		verdict: "mismatching",
+	},
+	{
+		property: "letter-spacing",
+		before: "tracking-normal",
+		after: "tracking-wide",
+		outside: "--tw-tracking",
+		verdict: "mismatching",
+	},
+])("verifies compiled typography $property against each native use", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		row.before,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	// An alias-free inherited family keeps the removal context independently provable.
+	const subject = (first: string, second: string) =>
+		`<section style="font-family:Georgia,serif"><p data-subject class="${first}">Native 1234 typography</p><p data-subject class="${second}">Native 1234 typography</p></section>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next, row.before)}`,
+	);
+	await f.page.evaluate(() => document.fonts.ready.then(() => undefined));
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: row.before,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	const original = await f.inspect(inverse);
+	// The retained sans list needs the comparator's platform alias proof, so it stays unverified.
+	expect(
+		original.map((outcome) => outcome.rendered),
+		JSON.stringify(original),
+	).toEqual(["mismatching", row.property === "font-family" ? "unverified" : "verified"]);
+	// Removing the authored value must read against the compiled initial or inherited context.
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next, plan.next)}`,
+	);
+	await empty.page.evaluate(() => document.fonts.ready.then(() => undefined));
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// An outside change to a captured input is never a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element, outside) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native typography host");
+			element.style.setProperty(
+				outside,
+				outside === "--tw-tracking" ? "1px" : outside === "--tw-slashed-zero" ? "slashed-zero" : "Verdana",
+			);
+		}, row.outside);
+	expect((await f.inspect(expected))[0]?.rendered).toBe(row.verdict);
+});
