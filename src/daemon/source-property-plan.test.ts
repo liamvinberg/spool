@@ -149,3 +149,23 @@ it("keeps native independent sides and axes when a component overrides its broad
 		for (const key of row.kept) expect(after[key], `${row.property}: ${key}`).toBe(before[key]);
 	}
 });
+
+it("retains authored priority and the lower declaration revealed by removal", async () => {
+	const f = fixture();
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "color", scope: "hover:" } as const;
+	const changed = await planPropertyValue(
+		f.root,
+		f.inputs,
+		"hover:text-red-500 hover:text-blue-500! text-sm",
+		operation,
+		{ kind: "binding", tokens: ["hover:text-green-500"] },
+		environment,
+	);
+	expect(changed.before).toEqual(["hover:text-blue-500!"]);
+	expect(changed.after).toEqual(["hover:text-green-500!"]);
+	expect(changed.next).toContain("hover:text-red-500");
+	const removed = await planPropertyValue(f.root, f.inputs, changed.next, operation, { kind: "remove" }, environment);
+	expect(removed.before).toEqual(["hover:text-green-500!"]);
+	expect(removed.next).toBe("hover:text-red-500 text-sm");
+});

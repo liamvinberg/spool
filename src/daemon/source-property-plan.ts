@@ -38,6 +38,11 @@ export async function planPropertyValue(
 	}
 	const original = await compilePropertySource(root, inputs, literal);
 	const read = readPropertyEffects(original, operation.property, operation.scope, environment);
+	const important = read.effects.some((effect) => effect.important);
+	const owners = read.owners.filter((owner) =>
+		read.effects.some((effect) => effect.owner === owner && effect.important === important),
+	);
+	if (important) candidate = candidate.map((token) => (anatomyOf(token).important ? token : `${token}!`));
 	const compiledCandidates = await compilePropertySource(root, inputs, candidate.join(" "));
 	const candidateEffects = readPropertyEffects(compiledCandidates, operation.property, operation.scope, environment);
 	if (candidate.some((token) => !candidateEffects.owners.includes(token)))
@@ -51,7 +56,7 @@ export async function planPropertyValue(
 	// These controls deliberately own the compiler's coupled layout declarations.
 	if (operation.property === "text-overflow")
 		for (const name of ["overflow-x", "overflow-y", "white-space-collapse", "text-wrap-mode"]) allowed.add(name);
-	const before = read.owners.filter((token) => {
+	const before = owners.filter((token) => {
 		if (candidate.includes(token)) return false;
 		if (candidate.length === 0) return true;
 		const changed = changedPropertyKeys(
@@ -63,7 +68,7 @@ export async function planPropertyValue(
 		// Replacing that binding would also detach its other independent components.
 		return [...changed].every((name) => allowed.has(name));
 	});
-	const after = candidate.filter((token) => !read.owners.includes(token));
+	const after = candidate.filter((token) => !owners.includes(token));
 	const tokens = splitClass(literal);
 	if (new Set(tokens).size !== tokens.length || new Set(candidate).size !== candidate.length)
 		throw new Error("duplicate class tokens have no independent source ownership");
