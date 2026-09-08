@@ -23,7 +23,9 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const corner = isCorner(expected.property);
 	const color = expected.property === "color" || expected.property === "background-color";
 	const weight = expected.property === "font-weight";
-	if (expected.property !== "opacity" && expected.property !== "font-size" && !color && !corner && !weight)
+	const leading = expected.property === "line-height";
+	const companion = weight ? "--tw-font-weight" : leading ? "--tw-leading" : undefined;
+	if (expected.property !== "opacity" && expected.property !== "font-size" && !color && !corner && !weight && !leading)
 		return unverified("this property needs a native effect proof");
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
@@ -38,7 +40,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		if (condition === "inactive") continue;
 		if (condition === "unverified")
 			return unverified("this property effect needs a native selector or conditional context proof");
-		if (weight && effect.property === "--tw-font-weight") companions.push(effect);
+		if (companion && effect.property === companion) companions.push(effect);
 		else if (effect.property === expected.property) applicable.push(effect);
 		else if (corner && effect.property === "border-radius") {
 			const value = resolvedValue(element, sheet, effect.value);
@@ -56,33 +58,40 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const selection = winningEffect(sheet, applicable);
 	if (selection.reason) return unverified(selection.reason);
 	const winner = selection.winner;
-	if (weight) {
+	if (weight || leading) {
+		const number = (value: string) => (weight ? nativeWeight(value) : nativeLineHeight(element, sheet, value));
 		const result = winningEffect(sheet, companions);
 		if (result.reason) return unverified(result.reason);
 		const native = view.getComputedStyle(element);
 		let companionMatches = true;
 		if (result.winner) {
 			const value = resolvedValue(element, sheet, result.winner.value);
-			const wanted = value === undefined ? undefined : nativeWeight(value);
-			const observed = native.getPropertyValue("--tw-font-weight").trim();
-			const actual = nativeWeight(observed);
+			const wanted = value === undefined ? undefined : number(value);
+			const observed = native.getPropertyValue(companion!).trim();
+			const actual = number(observed);
 			if (wanted === undefined || (actual === undefined && observed !== ""))
-				return unverified("this weight companion needs a native value proof");
+				return unverified("this type metric companion needs a native value proof");
 			companionMatches = wanted === actual;
 		}
 		let value: string | undefined;
 		if (!winner || winner.value.trim() === "inherit") {
-			if (!(element instanceof HTMLElement || element instanceof SVGElement) || element.style.fontWeight)
-				return unverified("this weight has an independent inline context requiring proof");
+			if (
+				!(element instanceof HTMLElement || element instanceof SVGElement) ||
+				element.style.getPropertyValue(expected.property)
+			)
+				return unverified("this type metric has an independent inline context requiring proof");
 			const parent = element.parentElement;
-			if (!parent) return unverified("this weight needs an inherited context proof");
-			value = view.getComputedStyle(parent).fontWeight;
+			if (!parent) return unverified("this type metric needs an inherited context proof");
+			const parentStyle = view.getComputedStyle(parent);
+			if (leading && parentStyle.fontSize !== native.fontSize)
+				return unverified("inherited leading needs its original unit context");
+			value = parentStyle.getPropertyValue(expected.property);
 		} else value = resolvedValue(element, sheet, winner.value);
-		const wanted = value === undefined ? undefined : nativeWeight(value);
-		const observed = native.fontWeight;
-		const actual = nativeWeight(observed);
+		const wanted = value === undefined ? undefined : number(value);
+		const observed = native.getPropertyValue(expected.property);
+		const actual = number(observed);
 		if (wanted === undefined || actual === undefined)
-			return unverified("this weight needs a native value context proof");
+			return unverified("this type metric needs a native value context proof");
 		return { rendered: companionMatches && wanted === actual ? "verified" : "mismatching", observed };
 	}
 	if (color) {
@@ -403,29 +412,65 @@ function nativeLength(element: Element, sheet: CSSStyleSheet, property: string, 
 	if (!(rule instanceof CSSStyleRule)) return;
 	rule.style.setProperty(property, value);
 	if (!rule.style.getPropertyValue(property)) return;
+	const dimensions: { number: number; unit: string }[] = [];
 	const parsed = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(px|rem|em|%)$/i.exec(value.trim());
-	if (!parsed) return;
-	const number = Number(parsed[1]);
-	const unit = parsed[2]!.toLowerCase();
-	let computed = number;
-	if (unit !== "px") {
-		if (property === "font-size" && element === element.ownerDocument.documentElement) return;
-		if (property !== "font-size" && unit === "%") return;
-		const context =
-			unit === "rem"
-				? element.ownerDocument.documentElement
-				: property === "font-size"
-					? element.parentElement
-					: element;
-		if (!context) return;
-		const inherited = view.getComputedStyle(context).fontSize;
-		if (!inherited.endsWith("px")) return;
-		computed *= Number.parseFloat(inherited) / (unit === "%" ? 100 : 1);
+	if (parsed) dimensions.push({ number: Number(parsed[1]), unit: parsed[2]!.toLowerCase() });
+	else if (/^[+-]?0(?:\.0*)?$/.test(value.trim())) dimensions.push({ number: 0, unit: "px" });
+	else {
+		try {
+			const sum = CSSNumericValue.parse(value).toSum("px", "em", "rem", "percent");
+			for (const term of sum.values) {
+				if (!(term instanceof CSSUnitValue)) return;
+				dimensions.push({ number: term.value, unit: term.unit === "percent" ? "%" : term.unit });
+			}
+		} catch {
+			return;
+		}
+	}
+	let computed = 0;
+	for (const dimension of dimensions) {
+		const { unit } = dimension;
+		let number = dimension.number;
+		if (number === 0) continue;
+		if (unit !== "px") {
+			if (property === "font-size" && element === element.ownerDocument.documentElement) return;
+			if (property !== "font-size" && property !== "line-height" && unit === "%") return;
+			const context =
+				unit === "rem"
+					? element.ownerDocument.documentElement
+					: property === "font-size"
+						? element.parentElement
+						: element;
+			if (!context) return;
+			const inherited = view.getComputedStyle(context).fontSize;
+			if (!inherited.endsWith("px")) return;
+			number *= Number.parseFloat(inherited) / (unit === "%" ? 100 : 1);
+		}
+		computed += number;
 	}
 	if (!Number.isFinite(computed)) return;
 	// Preserve the authored precision during conversion; serialize only the final px value.
 	rule.style.setProperty(property, `${computed}px`);
 	return Number.parseFloat(rule.style.getPropertyValue(property));
+}
+
+function nativeLineHeight(element: Element, sheet: CSSStyleSheet, value: string): number | undefined {
+	let multiplier: number | undefined;
+	if (/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) multiplier = Number(value);
+	else {
+		try {
+			multiplier = CSSNumericValue.parse(value).to("number").value;
+		} catch {
+			/* A length has a different native dimension. */
+		}
+	}
+	if (multiplier !== undefined) {
+		const size = element.ownerDocument.defaultView?.getComputedStyle(element).fontSize;
+		return size?.endsWith("px") && multiplier >= 0
+			? nativeLength(element, sheet, "line-height", `${multiplier * Number.parseFloat(size)}px`)
+			: undefined;
+	}
+	return nativeLength(element, sheet, "line-height", value);
 }
 
 function nativeWeight(value: string): number | undefined {

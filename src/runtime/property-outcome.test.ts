@@ -797,3 +797,110 @@ it("verifies font weight removal from each native parent and retains its inverse
 		"verified",
 	]);
 });
+
+it.each(["1.5", "32px", "1.333333"])(
+	"verifies compiled line height %s with unchanged type size and owned companion",
+	async (value) => {
+		const { root } = makeProject(makeTempDir());
+		writeDesignFile(root, "shared/tokens.css", "");
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		const operation = { kind: "property", property: "line-height", scope: "" } as const;
+		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+		const plan = await planPropertyValue(
+			root,
+			new Map([[file, readInput(file)]]),
+			"text-xl leading-10",
+			operation,
+			{ kind: "custom", value },
+			environment,
+		);
+		const expected: SourcePropertyExpectation = {
+			kind: "property",
+			property: operation.property,
+			scope: "",
+			className: plan.next,
+			absent: false,
+			scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+			effects: plan.consumers,
+			css: plan.desired.css,
+		};
+		const f = await fixture(
+			`<!doctype html><style>${plan.original.css}${expected.css}</style><div data-subject class="${plan.next}">Healthy</div><div data-subject class="text-xl leading-10">Retained</div>`,
+		);
+		expect(
+			(await f.inspect(expected)).map((outcome) => outcome.rendered),
+			JSON.stringify(expected.effects),
+		).toEqual(["verified", "mismatching"]);
+		expect(
+			await f.page.locator("[data-subject]").evaluateAll((elements) =>
+				elements.map((element) => {
+					const style = getComputedStyle(element);
+					return [style.fontSize, style.lineHeight];
+				}),
+			),
+		).toEqual([
+			["20px", value === "1.5" ? "30px" : value === "1.333333" ? "26.6667px" : "32px"],
+			["20px", "40px"],
+		]);
+		const inverse: SourcePropertyExpectation = {
+			...expected,
+			className: "text-xl leading-10",
+			css: plan.original.css,
+			effects: propertyConsumers(plan.original, plan.roots, environment),
+		};
+		expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	},
+);
+
+it("keeps inherited leading unit ambiguity separate from a known parent context", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property: "line-height", scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"leading-10",
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: operation.property,
+		scope: "",
+		className: plan.next,
+		absent: !plan.next,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}.foreign{font-size:40px;line-height:30px}</style><section style="font-size:20px;line-height:1.5"><div data-subject>Healthy</div><div data-subject class="leading-10">Retained</div><div data-subject style="font-size:40px">Unknown unit inheritance</div><div data-subject class="foreign">Same pixels, wrong context</div></section>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"unverified",
+		"unverified",
+	]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).lineHeight)),
+	).toEqual(["30px", "40px", "60px", "30px"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "leading-10",
+		absent: false,
+		css: plan.original.css,
+		effects: propertyConsumers(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"verified",
+		"mismatching",
+		"mismatching",
+	]);
+});
