@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
+import type { SourceRead } from "../../source-edit";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
@@ -249,13 +250,19 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 				vi.spyOn(contentWindow, "postMessage").mockImplementation((message) => {
 					if (message?.spool !== "source-request") return;
 					const result =
-						message.action === "read"
+						message.action === "read" || message.action === "inspect"
 							? gate.ok
 								? ORIGINAL
 								: undefined
 							: message.action === "complete"
 								? ORIGINAL
-								: true;
+								: message.action === "inventory"
+									? {
+											publication: ORIGINAL.publication,
+											uses: [{ original: ORIGINAL, visible: true }],
+											unknown: 0,
+										}
+									: true;
 					queueMicrotask(() =>
 						window.dispatchEvent(
 							new MessageEvent("message", {
@@ -366,6 +373,7 @@ async function settle(): Promise<void> {
 }
 
 function stubCanvasApis(): void {
+	let sourceRead: SourceRead | undefined;
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal("open", vi.fn());
 	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
@@ -404,19 +412,20 @@ function stubCanvasApis(): void {
 			}
 			if (url.pathname.endsWith("/source")) {
 				const body = JSON.parse(String(init?.body)) as { action: string; generation: number };
-				if (body.action === "read")
-					return Response.json({
-						ok: true,
-						read: {
-							handle: "read",
-							owner: "owner",
-							generation: body.generation,
-							original: ORIGINAL,
-							source: STAMP,
-							role: "literal-child",
-							value: "Pay now",
-						},
-					});
+				if (body.action === "read") {
+					sourceRead = {
+						handle: "read",
+						owner: "owner",
+						generation: body.generation,
+						original: ORIGINAL,
+						source: STAMP,
+						role: "literal-child",
+						value: "Pay now",
+					};
+					return Response.json({ ok: true, read: sourceRead });
+				}
+				if (body.action === "reach")
+					return Response.json(sourceRead ? { ok: true, read: sourceRead } : { ok: false, reason: "no read" });
 				if (body.action === "commit" || body.action === "inverse")
 					return Response.json({
 						ok: true,

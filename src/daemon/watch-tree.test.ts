@@ -95,7 +95,10 @@ describe.each(shapes)("%s watch", (_shape, open) => {
 		await watch.until(join("frames", "checkout", "frame.tsx"));
 	});
 
-	it("hears a frame folder renamed, and keeps hearing it under its new name", async () => {
+	it("hears a frame folder renamed, and keeps hearing it under its new name", {
+		// Both OS notification waits below retain their own ten-second deadline.
+		timeout: 25_000,
+	}, async () => {
 		const root = folder();
 		const watch = await watching(open, root);
 
