@@ -538,6 +538,13 @@ let acceptedOutcome: AcceptedOutcome | undefined;
 function observedOutcome(held: AcceptedOutcome): UseOutcome {
 	const { publication, targets, failed } = held;
 	const expected = publication.expected;
+	if (expected.kind === "property" || expected.kind === "structure")
+		return {
+			occurrence: publication.original.occurrence,
+			installation: "installed",
+			rendered: "unverified",
+			reason: "this rendered source effect has no verifier",
+		};
 	return combineUseOutcomes(
 		targets.map(({ original, element }) => {
 			const observed = element ? renderedField(element, original.field) : undefined;
