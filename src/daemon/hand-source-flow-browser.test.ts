@@ -221,13 +221,23 @@ it.each(positives)(
 		await f.page.keyboard.insertText("After");
 		expect(readFileSync(f.file, "utf8")).toBe(source);
 		expect(await f.frame.locator("#unrelated").textContent()).toBe("Before");
+		const delivered = () =>
+			f.page.waitForResponse(
+				(response) =>
+					response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+			);
+		let acknowledgement = delivered();
 		await f.page.keyboard.press("Enter");
 		for (let phase = 0; phase < 3; phase++) {
 			const text = phase === 1 ? "Before" : "After";
 			if (phase > 0) {
+				acknowledgement = delivered();
 				await f.page.mouse.click(800, 700);
 				await f.page.keyboard.press(phase === 1 ? "ControlOrMeta+z" : "ControlOrMeta+Shift+z");
 			}
+			// Saved bytes and preview text precede actual installation. Await the
+			// real acknowledged delivery before asserting source/state/caret.
+			expect((await acknowledgement).ok()).toBe(true);
 			await focusDraft(oracle);
 			await oracle.evaluate((after) => Reflect.get(globalThis, "oracleSelect")(after), phase !== 1);
 			if (name === "suspense" && phase === 0) {
@@ -240,7 +250,7 @@ it.each(positives)(
 			}
 			await expect.poll(() => f.label.textContent()).toBe(text);
 			await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
-			expect(await oracle.locator("#label").textContent()).toBe(text);
+			await expect.poll(() => oracle.locator("#label").textContent()).toBe(text);
 			await expect.poll(() => second.locator("#label").textContent()).toBe(text);
 			expect(await second.locator("#draft").inputValue(), `phase ${phase}`).toBe("Kept second");
 			expect(await second.locator("#unrelated").textContent()).toBe("Before");

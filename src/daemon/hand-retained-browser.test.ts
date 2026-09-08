@@ -582,7 +582,13 @@ it("undoes a shared source after normal page navigation and deletion of its init
 	});
 	await f.edit();
 	await replace(f.page, "Saved shared");
+	const delivered = () =>
+		f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+		);
+	let acknowledgement = delivered();
 	await f.page.keyboard.press("Enter");
+	expect((await acknowledgement).ok()).toBe(true);
 	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toContain("Saved shared");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 	await f.select();
@@ -593,11 +599,15 @@ it("undoes a shared source after normal page navigation and deletion of its init
 	expect(await f.page.locator('iframe[title="home"]').count()).toBe(0);
 	rmSync(join(f.root, "design/frames/home"), { recursive: true });
 	await f.page.mouse.click(5, 5);
+	acknowledgement = delivered();
 	await f.page.keyboard.press("ControlOrMeta+z");
+	expect((await acknowledgement).ok()).toBe(true);
 	await expect.poll(() => readFileSync(join(f.root, "design/shared/label.tsx"), "utf8")).toBe(shared);
 	await expect.poll(() => cold.locator("#label").textContent()).toBe("Before");
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+	acknowledgement = delivered();
 	await f.page.keyboard.press("ControlOrMeta+Shift+z");
+	expect((await acknowledgement).ok()).toBe(true);
 	await expect.poll(() => cold.locator("#label").textContent()).toBe("Saved shared");
 });
 
