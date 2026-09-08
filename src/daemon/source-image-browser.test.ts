@@ -614,3 +614,103 @@ it.each(["escape", "reselect"] as const)(
 		).toEqual([true, "kept during decode", 2, 5]);
 	},
 );
+
+it("keeps shared image recovery until both original uses show the saved bytes", { timeout: 120000 }, async () => {
+	const originalImage = `data:image/svg+xml;base64,${Buffer.from(SVG).toString("base64")}`;
+	const component = `import {useRef,useLayoutEffect} from 'react';import image from './assets/first.svg';export function Photo(){const ref=useRef(null);useLayoutEffect(()=>{if(window.imageCorrupt)ref.current.src=${JSON.stringify(originalImage)}});return <img ref={ref} id="hero" src={image} style={{width:180,height:120}}/>}`;
+	const source =
+		"import {Photo} from 'shared/photo';export default function Frame(){return <main style={{padding:40}}><Photo/><input id='native' defaultValue='initial'/></main>}";
+	const f = await originCanvas(
+		{ "shared/photo.tsx": component, "shared/assets/first.svg": SVG, "shared/assets/second.svg": SECOND },
+		source,
+		"#hero",
+		true,
+	);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	for (const [frame, corrupt] of [
+		[f.frame, false],
+		[second, true],
+	] as const) {
+		await frame.locator("#native").evaluate((element, corrupt) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+			element.value = "dirty shared input";
+			element.setSelectionRange(2, 5);
+			Reflect.set(window, "sharedImageInput", element);
+			Reflect.set(window, "imageCorrupt", corrupt);
+		}, corrupt);
+	}
+	const sends: string[] = [];
+	f.page.on("request", (request) => {
+		if (request.url().endsWith("/agent/turn")) sends.push(request.url());
+	});
+	await f.select();
+	await f.page.getByRole("button", { name: "image", exact: true }).click();
+	const choice = f.page.locator('[data-menu-option="second.svg"]');
+	await expect.poll(() => choice.count()).toBe(1);
+	await choice.click();
+	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(2);
+	const outcomes = await f.page.evaluate(() => Reflect.get(window, "originOutcomes"));
+	expect(outcomes.map((outcome: { rendered: string }) => outcome.rendered).sort()).toEqual([
+		"mismatching",
+		"verified",
+	]);
+	for (const [frame, width] of [
+		[f.frame, 70],
+		[second, 30],
+	] as const) {
+		await expect
+			.poll(() =>
+				frame.locator("#hero").evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth),
+			)
+			.toBe(width);
+		expect(
+			await frame.locator("#native").evaluate((element) => {
+				if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+				return [
+					element === Reflect.get(window, "sharedImageInput"),
+					element.value,
+					element.selectionStart,
+					element.selectionEnd,
+				];
+			}),
+		).toEqual([true, "dirty shared input", 2, 5]);
+	}
+	const saved = component
+		.replace("import image from './assets/first.svg';", 'import second from "./assets/second.svg";')
+		.replace("src={image}", "src={second}");
+	expect(readFileSync(f.file("shared/photo.tsx"), "utf8")).toBe(saved);
+	const notice = f.page.locator('[data-hand-notice="mismatching"]');
+	await expect.poll(() => notice.count()).toBe(1);
+	await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	const composer = f.page.locator("[data-agent-rail] textarea");
+	await expect.poll(() => composer.inputValue()).toContain("second.svg");
+	const prepared = await composer.inputValue();
+	await f.page.locator('[data-dock-glyph="properties"]').click();
+	await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator("#native").inputValue()).toBe("initial");
+	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(4);
+	expect(await notice.count()).toBe(1);
+	expect(await second.locator("#native").inputValue()).toBe("dirty shared input");
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	expect(await composer.inputValue()).toBe(prepared);
+	const frameElement = await f.page.locator('iframe[title="second"]').elementHandle();
+	const document = await frameElement?.contentFrame();
+	if (!document) throw new Error("missing secondary document");
+	const navigated = f.page.waitForEvent("framenavigated", (frame) => frame === document);
+	await second.locator("#hero").evaluate(() => location.reload());
+	await navigated;
+	await expect
+		.poll(() =>
+			second.locator("#hero").evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth),
+		)
+		.toBe(70);
+	await f.page.locator('[data-dock-glyph="properties"]').click();
+	await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(6);
+	await expect.poll(() => notice.count()).toBe(0);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	await expect.poll(() => composer.inputValue()).toBe("");
+	expect(readFileSync(f.file("shared/photo.tsx"), "utf8")).toBe(saved);
+	expect(f.writes).toEqual(["commit"]);
+	expect(sends).toEqual([]);
+});
