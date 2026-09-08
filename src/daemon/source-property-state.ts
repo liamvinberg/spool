@@ -6,6 +6,7 @@ import { realDesignDir } from "./design-path";
 import { lowerLiterals, type RetainedCompilation, type SourceInput } from "./retained-compile";
 import { compilePropertySource } from "./source-property-compile";
 import { nativePropertyEffects } from "./source-property-dependencies";
+import { nativeConsumerEffects } from "./source-property-observation";
 
 /** Read the same retained class cell from a proposed or acknowledged source snapshot. */
 export async function propertyState(
@@ -47,6 +48,10 @@ export async function propertyState(
 			selections: selections.map((selection) => ({
 				...selection,
 				effects: nativePropertyEffects(certificate, new Set(selection.roots), environment),
+				observations: selection.observations.map((observation) => ({
+					...observation,
+					effects: nativeConsumerEffects(certificate, observation.property, environment),
+				})),
 			})),
 		};
 	}

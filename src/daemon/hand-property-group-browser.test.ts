@@ -102,12 +102,14 @@ it("removes an authored scope through one actual rail source operation and inver
 	const reading = await (await readReply).json();
 	expect(reading, JSON.stringify(reading)).toMatchObject({ ok: true });
 	await expect.poll(() => f.writes).toEqual(["commit"]);
+	// A recorded request is not a landed write: read the file once its save settles.
+	await f.settled();
 	expect(f.bytes()["shared/button.tsx"]).toBe(
 		source.replace("hover:opacity-50", "").replace("hover:text-red-500", ""),
 	);
-	await f.settled();
 	await f.history();
 	await expect.poll(() => f.writes).toEqual(["commit", "inverse"]);
+	await f.settled();
 	expect(f.bytes()["shared/button.tsx"]).toBe(source);
 });
 
@@ -168,19 +170,26 @@ it.each([false, true])(
 		expect(f.bytes()["shared/button.tsx"]).toBe(source.replace("hover:opacity-50", ""));
 		await f.history();
 		await expect.poll(() => f.writes).toEqual(["commit", "inverse"]);
+		await f.settled();
 		expect(f.bytes()["shared/button.tsx"]).toBe(source);
 	},
 );
 
-it.each([false, true])(
-	"verifies every shared use of a raw class removal (masked: %s)",
+it.each([
+	[false, false],
+	[true, false],
+	[false, true],
+	[true, true],
+])(
+	"verifies every shared use of a raw class removal (masked: %s, compound: %s)",
 	{ timeout: 120_000 },
-	async (masked) => {
+	async (masked, compound) => {
 		const file = "shared/button.tsx";
-		const source = 'export function Button(){return <button id="subject" className="p-6 opacity-75">Hello</button>}';
+		const token = compound ? "paired" : "opacity-75";
+		const source = `export function Button(){return <button id="subject" className="p-6 ${token}">Hello</button>}`;
 		const f = await originCanvas(
-			{ [file]: source },
-			'import {Button} from "shared/button";export default function Frame(){return <main className="p-10"><Button/><input id="native" defaultValue="initial"/></main>}',
+			{ [file]: source, "shared/tokens.css": "@utility paired { opacity: .75; color: #123456; }" },
+			'import {Button} from "shared/button";export default function Frame(){return <main className="p-10" style={{color:"#000"}}><Button/><input id="native" defaultValue="initial"/></main>}',
 			"#subject",
 			true,
 			async (page) => {
@@ -199,12 +208,12 @@ it.each([false, true])(
 		);
 		const documents = [f.frame, f.page.frameLocator('iframe[title="second"]')];
 		if (masked)
-			await documents[1]!.locator("#subject").evaluate((element) => {
+			await documents[1]!.locator("#subject").evaluate((element, token) => {
 				new MutationObserver(() => {
-					if (!element.classList.contains("opacity-75")) element.setAttribute("style", "opacity:.25");
+					if (!element.classList.contains(token)) element.setAttribute("style", "opacity:.25");
 					else element.removeAttribute("style");
 				}).observe(element, { attributes: true, attributeFilter: ["class"] });
-			});
+			}, token);
 		for (const document of documents)
 			await document.locator("#native").evaluate((element) => {
 				if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
@@ -220,7 +229,7 @@ it.each([false, true])(
 		);
 		await f.page
 			.locator("[data-properties-source] button")
-			.filter({ hasText: /^opacity-75$/ })
+			.filter({ hasText: new RegExp(`^${token}$`) })
 			.click();
 		expect(await (await committed).json()).toMatchObject({
 			ok: true,
@@ -229,11 +238,16 @@ it.each([false, true])(
 		});
 		await delivered;
 		await f.settled();
-		expect(f.bytes()[file]).toBe(source.replace("opacity-75", ""));
+		expect(f.bytes()[file]).toBe(source.replace(token, ""));
 		for (const [index, document] of documents.entries())
 			expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).opacity)).toBe(
 				masked && index === 1 ? "0.25" : "1",
 			);
+		if (compound)
+			for (const document of documents)
+				expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).color)).toBe(
+					"rgb(0, 0, 0)",
+				);
 		const result = await f.page.evaluate(() => {
 			const results = Reflect.get(window, "groupOutcomes");
 			return [results.home, results.second].flatMap((result) => result?.uses ?? []);
@@ -250,6 +264,10 @@ it.each([false, true])(
 			expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).opacity)).toBe(
 				"0.75",
 			);
+			if (compound)
+				expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).color)).toBe(
+					"rgb(18, 52, 86)",
+				);
 			expect(
 				await document
 					.locator("#native")

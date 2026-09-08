@@ -279,7 +279,9 @@ it("edits opacity through the actual Properties control with preview, one save a
 	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
 });
 
-it("retains the latest typed request when a held original computed-class read is refused", async () => {
+it("retains the latest typed request when a held original computed-class read is refused", {
+	timeout: 120_000,
+}, async () => {
 	let release = () => {};
 	const held = new Promise<void>((resolve) => {
 		release = resolve;
@@ -317,6 +319,39 @@ it("retains the latest typed request when a held original computed-class read is
 	const composer = f.page.locator("[data-agent-rail] textarea");
 	await expect.poll(() => composer.inputValue()).toContain("opacity-60");
 	expect(await composer.inputValue()).toContain("#subject");
+	expect(f.writes).toEqual([]);
+	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
+});
+
+// A control the file cannot take says the source's own words for it, and the
+// optional additions it offers are named by that same description.
+it("says the source's own property refusal on the generic controls", { timeout: 120_000 }, async () => {
+	let refusal = "";
+	const f = await originCanvas(
+		{
+			"shared/button.tsx":
+				'export function Button(){return <button id="subject" className={"opacity-" + 75}>Hello</button>}',
+		},
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		false,
+		async (page) => {
+			page.on("response", (response) => {
+				if (!response.url().endsWith("/source")) return;
+				const body = response.request().postDataJSON();
+				if (body?.action !== "describe" || body.operation?.kind !== "property") return;
+				void response.json().then((result) => {
+					if (!result.ok && typeof result.reason === "string") refusal = result.reason;
+				});
+			});
+		},
+	);
+	await f.select();
+	await expect.poll(() => refusal).not.toBe("");
+	await expect
+		.poll(() => f.page.locator('[data-properties-row="opacity"] > span').first().getAttribute("title"))
+		.toBe(refusal);
+	await expect.poll(() => f.page.locator("[data-add-property]").getAttribute("title")).toBe(refusal);
 	expect(f.writes).toEqual([]);
 	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
 });
@@ -375,7 +410,9 @@ it.each([true, false])("scrubs one retained opacity gesture and completes only o
 		"#subject",
 	);
 	await f.select();
+	// The rail scrolls: a pointer gesture reads the row where it actually is.
 	const label = f.page.locator('[data-properties-row="opacity"] > span').first();
+	await label.scrollIntoViewIfNeeded();
 	const box = await label.boundingBox();
 	if (!box) throw new Error("opacity scrub label has no box");
 	const x = box.x + 5,
@@ -414,7 +451,9 @@ it.each([false, true])(
 			"#subject",
 		);
 		await f.select();
-		const box = await f.page.locator('[data-properties-row="opacity"] > span').first().boundingBox();
+		const label = f.page.locator('[data-properties-row="opacity"] > span').first();
+		await label.scrollIntoViewIfNeeded();
+		const box = await label.boundingBox();
 		if (!box) throw new Error("opacity scrub label has no box");
 		const x = box.x + 5,
 			y = box.y + box.height / 2;
@@ -489,7 +528,10 @@ it("uses the approved shared color menu with exact reference metadata and bindin
 	await trigger.click();
 	const search = f.page.getByRole("textbox", { name: "Find color token", exact: true });
 	await search.fill("missing-color-choice");
-	expect(await f.page.locator(".ep-color-options button").count()).toBe(0);
+	// No token answers that search; removing the declaration is not a search result.
+	expect(
+		await f.page.locator(".ep-color-options button").evaluateAll((buttons) => buttons.map((b) => b.textContent)),
+	).toEqual(["Remove color"]);
 	expect(f.writes).toEqual([]);
 	await search.fill("blue-500");
 	const blue = f.page.getByRole("button", { name: "Apply --color-blue-500", exact: true });

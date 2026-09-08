@@ -147,17 +147,41 @@ export function nativePropertyEffects(
 ): SourcePropertyEffect[] {
 	const effects = new Set(propertyConsumers(certificate, roots, environment));
 	const inputs = new Set<string>();
+	const carried = (effect: SourcePropertyEffect) => {
+		let added = false;
+		for (const name of propertyInputs(effect))
+			if (name.startsWith("--tw-") && !inputs.has(name)) {
+				inputs.add(name);
+				added = true;
+			}
+		return added;
+	};
 	for (const effect of effects)
-		if (["transform", "translate", "rotate", "scale", "filter", "backdrop-filter"].includes(effect.property))
-			for (const name of propertyInputs(effect)) if (name.startsWith("--tw-")) inputs.add(name);
+		if (
+			[
+				"transform",
+				"translate",
+				"rotate",
+				"scale",
+				"filter",
+				"backdrop-filter",
+				"box-shadow",
+				"background-image",
+			].includes(effect.property)
+		)
+			carried(effect);
 	let growing = true;
 	while (growing) {
 		growing = false;
 		for (const effect of certificate.effects) {
-			if (effects.has(effect) || !inputs.has(effect.property)) continue;
+			if (!inputs.has(effect.property)) continue;
+			// A carried declaration reached as this root's own consumer still hands
+			// the native value its further inputs: a gradient's stop list names the
+			// position and the stops that its image reads.
+			if (carried(effect)) growing = true;
+			if (effects.has(effect)) continue;
 			effects.add(effect);
 			growing = true;
-			for (const name of propertyInputs(effect)) if (name.startsWith("--tw-")) inputs.add(name);
 		}
 	}
 	return certificate.effects.filter((effect) => effects.has(effect));

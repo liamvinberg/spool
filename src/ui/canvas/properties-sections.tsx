@@ -102,6 +102,8 @@ export interface View {
 	compiler: Compiler;
 	/** true when a bare token under this scope is not one the file was written with */
 	fresh: (token: string | null) => boolean;
+	/** The source's own reason no class edit on this element can be written. */
+	sourceRefusal?: string | undefined;
 	/** Remaining layout edits under the live scope. */
 	put: (edits: readonly RowEdit[]) => void;
 }
@@ -190,6 +192,20 @@ function ruleRow<K extends Rule["kind"]>(property: string, kind: K): ModelRow & 
 function okOf(view: View, row: ModelRow): boolean {
 	if (appearanceProperty(row)) return view.property !== null;
 	return verdictFor(row, view.element, view.scoped).ok;
+}
+
+/**
+ * What an appearance control says about itself, in the source's own words.
+ *
+ * An open session is somewhere to send a request, never evidence that the
+ * source will take one. The rail asks the source once whether this element's
+ * class can be written, and every control repeats that answer rather than
+ * looking ordinary. A refusal still arrives at the write, so a request the file
+ * cannot take can still be made and handed to an agent.
+ */
+function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
+	if (!appearanceProperty(row)) return { ok: verdictFor(row, view.element, view.scoped).ok, reason: undefined };
+	return { ok: view.property !== null, reason: view.sourceRefusal };
 }
 
 /**
@@ -290,7 +306,7 @@ function LengthRow({
 	const family = row.rule.family;
 	const kind: Kind = LENGTHS[family] ?? "spacing";
 	const step = stepOf(view.theme);
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const reader = read ?? ((scoped: string) => signedOf(lengthOf(scoped, family)));
 	const held = worn<string | null>(view, reader, (value) => value === null);
 	const value = held.shown ?? "";
@@ -325,6 +341,7 @@ function LengthRow({
 		<Row
 			name={name ?? row.property}
 			ok={ok}
+			reason={reason}
 			changed={changed}
 			onScrub={ok ? (scrub?.move ?? stepBy) : undefined}
 			onScrubStart={scrub?.start}
@@ -382,7 +399,7 @@ function BorderWidthRow({
 }) {
 	const row = ruleRow(property, "border-width");
 	const edge = row.rule.edge;
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const step = stepOf(view.theme);
 	const held = worn<string | null>(
 		view,
@@ -425,6 +442,7 @@ function BorderWidthRow({
 		<Row
 			name={name ?? row.property}
 			ok={ok}
+			reason={reason}
 			changed={changed}
 			onScrub={ok ? (scrub?.move ?? stepBy) : undefined}
 			onScrubStart={scrub?.start}
@@ -538,13 +556,14 @@ function ColourRow({
 	fold?: ReactNode;
 }) {
 	const control = view.property;
-	const reading = usePropertyReading(
+	const row = ruleRow(property, "colour");
+	const prefix = row.rule.prefix;
+	const { ok, reason } = rowAdmission(view, row);
+	const described = usePropertyReading(
 		control,
 		property === "color" || property === "background-color" ? property : undefined,
 	);
-	const row = ruleRow(property, "colour");
-	const prefix = row.rule.prefix;
-	const ok = okOf(view, row);
+	const reading = described?.reading;
 	const reader = read ?? ((scoped: string) => colourOf(scoped, prefix, view.theme));
 	const held = worn<Colour>(view, reader, (colour) => colour.token === null);
 	const shown = held.shown;
@@ -555,7 +574,7 @@ function ColourRow({
 			: { token: shown.name, name: shown.name, swatch: shown.paint ?? "" };
 	const previewAlpha = (alpha: number | null) => {
 		if (shown.name === null) return;
-		const original = reading?.reading;
+		const original = reading;
 		const paint = original?.binding.kind === "reference" ? `var(${original.binding.name})` : original?.authored;
 		control?.preview(
 			property,
@@ -571,8 +590,8 @@ function ColourRow({
 		return (
 			<PropertyColorField
 				property={property}
-				reading={reading?.reading}
-				reason={reading?.reason}
+				reading={reading}
+				reason={described?.reason ?? reason}
 				options={[
 					...(view.theme?.colour ?? []).map((token) => ({ ...token, reference: `--color-${token.name}` })),
 					...KEYWORD_COLOURS.map((color) => ({
@@ -605,7 +624,7 @@ function ColourRow({
 			/>
 		);
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed}>
+		<Row name={name ?? row.property} ok={ok} reason={reason} changed={changed}>
 			<Menu
 				current={current}
 				options={[{ token: null, name: absent, swatch: "" }, ...colourOptions(view.theme)]}
@@ -696,7 +715,7 @@ const UNSET: Option = { token: null, name: "unset" };
 function WordRow({ view, property, name }: { view: View; property: string; name?: string }) {
 	const row = ruleRow(property, "word");
 	const word = row.rule.word;
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const held = worn<string | null>(
 		view,
 		(scoped) => wordOf(scoped, word),
@@ -716,7 +735,7 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 			? { token: null, name: WORDS[word].fallback }
 			: (options.find((option) => option.token === held.shown) ?? { token: held.shown, name: held.shown });
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed}>
+		<Row name={name ?? row.property} ok={ok} reason={reason} changed={changed}>
 			<Menu
 				current={current}
 				options={options}
@@ -823,7 +842,7 @@ function TokenRow({
 	fold?: ReactNode;
 }) {
 	const row = modelRow(property);
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const held = worn(
 		view,
 		(scoped) => readRow(row, scoped, view.theme),
@@ -852,7 +871,7 @@ function TokenRow({
 					value: held.shown.says ?? "",
 				});
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed}>
+		<Row name={name ?? row.property} ok={ok} reason={reason} changed={changed}>
 			<Menu
 				current={current}
 				options={options}
@@ -900,7 +919,7 @@ function ToggleRow({
 }) {
 	const row = ruleRow(property, "toggles");
 	const set = row.rule.set;
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const on = toggledOf(view.scoped, set);
 	const inherited = view.scope.length > 0 ? toggledOf(view.base, set) : new Set<string>();
 	const chips = set.groups.filter((group) => group !== menuGroup).flat();
@@ -908,7 +927,7 @@ function ToggleRow({
 	const none = `${menuGroup?.[0]?.split("-")[0] ?? ""}-none`;
 	const write = (token: string, next: boolean) => writeValue(view, row, { kind: "toggle", token, on: next });
 	return (
-		<Row name={row.property} ok={ok} tall changed={[...on].some((token) => view.fresh(token))}>
+		<Row name={row.property} ok={ok} reason={reason} tall changed={[...on].some((token) => view.fresh(token))}>
 			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
 				{chips.map((token) => (
 					<Chip
@@ -1106,7 +1125,7 @@ const DIRECTION_OPTIONS: readonly Option[] = DIRECTIONS.map((direction) => ({
  */
 function GradientRows({ view }: { view: View }) {
 	const row = modelRow("background-image");
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const own = gradientOf(view.scoped, view.theme);
 	const gradient = through(
 		view,
@@ -1155,7 +1174,7 @@ function GradientRows({ view }: { view: View }) {
 		gradient === null ? SHAPES[0] : (SHAPES.find((shape) => shape.token === gradient.shape) ?? SHAPES[0]);
 	return (
 		<>
-			<Row name="background-image" ok={ok} changed={changed}>
+			<Row name="background-image" ok={ok} reason={reason} changed={changed}>
 				<Menu
 					current={current ?? { token: null, name: "none" }}
 					options={SHAPES}
@@ -1805,6 +1824,7 @@ function StrokeSection({ view }: { view: View }) {
 
 function TextSection({ view }: { view: View }) {
 	const alignRow = modelRow("text-align");
+	const { ok: alignOk, reason: alignReason } = rowAdmission(view, alignRow);
 	const align = wordThrough(view, "text-align");
 	const drawn = new Set([
 		"font-family",
@@ -1824,12 +1844,17 @@ function TextSection({ view }: { view: View }) {
 				<TypographyNumberRow view={view} property="letter-spacing" />
 			) : null}
 			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
-			<Row name="text-align" ok={okOf(view, alignRow)} changed={view.fresh(wordOf(view.scoped, "text-align"))}>
+			<Row
+				name="text-align"
+				ok={alignOk}
+				reason={alignReason}
+				changed={view.fresh(wordOf(view.scoped, "text-align"))}
+			>
 				<Menu
 					label="text-align"
 					current={{ token: align, name: align?.replace(/^text-/, "") ?? "start" }}
 					faint={align === null}
-					ok={okOf(view, alignRow)}
+					ok={alignOk}
 					options={["start", "left", "center", "right"].map((value) => ({ token: `text-${value}`, name: value }))}
 					onPick={(token) => {
 						if (token) writeValue(view, alignRow, { kind: "value", value: token });
@@ -1844,17 +1869,23 @@ function TextSection({ view }: { view: View }) {
 }
 
 function AddProperty({ view }: { view: View }) {
-	const options = ["letter-spacing", "border-width"].filter(
-		(property) => readRow(modelRow(property), view.scoped, view.theme).token === null,
-	);
+	// An optional property is offered where its own source admits it, and the
+	// refusal it would have met is said here rather than after a failed save.
+	const optional = [
+		{ property: "letter-spacing", admission: rowAdmission(view, modelRow("letter-spacing")) },
+		{ property: "border-width", admission: rowAdmission(view, modelRow("border-width")) },
+	];
+	const unset = optional.filter(({ property }) => readRow(modelRow(property), view.scoped, view.theme).token === null);
+	const options = unset.map(({ property }) => property);
+	const reason = unset.map(({ admission }) => admission.reason).find((said) => said !== undefined);
 	return (
-		<div className="flex h-8 items-center border-border-raised border-t px-2.5">
+		<div data-add-property="" title={reason} className="flex h-8 items-center border-border-raised border-t px-2.5">
 			<Menu
 				label="Add property"
 				current={{ token: null, name: "+ Add property" }}
 				options={options.map((property) => ({ token: property, name: property }))}
 				filter
-				ok={view.property !== null}
+				ok={view.property !== null && options.length > 0}
 				onPick={(property) => {
 					if (property)
 						view.property?.apply(property, {
@@ -1869,15 +1900,19 @@ function AddProperty({ view }: { view: View }) {
 
 /** Typography and Appearance follow the approved editing controls; remaining layout rows retain their sections. */
 export function PropertySections({ view }: { view: View }) {
+	// One description of this element's class says whether any property of it can
+	// be written; a refusal of a particular value still comes back at the write.
+	const refusal = usePropertyReading(view.property, "color")?.reason;
+	const held: View = { ...view, sourceRefusal: view.sourceRefusal ?? refusal };
 	return (
 		<>
-			<PositionSection view={view} />
-			<SizeSection view={view} />
-			<LayoutSection view={view} />
-			<TextSection view={view} />
-			<AppearanceSection view={view} />
-			<StrokeSection view={view} />
-			<AddProperty view={view} />
+			<PositionSection view={held} />
+			<SizeSection view={held} />
+			<LayoutSection view={held} />
+			<TextSection view={held} />
+			<AppearanceSection view={held} />
+			<StrokeSection view={held} />
+			<AddProperty view={held} />
 		</>
 	);
 }

@@ -984,6 +984,19 @@ function stubCanvasApis(refused = false): void {
 					};
 					return Response.json({ ok: true, read: sourceRead });
 				}
+				// The daemon describes a property control before it may be written.
+				if (body.action === "describe" && body.operation.kind === "property")
+					return Response.json({
+						ok: true,
+						description: {
+							operation: body.operation,
+							original: body.original,
+							source: "frames/home/frame.tsx:12:3",
+							role: "literal-attribute",
+							value: body.original.value,
+							property: { tokens: [], binding: { kind: "page" }, native: "1" },
+						},
+					});
 				if (body.action === "preview")
 					return Response.json({
 						ok: true,

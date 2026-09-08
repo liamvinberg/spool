@@ -10,6 +10,7 @@ import {
 	propertySignature,
 } from "./source-property-dependencies";
 import { propertyKeys, readPropertyEffects } from "./source-property-effects";
+import { propertyObservations } from "./source-property-observation";
 import { planPropertyValue } from "./source-property-plan";
 import { removalComponents } from "./source-property-removal";
 
@@ -162,6 +163,7 @@ export async function planPropertyGroup(
 		selections: selections.map((selection) => ({
 			...selection,
 			consumers: nativePropertyEffects(desired, selection.roots, environment),
+			observations: propertyObservations(original, desired, selection.roots, selection.scope, environment),
 		})),
 	};
 }

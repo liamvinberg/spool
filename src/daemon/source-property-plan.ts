@@ -34,6 +34,11 @@ export async function planPropertyValue(
 		candidate = [`${operation.scope}${custom.token}`];
 	}
 	for (const token of candidate) {
+		// Several classes spell one gradient, and each of them is its own source
+		// token. A run of them in one request is malformed, not a class the
+		// compiler declined to emit.
+		if (token.trim() === "" || /\s/.test(token))
+			throw new Error("each binding token is one class, and this request holds a run of them");
 		const parts = anatomyOf(token);
 		if ((parts.variants.length ? `${parts.variants.join(":")}:` : "") !== operation.scope)
 			throw new Error("the chosen binding belongs to another scope");

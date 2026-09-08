@@ -167,3 +167,32 @@ it("retains authored priority and the lower declaration revealed by removal", as
 	expect(removed.before).toEqual(["hover:text-green-500!"]);
 	expect(removed.next).toBe("hover:text-red-500 text-sm");
 });
+
+// A gradient is several classes, and each one is its own source token: the
+// controls send them apart, so a run of classes in one token is a malformed
+// request rather than a class the compiler failed to emit.
+it("refuses a binding token that is a run of classes", async () => {
+	const f = fixture();
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "background-image", scope: "" } as const;
+	const literal = "bg-linear-to-r from-red-500 to-blue-500";
+	await expect(
+		planPropertyValue(
+			f.root,
+			f.inputs,
+			literal,
+			operation,
+			{ kind: "binding", tokens: ["bg-linear-to-r from-green-500 to-blue-500"] },
+			environment,
+		),
+	).rejects.toThrow("each binding token is one class");
+	const planned = await planPropertyValue(
+		f.root,
+		f.inputs,
+		literal,
+		operation,
+		{ kind: "binding", tokens: ["bg-linear-to-r", "from-green-500", "to-blue-500"] },
+		environment,
+	);
+	expect(new Set(planned.next.split(" "))).toEqual(new Set(["bg-linear-to-r", "from-green-500", "to-blue-500"]));
+});
