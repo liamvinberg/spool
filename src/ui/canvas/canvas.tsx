@@ -2627,6 +2627,7 @@ export function ProjectCanvas({
 		const initial: SourceIntent = {
 			...sourceIntent(pick, pointing.entries),
 			operation: { kind: "delete" },
+			change: { kind: "delete" },
 			action: "delete this element",
 		};
 		if (pickedRef.current.length !== 1) {
