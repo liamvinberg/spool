@@ -2328,27 +2328,17 @@ it("reports the compiled gradient's captured evidence and interpolation space ho
 		effects: nativePropertyEffects(plan.desired, plan.roots, environment),
 		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
 	};
+	// The captured closure carries the direction and the closing stop the native consumer reads.
+	for (const input of ["--tw-gradient-position", "--tw-gradient-to", "--tw-gradient-stops"])
+		expect(
+			expected.effects.some((effect) => effect.owner !== null && effect.property === input),
+			input,
+		).toBe(true);
 	const host = (classes: string) => `<div data-subject class="${classes}" style="width:80px;height:40px"></div>`;
 	const f = await fixture(
 		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host(original)}`,
 	);
-	// The captured closure for these roots omits the direction and the closing stop the native
-	// consumer reads, so the use is refused rather than compared on partial evidence.
-	const partial = await f.inspect(expected);
-	expect(
-		partial.map((outcome) => outcome.rendered),
-		JSON.stringify(partial),
-	).toEqual(["unverified", "unverified"]);
-	expect(partial[0]?.reason).toContain("complete captured variable and companion evidence");
-	const complete: SourcePropertyExpectation = {
-		...expected,
-		effects: nativePropertyEffects(
-			plan.desired,
-			new Set([...plan.roots, "--tw-gradient-position", "--tw-gradient-to", "--tw-gradient-stops"]),
-			environment,
-		),
-	};
-	const outcomes = await f.inspect(complete);
+	const outcomes = await f.inspect(expected);
 	const interpolating = await f.page.evaluate(() =>
 		CSS.supports("background-image: linear-gradient(in lab, red, red)"),
 	);
@@ -2360,12 +2350,24 @@ it("reports the compiled gradient's captured evidence and interpolation space ho
 			JSON.stringify(outcomes),
 		).toEqual(["unverified", "unverified"]);
 		expect(outcomes[0]?.reason).toContain("interpolation space");
-		return;
+	} else {
+		expect(
+			outcomes.map((outcome) => outcome.rendered),
+			JSON.stringify(outcomes),
+		).toEqual(["verified", "mismatching"]);
 	}
+	// Losing any one captured companion is refused, never compared on partial evidence.
+	const closing = expected.effects.find((effect) => effect.owner !== null && effect.property === "--tw-gradient-to");
+	if (!closing) throw new Error("missing captured native gradient companion");
+	const partial = await f.inspect({
+		...expected,
+		effects: expected.effects.filter((effect) => effect !== closing),
+	});
 	expect(
-		outcomes.map((outcome) => outcome.rendered),
-		JSON.stringify(outcomes),
-	).toEqual(["verified", "mismatching"]);
+		partial.map((outcome) => outcome.rendered),
+		JSON.stringify(partial),
+	).toEqual(["unverified", "unverified"]);
+	expect(partial[0]?.reason).toContain("complete captured variable and companion evidence");
 });
 
 it("compares a compiled gradient whose own branch carries no interpolation space", async () => {
