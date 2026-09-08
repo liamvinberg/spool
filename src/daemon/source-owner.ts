@@ -6,6 +6,7 @@ import {
 	type SourceDescription,
 	type SourceInventory,
 	type SourceOccurrence,
+	type SourceOperation,
 	type SourcePublication,
 	type SourceRead,
 	type SourceReceipt,
@@ -223,6 +224,7 @@ export function createSourceOwner(
 		original: SourceOccurrence,
 		generation: number,
 		observer: string,
+		operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
 	): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string }> {
 		try {
 			watch(root);
@@ -238,13 +240,16 @@ export function createSourceOwner(
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
+			if (operation.kind !== "literal") throw new Error("this source operation has no admitted planner");
+			if (operation.field !== original.field)
+				throw new Error("the source purpose does not match the original field");
 			const { cellKey, cell, target } = resolveTextSource(root, compilation, original, generation);
 			const found = lookupFrame(root, frame);
 			if (found.kind !== "found") throw new Error("the original frame is no longer there");
 			const file = sourceTarget(root, cell.file, compilation.inputs).file;
 			const handle = randomUUID();
 			const read: SourceRead = {
-				operation: { kind: "literal", ...(cell.field ? { field: cell.field } : {}) },
+				operation,
 				handle,
 				owner,
 				original: { ...original },
