@@ -1,6 +1,7 @@
 import type { RenderOutcome } from "../../source-edit";
 import { CloseIcon } from "../icons";
 import { NOTICE_PILL } from "./collision-notice";
+import type { Refusal } from "./hand-edit";
 import type { SourceIntent } from "./source-intent";
 
 /**
@@ -24,6 +25,7 @@ export type HandSaid =
 			intent?: SourceIntent;
 			dismissed?: boolean;
 			sourceUnchanged?: boolean;
+			refusal?: Refusal["code"];
 			frame: string;
 			status: RenderOutcome | "saving" | "unknown" | "blocked";
 			text: string;
@@ -86,7 +88,7 @@ export function HandNotice({
 					) : null}
 				</div>
 				<p className="mt-1 text-muted">
-					{said.says}
+					<span data-hand-refusal={said.refusal}>{said.says}</span>
 					{said.text && said.status !== "saving" ? ` Your text: ${said.text}` : ""}
 				</p>
 				<div className="mt-1.5 flex flex-wrap gap-1">

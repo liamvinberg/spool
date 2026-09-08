@@ -2452,6 +2452,7 @@ export function ProjectCanvas({
 				status: "blocked",
 				text: intentText(intent) ?? "",
 				says: refusal.says,
+				refusal: refusal.code,
 				intent,
 			});
 	}, []);
