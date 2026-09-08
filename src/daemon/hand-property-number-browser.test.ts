@@ -12,6 +12,12 @@ it.each([
 		const original = `export function Label(){return <button id="subject" className="${token} p-6">Hello</button>}`;
 		const frame = `import {Label} from 'shared/label';export default function Frame(){return <main className="p-10"><Label/></main>}`;
 		const f = await originCanvas({ [file]: original }, frame, "#subject", true);
+		// Repeated steps are one gesture, so they plan one preview between them;
+		// the frames wear it once that reply arrives.
+		let previews = 0;
+		f.page.on("response", (response) => {
+			if (response.url().endsWith("/source") && response.request().postDataJSON()?.action === "preview") previews++;
+		});
 		await f.select();
 		const field = f.page.locator(`[data-properties-row="${property}"] input`).first();
 		await expect.poll(() => field.inputValue()).toBe(start);
@@ -21,6 +27,7 @@ it.each([
 		expect(await field.inputValue()).toBe(next);
 		expect(f.writes).toEqual([]);
 		expect(f.bytes()[file]).toBe(original);
+		await expect.poll(() => previews).toBe(1);
 		for (const document of [f.frame, f.page.frameLocator('iframe[title="second"]')])
 			await expect
 				.poll(() =>
