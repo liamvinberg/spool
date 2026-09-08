@@ -1,4 +1,18 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
+import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
+
+const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited: boolean }> = {
+	"text-align": { value: "start", inherited: true },
+	"text-transform": { value: "none", inherited: true },
+	"text-decoration-line": { value: "none", inherited: false },
+	"font-style": { value: "normal", inherited: true },
+	"white-space": { value: "normal", inherited: true },
+	"object-fit": { value: "fill", inherited: false },
+	"text-overflow": { value: "clip", inherited: false },
+};
+function keywordProperty(property: string): property is NativeKeywordProperty {
+	return Object.hasOwn(keywordDefaults, property);
+}
 
 export interface PropertyOutcome {
 	rendered: "verified" | "mismatching" | "unverified" | "inactive";
@@ -20,12 +34,21 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	}
 	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
 		return borderOutcome(element, expected);
+	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
 	const corner = isCorner(expected.property);
 	const color = expected.property === "color" || expected.property === "background-color";
 	const weight = expected.property === "font-weight";
 	const leading = expected.property === "line-height";
 	const companion = weight ? "--tw-font-weight" : leading ? "--tw-leading" : undefined;
-	if (expected.property !== "opacity" && expected.property !== "font-size" && !color && !corner && !weight && !leading)
+	if (
+		expected.property !== "opacity" &&
+		expected.property !== "font-size" &&
+		!color &&
+		!corner &&
+		!weight &&
+		!leading &&
+		!keyword
+	)
 		return unverified("this property needs a native effect proof");
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
@@ -58,6 +81,28 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const selection = winningEffect(sheet, applicable);
 	if (selection.reason) return unverified(selection.reason);
 	const winner = selection.winner;
+	if (keyword) {
+		const fallback = keywordDefaults[keyword];
+		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
+		if (winner && value === undefined) return unverified("this keyword needs a resolved variable context");
+		if (!winner || value === "inherit" || value === "unset" || value === "initial") {
+			if (
+				(element instanceof HTMLElement || element instanceof SVGElement) &&
+				element.style.getPropertyValue(keyword)
+			)
+				return unverified("this keyword has an independent inline context requiring proof");
+			if (value === "inherit" || (value !== "initial" && fallback.inherited)) {
+				const parent = element.parentElement;
+				if (!parent) return unverified("this keyword needs a native inherited context proof");
+				value = view.getComputedStyle(parent).getPropertyValue(keyword);
+			} else value = fallback.value;
+		}
+		if (value === undefined) return unverified("this keyword has no independent expected declaration");
+		const result = nativeKeyword(element, keyword, value);
+		return result.kind === "unknown"
+			? unverified(result.reason)
+			: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
+	}
 	if (weight || leading) {
 		const number = (value: string) => (weight ? nativeWeight(value) : nativeLineHeight(element, sheet, value));
 		const result = winningEffect(sheet, companions);

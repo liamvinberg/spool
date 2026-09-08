@@ -904,3 +904,152 @@ it("keeps inherited leading unit ambiguity separate from a known parent context"
 		"mismatching",
 	]);
 });
+
+it.each([
+	{ property: "text-align", before: "text-left", after: "text-right", old: "left", value: "right" },
+	{ property: "text-transform", before: "uppercase", after: "lowercase", old: "uppercase", value: "lowercase" },
+	{
+		property: "text-decoration-line",
+		before: "underline",
+		after: "line-through",
+		old: "underline",
+		value: "line-through",
+	},
+	{ property: "font-style", before: "italic", after: "not-italic", old: "italic", value: "normal" },
+	{ property: "white-space", before: "whitespace-pre", after: "whitespace-nowrap", old: "pre", value: "nowrap" },
+	{ property: "object-fit", before: "object-cover", after: "object-contain", old: "cover", value: "contain" },
+	{ property: "text-overflow", before: "text-ellipsis", after: "text-clip", old: "ellipsis", value: "clip" },
+])("verifies compiled $property choices and inverse against ordinary native declarations", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		row.before,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const subject = (classes: string) =>
+		row.property === "object-fit"
+			? `<img data-subject class="${classes}" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='10'%3E%3C/svg%3E" style="width:40px;height:40px"/>`
+			: `<div data-subject class="${classes}" style="width:20px;overflow:hidden;${row.property === "text-overflow" ? "white-space:nowrap;" : ""}">Long native text</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(row.before)}`,
+	);
+	if (row.property === "object-fit")
+		await f.page.locator("img").evaluateAll((elements) =>
+			Promise.all(
+				elements.map((element) => {
+					if (!(element instanceof HTMLImageElement)) throw new Error("missing native image");
+					return element.decode();
+				}),
+			),
+		);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.evaluateAll(
+				(elements, property) => elements.map((element) => getComputedStyle(element).getPropertyValue(property)),
+				row.property,
+			),
+	).toEqual([row.value, row.old]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: row.before,
+		css: plan.original.css,
+		effects: propertyConsumers(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		row.before,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const defaults: Record<string, string> = {
+		"text-align": "center",
+		"text-transform": "none",
+		"text-decoration-line": "none",
+		"font-style": "normal",
+		"white-space": "normal",
+		"object-fit": "fill",
+		"text-overflow": "clip",
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style><section style="text-align:center">${subject(removal.next)}${subject(row.before)}</section>`,
+	);
+	if (row.property === "object-fit")
+		await empty.page.locator("img").evaluateAll((elements) =>
+			Promise.all(
+				elements.map((element) => {
+					if (!(element instanceof HTMLImageElement)) throw new Error("missing native image");
+					return element.decode();
+				}),
+			),
+		);
+	expect((await empty.inspect(removed)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect(
+		await empty.page
+			.locator("[data-subject]")
+			.evaluateAll(
+				(elements, property) => elements.map((element) => getComputedStyle(element).getPropertyValue(property)),
+				row.property,
+			),
+	).toEqual([defaults[row.property], row.old]);
+	expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("resolves keyword variables before native comparison without accepting outside context", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", ":root {--case:lowercase}.mask{text-transform:uppercase}");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const classes = "[text-transform:var(--case)]";
+	const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), classes);
+	const operation = { kind: "property", property: "text-transform", scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: operation.property,
+		scope: "",
+		className: classes,
+		absent: false,
+		scopePaths: propertyScopePaths(certificate, certificate, operation, environment),
+		effects: propertyConsumers(certificate, new Set(["text-transform"]), environment),
+		css: certificate.css,
+	};
+	const f = await fixture(
+		`<!doctype html><style>${expected.css}</style><div data-subject class="${classes}">Healthy</div><div data-subject class="${classes}" style="--case:uppercase">Outside variable</div><div data-subject class="${classes} mask">Independent cascade</div>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"unverified",
+		"unverified",
+	]);
+});
