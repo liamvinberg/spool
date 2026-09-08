@@ -34,3 +34,5 @@ Remove a color declaration from its existing menu and restore the original refer
 
 
 Known literal inline weight and padding can supply read-only context for class color and opacity. Relevant inline properties and unknown style objects remain refused.
+
+Retry a property edit against checked current source, or check an uncertain save without replaying it. Shared recovery remains until every affected use verifies the saved result, including Undo's restored binding.
