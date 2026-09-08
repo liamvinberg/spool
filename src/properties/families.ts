@@ -926,6 +926,7 @@ export const WORDS: Readonly<Record<Word, WordFamily>> = {
 	"text-align": {
 		property: "text-align",
 		options: [
+			{ token: "text-start", says: "start" },
 			{ token: "text-left", says: "left" },
 			{ token: "text-center", says: "center" },
 			{ token: "text-right", says: "right" },

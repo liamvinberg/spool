@@ -805,3 +805,13 @@ it("offers the approved start alignment through the typography menu and original
 	expect(rail.requests).toEqual([{ property: "text-align", value: { kind: "binding", tokens: ["text-start"] } }]);
 	expect(rail.legacy).toEqual([]);
 });
+
+it.each([false, true])("reads the authored start alignment in its selected scope (hover: %s)", async (hovered) => {
+	const rail = await mount(hovered ? "text-left hover:text-start" : "text-start", hovered ? ["hover"] : BASE);
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="text-align"]');
+	expect(trigger?.textContent).toContain("start");
+	await act(() => trigger?.click());
+	const option = document.querySelector('[data-menu-option="start"]');
+	expect(option?.getAttribute("aria-selected")).toBe("true");
+	expect(rail.requests).toEqual([]);
+});
