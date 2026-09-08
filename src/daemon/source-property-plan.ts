@@ -20,6 +20,7 @@ export async function planPropertyValue(
 	operation: Extract<SourceOperation, { kind: "property" }>,
 	requested: SourcePropertyValue,
 	environment: SourcePropertyEnvironment,
+	bundledCss = "",
 ) {
 	const row = rowFor(operation.property);
 	if (!row || row.primitive === "read") throw new Error("this property has no supported control");
@@ -36,14 +37,14 @@ export async function planPropertyValue(
 		if ((parts.variants.length ? `${parts.variants.join(":")}:` : "") !== operation.scope)
 			throw new Error("the chosen binding belongs to another scope");
 	}
-	const original = await compilePropertySource(root, inputs, literal);
+	const original = await compilePropertySource(root, inputs, literal, bundledCss);
 	const read = readPropertyEffects(original, operation.property, operation.scope, environment);
 	const important = read.effects.some((effect) => effect.important);
 	const owners = read.owners.filter((owner) =>
 		read.effects.some((effect) => effect.owner === owner && effect.important === important),
 	);
 	if (important) candidate = candidate.map((token) => (anatomyOf(token).important ? token : `${token}!`));
-	const compiledCandidates = await compilePropertySource(root, inputs, candidate.join(" "));
+	const compiledCandidates = await compilePropertySource(root, inputs, candidate.join(" "), bundledCss);
 	const candidateEffects = readPropertyEffects(compiledCandidates, operation.property, operation.scope, environment);
 	if (candidate.some((token) => !candidateEffects.owners.includes(token)))
 		throw new Error("the chosen token has no compiled effect for this property");
@@ -75,7 +76,7 @@ export async function planPropertyValue(
 	if (after.some((token) => tokens.includes(token)))
 		throw new Error("the chosen token already belongs to another source effect");
 	const next = [...tokens.filter((token) => !before.includes(token)), ...after].join(" ");
-	const desired = await compilePropertySource(root, inputs, next);
+	const desired = await compilePropertySource(root, inputs, next, bundledCss);
 	const roots = changedPropertyKeys(
 		original.effects.filter((effect) => effect.owner !== null && before.includes(effect.owner)),
 		desired.effects.filter((effect) => effect.owner !== null && after.includes(effect.owner)),

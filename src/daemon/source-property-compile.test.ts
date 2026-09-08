@@ -5,7 +5,7 @@ import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { splitClass } from "./class-write";
 import { appearanceProperties } from "./fixtures/property-appearance";
 import { readInput } from "./retained-compile";
-import { compilePropertySource } from "./source-property-compile";
+import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
 
 function fixture(tokens = "") {
 	const { root } = makeProject(join(makeTempDir(), ".spool"));
@@ -60,4 +60,46 @@ it("keeps original stylesheet bytes and refuses newly discovered dependencies", 
 	writeDesignFile(f.root, "shared/extra.css", "@theme { --color-brand:#123456; }");
 	f.inputs.set(f.file, readInput(f.file));
 	await expect(compilePropertySource(f.root, f.inputs, "text-brand")).rejects.toThrow("original captured");
+});
+
+it("includes captured bundled style declarations beside the utility effects", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const certificate = await compilePropertySource(
+		root,
+		new Map([[file, readInput(file)]]),
+		"text-red-500",
+		".notice {color: rebeccapurple !important} @media (min-width: 1px) {body {--chosen: 2}} ",
+	);
+	expect(certificate.effects).toContainEqual(
+		expect.objectContaining({
+			owner: null,
+			property: "color",
+			value: "rebeccapurple",
+			important: true,
+			path: expect.arrayContaining([".notice"]),
+		}),
+	);
+	expect(certificate.effects).toContainEqual(
+		expect.objectContaining({
+			owner: null,
+			property: "--chosen",
+			value: "2",
+			path: expect.arrayContaining(["@media (min-width: 1px)"]),
+		}),
+	);
+});
+
+it("inspects captured frame effects without inventing candidate ownership", async () => {
+	const f = fixture("@theme { --color-brand:#123456; }");
+	const original = await compilePropertySource(f.root, f.inputs, "text-brand border-2");
+	const inspected = await inspectPropertyCss(`${original.css}\n.parent { direction:rtl; --chosen:3px }`);
+	expect(inspected.effects.every((effect) => effect.owner === null)).toBe(true);
+	expect(inspected.effects).toContainEqual(
+		expect.objectContaining({ property: "direction", value: "rtl", path: [".parent"] }),
+	);
+	expect(inspected.effects).toContainEqual(expect.objectContaining({ property: "--color-brand", value: "#123456" }));
+	expect(inspected.registrations["--tw-border-style"]).toBeDefined();
+	await expect(inspectPropertyCss('@import "./not-captured.css";')).rejects.toThrow("uncaptured import");
 });

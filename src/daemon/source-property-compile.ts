@@ -40,6 +40,7 @@ export async function compilePropertySource(
 	root: string,
 	inputs: ReadonlyMap<string, SourceInput>,
 	literal: string,
+	bundledCss = "",
 ): Promise<PropertyCertificate> {
 	const tokens = splitClass(literal);
 	const sheets = designStylesheets(realDesignDir(root), (file) => {
@@ -47,12 +48,35 @@ export async function compilePropertySource(
 		if (!input) throw new Error("property stylesheet is outside the original captured compiler inputs");
 		return input.bytes.toString("utf8");
 	});
+	const bundle = "spool:retained-property-css";
+	const options = {
+		...sheets,
+		loadStylesheet: async (id: string, base: string) =>
+			id === bundle ? { path: bundle, base: sheets.base, content: bundledCss } : sheets.loadStylesheet(id, base),
+	};
+	const rootCss = ROOT_CSS + (bundledCss ? `\n@import "${bundle}";` : "");
 	const imports: CssNode[] = [
 		{ kind: "at-rule", name: "@import", params: '"tailwindcss"', nodes: [] },
 		{ kind: "at-rule", name: "@import", params: '"./tokens.css"', nodes: [] },
 	];
-	const compiler = await compileAst(imports, sheets);
+	if (bundledCss) imports.push({ kind: "at-rule", name: "@import", params: JSON.stringify(bundle), nodes: [] });
+	const compiler = await compileAst(imports, options);
 	const ast = compiler.build(tokens);
+	const { effects, registrations } = extractPropertyEffects(ast, tokens);
+	const cssCompiler = await compile(rootCss, options);
+	const system = await __unstable__loadDesignSystem(rootCss, options);
+	const theme = Object.fromEntries(system.theme.entries());
+	return {
+		literal,
+		effects,
+		registrations,
+		theme,
+		css: cssCompiler.build(tokens),
+		stylesheets: [...sheets.stylesheets],
+	};
+}
+
+function extractPropertyEffects(ast: readonly CssNode[], tokens: readonly string[]) {
 	const effects: SourcePropertyEffect[] = [];
 	const registrations: PropertyCertificate["registrations"] = {};
 	const selectors = tokens.map((token) => ({ token, selector: `.${identifier(token)}` }));
@@ -85,15 +109,17 @@ export async function compilePropertySource(
 		}
 	}
 	walk(ast, null, []);
-	const cssCompiler = await compile(ROOT_CSS, sheets);
-	const system = await __unstable__loadDesignSystem(ROOT_CSS, sheets);
-	const theme = Object.fromEntries(system.theme.entries());
-	return {
-		literal,
-		effects,
-		registrations,
-		theme,
-		css: cssCompiler.build(tokens),
-		stylesheets: [...sheets.stylesheets],
-	};
+	return { effects, registrations };
+}
+
+/** Inspect a captured compiled stylesheet without generating or resolving new candidates. */
+export async function inspectPropertyCss(css: string) {
+	const path = "spool:captured-property-css";
+	const compiler = await compileAst([{ kind: "at-rule", name: "@import", params: JSON.stringify(path), nodes: [] }], {
+		loadStylesheet: async (id) => {
+			if (id !== path) throw new Error("compiled property CSS contains an uncaptured import");
+			return { path, base: "", content: css };
+		},
+	});
+	return extractPropertyEffects(compiler.build([]), []);
 }
