@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { type BuildOptions, build, formatMessagesSync, type OnResolveResult, type Plugin } from "esbuild";
 import { isSafeName } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
@@ -179,7 +179,7 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			if (existsSync(file)) throw new Error("compiler configuration resolution changed during compilation");
 		for (const file of absent)
 			if (existsSync(resolveDesignPath(designDir, file))) throw new Error("an absent dependency was created");
-		finishCompilation(retained, sequence);
+		finishCompilation(retained, sequence, designDir);
 		publications.set(retained.packet.id, { root, frame, compilation: retained });
 		return retained;
 	}
@@ -442,7 +442,7 @@ async function compileFrame({
 		if (!sameInput(input, readInput(file))) throw new Error("compiler configuration changed during compilation");
 	for (const file of retained.configurationAbsent)
 		if (existsSync(file)) throw new Error("compiler configuration resolution changed during compilation");
-	finishCompilation(retained, 0);
+	finishCompilation(retained, 0, designDir);
 	const document = assembleFrameDocument({
 		project,
 		frame,
@@ -685,7 +685,19 @@ export function describeCompileError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-function finishCompilation(compilation: RetainedCompilation, sequence: number): void {
+function finishCompilation(compilation: RetainedCompilation, sequence: number, designDir: string): void {
+	for (const cell of Object.values(compilation.cells)) {
+		const specifier = cell.image?.specifier;
+		if (!specifier) continue;
+		const path = resolveDesignPath(
+			designDir,
+			resolve(specifier.startsWith("shared/") ? designDir : dirname(resolve(designDir, cell.file)), specifier),
+		);
+		const input = compilation.inputs.get(path);
+		const type = ASSET_MEDIA_TYPES[extname(path).toLowerCase()];
+		if (!input || !type) throw new Error("the image binding is outside the captured asset inputs");
+		cell.value = `data:${type};base64,${input.bytes.toString("base64")}`;
+	}
 	compilation.packet.sequence = sequence;
 	compilation.packet.owners = Object.fromEntries(
 		Object.entries(compilation.cells).map(([id, cell]) => [id, cell.owner]),
