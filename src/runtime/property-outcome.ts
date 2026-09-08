@@ -1,4 +1,5 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
+import { nativeColor } from "./property-colors";
 import { nativeFilter } from "./property-filters";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
@@ -636,29 +637,6 @@ function resolvedValue(
 		return resolved;
 	});
 	return unresolved || /\b(?:var|env|attr)\(/i.test(result) ? undefined : result;
-}
-
-/** Native color serialization without drawing pixels or adopting styles into the application. */
-function nativeColor(value: string): string | undefined {
-	if (
-		/\b(?:currentcolor|inherit|initial|unset|revert|revert-layer)\b|\b(?:light-dark|contrast-color|var|env|attr)\(/i.test(
-			value,
-		)
-	)
-		return;
-	const context = new OffscreenCanvas(1, 1).getContext("2d");
-	if (!context) return;
-	const parse = (input: string): string | undefined => {
-		context.fillStyle = "#010203";
-		context.fillStyle = input;
-		const first = context.fillStyle;
-		context.fillStyle = "#040506";
-		context.fillStyle = input;
-		return typeof first === "string" && first === context.fillStyle ? first : undefined;
-	};
-	// Serialize once before changing color spaces, matching computed CSS precision.
-	const parsed = parse(value);
-	return parsed === undefined ? undefined : parse(`color(from ${parsed} srgb r g b / alpha)`);
 }
 
 /** Relative font sizes use this native use's root or parent, never another selected use. */
