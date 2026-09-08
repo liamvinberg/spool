@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { build } from "esbuild";
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
 import { expect, onTestFinished } from "vitest";
 import type { SourceRead } from "../source-edit";
@@ -12,6 +12,7 @@ export async function originCanvas(
 	frameSource: string,
 	selector: string,
 	shared = false,
+	beforeLoad?: (page: Page) => Promise<void>,
 ) {
 	const uiDir = join(makeTempDir(), "ui");
 	const project = await serveProject({ uiDir });
@@ -46,6 +47,7 @@ export async function originCanvas(
 			if (data?.spool === "source-reply" && data.result?.installation) outcomes.push(data.result);
 		});
 	});
+	await beforeLoad?.(page);
 	await page.goto(`${project.url}/p/${project.name}`);
 	const frame = page.frameLocator('iframe[title="home"]');
 	const target = frame.locator(selector).first();
