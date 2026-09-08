@@ -701,7 +701,22 @@ function observedUse(
 			rendered: "unverified",
 			reason: "this rendered source effect has no verifier",
 		};
-	const property = expected.kind === "property" && element ? propertyOutcome(element, expected) : undefined;
+	let property = expected.kind === "property" && element ? propertyOutcome(element, expected) : undefined;
+	if (property?.rendered === "verified" && expected.kind === "property" && element) {
+		const props = committedFiber(element)?.memoizedProps;
+		const declaration = props ? Object.getOwnPropertyDescriptor(props, "className") : undefined;
+		const applied =
+			props !== undefined &&
+			(expected.absent
+				? declaration === undefined || ("value" in declaration && declaration.value === undefined)
+				: declaration !== undefined && "value" in declaration && declaration.value === expected.className);
+		if (!applied)
+			property = {
+				...property,
+				rendered: "unverified",
+				reason: "the native value matches, but the committed class declaration has not received this source change",
+			};
+	}
 	const observed =
 		expected.kind === "property" ? property?.observed : element ? renderedField(element, original.field) : undefined;
 	const matches =
