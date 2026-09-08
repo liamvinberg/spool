@@ -78,7 +78,7 @@ import {
 	propertyControlValue,
 	propertyNumericSample,
 } from "./property-controls";
-import { PropertyNumberField } from "./property-number-field";
+import { numericTokenProperty, PropertyNumberField } from "./property-number-field";
 
 /** Rows read candidate spellings from the shared property inventory.
  * Appearance controls retain an original source operation through preview and completion.
@@ -712,6 +712,36 @@ function TypographyNumberRow({
 			preview={(value) => control?.preview(property, value)}
 			apply={(value) => control?.apply(property, value)}
 			finish={(commit) => control?.finish(commit)}
+		/>
+	);
+}
+
+function RadiusNumberRow({
+	view,
+	property,
+	name,
+	fold,
+}: {
+	view: View;
+	property: string;
+	name?: string;
+	fold: ReactNode;
+}) {
+	const control = view.property;
+	const reading = usePropertyReading(control, property);
+	if (!numericTokenProperty(property)) throw new Error("radius fold has no numeric property control");
+	return (
+		<PropertyNumberField
+			property={property}
+			{...(name ? { name } : {})}
+			reading={reading}
+			options={view.theme?.radius ?? []}
+			scope={scopeKey(view.scope)}
+			begin={() => control?.begin(property)}
+			preview={(value) => control?.preview(property, value)}
+			apply={(value) => control?.apply(property, value)}
+			finish={(commit) => control?.finish(commit)}
+			accessory={fold}
 		/>
 	);
 }
@@ -1552,13 +1582,11 @@ function AppearanceSection({ view }: { view: View }) {
 				fold={RADIUS_FOLD}
 				read={(scoped) => cornersAsSides(scoped, view.theme)}
 				draw={(entry, caret) => (
-					<TokenRow
+					<RadiusNumberRow
 						key={entry.property}
 						view={view}
 						property={entry.property}
 						{...(entry.name === undefined ? {} : { name: entry.name })}
-						absent={{ token: null, name: "rounded-none", value: "0" }}
-						clearTo="none"
 						fold={caret}
 					/>
 				)}

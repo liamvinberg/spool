@@ -578,7 +578,9 @@ function sectionReason(rail: Rail, section: string): string {
 }
 
 function menuIn(rail: Rail, label: string): HTMLElement | null {
-	return rail.host.querySelector<HTMLElement>(`button[aria-label="Choose ${label}"], [aria-label="${label}"]`);
+	return rail.host.querySelector<HTMLElement>(
+		`button[aria-label="Choose ${label}"], button[aria-label="${label}"], button[aria-label="${label} token"]`,
+	);
 }
 
 function listFor(rail: Rail, label: string): HTMLElement | null {

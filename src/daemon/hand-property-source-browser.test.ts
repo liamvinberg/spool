@@ -566,3 +566,235 @@ it("previews fractional shared typography, steps its current draft and restores 
 	expect(f.bytes()["shared/button.tsx"]).toBe(changed);
 	expect(await second.evaluate((element) => getComputedStyle(element).fontSize)).toBe("8.999px");
 });
+
+it("applies a shared project background reference and explicitly detaches it without losing other properties", {
+	timeout: 120_000,
+}, async () => {
+	const original =
+		'export function Button(){return <button id="subject" className="bg-white text-red-500 text-sm rounded-lg">Hello</button>}';
+	const f = await originCanvas(
+		{ "shared/button.tsx": original, "shared/tokens.css": "@theme { --color-brand: #123456; }" },
+		'import "shared/tokens.css";import {Button} from "shared/button";export default function Frame(){return <main style={{padding:40}}><Button/><input id="native" defaultValue="initial"/></main>}',
+		"#subject",
+		true,
+	);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	for (const frame of [f.frame, second])
+		await frame.locator("#native").evaluate((element) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+			element.value = "kept background state";
+			element.setSelectionRange(2, 5);
+			Reflect.set(window, "backgroundInput", element);
+		});
+	await f.select();
+	const trigger = f.page.getByRole("button", { name: "Choose background-color", exact: true });
+	await trigger.click();
+	await f.page.getByRole("textbox", { name: "Find background-color token", exact: true }).fill("brand");
+	const option = f.page.getByRole("button", { name: "Apply --color-brand", exact: true });
+	expect(await option.locator("..").textContent()).toContain("Project");
+	const save = async (action: () => Promise<unknown>) => {
+		const reply = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
+		await action();
+		expect(await (await reply).json()).toMatchObject({ ok: true, source: "saved" });
+		await f.settled();
+	};
+	await save(() => option.click());
+	const bound = f.bytes()["shared/button.tsx"];
+	expect(bound).toContain("bg-brand");
+	expect(bound).toContain("text-red-500 text-sm rounded-lg");
+	await expect.poll(() => trigger.getAttribute("title")).toBe("Linked to --color-brand");
+	for (const frame of [f.frame, second])
+		expect(await frame.locator("#subject").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
+			"rgb(18, 52, 86)",
+		);
+	await trigger.click();
+	expect(
+		await f.page.getByRole("button", { name: "Apply --color-brand", exact: true }).getAttribute("aria-pressed"),
+	).toBe("true");
+	await save(() => f.page.getByRole("button", { name: "Use custom value", exact: true }).click());
+	await expect.poll(() => trigger.getAttribute("title")).toBe("Custom value");
+	const custom = f.bytes()["shared/button.tsx"];
+	expect(custom).not.toContain("bg-brand");
+	expect(custom).toContain("text-red-500 text-sm rounded-lg");
+	await trigger.click();
+	const field = f.page.getByRole("textbox", { name: "background-color", exact: true });
+	await field.fill("#abcdef");
+	await expect
+		.poll(() => second.locator("#subject").evaluate((element) => getComputedStyle(element).backgroundColor))
+		.toBe("rgb(171, 205, 239)");
+	expect(f.bytes()["shared/button.tsx"]).toBe(custom);
+	await field.press("Escape");
+	await expect
+		.poll(() => second.locator("#subject").evaluate((element) => getComputedStyle(element).backgroundColor))
+		.toBe("rgb(18, 52, 86)");
+	await f.history();
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toBe(bound);
+	await f.select();
+	await expect.poll(() => trigger.getAttribute("title")).toBe("Linked to --color-brand");
+	await f.history();
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toBe(original);
+	await f.history(true);
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toBe(bound);
+	for (const frame of [f.frame, second]) {
+		expect(await frame.locator("#subject").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
+			"rgb(18, 52, 86)",
+		);
+		expect(
+			await frame.locator("#native").evaluate((element) => {
+				if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+				return [
+					element === Reflect.get(window, "backgroundInput"),
+					element.value,
+					element.selectionStart,
+					element.selectionEnd,
+				];
+			}),
+		).toEqual([true, "kept background state", 2, 5]);
+	}
+	expect(f.writes).toEqual(["commit", "commit", "inverse", "inverse", "inverse"]);
+});
+
+it.each([true, false])(
+	"preserves shared color and exact type size in either edit order: color first %s",
+	{
+		timeout: 120_000,
+	},
+	async (colorFirst) => {
+		const original =
+			'export function Button(){return <button id="subject" className="text-red-500 text-sm leading-6 bg-white">Hello</button>}';
+		const f = await originCanvas(
+			{ "shared/button.tsx": original },
+			'import {Button} from "shared/button";export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+			"#subject",
+			true,
+		);
+		const second = f.page.frameLocator('iframe[title="second"]').locator("#subject");
+		const beforeColor = await f.target.evaluate((element) => getComputedStyle(element).color);
+		for (const target of [f.target, second])
+			await target.evaluate((element) => Reflect.set(window, "orderedPropertyNode", element));
+		await f.select();
+		const color = async () => {
+			await f.page.getByRole("button", { name: "Choose color", exact: true }).click();
+			await f.page.getByRole("textbox", { name: "Find color token", exact: true }).fill("blue-500");
+			await f.page.getByRole("button", { name: "Apply --color-blue-500", exact: true }).click();
+		};
+		const size = async () => {
+			const field = f.page.getByRole("textbox", { name: "font-size", exact: true });
+			await field.fill("8.999px");
+			await field.press("Enter");
+		};
+		let afterColor = beforeColor;
+		for (const action of colorFirst ? [color, size] : [size, color]) {
+			const saved = f.page.waitForResponse(
+				(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+			);
+			await action();
+			expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
+			await f.settled();
+			if (action === color) afterColor = await f.target.evaluate((element) => getComputedStyle(element).color);
+			for (const target of [f.target, second])
+				expect(await target.evaluate((element) => getComputedStyle(element).lineHeight)).toBe("24px");
+		}
+		const changed = f.bytes()["shared/button.tsx"];
+		expect(changed).toContain("text-blue-500");
+		expect(changed).toContain("8.999px");
+		expect(changed).toContain("leading-6 bg-white");
+		expect(afterColor).not.toBe(beforeColor);
+		const check = async (color: string, size: string) => {
+			for (const target of [f.target, second])
+				expect(
+					await target.evaluate((element) => ({
+						color: getComputedStyle(element).color,
+						size: getComputedStyle(element).fontSize,
+						leading: getComputedStyle(element).lineHeight,
+						same: element === Reflect.get(window, "orderedPropertyNode"),
+					})),
+				).toEqual({ color, size, leading: "24px", same: true });
+		};
+		await check(afterColor, "8.999px");
+		for (const redo of [false, false, true, true]) {
+			const saved = f.page.waitForResponse(
+				(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "inverse",
+			);
+			await f.history(redo);
+			expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
+			await f.settled();
+			if (f.writes.length === 4) {
+				expect(f.bytes()["shared/button.tsx"]).toBe(original);
+				await check(beforeColor, "14px");
+			}
+		}
+		expect(f.bytes()["shared/button.tsx"]).toBe(changed);
+		await check(afterColor, "8.999px");
+		expect(f.writes).toEqual(["commit", "commit", "inverse", "inverse", "inverse", "inverse"]);
+	},
+);
+
+it("edits one shared radius corner through the approved numeric control and preserves the other corners", {
+	timeout: 120_000,
+}, async () => {
+	const original =
+		'export function Button(){return <button id="subject" className="p-6 rounded-lg bg-white text-red-500">Hello</button>}';
+	const f = await originCanvas(
+		{ "shared/button.tsx": original },
+		'import {Button} from "shared/button";export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		true,
+	);
+	await f.select();
+	await f.page
+		.locator('[data-properties-row="border-radius"]')
+		.getByRole("button", { name: "unfold", exact: true })
+		.click();
+	const field = f.page.getByRole("textbox", { name: "border-top-left-radius", exact: true });
+	await expect.poll(() => field.count()).toBe(1);
+	const targets = [f.target, f.page.frameLocator('iframe[title="second"]').locator("#subject")];
+	const check = async (corner: string) => {
+		for (const target of targets)
+			expect(
+				await target.evaluate((element) => {
+					const css = getComputedStyle(element);
+					return [
+						css.borderTopLeftRadius,
+						css.borderTopRightRadius,
+						css.borderBottomRightRadius,
+						css.borderBottomLeftRadius,
+					];
+				}),
+			).toEqual([corner, "8px", "8px", "8px"]);
+	};
+	await field.fill("3.25px");
+	await expect
+		.poll(() => f.target.evaluate((element) => getComputedStyle(element).borderTopLeftRadius))
+		.toBe("3.25px");
+	await check("3.25px");
+	expect(f.bytes()["shared/button.tsx"]).toBe(original);
+	await field.press("Escape");
+	await check("8px");
+	await field.fill("3.25px");
+	const saved = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await field.press("Enter");
+	expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
+	await f.settled();
+	await check("3.25px");
+	const changed = f.bytes()["shared/button.tsx"];
+	expect(changed).toContain("rounded-lg");
+	expect(changed).toContain("rounded-tl-[3.25px]");
+	expect(changed).toContain("bg-white text-red-500");
+	await f.history();
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toBe(original);
+	await check("8px");
+	await f.history(true);
+	await f.settled();
+	expect(f.bytes()["shared/button.tsx"]).toBe(changed);
+	await check("3.25px");
+	expect(f.writes).toEqual(["commit", "inverse", "inverse"]);
+});

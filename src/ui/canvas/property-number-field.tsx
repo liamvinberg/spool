@@ -1,18 +1,30 @@
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import type { ThemeToken } from "../../daemon/theme";
 import { stepLength } from "../../properties/families";
 import type { SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 import { Menu, NumField, Row } from "./properties-fields";
 
-const prefixes = { "font-size": "text", "line-height": "leading", "letter-spacing": "tracking" };
+const prefixes = {
+	"font-size": "text",
+	"line-height": "leading",
+	"letter-spacing": "tracking",
+	"border-radius": "rounded",
+	"border-top-left-radius": "rounded-tl",
+	"border-top-right-radius": "rounded-tr",
+	"border-bottom-right-radius": "rounded-br",
+	"border-bottom-left-radius": "rounded-bl",
+};
 type Property = keyof typeof prefixes;
+export function numericTokenProperty(property: string): property is Property {
+	return Object.hasOwn(prefixes, property);
+}
 
 function numberUnit(value: string): { number: string; unit: string } | undefined {
 	const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-z%]*)$/i.exec(value.trim());
 	return match ? { number: match[1]!, unit: match[2]! } : undefined;
 }
 
-/** Numeric typography preserves authored units and completes one original gesture. */
+/** Numeric token fields preserve authored units and complete one original gesture. */
 export function PropertyNumberField({
 	property,
 	reading,
@@ -22,6 +34,8 @@ export function PropertyNumberField({
 	preview,
 	apply,
 	finish,
+	name,
+	accessory,
 }: {
 	property: Property;
 	reading: SourcePropertyReading | undefined;
@@ -31,7 +45,10 @@ export function PropertyNumberField({
 	preview(value: SourcePropertyValue): void;
 	apply(value: SourcePropertyValue): void;
 	finish(commit: boolean): void;
+	name?: string;
+	accessory?: ReactNode;
 }) {
+	const radius = property.startsWith("border-");
 	const binding = reading?.binding.kind === "reference" ? reading.binding : undefined;
 	const boundToken = binding
 		? options
@@ -80,7 +97,7 @@ export function PropertyNumberField({
 	};
 	return (
 		<Row
-			name={property}
+			name={name ?? property}
 			ok={reading !== undefined}
 			onScrubStart={() => {
 				scrub.current = { value: initial?.number ?? "", moved: false };
@@ -128,18 +145,27 @@ export function PropertyNumberField({
 					value: binding?.name ?? "Custom value",
 				}}
 				options={[
-					{ token: null, name: "unset" },
+					{ token: null, name: radius ? `${prefixes[property]}-none` : "unset" },
 					...options.map((option) => ({
 						token: `${scope}${prefixes[property]}-${option.name}`,
-						name: option.name,
+						name: radius ? `${prefixes[property]}-${option.name}` : option.name,
 						value: option.value,
 						...(option.from === "default" ? { group: "default" } : {}),
 					})),
 				]}
 				ok={reading !== undefined}
 				filter
-				onPick={(token) => apply(token === null ? { kind: "remove" } : { kind: "binding", tokens: [token] })}
+				onPick={(token) =>
+					apply(
+						token === null
+							? radius && scope
+								? { kind: "binding", tokens: [`${scope}${prefixes[property]}-none`] }
+								: { kind: "remove" }
+							: { kind: "binding", tokens: [token] },
+					)
+				}
 			/>
+			{accessory}
 		</Row>
 	);
 }
