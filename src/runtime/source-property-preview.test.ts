@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { previewPropertyStyles, restorePropertyStyles } from "./source-property-preview";
 
 const packet = { id: "installed", css: "original", bundledCss: "bundle" };
 function fixture(generation: number) {
 	document.head.innerHTML =
 		'<style id="spool-compiled-css">original</style><style id="spool-bundled-css">bundle</style>';
-	afterEach(() => restorePropertyStyles(generation));
+	onTestFinished(() => restorePropertyStyles(generation));
 	const compiled = document.getElementById("spool-compiled-css")!;
 	const bundle = document.getElementById("spool-bundled-css")!;
 	const plan = (revision: number, css: string) => ({
@@ -43,4 +43,14 @@ it("does not overwrite an outside stylesheet before the first preview", () => {
 	f.compiled.textContent = "outside";
 	expect(previewPropertyStyles(f.plan(1, "preview"), packet)).toBe(false);
 	expect(f.compiled.textContent).toBe("outside");
+});
+
+it.each(["before", "during"])("preserves outside CSSOM edits made %s preview", (when) => {
+	const f = fixture(4);
+	if (when === "during") expect(previewPropertyStyles(f.plan(1, "preview"), packet)).toBe(true);
+	if (!(f.compiled instanceof HTMLStyleElement) || !f.compiled.sheet) throw new Error("missing live stylesheet");
+	f.compiled.sheet.insertRule(".outside {color: red}", 0);
+	expect(previewPropertyStyles(f.plan(2, "later"), packet)).toBe(false);
+	restorePropertyStyles(4);
+	expect([...f.compiled.sheet.cssRules].some((rule) => rule.cssText.includes(".outside"))).toBe(true);
 });

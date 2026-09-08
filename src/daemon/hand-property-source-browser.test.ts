@@ -201,4 +201,46 @@ it("previews an unused property candidate, saves once and reverses retained sour
 			change: { kind: "property", value: { kind: "binding", tokens: ["text-yellow-500"] } },
 		}),
 	).toMatchObject({ ok: false });
+	const cssOriginal = await f.target.evaluate((element) =>
+		window.__SPOOL_SOURCE__?.read(element as HTMLElement, 9003, "className", {
+			kind: "property",
+			property: "color",
+			scope: "",
+		}),
+	);
+	const cssRead = await request({
+		action: "read",
+		frame: "home",
+		original: cssOriginal,
+		generation: 9003,
+		observer,
+		operation: { kind: "property", property: "color", scope: "" },
+	});
+	expect(cssRead.ok, cssRead.reason).toBe(true);
+	const cssPlan = await request({
+		action: "preview",
+		handle: cssRead.read.handle,
+		generation: 9003,
+		revision: 1,
+		original: cssOriginal,
+		change: { kind: "property", value: { kind: "binding", tokens: ["text-yellow-500"] } },
+	});
+	expect(cssPlan.ok, cssPlan.reason).toBe(true);
+	expect(
+		await f.target.evaluate((_element, plan) => window.__SPOOL_SOURCE__?.previewProperty(plan), cssPlan.preview),
+	).toBe(true);
+	const outside = await f.target.evaluate((_element, plan) => {
+		const sheet = (document.getElementById("spool-compiled-css") as HTMLStyleElement).sheet!;
+		sheet.insertRule(".outside-css-owner {color: rgb(1,2,3)}", sheet.cssRules.length);
+		const accepted = window.__SPOOL_SOURCE__?.previewProperty({ ...plan, revision: 2 });
+		window.__SPOOL_SOURCE__?.cancel(9003);
+		return {
+			accepted,
+			kept: [...(document.getElementById("spool-compiled-css") as HTMLStyleElement).sheet!.cssRules].some((rule) =>
+				rule.cssText.includes(".outside-css-owner"),
+			),
+		};
+	}, cssPlan.preview);
+	expect(outside).toEqual({ accepted: false, kept: true });
+	await request({ action: "cancel", handle: cssRead.read.handle });
 });
