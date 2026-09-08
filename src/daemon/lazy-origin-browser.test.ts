@@ -183,27 +183,32 @@ async function fixture(
 		}
 	};
 	const assertMatchedCaptures = async () => {
-		const expected = [...mirrored];
-		expect((await requests()).map((request) => request.id)).toEqual(expected);
-		expect(
-			(await page.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])).map(
-				(result) => result.id,
-			),
-		).toEqual(expected);
-		expect(
-			(await normal.evaluate(() => Reflect.get(globalThis, "captureRequests") as CaptureRequest[])).map(
-				(request) => request.id,
-			),
-		).toEqual(expected);
-		expect(
-			(await normal.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])).map(
-				(result) => result.id,
-			),
-		).toEqual(expected);
+		// A background request can arrive while the previous capture is being mirrored.
+		// Drain actual work, then check a completed ID boundary rather than assuming
+		// the request list stays frozen for the entire selection operation.
+		for (let attempt = 0; attempt < 20; attempt++) {
+			await matchCaptures();
+			const expected = [...mirrored];
+			const servedResults = await page.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[]);
+			const ordinaryRequests = await normal.evaluate(
+				() => Reflect.get(globalThis, "captureRequests") as CaptureRequest[],
+			);
+			const ordinaryResults = await normal.evaluate(
+				() => Reflect.get(globalThis, "captureResults") as CaptureResult[],
+			);
+			const servedRequests = await requests();
+			if (servedRequests.some((request) => !mirrored.has(request.id))) continue;
+			expect(servedRequests.map((request) => request.id)).toEqual(expected);
+			expect(servedResults.map((result) => result.id)).toEqual(expected);
+			expect(ordinaryRequests.map((request) => request.id)).toEqual(expected);
+			expect(ordinaryResults.map((result) => result.id)).toEqual(expected);
+			return expected;
+		}
+		throw new Error("capture requests did not reach a completed comparison boundary");
 	};
 	// Establish the boundary with a real capture and mirror every observed request,
 	// including background still captures. IDs and completions must match exactly.
-	const capture = async () => {
+	const requestCapture = async () => {
 		const id = crypto.randomUUID().replaceAll("-", "");
 		await page.evaluate(
 			(id) =>
@@ -214,6 +219,9 @@ async function fixture(
 			id,
 		);
 		await expect.poll(async () => (await requests()).some((request) => request.id === id)).toBe(true);
+	};
+	const capture = async () => {
+		await requestCapture();
 		await matchCaptures();
 		await assertMatchedCaptures();
 	};
@@ -226,7 +234,7 @@ async function fixture(
 		await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 		await page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
 	};
-	return { page, normal, frame, file, source, select, project, capture, assertMatchedCaptures };
+	return { page, normal, frame, file, source, select, project, capture, requestCapture, assertMatchedCaptures };
 }
 
 it.each([
@@ -246,6 +254,7 @@ it.each([
 		const f = await fixture(sample, sample.consumed);
 		const display = () =>
 			f.frame.locator("main").evaluate(() => ({
+				captureIds: (Reflect.get(globalThis, "captureRequests") as { id: string }[]).map((request) => request.id),
 				reads: Reflect.get(globalThis, "reads"),
 				subscriptions: Reflect.get(globalThis, "subscriptions"),
 				subscriptionTrace: Reflect.get(globalThis, "subscriptionTrace") as [number, number][],
@@ -256,6 +265,7 @@ it.each([
 			}));
 		const ordinary = () =>
 			f.normal.evaluate(() => ({
+				captureIds: (Reflect.get(globalThis, "captureRequests") as { id: string }[]).map((request) => request.id),
 				reads: Reflect.get(globalThis, "reads"),
 				subscriptions: Reflect.get(globalThis, "subscriptions"),
 				subscriptionTrace: Reflect.get(globalThis, "subscriptionTrace") as [number, number][],
@@ -264,15 +274,27 @@ it.each([
 				moduleInitializers: Reflect.get(globalThis, "moduleInitializers"),
 				traps: Reflect.get(globalThis, "traps"),
 			}));
+		const parity = async () => {
+			for (let attempt = 0; attempt < 20; attempt++) {
+				const completed = await f.assertMatchedCaptures();
+				// Trace and request IDs are read in the same browser task. A request
+				// arriving after this snapshot belongs to the next comparison interval.
+				const actual = await display();
+				if (JSON.stringify(actual.captureIds) !== JSON.stringify(completed)) continue;
+				const expected = await ordinary();
+				expect(actual).toEqual(expected);
+				expect(actual.subscriptionTrace).toHaveLength(actual.subscriptions);
+				return actual;
+			}
+			throw new Error("capture work did not settle before the subscription snapshot");
+		};
 		await f.frame.locator("main").evaluate(() => Reflect.get(globalThis, "afterCommit")?.());
 		await f.normal.evaluate(() => Reflect.get(globalThis, "afterCommit")?.());
-		await f.assertMatchedCaptures();
-		expect(await display()).toEqual(await ordinary());
+		await parity();
 		if (sample.capture) {
-			const initial = await display();
+			const initial = await parity();
 			await f.capture();
-			const captured = await display();
-			expect(captured).toEqual(await ordinary());
+			const captured = await parity();
 			expect(captured.subscriptionTrace.slice(0, initial.subscriptionTrace.length)).toEqual(
 				initial.subscriptionTrace,
 			);
@@ -281,9 +303,10 @@ it.each([
 				...captured,
 				subscriptions: initial.subscriptions,
 				subscriptionTrace: initial.subscriptionTrace,
+				captureIds: initial.captureIds,
 			}).toEqual(initial);
 		}
-		const before = await display();
+		const before = await parity();
 		const commits = await f.frame.locator("main").evaluate(() => globalThis.__SPOOL_OBSERVER__.commits);
 		const observations = await f.frame
 			.locator("button")
@@ -318,6 +341,7 @@ it.each([
 				if (expected[sample.name] === "Button") expect(choices[0]?.module).toBe("shared/ui/leaf.tsx");
 			}
 		}
+		if (sample.capture) await f.requestCapture();
 		await f.select();
 		const field = f.page.getByRole("textbox", { name: "Text", exact: true });
 		if (sample.consumed && refused.has(sample.name)) {
@@ -330,8 +354,15 @@ it.each([
 			return;
 		}
 		await expect.poll(() => field.count()).toBe(1);
-		await f.assertMatchedCaptures();
-		expect(await display()).toEqual(before);
+		const after = await parity();
+		expect(after.subscriptionTrace.slice(0, before.subscriptionTrace.length)).toEqual(before.subscriptionTrace);
+		if (sample.capture) expect(after.captureIds.length).toBeGreaterThan(before.captureIds.length);
+		expect({
+			...after,
+			subscriptions: before.subscriptions,
+			subscriptionTrace: before.subscriptionTrace,
+			captureIds: before.captureIds,
+		}).toEqual(before);
 		expect(await f.frame.locator("main").evaluate(() => globalThis.__SPOOL_OBSERVER__.commits)).toBe(commits);
 		const delivery = f.page.waitForResponse(
 			(response) =>
@@ -348,11 +379,19 @@ it.each([
 		await f.page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 
 		await f.page.mouse.click(500, 750);
+		const undoDelivered = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+		);
 		await f.page.keyboard.press("ControlOrMeta+z");
 		await expect.poll(() => readFileSync(f.file, "utf8")).toBe(f.source);
+		expect((await undoDelivered).ok()).toBe(true);
 		await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Same");
 		await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+		const redoDelivered = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+		);
 		await f.page.keyboard.press("ControlOrMeta+Shift+z");
+		expect((await redoDelivered).ok()).toBe(true);
 		await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Saved origin");
 	},
 );
