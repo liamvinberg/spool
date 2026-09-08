@@ -482,6 +482,7 @@ function ownsPreview(held: PreviewedUse): boolean {
 	);
 }
 function cancelSourceUses(generation: number, reason: "cancel" | "prepare" | "install" = "cancel"): void {
+	if (reason !== "install") restorePropertyStyles(generation);
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
@@ -540,7 +541,6 @@ function previewProperty(plan: SourcePropertyPreview): boolean {
 }
 
 function cancelSource(generation: number): void {
-	restorePropertyStyles(generation);
 	const held = leases.get(generation);
 	leases.delete(generation);
 	cancelSourceUses(generation);
