@@ -33,6 +33,7 @@ import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from 
 import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
+import { applySourcePatches } from "./source-patches";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
@@ -59,7 +60,7 @@ interface Receipt {
 	frame: string;
 	file: string;
 	compilation: RetainedCompilation;
-	inverse: SpanPatch;
+	inverse: readonly SpanPatch[];
 	original: SourceOccurrence;
 	generation: number;
 	retired: boolean;
@@ -243,6 +244,7 @@ export function createSourceOwner(
 			const file = sourceTarget(root, cell.file, compilation.inputs).file;
 			const handle = randomUUID();
 			const read: SourceRead = {
+				operation: { kind: "literal", ...(cell.field ? { field: cell.field } : {}) },
 				handle,
 				owner,
 				original: { ...original },
@@ -290,6 +292,7 @@ export function createSourceOwner(
 			valid(root, publication.compilation);
 			const { cellKey, cell, target } = resolveTextSource(root, publication.compilation, original, 0);
 			const read: SourceRead = {
+				operation: { kind: "literal", ...(cell.field ? { field: cell.field } : {}) },
 				handle: "",
 				owner,
 				generation: 0,
@@ -425,7 +428,7 @@ export function createSourceOwner(
 		held: OriginalRead,
 		next: string,
 		expected: SourcePublication["expected"],
-		executed?: SpanPatch,
+		executed?: readonly SpanPatch[],
 		inverseOf?: symbol,
 	): Promise<SourceResult> {
 		valid(held.root, held.history ?? held.compilation);
@@ -470,14 +473,15 @@ export function createSourceOwner(
 		const frozen = new Map([...held.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]));
 		// Source remains ordinary files. This final synchronous check and rename
 		// cannot exclude an uncoordinated process saving after the check.
+		const forward = applySourcePatches(before, executed ?? [spanBetween(next, before)]);
+		if (forward.text !== next) throw new Error("the source operation does not match its planned spans");
 		writeAtomic(held.file, next);
 		const after = readInput(held.file);
-		const forward = executed ?? spanBetween(next, before);
 		const operation = journal.record(
 			held.file,
 			input,
 			after,
-			[{ ...forward, before: before.slice(forward.start, forward.end) }],
+			forward.patches.map((patch) => ({ ...patch, before: before.slice(patch.start, patch.end) })),
 			inverseOf,
 		);
 		frozen.set(held.file, after);
@@ -490,6 +494,7 @@ export function createSourceOwner(
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
 			expected: {
+				kind: "literal",
 				value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
 				absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
 			},
@@ -502,11 +507,7 @@ export function createSourceOwner(
 			frame: held.frame,
 			file: held.file,
 			compilation: saved,
-			inverse: {
-				start: forward.start,
-				end: forward.start + forward.text.length,
-				text: before.slice(forward.start, forward.end),
-			},
+			inverse: forward.inverse,
 			original: held.read.original,
 			generation: held.read.generation,
 			retired: false,
@@ -729,13 +730,13 @@ export function createSourceOwner(
 				}
 				const input = held.compilation.inputs.get(held.file);
 				if (!input) throw new Error("the original source input is missing");
-				const patch = journal.transform(held.file, input, patches)[0];
-				if (!patch) throw new Error("the source patch is missing");
+				const transformed = journal.transform(held.file, input, patches);
+				if (transformed.length === 0) throw new Error("the source patch is missing");
 				return await publish(
 					held,
-					applySpan(journal.current(held.file, input).bytes.toString("utf8"), patch),
-					{ value: op.text, absent: false },
-					patch,
+					applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
+					{ kind: "literal", value: op.text, absent: false },
+					transformed,
 				);
 			} catch (error) {
 				return { ok: false, reason: reason(error) };
@@ -802,8 +803,8 @@ export function createSourceOwner(
 				if (source === undefined) throw new Error("the inverse source read is incomplete");
 				const input = held.compilation.inputs.get(held.file);
 				if (!input) throw new Error("the original input is missing");
-				const transformed = journal.transform(held.file, input, [held.inverse])[0];
-				if (!transformed) throw new Error("the inverse source span is missing");
+				const transformed = journal.transform(held.file, input, held.inverse);
+				if (transformed.length === 0) throw new Error("the inverse source span is missing");
 				const cell = held.compilation.cells[held.cell];
 				if (!cell) throw new Error("the original source role changed");
 				return await publish(
@@ -817,6 +818,7 @@ export function createSourceOwner(
 						compilation,
 						history: held.required,
 						read: {
+							operation: { kind: "literal", ...(cell.field ? { field: cell.field } : {}) },
 							handle: "",
 							owner,
 							original,
@@ -828,7 +830,7 @@ export function createSourceOwner(
 							value: cell.value,
 						},
 					},
-					applySpan(journal.current(held.file, input).bytes.toString("utf8"), transformed),
+					applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
 					held.expected,
 					transformed,
 					held.operation,

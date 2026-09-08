@@ -901,6 +901,7 @@ function stubCanvasApis(refused = false): void {
 				const body = JSON.parse(String(init?.body)) as { action: string; generation: number };
 				if (body.action === "read") {
 					sourceRead = {
+						operation: { kind: "literal", field: "title" },
 						handle: "attribute-read",
 						owner: "owner",
 						generation: body.generation,

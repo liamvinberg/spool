@@ -53,7 +53,7 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
-	operation?: SourceOperation;
+	operation: SourceOperation;
 	handle: string;
 	owner: string;
 	generation: number;
@@ -92,7 +92,7 @@ export interface RetainedValues {
 
 export interface SourcePublication {
 	expected:
-		| { kind?: "literal"; value: string; absent: boolean }
+		| { kind: "literal"; value: string; absent: boolean }
 		| SourcePropertyExpectation
 		| SourceStructuralExpectation;
 	admission: { token: string; expires: number };
