@@ -322,3 +322,81 @@ it.each(["input", "textarea"])(
 		expect(f.bytes()).toEqual({ [entry]: source });
 	},
 );
+
+it.each(["audio", "video", "source", "iframe"])(
+	"retains shared nonimage %s src through actual Properties and source history",
+	{ timeout: 120000 },
+	async (tag) => {
+		const element = `<${tag} id="label" src="about:blank" style={{display:"block",width:200,height:100,background:"red"}} ${tag === "audio" ? "controls" : ""}/>`;
+		const source = `export default function Field(){return <main style={{padding:40}}>${element}</main>}`;
+		const f = await originCanvas({ [entry]: source }, frame, "#label", true);
+		const second = f.page.frameLocator('iframe[title="second"]').locator("#label");
+		await expect.poll(() => second.count()).toBe(1);
+		// An authored display box makes source selectable through the same native
+		// picker as the visible media elements; no synthetic selection is injected.
+		await f.select();
+		const field = f.page.getByRole("textbox", { name: "src", exact: true });
+		await field.fill("about:blank#preview");
+		for (const target of [f.target, second])
+			await expect.poll(() => target.getAttribute("src")).toBe("about:blank#preview");
+		await field.press("Escape");
+		for (const target of [f.target, second]) await expect.poll(() => target.getAttribute("src")).toBe("about:blank");
+		expect(f.bytes()).toEqual({ [entry]: source });
+		await field.fill("about:blank#saved");
+		await field.press("Enter");
+		for (let phase = 0; phase < 3; phase++) {
+			if (phase) await f.history(phase === 2);
+			await expect
+				.poll(() => f.bytes())
+				.toEqual({
+					[entry]: phase === 1 ? source : source.replace('src="about:blank"', 'src="about:blank#saved"'),
+				});
+			await f.settled();
+			for (const target of [f.target, second])
+				expect(await target.getAttribute("src")).toBe(phase === 1 ? "about:blank" : "about:blank#saved");
+			expect(await f.page.locator('[data-hand-notice="mismatching"]').count()).toBe(0);
+		}
+	},
+);
+
+it("keeps image src in its dedicated operation instead of the literal src Properties field", {
+	timeout: 120000,
+}, async () => {
+	const source =
+		"export default function Field(){return <main style={{padding:40}}><img id=\"label\" src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'/%3E\" alt=\"Picture\" style={{width:180,height:100}}/></main>}";
+	const f = await originCanvas({ [entry]: source }, frame, "#label");
+	await f.select();
+	await expect.poll(() => f.page.getByRole("textbox", { name: "alt", exact: true }).count()).toBe(1);
+	expect(await f.page.getByRole("textbox", { name: "src", exact: true }).count()).toBe(0);
+	expect(f.bytes()).toEqual({ [entry]: source });
+	expect(f.writes).toEqual([]);
+});
+
+it("creates a missing shared iframe src and removes its DOM presence on source undo", { timeout: 120000 }, async () => {
+	const source =
+		'export default function Field(){return <main style={{padding:40}}><iframe id="label" style={{width:200,height:100}}/></main>}';
+	const f = await originCanvas({ [entry]: source }, frame, "#label", true);
+	const second = f.page.frameLocator('iframe[title="second"]').locator("#label");
+	await expect.poll(() => second.count()).toBe(1);
+	await f.select();
+	const field = f.page.getByRole("textbox", { name: "src", exact: true });
+	await field.fill("about:blank#preview");
+	for (const target of [f.target, second])
+		await expect.poll(() => target.getAttribute("src")).toBe("about:blank#preview");
+	await field.press("Escape");
+	for (const target of [f.target, second]) await expect.poll(() => target.getAttribute("src")).toBe(null);
+	expect(f.bytes()).toEqual({ [entry]: source });
+	await field.fill("about:blank#saved");
+	await field.press("Enter");
+	await expect.poll(() => f.bytes()[entry]).toContain('src="about:blank#saved"');
+	await f.settled();
+	const saved = f.bytes();
+	for (const redo of [false, true]) {
+		await f.history(redo);
+		await expect.poll(() => f.bytes()).toEqual(redo ? saved : { [entry]: source });
+		await f.settled();
+		for (const target of [f.target, second])
+			expect(await target.getAttribute("src")).toBe(redo ? "about:blank#saved" : null);
+		expect(await f.page.locator('[data-hand-notice="mismatching"]').count()).toBe(0);
+	}
+});
