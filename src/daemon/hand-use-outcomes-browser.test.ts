@@ -44,8 +44,10 @@ async function observed(
 						if (fault === "absence") {
 							for (const fields of Object.values(publication.packet.attributes ?? {}))
 								for (const definition of Object.values(fields))
-									if (definition.cell === (publication.cell ?? publication.original.cell))
+									if (definition.cell === (publication.cell ?? publication.original.cell)) {
 										definition.absent = !definition.absent;
+										if (!definition.absent) publication.packet.values[definition.cell] = "";
+									}
 						}
 					}
 					if (
