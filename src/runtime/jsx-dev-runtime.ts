@@ -740,29 +740,30 @@ function observedUse(
 				reason: "the native value matches, but the committed class declaration has not received this source change",
 			};
 	}
-	const observed =
-		expected.kind === "property" ? property?.observed : element ? renderedField(element, original.field) : undefined;
-	const matches =
-		expected.kind === "property"
-			? property?.rendered === "verified"
-			: original.field
-				? !!element &&
-					(expected.absent
-						? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
-						: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
-							observed === expected.value)
-				: observed === expected.value;
-	const rendered = !element?.isConnected
-		? element && failed.has(element)
-			? "failed"
-			: "unmounted"
-		: pendingIn(element)
-			? "pending"
-			: matches
-				? "verified"
-				: element && failed.has(element)
-					? "failed"
-					: (property?.rendered ?? "mismatching");
+	function observedValue(): string | undefined {
+		if (expected.kind === "property") return property?.observed;
+		return element ? renderedField(element, original.field) : undefined;
+	}
+	const observed = observedValue();
+	function fieldMatches(field: string): boolean {
+		if (!element || expected.kind !== "literal") return false;
+		const props = committedFiber(element)?.memoizedProps;
+		if (expected.absent) return !hasRenderedField(element, field, props);
+		return hasRenderedField(element, field, props) && observed === expected.value;
+	}
+	function matching(): boolean {
+		if (expected.kind === "property") return property?.rendered === "verified";
+		if (expected.kind !== "literal") return false;
+		return original.field ? fieldMatches(original.field) : observed === expected.value;
+	}
+	function renderedAs(): UseOutcome["rendered"] {
+		if (!element?.isConnected) return element && failed.has(element) ? "failed" : "unmounted";
+		if (pendingIn(element)) return "pending";
+		if (matching()) return "verified";
+		if (failed.has(element)) return "failed";
+		return property?.rendered ?? "mismatching";
+	}
+	const rendered = renderedAs();
 	return {
 		occurrence: original.occurrence,
 		installation: "installed",
