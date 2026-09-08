@@ -241,7 +241,12 @@ export function scaleValue(px: number, step = 4): string {
 }
 
 function hasFraction(value: string): boolean {
-	return /[1-9]/.test(value.split(".")[1] ?? "");
+	const [mantissa = "", exponent = "0"] = value.toLowerCase().split("e");
+	const [whole = "", fraction = ""] = mantissa.replace(/^[+-]/, "").split(".");
+	const places = fraction.length - Number(exponent);
+	if (places <= 0) return false;
+	const digits = whole + fraction;
+	return /[1-9]/.test(places >= digits.length ? digits : digits.slice(-places));
 }
 function numericCandidate(kind: Kind, value: string, negative: boolean): { value: string; negative: boolean } {
 	if ((kind === "px" || kind === "ms" || kind === "deg") && value.includes("."))

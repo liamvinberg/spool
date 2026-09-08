@@ -67,3 +67,10 @@ it("refuses a nonzero scientific value outside the native numeric range before s
 	expect(stepLength("spacing", lengthOf("p-[1e-1000px]", "p"), 0, 1)).toBeNull();
 	expect(stepLength("spacing", lengthOf("p-[0e-1000px]", "p"), 0, 1)).toEqual({ value: "[1px]", negative: false });
 });
+
+it("keeps count integrality exact for authored scientific values", () => {
+	expect(stepLength("count", lengthOf("z-[1e-1]", "z"), 0, 1)).toBeNull();
+	expect(stepLength("count", lengthOf("z-[1.000000000000000001e0]", "z"), 1, 1)).toBeNull();
+	expect(stepLength("count", lengthOf("z-[1e1]", "z"), 10, 1)).toEqual({ value: "[11]", negative: false });
+	expect(stepLength("count", lengthOf("z-[1.5e1]", "z"), 15, 1)).toEqual({ value: "[16]", negative: false });
+});
