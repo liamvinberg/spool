@@ -59,6 +59,28 @@ it("groups the approved typography and appearance controls without duplicating c
 	expect(groups.indexOf(typography!)).toBeLessThan(groups.indexOf(appearance!));
 });
 
+it("keeps the approved four headers, with the border controls in their approved places", async () => {
+	const rail = await mount("border-2 border-red-500 rounded-lg p-4 text-md");
+	const groups = [...rail.host.children];
+	const headed = (group: Element) => group.firstElementChild?.firstElementChild?.textContent ?? "";
+	expect(groups.map(headed).filter(Boolean)).toEqual([
+		"position",
+		"size",
+		"layout",
+		"Typography",
+		"Appearance",
+		"+ Add property",
+	]);
+	const named = (name: string) => groups.find((group) => headed(group) === name);
+	// The approved frame draws an added border width with Layout's optional
+	// numbers, and gives its colour no slot of its own, so it reads under Appearance.
+	expect(named("layout")?.querySelector('[data-properties-row="border-width"]')).not.toBeNull();
+	expect(named("Appearance")?.querySelector('[data-properties-row="border-width"]')).toBeNull();
+	expect(named("Appearance")?.querySelector('[data-properties-row="border-color"]')).not.toBeNull();
+	expect(rail.host.querySelectorAll('[data-properties-row="border-width"]')).toHaveLength(1);
+	expect(rail.host.querySelectorAll('[data-properties-row="border-color"]')).toHaveLength(1);
+});
+
 it.each(["letter-spacing", "border-width"])(
 	"adds the optional %s through its typed source control",
 	async (property) => {

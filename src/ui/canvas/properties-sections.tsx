@@ -1512,7 +1512,18 @@ function LayoutSection({ view }: { view: View }) {
 	const wrapRow = modelRow("flex-wrap");
 	const alignRow = modelRow("align-items");
 	const justifyRow = modelRow("justify-content");
+	// The approved frame draws an added border width with Layout's other optional
+	// numbers, so it is here rather than under a header of its own.
+	const widths = borderWidthsOf(view.scoped);
+	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
+	const bordered = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
 	const drawn = new Set([
+		...(bordered ? BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property) : []),
+		// `border-s` and `border-e` are the fold's left and right edges under
+		// their logical names: it already draws them, and reading `border` as
+		// both would put the same width on screen three times
+		"border-inline-start-width",
+		"border-inline-end-width",
 		"display",
 		"overflow",
 		"padding",
@@ -1635,6 +1646,22 @@ function LayoutSection({ view }: { view: View }) {
 					/>
 				)}
 			/>
+			{bordered ? (
+				<Folded
+					view={view}
+					fold={BORDER_WIDTH_FOLD}
+					read={borderWidthsOf}
+					draw={(entry, caret) => (
+						<BorderWidthRow
+							key={entry.property}
+							view={view}
+							property={entry.property}
+							{...(entry.name === undefined ? {} : { name: entry.name })}
+							fold={caret}
+						/>
+					)}
+				/>
+			) : null}
 			<WordRow view={view} property="overflow" />
 			{scrolls ? <ToggleRow view={view} property="scroll-snap-type" /> : null}
 			<Rest view={view} section="layout" drawn={drawn} />
@@ -1684,6 +1711,10 @@ function AppearanceSection({ view }: { view: View }) {
 	const easing = themeOf(view.scoped, "ease", "ease", view.theme) !== null;
 	const filters = toggledOf(view.scoped, FILTER_SET).size > 0;
 	const opened = more || transforms || easing || filters;
+	// A width is what gives an edge a colour to read, so the colours draw with it.
+	const widths = borderWidthsOf(view.scoped);
+	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
+	const bordered = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
 	const drawn = new Set([
 		"opacity",
 		"border-radius",
@@ -1692,6 +1723,7 @@ function AppearanceSection({ view }: { view: View }) {
 		"border-bottom-right-radius",
 		"border-bottom-left-radius",
 		"box-shadow",
+		...(bordered ? BORDER_COLOUR_FOLD.levels.flat().map((entry) => entry.property) : []),
 		...(opened ? ["filter", ...MORE_APPEARANCE, "transition-timing-function"] : []),
 	]);
 	return (
@@ -1749,51 +1781,7 @@ function AppearanceSection({ view }: { view: View }) {
 					</button>
 				</div>
 			)}
-			<GradientRows view={view} />
-			<Rest view={view} section="fill" drawn={new Set(["background-color", "background-image"])} />
-			<Rest view={view} section="appearance" drawn={drawn} />
-		</Section>
-	);
-}
-
-/**
- * Width and colour, each folding to the four edges.
- *
- * The colour rows appear only once a width exists: a border colour with no
- * width paints nothing, so offering one is offering a field that cannot change
- * a pixel.
- */
-function StrokeSection({ view }: { view: View }) {
-	const widths = borderWidthsOf(view.scoped);
-	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
-	const any = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
-	if (!any && !rowsIn("stroke").some((row) => readRow(row, view.scoped, view.theme).token !== null)) return null;
-	const drawn = new Set([
-		...BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property),
-		// `border-s` and `border-e` are the fold's left and right edges under
-		// their logical names: it already draws them, and reading `border` as
-		// both would put the same width on screen three times
-		"border-inline-start-width",
-		"border-inline-end-width",
-		...(any ? BORDER_COLOUR_FOLD.levels.flat().map((entry) => entry.property) : []),
-	]);
-	return (
-		<Section name="stroke" reason={sectionReason(view, ["border-width"])}>
-			<Folded
-				view={view}
-				fold={BORDER_WIDTH_FOLD}
-				read={borderWidthsOf}
-				draw={(entry, caret) => (
-					<BorderWidthRow
-						key={entry.property}
-						view={view}
-						property={entry.property}
-						{...(entry.name === undefined ? {} : { name: entry.name })}
-						fold={caret}
-					/>
-				)}
-			/>
-			{any ? (
+			{bordered ? (
 				<Folded
 					view={view}
 					fold={BORDER_COLOUR_FOLD}
@@ -1817,10 +1805,34 @@ function StrokeSection({ view }: { view: View }) {
 					}}
 				/>
 			) : null}
-			<Rest view={view} section="stroke" drawn={drawn} />
+			<GradientRows view={view} />
+			<Rest view={view} section="fill" drawn={new Set(["background-color", "background-image"])} />
+			<Rest view={view} section="appearance" drawn={drawn} />
+			<Rest
+				view={view}
+				section="stroke"
+				drawn={
+					new Set([
+						...drawn,
+						// Layout draws the widths; reading them again here would put the
+						// same number on screen twice.
+						...BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property),
+						"border-inline-start-width",
+						"border-inline-end-width",
+					])
+				}
+			/>
 		</Section>
 	);
 }
+
+/**
+ * Width and colour, each folding to the four edges.
+ *
+ * The colour rows appear only once a width exists: a border colour with no
+ * width paints nothing, so offering one is offering a field that cannot change
+ * a pixel.
+ */
 
 function TextSection({ view }: { view: View }) {
 	const alignRow = modelRow("text-align");
@@ -1911,7 +1923,6 @@ export function PropertySections({ view }: { view: View }) {
 			<LayoutSection view={held} />
 			<TextSection view={held} />
 			<AppearanceSection view={held} />
-			<StrokeSection view={held} />
 			<AddProperty view={held} />
 		</>
 	);
