@@ -570,6 +570,21 @@ it("does not invent a new save or verified result when fresh retry source alread
 	await f.notice.getByRole("button", { name: "Ask agent", exact: true }).click();
 	await expect.poll(() => f.composer.inputValue()).toContain("Already requested");
 	expect(f.calls()).toBe(callsBeforeHandoff);
+	const writes: string[] = [];
+	f.page.on("request", (request) => {
+		if (request.url().endsWith("/source") && ["commit", "inverse"].includes(request.postDataJSON()?.action))
+			writes.push(request.postDataJSON().action);
+	});
+	await f.properties();
+	await f.notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+	await expect.poll(() => f.frame.locator("#label").textContent()).toBe("Already requested");
+	await expect.poll(() => f.notice.count()).toBe(0);
+	expect(await f.frame.locator("#draft").inputValue()).toBe("initial");
+	expect(readFileSync(f.file, "utf8")).toBe(before);
+	expect(writes).toEqual([]);
+	await f.page.locator('[data-dock-glyph="agent"]').click();
+	await expect.poll(() => f.composer.inputValue()).toBe("");
+	expect(f.calls()).toBe(callsBeforeHandoff);
 });
 
 it("preserves Properties scroll and field state across the approved reduced-motion Agent handoff", {
