@@ -69,3 +69,22 @@ it("exposes acknowledged transient snapshots and only marks explicit inverse pai
 	writeFileSync(file, "opaque");
 	expect(() => journal.changes(file, original)).toThrow("record was lost");
 });
+
+it("orders acknowledged changes across separate dependency files", () => {
+	const dir = makeTempDir();
+	const first = join(dir, "first.ts");
+	const second = join(dir, "second.ts");
+	writeFileSync(first, "a");
+	writeFileSync(second, "b");
+	const journal = createSourceJournal();
+	const a = journal.observe(first);
+	const b = journal.observe(second);
+	writeAtomic(second, "B");
+	journal.record(second, b, readInput(second), [{ start: 0, end: 1, before: "b", text: "B" }]);
+	writeAtomic(first, "A");
+	journal.record(first, a, readInput(first), [{ start: 0, end: 1, before: "a", text: "A" }]);
+	const ordered = [...journal.changes(first, a), ...journal.changes(second, b)].sort(
+		(left, right) => left.order - right.order,
+	);
+	expect(ordered.map((change) => change.after.bytes.toString())).toEqual(["B", "A"]);
+});
