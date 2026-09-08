@@ -27,9 +27,9 @@ const outlineGuards = ["outline-style", "--tw-outline-style", "outline-color"];
 const decorationGuards = ["text-decoration-line", "text-decoration-style", "text-decoration-color"];
 
 /** Retained single-length rows, with the initial declaration and keywords their native use can show. */
-const lengthRows: Readonly<
-	Record<string, { initial?: string; inherited: boolean; keywords: readonly string[]; guarded: readonly string[] }>
-> = {
+type LengthRow = { initial?: string; inherited: boolean; keywords: readonly string[]; guarded: readonly string[] };
+
+const lengthRows: Readonly<Record<string, LengthRow>> = {
 	// The initial outline width is a keyword with no native length, so a cleared use stays unverified.
 	"outline-width": { inherited: false, keywords: [], guarded: outlineGuards },
 	"outline-offset": { initial: "0px", inherited: false, keywords: [], guarded: outlineGuards },
@@ -74,6 +74,90 @@ function transitionProperty(property: string): property is NativeTransitionPrope
 	);
 }
 
+type ComposedNative =
+	| NativeTransformProperty
+	| NativeTransitionProperty
+	| "filter"
+	| "box-shadow"
+	| "font-variant-numeric"
+	| "background-image";
+
+type SelectedFamily =
+	| { kind: "keyword"; keyword: NativeKeywordProperty }
+	| { kind: "length"; row: LengthRow }
+	| { kind: "metric"; companion: string; measure: "weight" | "leading" | "spacing" }
+	| { kind: "family" }
+	| { kind: "color" }
+	| { kind: "corner" }
+	| { kind: "size" }
+	| { kind: "opacity" };
+
+type PropertyFamily =
+	| { kind: "composed"; native: ComposedNative }
+	| { kind: "border" }
+	| { kind: "border-color" }
+	| { kind: "radius" }
+	| { kind: "selected"; select: SelectedFamily };
+
+const filterProperties = ["filter", "brightness", "contrast", "saturate", "hue-rotate"];
+const colorProperties = [
+	"color",
+	"background-color",
+	"outline-color",
+	"text-decoration-color",
+	"caret-color",
+	"accent-color",
+	"fill",
+	"stroke",
+];
+const metricRows: Readonly<Record<string, { companion: string; measure: "weight" | "leading" | "spacing" }>> = {
+	"font-weight": { companion: "--tw-font-weight", measure: "weight" },
+	"line-height": { companion: "--tw-leading", measure: "leading" },
+	"letter-spacing": { companion: "--tw-tracking", measure: "spacing" },
+};
+const borderWidthRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?width$/;
+
+/** Every retained property is read by exactly one family; an unlisted one has no native proof. */
+function propertyFamily(property: string): PropertyFamily | undefined {
+	if (Object.hasOwn(transformProperties, property))
+		return { kind: "composed", native: transformProperties[property]! };
+	if (filterProperties.includes(property)) return { kind: "composed", native: "filter" };
+	if (shadowProperties.includes(property)) return { kind: "composed", native: "box-shadow" };
+	if (transitionProperty(property)) return { kind: "composed", native: property };
+	if (property === "font-variant-numeric" || property === "background-image")
+		return { kind: "composed", native: property };
+	if (borderWidthRow.test(property)) return { kind: "border" };
+	if (borderColorRow.test(property)) return { kind: "border-color" };
+	if (property === "border-radius") return { kind: "radius" };
+	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
+	if (Object.hasOwn(lengthRows, property))
+		return { kind: "selected", select: { kind: "length", row: lengthRows[property]! } };
+	if (Object.hasOwn(metricRows, property))
+		return { kind: "selected", select: { kind: "metric", ...metricRows[property]! } };
+	if (colorProperties.includes(property)) return { kind: "selected", select: { kind: "color" } };
+	if (isCorner(property)) return { kind: "selected", select: { kind: "corner" } };
+	if (property === "font-family") return { kind: "selected", select: { kind: "family" } };
+	if (property === "font-size") return { kind: "selected", select: { kind: "size" } };
+	if (property === "opacity") return { kind: "selected", select: { kind: "opacity" } };
+	return;
+}
+
+/** Every corner is its own native component; the row is verified only when all four are. */
+function radiusOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
+	const outcomes = [
+		"border-top-left-radius",
+		"border-top-right-radius",
+		"border-bottom-right-radius",
+		"border-bottom-left-radius",
+	].map((corner) => propertyOutcome(element, { ...expected, property: corner }));
+	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
+	if (refused) return refused;
+	return {
+		rendered: outcomes.every((outcome) => outcome.rendered === "verified") ? "verified" : "mismatching",
+		observed: outcomes.map((outcome) => outcome.observed ?? "").join(" "),
+	};
+}
+
 export interface PropertyOutcome {
 	rendered: "verified" | "mismatching" | "unverified" | "inactive";
 	observed?: string;
@@ -97,69 +181,29 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("the selected property condition needs a native context proof");
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
-	const transform = Object.hasOwn(transformProperties, expected.property)
-		? transformProperties[expected.property]
-		: undefined;
-	if (transform) return composedOutcome(element, expected, transform);
-	if (["filter", "brightness", "contrast", "saturate", "hue-rotate"].includes(expected.property))
-		return composedOutcome(element, expected, "filter");
-	if (
-		expected.property === "border-width" ||
-		/^border-(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-width$/.test(expected.property)
-	)
-		return borderOutcome(element, expected);
-	if (expected.property === "border-radius") {
-		// Every corner is its own native component; the row is verified only when all four are.
-		const outcomes = [
-			"border-top-left-radius",
-			"border-top-right-radius",
-			"border-bottom-right-radius",
-			"border-bottom-left-radius",
-		].map((corner) => propertyOutcome(element, { ...expected, property: corner }));
-		const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
-		if (refused) return refused;
-		return {
-			rendered: outcomes.every((outcome) => outcome.rendered === "verified") ? "verified" : "mismatching",
-			observed: outcomes.map((outcome) => outcome.observed ?? "").join(" "),
-		};
-	}
-	if (borderColorRow.test(expected.property)) return borderColorOutcome(element, expected);
-	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
-	if (shadowProperties.includes(expected.property)) return composedOutcome(element, expected, "box-shadow");
-	if (expected.property === "font-variant-numeric") return composedOutcome(element, expected, expected.property);
-	if (expected.property === "background-image") return composedOutcome(element, expected, expected.property);
-	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
-	const corner = isCorner(expected.property);
-	const color = [
-		"color",
-		"background-color",
-		"outline-color",
-		"text-decoration-color",
-		"caret-color",
-		"accent-color",
-		"fill",
-		"stroke",
-	].includes(expected.property);
-	const length = Object.hasOwn(lengthRows, expected.property) ? lengthRows[expected.property] : undefined;
-	const family = expected.property === "font-family";
-	const weight = expected.property === "font-weight";
-	const leading = expected.property === "line-height";
-	const spacing = expected.property === "letter-spacing";
-	const companion = weight ? "--tw-font-weight" : leading ? "--tw-leading" : spacing ? "--tw-tracking" : undefined;
-	if (
-		expected.property !== "opacity" &&
-		expected.property !== "font-size" &&
-		!color &&
-		!corner &&
-		!family &&
-		!length &&
-		!weight &&
-		!leading &&
-		!spacing &&
-		!keyword
-	)
-		return unverified("this property needs a native effect proof");
-	if (pseudo !== "" && !color) return unverified("this property has no native pseudo-element reading");
+	const family = propertyFamily(expected.property);
+	if (!family) return unverified("this property needs a native effect proof");
+	if (family.kind === "composed") return composedOutcome(element, expected, family.native);
+	if (family.kind === "border") return borderOutcome(element, expected);
+	if (family.kind === "border-color") return borderColorOutcome(element, expected);
+	if (family.kind === "radius") return radiusOutcome(element, expected);
+	return selectedOutcome(element, view, expected, family.select, pseudo);
+}
+
+/** One shared declaration selection, then the family that reads the selected value natively. */
+function selectedOutcome(
+	element: Element,
+	view: Window,
+	expected: SourcePropertyExpectation,
+	select: SelectedFamily,
+	pseudo: string,
+): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	if (pseudo !== "" && select.kind !== "color")
+		return unverified("this property has no native pseudo-element reading");
+	const corner = select.kind === "corner";
+	const length = select.kind === "length" ? select.row : undefined;
+	const companion = select.kind === "metric" ? select.companion : undefined;
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
@@ -192,7 +236,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const selection = winningEffect(sheet, applicable);
 	if (selection.reason) return unverified(selection.reason);
 	const winner = selection.winner;
-	if (keyword) {
+	if (select.kind === "keyword") {
+		const keyword = select.keyword;
 		const fallback = keywordDefaults[keyword];
 		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
 		if (winner && value === undefined) return unverified("this keyword needs a resolved variable context");
@@ -263,7 +308,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 				: wantedKeyword === actualKeyword;
 		return { rendered: matches ? "verified" : "mismatching", observed };
 	}
-	if (family) {
+	if (select.kind === "family") {
 		if (
 			(!winner || winner.owner === null) &&
 			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
@@ -283,11 +328,11 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			? unverified(result.reason)
 			: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
 	}
-	if (weight || leading || spacing) {
+	if (select.kind === "metric") {
 		const number = (value: string) =>
-			weight
+			select.measure === "weight"
 				? nativeWeight(value)
-				: spacing
+				: select.measure === "spacing"
 					? nativeSpacing(element, sheet, value)
 					: nativeLineHeight(element, sheet, value);
 		const result = winningEffect(sheet, companions);
@@ -297,7 +342,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		if (result.winner) {
 			const value = resolvedValue(element, sheet, result.winner.value);
 			const wanted = value === undefined ? undefined : number(value);
-			const observed = native.getPropertyValue(companion!).trim();
+			const observed = native.getPropertyValue(select.companion).trim();
 			const actual = number(observed);
 			if (wanted === undefined || (actual === undefined && observed !== ""))
 				return unverified("this type metric companion needs a native value proof");
@@ -313,7 +358,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			const parent = element.parentElement;
 			if (!parent) return unverified("this type metric needs an inherited context proof");
 			const parentStyle = view.getComputedStyle(parent);
-			if (leading && parentStyle.fontSize !== native.fontSize)
+			if (select.measure === "leading" && parentStyle.fontSize !== native.fontSize)
 				return unverified("inherited leading needs its original unit context");
 			value = parentStyle.getPropertyValue(expected.property);
 		} else value = resolvedValue(element, sheet, winner.value);
@@ -324,7 +369,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("this type metric needs a native value context proof");
 		return { rendered: companionMatches && wanted === actual ? "verified" : "mismatching", observed };
 	}
-	if (color) {
+	if (select.kind === "color") {
 		// An inline declaration cannot target a pseudo-element, so it is not a competing context there.
 		if (
 			!pseudo &&
@@ -368,7 +413,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("this color needs a variable or native context proof");
 		return { rendered: wanted === actual ? "verified" : "mismatching", observed };
 	}
-	if (expected.property === "font-size" || corner) {
+	if (select.kind === "size" || corner) {
 		if (!winner && !corner) return unverified("this type size needs an inherited context proof");
 		const value = resolvedValue(element, sheet, winner?.value ?? "0px");
 		const wanted = value === undefined ? undefined : nativeLength(element, sheet, expected.property, value);
