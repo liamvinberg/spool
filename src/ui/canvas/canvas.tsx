@@ -1996,7 +1996,7 @@ export function ProjectCanvas({
 				});
 				const ran = history.current;
 				const operation = sourceDelivery
-					.inventory(entry.receipt.field)
+					.inventory(entry.receipt.field, entry.receipt.operation)
 					.then((inventories) => {
 						sourceDelivery.holdInverse(
 							entry.receipt.handle,
@@ -2795,7 +2795,7 @@ export function ProjectCanvas({
 				says: "Saving…",
 				...(intent ? { intent } : {}),
 			});
-			const operation = commitSource(project, held.read, text).then(async (result) => {
+			const operation = commitSource(project, held.read, { kind: "literal", text }).then(async (result) => {
 				if (result?.ok && result.receipt)
 					recordEntry({
 						kind: "source",
@@ -2871,7 +2871,7 @@ export function ProjectCanvas({
 					});
 					return;
 				}
-				const result = await commitSource(project, read, text);
+				const result = await commitSource(project, read, { kind: "literal", text });
 				if (result?.ok && result.receipt)
 					recordEntry({ kind: "source", ...(intent ? { intent } : {}), frame, receipt: result.receipt });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(frame, read.generation);
@@ -3014,7 +3014,7 @@ export function ProjectCanvas({
 					);
 					return;
 				}
-				const result = await commitSource(project, read, intent.value ?? "");
+				const result = await commitSource(project, read, { kind: "literal", text: intent.value ?? "" });
 				if (result?.ok && result.receipt)
 					recordEntry({ kind: "source", frame: intent.frame, receipt: result.receipt, intent });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(intent.frame, generation);

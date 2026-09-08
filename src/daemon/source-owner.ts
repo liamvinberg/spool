@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import {
+	type SourceChange,
 	type SourceDescription,
 	type SourceInventory,
 	type SourceOccurrence,
@@ -13,6 +14,7 @@ import {
 	type SourceResult,
 	type SourceUse,
 	sameSourceOccurrence,
+	sameSourceOperation,
 	type UseOutcome,
 } from "../source-edit";
 import type { ExecutedEdit } from "./bundled-editor";
@@ -53,6 +55,7 @@ interface OriginalRead {
 	file: string;
 }
 interface Receipt {
+	purpose: SourceRead["operation"];
 	expected: SourcePublication["expected"];
 	required: RetainedCompilation;
 	cell: string;
@@ -516,12 +519,14 @@ export function createSourceOwner(
 		frozen.set(held.file, after);
 		for (const [file, input] of frozen) continuity.set(file, input);
 		const receipt: SourceReceipt = {
+			operation: held.read.operation,
 			owner,
 			handle: randomUUID(),
 			...(held.read.original.field ? { field: held.read.original.field } : {}),
 		};
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
+			purpose: held.read.operation,
 			expected: {
 				kind: "literal",
 				value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
@@ -711,7 +716,7 @@ export function createSourceOwner(
 		handle: string,
 		generation: number,
 		original: SourceOccurrence,
-		ops: readonly HandOp[],
+		change: SourceChange,
 	): Promise<SourceResult> {
 		return ordered(root, async () => {
 			const held = reads.get(handle);
@@ -743,13 +748,12 @@ export function createSourceOwner(
 					valid(root, current);
 					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
 				}
-				if (ops.length !== 1 || ops.some((op) => op.kind !== "set-text" || op.source !== held.read.source))
+				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
-				const op = ops[0];
-				if (op?.kind !== "set-text") throw new Error("this read only authorizes text");
+				if (change.kind !== "literal") throw new Error("this read only authorizes literal values");
 				let patches: readonly SpanPatch[];
 				if (held.target?.syntax === "react-call")
 					patches = [
@@ -761,13 +765,13 @@ export function createSourceOwner(
 								field: held.target.attribute ?? "children",
 								value: held.read.value,
 							},
-							op.text,
+							change.text,
 						),
 					];
 				else {
 					const operation: HandOp = held.read.field
-						? { kind: "set-attribute", source: held.read.source, name: held.read.field, value: op.text }
-						: op;
+						? { kind: "set-attribute", source: held.read.source, name: held.read.field, value: change.text }
+						: { kind: "set-text", source: held.read.source, text: change.text };
 					const planned = planOps(source, [operation]);
 					if (!planned.ok) throw new Error(planned.refusal.says);
 					patches = planned.patches;
@@ -779,7 +783,7 @@ export function createSourceOwner(
 				return await publish(
 					held,
 					applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
-					{ kind: "literal", value: op.text, absent: false },
+					{ kind: "literal", value: change.text, absent: false },
 					transformed,
 				);
 			} catch (error) {
@@ -791,7 +795,13 @@ export function createSourceOwner(
 		return ordered(root, async () => {
 			const held = receipts.get(receipt.handle);
 			try {
-				if (receipt.owner !== owner || !held || held.root !== root || held.retired)
+				if (
+					receipt.owner !== owner ||
+					!held ||
+					held.root !== root ||
+					held.retired ||
+					!sameSourceOperation(receipt.operation, held.purpose)
+				)
 					throw new Error("this source undo is no longer available");
 
 				valid(root, held.required);
@@ -862,7 +872,7 @@ export function createSourceOwner(
 						compilation,
 						history: held.required,
 						read: {
-							operation: { kind: "literal", ...(cell.field ? { field: cell.field } : {}) },
+							operation: held.purpose,
 							handle: "",
 							owner,
 							original,

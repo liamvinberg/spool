@@ -2261,6 +2261,25 @@ export function createDaemonApp({
 					z.object({ kind: z.literal("property"), property: z.string(), scope: z.string() }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
 				]);
+				const change = z.discriminatedUnion("kind", [
+					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
+					z.object({ kind: z.literal("delete") }).strict(),
+					z
+						.object({
+							kind: z.literal("property"),
+							value: z.discriminatedUnion("kind", [
+								z
+									.object({
+										kind: z.literal("binding"),
+										tokens: z.array(z.string().max(10_000)).max(100).readonly(),
+									})
+									.strict(),
+								z.object({ kind: z.literal("custom"), value: z.string().max(10_000) }).strict(),
+								z.object({ kind: z.literal("remove") }).strict(),
+							]),
+						})
+						.strict(),
+				]);
 				const occurrence = z
 					.object({
 						publication: z.string(),
@@ -2309,15 +2328,14 @@ export function createDaemonApp({
 								handle: z.string(),
 								generation: z.number().int().positive(),
 								original: occurrence,
-								text: z.string().max(100_000),
-								source: z.string(),
+								change,
 							})
 							.strict(),
 						z
 							.object({
 								action: z.literal("inverse"),
 								receipt: z
-									.object({ handle: z.string(), owner: z.string(), field: z.string().optional() })
+									.object({ handle: z.string(), owner: z.string(), operation, field: z.string().optional() })
 									.strict(),
 								inventories: z.array(inventory).optional(),
 							})
@@ -2379,9 +2397,7 @@ export function createDaemonApp({
 						return c.json(await sourceOwner.describe(project.root, body.frame, body.original, body.inventories));
 					case "commit":
 						return c.json(
-							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, [
-								{ kind: "set-text", source: body.source, text: body.text },
-							]),
+							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, body.change),
 						);
 					case "inverse":
 						return c.json(await sourceOwner.inverse(project.root, body.receipt, body.inventories));

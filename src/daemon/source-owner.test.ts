@@ -41,7 +41,7 @@ async function fixture(configure?: (root: string) => void) {
 	if (!asked.ok) throw new Error(asked.reason);
 	const file = join(root, "design/frames/home/frame.tsx");
 	const commit = (read: SourceRead, text: string, occurrence = read.original) =>
-		owner.commit(root, read.handle, read.generation, occurrence, [{ kind: "set-text", source: read.source, text }]);
+		owner.commit(root, read.handle, read.generation, occurrence, { kind: "literal", text });
 	return { root, compiler, owner, read: asked.read, file, commit, observation };
 }
 
@@ -70,6 +70,18 @@ it("retains the original occurrence, source role and generation across completio
 	});
 	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
 	expect(await f.commit(f.read, "again")).toMatchObject({ ok: false });
+});
+
+it("binds the requested change to the original operation purpose and consumes a mismatched attempt", async () => {
+	const f = await fixture();
+	expect(
+		await f.owner.commit(f.root, f.read.handle, f.read.generation, f.read.original, { kind: "delete" }),
+	).toMatchObject({
+		ok: false,
+		reason: "this source read does not authorize that operation",
+	});
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+	expect(await f.commit(f.read, "cannot retry an already consumed handle")).toMatchObject({ ok: false });
 });
 
 it("refuses detected competing source and equal-byte outside replacements", async () => {
@@ -172,9 +184,10 @@ it("refuses a newly shadowing resolver candidate before saving source", async ()
 	const read = await owner.read(root, "home", original, 1, "canvas");
 	if (!read.ok) throw new Error(read.reason);
 	writeDesignFile(root, "frames/home/dep.tsx", "export const id = 2;");
-	const result = await owner.commit(root, read.read.handle, 1, read.read.original, [
-		{ kind: "set-text", source: read.read.source, text: "must not save" },
-	]);
+	const result = await owner.commit(root, read.read.handle, 1, read.read.original, {
+		kind: "literal",
+		text: "must not save",
+	});
 	expect(result).toMatchObject({ ok: false });
 	expect(readFileSync(join(root, "design/frames/home/frame.tsx"), "utf8")).not.toContain("must not save");
 });

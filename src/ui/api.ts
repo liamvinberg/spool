@@ -24,6 +24,7 @@ import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type {
+	SourceChange,
 	SourceDescription,
 	SourceInventory,
 	SourceOccurrence,
@@ -1576,7 +1577,11 @@ export async function sourceReach(
 	}
 }
 
-export async function commitSource(project: string, read: SourceRead, text: string): Promise<SourceResult | undefined> {
+export async function commitSource(
+	project: string,
+	read: SourceRead,
+	change: SourceChange,
+): Promise<SourceResult | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
@@ -1585,8 +1590,7 @@ export async function commitSource(project: string, read: SourceRead, text: stri
 				handle: read.handle,
 				generation: read.generation,
 				original: read.original,
-				source: read.source,
-				text,
+				change,
 			},
 		});
 		return res.ok ? ((await res.json()) as SourceResult) : undefined;
