@@ -149,6 +149,7 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			sourcefile: STDIN_NAME,
 			contents: bootEntry(frame),
 			label: `frame "${frame}"`,
+			imageBudget: IMAGE_BUDGET_BYTES,
 			retained,
 			frozen,
 			resolutions: resolution?.resolutions,

@@ -17,6 +17,7 @@ import {
 	sameSourceOperation,
 	type UseOutcome,
 } from "../source-edit";
+import type { SourceImagePut, SourceImageStaged } from "../source-image";
 import type { ExecutedEdit } from "./bundled-editor";
 import type { FrameCompiler } from "./compile";
 import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-path";
@@ -34,6 +35,7 @@ import {
 } from "./retained-compile";
 import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from "./source-agent";
 import { sourceHistoryCompilation } from "./source-history";
+import { type StagedImage, stageImageAsset } from "./source-image-stage";
 import { resolveImageSource } from "./source-image-target";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
@@ -43,6 +45,7 @@ import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
 interface OriginalRead {
+	image?: StagedImage;
 	retryFrom?: RetainedCompilation;
 	sourceOnly?: boolean;
 	coverage: number;
@@ -313,6 +316,49 @@ export function createSourceOwner(
 		} catch (error) {
 			return { ok: false, reason: reason(error) };
 		}
+	}
+	function stageImage(
+		root: string,
+		handle: string,
+		generation: number,
+		original: SourceOccurrence,
+		put: SourceImagePut,
+	): Promise<SourceImageStaged> {
+		return ordered(root, async () => {
+			try {
+				const held = reads.get(handle);
+				if (
+					!held ||
+					held.root !== root ||
+					held.read.operation.kind !== "image" ||
+					held.read.generation !== generation ||
+					!sameSourceOccurrence(held.read.original, original)
+				)
+					throw new Error("the original image edit is no longer eligible");
+				const observed = await observe(root, held.frame, generation, held.observer);
+				if (reads.get(handle) !== held || !observed || !sameSourceOccurrence(observed, original))
+					throw new Error("the original image changed before staging");
+				valid(root, held.compilation);
+				if (held.coverage !== (coverage.get(root) ?? 0))
+					throw new Error("source observation was lost before staging");
+				const found = lookupFrame(root, held.frame);
+				if (found.kind !== "found") throw new Error("the original image frame is no longer available");
+				const image = stageImageAsset(root, found.dir, put);
+				if (image.created) {
+					const directories = new Map(held.compilation.directories);
+					const before = directories.get(image.created.directory);
+					if (before !== undefined && before !== image.created.before)
+						throw new Error("the original image directory changed");
+					if (before !== undefined) directories.set(image.created.directory, image.created.after);
+					held.compilation = { ...held.compilation, directories };
+				}
+				valid(root, held.compilation);
+				held.image = image;
+				return { ok: true, path: image.path, value: image.value };
+			} catch (error) {
+				return { ok: false, reason: reason(error) };
+			}
+		});
 	}
 	async function reach(root: string, handle: string, inventories: SourceInventory[]) {
 		const held = reads.get(handle);
@@ -1210,6 +1256,7 @@ export function createSourceOwner(
 		},
 		admit,
 		read,
+		stageImage,
 		reach,
 		describe,
 		commit,
