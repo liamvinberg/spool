@@ -10,7 +10,7 @@ import {
 	propertyConsumers,
 	propertySignature,
 } from "./source-property-dependencies";
-import { readPropertyEffects } from "./source-property-effects";
+import { propertyKeys, readPropertyEffects } from "./source-property-effects";
 
 /** A property name chooses a control; actual compiler output chooses its source tokens. */
 export async function planPropertyValue(
@@ -42,7 +42,27 @@ export async function planPropertyValue(
 	const candidateEffects = readPropertyEffects(compiledCandidates, operation.property, operation.scope, environment);
 	if (candidate.some((token) => !candidateEffects.owners.includes(token)))
 		throw new Error("the chosen token has no compiled effect for this property");
-	const before = read.owners.filter((token) => !candidate.includes(token));
+	const allowed = new Set(
+		compiledCandidates.effects
+			.filter((effect) => effect.owner !== null)
+			.flatMap((effect) => propertyKeys(effect.property, environment)),
+	);
+	for (const name of read.roots) allowed.add(name);
+	// These controls deliberately own the compiler's coupled layout declarations.
+	if (operation.property === "text-overflow")
+		for (const name of ["overflow-x", "overflow-y", "white-space-collapse", "text-wrap-mode"]) allowed.add(name);
+	const before = read.owners.filter((token) => {
+		if (candidate.includes(token)) return false;
+		if (candidate.length === 0) return true;
+		const changed = changedPropertyKeys(
+			original.effects.filter((effect) => effect.owner === token),
+			compiledCandidates.effects.filter((effect) => effect.owner !== null),
+			environment,
+		);
+		// A broader binding stays authored; the specific component is an override.
+		// Replacing that binding would also detach its other independent components.
+		return [...changed].every((name) => allowed.has(name));
+	});
 	const after = candidate.filter((token) => !read.owners.includes(token));
 	const tokens = splitClass(literal);
 	if (new Set(tokens).size !== tokens.length || new Set(candidate).size !== candidate.length)
