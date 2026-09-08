@@ -298,24 +298,45 @@ it.each(["color", "background-color"])("keeps overridden and conditional %s vari
 	expect(await f.page.content()).toBe(before);
 });
 
-it.each(["rgb(1 2 3 / .50001)", "oklch(.704 .191 22.216)", "color-mix(in oklab, red 50%, transparent)"])(
+function custom(value: string): SourcePropertyExpectation {
+	return {
+		...opacity(".5"),
+		property: "background-color",
+		className: "custom",
+		effects: [
+			{ owner: "custom", path: ["@layer utilities", "$"], property: "background-color", value, important: false },
+		],
+		css: `@layer utilities {.custom {background-color:${value}}}`,
+	};
+}
+
+it.each(["rgb(1 2 3 / .51)", "oklch(.704 .191 22.216)", "color-mix(in oklab, red 50%, transparent)"])(
 	"uses native %s color precision without raster sampling",
 	async (value) => {
-		const expected: SourcePropertyExpectation = {
-			...opacity(".5"),
-			property: "background-color",
-			className: "custom",
-			effects: [
-				{ owner: "custom", path: ["@layer utilities", "$"], property: "background-color", value, important: false },
-			],
-			css: `@layer utilities {.custom {background-color:${value}}}`,
-		};
 		const f = await fixture(
 			`<!doctype html><div data-subject style="background-color:${value}">Healthy</div><div data-subject style="background-color:blue">Different</div>`,
 		);
-		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+		expect((await f.inspect(custom(value))).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
 	},
 );
+
+it("never certifies an expected color this engine cannot record distinguishably", async () => {
+	// Chromium records .50001 and .5 alike, so equal pixels here would prove nothing.
+	const value = "rgb(1 2 3 / .50001)";
+	const f = await fixture(
+		`<!doctype html><div data-subject style="background-color:${value}">Same record</div><div data-subject style="background-color:rgb(1 2 3 / .5)">Indistinguishable</div>`,
+	);
+	const outcomes = await f.inspect(custom(value));
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["unverified", "unverified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).backgroundColor)),
+	).toEqual(["rgba(1, 2, 3, 0.5)", "rgba(1, 2, 3, 0.5)"]);
+});
 
 it("verifies fractional compiled type while preserving independent line height", async () => {
 	const { root } = makeProject(makeTempDir());
