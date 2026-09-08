@@ -41,5 +41,11 @@ export interface SourcePropertyGroupExpectation {
 		roots: readonly string[];
 		scopePaths: readonly (readonly string[])[];
 		effects: readonly SourcePropertyEffect[];
+		observations: readonly {
+			property: string;
+			roots: readonly string[];
+			scopePaths: readonly (readonly string[])[];
+			effects: readonly SourcePropertyEffect[];
+		}[];
 	})[];
 }

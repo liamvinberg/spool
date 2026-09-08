@@ -293,3 +293,45 @@ it("refuses unknown logical context instead of guessing an axis", async () => {
 		),
 	).rejects.toThrow("writing mode");
 });
+
+it("projects each native group consumer while retaining storage roots and scoped conditions", async () => {
+	const f = fixture();
+	const plan = await planPropertyGroup(
+		f.root,
+		f.inputs,
+		"opacity-75 text-brand hover:opacity-50 hover:text-red-500 hover:scale-x-50 scale-y-75",
+		{ kind: "remove-scope", scope: "hover:" },
+		environment,
+	);
+	const selection = plan.selections[0]!;
+	expect(selection.roots.has("--tw-scale-x")).toBe(true);
+	expect(selection.observations.map(({ property }) => property)).toEqual(
+		expect.arrayContaining(["opacity", "color", "scale"]),
+	);
+	for (const observation of selection.observations) {
+		expect(observation.scopePaths.length).toBeGreaterThan(0);
+		expect(observation.scopePaths.every((path) => path.includes("$:hover"))).toBe(true);
+	}
+	const color = selection.observations.find(({ property }) => property === "color")!;
+	expect(color.effects.every((effect) => effect.property === "color")).toBe(true);
+	const scale = selection.observations.find(({ property }) => property === "scale")!;
+	expect(scale.roots).toContain("--tw-scale-x");
+	expect(scale.effects).toContainEqual(
+		expect.objectContaining({ owner: "scale-y-75", property: "--tw-scale-y", value: "75%" }),
+	);
+	expect(new Set(selection.observations.flatMap(({ roots }) => roots))).toEqual(selection.roots);
+});
+
+it("keeps an unconsumed source variable as an explicit unknown group observation", async () => {
+	const f = fixture();
+	const plan = await planPropertyGroup(
+		f.root,
+		f.inputs,
+		"[--unconsumed:3] opacity-75",
+		{ kind: "tokens", add: [], remove: ["[--unconsumed:3]"] },
+		environment,
+	);
+	expect(plan.selections[0]!.observations).toMatchObject([
+		{ property: "--unconsumed", roots: ["--unconsumed"], scopePaths: [["@layer utilities", "$"]] },
+	]);
+});

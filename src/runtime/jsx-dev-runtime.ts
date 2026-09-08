@@ -696,19 +696,19 @@ function observedUse(
 		);
 	if (expected.kind === "properties") {
 		const outcomes = expected.selections.flatMap((selection) =>
-			(selection.kind === "field" ? [selection.property] : selection.roots).map((property) =>
+			selection.observations.map((observation) =>
 				observedUse(
 					original,
 					element,
 					{
 						kind: "property",
-						property,
+						property: observation.property,
 						scope: selection.scope,
 						className: expected.className,
 						absent: expected.absent,
 						css: expected.css,
-						scopePaths: selection.scopePaths,
-						effects: selection.effects,
+						scopePaths: observation.scopePaths,
+						effects: observation.effects,
 					},
 					failed,
 				),
