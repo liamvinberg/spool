@@ -4,6 +4,7 @@ import type { Cover } from "../../cover";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { Unseen } from "../../daemon/seen";
 import { pageWithin, ROOT_PAGE } from "../../page-path";
+import { STEP } from "../../properties/theme";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
@@ -155,7 +156,6 @@ import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import { swappable } from "./properties-attributes";
 import { type Held, PropertiesRail } from "./properties-rail";
-import { STEP } from "./properties-theme";
 import {
 	clipboardCopyAllowed,
 	dropTargetMessage,

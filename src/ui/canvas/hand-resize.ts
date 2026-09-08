@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { screenConflict } from "../../daemon/class-write";
+import { lengthOf, lengthPx, scaleValue } from "../../properties/families";
+import { stepOf } from "../../properties/theme";
 import type { CompiledTheme, HandOp, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
-import { lengthOf, lengthPx, scaleValue } from "./properties-families";
 import { BASE, scopedClass } from "./properties-scope";
-import { stepOf } from "./properties-theme";
 
 /**
  * Resize by handle (#259), as decisions over data.

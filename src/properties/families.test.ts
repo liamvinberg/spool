@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CompiledTheme } from "../api";
+import type { CompiledTheme } from "../daemon/theme";
 import {
 	borderWidthsOf,
 	colourOf,
@@ -19,7 +19,7 @@ import {
 	themeOf,
 	toggledOf,
 	wordOf,
-} from "./properties-families";
+} from "./families";
 
 /**
  * The mechanics under the rows (#257): what a token is made of once a sign, a

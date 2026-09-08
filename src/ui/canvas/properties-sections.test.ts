@@ -3,9 +3,9 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import type { RowEdit, RowElement } from "../../properties/rows";
 import type { CompiledTheme } from "../api";
 import type { Compiler } from "./properties-compile";
-import type { RowEdit, RowElement } from "./properties-rows";
 import { BASE, type Scope, scopedClass, scopeKey } from "./properties-scope";
 import { PropertySections, type View } from "./properties-sections";
 
