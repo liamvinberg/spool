@@ -35,3 +35,37 @@ it("does not claim to detect an outside writer between its final observation and
 	journal.record(file, original, readInput(file), [{ start: 0, end: 8, before: "original", text: "hand" }]);
 	expect(journal.observe(file).bytes.toString()).toBe("hand");
 });
+
+it("exposes acknowledged transient snapshots and only marks explicit inverse pairs canceled", () => {
+	const file = join(makeTempDir(), "source.ts");
+	writeFileSync(file, "base");
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	const save = (text: string, inverseOf?: symbol) => {
+		const before = journal.observe(file);
+		writeAtomic(file, text);
+		return journal.record(
+			file,
+			before,
+			readInput(file),
+			[{ start: 0, end: before.bytes.length, before: before.bytes.toString(), text }],
+			inverseOf,
+		);
+	};
+	save("competing");
+	save("base");
+	const hand = save("hand");
+	save("base", hand);
+	expect(
+		journal
+			.changes(file, original)
+			.map((change) => [change.before.bytes.toString(), change.after.bytes.toString(), change.canceled]),
+	).toEqual([
+		["base", "competing", false],
+		["competing", "base", false],
+		["base", "hand", true],
+		["hand", "base", true],
+	]);
+	writeFileSync(file, "opaque");
+	expect(() => journal.changes(file, original)).toThrow("record was lost");
+});

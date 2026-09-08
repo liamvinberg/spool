@@ -10,6 +10,18 @@ interface Step {
 	edits: readonly ExecutedEdit[] | null;
 }
 
+function canceledSteps(route: readonly Step[]): Set<symbol> {
+	const active = new Set<symbol>();
+	const canceled = new Set<symbol>();
+	for (const step of route) {
+		if (step.inverseOf && active.delete(step.inverseOf)) {
+			canceled.add(step.inverseOf);
+			canceled.add(step.id);
+		} else active.add(step.id);
+	}
+	return canceled;
+}
+
 /** Only acknowledged, observed operations bridge two source identities. */
 export function createSourceJournal() {
 	const files = new Map<string, { current: SourceInput; steps: Step[] }>();
@@ -39,17 +51,19 @@ export function createSourceJournal() {
 			path(file, original);
 			return observe(file);
 		},
+		/** Exact acknowledged snapshots let effect readers detect transient competing declarations. */
+		changes(
+			file: string,
+			original: SourceInput,
+		): readonly { before: SourceInput; after: SourceInput; canceled: boolean }[] {
+			const route = path(file, original);
+			const canceled = canceledSteps(route);
+			return route.map((step) => ({ before: step.before, after: step.after, canceled: canceled.has(step.id) }));
+		},
 		transform(file: string, original: SourceInput, patches: readonly SpanPatch[]): SpanPatch[] {
 			let result = patches.map((patch) => ({ ...patch }));
 			const route = path(file, original);
-			const active = new Set<symbol>();
-			const canceled = new Set<symbol>();
-			for (const step of route) {
-				if (step.inverseOf && active.delete(step.inverseOf)) {
-					canceled.add(step.inverseOf);
-					canceled.add(step.id);
-				} else active.add(step.id);
-			}
+			const canceled = canceledSteps(route);
 			for (const step of route) {
 				result = result.map((patch) => {
 					let shift = 0;
