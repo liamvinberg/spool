@@ -769,3 +769,71 @@ it.each([false, true])(
 		expect(await composer.inputValue()).toContain("#hero");
 	},
 );
+
+it("retains an unknown image save without replay, reload, or an invented Undo receipt", {
+	timeout: 120000,
+}, async () => {
+	const f = await originCanvas({ "shared/assets/first.svg": SVG }, SOURCE, "#hero");
+	await f.frame.locator("#counter").evaluate((element) => {
+		if (!(element instanceof HTMLButtonElement)) throw new Error("missing counter");
+		element.click();
+	});
+	await expect.poll(() => f.frame.locator("#counter").textContent()).toBe("1");
+	await f.frame.locator("#native").evaluate((element) => {
+		if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+		element.value = "unknown save keeps native";
+		element.setSelectionRange(2, 5);
+		Reflect.set(window, "unknownImageInput", element);
+	});
+	const sends: string[] = [];
+	f.page.on("request", (request) => {
+		if (request.url().endsWith("/agent/turn")) sends.push(request.url());
+	});
+	await f.select();
+	let acknowledgedOnServer = false;
+	await f.page.route("**/source", async (route) => {
+		if (route.request().postDataJSON()?.action !== "commit") return route.continue();
+		const response = await route.fetch();
+		expect(await response.json()).toMatchObject({ ok: true, source: "saved" });
+		acknowledgedOnServer = true;
+		await route.abort();
+	});
+	const transfer = await f.target.evaluateHandle((_element, bytes) => {
+		const data = new DataTransfer();
+		data.items.add(new File([bytes], "uncertain.svg", { type: "image/svg+xml" }));
+		return data;
+	}, SECOND);
+	await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+	const notice = f.page.locator('[data-hand-notice="unknown"]');
+	await expect.poll(() => notice.count()).toBe(1);
+	expect(acknowledgedOnServer).toBe(true);
+	expect(await notice.textContent()).toContain("not been retried");
+	const saved = readFileSync(f.file("frames/home/frame.tsx"), "utf8");
+	expect(saved).toContain('import uncertain from "./uncertain.svg";');
+	expect(saved).toContain("src={uncertain}");
+	expect(readFileSync(f.file("frames/home/uncertain.svg"), "utf8")).toBe(SECOND);
+	expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(30);
+	expect(await f.frame.locator("#counter").textContent()).toBe("1");
+	expect(
+		await f.frame.locator("#native").evaluate((element) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+			return [
+				element === Reflect.get(window, "unknownImageInput"),
+				element.value,
+				element.selectionStart,
+				element.selectionEnd,
+			];
+		}),
+	).toEqual([true, "unknown save keeps native", 2, 5]);
+	await f.history();
+	await f.page.keyboard.press("Tab");
+	expect(f.writes).toEqual(["commit"]);
+	await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+	const composer = f.page.locator("[data-agent-rail] textarea");
+	await expect.poll(() => composer.inputValue()).toContain("uncertain.svg");
+	expect(await composer.inputValue()).toContain("#hero");
+	expect(await composer.inputValue()).toContain("do not replay an uncertain save");
+	expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(saved);
+	expect(f.writes).toEqual(["commit"]);
+	expect(sends).toEqual([]);
+});
