@@ -358,3 +358,39 @@ it("does not prepare an old property read after Escape and a newer preview", asy
 	expect(f.writes).toEqual([]);
 	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
 });
+
+it.each([true, false])("scrubs one retained opacity gesture and completes only on release: %s", async (commit) => {
+	const f = await originCanvas(
+		{
+			"shared/button.tsx":
+				'export function Button(){return <button id="subject" className="opacity-75">Hello</button>}',
+		},
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+	);
+	await f.select();
+	const label = f.page.locator('[data-properties-row="opacity"] > span').first();
+	const box = await label.boundingBox();
+	if (!box) throw new Error("opacity scrub label has no box");
+	const x = box.x + 5,
+		y = box.y + box.height / 2;
+	await f.page.mouse.move(x, y);
+	await f.page.mouse.down();
+	await f.page.mouse.move(x + 8, y);
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.77");
+	await f.page.mouse.move(x + 16, y);
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.79");
+	expect(f.writes).toEqual([]);
+	expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+	if (!commit) await f.page.keyboard.press("Escape");
+	await f.page.mouse.up();
+	if (commit) {
+		await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-79");
+		await f.settled();
+		expect(f.writes).toEqual(["commit"]);
+		await f.history();
+		await expect.poll(() => f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+		await f.settled();
+	} else expect(f.writes).toEqual([]);
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+});

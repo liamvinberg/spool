@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
 	borderColoursOf,
 	borderWidthsOf,
@@ -104,6 +104,54 @@ function writeValue(view: View, row: ModelRow, value: RowValue): void {
 	if (appearanceProperty(row)) {
 		view.property?.apply(row.property, propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
 	} else view.put(editsFor(row, value, atOf(view)));
+}
+
+/** Pointer moves preview one original number; only release completes that source operation. */
+function usePropertyScrub(
+	view: View,
+	row: ModelRow,
+	value: string,
+	step: (from: string, units: number) => string | undefined,
+) {
+	const control = appearanceProperty(row) ? view.property : null;
+	const held = useRef<{ value: string; moved: boolean } | undefined>(undefined);
+	const [draft, setDraft] = useState<string>();
+	const scope = scopeKey(view.scope);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: new authored values or scopes retire the displayed scrub draft
+	useEffect(() => {
+		setDraft(undefined);
+	}, [value, scope]);
+	const finish = (commit: boolean) => {
+		const original = held.current;
+		if (!original) return;
+		held.current = undefined;
+		control?.finish(commit && original.moved);
+		if (!commit || !original.moved) setDraft(undefined);
+	};
+	return control
+		? {
+				value: draft ?? value,
+				start: () => {
+					held.current = { value, moved: false };
+					control.begin(row.property);
+				},
+				move: (units: number) => {
+					const original = held.current;
+					if (!original) return;
+					const next = step(original.value, units);
+					if (next === undefined) return;
+					original.value = next;
+					original.moved = true;
+					setDraft(next);
+					control.preview(
+						row.property,
+						propertyControlValue(row, { kind: "value", value: next }, atOf(view), scope),
+					);
+				},
+				end: () => finish(true),
+				cancel: () => finish(false),
+			}
+		: undefined;
 }
 
 /** The model row this property is, which is a programming error when it is missing. */
@@ -235,8 +283,10 @@ function LengthRow({
 	const reader = read ?? ((scoped: string) => signedOf(lengthOf(scoped, family)));
 	const held = worn<string | null>(view, reader, (value) => value === null);
 	const value = held.shown ?? "";
-	const parsed = takeApart(value);
-	const readout = parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
+	const readoutOf = (value: string) => {
+		const parsed = takeApart(value);
+		return parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
+	};
 	const changed = view.fresh(lengthOf(view.scoped, family)?.token ?? null);
 	const control = appearanceProperty(row) ? view.property : null;
 	const typedValue = (typed: string): RowValue | undefined => {
@@ -245,20 +295,34 @@ function LengthRow({
 		return next ? { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` } : undefined;
 	};
 	const write = (next: RowValue) => writeValue(view, row, next);
-	const stepBy = (units: number) => {
+	const stepped = (value: string, units: number): string | undefined => {
+		const parsed = takeApart(value);
 		const from: Length | null =
 			parsed === null
 				? null
 				: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
 		const next = stepLength(kind, from, measured, units);
 		if (next === null) return;
-		write({ kind: "value", value: `${next.negative ? "-" : ""}${next.value}` });
+		return `${next.negative ? "-" : ""}${next.value}`;
 	};
+	const stepBy = (units: number) => {
+		const next = stepped(value, units);
+		if (next !== undefined) write({ kind: "value", value: next });
+	};
+	const scrub = usePropertyScrub(view, row, value, stepped);
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed} onScrub={ok ? stepBy : undefined}>
+		<Row
+			name={name ?? row.property}
+			ok={ok}
+			changed={changed}
+			onScrub={ok ? (scrub?.move ?? stepBy) : undefined}
+			onScrubStart={scrub?.start}
+			onScrubEnd={scrub?.end}
+			onScrubCancel={scrub?.cancel}
+		>
 			<NumField
-				value={value}
-				readout={readout}
+				value={scrub?.value ?? value}
+				readout={readoutOf(scrub?.value ?? value)}
 				ok={ok}
 				faint={held.own === null}
 				changed={changed}
@@ -310,9 +374,16 @@ function BorderWidthRow({
 		(value) => value === null,
 	);
 	const changed = view.fresh(readRow(row, view.scoped, view.theme).token);
+	const control = view.property;
+	const value = held.shown ?? "";
 	const write = (next: RowValue) => writeValue(view, row, next);
-	const stepBy = (units: number) => {
-		const parsed = takeApart(held.shown ?? "");
+	const typedValue = (typed: string): RowValue | undefined => {
+		if (typed.trim() === "") return null;
+		const next = parseTyped("px", typed);
+		return next && !next.negative ? { kind: "value", value: next.value } : undefined;
+	};
+	const stepped = (value: string, units: number): string | undefined => {
+		const parsed = takeApart(value);
 		const from: Length | null =
 			parsed === null
 				? null
@@ -326,26 +397,42 @@ function BorderWidthRow({
 					};
 		const next = stepLength("px", from, held.shown === null ? 0 : Number.NaN, units);
 		if (next === null || next.negative) return;
-		if (next.value === "0") write(null);
-		else write({ kind: "value", value: next.value });
+		return next.value;
 	};
 
+	const stepBy = (units: number) => {
+		const next = stepped(value, units);
+		if (next !== undefined) write({ kind: "value", value: next });
+	};
+	const scrub = usePropertyScrub(view, row, value, stepped);
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed} onScrub={ok ? stepBy : undefined}>
+		<Row
+			name={name ?? row.property}
+			ok={ok}
+			changed={changed}
+			onScrub={ok ? (scrub?.move ?? stepBy) : undefined}
+			onScrubStart={scrub?.start}
+			onScrubEnd={scrub?.end}
+			onScrubCancel={scrub?.cancel}
+		>
 			<NumField
-				value={held.shown ?? ""}
+				value={scrub?.value ?? value}
 				placeholder="0"
-				readout={describe("px", held.shown ?? "0", false, step) ?? "0px"}
+				readout={describe("px", scrub?.value || held.shown || "0", false, step) ?? "0px"}
 				ok={ok}
 				faint={held.own === null}
 				changed={changed}
+				onBegin={() => control?.begin(property)}
+				onCancel={() => control?.finish(false)}
+				onPreview={(typed) => {
+					const next = typedValue(typed);
+					if (next !== undefined)
+						control?.preview(property, propertyControlValue(row, next, atOf(view), scopeKey(view.scope)));
+				}}
 				onCommit={(typed) => {
-					const text = typed.trim();
-					if (text === "") return write(null);
-					const next = parseTyped("px", text);
-					if (next === null || next.negative) return;
-					if (next.value === "0") return write(null);
-					write({ kind: "value", value: next.value });
+					const next = typedValue(typed);
+					if (next !== undefined) write(next);
+					else control?.finish(false);
 				}}
 				onStep={stepBy}
 			/>

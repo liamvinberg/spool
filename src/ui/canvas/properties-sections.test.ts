@@ -81,7 +81,10 @@ it("scrubs the actual border field in its fractional displayed unit", async () =
 	await act(async () =>
 		document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 104, bubbles: true })),
 	);
-	expect(rail.wrote()).toEqual([{ token: "border-[2.25px]" }]);
+	expect(rail.previews).toEqual([
+		{ property: "border-width", value: { kind: "binding", tokens: ["border-[2.25px]"] } },
+	]);
+	expect(rail.requests).toEqual([]);
 	await act(async () =>
 		document.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: 104, bubbles: true })),
 	);
@@ -364,12 +367,34 @@ it("sends appearance values to source operations without falling through to the 
 	expect(rail.legacy).toEqual([]);
 });
 
+it("accumulates scrub previews from the original number without saving before release", async () => {
+	const rail = await mount("opacity-75");
+	const label = rowOf(rail, "opacity")?.firstElementChild;
+	if (!label) throw new Error("missing opacity label");
+	await act(async () =>
+		label.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, button: 0, clientX: 100, bubbles: true })),
+	);
+	for (const clientX of [104, 108])
+		await act(async () =>
+			document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX, bubbles: true })),
+		);
+	expect(rail.requests).toEqual([]);
+	expect(rail.previews).toEqual([
+		{ property: "opacity", value: { kind: "binding", tokens: ["opacity-76"] } },
+		{ property: "opacity", value: { kind: "binding", tokens: ["opacity-77"] } },
+	]);
+	await act(async () => document.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, bubbles: true })));
+	expect(rail.completions).toEqual([true]);
+});
+
 /* ---------- the harness ---------- */
 
 interface Rail {
 	host: HTMLElement;
 	requests: { property: string; value: SourcePropertyValue }[];
 	legacy: RowEdit[][];
+	previews: { property: string; value: SourcePropertyValue }[];
+	completions: boolean[];
 	/** the edits the last change came to, as the write lane would be handed them */
 	wrote: () => RowEdit[];
 	/** the scope those edits were written under */
@@ -389,13 +414,19 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 	let wrote: RowEdit[] = [];
 	const requests: Rail["requests"] = [];
 	const legacy: RowEdit[][] = [];
+	const previews: Rail["previews"] = [];
+	const completions: boolean[] = [];
 	const view: View = {
 		property: element?.refusal
 			? null
 			: {
 					begin: () => {},
-					preview: () => {},
-					finish: () => {},
+					preview: (property, value) => {
+						previews.push({ property, value });
+					},
+					finish: (commit) => {
+						completions.push(commit);
+					},
 					apply: (property, value) => {
 						requests.push({ property, value });
 						const row = rowFor(property);
@@ -424,7 +455,7 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
 	});
-	return { host, requests, legacy, wrote: () => wrote, scoped: () => scopeKey(scope) };
+	return { host, requests, legacy, previews, completions, wrote: () => wrote, scoped: () => scopeKey(scope) };
 }
 
 function stubCompiler(): Compiler {
@@ -600,3 +631,9 @@ async function press(_rail: Rail, target: HTMLElement | null): Promise<void> {
 		target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 	});
 }
+
+it("keeps an explicit zero border request distinct from removing its source binding", async () => {
+	const rail = await mount("border-2");
+	await type(rail, "border-width", "0");
+	expect(rail.requests).toEqual([{ property: "border-width", value: { kind: "binding", tokens: ["border-0"] } }]);
+});
