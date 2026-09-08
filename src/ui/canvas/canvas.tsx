@@ -1812,7 +1812,7 @@ export function ProjectCanvas({
 	);
 	const resolveIntent = useCallback((intent?: SourceIntent) => {
 		if (!intent) return;
-		setAgentRequest({ id: crypto.randomUUID(), retire: [intent.id, ...(intent.resolves ? [intent.resolves] : [])] });
+		setAgentRequest({ id: crypto.randomUUID(), retire: [intent.id, ...(intent.resolves ?? [])] });
 	}, []);
 	const presentSourceOutcome = useCallback(
 		(frame: string, outcome: UseOutcome | undefined, text: string, intent?: SourceIntent) => {
@@ -2040,12 +2040,17 @@ export function ProjectCanvas({
 					})
 					.then(async (result) => {
 						if (history.current !== ran) {
-							if (result?.ok && result.receipt) recordEntry({ ...entry, receipt: result.receipt });
+							if (result?.ok && result.receipt)
+								recordEntry({ ...entry, receipt: result.receipt, ...(intent ? { intent } : {}) });
 							await showSourceResult(entry.frame, result, "", true, intent);
 							return;
 						}
 						if (result?.ok && result.receipt)
-							history.current = amend(history.current, way, { ...entry, receipt: result.receipt });
+							history.current = amend(history.current, way, {
+								...entry,
+								receipt: result.receipt,
+								...(intent ? { intent } : {}),
+							});
 						else history.current = held; // an unavailable top inverse is explained, never skipped
 						await showSourceResult(entry.frame, result, "", true, intent);
 					});
