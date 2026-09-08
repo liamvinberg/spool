@@ -146,7 +146,7 @@ export type SourceResult =
 			receipt?: SourceReceipt;
 			reason?: string;
 	  }
-	| { ok: false; reason: string };
+	| { ok: false; reason: string; current?: SourceChange };
 
 /** A successful occurrence cannot conceal another occurrence's delivery result. */
 export function combineUseOutcomes(uses: UseOutcome[], occurrence = ""): UseOutcome {
