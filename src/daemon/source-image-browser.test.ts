@@ -202,7 +202,12 @@ it("cancels a real staged drop before its delayed response without a late save o
 	await expect
 		.poll(() => f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth))
 		.toBe(70);
+	await f.settled();
+	const inverse = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "inverse",
+	);
 	await f.history();
+	await inverse;
 	await expect
 		.poll(() => f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth))
 		.toBe(30);
@@ -269,7 +274,7 @@ it.each(["computed source", "failed decode", "unavailable content"] as const)(
 		const other = await f.frame.locator("#counter").boundingBox();
 		if (!other) throw new Error("missing other selection");
 		await f.page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
-		await f.page.mouse.click(other.x + 8, other.y + other.height / 2);
+		await f.page.mouse.click(other.x + other.width / 2, other.y + other.height / 2);
 		await f.page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
 		await expect
 			.poll(async () => {
