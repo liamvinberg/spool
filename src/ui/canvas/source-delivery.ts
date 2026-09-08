@@ -35,6 +35,12 @@ function groupOutcome(group: OutcomeGroup): UseOutcome {
 /** Calls belong to the original iframe WindowProxy, never just a frame name. */
 export function useSourceDelivery(project: string, iframes: RefObject<Map<string, HTMLIFrameElement>>) {
 	const observer = useRef(crypto.randomUUID());
+	const [active, setActive] = useState<{
+		frame: string;
+		selector: string;
+		generation: number;
+		field: string | undefined;
+	}>();
 	const outcomes = useRef<OutcomeGroup | undefined>(undefined);
 	const outcomeListeners = useRef(new Set<(publication: string, outcome: UseOutcome) => void>());
 	const [liveFrames, setLiveFrames] = useState<ReadonlySet<string>>(new Set());
@@ -188,10 +194,10 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		[iframes, request],
 	);
 	const describe = useCallback(
-		async (frame: string, selector: string) => {
+		async (frame: string, selector: string, field?: string) => {
 			const version = ++descriptionVersion.current;
 			setLiveFrames(new Set(iframes.current.keys()));
-			const original = await request<SourceOccurrence>(frame, { action: "inspect", selector });
+			const original = await request<SourceOccurrence>(frame, { action: "inspect", selector, field });
 			const description = original
 				? await describeSource(project, frame, original, await inventory(original.field))
 				: undefined;
@@ -210,9 +216,11 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			},
 			[project, request],
 		),
+		active,
 		liveFrames,
 		releaseDescription: useCallback(() => {
 			descriptionVersion.current++;
+			setActive(undefined);
 			setLiveFrames(new Set());
 		}, []),
 		holdInverse: useCallback((key: string, frames: string[]) => {
@@ -279,6 +287,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		),
 		read: useCallback(
 			(frame: string, selector: string, generation: number, field?: string) => {
+				setActive({ frame, selector, generation, field });
 				outcomes.current = undefined;
 				return request<SourceOccurrence>(frame, { action: "read", selector, generation, field });
 			},

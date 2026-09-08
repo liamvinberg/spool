@@ -270,6 +270,14 @@ function Body({
 
 	const element = held?.kind === "element" ? held : null;
 	const [sourceSupported, setSourceSupported] = useState<{ identity: string; label: string }>();
+	const [textSupported, setTextSupported] = useState<{ identity: string; label: string; revision: number }>();
+	const support = useCallback(
+		(value: { identity: string; label: string } | undefined, field?: string) => {
+			setSourceSupported(value);
+			if (!field) setTextSupported(value ? { ...value, revision } : undefined);
+		},
+		[revision],
+	);
 	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const filed = read?.className ?? "";
@@ -287,6 +295,9 @@ function Body({
 			? filed
 			: preview.tokens.reduce((held, token) => writeClass(held === "" ? null : held, { token, scope: "" }), filed);
 	const identity = element === null ? "" : `${element.frame} ${element.selector}`;
+	const active = acts.ownership?.active;
+	const purpose =
+		element && active?.frame === element.frame && active.selector === element.selector ? active : undefined;
 
 	// the scope is the element's, not the rail's: a fresh rung starts at the base
 	const before = useRef(identity);
@@ -376,7 +387,10 @@ function Body({
 				rungs={rungs}
 				acts={acts}
 				onCollapse={onCollapse}
-				sourceSupported={sourceSupported?.identity === identity}
+				sourceSupported={
+					sourceSupported?.identity === identity ||
+					(textSupported?.identity === identity && textSupported.revision === revision)
+				}
 			/>
 			{element && acts.ownership ? (
 				<SourceOwnership
@@ -385,8 +399,10 @@ function Body({
 					selector={element.selector}
 					name={read?.name ?? rowElement.tag}
 					revision={revision}
+					field={purpose?.field}
+					generation={purpose?.generation}
 					actions={acts.ownership}
-					onSupport={setSourceSupported}
+					onSupport={support}
 				/>
 			) : null}
 			{element === null ? null : (
@@ -427,7 +443,11 @@ function Body({
 				    same rung, so an edit does not close what you opened */}
 				{element && acts.text ? (
 					<ContentText
-						scope={sourceSupported?.identity === identity ? sourceSupported.label : undefined}
+						scope={
+							textSupported?.identity === identity && textSupported.revision === revision
+								? textSupported.label
+								: undefined
+						}
 						key={`${identity}:${revision}`}
 						frame={element.frame}
 						selector={element.selector}

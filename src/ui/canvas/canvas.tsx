@@ -5208,6 +5208,7 @@ export function ProjectCanvas({
 						preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
 						acts={{
 							ownership: {
+								active: sourceDelivery.active,
 								describe: sourceDelivery.describe,
 								release: sourceDelivery.releaseDescription,
 								highlight: sourceDelivery.highlight,
