@@ -285,3 +285,37 @@ it.each([
 		{ kind: "unknown", reason: "this absolute unit conversion needs a more precise native longhand value" },
 	]);
 });
+
+it.each([
+	{ property: "scale", expected: ".5000005", other: ".5" },
+	{ property: "rotate", expected: ".5000005deg", other: ".5deg" },
+	{ property: "translate", expected: ".5000005px", other: ".5px" },
+] as const)(
+	"keeps indistinguishable native $property precision unknown for self and other",
+	async ({ property, expected, other }) => {
+		const f = await fixture(
+			`<div data-subject style="width:100px;height:40px;${property}:${expected}">Self</div><div data-subject style="width:100px;height:40px;${property}:${other}">Other</div>`,
+		);
+		const observed = await f.page
+			.locator("[data-subject]")
+			.evaluateAll(
+				(elements, property) => elements.map((element) => getComputedStyle(element).getPropertyValue(property)),
+				property,
+			);
+		expect(observed[0]).toBe(observed[1]);
+		expect(await f.inspect(property, expected)).toEqual([
+			{ kind: "unknown", reason: "this transform needs observable native longhand precision" },
+			{ kind: "unknown", reason: "this transform needs observable native longhand precision" },
+		]);
+	},
+);
+
+it("preserves full matrix precision when Typed OM distinguishes an identical declaration from another use", async () => {
+	const f = await fixture(
+		'<div data-subject style="width:100px;height:40px;transform:scale(.5000005)">Self</div><div data-subject style="width:100px;height:40px;transform:scale(.5)">Other</div>',
+	);
+	expect(await f.inspect("transform", "scale(.5000005)")).toEqual([
+		{ kind: "known", matches: true, observed: expect.any(String) },
+		{ kind: "known", matches: false, observed: expect.any(String) },
+	]);
+});
