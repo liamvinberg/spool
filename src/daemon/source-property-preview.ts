@@ -12,7 +12,7 @@ export function propertyPreviewDeclarations(effects: readonly SourcePropertyEffe
 		}
 		// These compiler slots feed the gradient position grammar through the
 		// captured stop list. Other gradient values remain in that exact CSS.
-		if (effect.value === placeholder && /^--tw-gradient-(?:(?:from|via|to)-)?position$/.test(effect.property)) {
+		if (/^--tw-gradient-(?:(?:(?:from|via|to)-)?position|from|via|to)$/.test(effect.property)) {
 			const reached = new Set([effect.property]);
 			let changed = true;
 			while (changed) {
@@ -27,8 +27,9 @@ export function propertyPreviewDeclarations(effects: readonly SourcePropertyEffe
 			if (reached.has("background-image"))
 				declarations.push({
 					property: "background-image",
-					value:
-						effect.property === "--tw-gradient-position"
+					value: /^--tw-gradient-(?:from|via|to)$/.test(effect.property)
+						? `linear-gradient(${effect.value}, blue)`
+						: effect.property === "--tw-gradient-position"
 							? `linear-gradient(${placeholder}, red, blue)`
 							: `linear-gradient(red ${placeholder}, blue)`,
 				});

@@ -4,6 +4,7 @@ import {
 	borderWidthsOf,
 	type Colour,
 	colourOf,
+	colourToken,
 	cornersOf,
 	DIRECTIONS,
 	describe,
@@ -1127,6 +1128,18 @@ function GradientRows({ view }: { view: View }) {
 			row.property,
 			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
 		);
+	const beginAlpha = (stop: Stop) => {
+		if (!gradient || !stop.colour?.name) return;
+		const value = propertyControlValue(row, { kind: "gradient", gradient }, atOf(view), scopeKey(view.scope));
+		if (value.kind !== "binding") return;
+		const prefix = scopeKey(view.scope);
+		const original = `${prefix}${colourToken(stop.at, stop.colour.name, stop.colour.alpha)}`;
+		const sample = `${prefix}${stop.at}-${stop.colour.name}/[${propertySamplePlaceholder}]`;
+		control?.begin(row.property, {
+			kind: "binding",
+			tokens: value.tokens.map((token) => (token === original ? sample : token)),
+		});
+	};
 	const direction = (typed: string): Gradient | undefined => {
 		const degrees = gradientAngle(typed.trim().replace(/deg$/, ""));
 		return gradient && degrees !== undefined ? { ...gradient, direction: String(degrees) } : undefined;
@@ -1260,13 +1273,14 @@ function GradientRows({ view }: { view: View }) {
 								alpha={stop.colour?.alpha ?? null}
 								ok={ok && stop.colour !== null}
 								faint={false}
-								onBegin={() => control?.begin(row.property)}
+								onBegin={() => beginAlpha(stop)}
 								onCancel={() => control?.finish(false)}
 								onPreview={(alpha) =>
 									preview(
 										withStop(gradient, index, (held) =>
 											held.colour ? { ...held, colour: { ...held.colour, alpha } } : held,
 										),
+										`${alpha ?? 100}%`,
 									)
 								}
 								onCommit={(alpha) =>

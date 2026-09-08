@@ -60,7 +60,7 @@ it.each(["from-13.5%", "from-[13.5%]"])("checks actual compiler admission for fr
 	expect(plan.desired.css).toContain("13.5%");
 });
 
-it.each(["angle", "position"])("captures the selected gradient %s marker", async (part) => {
+it.each(["angle", "position", "alpha"])("captures the selected gradient %s marker", async (part) => {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", ":root{}");
 	const file = realpathSync(join(root, "design/shared/tokens.css"));
@@ -74,7 +74,7 @@ it.each(["angle", "position"])("captures the selected gradient %s marker", async
 			kind: "binding",
 			tokens: [
 				part === "angle" ? `bg-linear-[${marker}]` : "bg-linear-45",
-				"from-red-500",
+				part === "alpha" ? `from-red-500/[${marker}]` : "from-red-500",
 				part === "position" ? `from-[percentage:${marker}]` : "from-10%",
 				"to-blue-500",
 				"to-90%",
@@ -82,6 +82,17 @@ it.each(["angle", "position"])("captures the selected gradient %s marker", async
 		},
 		{ direction: "ltr", writingMode: "horizontal-tb" },
 	);
+	if (part === "alpha") {
+		expect(
+			propertyPreviewDeclarations(plan.desired.effects, marker).some(
+				(declaration) =>
+					declaration.property === "background-image" &&
+					declaration.value.startsWith("linear-gradient(color-mix(") &&
+					declaration.value.includes(marker),
+			),
+		).toBe(true);
+		return;
+	}
 	expect(propertyPreviewDeclarations(plan.desired.effects, marker)).toContainEqual({
 		property: "background-image",
 		value: part === "angle" ? `linear-gradient(${marker}, red, blue)` : `linear-gradient(red ${marker}, blue)`,
