@@ -28,6 +28,7 @@ function numberUnit(value: string): { number: string; unit: string } | undefined
 export function PropertyNumberField({
 	property,
 	reading,
+	reason,
 	options,
 	scope = "",
 	begin,
@@ -39,6 +40,7 @@ export function PropertyNumberField({
 }: {
 	property: Property;
 	reading: SourcePropertyReading | undefined;
+	reason?: string | undefined;
 	options: readonly ThemeToken[];
 	scope?: string;
 	begin(): void;
@@ -101,7 +103,7 @@ export function PropertyNumberField({
 	return (
 		<Row
 			name={name ?? property}
-			reason={binding ? "Choose a token or type a custom value to change this reference." : undefined}
+			reason={reason ?? (binding ? "Choose a token or type a custom value to change this reference." : undefined)}
 			ok={reading !== undefined}
 			onScrubStart={() => {
 				customDraft.current = false;

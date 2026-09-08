@@ -268,9 +268,10 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				},
 				lifetime,
 			);
-			const description = original
+			const described = original
 				? await describeSource(project, frame, original, await inventory(original.field, operation), operation)
 				: undefined;
+			const description = described?.ok ? described.description : undefined;
 			if (version === descriptionVersion.current)
 				setLiveFrames(new Set(description?.reach?.uses.map((use) => use.frame) ?? []));
 			return description;
@@ -279,6 +280,21 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	);
 
 	return {
+		describeProperty: useCallback(
+			async (frame: string, selector: string, property: string, scope: string) => {
+				const operation: SourceOperation = { kind: "property", property, scope };
+				const original = await request<SourceOccurrence>(frame, {
+					action: "inspect",
+					selector,
+					field: "className",
+					operation,
+				});
+				if (!original) return { reason: "The selected source could not be inspected." };
+				const result = await describeSource(project, frame, original, [], operation);
+				return result.ok ? { reading: result.description.property } : { reason: result.reason };
+			},
+			[project, request],
+		),
 		describeField: useCallback(
 			async (
 				frame: string,
@@ -292,7 +308,8 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					field,
 					operation,
 				});
-				return original ? describeSource(project, frame, original, [], operation) : undefined;
+				const described = original ? await describeSource(project, frame, original, [], operation) : undefined;
+				return described?.ok ? described.description : undefined;
 			},
 			[project, request],
 		),
@@ -336,13 +353,14 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					operation,
 				});
 				if (!original || !(await sourceIsCurrent(project, original.publication))) return;
-				const description = await describeSource(
+				const described = await describeSource(
 					project,
 					frame,
 					original,
 					await inventory(field, operation),
 					operation,
 				);
+				const description = described.ok ? described.description : undefined;
 				if (!description?.reach) return;
 				const outcomes = await Promise.all(
 					description.reach.uses.map(

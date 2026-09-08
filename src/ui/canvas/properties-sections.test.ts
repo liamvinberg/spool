@@ -250,6 +250,7 @@ it("offers this project's colours first and Tailwind's under a default divider",
 		"transparent",
 		"current",
 		"inherit",
+		"Remove background color",
 	]);
 	expect(dividersIn(rail, "background-color")).toEqual(["Project", "Default"]);
 
@@ -474,13 +475,15 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 						const reading = colourOf(scopedClass(className, scope), property === "color" ? "text" : "bg", THEME);
 						const token = THEME.colour.find((token) => token.name === reading.name);
 						return {
-							tokens: reading.token ? [reading.token] : [],
-							binding: token
-								? { kind: "reference", name: `--color-${token.name}`, value: token.value }
-								: reading.token
-									? { kind: "custom" }
-									: { kind: "page" },
-							native: token?.value ?? reading.paint ?? "transparent",
+							reading: {
+								tokens: reading.token ? [reading.token] : [],
+								binding: token
+									? { kind: "reference", name: `--color-${token.name}`, value: token.value }
+									: reading.token
+										? { kind: "custom" }
+										: { kind: "page" },
+								native: token?.value ?? reading.paint ?? "transparent",
+							},
 						};
 					},
 					begin: () => {},
@@ -638,7 +641,10 @@ function optionNames(rail: Rail, label: string): string[] {
 		...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option], .ep-color-options button") ?? []),
 	].map(
 		(option) =>
-			option.dataset.menuOption ?? option.getAttribute("aria-label")?.replace(/^Apply (?:--color-)?/, "") ?? "",
+			option.dataset.menuOption ??
+			option.getAttribute("aria-label")?.replace(/^Apply (?:--color-)?/, "") ??
+			option.textContent ??
+			"",
 	);
 }
 

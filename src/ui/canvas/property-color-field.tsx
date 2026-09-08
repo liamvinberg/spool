@@ -45,6 +45,7 @@ function tokenKeys(event: KeyboardEvent<HTMLElement>): void {
 export function PropertyColorField({
 	property,
 	reading,
+	reason,
 	options,
 	begin,
 	preview,
@@ -54,6 +55,7 @@ export function PropertyColorField({
 }: {
 	property: "color" | "background-color";
 	reading: SourcePropertyReading | undefined;
+	reason?: string | undefined;
 	options: readonly ColorOption[];
 	begin(): void;
 	preview(value: string): void;
@@ -167,7 +169,7 @@ export function PropertyColorField({
 							? `Linked to ${binding}`
 							: reading?.binding.kind === "custom"
 								? "Custom value"
-								: "Resolved from the page; source binding has not been inspected"
+								: (reason ?? "Inspecting source binding…")
 					}
 					onClick={() => {
 						complete(false);

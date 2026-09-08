@@ -49,7 +49,6 @@ import {
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
-import type { SourcePropertyReading } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -75,6 +74,7 @@ import { PropertyColorField } from "./property-color-field";
 import {
 	appearanceProperty,
 	type PropertyControls,
+	type PropertyDescription,
 	propertyControlValue,
 	propertyNumericSample,
 } from "./property-controls";
@@ -495,20 +495,23 @@ function colourTyped(theme: CompiledTheme | null, typed: string): Option | null 
 /** Retire obsolete presentation immediately when source identity or scope changes. */
 function usePropertyReading(control: PropertyControls | null | undefined, property: string | undefined) {
 	const identity = JSON.stringify([control?.identity, property]);
-	const [described, setDescribed] = useState<{ identity: string; reading: SourcePropertyReading | undefined }>();
+	const [described, setDescribed] = useState<{
+		identity: string;
+		description: PropertyDescription | undefined;
+	}>();
 	const describe = useRef(control?.describe);
 	describe.current = control?.describe;
 	useEffect(() => {
 		let live = true;
 		if (property)
-			void describe.current?.(property).then((reading) => {
-				if (live) setDescribed({ identity, reading });
+			void describe.current?.(property).then((description) => {
+				if (live) setDescribed({ identity, description });
 			});
 		return () => {
 			live = false;
 		};
 	}, [identity, property]);
-	return described?.identity === identity ? described.reading : undefined;
+	return described?.identity === identity ? described.description : undefined;
 }
 
 function ColourRow({
@@ -554,7 +557,8 @@ function ColourRow({
 		return (
 			<PropertyColorField
 				property={property}
-				reading={reading}
+				reading={reading?.reading}
+				reason={reading?.reason}
 				options={[
 					...(view.theme?.colour ?? []).map((token) => ({ ...token, reference: `--color-${token.name}` })),
 					...KEYWORD_COLOURS.map((color) => ({
@@ -705,7 +709,8 @@ function TypographyNumberRow({
 	return (
 		<PropertyNumberField
 			property={property}
-			reading={reading}
+			reading={reading?.reading}
+			reason={reading?.reason}
 			options={options ?? []}
 			scope={scopeKey(view.scope)}
 			begin={() => control?.begin(property)}
@@ -734,7 +739,8 @@ function RadiusNumberRow({
 		<PropertyNumberField
 			property={property}
 			{...(name ? { name } : {})}
-			reading={reading}
+			reading={reading?.reading}
+			reason={reading?.reason}
 			options={view.theme?.radius ?? []}
 			scope={scopeKey(view.scope)}
 			begin={() => control?.begin(property)}
