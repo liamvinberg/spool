@@ -2,6 +2,7 @@ import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-
 import { nativeColor } from "./property-colors";
 import { nativeFilter } from "./property-filters";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
+import { nativeShadow } from "./property-shadows";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
 import { type NativeTransitionProperty, nativeTransition } from "./property-transitions";
 
@@ -32,6 +33,9 @@ const transformProperties: Readonly<Record<string, NativeTransformProperty>> = {
 	"translate-x": "translate",
 	"translate-y": "translate",
 };
+
+/** Ring and shadow rows are separate source controls over one native box-shadow consumer. */
+const shadowProperties = ["box-shadow", "box-shadow color", "ring-width", "ring-offset-width", "ring-color"];
 
 function transitionProperty(property: string): property is NativeTransitionProperty {
 	return (
@@ -66,6 +70,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
 		return borderOutcome(element, expected);
 	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
+	if (shadowProperties.includes(expected.property)) return composedOutcome(element, expected, "box-shadow");
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
 	const corner = isCorner(expected.property);
 	const color = [
@@ -286,7 +291,7 @@ function substituteVariables(
 function composedOutcome(
 	element: Element,
 	expected: SourcePropertyExpectation,
-	property: NativeTransformProperty | NativeTransitionProperty | "filter",
+	property: NativeTransformProperty | NativeTransitionProperty | "filter" | "box-shadow",
 ): PropertyOutcome {
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const sheet = new CSSStyleSheet();
@@ -300,11 +305,15 @@ function composedOutcome(
 				? /^--tw-translate-[xyz]$/.test(name)
 				: property === "filter"
 					? /^--tw-(?:blur|brightness|contrast|grayscale|hue-rotate|invert|saturate|sepia|drop-shadow)$/.test(name)
-					: property === "transition-duration"
-						? name === "--tw-duration"
-						: property === "transition-timing-function"
-							? name === "--tw-ease"
-							: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
+					: property === "box-shadow"
+						? /^--tw-(?:inset-)?(?:ring-(?:inset|color|offset-(?:width|color|shadow)|shadow)|shadow(?:-color|-alpha)?)$/.test(
+								name,
+							)
+						: property === "transition-duration"
+							? name === "--tw-duration"
+							: property === "transition-timing-function"
+								? name === "--tw-ease"
+								: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
@@ -389,16 +398,59 @@ function composedOutcome(
 		return unverified("this transition has no active native property");
 	const initial = transition ? (property === "transition-timing-function" ? "ease" : "0s") : "none";
 	// A fully resolved empty fallback list computes to this non-inherited consumer's initial value.
-	const value = resolve(selection.winner?.value ?? initial).trim() || initial;
+	let value = resolve(selection.winner?.value ?? initial).trim() || initial;
+	if (property === "box-shadow" && !unresolved) {
+		const view = element.ownerDocument.defaultView;
+		const flattened = view === null ? undefined : absoluteLengths(value);
+		// Shadow lengths and the used current color are this element's own native context.
+		if (flattened === undefined || view === null)
+			return unverified("this shadow needs an absolute native length context");
+		value = flattened.replace(/(?<![\w-])currentcolor(?![\w-])/gi, view.getComputedStyle(element).color);
+	}
 	if (unresolved) return unverified("this composed effect needs complete captured variable and companion evidence");
 	const result = transitionProperty(property)
 		? nativeTransition(element, property, value)
 		: property === "filter"
 			? nativeFilter(element, value)
-			: nativeTransform(element, property, value);
+			: property === "box-shadow"
+				? nativeShadow(element, value)
+				: nativeTransform(element, property, value);
 	return result.kind === "unknown"
 		? unverified(result.reason)
 		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
+}
+
+/** Reduce only top-level calc terms to absolute pixels; nested or relative units stay unresolved. */
+function absoluteLengths(value: string): string | undefined {
+	let result = "";
+	let cursor = 0;
+	let depth = 0;
+	for (let index = 0; index < value.length; index++) {
+		if (value[index] === ")") {
+			if (--depth < 0) return;
+			continue;
+		}
+		if (value[index] !== "(") continue;
+		const open = index;
+		const start = /(?<![\w-])calc\($/i.test(value.slice(cursor, open + 1)) ? open - 4 : -1;
+		depth++;
+		if (start < 0 || depth !== 1) continue;
+		for (index = open + 1; index < value.length; index++) {
+			if (value[index] === "(") depth++;
+			else if (value[index] === ")" && --depth === 0) break;
+		}
+		if (depth !== 0) return;
+		let pixels: number;
+		try {
+			pixels = CSSNumericValue.parse(value.slice(start, index + 1)).to("px").value;
+		} catch {
+			return;
+		}
+		if (!Number.isFinite(pixels)) return;
+		result += `${value.slice(cursor, start)}${pixels}px`;
+		cursor = index + 1;
+	}
+	return depth === 0 ? result + value.slice(cursor) : undefined;
 }
 
 /** Additional paint channels need their own applicable native surface, separately from color equality. */
@@ -562,15 +614,15 @@ function winningEffect(
 		const order = names.length === 0 ? layers.length : layers.indexOf(names[0]!);
 		return important ? -order : order;
 	};
+	// Conditional group rules carry no specificity; only the selector chain does.
+	const subject = (effect: SourcePropertyEffect) =>
+		JSON.stringify(effect.path.filter((part) => !part.startsWith("@")));
 	let winner: SourcePropertyEffect | undefined;
 	let rank = Number.NEGATIVE_INFINITY;
 	for (const effect of applicable.filter((effect) => effect.important === important)) {
 		const next = priority(effect);
 		if (next === undefined) return { reason: "this property effect needs a cascade layer proof" };
-		if (
-			next === rank &&
-			!(winner?.owner && effect.owner && JSON.stringify(winner.path) === JSON.stringify(effect.path))
-		)
+		if (next === rank && !(winner?.owner && effect.owner && subject(winner) === subject(effect)))
 			return { reason: "competing property effects need a specificity proof" };
 		// Equal compiler utility subjects have equal specificity; declaration order decides.
 		if (next >= rank) {
@@ -633,6 +685,8 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 		try {
 			if (!element.matches(selector)) return "inactive";
 		} catch {
+			// The style engine drops a selector its own parser rejects; ask it rather than guessing.
+			if (!CSS.supports(`selector(${selector})`)) return "inactive";
 			unknown = true;
 		}
 	}

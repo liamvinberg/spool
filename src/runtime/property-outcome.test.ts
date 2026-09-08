@@ -1598,3 +1598,94 @@ it.each(["transition-duration", "transition-timing-function"])(
 		).toEqual(["verified", "unverified", "unverified"]);
 	},
 );
+
+it.each([
+	{ property: "box-shadow", before: "shadow-sm", after: "shadow-md", companion: "" },
+	{ property: "ring-width", before: "ring-2", after: "ring-4", companion: "" },
+	{ property: "ring-offset-width", before: "ring-offset-2", after: "ring-offset-4", companion: "ring-2" },
+	{ property: "ring-color", before: "ring-red-500", after: "ring-blue-500", companion: "ring-2" },
+	{ property: "box-shadow color", before: "shadow-red-500", after: "shadow-blue-500", companion: "shadow-sm" },
+])("verifies compiled shadow $property against its captured native box shadow", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "binding", tokens: [row.after] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const subject = (classes: string) =>
+		`<div data-subject class="${classes}" style="width:80px;height:40px;color:#123456">Native shadow</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(original)}`,
+	);
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(["verified", "mismatching"]);
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next)}${subject(original)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// An outside change to any captured native input is a mismatch, never a silent pass.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native shadow host");
+			element.style.setProperty("--tw-inset-shadow", "0 0 0 3px #ff0000");
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native shadow host");
+			element.style.removeProperty("--tw-inset-shadow");
+			element.style.boxShadow = "none";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+});
