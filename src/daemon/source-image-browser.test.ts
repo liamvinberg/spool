@@ -837,3 +837,103 @@ it("retains an unknown image save without replay, reload, or an invented Undo re
 	expect(f.writes).toEqual(["commit"]);
 	expect(sends).toEqual([]);
 });
+
+it("decodes every accepted image format through actual drop and source Undo", { timeout: 120000 }, async () => {
+	const f = await originCanvas({ "shared/assets/first.svg": SVG }, SOURCE, "#hero");
+	const encoded = await f.target.evaluate(() => {
+		const canvas = document.createElement("canvas");
+		canvas.width = 12;
+		canvas.height = 8;
+		const context = canvas.getContext("2d");
+		if (!context) throw new Error("missing native encoder");
+		context.fillStyle = "red";
+		context.fillRect(0, 0, 12, 8);
+		return {
+			jpeg: canvas.toDataURL("image/jpeg"),
+			png: canvas.toDataURL("image/png"),
+			webp: canvas.toDataURL("image/webp"),
+		};
+	});
+	const formats = [
+		{
+			name: "format.gif",
+			type: "image/gif",
+			data: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+			width: 1,
+			height: 1,
+		},
+		{ name: "format.jpeg", type: "image/jpeg", data: encoded.jpeg, width: 12, height: 8 },
+		{ name: "format.jpg", type: "image/jpeg", data: encoded.jpeg, width: 12, height: 8 },
+		{ name: "format.png", type: "image/png", data: encoded.png, width: 12, height: 8 },
+		{
+			name: "format.svg",
+			type: "image/svg+xml",
+			data: `data:image/svg+xml;base64,${Buffer.from(SECOND).toString("base64")}`,
+			width: 70,
+			height: 20,
+		},
+		{ name: "format.webp", type: "image/webp", data: encoded.webp, width: 12, height: 8 },
+	];
+	await f.frame.locator("#native").evaluate((element) => {
+		if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+		element.value = "kept across formats";
+		Reflect.set(window, "formatInput", element);
+	});
+	for (const format of formats) {
+		expect(format.data.startsWith(`data:${format.type};base64,`)).toBe(true);
+		await f.select();
+		const saved = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
+		const transfer = await f.target.evaluateHandle((_element, format) => {
+			const data = new DataTransfer();
+			const bytes = Uint8Array.from(atob(format.data.slice(format.data.indexOf(",") + 1)), (character) =>
+				character.charCodeAt(0),
+			);
+			data.items.add(new File([bytes], format.name, { type: format.type }));
+			return data;
+		}, format);
+		await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+		expect(await (await saved).json()).toMatchObject({ ok: true, source: "saved" });
+		await f.settled();
+		expect(
+			await f.target.evaluate(
+				(element) => element instanceof HTMLImageElement && [element.naturalWidth, element.naturalHeight],
+			),
+		).toEqual([format.width, format.height]);
+		expect(await f.target.getAttribute("src")).toBe(format.data);
+		expect(readFileSync(f.file(`frames/home/${format.name}`))).toEqual(
+			Buffer.from(format.data.slice(format.data.indexOf(",") + 1), "base64"),
+		);
+		expect(await f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1)?.rendered)).toBe("verified");
+		const undone = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "inverse",
+		);
+		await f.history();
+		expect(await (await undone).json()).toMatchObject({ ok: true, source: "saved" });
+		await f.settled();
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(SOURCE);
+		expect(existsSync(f.file(`frames/home/${format.name}`))).toBe(true);
+		expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(
+			30,
+		);
+		expect(
+			await f.frame.locator("#native").evaluate((element) => element === Reflect.get(window, "formatInput")),
+		).toBe(true);
+		expect(await f.frame.locator("#native").inputValue()).toBe("kept across formats");
+	}
+	expect(f.writes).toEqual([
+		"commit",
+		"inverse",
+		"commit",
+		"inverse",
+		"commit",
+		"inverse",
+		"commit",
+		"inverse",
+		"commit",
+		"inverse",
+		"commit",
+		"inverse",
+	]);
+});
