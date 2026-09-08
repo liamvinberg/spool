@@ -42,6 +42,8 @@ import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
 import { type OwnershipActions, SourceOwnership } from "./source-ownership";
 
+const IMAGE_OPERATION: SourceOperation = { kind: "image" };
+
 /**
  * The properties rail (#256): the right column, back, and holding one thing.
  *
@@ -399,7 +401,7 @@ function Body({
 					name={read?.name ?? rowElement.tag}
 					revision={revision}
 					field={purpose ? purpose.field : rowElement.tag === "img" ? "src" : undefined}
-					operation={purpose?.operation}
+					operation={purpose?.operation ?? (rowElement.tag === "img" ? IMAGE_OPERATION : undefined)}
 					generation={purpose?.generation}
 					actions={acts.ownership}
 					onSupport={support}
@@ -1099,7 +1101,18 @@ function Attributes({
 			void Promise.all(
 				candidates
 					.filter((field) => !["className", "style", "data-go", "key", "ref"].includes(field.name))
-					.map(async (field) => [field.name, await describe(frame, selector, field.name)] as const),
+					.map(
+						async (field) =>
+							[
+								field.name,
+								await describe(
+									frame,
+									selector,
+									field.name,
+									field.asset ? IMAGE_OPERATION : { kind: "literal", field: field.name },
+								),
+							] as const,
+					),
 			).then((entries) => {
 				if (live) setDescriptions(Object.fromEntries(entries));
 			});

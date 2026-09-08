@@ -1,10 +1,15 @@
 import { useId, useRef, useState } from "react";
-import type { SourceDescription, SourceRead } from "../../source-edit";
+import type { SourceDescription, SourceOperation, SourceRead } from "../../source-edit";
 import { BOX, Row, Section, VALUE } from "./properties-fields";
 
 export interface TextActions {
 	refused?(frame: string, selector: string, text: string, field?: string): void;
-	describe?(frame: string, selector: string, field: string): Promise<SourceDescription | undefined>;
+	describe?(
+		frame: string,
+		selector: string,
+		field: string,
+		operation?: SourceOperation,
+	): Promise<SourceDescription | undefined>;
 	begin(frame: string, selector: string, field?: string): Promise<SourceRead | undefined>;
 	preview(frame: string, read: SourceRead, text: string): void;
 	finish(frame: string, read: SourceRead, text: string, commit: boolean): void;

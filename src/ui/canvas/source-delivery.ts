@@ -227,9 +227,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			frame: string,
 			selector: string,
 			field?: string,
-			operation: SourceOperation = field === "src"
-				? { kind: "image" }
-				: { kind: "literal", ...(field ? { field } : {}) },
+			operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 		) => {
 			const version = ++descriptionVersion.current;
 			setLiveFrames(new Set(iframes.current.keys()));
@@ -251,8 +249,12 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 
 	return {
 		describeField: useCallback(
-			async (frame: string, selector: string, field: string) => {
-				const operation: SourceOperation = field === "src" ? { kind: "image" } : { kind: "literal", field };
+			async (
+				frame: string,
+				selector: string,
+				field: string,
+				operation: SourceOperation = { kind: "literal", field },
+			) => {
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,

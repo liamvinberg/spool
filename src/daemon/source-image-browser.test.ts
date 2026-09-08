@@ -91,6 +91,12 @@ it("chooses an existing shared image from the real picker and discloses both aff
 		"#hero",
 		true,
 	);
+	let descriptions = 0;
+	f.page.on("request", (request) => {
+		if (!request.url().endsWith("/source")) return;
+		const body = request.postDataJSON();
+		if (body?.action === "describe" && body.operation?.kind === "image" && body.inventories?.length) descriptions++;
+	});
 	await f.select();
 	const uses = f.page.getByRole("button", { name: "Show affected uses", exact: true });
 	await expect.poll(() => uses.count()).toBe(1);
@@ -100,6 +106,9 @@ it("chooses an existing shared image from the real picker and discloses both aff
 	await f.page.getByRole("button", { name: "image", exact: true }).click();
 	const option = f.page.locator('[data-menu-option="second.svg"]');
 	await expect.poll(() => option.count()).toBe(1);
+	expect(descriptions).toBe(1);
+	expect(await uses.textContent()).toBe("2");
+	expect(await f.page.locator("[data-source-uses]").textContent()).toContain("shared/photo.tsx");
 	const saved = f.page.waitForResponse(
 		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
 	);
