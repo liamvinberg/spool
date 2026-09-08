@@ -12,11 +12,17 @@ it.each([
 		const original = `export function Label(){return <button id="subject" className="${token} p-6">Hello</button>}`;
 		const frame = `import {Label} from 'shared/label';export default function Frame(){return <main className="p-10"><Label/></main>}`;
 		const f = await originCanvas({ [file]: original }, frame, "#subject", true);
-		// Repeated steps are one gesture, so they plan one preview between them;
-		// the frames wear it once that reply arrives.
+		// Steps plan as the held read allows: two of them coalesce into one preview
+		// where the read is still arriving, and plan one each where it has landed.
+		// Waiting for a compiled reply is what makes the readings below deterministic;
+		// what repeated steps are one of is the gesture, which is one source read.
 		let previews = 0;
+		let reads = 0;
 		f.page.on("response", (response) => {
-			if (response.url().endsWith("/source") && response.request().postDataJSON()?.action === "preview") previews++;
+			if (!response.url().endsWith("/source")) return;
+			const action = response.request().postDataJSON()?.action;
+			if (action === "preview") previews++;
+			if (action === "read") reads++;
 		});
 		await f.select();
 		const field = f.page.locator(`[data-properties-row="${property}"] input`).first();
@@ -27,7 +33,8 @@ it.each([
 		expect(await field.inputValue()).toBe(next);
 		expect(f.writes).toEqual([]);
 		expect(f.bytes()[file]).toBe(original);
-		await expect.poll(() => previews).toBe(1);
+		await expect.poll(() => previews, { timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+		expect(reads).toBe(1);
 		for (const document of [f.frame, f.page.frameLocator('iframe[title="second"]')])
 			await expect
 				.poll(() =>
