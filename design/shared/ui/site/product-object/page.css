@@ -1,0 +1,79 @@
+.po-page .po-hero-foot { display: flex; align-items: center; justify-content: space-between; gap: 70px; margin-top: 42px; }
+.po-page .po-intro { max-width: 450px; }
+.po-page .po-intro p { color: #b9b1ac; font-size: 19px; line-height: 1.5; }
+.po-page .po-try { display: flex; align-items: center; gap: 18px; font-size: 14px; margin-top: 26px; color: #f0e9e3; }
+.po-page .po-try svg { width: 16px; }
+.po-page .po-install-object { width: 470px; flex: none; }
+.po-page .po-package-download { background: #ece5db; color: #201c19; display: flex; align-items: center; padding: 26px 26px; gap: 24px; border-radius: 3px 3px 0 0; }
+.po-page .po-app-icon { display: grid; place-items: center; width: 76px; height: 76px; background: #f0442a; border-radius: 18px; color: #fff2e9; flex: none; }
+.po-page .po-app-icon svg { width: 34px; height: 46px; }
+.po-page .po-package-type { display: flex; flex-direction: column; gap: 7px; }
+.po-page .po-package-type strong { font-size: 33px; line-height: 1; font-weight: 500; letter-spacing: -1.7px; }
+.po-page .po-package-type > span { font-size: 13px; }
+.po-page .po-download-arrow { font-size: 39px; margin-left: auto; align-self: end; line-height: 1; }
+.po-page .po-package-terminal { display: flex; justify-content: space-between; align-items: center; border: 1px solid #65504480; border-top: 0; padding: 15px 17px; color: #aaa09a; background: #141210b3; }
+.po-page .po-package-terminal > span { font-size: 11px; }
+.po-page .po-package-terminal button { display: flex; align-items: center; gap: 16px; color: #e0d4ca; font-size: 11px; }
+.po-page .po-package-terminal code { font-family: "Fragment Mono", monospace; }
+.po-page .po-package-terminal svg { width: 13px; }
+.po-page .po-preview-title { display: flex; align-items: center; justify-content: space-between; height: 58px; border-top: 1px solid #8d74614d; font-size: 14px; }
+.po-page .po-preview-note { margin-left: 19px; font-size: 12px; color: #a4978d; }
+.po-page .po-preview-title button { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.po-page .po-preview-title svg { width: 14px; }
+.po-page.po-package .sg-hero { padding-bottom: 40px; }
+.po-page.po-package .sg-nav nav { gap: 36px; }
+.po-page.po-dock .sg-nav { height: 140px; align-items: flex-start; padding-top: 25px; }
+.po-page.po-dock .sg-nav > button { padding-top: 12px; }
+.po-page.po-dock .sg-nav nav { align-items: start; gap: 35px; }
+.po-page.po-dock .sg-nav nav > a { margin-top: 18px; }
+.po-page.po-dock .po-compact { width: 370px; margin-left: 28px; }
+.po-page.po-dock .po-package-download { background: transparent; color: #f1e5db; padding: 0 0 15px; border-bottom: 1px solid #9f84715c; border-radius: 0; gap: 15px; }
+.po-page.po-dock .po-app-icon { width: 50px; height: 50px; border-radius: 12px; }
+.po-page.po-dock .po-app-icon svg { width: 25px; height: 33px; }
+.po-page.po-dock .po-package-type strong { font-size: 22px; letter-spacing: -.8px; }
+.po-page.po-dock .po-package-type > span { font-size: 12px; }
+.po-page.po-dock .po-download-arrow { font-size: 36px; padding-bottom: 4px; }
+.po-page.po-dock .po-package-terminal { background: transparent; border: 0; padding: 11px 0; }
+.po-page.po-dock .po-package-terminal button { border: 0; border-radius: 0; background: transparent; padding: 0; }
+.po-page.po-dock .sg-hero { padding-top: 33px; padding-bottom: 37px; }
+.po-page.po-dock .po-hero-foot { margin-top: 40px; align-items: flex-end; }
+.po-page.po-dock .po-open-canvas { display: flex; align-items: flex-end; justify-content: space-between; width: 370px; text-align: left; border-bottom: 1px solid #d4b6a380; padding-bottom: 20px; }
+.po-page.po-dock .po-open-canvas > span:first-child { font-size: 37px; letter-spacing: -1.4px; line-height: 1.05; }
+.po-page .po-big-arrow { font-size: 74px; line-height: .9; font-weight: 300; }
+.po-page.po-dock .po-preview-title { border-top: 0; }
+@media (hover:hover) { .po-page .po-package-download:hover .po-download-arrow { transform: translateY(4px); } .po-page .po-try:hover, .po-page .po-preview-title button:hover { color: #f77958; } }
+@media (max-width:760px) { .po-page .po-hero-foot { flex-direction: column; align-items: start; gap: 28px; } .po-page .po-install-object { width: 100%; } .po-page.po-dock .sg-nav { height: auto; padding-bottom: 30px; } .po-page.po-dock .po-compact { width: 250px; margin-left: 0; } .po-page .po-preview-note { display: none; } }
+@media (max-width: 760px) {
+	.po-page.po-dock .sg-nav {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 28px;
+		padding-top: 20px;
+		padding-bottom: 0;
+	}
+	.po-page.po-dock .sg-nav > button {
+		align-self: flex-start;
+		padding-top: 0;
+	}
+	.po-page.po-dock .sg-nav nav,
+	.po-page.po-dock .po-compact {
+		width: 100%;
+		min-width: 0;
+	}
+	.po-page.po-dock .po-hero-foot {
+		align-items: stretch;
+	}
+	.po-page.po-dock .po-open-canvas {
+		width: 100%;
+	}
+	.po-page .po-package-terminal {
+		gap: 12px;
+	}
+	.po-page .po-package-terminal button {
+		flex: none;
+		gap: 10px;
+	}
+	.po-page .po-package-terminal code {
+		white-space: nowrap;
+	}
+}

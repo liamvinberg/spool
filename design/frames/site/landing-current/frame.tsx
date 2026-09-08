@@ -1,5 +1,5 @@
-import { LandingTake } from "shared/ui/site/controls/landing-take";
+import { BloomLanding } from "shared/ui/site/current/ui/site/bloom/landing";
 
 export default function Frame() {
-	return <LandingTake take="current" />;
+	return <BloomLanding />;
 }
