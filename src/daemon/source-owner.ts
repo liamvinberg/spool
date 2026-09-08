@@ -223,6 +223,13 @@ export function createSourceOwner(
 	function reason(error: unknown): string {
 		return error instanceof Error ? error.message : "the source operation could not finish";
 	}
+	async function currentCompilation(root: string, frame: string, compilation: RetainedCompilation) {
+		const inputs = new Map([...compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]));
+		const current = await compiler.compilePublication(root, frame, inputs, sequence, compilation.absent, compilation);
+		valid(root, current);
+		return current;
+	}
+
 	async function read(
 		root: string,
 		frame: string,
@@ -252,18 +259,7 @@ export function createSourceOwner(
 			const retryFrom = retry ? compilation : undefined;
 			let resolved = resolveTextSource(root, compilation, original, generation);
 			if (retry) {
-				const inputs = new Map(
-					[...compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
-				);
-				const current = await compiler.compilePublication(
-					root,
-					frame,
-					inputs,
-					sequence,
-					compilation.absent,
-					compilation,
-				);
-				valid(root, current);
+				const current = await currentCompilation(root, frame, compilation);
 				if (readingCoverage !== (coverage.get(root) ?? 0))
 					throw new Error("source observation changed during retry");
 				resolved = retryTextSource(root, compilation, current, original, generation);
@@ -721,6 +717,7 @@ export function createSourceOwner(
 		return ordered(root, async () => {
 			const held = reads.get(handle);
 			reads.delete(handle); // exactly one completion, including a failed or unknown attempt
+			let authenticated = false;
 			try {
 				if (
 					!held ||
@@ -734,22 +731,12 @@ export function createSourceOwner(
 					throw new Error("the original committed occurrence changed before saving");
 				valid(root, held.compilation);
 				if (held.retryFrom) {
-					const inputs = new Map(
-						[...held.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
-					);
-					const current = await compiler.compilePublication(
-						root,
-						held.frame,
-						inputs,
-						sequence,
-						held.compilation.absent,
-						held.compilation,
-					);
-					valid(root, current);
+					const current = await currentCompilation(root, held.frame, held.compilation);
 					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
 				}
 				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");
+				authenticated = true;
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
@@ -787,7 +774,27 @@ export function createSourceOwner(
 					transformed,
 				);
 			} catch (error) {
-				return { ok: false, reason: reason(error) };
+				// Read-only conflict evidence uses the original authenticated owner. It
+				// neither revives this consumed read nor grants authority for a retry.
+				let current: SourceChange | undefined;
+				if (authenticated && held?.read.operation.kind === "literal") {
+					try {
+						valid(root, held.compilation);
+						const snapshot = await currentCompilation(root, held.frame, held.compilation);
+						const resolved = retryTextSource(
+							root,
+							held.retryFrom ?? held.compilation,
+							snapshot,
+							held.read.original,
+							generation,
+						);
+						if (held.coverage === (coverage.get(root) ?? 0))
+							current = { kind: "literal", text: resolved.cell.value };
+					} catch {
+						// Lost continuity or changed ancestry is not a checked current value.
+					}
+				}
+				return { ok: false, reason: reason(error), ...(current ? { current } : {}) };
 			}
 		});
 	}
