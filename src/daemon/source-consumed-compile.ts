@@ -115,7 +115,9 @@ export function rewriteConsumed(code: string): string {
 		if (text) edits.push({ start: n.start!, end: n.end!, text });
 	});
 	const outer = edits.filter((e) => !edits.some((o) => o !== e && o.start <= e.start && o.end >= e.end));
-	for (const e of outer.sort((a, b) => b.start - a.start)) code = code.slice(0, e.start) + e.text + code.slice(e.end);
+	// Replacing punctuation-led expressions must not join an adjacent keyword.
+	for (const e of outer.sort((a, b) => b.start - a.start))
+		code = `${code.slice(0, e.start)} ${e.text}${code.slice(e.end)}`;
 	const returns = parse(code, { sourceType: "module", plugins: ["jsx", "typescript", "decorators-legacy"] });
 	const returnEdits: { start: number; end: number; text: string }[] = [];
 	walkNodes(returns, [], (n) => {
@@ -124,7 +126,7 @@ export function rewriteConsumed(code: string): string {
 		const expression = code.slice(arg.start!, arg.end!);
 		if (expression.startsWith(`${helper}.returned(`)) return;
 		returnEdits.push(
-			{ start: arg.start!, end: arg.start!, text: `${helper}.returned({value:` },
+			{ start: arg.start!, end: arg.start!, text: ` ${helper}.returned({value:` },
 			{ start: arg.end!, end: arg.end!, text: ",origin:undefined})" },
 		);
 	});

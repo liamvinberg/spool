@@ -1,4 +1,4 @@
-import type { CompiledTheme, ThemeToken } from "../api";
+import type { CompiledTheme, ThemeToken } from "../daemon/theme";
 
 /**
  * The compiled theme, as the rail's menus read it (#257).

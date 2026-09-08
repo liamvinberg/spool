@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { type ClassTheme, writeClass } from "../../daemon/class-write";
-import type { CompiledTheme } from "../api";
-import { LENGTHS, NUMERIC_SET, TOGGLE_SETS, WORDS, type Word } from "./properties-families";
+import { type ClassTheme, writeClass } from "../daemon/class-write";
+import type { CompiledTheme } from "../daemon/theme";
+import { LENGTHS, NUMERIC_SET, TOGGLE_SETS, WORDS, type Word } from "./families";
 import {
 	editsFor,
 	optionsFor,
@@ -13,7 +13,7 @@ import {
 	sidesOf,
 	unlinkTo,
 	verdictFor,
-} from "./properties-rows";
+} from "./rows";
 
 /**
  * The property model (#257): every family resolves to a primitive and a rule,

@@ -592,26 +592,20 @@ describe("the write lane", () => {
 		});
 	});
 
-	it("deletes an element's lines, and undo brings them back", async () => {
+	it.each(["patch/gate", "patch"])("rejects legacy Delete admission through %s", async (endpoint) => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "cart", cartTsx);
 		const app = makeApp(spoolDir);
-		const asked = await gate(app, name, [{ kind: "delete", source: stampFor(cartTsx, "<h1") }]);
-
-		const answer = (await (
-			await app.request(
-				`/api/p/${name}/patch`,
-				jsonPost({
-					frame: "cart",
-					fingerprint: asked.fingerprint,
-					ops: [{ kind: "delete", source: stampFor(cartTsx, "<h1") }],
-				}),
-			)
-		).json()) as PatchAnswer;
-		expect(frameSource(root)).not.toContain("<h1");
-
-		await app.request(`/api/p/${name}/patch/revert`, jsonPost(answer.undo));
+		const response = await app.request(
+			`/api/p/${name}/${endpoint}`,
+			jsonPost({
+				frame: "cart",
+				fingerprint: fingerprintOf(cartTsx),
+				ops: [{ kind: "delete", source: stampFor(cartTsx, "<h1") }],
+			}),
+		);
+		expect(response.status).toBe(400);
 		expect(frameSource(root)).toBe(cartTsx);
 	});
 
@@ -787,7 +781,7 @@ describe("the write lane", () => {
 			(
 				await app.request(
 					`/api/p/${name}/patch/gate`,
-					jsonPost({ frame: "ghost", ops: [{ kind: "delete", source }] }),
+					jsonPost({ frame: "ghost", ops: [{ kind: "set-class", source, token: "p-4", scope: "" }] }),
 				)
 			).status,
 		).toBe(404);

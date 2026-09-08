@@ -1,7 +1,4 @@
 import { type ReactNode, useState } from "react";
-import type { CompiledTheme } from "../api";
-import { cn } from "../cn";
-import type { Compiler } from "./properties-compile";
 import {
 	borderColoursOf,
 	borderWidthsOf,
@@ -33,23 +30,7 @@ import {
 	WORDS,
 	type Word,
 	wordOf,
-} from "./properties-families";
-import {
-	AddField,
-	ArrowIcon,
-	Chip,
-	FAINT,
-	Fold,
-	IconField,
-	LABEL,
-	LinesIcon,
-	Menu,
-	NumField,
-	type Option,
-	PlaceField,
-	Row,
-	Section,
-} from "./properties-fields";
+} from "../../properties/families";
 import {
 	type At,
 	displayOf,
@@ -66,9 +47,28 @@ import {
 	type Section as SectionName,
 	unlinkTo,
 	verdictFor,
-} from "./properties-rows";
+} from "../../properties/rows";
+import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
+import type { CompiledTheme } from "../api";
+import { cn } from "../cn";
+import type { Compiler } from "./properties-compile";
+import {
+	AddField,
+	ArrowIcon,
+	Chip,
+	FAINT,
+	Fold,
+	IconField,
+	LABEL,
+	LinesIcon,
+	Menu,
+	NumField,
+	type Option,
+	PlaceField,
+	Row,
+	Section,
+} from "./properties-fields";
 import type { Scope } from "./properties-scope";
-import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "./properties-theme";
 
 /**
  * The rail's rows (#258): every section, drawn out of the property model.

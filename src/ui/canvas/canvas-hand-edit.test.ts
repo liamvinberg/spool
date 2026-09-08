@@ -4,19 +4,9 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
-import type { SourceRead } from "../../source-edit";
+import type { SourceOperation, SourceRead } from "../../source-edit";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
-
-/**
- * The write lane's two canvas gestures (#255), out on the canvas.
- *
- * A second click on a held element's words opens an edit on the element
- * itself; ⌫ on a held element takes its lines. Both ask the gate before
- * anything happens, both write through the lane, and both leave one press of
- * undo behind. The frame answers every ask here, so each test plays it: it
- * reads the message the canvas posted and replies as the shim would.
- */
 
 const ACCEL_KEY = accelKeyName();
 const ACCEL = ACCEL_KEY === "Meta" ? { metaKey: true } : { ctrlKey: true };
@@ -129,22 +119,16 @@ it.each(TEXT_REFUSALS)("shows $code and opens no edit when the gate refuses", as
 	expect(shown?.textContent).toBe("these words have no editable local literal source");
 });
 
-it("takes the held element's lines on ⌫, and the frame's own when no rung is open", async () => {
+it("requests structural authority for a held element and keeps frame trash separate", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheWords(canvas, frame);
-
 	await press("Backspace");
 	await settle();
-	expect(gateAsks().at(-1)).toEqual({ frame: "home", ops: [{ kind: "delete", source: STAMP }] });
-	expect(writes().at(-1)).toEqual({
-		frame: "home",
-		fingerprint: "abc",
-		ops: [{ kind: "delete", source: STAMP }],
-	});
-	// silent, like every other patch: no toast stands between it and undo
+	expect(sourceCalls("read").at(-1)).toMatchObject({ operation: { kind: "delete" }, original: ORIGINAL });
+	expect(sourceCalls("commit")).toHaveLength(0);
+	expect(gateAsks()).toHaveLength(0);
+	expect(writes()).toHaveLength(0);
 	expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
-
-	// with the rung climbed away the key is the frame's trash again
 	await press("Enter", { shiftKey: true });
 	await press("Enter", { shiftKey: true });
 	await press("Backspace");
@@ -152,44 +136,20 @@ it("takes the held element's lines on ⌫, and the frame's own when no rung is o
 	expect(host.querySelector('[data-frame-label="home"]')).toBeNull();
 });
 
-// and the two it names for delete: an element that is not a whole child, and
-// one a shared component defines rather than this frame
-const DELETE_REFUSALS = [
-	{ code: "not-a-child", says: "not a whole child of its parent" },
-	{ code: "shared-definition", says: "defined in shared/ui/card.tsx:2, rendered by 4 frames" },
-];
-
-it.each(DELETE_REFUSALS)("refuses a delete the lane will not take ($code), and says why", async (refusal) => {
-	const { host, canvas, frame } = await readyCanvas();
-	gate = { ok: false, refusal };
-	await holdTheWords(canvas, frame);
-
-	await press("Backspace");
-	await settle();
-	expect(writes()).toHaveLength(0);
-	expect(host.querySelector(`[data-hand-refusal="${refusal.code}"]`)?.textContent).toBe(refusal.says);
-});
-
-it("holds the last paint while the document a write reloaded boots behind it", async () => {
-	const { host, canvas, frame } = await readyCanvas();
-	await holdTheWords(canvas, frame);
-
-	await press("Backspace");
-	await settle();
-	expect(host.querySelectorAll('iframe[title="home (held)"]')).toHaveLength(0);
-
-	// the watcher's own event, which is how every source edit reaches the canvas
-	await act(async () => {
-		reload?.({ kind: "frame", frame: "home" });
-		await new Promise((resolve) => setTimeout(resolve, 30));
-	});
-	// the outgoing document stands, and no still is drawn over it
-	expect(host.querySelectorAll('iframe[title="home (held)"]')).toHaveLength(1);
-	expect(host.querySelector<HTMLElement>('[data-frame-cover="home"]')?.style.opacity ?? "0").toBe("0");
-
-	await frame.boot();
-	expect(host.querySelectorAll('iframe[title="home (held)"]')).toHaveLength(0);
-});
+it.each(["the original structural parent or insertion position changed", "duplicate sibling keys"])(
+	"shows the source owner's Delete refusal: %s",
+	async (reason) => {
+		const { host, canvas, frame } = await readyCanvas();
+		gate = { ok: false, refusal: { code: "source", says: reason } };
+		await holdTheWords(canvas, frame);
+		await press("Backspace");
+		await settle();
+		expect(writes()).toHaveLength(0);
+		expect(gateAsks()).toHaveLength(0);
+		expect(sourceCalls("read").at(-1)).toMatchObject({ operation: { kind: "delete" } });
+		expect(host.querySelector('[data-hand-refusal="source"]')?.textContent).toBe(reason);
+	},
+);
 
 // --- the harness -------------------------------------------------------------
 
@@ -198,14 +158,12 @@ type Gate =
 	| { ok: false; refusal: { code: string; says: string; expression?: string } };
 
 let gate: Gate = { ok: true, path: "design/frames/home/frame.tsx", fingerprint: "abc", mapped: false };
-let reload: ((event: { kind: string; frame?: string }) => void) | undefined;
 
 interface FramePlayer {
 	answer: (chain: readonly PickedHit[]) => Promise<void>;
 	lastEdit: () => { id: number; selector: string; x: number; y: number } | undefined;
 	opened: (id: number | undefined, text: string) => Promise<void>;
 	ended: (id: number | undefined, commit: boolean, text: string) => Promise<void>;
-	boot: () => Promise<void>;
 }
 
 /** Hold the words, which is the rung both gestures act on. */
@@ -218,7 +176,6 @@ async function holdTheWords(canvas: HTMLElement, frame: FramePlayer): Promise<vo
 
 async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElement; frame: FramePlayer }> {
 	gate = { ok: true, path: "design/frames/home/frame.tsx", fingerprint: "abc", mapped: false };
-	reload = undefined;
 	stubCanvasApis();
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -250,7 +207,7 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 					if (message?.spool !== "source-request") return;
 					const result =
 						message.action === "read" || message.action === "inspect"
-							? gate.ok
+							? message.operation?.kind === "delete" || gate.ok
 								? ORIGINAL
 								: undefined
 							: message.action === "complete"
@@ -320,7 +277,6 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 			ended: async (id, commit, text) => {
 				await reply({ spool: "edited", frame: "home", id, commit, text });
 			},
-			boot,
 		},
 	};
 }
@@ -389,18 +345,9 @@ function stubCanvasApis(): void {
 			const raw = input instanceof Request ? input.url : String(input);
 			const url = new URL(raw, window.location.href);
 			if (url.pathname.endsWith("/events")) {
-				// the watcher's own channel, held open so a test can fire one edit
-				return new Response(
-					new ReadableStream<Uint8Array>({
-						start(controller) {
-							const bytes = new TextEncoder();
-							reload = (event) => {
-								controller.enqueue(bytes.encode(`event: change\ndata: ${JSON.stringify(event)}\n\n`));
-							};
-						},
-					}),
-					{ headers: { "content-type": "text/event-stream" } },
-				);
+				return new Response(new ReadableStream<Uint8Array>(), {
+					headers: { "content-type": "text/event-stream" },
+				});
 			}
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
@@ -410,8 +357,17 @@ function stubCanvasApis(): void {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
 			}
 			if (url.pathname.endsWith("/source")) {
-				const body = JSON.parse(String(init?.body)) as { action: string; generation: number };
+				const body = JSON.parse(String(init?.body)) as {
+					action: string;
+					generation: number;
+					operation: SourceOperation;
+				};
 				if (body.action === "read") {
+					if (body.operation.kind === "delete")
+						return Response.json({
+							ok: false,
+							reason: gate.ok ? "this fixture has no structural source read" : gate.refusal.says,
+						});
 					sourceRead = {
 						operation: { kind: "literal" },
 						handle: "read",

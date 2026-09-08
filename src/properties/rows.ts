@@ -1,5 +1,5 @@
-import type { PatchRefusal } from "../../daemon/hand-write";
-import type { CompiledTheme } from "../api";
+import type { PatchRefusal } from "../daemon/hand-write";
+import type { CompiledTheme } from "../daemon/theme";
 import {
 	borderWidthsOf,
 	borderWidthToken,
@@ -34,35 +34,11 @@ import {
 	WORDS,
 	type Word,
 	wordOf,
-} from "./properties-families";
-import {
-	arbitraryColourName,
-	KEYWORD_COLOURS,
-	type MenuOption,
-	menuOf,
-	saysOf,
-	stepOf,
-	type ThemeList,
-} from "./properties-theme";
+} from "./families";
+import { arbitraryColourName, KEYWORD_COLOURS, type MenuOption, menuOf, saysOf, stepOf, type ThemeList } from "./theme";
 
-/**
- * Every row the rail draws, the primitive it uses and the rule it writes by
- * (#257).
- *
- * The inventory is the ticket's own: about 130 Tailwind class families, each
- * mapped to one primitive and one rule. A length is a number box, a word list
- * is a select, two or three words that are pictures are an icon pair, align
- * and justify together are the nine-dot grid, a yes-or-no is a chip, a colour
- * is a swatch with a name and an alpha, and what only reads is a plain value
- * with where it comes from. Nothing is left without one: a row with no control
- * reads as a bug, and a row that refuses with its reason teaches you the shape
- * of your own code.
- *
- * The rule is what the row does to the literal, and it is always the same
- * shape: a token, under a scope, handed to the write lane. The lane owns the
- * spelling that comes back — the fewest tokens, the logical sides kept, the
- * zero that drops at the base and overrides under a scope — so a row never
- * assembles a className itself.
+/** The retained property inventory and candidate spelling shared by controls and source planning.
+ * Candidate tokens describe the requested value; only captured compiler effects authorize replacement.
  */
 
 export type Section = "position" | "size" | "layout" | "appearance" | "fill" | "stroke" | "text" | "source";

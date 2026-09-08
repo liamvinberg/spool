@@ -13,6 +13,7 @@ import {
 	record,
 	rectsOf,
 	type Staging,
+	structuralGenerations,
 	type Taken,
 	takeRedo,
 	takeUndo,
@@ -466,4 +467,22 @@ describe("patch entries", () => {
 		const undone = takeUndo(history, alive("cart")) as Taken;
 		expect(drop(undone.history, "undo")).toEqual({ undo: [], redo: [] });
 	});
+});
+
+it("retains structural evidence only for actual undo and redo entries through cap and new branches", () => {
+	const source = (generation: number): HistoryEntry => ({
+		kind: "source",
+		frame: "home",
+		structuralGeneration: generation,
+		receipt: { owner: "owner", handle: String(generation), operation: { kind: "delete" } },
+	});
+	let history = record(emptyHistory(), source(1));
+	const undone = takeUndo(history, alive("home"));
+	if (!undone) throw new Error("missing source history");
+	expect(structuralGenerations(undone.history)).toEqual([1]);
+	history = record(undone.history, source(2));
+	expect(structuralGenerations(history)).toEqual([2]);
+	for (let generation = 3; generation <= HISTORY_LIMIT + 2; generation++)
+		history = record(history, source(generation));
+	expect(structuralGenerations(history)).toEqual(Array.from({ length: HISTORY_LIMIT }, (_, index) => index + 3));
 });

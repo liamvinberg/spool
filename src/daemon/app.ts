@@ -2287,6 +2287,16 @@ export function createDaemonApp({
 						occurrence: z.string(),
 						invocation: z.string(),
 						provenance: z.string().optional(),
+						structure: z
+							.object({
+								parent: z.string(),
+								source: z
+									.object({ site: z.string(), chain: z.array(z.string()).readonly() })
+									.strict()
+									.optional(),
+							})
+							.strict()
+							.optional(),
 						field: z.string().optional(),
 						absent: z.boolean().optional(),
 						value: z.string().max(100_000),
@@ -2306,6 +2316,7 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("describe"),
+								operation,
 								frame: z.string(),
 								original: occurrence,
 								inventories: z.array(inventory),
@@ -2394,7 +2405,15 @@ export function createDaemonApp({
 						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
 						return c.json({ ok: true });
 					case "describe":
-						return c.json(await sourceOwner.describe(project.root, body.frame, body.original, body.inventories));
+						return c.json(
+							await sourceOwner.describe(
+								project.root,
+								body.frame,
+								body.original,
+								body.inventories,
+								body.operation,
+							),
+						);
 					case "commit":
 						return c.json(
 							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, body.change),

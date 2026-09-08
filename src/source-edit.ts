@@ -1,5 +1,5 @@
 import type { SourcePropertyExpectation, SourcePropertyValue } from "./source-property";
-import type { SourceStructuralExpectation } from "./source-structure";
+import type { SourceStructuralExpectation, SourceStructuralParent } from "./source-structure";
 
 /** Purpose is captured before reading source and retained through completion and recovery. */
 export type SourceOperation =
@@ -21,6 +21,7 @@ export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boo
 
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
+	structure?: { parent: string; source?: SourceStructuralParent | undefined } | undefined;
 	absent?: boolean | undefined;
 	field?: string | undefined;
 	publication: string;
@@ -42,7 +43,9 @@ export function sameSourceOccurrence(a: SourceOccurrence, b: SourceOccurrence): 
 		a.context === b.context &&
 		a.provenance === b.provenance &&
 		a.field === b.field &&
-		a.absent === b.absent
+		a.absent === b.absent &&
+		a.structure?.parent === b.structure?.parent &&
+		JSON.stringify(a.structure?.source) === JSON.stringify(b.structure?.source)
 	);
 }
 
@@ -65,13 +68,14 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	structure?: SourceStructuralExpectation;
 	operation: SourceOperation;
 	handle: string;
 	owner: string;
 	generation: number;
 	original: SourceOccurrence;
 	source: string;
-	role: "literal-child" | "literal-attribute" | "factory-literal";
+	role: "literal-child" | "literal-attribute" | "factory-literal" | "structural-unit";
 	cell?: string;
 	field?: string;
 	scope?: "definition" | "call-site";
@@ -90,6 +94,7 @@ export interface SourceReceipt {
 }
 
 export interface RetainedValues {
+	structure?: import("./source-structure").SourceStructureState;
 	childValues?: Record<string, string | readonly string[] | null>;
 	attributes?: Record<string, Record<string, { cell: string; absent: boolean }>>;
 	stamps?: Record<string, string>;

@@ -1217,7 +1217,9 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 	}
 	sources.assertEntry(current);
 	if (operation.kind === "delete" || operation.kind === "reorder")
-		throw new Error("factory structure needs an authored removal/reorder proof; removing a clone input can throw");
+		throw new StructuralShapeRefusal(
+			"factory structure needs an authored removal/reorder proof; removing a clone input can throw",
+		);
 	if (operation.kind === "asset") throw new Error("factory assets need an imported-value source proof");
 	let field =
 		operation.kind === "text" ? "children" : operation.kind === "attribute" ? operation.attribute : "className";
@@ -1351,6 +1353,9 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 	};
 }
 
+/** Ancestry is proved, but this operation needs a structural unit derivation. */
+export class StructuralShapeRefusal extends Error {}
+
 export function sourceRead(
 	sources: Sources,
 	selection: Selection,
@@ -1456,11 +1461,11 @@ export function sourceRead(
 		}
 		const parent = site.ancestors.at(-1);
 		if (parent?.type !== "JSXElement" && parent?.type !== "JSXFragment")
-			throw new Error("not a complete authored JSX child; generated rows are refused");
+			throw new StructuralShapeRefusal("not a complete authored JSX child; generated rows are refused");
 		if (operation.kind === "reorder") {
 			const children = parent.children.filter((n) => n.type !== "JSXText" || n.value.trim() !== "");
 			if (children.length < 2 || children.some((n) => n.type !== "JSXElement"))
-				throw new Error("only complete authored siblings can reorder");
+				throw new StructuralShapeRefusal("only complete authored siblings can reorder");
 		}
 		expected = site.unit.text.slice(site.node.start!, site.node.end!);
 		slot = "child";

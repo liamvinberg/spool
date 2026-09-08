@@ -3,6 +3,7 @@ import type { SpanPatch } from "./hand-write";
 import { readInput, type SourceInput, sameInput } from "./retained-compile";
 
 interface Step {
+	order: number;
 	id: symbol;
 	inverseOf: symbol | undefined;
 	before: SourceInput;
@@ -10,8 +11,21 @@ interface Step {
 	edits: readonly ExecutedEdit[] | null;
 }
 
+function canceledSteps(route: readonly Step[]): Set<symbol> {
+	const active = new Set<symbol>();
+	const canceled = new Set<symbol>();
+	for (const step of route) {
+		if (step.inverseOf && active.delete(step.inverseOf)) {
+			canceled.add(step.inverseOf);
+			canceled.add(step.id);
+		} else active.add(step.id);
+	}
+	return canceled;
+}
+
 /** Only acknowledged, observed operations bridge two source identities. */
 export function createSourceJournal() {
+	let order = 0;
 	const files = new Map<string, { current: SourceInput; steps: Step[] }>();
 	function observe(file: string): SourceInput {
 		const current = readInput(file);
@@ -39,23 +53,37 @@ export function createSourceJournal() {
 			path(file, original);
 			return observe(file);
 		},
+		/** Exact acknowledged snapshots let effect readers detect transient competing declarations. */
+		changes(
+			file: string,
+			original: SourceInput,
+		): readonly { order: number; before: SourceInput; after: SourceInput; canceled: boolean }[] {
+			const route = path(file, original);
+			const canceled = canceledSteps(route);
+			return route.map((step) => ({
+				order: step.order,
+				before: step.before,
+				after: step.after,
+				canceled: canceled.has(step.id),
+			}));
+		},
 		transform(file: string, original: SourceInput, patches: readonly SpanPatch[]): SpanPatch[] {
 			let result = patches.map((patch) => ({ ...patch }));
+			const boundaries = patches.map(() => new Map<symbol, "before" | "after">());
 			const route = path(file, original);
-			const active = new Set<symbol>();
-			const canceled = new Set<symbol>();
+			const canceled = canceledSteps(route);
 			for (const step of route) {
-				if (step.inverseOf && active.delete(step.inverseOf)) {
-					canceled.add(step.inverseOf);
-					canceled.add(step.id);
-				} else active.add(step.id);
-			}
-			for (const step of route) {
-				result = result.map((patch) => {
+				result = result.map((patch, index) => {
 					let shift = 0;
 					let length = patch.end - patch.start;
 					for (const edit of step.edits ?? []) {
-						// Shared boundaries are ambiguous for insertion and are intentionally refused.
+						const boundary = step.inverseOf ? boundaries[index]!.get(step.inverseOf) : undefined;
+						const restoresBoundary =
+							patch.start === patch.end &&
+							boundary &&
+							(boundary === "before" ? edit.start === patch.start : edit.end === patch.start);
+						const canceledEdge = canceled.has(step.id) && (edit.start === patch.end || edit.end === patch.start);
+						// An unpaired operation at an insertion boundary is ambiguous.
 						if (
 							edit.start <= patch.end &&
 							edit.end >= patch.start &&
@@ -65,11 +93,18 @@ export function createSourceJournal() {
 							// Only a registered hand operation and its actual inverse may
 							// temporarily cover this exact literal. Intervening agent touches
 							// still refuse, even when they happen to restore the same bytes.
-							if (canceled.has(step.id) && edit.start === patch.start && edit.end === patch.end)
+							if (restoresBoundary) boundaries[index]!.delete(step.inverseOf!);
+							else if (canceledEdge && edit.start < edit.end && patch.start === patch.end)
+								// Keep which side of this removed neighbor owned the empty insertion.
+								boundaries[index]!.set(step.id, edit.start === patch.start ? "before" : "after");
+							else if (canceledEdge && patch.start < patch.end) {
+								// The paired insertion moves this intact span; its inverse moves it back.
+							} else if (canceled.has(step.id) && edit.start === patch.start && edit.end === patch.end)
 								length = edit.text.length;
 							else throw new Error("another recorded operation touched these words");
 						}
-						if (edit.end <= patch.start) shift += edit.text.length - (edit.end - edit.start);
+						if (edit.end <= patch.start && !(restoresBoundary && boundary === "before"))
+							shift += edit.text.length - (edit.end - edit.start);
 					}
 					return { ...patch, start: patch.start + shift, end: patch.start + shift + length };
 				});
@@ -87,7 +122,7 @@ export function createSourceJournal() {
 			if (!held || !sameInput(held.current, before))
 				throw new Error("source observation was lost before replacement");
 			const id = Symbol();
-			held.steps.push({ id, inverseOf, before, after, edits });
+			held.steps.push({ order: ++order, id, inverseOf, before, after, edits });
 			held.current = after;
 			// Bounded transient evidence. A missing original record always refuses.
 			if (held.steps.length > 1024) held.steps.shift();
