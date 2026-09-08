@@ -10,6 +10,7 @@ import type { CompiledTheme } from "../api";
 import type { Compiler } from "./properties-compile";
 import { BASE, type Scope, scopedClass, scopeKey } from "./properties-scope";
 import { PropertySections, type View } from "./properties-sections";
+import type { PropertyControls } from "./property-controls";
 
 /** These surface tests verify displayed values and requested candidates.
  * Appearance changes carry typed source requests; planner/native tests prove their effects.
@@ -407,6 +408,32 @@ it("greys every row on a literal no hand may write", async () => {
 	expect(rowNames(rail, "padding")).toEqual(["padding"]);
 });
 
+it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "background-image"])(
+	"carries the source's own refusal on the generic %s control, not a session's silence",
+	async (property) => {
+		const rail = await mount("opacity-75 border-2", BASE, undefined, async () => ({
+			reason: "className is an expression",
+		}));
+		expect(rowOf(rail, property)?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
+		expect(rail.requests).toEqual([]);
+		expect(rail.legacy).toEqual([]);
+	},
+);
+
+// The write is where a refusal is answered, so the request stays reachable.
+it("still takes a refused generic request, which is what reaches the agent", async () => {
+	const rail = await mount("opacity-75", BASE, undefined, async () => ({ reason: "className is an expression" }));
+	await type(rail, "opacity", "50");
+	expect(rail.requests).toEqual([{ property: "opacity", value: { kind: "binding", tokens: ["opacity-50"] } }]);
+});
+
+it("says why an optional property would be refused before it is added", async () => {
+	const rail = await mount("", BASE, undefined, async () => ({ reason: "className is an expression" }));
+	const add = rail.host.querySelector<HTMLElement>("[data-add-property]");
+	expect(add?.getAttribute("title")).toBe("className is an expression");
+	expect(rail.requests).toEqual([]);
+});
+
 it("sends appearance values to source operations without falling through to the legacy class writer", async () => {
 	const rail = await mount("opacity-75 text-thread border-2");
 	await type(rail, "opacity", "50");
@@ -454,7 +481,12 @@ interface Rail {
 	scoped: () => string;
 }
 
-async function mount(className: string, scope: Scope = BASE, element?: RowElement): Promise<Rail> {
+async function mount(
+	className: string,
+	scope: Scope = BASE,
+	element?: RowElement,
+	describe?: PropertyControls["describe"],
+): Promise<Rail> {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -475,21 +507,27 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 			: {
 					identity: className,
 					// Surface fixture readings are supplied evidence, not source admission.
-					describe: async (property) => {
-						const reading = colourOf(scopedClass(className, scope), property === "color" ? "text" : "bg", THEME);
-						const token = THEME.colour.find((token) => token.name === reading.name);
-						return {
-							reading: {
-								tokens: reading.token ? [reading.token] : [],
-								binding: token
-									? { kind: "reference", name: `--color-${token.name}`, value: token.value }
-									: reading.token
-										? { kind: "custom" }
-										: { kind: "page" },
-								native: token?.value ?? reading.paint ?? "transparent",
-							},
-						};
-					},
+					describe:
+						describe ??
+						(async (property) => {
+							const reading = colourOf(
+								scopedClass(className, scope),
+								property === "color" ? "text" : "bg",
+								THEME,
+							);
+							const token = THEME.colour.find((token) => token.name === reading.name);
+							return {
+								reading: {
+									tokens: reading.token ? [reading.token] : [],
+									binding: token
+										? { kind: "reference", name: `--color-${token.name}`, value: token.value }
+										: reading.token
+											? { kind: "custom" }
+											: { kind: "page" },
+									native: token?.value ?? reading.paint ?? "transparent",
+								},
+							};
+						}),
 					begin: () => {},
 					preview: (property, value) => {
 						previews.push({ property, value });

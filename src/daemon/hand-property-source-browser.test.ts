@@ -279,7 +279,9 @@ it("edits opacity through the actual Properties control with preview, one save a
 	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
 });
 
-it("retains the latest typed request when a held original computed-class read is refused", async () => {
+it("retains the latest typed request when a held original computed-class read is refused", {
+	timeout: 120_000,
+}, async () => {
 	let release = () => {};
 	const held = new Promise<void>((resolve) => {
 		release = resolve;
@@ -317,6 +319,39 @@ it("retains the latest typed request when a held original computed-class read is
 	const composer = f.page.locator("[data-agent-rail] textarea");
 	await expect.poll(() => composer.inputValue()).toContain("opacity-60");
 	expect(await composer.inputValue()).toContain("#subject");
+	expect(f.writes).toEqual([]);
+	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
+});
+
+// A control the file cannot take says the source's own words for it, and the
+// optional additions it offers are named by that same description.
+it("says the source's own property refusal on the generic controls", { timeout: 120_000 }, async () => {
+	let refusal = "";
+	const f = await originCanvas(
+		{
+			"shared/button.tsx":
+				'export function Button(){return <button id="subject" className={"opacity-" + 75}>Hello</button>}',
+		},
+		'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/></main>}',
+		"#subject",
+		false,
+		async (page) => {
+			page.on("response", (response) => {
+				if (!response.url().endsWith("/source")) return;
+				const body = response.request().postDataJSON();
+				if (body?.action !== "describe" || body.operation?.kind !== "property") return;
+				void response.json().then((result) => {
+					if (!result.ok && typeof result.reason === "string") refusal = result.reason;
+				});
+			});
+		},
+	);
+	await f.select();
+	await expect.poll(() => refusal).not.toBe("");
+	await expect
+		.poll(() => f.page.locator('[data-properties-row="opacity"] > span').first().getAttribute("title"))
+		.toBe(refusal);
+	await expect.poll(() => f.page.locator("[data-add-property]").getAttribute("title")).toBe(refusal);
 	expect(f.writes).toEqual([]);
 	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
 });
