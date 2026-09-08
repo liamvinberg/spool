@@ -249,7 +249,8 @@ function LengthRow({
 			parsed === null
 				? null
 				: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
-		const next = stepLength(kind, from, measured, units, step);
+		const next = stepLength(kind, from, measured, units);
+		if (next === null) return;
 		write({ kind: "value", value: `${next.negative ? "-" : ""}${next.value}` });
 	};
 	return (
@@ -264,7 +265,7 @@ function LengthRow({
 				onCommit={(typed) => {
 					const text = typed.trim();
 					if (text === "") return write(null);
-					const next = parseTyped(kind, text, step);
+					const next = parseTyped(kind, text);
 					if (next !== null) write({ kind: "value", value: `${next.negative ? "-" : ""}${next.value}` });
 				}}
 				onStep={stepBy}
@@ -319,7 +320,7 @@ function BorderWidthRow({
 				faint={held.own === null}
 				changed={changed}
 				onCommit={(typed) => {
-					const next = parseTyped("px", typed.trim(), step);
+					const next = parseTyped("px", typed.trim());
 					if (next === null || next.value === "0") return write(null);
 					write({ kind: "value", value: next.value });
 				}}

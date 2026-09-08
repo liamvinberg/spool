@@ -50,13 +50,12 @@ it("takes a sign, a fraction, a unit and a bare count", async () => {
 	expect(rail.wrote()).toEqual([{ token: "-m-4" }]);
 
 	await type(rail, "width", "50%");
-	expect(rail.wrote()).toEqual([{ token: "w-1/2" }]);
+	expect(rail.wrote()).toEqual([{ token: "w-[50%]" }]);
 
 	await type(rail, "width", "347px");
 	expect(rail.wrote()).toEqual([{ token: "w-[347px]" }]);
 
-	// a percent that is not on the fraction table stays a bare number, which is
-	// what v4 takes: `opacity-37.5` compiles and `opacity-[37.5%]` is noise
+	// A bare percentage amount keeps its candidate spelling; an explicit unit stays custom.
 	await type(rail, "opacity", "37.5");
 	expect(rail.wrote()).toEqual([{ token: "opacity-37.5" }]);
 
@@ -64,7 +63,7 @@ it("takes a sign, a fraction, a unit and a bare count", async () => {
 	await type(await mount("absolute"), "z-index", "10");
 	const turned = await mount("rotate-6");
 	await type(turned, "rotate", "12deg");
-	expect(turned.wrote()).toEqual([{ token: "rotate-12" }]);
+	expect(turned.wrote()).toEqual([{ token: "rotate-[12deg]" }]);
 });
 
 it("reads the token in the box and what it measures beside it", async () => {
