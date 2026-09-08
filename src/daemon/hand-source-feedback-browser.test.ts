@@ -1,3 +1,4 @@
+import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { originCanvas } from "./hand-origin-browser-helpers";
 
@@ -5,8 +6,8 @@ const file = "shared/feedback.tsx";
 const source = 'export function Label(){return <h1 id="label">Before</h1>}';
 const consumer =
 	'import {Label} from "shared/feedback";export default function Frame(){return <main style={{padding:40}}><Label/><h2 id="unrelated">Before</h2></main>}';
-async function preview() {
-	const f = await originCanvas({ [file]: source }, consumer, "#label", true);
+async function preview(beforeLoad?: (page: Page) => Promise<void>) {
+	const f = await originCanvas({ [file]: source }, consumer, "#label", true, beforeLoad);
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await second.locator("#label").waitFor();
 	await f.page.evaluate(() => {
@@ -140,21 +141,59 @@ it.each(["Escape", "selection change"])(
 	"clears the post-save gesture outline immediately on %s",
 	{ timeout: 120000 },
 	async (action) => {
-		const f = await preview();
-		await f.save();
-		expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBe("");
-		if (action === "Escape") await f.page.keyboard.press("Escape");
-		else {
-			const box = await f.frame.locator("#unrelated").boundingBox();
-			if (!box) throw new Error("unrelated heading has no box");
-			await f.page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
-			await f.page.mouse.click(box.x + 8, box.y + box.height / 2);
-			await f.page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
-		}
-		await f.page.evaluate(
-			() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+		const f = await preview(async (page) => {
+			await page.addInitScript(() => {
+				const clears: boolean[] = [];
+				Reflect.set(window, "feedbackClears", clears);
+				addEventListener(
+					"message",
+					(event) => {
+						if (event.data?.spool === "source-request" && event.data.action === "clear-feedback")
+							clears.push(document.querySelector("#label")?.hasAttribute("data-spool-shared-use") ?? false);
+					},
+					{ capture: true },
+				);
+			});
+		});
+		await f.second.locator("#label").evaluate(() => Reflect.get(window, "feedbackClears").splice(0));
+		// A slow delivery acknowledgement must not make the test miss the real
+		// 450ms gesture. Hold that response until the actual highlight clears.
+		await f.page.route("**/source", async (route) => {
+			if (route.request().postDataJSON()?.action !== "delivered") return route.continue();
+			const response = await route.fetch();
+			await expect.poll(() => f.second.locator("#label").getAttribute("data-spool-shared-use")).toBeNull();
+			await route.fulfill({ response });
+		});
+		const delivered = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
 		);
-		expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBeNull();
+		const saving = f.save();
+		try {
+			await f.page.waitForFunction(() => Reflect.get(window, "feedbackInstalled").length === 1, undefined, {
+				timeout: 4000,
+			});
+			expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBe("");
+			if (action === "Escape") await f.page.keyboard.press("Escape");
+			else {
+				const box = await f.frame.locator("#unrelated").boundingBox();
+				if (!box) throw new Error("unrelated heading has no box");
+				await f.page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
+				await f.page.mouse.click(box.x + 8, box.y + box.height / 2);
+				await f.page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
+			}
+			await f.page.evaluate(
+				() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+			);
+			expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBeNull();
+			// The native action reached the runtime while the gesture was still on;
+			// its 450ms timeout cannot satisfy this immediate-clear assertion.
+			expect(await f.second.locator("#label").evaluate(() => Reflect.get(window, "feedbackClears"))).toEqual([true]);
+		} finally {
+			await saving;
+			expect((await delivered).ok()).toBe(true);
+		}
+		expect(f.bytes()[file]).toContain("After");
+		expect(f.writes).toEqual(["commit"]);
 	},
 );
 

@@ -3,15 +3,18 @@ import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import {
+	type SourceChange,
 	type SourceDescription,
 	type SourceInventory,
 	type SourceOccurrence,
+	type SourceOperation,
 	type SourcePublication,
 	type SourceRead,
 	type SourceReceipt,
 	type SourceResult,
 	type SourceUse,
 	sameSourceOccurrence,
+	sameSourceOperation,
 	type UseOutcome,
 } from "../source-edit";
 import type { ExecutedEdit } from "./bundled-editor";
@@ -33,10 +36,13 @@ import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from 
 import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
 import type { Target } from "./source-origins";
+import { applySourcePatches } from "./source-patches";
+import { retryTextSource } from "./source-retry";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
 interface OriginalRead {
+	retryFrom?: RetainedCompilation;
 	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
@@ -49,6 +55,7 @@ interface OriginalRead {
 	file: string;
 }
 interface Receipt {
+	purpose: SourceRead["operation"];
 	expected: SourcePublication["expected"];
 	required: RetainedCompilation;
 	cell: string;
@@ -59,7 +66,7 @@ interface Receipt {
 	frame: string;
 	file: string;
 	compilation: RetainedCompilation;
-	inverse: SpanPatch;
+	inverse: readonly SpanPatch[];
 	original: SourceOccurrence;
 	generation: number;
 	retired: boolean;
@@ -216,12 +223,21 @@ export function createSourceOwner(
 	function reason(error: unknown): string {
 		return error instanceof Error ? error.message : "the source operation could not finish";
 	}
+	async function currentCompilation(root: string, frame: string, compilation: RetainedCompilation) {
+		const inputs = new Map([...compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]));
+		const current = await compiler.compilePublication(root, frame, inputs, sequence, compilation.absent, compilation);
+		valid(root, current);
+		return current;
+	}
+
 	async function read(
 		root: string,
 		frame: string,
 		original: SourceOccurrence,
 		generation: number,
 		observer: string,
+		operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+		retry = false,
 	): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string }> {
 		try {
 			watch(root);
@@ -232,17 +248,30 @@ export function createSourceOwner(
 			const publication = compiler.publication(original.publication);
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the original source owner is no longer available");
-			const { compilation } = publication;
+			let { compilation } = publication;
 			if (readingCoverage !== (coverage.get(root) ?? 0))
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
-			const { cellKey, cell, target } = resolveTextSource(root, compilation, original, generation);
+			if (operation.kind !== "literal") throw new Error("this source operation has no admitted planner");
+			if (operation.field !== original.field)
+				throw new Error("the source purpose does not match the original field");
+			const retryFrom = retry ? compilation : undefined;
+			let resolved = resolveTextSource(root, compilation, original, generation);
+			if (retry) {
+				const current = await currentCompilation(root, frame, compilation);
+				if (readingCoverage !== (coverage.get(root) ?? 0))
+					throw new Error("source observation changed during retry");
+				resolved = retryTextSource(root, compilation, current, original, generation);
+				compilation = current;
+			}
+			const { cellKey, cell, target } = resolved;
 			const found = lookupFrame(root, frame);
 			if (found.kind !== "found") throw new Error("the original frame is no longer there");
 			const file = sourceTarget(root, cell.file, compilation.inputs).file;
 			const handle = randomUUID();
 			const read: SourceRead = {
+				operation,
 				handle,
 				owner,
 				original: { ...original },
@@ -257,6 +286,7 @@ export function createSourceOwner(
 				value: cell.value,
 			};
 			reads.set(handle, {
+				...(retryFrom ? { retryFrom } : {}),
 				coverage: readingCoverage,
 				root,
 				frame,
@@ -290,6 +320,7 @@ export function createSourceOwner(
 			valid(root, publication.compilation);
 			const { cellKey, cell, target } = resolveTextSource(root, publication.compilation, original, 0);
 			const read: SourceRead = {
+				operation: { kind: "literal", ...(cell.field ? { field: cell.field } : {}) },
 				handle: "",
 				owner,
 				generation: 0,
@@ -425,7 +456,7 @@ export function createSourceOwner(
 		held: OriginalRead,
 		next: string,
 		expected: SourcePublication["expected"],
-		executed?: SpanPatch,
+		executed?: readonly SpanPatch[],
 		inverseOf?: symbol,
 	): Promise<SourceResult> {
 		valid(held.root, held.history ?? held.compilation);
@@ -470,26 +501,30 @@ export function createSourceOwner(
 		const frozen = new Map([...held.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]));
 		// Source remains ordinary files. This final synchronous check and rename
 		// cannot exclude an uncoordinated process saving after the check.
+		const forward = applySourcePatches(before, executed ?? [spanBetween(next, before)]);
+		if (forward.text !== next) throw new Error("the source operation does not match its planned spans");
 		writeAtomic(held.file, next);
 		const after = readInput(held.file);
-		const forward = executed ?? spanBetween(next, before);
 		const operation = journal.record(
 			held.file,
 			input,
 			after,
-			[{ ...forward, before: before.slice(forward.start, forward.end) }],
+			forward.patches.map((patch) => ({ ...patch, before: before.slice(patch.start, patch.end) })),
 			inverseOf,
 		);
 		frozen.set(held.file, after);
 		for (const [file, input] of frozen) continuity.set(file, input);
 		const receipt: SourceReceipt = {
+			operation: held.read.operation,
 			owner,
 			handle: randomUUID(),
 			...(held.read.original.field ? { field: held.read.original.field } : {}),
 		};
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
+			purpose: held.read.operation,
 			expected: {
+				kind: "literal",
 				value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
 				absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
 			},
@@ -502,11 +537,7 @@ export function createSourceOwner(
 			frame: held.frame,
 			file: held.file,
 			compilation: saved,
-			inverse: {
-				start: forward.start,
-				end: forward.start + forward.text.length,
-				text: before.slice(forward.start, forward.end),
-			},
+			inverse: forward.inverse,
 			original: held.read.original,
 			generation: held.read.generation,
 			retired: false,
@@ -663,7 +694,7 @@ export function createSourceOwner(
 					owner,
 					frame: held.frame,
 					...(held.read.cell ? { cell: held.read.cell } : {}),
-					before: held.compilation.packet.id,
+					before: held.read.original.publication,
 					compatibleBefore,
 					packet: retained.packet,
 					generation: held.read.generation,
@@ -681,11 +712,12 @@ export function createSourceOwner(
 		handle: string,
 		generation: number,
 		original: SourceOccurrence,
-		ops: readonly HandOp[],
+		change: SourceChange,
 	): Promise<SourceResult> {
 		return ordered(root, async () => {
 			const held = reads.get(handle);
 			reads.delete(handle); // exactly one completion, including a failed or unknown attempt
+			let authenticated = false;
 			try {
 				if (
 					!held ||
@@ -698,13 +730,17 @@ export function createSourceOwner(
 				if (!observed || !sameSourceOccurrence(observed, held.read.original))
 					throw new Error("the original committed occurrence changed before saving");
 				valid(root, held.compilation);
-				if (ops.length !== 1 || ops.some((op) => op.kind !== "set-text" || op.source !== held.read.source))
+				if (held.retryFrom) {
+					const current = await currentCompilation(root, held.frame, held.compilation);
+					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
+				}
+				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");
+				authenticated = true;
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
-				const op = ops[0];
-				if (op?.kind !== "set-text") throw new Error("this read only authorizes text");
+				if (change.kind !== "literal") throw new Error("this read only authorizes literal values");
 				let patches: readonly SpanPatch[];
 				if (held.target?.syntax === "react-call")
 					patches = [
@@ -716,29 +752,49 @@ export function createSourceOwner(
 								field: held.target.attribute ?? "children",
 								value: held.read.value,
 							},
-							op.text,
+							change.text,
 						),
 					];
 				else {
 					const operation: HandOp = held.read.field
-						? { kind: "set-attribute", source: held.read.source, name: held.read.field, value: op.text }
-						: op;
+						? { kind: "set-attribute", source: held.read.source, name: held.read.field, value: change.text }
+						: { kind: "set-text", source: held.read.source, text: change.text };
 					const planned = planOps(source, [operation]);
 					if (!planned.ok) throw new Error(planned.refusal.says);
 					patches = planned.patches;
 				}
 				const input = held.compilation.inputs.get(held.file);
 				if (!input) throw new Error("the original source input is missing");
-				const patch = journal.transform(held.file, input, patches)[0];
-				if (!patch) throw new Error("the source patch is missing");
+				const transformed = journal.transform(held.file, input, patches);
+				if (transformed.length === 0) throw new Error("the source patch is missing");
 				return await publish(
 					held,
-					applySpan(journal.current(held.file, input).bytes.toString("utf8"), patch),
-					{ value: op.text, absent: false },
-					patch,
+					applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
+					{ kind: "literal", value: change.text, absent: false },
+					transformed,
 				);
 			} catch (error) {
-				return { ok: false, reason: reason(error) };
+				// Read-only conflict evidence uses the original authenticated owner. It
+				// neither revives this consumed read nor grants authority for a retry.
+				let current: SourceChange | undefined;
+				if (authenticated && held?.read.operation.kind === "literal") {
+					try {
+						valid(root, held.compilation);
+						const snapshot = await currentCompilation(root, held.frame, held.compilation);
+						const resolved = retryTextSource(
+							root,
+							held.retryFrom ?? held.compilation,
+							snapshot,
+							held.read.original,
+							generation,
+						);
+						if (held.coverage === (coverage.get(root) ?? 0))
+							current = { kind: "literal", text: resolved.cell.value };
+					} catch {
+						// Lost continuity or changed ancestry is not a checked current value.
+					}
+				}
+				return { ok: false, reason: reason(error), ...(current ? { current } : {}) };
 			}
 		});
 	}
@@ -746,7 +802,13 @@ export function createSourceOwner(
 		return ordered(root, async () => {
 			const held = receipts.get(receipt.handle);
 			try {
-				if (receipt.owner !== owner || !held || held.root !== root || held.retired)
+				if (
+					receipt.owner !== owner ||
+					!held ||
+					held.root !== root ||
+					held.retired ||
+					!sameSourceOperation(receipt.operation, held.purpose)
+				)
 					throw new Error("this source undo is no longer available");
 
 				valid(root, held.required);
@@ -802,8 +864,8 @@ export function createSourceOwner(
 				if (source === undefined) throw new Error("the inverse source read is incomplete");
 				const input = held.compilation.inputs.get(held.file);
 				if (!input) throw new Error("the original input is missing");
-				const transformed = journal.transform(held.file, input, [held.inverse])[0];
-				if (!transformed) throw new Error("the inverse source span is missing");
+				const transformed = journal.transform(held.file, input, held.inverse);
+				if (transformed.length === 0) throw new Error("the inverse source span is missing");
 				const cell = held.compilation.cells[held.cell];
 				if (!cell) throw new Error("the original source role changed");
 				return await publish(
@@ -817,6 +879,7 @@ export function createSourceOwner(
 						compilation,
 						history: held.required,
 						read: {
+							operation: held.purpose,
 							handle: "",
 							owner,
 							original,
@@ -828,7 +891,7 @@ export function createSourceOwner(
 							value: cell.value,
 						},
 					},
-					applySpan(journal.current(held.file, input).bytes.toString("utf8"), transformed),
+					applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
 					held.expected,
 					transformed,
 					held.operation,

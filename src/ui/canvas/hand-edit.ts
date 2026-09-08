@@ -2,6 +2,7 @@ import type { SourceRead } from "../../source-edit";
 import type { HandOp } from "../api";
 import type { Point } from "./camera";
 import type { PickedSelection } from "./overlays";
+import type { SourceIntent } from "./source-intent";
 
 /**
  * The two canvas gestures on the write lane (#255), as decisions over data.
@@ -59,6 +60,7 @@ export interface HandEdit {
 	/** the hash of the file the gate answered against */
 	fingerprint: string;
 	read?: SourceRead;
+	intent?: SourceIntent;
 	phase: "asking" | "open";
 	start: string;
 }

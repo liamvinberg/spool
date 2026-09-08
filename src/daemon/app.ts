@@ -2253,6 +2253,33 @@ export function createDaemonApp({
 		.post(
 			"/api/p/:project/source",
 			validator("json", (value, c) => {
+				const operation = z.discriminatedUnion("kind", [
+					z
+						.object({ kind: z.literal("literal"), field: z.string().optional() })
+						.strict()
+						.transform(({ kind, field }) => ({ kind, ...(field === undefined ? {} : { field }) })),
+					z.object({ kind: z.literal("property"), property: z.string(), scope: z.string() }).strict(),
+					z.object({ kind: z.literal("delete") }).strict(),
+				]);
+				const change = z.discriminatedUnion("kind", [
+					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
+					z.object({ kind: z.literal("delete") }).strict(),
+					z
+						.object({
+							kind: z.literal("property"),
+							value: z.discriminatedUnion("kind", [
+								z
+									.object({
+										kind: z.literal("binding"),
+										tokens: z.array(z.string().max(10_000)).max(100).readonly(),
+									})
+									.strict(),
+								z.object({ kind: z.literal("custom"), value: z.string().max(10_000) }).strict(),
+								z.object({ kind: z.literal("remove") }).strict(),
+							]),
+						})
+						.strict(),
+				]);
 				const occurrence = z
 					.object({
 						publication: z.string(),
@@ -2287,6 +2314,8 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("read"),
+								operation,
+								retry: z.boolean().optional(),
 								observer: z.string(),
 								frame: z.string(),
 								original: occurrence,
@@ -2299,15 +2328,14 @@ export function createDaemonApp({
 								handle: z.string(),
 								generation: z.number().int().positive(),
 								original: occurrence,
-								text: z.string().max(100_000),
-								source: z.string(),
+								change,
 							})
 							.strict(),
 						z
 							.object({
 								action: z.literal("inverse"),
 								receipt: z
-									.object({ handle: z.string(), owner: z.string(), field: z.string().optional() })
+									.object({ handle: z.string(), owner: z.string(), operation, field: z.string().optional() })
 									.strict(),
 								inventories: z.array(inventory).optional(),
 							})
@@ -2350,7 +2378,15 @@ export function createDaemonApp({
 				switch (body.action) {
 					case "read":
 						return c.json(
-							await sourceOwner.read(project.root, body.frame, body.original, body.generation, body.observer),
+							await sourceOwner.read(
+								project.root,
+								body.frame,
+								body.original,
+								body.generation,
+								body.observer,
+								body.operation,
+								body.retry,
+							),
 						);
 					case "reach":
 						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories));
@@ -2361,9 +2397,7 @@ export function createDaemonApp({
 						return c.json(await sourceOwner.describe(project.root, body.frame, body.original, body.inventories));
 					case "commit":
 						return c.json(
-							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, [
-								{ kind: "set-text", source: body.source, text: body.text },
-							]),
+							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, body.change),
 						);
 					case "inverse":
 						return c.json(await sourceOwner.inverse(project.root, body.receipt, body.inventories));
@@ -3293,19 +3327,21 @@ export function createDaemonApp({
 		announceUiBuild: () => {
 			emitAppEvent({ kind: "ui" });
 		},
-		close: () => {
+		close: async () => {
 			for (const stop of playerWarmers.values()) stop();
 			playerWarmers.clear();
-			void playerCompiler.close();
+			const compiled = playerCompiler.close();
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();
-			for (const engine of engines.values()) engine.close?.();
+			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			sourceOwner.close();
 			hub.close();
 			updateChecker.stop();
-			void shots.close();
-			void goReader.close();
+			const closed = await Promise.allSettled([compiled, ...stoppedEngines, shots.close(), goReader.close()]);
+			const errors: unknown[] = [];
+			for (const result of closed) if (result.status === "rejected") errors.push(result.reason);
+			if (errors.length > 0) throw new AggregateError(errors, "Daemon resources could not close");
 		},
 	};
 }

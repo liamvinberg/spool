@@ -4,12 +4,13 @@ import {
 	combineUseOutcomes,
 	type SourceInventory,
 	type SourceOccurrence,
+	type SourceOperation,
 	type SourcePublication,
 	type SourceRead,
 	type SourceUse,
 	type UseOutcome,
 } from "../../source-edit";
-import { describeSource, respondSourceObservation, sourceReach, subscribeSse } from "../api";
+import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 
 interface OutcomeGroup {
@@ -172,11 +173,15 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		[project, request],
 	);
 	const inventory = useCallback(
-		async (field?: string): Promise<SourceInventory[]> => {
+		async (
+			field?: string,
+			operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+		): Promise<SourceInventory[]> => {
 			return await Promise.all(
 				[...iframes.current].map(async ([name, iframe]): Promise<SourceInventory> => {
 					const inventory = await request<Omit<SourceInventory, "frame">>(name, {
 						action: "inventory",
+						operation,
 						field: field,
 					});
 					const rect = iframe.getBoundingClientRect();
@@ -197,7 +202,12 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		async (frame: string, selector: string, field?: string) => {
 			const version = ++descriptionVersion.current;
 			setLiveFrames(new Set(iframes.current.keys()));
-			const original = await request<SourceOccurrence>(frame, { action: "inspect", selector, field });
+			const original = await request<SourceOccurrence>(frame, {
+				action: "inspect",
+				selector,
+				field,
+				operation: { kind: "literal", ...(field ? { field } : {}) },
+			});
 			const description = original
 				? await describeSource(project, frame, original, await inventory(original.field))
 				: undefined;
@@ -211,11 +221,49 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	return {
 		describeField: useCallback(
 			async (frame: string, selector: string, field: string) => {
-				const original = await request<SourceOccurrence>(frame, { action: "inspect", selector, field });
+				const original = await request<SourceOccurrence>(frame, {
+					action: "inspect",
+					selector,
+					field,
+					operation: { kind: "literal", ...(field ? { field } : {}) },
+				});
 				return original ? describeSource(project, frame, original, []) : undefined;
 			},
 			[project, request],
 		),
+		verifyReload: useCallback(
+			async (frame: string, selector: string, field?: string) => {
+				const original = await request<SourceOccurrence>(frame, {
+					action: "inspect",
+					selector,
+					field,
+					operation: { kind: "literal", ...(field ? { field } : {}) },
+				});
+				if (!original || !(await sourceIsCurrent(project, original.publication))) return;
+				const description = await describeSource(project, frame, original, await inventory(field));
+				if (!description?.reach) return;
+				const outcomes = await Promise.all(
+					description.reach.uses.map(
+						async (use): Promise<UseOutcome> => ({
+							...((await request<UseOutcome>(use.frame, {
+								action: "verify",
+								original: use.original,
+								expected: { kind: "literal", value: description.value, absent: original.absent ?? false },
+							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
+							frame: use.frame,
+						}),
+					),
+				);
+				outcomes.push(...(description.reach.unverified ?? []));
+				for (const name of description.reach.unknown)
+					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
+				for (const name of description.reach.unmounted)
+					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unmounted" });
+				return { description, outcome: combineUseOutcomes(outcomes, original.occurrence) };
+			},
+			[project, request, inventory],
+		),
+
 		active,
 		liveFrames,
 		releaseDescription: useCallback(() => {
@@ -247,7 +295,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		inventory,
 		prepare: useCallback(
 			async (frame: string, read: SourceRead): Promise<SourceRead> => {
-				const inventories = await inventory(read.original.field);
+				const inventories = await inventory(read.original.field, read.operation);
 				const result = await sourceReach(project, read.handle, inventories);
 				if (!result?.ok) return read;
 				const amended = result.read;
@@ -286,10 +334,16 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[request],
 		),
 		read: useCallback(
-			(frame: string, selector: string, generation: number, field?: string) => {
+			(
+				frame: string,
+				selector: string,
+				generation: number,
+				field?: string,
+				operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+			) => {
 				setActive({ frame, selector, generation, field });
 				outcomes.current = undefined;
-				return request<SourceOccurrence>(frame, { action: "read", selector, generation, field });
+				return request<SourceOccurrence>(frame, { action: "read", selector, generation, field, operation });
 			},
 			[request],
 		),

@@ -24,9 +24,11 @@ import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type {
+	SourceChange,
 	SourceDescription,
 	SourceInventory,
 	SourceOccurrence,
+	SourceOperation,
 	SourceRead,
 	SourceReceipt,
 	SourceResult,
@@ -1542,11 +1544,13 @@ export async function readSource(
 	original: SourceOccurrence,
 	generation: number,
 	observer: string,
+	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
+	retry = false,
 ): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "read", frame, original, generation, observer },
+			json: { action: "read", frame, original, generation, observer, operation, retry },
 		});
 		return res.ok
 			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })
@@ -1573,7 +1577,11 @@ export async function sourceReach(
 	}
 }
 
-export async function commitSource(project: string, read: SourceRead, text: string): Promise<SourceResult | undefined> {
+export async function commitSource(
+	project: string,
+	read: SourceRead,
+	change: SourceChange,
+): Promise<SourceResult | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
@@ -1582,8 +1590,7 @@ export async function commitSource(project: string, read: SourceRead, text: stri
 				handle: read.handle,
 				generation: read.generation,
 				original: read.original,
-				source: read.source,
-				text,
+				change,
 			},
 		});
 		return res.ok ? ((await res.json()) as SourceResult) : undefined;

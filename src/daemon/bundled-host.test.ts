@@ -8,6 +8,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { makeTempDir, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import type { AgentEvent } from "./agent-events";
+import { serveDaemon } from "./server";
 
 it("starts one lazy real host, stops on host failure and reopens the exact saved session", {
 	timeout: 30_000,
@@ -72,6 +73,46 @@ it("starts one lazy real host, stops on host failure and reopens the exact saved
 	expect(calls[2]).toContain("selection one");
 	expect(calls[2]).toContain("selection two");
 	expect(calls[2]).toContain("selection three");
+});
+
+it("finishes the bundled state writer before daemon shutdown releases its directory", { timeout: 20_000 }, async () => {
+	const directory = makeTempDir();
+	const children: ChildProcess[] = [];
+	const client = new BundledHostClient(join(directory, "bundled"), (state) => {
+		const child = fork(fileURLToPath(new URL("./fixtures/bundled-provider-host.ts", import.meta.url)), [], {
+			env: bundledEnvironment(state),
+			execArgv: ["--import", import.meta.resolve("tsx")],
+			stdio: ["ignore", "ignore", "ignore", "ipc"],
+		});
+		children.push(child);
+		return child;
+	});
+	onTestFinished(async () => {
+		for (const child of children) {
+			if (child.exitCode !== null || child.signalCode !== null) continue;
+			const exited = once(child, "exit");
+			child.kill();
+			await exited;
+		}
+	});
+	const engine = createSpoolEngine(directory, client);
+	const daemon = await serveDaemon({
+		spoolDir: directory,
+		version: "test",
+		host: "127.0.0.1",
+		port: 0,
+		history: false,
+		agentEngines: [engine],
+	});
+	onTestFinished(() => daemon.close());
+	// Closing while the lazy account request boots must also await its state writer.
+	const account = engine.account(makeTempDir()).catch((error: unknown) => error);
+	await daemon.close();
+	expect(children).toHaveLength(1);
+	expect(children[0]?.exitCode).toBe(0);
+	await account;
+	await expect(engine.account(directory)).rejects.toThrow("The bundled engine is closed.");
+	expect(children).toHaveLength(1);
 });
 
 it("does not pass ambient accounts, executable settings or provider variables to the host", {

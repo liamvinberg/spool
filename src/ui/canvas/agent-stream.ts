@@ -177,7 +177,7 @@ export interface AgentTurn {
 	 */
 	readonly draft: string;
 	/** the composer saying what it holds now, which is how a draft outlives the tab (#234) */
-	readonly onDraft: (text: string) => void;
+	readonly onDraft: (text: string, thread?: string) => void;
 	/**
 	 * The usage window, which is the one thing here that outlives a turn (#122).
 	 *
@@ -1421,8 +1421,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			/** the words in the box that nobody has sent, as the picture last had them (#234) */
 			draft: here.draft,
 			onDraft: useCallback(
-				(text: string) => {
-					const thread = threads.current.get(openRef.current);
+				(text: string, named?: string) => {
+					const thread = threads.current.get(named ?? openRef.current);
 					if (thread === undefined || thread.draft === text) return;
 					thread.draft = text;
 					// on the throttle rather than at once, and it is the only thing here that is:

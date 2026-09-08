@@ -2,7 +2,7 @@ import { relative } from "node:path";
 import type { SourceOccurrence } from "../source-edit";
 import { realDesignDir } from "./design-path";
 import type { RetainedCompilation } from "./retained-compile";
-import { type Selection, Sources, sourceRead } from "./source-origins";
+import { type RetryLiteral, type Selection, Sources, sourceRead } from "./source-origins";
 
 /** Resolve the selected committed field against the original compiler snapshot. */
 export function resolveTextSource(
@@ -11,6 +11,7 @@ export function resolveTextSource(
 	original: SourceOccurrence,
 	generation: number,
 	inverseCell?: string,
+	retry?: RetryLiteral,
 ) {
 	if (
 		original.field &&
@@ -40,7 +41,7 @@ export function resolveTextSource(
 			sources,
 			{ ...selection, generation: String(generation) },
 			original.field ? { kind: "attribute", attribute: original.field } : { kind: "text" },
-			previous ? { source: previous.source, field: previous.field ?? "children" } : undefined,
+			previous ? { kind: "inverse", source: previous.source, field: previous.field ?? "children" } : retry,
 		);
 		for (const unit of sources.revisions.values())
 			if (!compilation.inputs.has(unit.file))
@@ -53,7 +54,18 @@ export function resolveTextSource(
 		cellKey = found[0];
 	}
 	const cell = compilation.cells[cellKey];
-	if (!cell || (cell.value !== original.value && inverseCell !== cellKey))
+	if (
+		!cell ||
+		(cell.value !== original.value &&
+			inverseCell !== cellKey &&
+			!(
+				retry &&
+				retry.source === cell.source &&
+				retry.field === (cell.field ?? "children") &&
+				retry.after === cell.value &&
+				retry.before === original.value
+			))
+	)
 		throw new Error("the selected words have no proven literal source");
 	return { cellKey, cell, target };
 }

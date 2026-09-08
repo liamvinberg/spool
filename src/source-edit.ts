@@ -1,3 +1,24 @@
+import type { SourcePropertyExpectation, SourcePropertyValue } from "./source-property";
+import type { SourceStructuralExpectation } from "./source-structure";
+
+/** Purpose is captured before reading source and retained through completion and recovery. */
+export type SourceOperation =
+	| { kind: "literal"; field?: string }
+	| { kind: "property"; property: string; scope: string }
+	| { kind: "delete" };
+
+/** Requested value is separate from the original source operation's authority. */
+export type SourceChange =
+	| { kind: "literal"; text: string }
+	| { kind: "property"; value: SourcePropertyValue }
+	| { kind: "delete" };
+
+export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boolean {
+	if (a.kind === "literal") return b.kind === "literal" && a.field === b.field;
+	if (a.kind === "property") return b.kind === "property" && a.property === b.property && a.scope === b.scope;
+	return b.kind === "delete";
+}
+
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
 	absent?: boolean | undefined;
@@ -44,6 +65,7 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	operation: SourceOperation;
 	handle: string;
 	owner: string;
 	generation: number;
@@ -61,6 +83,7 @@ export interface SourceRead {
 export type SourceDescription = Omit<SourceRead, "handle" | "owner" | "generation">;
 
 export interface SourceReceipt {
+	operation: SourceOperation;
 	field?: string | undefined;
 	handle: string;
 	owner: string;
@@ -81,7 +104,10 @@ export interface RetainedValues {
 }
 
 export interface SourcePublication {
-	expected: { value: string; absent: boolean };
+	expected:
+		| { kind: "literal"; value: string; absent: boolean }
+		| SourcePropertyExpectation
+		| SourceStructuralExpectation;
 	admission: { token: string; expires: number };
 	owner: string;
 	frame: string;
@@ -116,7 +142,7 @@ export type SourceResult =
 			receipt?: SourceReceipt;
 			reason?: string;
 	  }
-	| { ok: false; reason: string };
+	| { ok: false; reason: string; current?: SourceChange };
 
 /** A successful occurrence cannot conceal another occurrence's delivery result. */
 export function combineUseOutcomes(uses: UseOutcome[], occurrence = ""): UseOutcome {

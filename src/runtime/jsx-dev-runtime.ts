@@ -74,6 +74,7 @@ import {
 	type RetainedValues,
 	type SourceInventory,
 	type SourceOccurrence,
+	type SourceOperation,
 	type SourcePublication,
 	sameSourceOccurrence,
 	type UseOutcome,
@@ -271,7 +272,12 @@ function sourceContext(element: Element): string {
 	}
 	return JSON.stringify(path);
 }
-function inspectSource(element: HTMLElement, field?: string): SourceOccurrence | undefined {
+function inspectSource(
+	element: HTMLElement,
+	field?: string,
+	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+): SourceOccurrence | undefined {
+	if (operation.kind !== "literal") return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
 	let origin = field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
@@ -398,12 +404,15 @@ function clearSourceFeedback(): void {
 	for (const element of document.querySelectorAll("[data-spool-shared-use]"))
 		element.removeAttribute("data-spool-shared-use");
 }
-function inventorySource(field?: string): Omit<SourceInventory, "frame"> {
+function inventorySource(
+	field?: string,
+	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+): Omit<SourceInventory, "frame"> {
 	const uses: SourceInventory["uses"] = [];
 	let unknown = 0;
 	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-source]")) {
 		if (field === undefined && element.children.length > 0) continue;
-		const original = inspectSource(element, field);
+		const original = inspectSource(element, field, operation);
 		if (!original) {
 			if (field !== undefined || element.textContent) unknown++;
 			continue;
@@ -423,8 +432,10 @@ function inventorySource(field?: string): Omit<SourceInventory, "frame"> {
 	return { publication: sourcePacket?.id ?? "", uses, unknown };
 }
 function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolean {
-	clearSourceFeedback();
-	for (const previous of sharedPreviews.keys()) cancelSourceUses(previous);
+	// A field's owner disclosure and its pending preview have separate lives.
+	// A late preparation must not erase the already-open disclosure.
+	clearGestureFeedback();
+	for (const previous of sharedPreviews.keys()) cancelSourceUses(previous, "prepare");
 	const prepared: PreviewedUse[] = [];
 	for (const original of uses) {
 		const element = [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
@@ -462,7 +473,7 @@ function ownsPreview(held: PreviewedUse): boolean {
 				!hasRenderedField(held.element, held.original.field, committedFiber(held.element)?.memoizedProps))
 	);
 }
-function cancelSourceUses(generation: number, feedback = true): void {
+function cancelSourceUses(generation: number, reason: "cancel" | "prepare" | "install" = "cancel"): void {
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
@@ -470,14 +481,20 @@ function cancelSourceUses(generation: number, feedback = true): void {
 		if (current && sameSourceOccurrence(current, use.original) && ownsPreview(use))
 			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
-	if (feedback) clearSourceFeedback();
+	if (reason === "cancel") clearSourceFeedback();
+	else if (reason === "prepare") clearGestureFeedback();
 }
-function sourceRead(element: HTMLElement, generation: number, field?: string): SourceOccurrence | undefined {
+function sourceRead(
+	element: HTMLElement,
+	generation: number,
+	field?: string,
+	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+): SourceOccurrence | undefined {
 	if (generation <= intent) return;
 	for (const old of leases.keys()) cancelSource(old);
 	intent = generation;
 	acceptedOutcome = undefined;
-	const original = inspectSource(element, field);
+	const original = inspectSource(element, field, operation);
 	if (!original || original.value !== renderedField(element, original.field)) return;
 	leases.set(generation, previewedUse(element, original));
 	return original;
@@ -535,40 +552,69 @@ interface AcceptedOutcome {
 	last: string;
 }
 let acceptedOutcome: AcceptedOutcome | undefined;
-function observedOutcome(held: AcceptedOutcome): UseOutcome {
-	const { publication, targets, failed } = held;
-	const expected = publication.expected;
-	return combineUseOutcomes(
-		targets.map(({ original, element }) => {
-			const observed = element ? renderedField(element, original.field) : undefined;
-			const matches = original.field
-				? !!element &&
-					(expected.absent
-						? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
-						: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
-							observed === expected.value)
-				: observed === expected.value;
-			const rendered = !element?.isConnected
-				? element && failed.has(element)
+function observedUse(
+	original: SourceOccurrence,
+	element: HTMLElement | undefined,
+	expected: SourcePublication["expected"],
+	failed: ReadonlySet<HTMLElement>,
+): UseOutcome {
+	if (expected.kind !== "literal")
+		return {
+			occurrence: original.occurrence,
+			installation: "installed",
+			rendered: "unverified",
+			reason: "this rendered source effect has no verifier",
+		};
+	const observed = element ? renderedField(element, original.field) : undefined;
+	const matches = original.field
+		? !!element &&
+			(expected.absent
+				? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
+				: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
+					observed === expected.value)
+		: observed === expected.value;
+	const rendered = !element?.isConnected
+		? element && failed.has(element)
+			? "failed"
+			: "unmounted"
+		: pendingIn(element)
+			? "pending"
+			: matches
+				? "verified"
+				: element && failed.has(element)
 					? "failed"
-					: "unmounted"
-				: pendingIn(element)
-					? "pending"
-					: matches
-						? "verified"
-						: element && failed.has(element)
-							? "failed"
-							: "mismatching";
-			return {
-				occurrence: original.occurrence,
-				installation: "installed",
-				rendered,
-				...(observed === undefined ? {} : { observed }),
-			};
-		}),
-		publication.original.occurrence,
+					: "mismatching";
+	return {
+		occurrence: original.occurrence,
+		installation: "installed",
+		rendered,
+		...(observed === undefined ? {} : { observed }),
+	};
+}
+function observedOutcome(held: AcceptedOutcome): UseOutcome {
+	return combineUseOutcomes(
+		held.targets.map(({ original, element }) =>
+			observedUse(original, element, held.publication.expected, held.failed),
+		),
+		held.publication.original.occurrence,
 	);
 }
+/** Read-only verification after an explicit reload; it never installs or previews. */
+function verifySource(original: SourceOccurrence, expected: SourcePublication["expected"]): UseOutcome {
+	const element = sourceElement(original);
+	if (
+		[...leases.values()].some((lease) => lease.element === element) ||
+		[...sharedPreviews.values()].some((uses) => uses.some((use) => use.element === element && use.previewed))
+	)
+		return {
+			occurrence: original.occurrence,
+			installation: "installed",
+			rendered: "unverified",
+			reason: "an edit still owns this preview",
+		};
+	return observedUse(original, element, expected, new Set());
+}
+
 function queueSourceOutcome(): void {
 	const held = acceptedOutcome;
 	if (!held?.ready) return;
@@ -682,7 +728,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
 	if (held && ownsPreview(held)) restoreField(held.element, held.original, held.children, held.restoreAttribute);
-	cancelSourceUses(publication.generation, false);
+	cancelSourceUses(publication.generation, "install");
 	feedbackTimer = setTimeout(clearGestureFeedback, 450);
 	leases.delete(publication.generation);
 	const observation: AcceptedOutcome = { publication, targets, failed: new Set(), ready: false, last: "" };
@@ -756,6 +802,7 @@ declare global {
 		__SPOOL_SOURCE__?: {
 			read: typeof sourceRead;
 			inspect: typeof inspectSource;
+			verify: typeof verifySource;
 			element: typeof sourceElement;
 			highlight: typeof highlightSource;
 			inventory: typeof inventorySource;
@@ -774,6 +821,7 @@ if (typeof window !== "undefined")
 	window.__SPOOL_SOURCE__ = {
 		read: sourceRead,
 		inspect: inspectSource,
+		verify: verifySource,
 		element: sourceElement,
 		highlight: highlightSource,
 		inventory: inventorySource,
