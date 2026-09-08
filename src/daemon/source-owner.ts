@@ -353,7 +353,7 @@ export function createSourceOwner(
 			if (operation.kind === "image" && retry)
 				throw new Error("read the current image binding before trying this replacement again");
 			const retryFrom = retry ? compilation : undefined;
-			if (retry && operation.kind !== "literal")
+			if (retry && operation.kind !== "literal" && operation.kind !== "property")
 				throw new Error("this source operation has no admitted retry planner");
 			let resolved = isPropertyOperation(operation)
 				? {
@@ -367,10 +367,13 @@ export function createSourceOwner(
 				const current = await currentCompilation(root, frame, compilation);
 				if (readingCoverage !== (coverage.get(root) ?? 0))
 					throw new Error("source observation changed during retry");
-				resolved = {
-					kind: "literal" as const,
-					...retryTextSource(root, compilation, current, original, generation),
-				};
+				resolved =
+					operation.kind === "property"
+						? {
+								kind: "property" as const,
+								...retryPropertySource(root, compilation, current, original, generation, operation),
+							}
+						: { kind: "literal" as const, ...retryTextSource(root, compilation, current, original, generation) };
 				compilation = current;
 			}
 			const { cellKey, cell, target } = resolved;
@@ -1216,6 +1219,9 @@ export function createSourceOwner(
 			held.read.original,
 			held.read.generation,
 			operation,
+			held.retryFrom && held.read.cell
+				? { kind: "retry", cell: held.read.cell, before: held.read.original.value, after: held.read.value }
+				: undefined,
 		);
 		const planned = await (async () => {
 			if (operation.kind === "property" && change.kind === "property")
@@ -1423,7 +1429,16 @@ export function createSourceOwner(
 				valid(root, held.compilation);
 				if (held.retryFrom) {
 					const current = await currentCompilation(root, held.frame, held.compilation);
-					retryTextSource(root, held.retryFrom, current, held.read.original, generation);
+					if (held.read.operation.kind === "property")
+						retryPropertySource(
+							root,
+							held.retryFrom,
+							current,
+							held.read.original,
+							generation,
+							held.read.operation,
+						);
+					else retryTextSource(root, held.retryFrom, current, held.read.original, generation);
 				}
 				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");
