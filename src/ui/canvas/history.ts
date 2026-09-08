@@ -26,7 +26,7 @@ import type { SourceIntent } from "./source-intent";
  * edits arrive over SSE and simply make stale entries skip, so nothing here
  * prunes the stacks in the background.
  *
- * Committed deletes stay out. The OS Trash owns restore, and the toast that
+ * Committed frame and page deletes stay out. The OS Trash owns restore, and the toast that
  * outranks this stack is the only undo a delete gets.
  */
 
@@ -103,6 +103,8 @@ export type HistoryEntry =
 			readonly kind: "source";
 			readonly frame: string;
 			readonly receipt: SourceReceipt;
+			/** Native evidence retention only; the receipt remains source authority. */
+			readonly structuralGeneration?: number;
 			readonly intent?: SourceIntent;
 	  }
 	| { readonly kind: "patch"; readonly frame: string; readonly patch: HeldPatch }
@@ -141,6 +143,17 @@ export type HistoryEntry =
 export interface History {
 	undo: readonly HistoryEntry[];
 	redo: readonly HistoryEntry[];
+}
+
+/** Only the existing stacks decide which structural observations may still serve an inverse. */
+export function structuralGenerations(history: History): number[] {
+	return [
+		...new Set(
+			[...history.undo, ...history.redo].flatMap((entry) =>
+				entry.kind === "source" && entry.structuralGeneration !== undefined ? [entry.structuralGeneration] : [],
+			),
+		),
+	];
 }
 
 /**

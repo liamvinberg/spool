@@ -31,3 +31,12 @@ it.each([
 ])("preserves executed member/call semantics and lexical bindings: %s", (source) => {
 	expect(evaluate(source, true)).toEqual(evaluate(source, false));
 });
+
+it.each([
+	'function cleanup(){return()=>"cleaned"} function run(){return cleanup()()}',
+	'function run(){return["kept"]}',
+	"function run(){const value={kept:true};return{...value}}",
+	"function run(){return(new Proxy({kept:true},{})).kept}",
+])("preserves return token boundaries without authored whitespace: %s", (source) => {
+	expect(evaluate(source, true)).toEqual(evaluate(source, false));
+});

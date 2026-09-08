@@ -1,7 +1,20 @@
+import type { ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+import type { SourceStructuralExpectation } from "../source-structure";
 import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
 import { decodeImage, observeImage } from "./source-image";
 import { installObserver } from "./source-observer";
+import { changedStructure, compatibleStructure, structuralList, structuralOptional } from "./source-structure";
+import { createStructuralBaselines } from "./source-structure-baselines";
+import {
+	captureStructure,
+	observeStructuralParent,
+	refreshStructuralNative,
+	retainVerifiedRestorations,
+	type StructuralBasis,
+	verifyReloadedStructure,
+	verifyStructure,
+} from "./source-structure-verification";
 import { installValueFlow } from "./source-values";
 
 /**
@@ -98,6 +111,8 @@ interface Fiber {
 	sibling: Fiber | null;
 }
 let sourcePacket: RetainedValues | undefined;
+let initialStructure: RetainedValues["structure"];
+let sourceWasInstalled = false;
 let initialStamps: Record<string, string> = {};
 let sequence = 0;
 let call = 0;
@@ -107,6 +122,10 @@ const revoked = new Set<string>();
 function revokeSource(publication: SourcePublication): void {
 	revoked.add(publication.packet.id);
 	if (acceptedOutcome?.publication.packet.id === publication.packet.id) acceptedOutcome = undefined;
+	if (publication.expected.kind === "structure") {
+		sharedPreviews.delete(publication.generation);
+		structuralBases.cancel(publication.generation);
+	}
 	const held = leases.get(publication.generation);
 	if (held && sameSourceOccurrence(held.original, publication.original)) cancelSource(publication.generation);
 }
@@ -182,7 +201,10 @@ const subscription = (owner: string) => {
 
 export function configureSource(packet: RetainedValues): void {
 	acceptedOutcome = undefined;
+	structuralBases.clear();
 	initialStamps = packet.stamps ?? {};
+	initialStructure = packet.structure;
+	sourceWasInstalled = false;
 	sourcePacket = packet;
 	Object.assign(sourceLocations, packet.locations);
 	sequence = packet.sequence;
@@ -192,6 +214,12 @@ export function sourceTypeFrom(element: Parameters<NonNullable<typeof globalThis
 }
 export function observeFactory<T>(site: string, action: () => T): T {
 	return globalThis.__SPOOL_VALUES__!.at(site, action);
+}
+export function sourceOptional(site: string, factory: () => ReactNode): ReactNode {
+	return structuralOptional(sourcePacket?.structure, site, factory);
+}
+export function sourceList(site: string, factories: Record<string, () => ReactNode>): { children?: ReactNode } {
+	return structuralList(sourcePacket?.structure, site, factories);
 }
 export function sourceValue(cell: string, initial: string): string {
 	return sourcePacket?.values[cell] ?? initial;
@@ -278,11 +306,12 @@ function inspectSource(
 	field?: string,
 	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 ): SourceOccurrence | undefined {
-	if (operation.kind !== "literal" && operation.kind !== "image") return;
+	if (operation.kind === "property") return;
 	if (operation.kind === "image" && (!(element instanceof HTMLImageElement) || field !== "src")) return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
-	let origin = field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
+	let origin =
+		operation.kind === "literal" && field === undefined && fiber ? origins.get(fiber.memoizedProps) : undefined;
 	let provenance: string | undefined;
 	const value: unknown = fiber
 		? Object.getOwnPropertyDescriptor(fiber.memoizedProps, field ?? "children")?.value
@@ -295,8 +324,8 @@ function inspectSource(
 			!origin &&
 			sourcePacket &&
 			fiber &&
-			(field !== undefined || typeof value === "string") &&
-			(value === undefined || typeof value === "string")
+			(operation.kind === "delete" ||
+				((field !== undefined || typeof value === "string") && (value === undefined || typeof value === "string")))
 		)
 			origin = {
 				cell: observed.source,
@@ -304,7 +333,7 @@ function inspectSource(
 				invocation: JSON.stringify(
 					observed.chain.map((call) => [call.occurrence, call.invocation?.id, call.element]),
 				),
-				value: String(value ?? ""),
+				value: operation.kind === "delete" ? "" : String(value ?? ""),
 			};
 	} catch {
 		return;
@@ -315,8 +344,21 @@ function inspectSource(
 		id = String(++occurrence);
 		nodes.set(element, id);
 	}
+	let structure: SourceOccurrence["structure"];
+	if (operation.kind === "delete") {
+		const parent = element.parentElement;
+		if (!parent) return;
+		let parentId = nodes.get(parent);
+		if (!parentId) {
+			parentId = String(++occurrence);
+			nodes.set(parent, parentId);
+		}
+		const source = observeStructuralParent(parent, sourcePacket?.locations ?? {});
+		structure = { parent: parentId, ...(source ? { source } : {}) };
+	}
 	return {
 		...origin,
+		...(structure ? { structure } : {}),
 		// Retained props keep their original invocation/value even when React
 		// skips recreating them. This observation belongs to the installed packet.
 		publication: sourcePacket?.id ?? origin.publication,
@@ -378,9 +420,11 @@ function clearGestureFeedback(): void {
 	renderSourceFeedback();
 }
 function sourceObservationOperation(original: SourceOccurrence): SourceOperation {
-	return original.field === "src"
-		? { kind: "image" }
-		: { kind: "literal", ...(original.field ? { field: original.field } : {}) };
+	return original.structure
+		? { kind: "delete" }
+		: original.field === "src"
+			? { kind: "image" }
+			: { kind: "literal", ...(original.field ? { field: original.field } : {}) };
 }
 function sourceElement(original: SourceOccurrence): HTMLElement | undefined {
 	return [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].find((element) => {
@@ -419,7 +463,7 @@ function inventorySource(
 	let unknown = 0;
 	for (const element of document.querySelectorAll<HTMLElement>("[data-spool-source]")) {
 		if (operation.kind === "image" && !(element instanceof HTMLImageElement)) continue;
-		if (field === undefined && element.children.length > 0) continue;
+		if (operation.kind === "literal" && field === undefined && element.children.length > 0) continue;
 		const original = inspectSource(element, field, operation);
 		if (!original) {
 			if (field !== undefined || element.textContent) unknown++;
@@ -439,7 +483,12 @@ function inventorySource(
 	}
 	return { publication: sourcePacket?.id ?? "", uses, unknown };
 }
-function prepareSourceUses(generation: number, uses: SourceOccurrence[]): boolean {
+function prepareSourceUses(
+	generation: number,
+	uses: SourceOccurrence[],
+	structure?: SourceStructuralExpectation,
+): boolean {
+	if (structure) structuralBases.prepare(generation, captureStructure(structure, sourceLocations));
 	// A field's owner disclosure and its pending preview have separate lives.
 	// A late preparation must not erase the already-open disclosure.
 	clearGestureFeedback();
@@ -489,6 +538,7 @@ function cancelSourceUses(generation: number, reason: "cancel" | "prepare" | "in
 		if (current && sameSourceOccurrence(current, use.original) && ownsPreview(use))
 			restoreField(use.element, use.original, use.children, use.restoreAttribute);
 	}
+	if (reason !== "install") structuralBases.cancel(generation);
 	if (reason === "cancel") clearSourceFeedback();
 	else if (reason === "prepare") clearGestureFeedback();
 }
@@ -503,7 +553,7 @@ function sourceRead(
 	intent = generation;
 	acceptedOutcome = undefined;
 	const original = inspectSource(element, field, operation);
-	if (!original || original.value !== renderedField(element, original.field)) return;
+	if (!original || (!original.structure && original.value !== renderedField(element, original.field))) return;
 	leases.set(generation, previewedUse(element, original));
 	return original;
 }
@@ -515,6 +565,7 @@ function validLease(generation: number): boolean {
 }
 function previewSource(generation: number, value: string): boolean {
 	const held = leases.get(generation);
+	if (held?.original.structure) return false;
 	if (!held) {
 		previewSourceUses(generation, value);
 		return sharedPreviews.has(generation);
@@ -557,7 +608,14 @@ function completeSource(generation: number): SourceOccurrence | undefined {
 function pendingIn(element: Element): boolean {
 	return committedHosts.get(element)?.pending ?? false;
 }
+const structuralBases = createStructuralBaselines();
 interface AcceptedOutcome {
+	structural?: {
+		basis: StructuralBasis;
+		before: RetainedValues["structure"];
+		originals: Map<HTMLElement, SourceOccurrence>;
+		restoredParents: Set<HTMLElement>;
+	};
 	publication: SourcePublication;
 	targets: { original: SourceOccurrence; element: HTMLElement | undefined; ancestors: Fiber[] }[];
 	failed: Set<HTMLElement>;
@@ -579,6 +637,15 @@ function observedUse(
 				: observeImage(element, expected);
 		return { occurrence: original.occurrence, installation: "installed", ...result };
 	}
+	if (expected.kind === "structure")
+		return combineUseOutcomes(
+			verifyReloadedStructure(expected, sourcePacket?.structure, sourceLocations, pendingIn).map((outcome) => ({
+				...outcome,
+				occurrence: original.occurrence,
+				installation: "installed",
+			})),
+			original.occurrence,
+		);
 	if (expected.kind !== "literal")
 		return {
 			occurrence: original.occurrence,
@@ -613,6 +680,56 @@ function observedUse(
 	};
 }
 function observedOutcome(held: AcceptedOutcome): UseOutcome {
+	const { publication, failed } = held;
+	const expected = publication.expected;
+	if (expected.kind === "structure") {
+		const structural = held.structural;
+		if (!structural)
+			return {
+				occurrence: publication.original.occurrence,
+				installation: "installed",
+				rendered: "unverified",
+				reason: "the original structural parent baseline is missing",
+			};
+		const outcomes = verifyStructure(
+			structural.basis,
+			expected,
+			structural.before,
+			sourceLocations,
+			pendingIn,
+			(element) => failed.has(element),
+		);
+		const verifiedParents = new Set(
+			outcomes.flatMap((outcome) =>
+				outcome.rendered === "verified" &&
+				outcome.parent &&
+				structural.originals.has(outcome.parent) &&
+				!structural.restoredParents.has(outcome.parent)
+					? [outcome.parent]
+					: [],
+			),
+		);
+		for (const basis of structuralBases.values())
+			retainVerifiedRestorations(basis, expected, structural.before, sourceLocations, verifiedParents);
+		for (const parent of verifiedParents) structural.restoredParents.add(parent);
+		return combineUseOutcomes(
+			outcomes.map((outcome) => {
+				const original = outcome.parent ? structural.originals.get(outcome.parent) : undefined;
+				return {
+					occurrence: original?.occurrence ?? publication.original.occurrence,
+					installation: "installed" as const,
+					rendered: original ? outcome.rendered : ("unverified" as const),
+					...(!original
+						? { reason: outcome.reason ?? "the structural parent has no original affected-use attribution" }
+						: outcome.reason
+							? { reason: outcome.reason }
+							: {}),
+				};
+			}),
+			publication.original.occurrence,
+		);
+	}
+
 	return combineUseOutcomes(
 		held.targets.map(({ original, element }) =>
 			observedUse(original, element, held.publication.expected, held.failed),
@@ -621,9 +738,36 @@ function observedOutcome(held: AcceptedOutcome): UseOutcome {
 	);
 }
 /** Read-only verification after an explicit reload; it never installs or previews. */
-function verifySource(original: SourceOccurrence, expected: SourcePublication["expected"]): UseOutcome {
+function verifySource(
+	original: SourceOccurrence,
+	expected: SourcePublication["expected"],
+	publication: string,
+): UseOutcome {
+	if (sourcePacket?.id !== publication)
+		return {
+			occurrence: original.occurrence,
+			installation: "refused",
+			rendered: "unverified",
+			reason: "the verified source publication changed",
+		};
+	if (expected.kind === "structure" && sourceWasInstalled) {
+		if (
+			acceptedOutcome?.publication.packet.id === publication &&
+			JSON.stringify(acceptedOutcome.publication.expected) === JSON.stringify(expected)
+		)
+			return observedOutcome(acceptedOutcome);
+		return {
+			occurrence: original.occurrence,
+			installation: "installed",
+			rendered: "unverified",
+			reason: "the still-running structural result has no original native verification basis",
+		};
+	}
+	if (expected.kind === "structure" && globalThis.__SPOOL_OBSERVER__.failure)
+		return { occurrence: original.occurrence, installation: "installed", rendered: "failed" };
 	const element = sourceElement(original);
 	if (
+		(expected.kind === "structure" && leases.size > 0) ||
 		[...leases.values()].some((lease) => lease.element === element) ||
 		[...sharedPreviews.values()].some((uses) => uses.some((use) => use.element === element && use.previewed))
 	)
@@ -716,6 +860,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 		!sourcePacket ||
 		(publication.before !== sourcePacket.id && !(undo && publication.compatibleBefore?.includes(sourcePacket.id))) ||
 		publication.packet.shape !== sourcePacket.shape ||
+		!compatibleStructure(initialStructure, publication.packet.structure) ||
 		publication.packet.sequence <= sequence
 	)
 		return refused("the running source generation changed");
@@ -752,7 +897,37 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	cancelSourceUses(publication.generation, "install");
 	feedbackTimer = setTimeout(clearGestureFeedback, 450);
 	leases.delete(publication.generation);
-	const observation: AcceptedOutcome = { publication, targets, failed: new Set(), ready: false, last: "" };
+	const basis = publication.expected.kind === "structure" ? structuralBases.get(publication.generation) : undefined;
+	if (basis) refreshStructuralNative(basis);
+	structuralBases.finish(publication.generation);
+	const structuralOriginals = new Map<HTMLElement, SourceOccurrence>();
+	for (const group of basis?.groups ?? []) {
+		const target = targets.find(
+			(target) => target.element === group.parent || target.original.structure?.parent === nodes.get(group.parent),
+		);
+		if (target) structuralOriginals.set(group.parent, target.original);
+	}
+	const structuralTargets = basis?.groups.flatMap((group) => {
+		const original = structuralOriginals.get(group.parent);
+		return original ? [{ original, element: group.parent, ancestors: sourceAncestry(group.parent) }] : [];
+	});
+	const observation: AcceptedOutcome = {
+		publication,
+		targets: structuralTargets ?? targets,
+		failed: new Set(),
+		ready: false,
+		last: "",
+		...(basis
+			? {
+					structural: {
+						basis,
+						before: sourcePacket?.structure,
+						originals: structuralOriginals,
+						restoredParents: new Set(),
+					},
+				}
+			: {}),
+	};
 	acceptedOutcome = observation;
 	try {
 		flushSync(() => {
@@ -782,7 +957,10 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 					)
 					.map((cell) => publication.packet.owners[cell]),
 			);
+			for (const site of changedStructure(sourcePacket?.structure, publication.packet.structure))
+				changed.add(publication.packet.owners[site] ?? sourcePacket?.owners[site]);
 			sourcePacket = publication.packet;
+			sourceWasInstalled = true;
 			Object.assign(sourceLocations, publication.packet.locations);
 			sequence = publication.packet.sequence;
 			const css = document.getElementById("spool-compiled-css"),
@@ -828,6 +1006,8 @@ declare global {
 			highlight: typeof highlightSource;
 			inventory: typeof inventorySource;
 			prepare: typeof prepareSourceUses;
+			retainStructures: typeof structuralBases.retain;
+			retireStructure: typeof structuralBases.retire;
 			clearFeedback: typeof clearSourceFeedback;
 			valid: typeof validLease;
 			preview: typeof previewSource;
@@ -848,6 +1028,8 @@ if (typeof window !== "undefined")
 		highlight: highlightSource,
 		inventory: inventorySource,
 		prepare: prepareSourceUses,
+		retainStructures: structuralBases.retain,
+		retireStructure: structuralBases.retire,
 		clearFeedback: clearSourceFeedback,
 		valid: validLease,
 		preview: previewSource,

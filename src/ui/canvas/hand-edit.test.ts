@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deleteGesture, GENERATED, MANY_RUNGS, NO_STAMP, secondClick, stampOf } from "./hand-edit";
+import { GENERATED, NO_STAMP, secondClick, stampOf } from "./hand-edit";
 import type { PickedSelection } from "./overlays";
-
-/**
- * The two gestures' own decisions (#255): what a pick can be acted on at all,
- * what one delete writes, and which press is the second click.
- */
 
 const pick = (over: Partial<PickedSelection> = {}): PickedSelection => ({
 	frame: "cart",
@@ -28,28 +23,6 @@ describe("the stamp a gesture acts on", () => {
 
 	it("refuses a box the file has no line for, whatever the ancestor's stamp says", () => {
 		expect(stampOf(pick({ generated: true }))).toBe(GENERATED);
-	});
-});
-
-describe("delete", () => {
-	it("writes one op against the held rung's own stamp", () => {
-		expect(deleteGesture([pick()])).toEqual({
-			frame: "cart",
-			ops: [{ kind: "delete", source: "frames/cart/frame.tsx:7:4" }],
-			on: expect.objectContaining({ selector: "screen > h1" }),
-		});
-	});
-
-	it("has nothing to do with nothing held", () => {
-		expect(deleteGesture([])).toBeUndefined();
-	});
-
-	it("refuses a set, because a refusal has to name one element", () => {
-		expect(deleteGesture([pick(), pick({ selector: "screen > p" })])).toBe(MANY_RUNGS);
-	});
-
-	it("refuses a rung the file has no line for", () => {
-		expect(deleteGesture([pick({ generated: true })])).toBe(GENERATED);
 	});
 });
 

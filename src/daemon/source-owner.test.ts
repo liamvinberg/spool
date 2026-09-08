@@ -800,3 +800,21 @@ it.each(["dependency", "coverage", "owner restart"])(
 		expect(readFileSync(f.file, "utf8")).toBe(SOURCE.replace("Hello", "Agent current"));
 	},
 );
+
+it("recognizes a reloaded original publication after an acknowledged exact inverse but not an outside equal-byte replacement", async () => {
+	const f = await fixture();
+	const original = f.read.original.publication;
+	const saved = await f.commit(f.read, "Changed");
+	if (!saved.ok || !saved.publication) throw new Error("save did not publish");
+	f.owner.delivered(saved.publication.packet.id);
+	expect(f.owner.current(f.root, original)).toBe(false);
+	const undone = await f.owner.inverse(f.root, saved.publication.receipt);
+	if (!undone.ok || !undone.publication) throw new Error("inverse did not publish");
+	f.owner.delivered(undone.publication.packet.id);
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+	expect(f.owner.current(f.root, original)).toBe(true);
+	const outside = `${f.file}.outside`;
+	writeFileSync(outside, SOURCE);
+	renameSync(outside, f.file);
+	expect(f.owner.current(f.root, original)).toBe(false);
+});

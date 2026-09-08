@@ -14,7 +14,7 @@ import { RENDER_HOST } from "./security";
  * The first test is the frame's half alone: an element made editable in place,
  * the keys it swallows while it is, and the two ways an edit ends. The second
  * is the whole lane out on a canvas — the words typed into the element itself
- * land in the file on disk, and ⌫ takes an element's lines out of it.
+ * land in the file on disk, and ⌫ removes one keyed authored child.
  */
 
 const BOOT = `document.getElementById("root").innerHTML =
@@ -169,14 +169,14 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 const CART = `export default function Frame() {
 	return (
 		<div className="flex h-full flex-col gap-4 p-6">
-			<h1 className="text-2xl">cart</h1>
-			<p className="text-sm">two items</p>
+			<h1 key="heading" className="text-2xl">cart</h1>
+			<p key="items" className="text-sm">two items</p>
 		</div>
 	);
 }
 `;
 
-it("types into the element and writes the file, then takes an element's lines", { timeout: 180_000 }, async () => {
+it("types into the element, then deletes and restores a keyed source child", { timeout: 180_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
 	const uiDir = join(makeTempDir(), "ui");
@@ -240,10 +240,10 @@ it("types into the element and writes the file, then takes an element's lines", 
 		}
 		return at;
 	};
-	/** A write reloads the frame it wrote; the ladder waits for what boots. */
-	const settled = async (): Promise<void> => {
-		await expect.poll(() => page.locator('iframe[title="cart (held)"]').count(), { timeout: 30_000 }).toBe(0);
-	};
+	const delivered = () =>
+		page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+		);
 
 	// the words: down to the heading, then a second click on it opens the edit
 	const heading = await descendTo("h1", [
@@ -258,12 +258,13 @@ it("types into the element and writes the file, then takes an element's lines", 
 		.toBe(1);
 	await page.keyboard.press("ControlOrMeta+a");
 	await page.keyboard.type("basket");
+	const textDelivery = delivered();
 	await page.keyboard.press("Enter");
+	await textDelivery;
 
 	// the file says what was typed, and everything else about it is untouched
 	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 20_000 }).toContain(">basket</h1>");
 	expect(readFileSync(file, "utf8")).toBe(CART.replace(">cart<", ">basket<"));
-	await settled();
 	await expect
 		.poll(() => page.frameLocator('iframe[title="cart"]').locator("h1").textContent(), { timeout: 20_000 })
 		.toBe("basket");
@@ -271,14 +272,19 @@ it("types into the element and writes the file, then takes an element's lines", 
 	// Saving retains the selection and running document. The next sibling is still one Tab away.
 	await page.keyboard.press("Tab");
 	await expect.poll(held).toBe("div > p");
+	const deleteDelivery = delivered();
 	await page.keyboard.press("Backspace");
+	await deleteDelivery;
 	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 20_000 }).not.toContain("<p");
 	expect(readFileSync(file, "utf8")).toBe(
-		CART.replace(">cart<", ">basket<").replace('\t\t\t<p className="text-sm">two items</p>\n', ""),
+		CART.replace(">cart<", ">basket<").replace('<p key="items" className="text-sm">two items</p>', ""),
 	);
 
-	// and one press puts it back, because a patch is its own inverse
-	await settled();
+	await expect.poll(() => page.frameLocator('iframe[title="cart"]').locator("p").count()).toBe(0);
+	// The source-owned receipt restores exactly the child that Delete removed.
+	const undoDelivery = delivered();
 	await page.keyboard.press("ControlOrMeta+z");
-	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 20_000 }).toContain("<p");
+	await undoDelivery;
+	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 20_000 }).toBe(CART.replace(">cart<", ">basket<"));
+	await expect.poll(() => page.frameLocator('iframe[title="cart"]').locator("p").textContent()).toBe("two items");
 });

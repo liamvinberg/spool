@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
-import type { SourceDescription } from "../../source-edit";
+import type { RowEdit, RowElement } from "../../properties/rows";
+import type { SourceDescription, SourceOperation } from "../../source-edit";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
@@ -21,7 +22,6 @@ import {
 	useCloseOnPressAway,
 	VALUE,
 } from "./properties-fields";
-import type { RowEdit, RowElement } from "./properties-rows";
 import {
 	BASE,
 	bareToken,
@@ -265,9 +265,10 @@ function Body({
 	const [sourceSupported, setSourceSupported] = useState<{ identity: string; label: string }>();
 	const [textSupported, setTextSupported] = useState<{ identity: string; label: string; revision: number }>();
 	const support = useCallback(
-		(value: { identity: string; label: string } | undefined, field?: string) => {
+		(value: { identity: string; label: string } | undefined, operation: SourceOperation) => {
 			setSourceSupported(value);
-			if (!field) setTextSupported(value ? { ...value, revision } : undefined);
+			if (operation.kind === "literal" && !operation.field)
+				setTextSupported(value ? { ...value, revision } : undefined);
 		},
 		[revision],
 	);
@@ -398,6 +399,7 @@ function Body({
 					name={read?.name ?? rowElement.tag}
 					revision={revision}
 					field={purpose ? purpose.field : rowElement.tag === "img" ? "src" : undefined}
+					operation={purpose?.operation}
 					generation={purpose?.generation}
 					actions={acts.ownership}
 					onSupport={support}
