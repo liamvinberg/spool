@@ -500,3 +500,76 @@ it.each([
 		),
 	).toEqual([radii, ["8px", "8px", "8px", "8px"]]);
 });
+
+it.each([
+	{ property: "color", token: "text-brand", tag: "div" },
+	{ property: "background-color", token: "bg-brand", tag: "div" },
+	{ property: "color", token: "text-brand", tag: "button" },
+	{ property: "background-color", token: "bg-brand", tag: "button" },
+])(
+	"verifies $property removal on $tag from independent native defaults and inheritance",
+	async ({ property, token, tag }) => {
+		const { root } = makeProject(makeTempDir());
+		writeDesignFile(root, "shared/tokens.css", "@theme {--color-brand:#123456}");
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		const operation = { kind: "property", property, scope: "" } as const;
+		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+		const plan = await planPropertyValue(
+			root,
+			new Map([[file, readInput(file)]]),
+			`p-4 ${token}`,
+			operation,
+			{ kind: "remove" },
+			environment,
+		);
+		const expected: SourcePropertyExpectation = {
+			kind: "property",
+			property,
+			scope: "",
+			className: plan.next,
+			absent: false,
+			scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+			effects: plan.consumers,
+			css: plan.desired.css,
+		};
+		const f = await fixture(
+			`<!doctype html><style>${plan.original.css}${expected.css}</style><section style="${property}:red"><${tag} data-subject class="${plan.next}">First</${tag}></section><section style="${property}:blue"><${tag} data-subject class="${plan.next}">Second</${tag}><${tag} data-subject class="${token}">Retained</${tag}><${tag} data-subject class="${plan.next}" style="${property}:#123456">Unknown inline role</${tag}></section>`,
+		);
+		const before = await f.page.content();
+		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual([
+			"verified",
+			"verified",
+			"mismatching",
+			"unverified",
+		]);
+		const inverse: SourcePropertyExpectation = {
+			...expected,
+			className: `p-4 ${token}`,
+			effects: propertyConsumers(plan.original, plan.roots, environment),
+			css: plan.original.css,
+		};
+		expect((await f.inspect(inverse)).slice(0, 3).map((outcome) => outcome.rendered)).toEqual([
+			"mismatching",
+			"mismatching",
+			"verified",
+		]);
+		expect(await f.page.content()).toBe(before);
+	},
+);
+
+it.each([undefined, "initial"])("keeps root or system color %j unverified", async (value) => {
+	const expected: SourcePropertyExpectation = {
+		...opacity(".5"),
+		property: "color",
+		className: value ? "system" : "",
+		absent: !value,
+		effects: value
+			? [{ owner: "system", path: ["@layer utilities", "$"], property: "color", value, important: false }]
+			: [],
+		css: value ? `@layer utilities {.system{color:${value}}}` : "",
+	};
+	const f = await fixture(
+		`<!doctype html><html data-subject class="system"><head><style>${expected.css}</style></head><body>Root color</body></html>`,
+	);
+	expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["unverified"]);
+});
