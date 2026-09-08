@@ -2316,6 +2316,7 @@ export function createDaemonApp({
 							.object({
 								action: z.literal("read"),
 								operation,
+								retry: z.boolean().optional(),
 								observer: z.string(),
 								frame: z.string(),
 								original: occurrence,
@@ -2385,6 +2386,7 @@ export function createDaemonApp({
 								body.generation,
 								body.observer,
 								body.operation,
+								body.retry,
 							),
 						);
 					case "reach":

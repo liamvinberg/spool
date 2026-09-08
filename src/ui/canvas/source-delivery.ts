@@ -10,7 +10,7 @@ import {
 	type SourceUse,
 	type UseOutcome,
 } from "../../source-edit";
-import { describeSource, respondSourceObservation, sourceReach, subscribeSse } from "../api";
+import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 
 interface OutcomeGroup {
@@ -237,6 +237,39 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			},
 			[project, request],
 		),
+		verifyReload: useCallback(
+			async (frame: string, selector: string, field?: string) => {
+				const original = await request<SourceOccurrence>(frame, {
+					action: "inspect",
+					selector,
+					field,
+					operation: { kind: "literal", ...(field ? { field } : {}) },
+				});
+				if (!original || !(await sourceIsCurrent(project, original.publication))) return;
+				const description = await describeSource(project, frame, original, await inventory(field));
+				if (!description?.reach) return;
+				const outcomes = await Promise.all(
+					description.reach.uses.map(
+						async (use): Promise<UseOutcome> => ({
+							...((await request<UseOutcome>(use.frame, {
+								action: "verify",
+								original: use.original,
+								expected: { kind: "literal", value: description.value, absent: original.absent ?? false },
+							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
+							frame: use.frame,
+						}),
+					),
+				);
+				outcomes.push(...(description.reach.unverified ?? []));
+				for (const name of description.reach.unknown)
+					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
+				for (const name of description.reach.unmounted)
+					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unmounted" });
+				return { description, outcome: combineUseOutcomes(outcomes, original.occurrence) };
+			},
+			[project, request, inventory],
+		),
+
 		active,
 		liveFrames,
 		releaseDescription: useCallback(() => {

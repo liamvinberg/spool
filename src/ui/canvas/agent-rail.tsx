@@ -28,6 +28,7 @@ import {
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
 import { ChevronIcon, PanelCaret } from "./sidebar";
+import type { AgentRequest } from "./source-intent";
 import { useStillness } from "./stillness";
 
 /**
@@ -161,6 +162,7 @@ export interface Threads {
 interface Holding {
 	readonly draft: string;
 	readonly attached: Attachment | null;
+	readonly prepared?: Readonly<Record<string, NonNullable<AgentRequest["prepared"]>>>;
 }
 
 const PermissionAction = createContext<(() => void) | undefined>(undefined);
@@ -180,6 +182,7 @@ export function AgentRail({
 	login,
 	queued,
 	handback,
+	request,
 	draft,
 	onDraft,
 	running,
@@ -220,6 +223,7 @@ export function AgentRail({
 	queued: readonly AgentQueued[];
 	/** whatever left the queue un-fired, for the box below to take back (#170) */
 	handback: AgentHandback;
+	request?: AgentRequest | undefined;
 	/** what this thread was left holding and nobody sent, off its own picture (#234) */
 	draft: string;
 	/** the box saying what it holds now, which is how a draft outlives the tab (#234) */
@@ -280,7 +284,7 @@ export function AgentRail({
 	const write = (patch: (was: Holding) => Holding) => setHeld((all) => ({ ...all, [open]: patch(all[open] ?? seed) }));
 	/** the field's words, into the composer and into the thread that outlives it */
 	const writeDraft = (text: string) => {
-		write((was) => ({ ...was, draft: text }));
+		write((was) => ({ ...was, draft: text, ...(text.trim() ? {} : { prepared: {} }) }));
 		onDraft(text);
 	};
 	/** the handovers already merged per thread, since the same words can come back twice */
@@ -296,13 +300,36 @@ export function AgentRail({
 		);
 		setHeld((all) => ({
 			...all,
-			[open]: { draft: landed, attached: handedBackReference(handback.messages, was.attached) },
+			[open]: { ...was, draft: landed, attached: handedBackReference(handback.messages, was.attached) },
 		}));
 		// the words landed in the box rather than being typed into it, and the box is written
 		// down either way: a stop hands a whole queue back, which is the most there has ever
 		// been in there to lose (#234)
 		onDraft(landed);
 	}, [handback, open]);
+	const requested = useRef<string | undefined>(undefined);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: one explicit handoff, not a replay when the draft changes
+	useEffect(() => {
+		if (!request || request.thread !== open || requested.current === request.id) return;
+		requested.current = request.id;
+		const was = held[open] ?? seed;
+		const prepared = { ...was.prepared };
+		let text = was.draft;
+		if (!request.prepared) {
+			for (const [id, entry] of Object.entries(prepared)) {
+				if (request.retire && request.retire !== id) continue;
+				text = text.includes(`\n\n${entry.text}`)
+					? text.replace(`\n\n${entry.text}`, "")
+					: text.replace(entry.text, "");
+				delete prepared[id];
+			}
+		} else if (!prepared[request.prepared.intent]) {
+			prepared[request.prepared.intent] = request.prepared;
+			text = [text, request.prepared.text].filter(Boolean).join("\n\n");
+		}
+		setHeld((all) => ({ ...all, [open]: { ...was, draft: text, prepared } }));
+		onDraft(text);
+	}, [request, open]);
 	/**
 	 * The question the composer would answer, read off the log rather than handed in.
 	 *
@@ -420,8 +447,23 @@ export function AgentRail({
 								waited={waited}
 								finished={threads.finished}
 								answering={asking?.kind === "ask" ? asking.request : null}
-								strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
-								pointing={pointing}
+								request={request?.thread === open && !request.retire ? request.id : undefined}
+								strip={stripOf(
+									Object.values(holding.prepared ?? {}).length
+										? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)
+										: pointing.entries,
+									composerWidth(width),
+									pointing.inside,
+								)}
+								pointing={
+									Object.values(holding.prepared ?? {}).length
+										? {
+												...pointing,
+												entries: Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection),
+												onDrop: () => write((was) => ({ ...was, prepared: {} })),
+											}
+										: pointing
+								}
 								draft={holding.draft}
 								onDraft={writeDraft}
 								attached={holding.attached}
@@ -2089,6 +2131,7 @@ function fieldSays(answering: string | null, finished: boolean): string {
 }
 
 function Composer({
+	request,
 	permissions,
 	menu,
 	onMenu,
@@ -2112,6 +2155,7 @@ function Composer({
 	onStop,
 	onAnswer,
 }: {
+	request: string | undefined;
 	permissions: PermissionDeck | undefined;
 	menu: "models" | "permissions" | "agent" | null;
 	onMenu: (menu: "models" | "permissions" | "agent" | null) => void;
@@ -2161,6 +2205,17 @@ function Composer({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const field = useRef<HTMLTextAreaElement>(null);
+	useEffect(() => {
+		if (!request) return;
+		let second = 0;
+		const first = requestAnimationFrame(() => {
+			second = requestAnimationFrame(() => field.current?.focus({ preventScroll: true }));
+		});
+		return () => {
+			cancelAnimationFrame(first);
+			cancelAnimationFrame(second);
+		};
+	}, [request]);
 	const permissionTrigger = useRef<HTMLButtonElement>(null);
 	const preparing = useRef(false);
 	/*
