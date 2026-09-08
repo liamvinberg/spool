@@ -12,7 +12,7 @@ import type { AgentModelDeck } from "./agent-model";
 import { AgentModelPicker } from "./agent-model-picker";
 import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
-import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
+import { type AgentHandback, type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
 import { Caret } from "./agent-said";
 import { SeedParagraphs, SeedSurface } from "./agent-seed";
 import { Lightbox, Shot } from "./agent-shot";
@@ -161,7 +161,7 @@ export interface Threads {
  */
 interface Holding {
 	readonly draft: string;
-	readonly attached: Attachment | null;
+	readonly attached: readonly Attachment[];
 	readonly prepared?: Readonly<
 		Record<
 			string,
@@ -221,6 +221,8 @@ export function AgentRail({
 	request,
 	draft,
 	onDraft,
+	attached,
+	onAttach,
 	running,
 	model,
 	limit,
@@ -263,6 +265,8 @@ export function AgentRail({
 	active?: boolean;
 	/** what this thread was left holding and nobody sent, off its own picture (#234) */
 	draft: string;
+	attached: readonly Attachment[];
+	onAttach: (images: readonly Attachment[], thread?: string) => Promise<void>;
 	/** the box saying what it holds now, which is how a draft outlives the tab (#234) */
 	onDraft: (text: string, thread?: string) => void;
 	/**
@@ -307,7 +311,11 @@ export function AgentRail({
 	 * half-typed sentence, and must not carry it into somebody else's transcript either.
 	 */
 	const open = threads.open;
+	const initialThread = useRef(open);
+	if (!initialThread.current && open) initialThread.current = open;
 	const [held, setHeld] = useState<Readonly<Record<string, Holding>>>({});
+	const heldRef = useRef(held);
+	heldRef.current = held;
 	/**
 	 * What this thread was last left holding, for a rail that has just been opened (#234).
 	 *
@@ -316,13 +324,21 @@ export function AgentRail({
 	 * truth: the moment anything is typed here the composer's own copy is what the field
 	 * draws, and the thread is told about every change to it.
 	 */
-	const seed: Holding = { draft, attached: null };
+	const seed: Holding = { draft, attached };
+	const latestSeed = useRef(seed);
+	latestSeed.current = seed;
 	const holding = held[open] ?? seed;
-	const write = (patch: (was: Holding) => Holding) => setHeld((all) => ({ ...all, [open]: patch(all[open] ?? seed) }));
+	const write = (patch: (was: Holding) => Holding) => {
+		const target = open || initialThread.current;
+		const next = patch(heldRef.current[target] ?? (open ? seed : latestSeed.current));
+		heldRef.current = { ...heldRef.current, [target]: next };
+		setHeld(heldRef.current);
+		return next;
+	};
 	/** the field's words, into the composer and into the thread that outlives it */
 	const writeDraft = (text: string) => {
 		write((was) => changedDraft(was, text));
-		onDraft(text);
+		onDraft(text, open);
 	};
 	/** the handovers already merged per thread, since the same words can come back twice */
 	const merged = useRef(new Map<string, number>());
@@ -337,12 +353,13 @@ export function AgentRail({
 		);
 		setHeld((all) => ({
 			...all,
-			[open]: { ...changedDraft(was, landed), attached: handedBackReference(handback.messages, was.attached) },
+			[open]: { ...changedDraft(was, landed), attached: handedBackReferences(handback.messages, was.attached) },
 		}));
 		// the words landed in the box rather than being typed into it, and the box is written
 		// down either way: a stop hands a whole queue back, which is the most there has ever
 		// been in there to lose (#234)
 		onDraft(landed);
+		onAttach(handedBackReferences(handback.messages, was.attached), open);
 	}, [handback, open]);
 	const requested = useRef<string | undefined>(undefined);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: one explicit handoff, not a replay when the draft changes
@@ -501,6 +518,7 @@ export function AgentRail({
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
 					    rather than one width */}
 							<Composer
+								thread={open}
 								permissions={permissions}
 								menu={footerMenu}
 								onMenu={setFooterMenu}
@@ -528,7 +546,17 @@ export function AgentRail({
 								draft={holding.draft}
 								onDraft={writeDraft}
 								attached={holding.attached}
-								onAttach={(attached) => write((was) => ({ ...was, attached }))}
+								onAttach={async (update) => {
+									const target = open || initialThread.current;
+									const was = heldRef.current[target] ?? (open ? seed : latestSeed.current);
+									const next = update(was.attached);
+									const adding = next.some((image) => !was.attached.includes(image));
+									// A visible new thumbnail is already stored. Removing one is immediate;
+									// its text recovery record prevents an old image returning after refresh.
+									if (adding) await onAttach(next, target);
+									write((current) => ({ ...current, attached: next }));
+									if (!adding) await onAttach(next, target);
+								}}
 								queued={queued}
 								model={model}
 								limit={limit}
@@ -1386,7 +1414,10 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 				<p className="whitespace-pre-wrap text-text type-body">{entry.text}</p>
 				{/* the same 120px thumbnail a call's own picture gets, because it is the same
 				    act of looking: a picture in the log, at a size that says what it is */}
-				{entry.attached === null ? null : <Shot shot={entry.attached} of={null} quiet={true} />}
+				{entry.attached.map((image, index) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: a sent message's references never reorder
+					<Shot key={index} shot={image} of={null} quiet={true} />
+				))}
 				{entry.context === null ? null : (
 					<span data-agent-context="" className="truncate text-muted type-detail">
 						{entry.context}
@@ -2192,6 +2223,7 @@ function fieldSays(answering: string | null, finished: boolean): string {
 }
 
 function Composer({
+	thread,
 	request,
 	permissions,
 	menu,
@@ -2216,6 +2248,7 @@ function Composer({
 	onStop,
 	onAnswer,
 }: {
+	thread: string;
 	request: string | undefined;
 	permissions: PermissionDeck | undefined;
 	menu: "models" | "permissions" | "agent" | null;
@@ -2251,8 +2284,8 @@ function Composer({
 	 * Controlled for the field's own reason: a message the queue held carries one, and
 	 * taking it back has to put it where it came from rather than dropping it silently.
 	 */
-	attached: Attachment | null;
-	onAttach: (attached: Attachment | null) => void;
+	attached: readonly Attachment[];
+	onAttach: (update: (held: readonly Attachment[]) => readonly Attachment[]) => Promise<void>;
 	queued: readonly AgentQueued[];
 	model: AgentModelDeck;
 	limit: AgentLimit | null;
@@ -2265,6 +2298,8 @@ function Composer({
 	onStop: () => void;
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
+	const currentThread = useRef(thread);
+	currentThread.current = thread;
 	const field = useRef<HTMLTextAreaElement>(null);
 	useEffect(() => {
 		if (!request) return;
@@ -2279,6 +2314,22 @@ function Composer({
 	}, [request]);
 	const permissionTrigger = useRef<HTMLButtonElement>(null);
 	const preparing = useRef(false);
+	const reading = useRef(0);
+	const reads = useRef(Promise.resolve());
+	const attachFiles = (files: readonly File[]) => {
+		reading.current += 1;
+		// Serial completion preserves paste order when a larger file reads last.
+		reads.current = reads.current
+			.then(async () => {
+				try {
+					const attached = await Promise.all(files.map(readAttachment));
+					await onAttach((held) => [...held, ...attached]);
+				} finally {
+					reading.current -= 1;
+				}
+			})
+			.catch(() => {});
+	};
 	/*
 	 * A stop is offered against every turn that is still a process (#165, #180, #234).
 	 *
@@ -2303,7 +2354,7 @@ function Composer({
 	}, [draft]);
 
 	const take = async (text: string) => {
-		if (preparing.current) return false;
+		if (preparing.current || reading.current > 0) return false;
 		// captured here rather than read later: the chips that were up are the bytes
 		// that went out, and the line under the words has to say so afterwards. For a
 		// message the queue holds that is the whole contract, because it fires against a
@@ -2314,7 +2365,7 @@ function Composer({
 			const offer = model.loading ? await model.ready?.() : model.offer;
 			preparing.current = false;
 			// Changing chats or editing the draft while it loads cancels this pending press.
-			if (!offer || field.current?.value !== draft) return false;
+			if (!offer || currentThread.current !== thread || field.current?.value !== draft) return false;
 			if (offer.models.length === 0) {
 				model.connect?.();
 				return false;
@@ -2337,7 +2388,7 @@ function Composer({
 		// a box cleared over that is a sentence gone with no way back to it
 		if (!took) return false;
 		onDraft("");
-		onAttach(null);
+		onAttach(() => []);
 		return true;
 	};
 
@@ -2354,17 +2405,27 @@ function Composer({
 				event.stopPropagation();
 			}}
 			onDrop={(event) => {
-				const file = attachmentIn(event.dataTransfer);
-				if (file === undefined) return;
+				const files = attachmentsIn(event.dataTransfer);
+				if (files.length === 0) return;
 				event.preventDefault();
 				event.stopPropagation();
-				void readAttachment(file).then(onAttach);
+				attachFiles(files);
 			}}
 		>
 			<WindStroke phase={phase} waited={waited} />
 			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
 				<QueueBox queued={queued} onUnqueue={onUnqueue} />
-				{attached === null ? null : <Attached attached={attached} onDrop={() => onAttach(null)} />}
+				{attached.length > 0 && (
+					<div className="flex flex-wrap gap-2">
+						{attached.map((image, index) => (
+							<Attached
+								key={referenceKey(image)}
+								attached={image}
+								onDrop={() => onAttach((held) => held.filter((_, at) => at !== index))}
+							/>
+						))}
+					</div>
+				)}
 				<SelectionStrip strip={strip} pointing={pointing} />
 				{/*
 				 * What the field is for, and what the press will do with it.
@@ -2389,10 +2450,10 @@ function Composer({
 						// a screenshot in the clipboard is the commonest reference there is, and
 						// pasting one is how it gets here: a browser never reveals a path, so
 						// there is nothing else a paste could mean
-						const file = attachmentIn(event.clipboardData);
-						if (file === undefined) return;
+						const files = attachmentsIn(event.clipboardData);
+						if (files.length === 0) return;
 						event.preventDefault();
-						void readAttachment(file).then(onAttach);
+						attachFiles(files);
 					}}
 					onKeyDown={(event) => {
 						if (event.key !== "Enter" || event.shiftKey) return;
@@ -2632,6 +2693,16 @@ const ATTACHED_W = 44;
  * It carries a plate the chip's does not, because it sits on a picture rather than on
  * a surface, and an unbacked glyph over arbitrary pixels is not always there.
  */
+const referenceKeys = new WeakMap<Attachment, string>();
+function referenceKey(image: Attachment): string {
+	let key = referenceKeys.get(image);
+	if (!key) {
+		key = crypto.randomUUID();
+		referenceKeys.set(image, key);
+	}
+	return key;
+}
+
 function Attached({ attached, onDrop }: { attached: Attachment; onDrop: () => void }) {
 	const [big, setBig] = useState(false);
 	// held across renders for the reason `Shot` holds its own: the rail re-projects on
@@ -2687,24 +2758,22 @@ function draggingAttachment(data: DataTransfer | null): boolean {
  * tile never draws for something the turn would be turned away for: nothing appearing
  * is a smaller cost than a prompt lost to a refusal after Enter.
  */
-function attachmentIn(data: DataTransfer | null): File | undefined {
-	return Array.from(data?.files ?? []).find((file) => isSendableAttachment(file));
+function attachmentsIn(data: DataTransfer | null): File[] {
+	return Array.from(data?.files ?? []).filter((file) => isSendableAttachment(file));
 }
 
-/**
- * The file as the bytes the agent reads.
- *
- * Chunked because `String.fromCharCode` takes its bytes as arguments and a
- * screenshot is hundreds of thousands of them, which is a stack overflow rather
- * than a slow call.
- */
-async function readAttachment(file: File): Promise<Attachment> {
-	const bytes = new Uint8Array(await file.arrayBuffer());
-	let binary = "";
-	for (let at = 0; at < bytes.length; at += 8192) {
-		binary += String.fromCharCode(...bytes.subarray(at, at + 8192));
-	}
-	return { media: file.type, data: btoa(binary) };
+/** The browser reads and encodes image bytes asynchronously. */
+function readAttachment(file: File): Promise<Attachment> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => {
+			if (typeof reader.result !== "string") return reject(new Error("Could not read the image"));
+			resolve({ media: file.type, data: reader.result.slice(reader.result.indexOf(",") + 1) });
+		};
+		reader.onerror = () => reject(reader.error);
+		reader.onabort = () => reject(new Error("Image read was cancelled"));
+		reader.readAsDataURL(file);
+	});
 }
 
 /* ---------- what the hands are pointing at ----------

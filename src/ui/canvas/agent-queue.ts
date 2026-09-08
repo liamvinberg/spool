@@ -1,4 +1,4 @@
-import type { Attachment } from "../../attachment";
+import { type Attachment, restoredAttachments } from "../../attachment";
 import type { AgentWords } from "./agent-transcript";
 
 /**
@@ -36,11 +36,13 @@ export interface AgentQueued extends AgentWords {
  * both of its buttons would lie.
  */
 export function drawableQueue(queued: readonly unknown[]): AgentQueued[] {
-	return queued.filter((one): one is AgentQueued => {
-		if (typeof one !== "object" || one === null) return false;
-		const message = one as { id?: unknown; text?: unknown };
-		return typeof message.id === "string" && typeof message.text === "string" && message.text !== "";
-	});
+	return queued
+		.filter((one): one is AgentQueued => {
+			if (typeof one !== "object" || one === null) return false;
+			const message = one as { id?: unknown; text?: unknown };
+			return typeof message.id === "string" && typeof message.text === "string" && message.text !== "";
+		})
+		.map((message) => ({ ...message, attached: restoredAttachments(message.attached) }));
 }
 
 /**
@@ -89,56 +91,10 @@ export function handedBack(words: readonly string[], draft: string): string {
 	return draft === "" ? returned : `${returned}${SEAM}${draft}`;
 }
 
-/**
- * Which of the words on their way home can carry what they were holding (#119, #234).
- *
- * The box has one slot for a reference and several messages may each have one, so a
- * handover of the whole queue has more pictures than there are places to put them. The
- * first in fire order takes the slot; the rest are not collapsed into the blob and are not
- * dropped either — they stay where they are, as their own rows, still holding what they
- * were holding.
- *
- * It is the words-and-reference pair that decides this rather than the words alone. Two
- * sentences returning as one string is a bounded loss the blank line makes visible and a
- * hand can undo. A picture is not: a browser never gave spool the path it came from, so a
- * dropped one cannot be got again from anywhere.
- */
-export function handover(messages: readonly AgentQueued[]): {
-	/** in fire order, which is the order they land back in the field */
-	readonly back: readonly AgentQueued[];
-	/** left in the box, because what they carry has nowhere to ride */
-	readonly kept: readonly AgentQueued[];
-} {
-	const back: AgentQueued[] = [];
-	const kept: AgentQueued[] = [];
-	let slot = true;
-	for (const one of messages) {
-		const carrying = one.attached !== null && one.attached !== undefined;
-		if (carrying && !slot) {
-			kept.push(one);
-			continue;
-		}
-		if (carrying) slot = false;
-		back.push(one);
-	}
-	return { back, kept };
-}
-
-/**
- * The reference that comes home with those words (#119).
- *
- * A message carries at most one and the composer holds at most one, so a handover of
- * several has more references than there are slots to put them in. The first in fire
- * order takes the slot, and only when the box's own is empty — which is the caret's own
- * rule applied to the other half of the message: what the hand is holding now is not
- * moved by something arriving from the queue.
- *
- * The rest are dropped, and that is the same bounded loss the blank line already admits
- * for the words: several messages come back as one message, and one message has one
- * reference. Dropping the words' reference *silently* is what this exists to stop —
- * restored, it is a thumbnail in the box again and the hand can see what it has.
- */
-export function handedBackReference(messages: readonly AgentQueued[], held: Attachment | null): Attachment | null {
-	if (held !== null) return held;
-	return messages.find((one) => one.attached !== null && one.attached !== undefined)?.attached ?? null;
+/** Every queued reference can return to the composer, in message order. */
+export function handedBackReferences(
+	messages: readonly AgentQueued[],
+	held: readonly Attachment[],
+): readonly Attachment[] {
+	return [...messages.flatMap((message) => message.attached ?? []), ...held];
 }

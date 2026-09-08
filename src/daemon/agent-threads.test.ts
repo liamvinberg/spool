@@ -32,7 +32,7 @@ const picture: ThreadPut = {
 	life: "read",
 	at: 1_700_000_000_000,
 	entries: [
-		{ key: "u0", kind: "user", text: "shoot home and fix whatever reads wrong", context: null, attached: null },
+		{ key: "u0", kind: "user", text: "shoot home and fix whatever reads wrong", context: null, attached: [] },
 		{ key: "row:t1", kind: "row", state: "done", verb: "shot", subject: "home" },
 	],
 	kept: 2,

@@ -1,4 +1,4 @@
-import type { Attachment } from "../../attachment";
+import { type Attachment, restoredAttachments } from "../../attachment";
 import type { AgentEvent, AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, questionsOf } from "./agent-ask";
@@ -234,7 +234,7 @@ export type AgentEntry =
 			readonly kind: "user";
 			readonly text: string;
 			readonly context: string | null;
-			readonly attached: Attachment | null;
+			readonly attached: readonly Attachment[];
 	  }
 	/**
 	 * One block of the agent's prose.
@@ -367,11 +367,13 @@ const KINDS: ReadonlySet<string> = new Set(["user", "prose", "row", "wait", "ask
  * not take the canvas with it.
  */
 export function drawableEntries(entries: readonly unknown[]): AgentEntry[] {
-	return entries.filter((entry): entry is AgentEntry => {
-		if (typeof entry !== "object" || entry === null) return false;
-		const one = entry as { key?: unknown; kind?: unknown };
-		return typeof one.key === "string" && typeof one.kind === "string" && KINDS.has(one.kind);
-	});
+	return entries
+		.filter((entry): entry is AgentEntry => {
+			if (typeof entry !== "object" || entry === null) return false;
+			const one = entry as { key?: unknown; kind?: unknown };
+			return typeof one.key === "string" && typeof one.kind === "string" && KINDS.has(one.kind);
+		})
+		.map((entry) => (entry.kind === "user" ? { ...entry, attached: restoredAttachments(entry.attached) } : entry));
 }
 
 /**
@@ -599,7 +601,7 @@ const ANSWERS: ReadonlySet<AgentEvent["kind"]> = new Set([
 export interface AgentSent {
 	/** exactly what the chip strip said at rest, which is the line the log keeps */
 	readonly context?: string | null;
-	readonly attached?: Attachment | null;
+	readonly attached?: readonly Attachment[];
 	/** the entries those chips were drawn from, which are the bytes that go out */
 	readonly selection?: readonly SelectionEntry[] | undefined;
 }
@@ -1388,7 +1390,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		kind: "user",
 		text: words.text,
 		context: words.context ?? null,
-		attached: words.attached ?? null,
+		attached: words.attached ?? [],
 	}));
 	for (const slot of order) {
 		if (slot.kind === "row") {

@@ -517,7 +517,7 @@ export function ProjectCanvas({
 		setPreferredEngine(engine);
 		void putSetting("agent.engine", engine, project);
 	};
-	const deck = useAgentThreads(project, preferredEngine);
+	const deck = useAgentThreads(project, preferredEngine, root);
 	const turn = deck.turn;
 	const permissions = useAgentPermissions(project, deck.open, deck.engine, turn.phase);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
@@ -5949,6 +5949,8 @@ export function ProjectCanvas({
 						queued={turn.queued}
 						handback={turn.handback}
 						draft={turn.draft}
+						attached={turn.attached}
+						onAttach={turn.onAttach}
 						onDraft={turn.onDraft}
 						running={turn.running}
 						model={model}

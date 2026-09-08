@@ -519,15 +519,11 @@ export class BundledRuntime {
 					{
 						expandPromptTemplates: false,
 						images: said.flatMap((message) =>
-							message.attachment === undefined
-								? []
-								: [
-										{
-											type: "image" as const,
-											mimeType: message.attachment.media,
-											data: message.attachment.data,
-										},
-									],
+							(message.attachments ?? []).map((attachment) => ({
+								type: "image" as const,
+								mimeType: attachment.media,
+								data: attachment.data,
+							})),
 						),
 					},
 				);

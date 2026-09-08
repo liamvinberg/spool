@@ -27,7 +27,7 @@ it.each([
 				prompt:
 					'file tools: [{"name":"edit","arguments":{"path":"design/frames/home/frame.tsx","edits":[{"oldText":"before","newText":"after"}]}}]',
 				selection: "captured selection",
-				attachment: { media: "image/png", data: "aGVsbG8=" },
+				attachments: [{ media: "image/png", data: "aGVsbG8=" }],
 			},
 		],
 	};

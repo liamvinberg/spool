@@ -361,10 +361,10 @@ export type AgentSaid = AgentMessage;
 export function agentPromptContent(said: readonly AgentSaid[]): unknown[] {
 	const blocks: unknown[] = [];
 	for (const one of said) {
-		if (one.attachment !== undefined) {
+		for (const attachment of one.attachments ?? []) {
 			blocks.push({
 				type: "image",
-				source: { type: "base64", media_type: one.attachment.media, data: one.attachment.data },
+				source: { type: "base64", media_type: attachment.media, data: attachment.data },
 			});
 		}
 		blocks.push({ type: "text", text: one.selection === "" ? one.prompt : `${one.selection}\n\n${one.prompt}` });

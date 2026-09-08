@@ -11,8 +11,8 @@ export function LandingEnding({ take }: { take: EndingTake }) {
 			<ModernStart />
 			<div className="ee-note sg-width">
 				<p>I’m Liam, the person building spool. Follow along as it takes shape.</p>
-				<a href="https://x.com/liamv1nberg" target="_blank" rel="noreferrer">
-					Follow @liamv1nberg
+				<a href="https://x.com/liamvinberg" target="_blank" rel="noreferrer">
+					Follow @liamvinberg
 				</a>
 			</div>
 			<footer className="ee-footer sg-width">

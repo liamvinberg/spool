@@ -26,7 +26,7 @@ export interface AgentOwnership {
 export interface AgentMessage {
 	readonly prompt: string;
 	readonly selection: string;
-	readonly attachment?: Attachment;
+	readonly attachments?: readonly Attachment[];
 }
 
 export interface EngineOfferOptions {

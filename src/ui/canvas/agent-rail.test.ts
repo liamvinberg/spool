@@ -2,12 +2,14 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { IDBFactory } from "fake-indexeddb";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { longestStreamed, readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
+import { draftsFor } from "./agent-drafts";
 import { chunksOf } from "./agent-markdown";
 import { type FrameJump, followTo, sameEntry, windStrength } from "./agent-rail";
 import type { AgentEntry } from "./agent-transcript";
@@ -38,6 +40,7 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas";
  * global shadows happy-dom's, the writes go nowhere and the whole file passes.
  */
 beforeEach(() => {
+	vi.stubGlobal("indexedDB", new IDBFactory());
 	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
 	onTestFinished(() => {
 		vi.useRealTimers();
@@ -61,7 +64,7 @@ const PROJECTION = {
 interface Said {
 	readonly prompt: string;
 	readonly selection?: readonly { readonly frame: string }[];
-	readonly attachment?: { media: string; data: string };
+	readonly attachments?: { media: string; data: string }[];
 }
 
 /** one thread's stream, so a test can drive a conversation it is not looking at (#200) */
@@ -78,7 +81,7 @@ interface Turn {
 	/** every message of every turn, flattened: a turn is one press or a queue that fired */
 	readonly prompts: string[];
 	/** whatever rode with those words, which so far is a reference image (#119) */
-	readonly attachments: ({ media: string; data: string } | undefined)[];
+	readonly attachments: { media: string; data: string }[][];
 	/** each turn's own messages, so a test can say two of them fired as one turn (#170) */
 	readonly turns: (readonly Said[])[];
 	/** what the person said to a waiting request, which goes up its own door (#145) */
@@ -285,7 +288,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				turn.turns.push(sent.said);
 				for (const one of sent.said) {
 					turn.prompts.push(one.prompt);
-					turn.attachments.push(one.attachment);
+					turn.attachments.push(one.attachments ?? []);
 				}
 				const stream = sse();
 				turn.open = true;
@@ -425,6 +428,9 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	});
 	return {
 		host,
+		leave: async () => {
+			await act(async () => root.render(null));
+		},
 		turn,
 		watcher,
 		chrome,
@@ -457,6 +463,9 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			// the column holds one surface and properties have it by default (#256),
 			// so a file about the agent opens the agent: its glyph in the strip is
 			// the switch, and pressing it is what every test here starts from
+			await act(async () => {
+				await draftsFor("test").ready;
+			});
 			const expand = host.querySelector<HTMLElement>('[aria-label="Expand agent"]');
 			if (expand !== null) {
 				await act(async () => {
@@ -573,15 +582,16 @@ async function clickHome(host: HTMLElement, x = 40, y = 40) {
 }
 
 /** a pasted screenshot, which is one of the two ways one gets into the composer */
-async function paste(host: HTMLElement, file: File) {
+async function paste(host: HTMLElement, ...files: File[]) {
+	const count = host.querySelectorAll("[data-agent-attached]").length + files.length;
 	const box = field(host);
 	if (box === null) throw new Error("no composer");
 	await act(async () => {
 		const event = new Event("paste", { bubbles: true });
-		Object.defineProperty(event, "clipboardData", { value: { files: [file] } });
+		Object.defineProperty(event, "clipboardData", { value: { files } });
 		box.dispatchEvent(event);
 	});
-	await until(() => host.querySelector("[data-agent-attached]") !== null);
+	await until(() => host.querySelectorAll("[data-agent-attached]").length === count);
 }
 
 /**
@@ -2305,6 +2315,16 @@ describe("the chip strip", () => {
 });
 
 describe("an attached image", () => {
+	it("keeps every image from repeated pastes", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await paste(canvas.host, shot());
+		await paste(canvas.host, shot());
+		expect(canvas.host.querySelectorAll("[data-agent-attached]")).toHaveLength(2);
+		await send(canvas.host, "use both references");
+		expect(canvas.turn.attachments.at(-1)).toHaveLength(2);
+	});
+
 	it("rides with the words as bytes and shows what was sent", async () => {
 		const canvas = mount();
 		await canvas.render();
@@ -2314,7 +2334,7 @@ describe("an attached image", () => {
 
 		await send(canvas.host, "match this");
 
-		const sent = canvas.turn.attachments.at(-1);
+		const sent = canvas.turn.attachments.at(-1)?.[0];
 		expect(sent?.media).toBe("image/png");
 		// the bytes themselves, base64: a browser never reveals a path, so there is
 		// nothing else this could be
@@ -2350,7 +2370,7 @@ describe("an attached image", () => {
 		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
 
 		await send(canvas.host, "match this");
-		expect(canvas.turn.attachments.at(-1)).toBeUndefined();
+		expect(canvas.turn.attachments.at(-1)).toEqual([]);
 	});
 
 	it("can be taken back with the ✕ before it goes", async () => {
@@ -2363,7 +2383,7 @@ describe("an attached image", () => {
 
 		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
 		await send(canvas.host, "never mind");
-		expect(canvas.turn.attachments.at(-1)).toBeUndefined();
+		expect(canvas.turn.attachments.at(-1)).toEqual([]);
 	});
 
 	/** 44px is enough to recognise a picture and not enough to check one */
@@ -2392,7 +2412,7 @@ describe("an attached image", () => {
 		expect(canvas.host.querySelector("[data-agent-attached]")).not.toBeNull();
 
 		await send(canvas.host, "match this");
-		expect(canvas.turn.attachments.at(-1)?.data).toBe("iVBORw0KGgoBAgM=");
+		expect(canvas.turn.attachments.at(-1)?.[0]?.data).toBe("iVBORw0KGgoBAgM=");
 	});
 });
 
@@ -3169,7 +3189,7 @@ function storedThread({
 		life: "read",
 		at: 1_700_000_000_000,
 		entries: [
-			{ key: "u0", kind: "user", text: over.ask, context: null, attached: null },
+			{ key: "u0", kind: "user", text: over.ask, context: null, attached: [] },
 			{
 				key: "row:t1",
 				kind: "row",
@@ -3596,7 +3616,7 @@ describe("what survives a restart", () => {
 				life: stopped ? "running" : "read",
 				stopped,
 				entries: [
-					{ key: "u0", kind: "user", text: "tighten the header", context: null, attached: null },
+					{ key: "u0", kind: "user", text: "tighten the header", context: null, attached: [] },
 					{ key: "p0", kind: "prose", full: "The header is tighter.\n\nThe receipt", settled: false },
 				],
 				kept: 2,
@@ -3648,7 +3668,7 @@ describe("what survives a restart", () => {
 				life: "running",
 				stopped: true,
 				entries: [
-					{ key: "u0", kind: "user", text: "three takes on the cart", context: null, attached: null },
+					{ key: "u0", kind: "user", text: "three takes on the cart", context: null, attached: [] },
 					{
 						key: "row:t1",
 						kind: "row",
@@ -3885,6 +3905,44 @@ describe("closing a thread", () => {
  * turn's worth of typing can be sitting — and it was memory only, so a refresh took it.
  */
 describe("what the composer keeps", () => {
+	it("returns to the conversation when an unsent new chat was emptied", async () => {
+		const canvas = mount();
+		canvas.stored.served = [storedThread({ id: ONE, ask: "existing conversation" })];
+		await canvas.render();
+		await newThread(canvas.host);
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, "discard this draft"));
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, ""));
+		await canvas.leave();
+		await canvas.render();
+		await until(() => plateAsk(canvas.host)?.textContent?.includes("existing conversation") === true);
+		expect(field(canvas.host)?.value).toBe("");
+	});
+
+	it("restores an unsent new chat with every image after leaving the project", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await paste(canvas.host, shot(), shot());
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, "still writing"));
+		await canvas.leave();
+		await canvas.render();
+		await until(() => field(canvas.host)?.value === "still writing");
+		expect(canvas.host.querySelectorAll("[data-agent-attached]")).toHaveLength(2);
+		expect(canvas.turn.prompts).toEqual([]);
+	});
+
+	it("keeps words typed while the conversation list is still loading", async () => {
+		const canvas = mount();
+		let resolve = () => {};
+		canvas.stored.hold = new Promise<void>((done) => {
+			resolve = done;
+		});
+		await canvas.render();
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, "typed while loading"));
+		await act(async () => resolve());
+		await settle(100);
+		expect(field(canvas.host)?.value).toBe("typed while loading");
+	});
+
 	it("writes the words in the box down with the thread they belong to", async () => {
 		const canvas = mount();
 		await canvas.render();
@@ -4011,7 +4069,7 @@ describe("the model menu", () => {
 		await send(canvas.host, "keep this draft");
 		await settle(50);
 		expect(canvas.turn.streams[0]?.thread).toBe(thread);
-		expect(canvas.turn.attachments[0]?.media).toBe("image/png");
+		expect(canvas.turn.attachments[0]?.[0]?.media).toBe("image/png");
 		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
 		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("spool");
 	});

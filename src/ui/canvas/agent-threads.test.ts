@@ -19,7 +19,7 @@ const asked: AgentEntry = {
 	kind: "user",
 	text: "shoot home and fix what reads wrong",
 	context: null,
-	attached: null,
+	attached: [],
 };
 const note = (text: string): AgentEntry => ({ key: `n:${text}`, kind: "note", text });
 const row = (state: "running" | "done", verb = "edit"): Extract<AgentEntry, { kind: "row" }> => ({
@@ -130,7 +130,7 @@ describe("the name", () => {
 	});
 
 	it("is the words the thread opened with, not the last thing said in it", () => {
-		const later: AgentEntry = { key: "u1", kind: "user", text: "now the receipt", context: null, attached: null };
+		const later: AgentEntry = { key: "u1", kind: "user", text: "now the receipt", context: null, attached: [] };
 		expect(askOf([asked, row("done"), later])).toBe("shoot home and fix what reads wrong");
 	});
 

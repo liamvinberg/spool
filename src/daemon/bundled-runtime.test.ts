@@ -18,7 +18,10 @@ function options(root: string, id = randomUUID(), prompt = "hello"): EngineTurnO
 			{
 				prompt,
 				selection: "<selection>first frame</selection>",
-				attachment: { media: "image/png", data: "aGVsbG8=" },
+				attachments: [
+					{ media: "image/png", data: "aGVsbG8=" },
+					{ media: "image/jpeg", data: "d29ybGQ=" },
+				],
 			},
 		],
 		ask: { value: "spool/openai/api_key/spool-test", effort: "high" },
@@ -78,6 +81,7 @@ it("continues exact SDK sessions with images and context, independent threads, a
 	expect(events.find((event) => event.kind === "ended")).toMatchObject({ ending: "done", reason: null });
 	expect(contexts[0]?.tools?.map((tool) => tool.name)).toEqual(["read", "write", "edit", "bash", "ask_person"]);
 	expect(JSON.stringify(contexts[0])).toContain("aGVsbG8=");
+	expect(JSON.stringify(contexts[0])).toContain("d29ybGQ=");
 	expect(JSON.stringify(contexts[0])).toContain("first frame");
 	expect(contexts[0]?.systemPrompt).toContain("Project instruction as text");
 	expect(existsSync(join(root, "executed"))).toBe(false);
