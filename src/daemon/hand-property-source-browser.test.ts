@@ -410,7 +410,9 @@ it.each([true, false])("scrubs one retained opacity gesture and completes only o
 		"#subject",
 	);
 	await f.select();
+	// The rail scrolls: a pointer gesture reads the row where it actually is.
 	const label = f.page.locator('[data-properties-row="opacity"] > span').first();
+	await label.scrollIntoViewIfNeeded();
 	const box = await label.boundingBox();
 	if (!box) throw new Error("opacity scrub label has no box");
 	const x = box.x + 5,
@@ -449,7 +451,9 @@ it.each([false, true])(
 			"#subject",
 		);
 		await f.select();
-		const box = await f.page.locator('[data-properties-row="opacity"] > span').first().boundingBox();
+		const label = f.page.locator('[data-properties-row="opacity"] > span').first();
+		await label.scrollIntoViewIfNeeded();
+		const box = await label.boundingBox();
 		if (!box) throw new Error("opacity scrub label has no box");
 		const x = box.x + 5,
 			y = box.y + box.height / 2;
