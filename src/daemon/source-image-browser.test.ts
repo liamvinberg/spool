@@ -364,3 +364,83 @@ it.each([false, true])(
 		expect(sends).toEqual([]);
 	},
 );
+
+it.each([false, true])(
+	"acknowledges the current image without saving or adding an Undo entry (unapplied: %s)",
+	{ timeout: 120000 },
+	async (unapplied) => {
+		const replacement = `data:image/svg+xml;base64,${Buffer.from(SECOND).toString("base64")}`;
+		const source = unapplied
+			? SOURCE.replace("{useState}", "{useState,useLayoutEffect,useRef}")
+					.replace(
+						"const [count,setCount]",
+						`const imageRef=useRef(null);useLayoutEffect(()=>{if(window.imageCorrupt)imageRef.current.src=${JSON.stringify(replacement)}});const [count,setCount]`,
+					)
+					.replace('<img id="hero"', '<img ref={imageRef} id="hero"')
+			: SOURCE;
+		const f = await originCanvas({ "shared/assets/first.svg": SVG }, source, "#hero");
+		if (unapplied) {
+			await f.page.route("**/source", async (route) => {
+				if (route.request().postDataJSON()?.action !== "commit") return route.continue();
+				const response = await route.fetch();
+				// The original read was valid. The authored app changes while its real unchanged reply is held.
+				await f.target.evaluate(() => Reflect.set(window, "imageCorrupt", true));
+				await f.frame.locator("#counter").evaluate((element) => {
+					if (!(element instanceof HTMLButtonElement)) throw new Error("missing counter");
+					element.click();
+				});
+				await expect.poll(() => f.frame.locator("#counter").textContent()).toBe("1");
+				await expect
+					.poll(() => f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth))
+					.toBe(70);
+				await route.fulfill({ response });
+			});
+		}
+		await f.select();
+		await f.page.getByRole("button", { name: "image", exact: true }).click();
+		const choice = f.page.locator('[data-menu-option="first.svg"]');
+		await expect.poll(() => choice.count()).toBe(1);
+		const completion = f.page.waitForResponse(
+			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+		);
+		await choice.click();
+		expect(await (await completion).json()).toEqual({ ok: true, source: "unchanged", publication: null });
+		await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(1);
+		expect(await f.page.evaluate(() => Reflect.get(window, "originOutcomes").at(-1).rendered)).toBe(
+			unapplied ? "mismatching" : "verified",
+		);
+		if (unapplied) {
+			const notice = f.page.locator('[data-hand-notice="unverified"]');
+			await expect.poll(() => notice.count()).toBe(1);
+			expect(await notice.textContent()).toContain("No new edit saved");
+			expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+			expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(
+				70,
+			);
+			await notice.getByRole("button", { name: "Ask agent", exact: true }).click();
+			const composer = f.page.locator("[data-agent-rail] textarea");
+			await expect.poll(() => composer.inputValue()).toContain("first.svg");
+			await f.page.locator('[data-dock-glyph="properties"]').click();
+			await notice.getByRole("button", { name: "Reload app (resets state)", exact: true }).click();
+			await expect.poll(() => f.page.evaluate(() => Reflect.get(window, "originOutcomes").length)).toBe(2);
+			await expect.poll(() => notice.count()).toBe(0);
+			await f.page.locator('[data-dock-glyph="agent"]').click();
+			await expect.poll(() => composer.inputValue()).toBe("");
+		}
+		await expect.poll(() => f.page.locator("[data-hand-notice]").count()).toBe(0);
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+		expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(
+			30,
+		);
+		const inverse: string[] = [];
+		f.page.on("request", (request) => {
+			if (request.url().endsWith("/source") && request.postDataJSON()?.action === "inverse")
+				inverse.push(request.url());
+		});
+		await f.history();
+		await f.page.keyboard.press("Tab");
+		expect(inverse).toEqual([]);
+		expect(f.writes).toEqual(["commit"]);
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+	},
+);

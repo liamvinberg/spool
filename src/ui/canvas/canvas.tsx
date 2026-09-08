@@ -185,6 +185,7 @@ import {
 	attributedIntent,
 	intentText,
 	inverseIntent,
+	matchesIntentSource,
 	preparedHelp,
 	type SourceIntent,
 	sourceIntent,
@@ -1935,16 +1936,12 @@ export function ProjectCanvas({
 				return;
 			}
 			if (result.source === "unchanged") {
-				const checked =
-					intent?.operation.kind === "literal" ? await sourceDelivery.verifyReload(intent) : undefined;
+				const checked = intent ? await sourceDelivery.verifyReload(intent) : undefined;
 				if (
 					intent &&
-					(checked?.kind !== "literal" ||
-						intent.expected?.kind !== "literal" ||
-						checked.description.cell !== intent.cell ||
-						checked.description.source !== intent.source ||
-						checked.description.value !== intent.expected.value ||
-						(checked.description.original.absent ?? false) !== intent.expected.absent ||
+					(!checked ||
+						checked.kind === "structure" ||
+						!matchesIntentSource(intent, checked.description) ||
 						checked.outcome.rendered !== "verified")
 				) {
 					unappliedSource.current.add(frame);
@@ -3117,18 +3114,7 @@ export function ProjectCanvas({
 			reloadedIntent.current = undefined;
 			const checked = await sourceDelivery.verifyReload(intent);
 			const matches =
-				checked?.kind === "structure" ||
-				((checked?.kind === "literal" || checked?.kind === "image") &&
-					intent.expected?.kind === checked.kind &&
-					checked.description.cell === intent.cell &&
-					checked.description.source ===
-						(intent.expected.kind === "image" ? intent.expected.source : intent.source) &&
-					checked.description.value === intent.expected.value &&
-					(checked.description.original.absent ?? false) === intent.expected.absent &&
-					(intent.expected.kind !== "image" ||
-						(checked.description.asset === intent.expected.asset &&
-							checked.description.role === intent.role &&
-							checked.description.scope === intent.scope)));
+				checked?.kind === "structure" || (!!checked && matchesIntentSource(intent, checked.description));
 			if (matches && checked?.outcome.rendered === "verified") {
 				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
 				resolveIntent(intent);

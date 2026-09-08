@@ -87,6 +87,22 @@ export function attributedIntent(intent: SourceIntent, read: SourceDescription):
 	};
 }
 
+/** Source comparison for recovery presentation; current publication and native outcome remain separately required. */
+export function matchesIntentSource(intent: SourceIntent, description: SourceDescription): boolean {
+	const expected = intent.expected;
+	if (expected?.kind !== "literal" && expected?.kind !== "image") return false;
+	return (
+		description.cell === intent.cell &&
+		description.source === (expected.kind === "image" ? expected.source : intent.source) &&
+		description.value === expected.value &&
+		(description.original.absent ?? false) === expected.absent &&
+		(expected.kind !== "image" ||
+			(description.asset === expected.asset &&
+				description.role === intent.role &&
+				description.scope === intent.scope))
+	);
+}
+
 export function inverseIntent(intent: SourceIntent, way: "undo" | "redo"): SourceIntent {
 	const { change: _forward, expected: _expected, ...original } = intent;
 	return {
