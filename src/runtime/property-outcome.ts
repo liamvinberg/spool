@@ -101,6 +101,21 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		/^border-(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-width$/.test(expected.property)
 	)
 		return borderOutcome(element, expected);
+	if (expected.property === "border-radius") {
+		// Every corner is its own native component; the row is verified only when all four are.
+		const outcomes = [
+			"border-top-left-radius",
+			"border-top-right-radius",
+			"border-bottom-right-radius",
+			"border-bottom-left-radius",
+		].map((corner) => propertyOutcome(element, { ...expected, property: corner }));
+		const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
+		if (refused) return refused;
+		return {
+			rendered: outcomes.every((outcome) => outcome.rendered === "verified") ? "verified" : "mismatching",
+			observed: outcomes.map((outcome) => outcome.observed ?? "").join(" "),
+		};
+	}
 	if (transitionProperty(expected.property)) return composedOutcome(element, expected, expected.property);
 	if (shadowProperties.includes(expected.property)) return composedOutcome(element, expected, "box-shadow");
 	if (expected.property === "font-variant-numeric") return composedOutcome(element, expected, expected.property);

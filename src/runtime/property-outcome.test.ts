@@ -2015,3 +2015,92 @@ it.each([
 		}, row);
 	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
 });
+
+it("verifies the compiled all-corner radius against every native corner", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const operation = { kind: "property", property: "border-radius", scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		"rounded-[4px]",
+		operation,
+		{ kind: "binding", tokens: ["rounded-[8px]"] },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: "border-radius",
+		scope: "",
+		className: plan.next,
+		absent: false,
+		css: plan.desired.css,
+		effects: plan.consumers,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+	};
+	const host = (classes: string) => `<div data-subject class="${classes}" style="width:60px;height:40px">Radius</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${host(plan.next)}${host("rounded-[4px]")}`,
+	);
+	const outcomes = await f.inspect(expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify({ outcomes, effects: expected.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => getComputedStyle(element).borderRadius),
+	).toBe("8px");
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: "rounded-[4px]",
+		css: plan.original.css,
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		plan.next,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style>${host(removal.next)}${host(plan.next)}`,
+	);
+	const cleared = await empty.inspect(removed);
+	expect(
+		cleared.map((outcome) => outcome.rendered),
+		JSON.stringify({ cleared, effects: removed.effects }),
+	).toEqual(["verified", "mismatching"]);
+	expect((await empty.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	// A single outside corner is enough to refuse the whole row.
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native radius host");
+			element.style.borderTopLeftRadius = "9px";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element) => {
+			if (!(element instanceof HTMLElement)) throw new Error("missing native radius host");
+			element.style.borderTopLeftRadius = "20% 30%";
+		});
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
