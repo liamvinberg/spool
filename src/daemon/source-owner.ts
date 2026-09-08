@@ -36,7 +36,7 @@ import {
 import type { SourceAgentAuthority, SourceAgentReply, SourceAgentRequest } from "./source-agent";
 import { sourceHistoryCompilation } from "./source-history";
 import { createSourceJournal } from "./source-journal";
-import type { Target } from "./source-origins";
+import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
@@ -46,6 +46,14 @@ import { propertyReading } from "./source-property-reading";
 import { propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
 import { retryPropertySource, retryTextSource } from "./source-retry";
+import { readStructuralAncestry } from "./source-structure";
+import {
+	certifyStructuralChange,
+	describeDeleteTarget,
+	potentialDeleteSource,
+	resolveSourceDelete,
+	type SourceDeleteTarget,
+} from "./source-structure-target";
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
@@ -53,10 +61,16 @@ interface PropertyProof {
 	environment: SourcePropertyEnvironment;
 	roots: ReadonlySet<string>;
 }
+interface StructuralParent {
+	frame: string;
+	occurrence: string;
+}
 interface OriginalRead {
 	inverseExpected?: SourcePublication["expected"];
 	property?: PropertyProof;
+	structuralParents?: StructuralParent[];
 	retryFrom?: RetainedCompilation;
+	structure?: SourceDeleteTarget;
 	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
@@ -70,7 +84,11 @@ interface OriginalRead {
 }
 interface Receipt {
 	property?: PropertyProof;
+	structuralAfter?: Extract<SourcePublication["expected"], { kind: "structure" }>;
+	structuralParents?: StructuralParent[];
 	purpose: SourceRead["operation"];
+	structuralRead?: SourceRead;
+	structure?: SourceDeleteTarget;
 	expected: SourcePublication["expected"];
 	required: RetainedCompilation;
 	cell: string;
@@ -268,7 +286,26 @@ export function createSourceOwner(
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
-			if (operation.kind === "delete") throw new Error("this source operation has no admitted planner");
+			if (operation.kind === "delete") {
+				const structure = resolveSourceDelete(root, compilation, original, generation);
+				const read: SourceRead = {
+					...describeDeleteTarget(original, structure),
+					handle: randomUUID(),
+					owner,
+					generation,
+				};
+				reads.set(read.handle, {
+					structure,
+					coverage: readingCoverage,
+					root,
+					frame,
+					read,
+					compilation,
+					file: structure.file,
+					observer,
+				});
+				return { ok: true, read };
+			}
 			if (operation.kind === "literal" && operation.field !== original.field)
 				throw new Error("the source purpose does not match the original field");
 			const retryFrom = retry ? compilation : undefined;
@@ -317,7 +354,7 @@ export function createSourceOwner(
 				role:
 					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
 				cell: cellKey,
-				...(cell.field ? { field: cell.field } : {}),
+				...(cell?.field ? { field: cell.field } : {}),
 				scope: target?.role ?? "definition",
 				repeated: target?.repeated ?? false,
 				value: cell.value,
@@ -356,7 +393,27 @@ export function createSourceOwner(
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the source owner is no longer available");
 			valid(root, publication.compilation);
-			if (operation.kind === "delete") throw new Error("this source purpose has no admitted description planner");
+			if (operation.kind === "delete") {
+				const structure = resolveSourceDelete(root, publication.compilation, original, 0);
+				const read: SourceRead = { ...describeDeleteTarget(original, structure), handle: "", owner, generation: 0 };
+				const found = await discover(
+					root,
+					{
+						structure,
+						root,
+						frame,
+						read,
+						compilation: publication.compilation,
+						file: structure.file,
+						observer: "",
+						coverage: coverage.get(root) ?? 0,
+					},
+					inventories,
+				);
+				if (!found.ok) return found;
+				const { handle: _handle, owner: _owner, generation: _generation, ...description } = found.read;
+				return { ok: true, description };
+			}
 			const resolved =
 				operation.kind === "property"
 					? {
@@ -394,7 +451,7 @@ export function createSourceOwner(
 					target?.syntax === "react-call" ? "factory-literal" : cell.field ? "literal-attribute" : "literal-child",
 				scope: target?.role ?? "definition",
 				repeated: target?.repeated ?? false,
-				...(cell.field ? { field: cell.field } : {}),
+				...(cell?.field ? { field: cell.field } : {}),
 			};
 			const found = await discover(
 				root,
@@ -505,6 +562,95 @@ export function createSourceOwner(
 		return { uses, unverified, unknown };
 	}
 
+	function structuralUses(
+		root: string,
+		target: SourceDeleteTarget,
+		compilation: RetainedCompilation,
+		generation: number,
+		inventories: SourceInventory[],
+	) {
+		const input = compilation.inputs.get(target.file);
+		if (!input) throw new Error("the structural target is outside its original compiler input");
+		const [selected] = journal.transform(target.file, input, [{ ...target.selected, text: target.replacement }]);
+		if (!selected) throw new Error("the original structural span is missing");
+		const uses: SourceUse[] = [],
+			unverified: UseOutcome[] = [];
+		const unknown = new Set<string>();
+		for (const inventory of inventories) {
+			if (inventory.unknown) unknown.add(inventory.frame);
+			const publication = compiler.publication(inventory.publication);
+			if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
+				unknown.add(inventory.frame);
+				continue;
+			}
+			for (const use of inventory.uses) {
+				if (!use.original.structure) continue;
+				const current = use.original.publication === inventory.publication;
+				try {
+					if (!current) throw new Error("the candidate belongs to another publication");
+					valid(root, publication.compilation);
+					const candidate = resolveSourceDelete(root, publication.compilation, use.original, generation);
+					if (candidate.file !== target.file || candidate.site !== target.site) continue;
+					const candidateInput = publication.compilation.inputs.get(candidate.file);
+					if (!candidateInput) throw new Error("the structural use is outside its original compiler input");
+					const [candidateSpan] = journal.transform(candidate.file, candidateInput, [
+						{ ...candidate.selected, text: candidate.replacement },
+					]);
+					if (candidateSpan?.start === selected.start && candidateSpan.end === selected.end)
+						uses.push({ frame: inventory.frame, ...use });
+				} catch (error) {
+					unknown.add(inventory.frame);
+					if (potentialDeleteSource(use.original, target.source))
+						unverified.push({
+							frame: inventory.frame,
+							occurrence: current ? use.original.occurrence : "",
+							installation: "refused",
+							rendered: "unverified",
+							reason: `A potentially affected structural use could not be attributed: ${reason(error)}`,
+						});
+				}
+			}
+		}
+		return { uses, unverified, unknown };
+	}
+
+	function structuralInverseUses(root: string, held: Receipt, inventories: SourceInventory[]) {
+		const uses: SourceUse[] = [],
+			unverified: UseOutcome[] = [];
+		const unknown = new Set<string>();
+		const prior = held.structuralParents ?? [];
+		for (const inventory of inventories) {
+			if (inventory.unknown) unknown.add(inventory.frame);
+			const publication = compiler.publication(inventory.publication);
+			if (!publication || publication.root !== root || publication.frame !== inventory.frame) {
+				unknown.add(inventory.frame);
+				continue;
+			}
+			const parents = new Set(prior.filter((use) => use.frame === inventory.frame).map((use) => use.occurrence));
+			for (const use of inventory.uses) {
+				if (!parents.has(use.original.occurrence)) continue;
+				try {
+					if (!use.original.provenance)
+						throw new Error("the original structural parent has no committed provenance");
+					const sources = new Sources(root, publication.compilation);
+					for (const file of publication.compilation.inputs.keys())
+						if (/\.[cm]?[jt]sx?$/.test(file)) sources.read(relative(realDesignDir(root), file));
+					readStructuralAncestry(sources, JSON.parse(use.original.provenance) as Selection);
+					uses.push({ frame: inventory.frame, ...use });
+				} catch (error) {
+					unverified.push({
+						frame: inventory.frame,
+						occurrence: use.original.occurrence,
+						installation: "refused",
+						rendered: "unverified",
+						reason: reason(error),
+					});
+				}
+			}
+		}
+		return { uses, unverified, unknown };
+	}
+
 	async function discover(
 		root: string,
 		held: OriginalRead,
@@ -513,14 +659,9 @@ export function createSourceOwner(
 		try {
 			valid(root, held.compilation);
 			const cell = held.read.cell ?? held.read.original.cell;
-			const { uses, unverified, unknown } = observedUses(
-				root,
-				cell,
-				held.read.generation,
-				inventories,
-				"read",
-				held.read.operation,
-			);
+			const { uses, unverified, unknown } = held.structure
+				? structuralUses(root, held.structure, held.compilation, held.read.generation, inventories)
+				: observedUses(root, cell, held.read.generation, inventories, "read", held.read.operation);
 			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const dependent = await dependencyFrames(root, held.file);
 			if (!dependent) unknown.add("source coverage");
@@ -571,6 +712,26 @@ export function createSourceOwner(
 		const input = originalInput ? journal.current(held.file, originalInput) : undefined;
 		if (!input) throw new Error("the original compiler input is missing");
 		const before = input.bytes.toString("utf8");
+		let structureBefore = held.read.structure;
+		if (held.structure && expected.kind === "structure") {
+			if (!structureBefore) throw new Error("the original structural parent guard is missing");
+			const certified = certifyStructuralChange(held.structure, before, next, structureBefore);
+			structureBefore = {
+				...structureBefore,
+				state: certified.before,
+				...(held.structure.expected.fallback && certified.before.optional[held.structure.site] === false
+					? { fallback: held.structure.expected.fallback }
+					: {}),
+			};
+			expected = {
+				...expected,
+				state: certified.after,
+				...(held.structure.expected.fallback && certified.after.optional[held.structure.site] === false
+					? { fallback: held.structure.expected.fallback }
+					: {}),
+			};
+		}
+
 		const compatibleBefore = compiler.matchingPublications(
 			held.root,
 			held.frame,
@@ -602,13 +763,26 @@ export function createSourceOwner(
 		};
 		const saved = { ...held.compilation, inputs: frozen };
 		const inverse: Receipt = {
+			...(expected.kind === "structure" ? { structuralAfter: expected } : {}),
 			purpose: held.read.operation,
 			...(held.property ? { property: held.property } : {}),
-			expected: held.inverseExpected ?? {
-				kind: "literal",
-				value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
-				absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
-			},
+			...(held.structure
+				? {
+						structure: held.structure,
+						structuralRead: held.read,
+						structuralParents:
+							held.structuralParents ??
+							(held.read.reach?.uses ?? [{ frame: held.frame, original: held.read.original }]).flatMap((use) =>
+								use.original.structure ? [{ frame: use.frame, occurrence: use.original.structure.parent }] : [],
+							),
+					}
+				: {}),
+			expected: structureBefore ??
+				held.inverseExpected ?? {
+					kind: "literal",
+					value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
+					absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
+				},
 			required: sourceHistoryCompilation(held.root, saved, held.file),
 			cell: held.read.cell ?? held.read.original.cell,
 			...(held.read.reach ? { reach: held.read.reach } : {}),
@@ -964,6 +1138,21 @@ export function createSourceOwner(
 				if (change.kind !== held.read.operation.kind)
 					throw new Error("this source read does not authorize that operation");
 				authenticated = true;
+				if (held.structure) {
+					if (change.kind !== "delete") throw new Error("this structural read does not authorize that operation");
+					const target = held.structure;
+					const input = held.compilation.inputs.get(held.file);
+					if (!input) throw new Error("the original structural source input is missing");
+					const transformed = journal.transform(held.file, input, [
+						{ ...target.selected, text: target.replacement },
+					]);
+					return await publish(
+						held,
+						applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
+						target.expected,
+						transformed,
+					);
+				}
 				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the original source read is incomplete");
 
@@ -1116,14 +1305,9 @@ export function createSourceOwner(
 				let original = held.original;
 				let reach = held.reach;
 				if (inventories) {
-					const { uses, unverified, unknown } = observedUses(
-						root,
-						held.cell,
-						held.generation,
-						inventories,
-						"inverse",
-						held.purpose,
-					);
+					const { uses, unverified, unknown } = held.structure
+						? structuralInverseUses(root, held, inventories)
+						: observedUses(root, held.cell, held.generation, inventories, "inverse", held.purpose);
 					const dependent = await dependencyFrames(root, held.file);
 					reach = {
 						uses,
@@ -1167,9 +1351,15 @@ export function createSourceOwner(
 				const transformed = journal.transform(held.file, input, held.inverse);
 				if (transformed.length === 0) throw new Error("the inverse source span is missing");
 				const cell = held.compilation.cells[held.cell];
-				if (!cell) throw new Error("the original source role changed");
+				if (!cell && !held.structure) throw new Error("the original source role changed");
 				const inverseRead: OriginalRead = {
 					observer: "",
+					...(held.structure
+						? {
+								structure: held.structure,
+								...(held.structuralParents ? { structuralParents: held.structuralParents } : {}),
+							}
+						: {}),
 					sourceOnly,
 					coverage: held.coverage,
 					root,
@@ -1177,18 +1367,27 @@ export function createSourceOwner(
 					file: held.file,
 					compilation,
 					history: held.required,
-					read: {
-						operation: held.purpose,
-						handle: "",
-						owner,
-						original,
-						generation: held.generation,
-						role: cell.field ? "literal-attribute" : "literal-child",
-						cell: held.cell,
-						...(reach ? { reach } : {}),
-						source: cell.source,
-						value: cell.value,
-					},
+					read:
+						held.structuralRead && held.structure
+							? {
+									...held.structuralRead,
+									operation: held.purpose,
+									original,
+									...(reach ? { reach } : {}),
+									...(held.structuralAfter ? { structure: held.structuralAfter } : {}),
+								}
+							: {
+									operation: held.purpose,
+									handle: "",
+									owner,
+									original,
+									generation: held.generation,
+									role: cell?.field ? "literal-attribute" : "literal-child",
+									cell: held.cell,
+									...(reach ? { reach } : {}),
+									source: cell!.source,
+									value: cell!.value,
+								},
 				};
 				const next = applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text;
 				let expected = held.expected;
@@ -1224,7 +1423,9 @@ export function createSourceOwner(
 		if (!held || held.root !== root) return false;
 		try {
 			valid(root, held.compilation);
-			return [...held.compilation.inputs].every(([file, input]) => sameInput(input, readInput(file)));
+			return [...held.compilation.inputs].every(([file, input]) =>
+				journal.current(file, input).bytes.equals(input.bytes),
+			);
 		} catch {
 			return false;
 		}

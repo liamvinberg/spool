@@ -695,9 +695,10 @@ export function describeCompileError(error: unknown): string {
 
 function finishCompilation(compilation: RetainedCompilation, sequence: number): void {
 	compilation.packet.sequence = sequence;
-	compilation.packet.owners = Object.fromEntries(
-		Object.entries(compilation.cells).map(([id, cell]) => [id, cell.owner]),
-	);
+	compilation.packet.owners = {
+		...compilation.structureOwners,
+		...Object.fromEntries(Object.entries(compilation.cells).map(([id, cell]) => [id, cell.owner])),
+	};
 	compilation.packet.attributes = {};
 	for (const [cell, definition] of Object.entries(compilation.cells))
 		if (definition.field && definition.syntax === "jsx") {

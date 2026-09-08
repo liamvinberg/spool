@@ -93,8 +93,14 @@ it("opens a tab whose page is a real document, and walks the URL with it", { tim
 
 	// close really closes: the tab spool opened stays closable after a walk has
 	// given it a history of its own
-	await played.locator("#spool-close").click();
-	await expect.poll(() => played.isClosed(), { timeout: 10_000 }).toBe(true);
+	const closed = played.waitForEvent("close", { timeout: 10_000 });
+	// Closing this tab is the action's completion; it cannot wait for a
+	// navigation epilogue in the document that the real click destroys.
+	await Promise.all([played.locator("#spool-close").click({ noWaitAfter: true }), closed]);
+	expect(played.isClosed()).toBe(true);
+	expect(context.pages()).toEqual([canvas]);
+	expect(await canvas.locator('[role="application"]').count()).toBe(1);
+	expect(await canvas.evaluate(() => location.pathname)).toBe(`/p/${project.name}`);
 });
 
 it("wears the bar, puts it away on the eye, and peeks it back on a rest against the top edge", {

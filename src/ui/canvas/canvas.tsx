@@ -97,7 +97,7 @@ import {
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
-import { deleteGesture, GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
+import { GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
 import { HandNotice, type HandSaid } from "./hand-notice";
 import {
 	draggedAngle,
@@ -121,6 +121,7 @@ import {
 	drop,
 	emptyHistory,
 	entryOf,
+	type History,
 	type HistoryEntry,
 	type Liveness,
 	placeEntryOf,
@@ -128,6 +129,7 @@ import {
 	record,
 	rectsOf,
 	type Staging,
+	structuralGenerations,
 	takeRedo,
 	takeUndo,
 	type Way,
@@ -702,6 +704,14 @@ export function ProjectCanvas({
 	// the one undo/redo stack: per window, in memory, hands' writes only — the
 	// canvas's geometry and the rail's file operations on the same ⌘Z (#230)
 	const history = useRef(emptyHistory());
+	const retainStructureHistory = sourceDelivery.retainStructures;
+	const updateHistory = useCallback(
+		(next: History) => {
+			history.current = next;
+			retainStructureHistory(structuralGenerations(next));
+		},
+		[retainStructureHistory],
+	);
 	// the rail's runner, put here by the rail itself: it owns the stored order
 	// and the explorer calls, so an explorer entry has to be run from there
 	const runEntry = useRef<RunEntry | null>(null);
@@ -1522,7 +1532,7 @@ export function ProjectCanvas({
 			if (Object.keys(patch).length === 0) return;
 			if (before !== undefined) {
 				const entry = entryOf(before, patch);
-				if (entry !== undefined) history.current = record(history.current, entry);
+				if (entry !== undefined) updateHistory(record(history.current, entry));
 			}
 			setFrames((current) => {
 				return current.map((frame) => {
@@ -1536,7 +1546,7 @@ export function ProjectCanvas({
 				if (!ok) void refetchFrames();
 			});
 		},
-		[project, refetchFrames],
+		[project, refetchFrames, updateHistory],
 	);
 
 	/**
@@ -1624,10 +1634,10 @@ export function ProjectCanvas({
 			const after = { ...before, ...patch };
 			const entry = entryOf({ [name]: before }, { [name]: after });
 			if (entry === undefined) return;
-			history.current = record(history.current, entry);
+			updateHistory(record(history.current, entry));
 			applyRects({ [name]: after });
 		},
-		[applyRects],
+		[applyRects, updateHistory],
 	);
 
 	/**
@@ -1694,9 +1704,12 @@ export function ProjectCanvas({
 		[],
 	);
 
-	const recordEntry = useCallback((entry: HistoryEntry) => {
-		history.current = record(history.current, entry);
-	}, []);
+	const recordEntry = useCallback(
+		(entry: HistoryEntry) => {
+			updateHistory(record(history.current, entry));
+		},
+		[updateHistory],
+	);
 
 	// --- tidy: the layered drawing of the graph, laid over the field ------------
 
@@ -1717,9 +1730,9 @@ export function ProjectCanvas({
 		const rects = arrange(scope, edgesRef.current);
 		const entry = entryOf(before, rects);
 		if (entry === undefined) return; // already tidy: nothing to undo
-		history.current = record(history.current, entry);
+		updateHistory(record(history.current, entry));
 		applyRects(rects);
-	}, [applyRects, flushNudge]);
+	}, [applyRects, flushNudge, updateHistory]);
 
 	// --- trash (#23): instant canvas removal, disk move deferred on the toast ---
 
@@ -1868,7 +1881,23 @@ export function ProjectCanvas({
 			if (intent && result?.ok) {
 				if (result.publication) {
 					const expected = result.publication.expected;
-					intent = { ...intent, expected };
+					intent = {
+						...intent,
+						expected,
+						recovery: {
+							frames: [
+								...new Set([
+									...(intent.recovery?.frames ?? []),
+									result.publication.frame,
+									...(result.publication.related ?? []).map((item) => item.frame),
+									...(result.publication.failures ?? []).flatMap((use) => (use.frame ? [use.frame] : [])),
+								]),
+							],
+							unknown:
+								intent.recovery?.unknown === true ||
+								(result.publication.failures ?? []).some((use) => !use.frame),
+						},
+					};
 					if (undo && expected.kind === "literal") intent.change = { kind: "literal", text: expected.value };
 				} else if (
 					result.source === "unchanged" &&
@@ -1912,12 +1941,10 @@ export function ProjectCanvas({
 			}
 			if (result.source === "unchanged") {
 				const checked =
-					intent?.operation.kind === "literal"
-						? await sourceDelivery.verifyReload(frame, intent.selector, intent.field)
-						: undefined;
+					intent?.operation.kind === "literal" ? await sourceDelivery.verifyReload(intent) : undefined;
 				if (
 					intent &&
-					(!checked ||
+					(checked?.kind !== "literal" ||
 						intent.expected?.kind !== "literal" ||
 						checked.description.cell !== intent.cell ||
 						checked.description.source !== intent.source ||
@@ -2003,7 +2030,7 @@ export function ProjectCanvas({
 			const alive = liveness();
 			const taken = way === "undo" ? takeUndo(held, alive) : takeRedo(held, alive);
 			if (taken === undefined) return;
-			history.current = taken.history;
+			updateHistory(taken.history);
 			const entry = taken.entry;
 			if (entry.kind === "geometry") {
 				applyRects(rectsOf(entry.rects, way));
@@ -2033,16 +2060,21 @@ export function ProjectCanvas({
 					says: way === "undo" ? "Undoing…" : "Redoing…",
 				});
 				const ran = history.current;
+				if (entry.structuralGeneration !== undefined)
+					sourceDelivery.holdInverse(entry.receipt.handle, [], entry.structuralGeneration);
 				const operation = sourceDelivery
 					.inventory(entry.receipt.field, entry.receipt.operation)
 					.then((inventories) => {
 						sourceDelivery.holdInverse(
 							entry.receipt.handle,
 							inventories.map((inventory) => inventory.frame),
+							entry.structuralGeneration,
 						);
 						return inverseSource(project, entry.receipt, inventories);
 					})
 					.then(async (result) => {
+						if (result && !result.ok && entry.structuralGeneration !== undefined)
+							sourceDelivery.retireStructure(entry.structuralGeneration);
 						if (history.current !== ran) {
 							if (result?.ok && result.receipt)
 								recordEntry({ ...entry, receipt: result.receipt, ...(intent ? { intent } : {}) });
@@ -2050,12 +2082,14 @@ export function ProjectCanvas({
 							return;
 						}
 						if (result?.ok && result.receipt)
-							history.current = amend(history.current, way, {
-								...entry,
-								receipt: result.receipt,
-								...(intent ? { intent } : {}),
-							});
-						else history.current = held; // an unavailable top inverse is explained, never skipped
+							updateHistory(
+								amend(history.current, way, {
+									...entry,
+									receipt: result.receipt,
+									...(intent ? { intent } : {}),
+								}),
+							);
+						else updateHistory(held); // an unavailable top inverse is explained, never skipped
 						await showSourceResult(entry.frame, result, "", true, intent);
 					});
 				pendingSource.current.set(entry.frame, operation);
@@ -2072,10 +2106,11 @@ export function ProjectCanvas({
 				void revertPatch(project, entry.patch).then((next) => {
 					// a press that landed after this one owns the stacks now
 					if (history.current !== ran) return;
-					history.current =
+					updateHistory(
 						next === undefined
 							? drop(history.current, way)
-							: amend(history.current, way, { ...entry, patch: next });
+							: amend(history.current, way, { ...entry, patch: next }),
+					);
 				});
 				return;
 			}
@@ -2093,7 +2128,7 @@ export function ProjectCanvas({
 				}
 				// a press that landed after this one owns the stacks now
 				if (history.current !== taking) return;
-				history.current = drop(history.current, way);
+				updateHistory(drop(history.current, way));
 				void refetchFrames();
 			});
 		},
@@ -2111,6 +2146,8 @@ export function ProjectCanvas({
 			sourceDelivery.inventory,
 			sourceDelivery.holdInverse,
 			sourceDelivery.releaseInverse,
+			updateHistory,
+			sourceDelivery.retireStructure,
 		],
 	);
 
@@ -2630,45 +2667,92 @@ export function ProjectCanvas({
 		[project, settleWrite],
 	);
 
-	/**
-	 * The delete gesture (#255): ⌫ on a held element takes its lines.
-	 *
-	 * Silent, like every other patch — ⌘Z brings it back and no toast is owed
-	 * either way. Every held rung goes in one patch, so however many were
-	 * picked it is one press to put them back.
-	 */
+	/** Delete one original authored unit through the source owner and its inverse receipt. */
 	const deleteElements = useCallback((): boolean => {
-		const held = pickedRef.current[0];
-		const gesture = deleteGesture(pickedRef.current);
-		if (gesture === undefined || held === undefined) return false;
-		// a held ⌫ repeats: the second press would be gated against the file the
-		// first one is in the middle of rewriting, and would land nowhere
-		if (writing.current) return true;
-		if (!("ops" in gesture)) {
-			showRefusal(held.frame, held.selector, gesture);
+		const pick = pickedRef.current[0];
+		if (!pick) return false;
+		const initial: SourceIntent = {
+			...sourceIntent(pick, pointing.entries),
+			operation: { kind: "delete" },
+			change: { kind: "delete" },
+			action: "delete this element",
+		};
+		if (pickedRef.current.length !== 1) {
+			showRefusal(
+				pick.frame,
+				pick.selector,
+				{ code: "source", says: "Delete requires one identifiable authored source unit" },
+				initial,
+			);
 			return true;
 		}
-		setRefused(null);
+		if (writing.current || pendingSource.current.size > 0) return true;
 		writing.current = true;
-		void gatePatch(project, gesture.frame, gesture.ops).then((asked) => {
-			if (asked === undefined) {
-				writing.current = false;
-				setSaid({ kind: "failed", frame: gesture.frame });
+		setRefused(null);
+		const generation = ++pickSeq.current;
+		const completion = (async () => {
+			let intent = initial;
+			const original = await sourceDelivery.read(
+				pick.frame,
+				pick.selector,
+				generation,
+				undefined,
+				initial.operation,
+			);
+			if (!original) {
+				showRefusal(
+					pick.frame,
+					pick.selector,
+					{ code: "source", says: "this element has no committed structural source observation" },
+					intent,
+				);
 				return;
 			}
-			if (!asked.ok) {
-				writing.current = false;
-				showRefusal(gesture.on.frame, gesture.on.selector, asked.refusal);
+			intent = { ...intent, original };
+			const result = await readSource(
+				project,
+				pick.frame,
+				original,
+				generation,
+				sourceDelivery.observer,
+				initial.operation,
+			);
+			if (!result?.ok) {
+				await sourceDelivery.cancel(pick.frame, generation);
+				showRefusal(
+					pick.frame,
+					pick.selector,
+					{ code: "source", says: result?.reason ?? "the original structural read did not arrive" },
+					intent,
+				);
 				return;
 			}
-			writePatch(gesture.frame, asked.fingerprint, gesture.ops);
+			const read = await sourceDelivery.prepare(pick.frame, result.read);
+			intent = attributedIntent(intent, read);
+			retainedPublications.current.set(pick.frame, original.publication);
+			setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
+			const saved = await commitSource(project, read, { kind: "delete" });
+			if (saved?.ok && saved.receipt)
+				recordEntry({
+					kind: "source",
+					frame: pick.frame,
+					receipt: saved.receipt,
+					intent,
+					structuralGeneration: generation,
+				});
+			if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
+			await showSourceResult(pick.frame, saved, "", false, intent);
+		})();
+		pendingSource.current.set(pick.frame, completion);
+		void completion.finally(() => {
+			writing.current = false;
+			pendingSource.current.delete(pick.frame);
 		});
 		return true;
-	}, [project, showRefusal, writePatch]);
+	}, [project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult]);
 
 	/**
-	 * The rail's own write (#256), which is the delete gesture's path with a
-	 * different surface asking.
+	 * The rail's legacy gated patch path (#256).
 	 *
 	 * Gated first, so a refusal lands on the element it is about rather than in
 	 * a field, and written as one patch so however many tokens a press moved it
@@ -2769,7 +2853,7 @@ export function ProjectCanvas({
 		(frame: string, selector: string) => {
 			const entry = history.current.undo.at(-1);
 			if (entry === undefined || entry.kind !== "patch" || entry.frame !== frame) return;
-			history.current = withdraw(history.current);
+			updateHistory(withdraw(history.current));
 			repick.current = { frame, selector };
 			setSaid({ kind: "clamped", frame });
 			void revertPatch(project, entry.patch).then((next) => {
@@ -2781,7 +2865,7 @@ export function ProjectCanvas({
 				holdNext.current.add(frame);
 			});
 		},
-		[project],
+		[project, updateHistory],
 	);
 
 	/**
@@ -2998,16 +3082,16 @@ export function ProjectCanvas({
 			const intent = reloadedIntent.current;
 			if (!intent || intent.frame !== frame) return;
 			reloadedIntent.current = undefined;
-			if (intent.operation.kind !== "literal" || intent.expected?.kind !== "literal") return;
-			const checked = await sourceDelivery.verifyReload(frame, intent.selector, intent.field);
-			if (
-				checked &&
-				checked.description.cell === intent.cell &&
-				checked.description.source === intent.source &&
-				checked.description.value === intent.expected.value &&
-				(checked.description.original.absent ?? false) === intent.expected.absent &&
-				checked.outcome.rendered === "verified"
-			) {
+			const checked = await sourceDelivery.verifyReload(intent);
+			const matches =
+				checked?.kind === "structure" ||
+				(checked?.kind === "literal" &&
+					intent.expected?.kind === "literal" &&
+					checked.description.cell === intent.cell &&
+					checked.description.source === intent.source &&
+					checked.description.value === intent.expected.value &&
+					(checked.description.original.absent ?? false) === intent.expected.absent);
+			if (matches && checked?.outcome.rendered === "verified") {
 				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
 				resolveIntent(intent);
 			}
@@ -3583,6 +3667,7 @@ export function ProjectCanvas({
 					return;
 				}
 				case "loaded": {
+					sourceDelivery.retainStructures(structuralGenerations(history.current), message.frame);
 					void verifyReloadedIntent(message.frame);
 					lifecycleRef.current.noteLoaded(message.frame);
 					// the document a hand edit was waiting on: the one held in front
@@ -3858,6 +3943,7 @@ export function ProjectCanvas({
 		verifyReloadedIntent,
 		rollBackResize,
 		swapPicture,
+		sourceDelivery.retainStructures,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -4670,7 +4756,7 @@ export function ProjectCanvas({
 		if (at === undefined) return;
 		const entry = placeEntryOf({ [page]: origin }, { [page]: at });
 		if (entry === undefined) return;
-		history.current = record(history.current, entry);
+		updateHistory(record(history.current, entry));
 		applyPlaces({ [page]: at });
 	};
 

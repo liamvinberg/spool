@@ -42,7 +42,7 @@ export function SourceOwnership({
 	operation?: SourceOperation | undefined;
 	generation?: number | undefined;
 	actions: OwnershipActions;
-	onSupport(value: { identity: string; label: string } | undefined, field?: string): void;
+	onSupport(value: { identity: string; label: string } | undefined, operation: SourceOperation): void;
 }) {
 	const [described, setDescribed] = useState<{ identity: string; value: SourceDescription | undefined }>();
 	const identity = JSON.stringify([frame, selector, field, operation, generation, revision]);
@@ -55,13 +55,13 @@ export function SourceOwnership({
 	useEffect(() => {
 		let live = true;
 		highlight([]);
-		onSupport(undefined, field);
+		onSupport(undefined, operation ?? { kind: "literal", ...(field ? { field } : {}) });
 		void describe(frame, selector, field, operation).then((value) => {
 			if (live) {
 				setDescribed({ identity, value });
 				onSupport(
 					value ? { identity: `${frame} ${selector}`, label: ownershipLabel(value, frame) } : undefined,
-					field,
+					operation ?? { kind: "literal", ...(field ? { field } : {}) },
 				);
 			}
 		});

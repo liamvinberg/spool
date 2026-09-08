@@ -13,6 +13,7 @@ import {
 import type { SourcePropertyPreview } from "../../source-property";
 import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
+import type { SourceIntent } from "./source-intent";
 
 interface OutcomeGroup {
 	publication: SourcePublication;
@@ -48,7 +49,9 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	const outcomeListeners = useRef(new Set<(publication: string, outcome: UseOutcome) => void>());
 	const [liveFrames, setLiveFrames] = useState<ReadonlySet<string>>(new Set());
 	const descriptionVersion = useRef(0);
-	const inverseHolds = useRef(new Map<string, string[]>());
+	const inverseHolds = useRef(new Map<string, { frames: string[]; structuralGeneration?: number }>());
+	const structuralHistory = useRef<readonly number[]>([]);
+	const sentStructures = useRef("[]");
 	const prepared = useRef(new Map<number, { initiator: string; frames: string[] }>());
 	const pending = useRef(
 		new Map<string, { window: Window; resolve: (value: unknown) => void; timer: ReturnType<typeof setTimeout> }>(),
@@ -161,6 +164,25 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		},
 		[iframes],
 	);
+	const retainStructuralEvidence = useCallback(
+		(loadedFrame?: string) => {
+			const generations = [
+				...new Set([
+					...structuralHistory.current,
+					...[...inverseHolds.current.values()].flatMap((hold) =>
+						hold.structuralGeneration === undefined ? [] : [hold.structuralGeneration],
+					),
+				]),
+			].sort((a, b) => a - b);
+			const serialized = JSON.stringify(generations);
+			if (loadedFrame === undefined && sentStructures.current === serialized) return;
+			if (loadedFrame === undefined) sentStructures.current = serialized;
+			for (const frame of loadedFrame === undefined ? iframes.current.keys() : [loadedFrame])
+				void request(frame, { action: "retain-structure", generations });
+		},
+		[iframes, request],
+	);
+
 	useEffect(
 		() =>
 			subscribeSse(`/api/p/${encodeURIComponent(project)}/source-observer/${observer.current}`, {
@@ -244,21 +266,52 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			[project, request],
 		),
 		verifyReload: useCallback(
-			async (frame: string, selector: string, field?: string) => {
+			async (intent: SourceIntent) => {
+				const { frame, selector, field, operation, expected } = intent;
+				if (operation.kind === "delete" && expected?.kind === "structure" && intent.original) {
+					const inventories = await inventory(undefined, operation);
+					const outcomes = await Promise.all(
+						(intent.recovery?.frames ?? [frame]).map(async (name): Promise<UseOutcome> => {
+							const observed = inventories.find((item) => item.frame === name);
+							if (!observed || observed.unknown || !(await sourceIsCurrent(project, observed.publication)))
+								return { frame: name, occurrence: "", installation: "refused", rendered: "unverified" };
+							return {
+								...((await request<UseOutcome>(name, {
+									action: "verify",
+									original: intent.original,
+									expected,
+									publication: observed.publication,
+								})) ?? { occurrence: "", installation: "refused", rendered: "unverified" }),
+								frame: name,
+							};
+						}),
+					);
+					if (intent.recovery?.unknown)
+						outcomes.push({ occurrence: "", installation: "refused", rendered: "unverified" });
+					return { kind: "structure" as const, outcome: combineUseOutcomes(outcomes, intent.original.occurrence) };
+				}
+				if (operation.kind !== "literal" || expected?.kind !== "literal") return;
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
 					selector,
 					field,
-					operation: { kind: "literal", ...(field ? { field } : {}) },
+					operation,
 				});
 				if (!original || !(await sourceIsCurrent(project, original.publication))) return;
-				const description = await describeSource(project, frame, original, await inventory(field));
+				const description = await describeSource(
+					project,
+					frame,
+					original,
+					await inventory(field, operation),
+					operation,
+				);
 				if (!description?.reach) return;
 				const outcomes = await Promise.all(
 					description.reach.uses.map(
 						async (use): Promise<UseOutcome> => ({
 							...((await request<UseOutcome>(use.frame, {
 								action: "verify",
+								publication: use.original.publication,
 								original: use.original,
 								expected: { kind: "literal", value: description.value, absent: original.absent ?? false },
 							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
@@ -271,7 +324,11 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unverified" });
 				for (const name of description.reach.unmounted)
 					outcomes.push({ frame: name, occurrence: "", installation: "refused", rendered: "unmounted" });
-				return { description, outcome: combineUseOutcomes(outcomes, original.occurrence) };
+				return {
+					kind: "literal" as const,
+					description,
+					outcome: combineUseOutcomes(outcomes, original.occurrence),
+				};
 			},
 			[project, request, inventory],
 		),
@@ -283,12 +340,36 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			setActive(undefined);
 			setLiveFrames(new Set());
 		}, []),
-		holdInverse: useCallback((key: string, frames: string[]) => {
-			inverseHolds.current.set(key, frames);
-		}, []),
-		releaseInverse: useCallback((key: string) => {
-			inverseHolds.current.delete(key);
-		}, []),
+		retainStructures: useCallback(
+			(generations: readonly number[], loadedFrame?: string) => {
+				structuralHistory.current = generations;
+				retainStructuralEvidence(loadedFrame);
+			},
+			[retainStructuralEvidence],
+		),
+		retireStructure: useCallback(
+			(generation: number) => {
+				for (const frame of iframes.current.keys()) void request(frame, { action: "retire-structure", generation });
+			},
+			[iframes, request],
+		),
+		holdInverse: useCallback(
+			(key: string, frames: string[], structuralGeneration?: number) => {
+				inverseHolds.current.set(key, {
+					frames,
+					...(structuralGeneration === undefined ? {} : { structuralGeneration }),
+				});
+				retainStructuralEvidence();
+			},
+			[retainStructuralEvidence],
+		),
+		releaseInverse: useCallback(
+			(key: string) => {
+				inverseHolds.current.delete(key);
+				retainStructuralEvidence();
+			},
+			[retainStructuralEvidence],
+		),
 		highlight: useCallback(
 			(uses: SourceUse[]) => {
 				for (const frame of iframes.current.keys())
@@ -319,6 +400,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					frames.map((name) =>
 						request<boolean>(name, {
 							action: "prepare",
+							structure: read.structure,
 							generation: read.generation,
 							uses: amended.reach?.uses.filter((use) => use.frame === name).map((use) => use.original) ?? [],
 						}),
@@ -331,7 +413,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		holds: useCallback(
 			(frame: string) =>
 				[...prepared.current.values()].some((value) => value.frames.includes(frame)) ||
-				[...inverseHolds.current.values()].some((frames) => frames.includes(frame)),
+				[...inverseHolds.current.values()].some((hold) => hold.frames.includes(frame)),
 			[],
 		),
 		clearFeedback: useCallback(() => {

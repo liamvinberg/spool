@@ -29,7 +29,6 @@ import { walkNodes } from "./jsx-walk";
 
 export type HandOp =
 	| { kind: "set-text"; source: string; text: string }
-	| { kind: "delete"; source: string }
 	| { kind: "set-class"; source: string; token: string; scope: string; remove?: boolean }
 	| { kind: "set-attribute"; source: string; name: string; value: string }
 	| { kind: "set-asset"; source: string; specifier: string; hint: string };
@@ -43,7 +42,6 @@ export type RefusalCode =
 	| "mapped-text"
 	| "expression-text"
 	| "no-text"
-	| "not-a-child"
 	| "expression-attribute"
 	| "class-attribute"
 	| "walk-target"
@@ -131,10 +129,6 @@ export function parseHandOps(value: unknown): HandOp[] | undefined {
 		if (typeof raw !== "object" || raw === null) return undefined;
 		const { kind, source, text, token, scope, remove, name, value: attribute } = raw as Record<string, unknown>;
 		if (typeof source !== "string" || !STAMP.test(source)) return undefined;
-		if (kind === "delete") {
-			ops.push({ kind, source });
-			continue;
-		}
 		if (kind === "set-text") {
 			if (typeof text !== "string" || text.length > TEXT_CAP) return undefined;
 			ops.push({ kind, source, text });
@@ -417,8 +411,6 @@ function planOne(source: string, program: Node, element: Element, op: HandOp): O
 	switch (op.kind) {
 		case "set-text":
 			return planText(source, element, op.text);
-		case "delete":
-			return planDelete(source, element);
 		case "set-attribute":
 			return planAttribute(source, element, op.name, op.value);
 		case "set-asset":
@@ -527,26 +519,6 @@ function coreOf(source: string, child: Node, text: string): SpanPatch {
 	const raw = rawOf(source, child);
 	const core = textCore(raw);
 	return { start: nodeStart(child) + core.start, end: nodeStart(child) + core.end, text: writeJsxText(text) };
-}
-
-function planDelete(source: string, element: Element): OnePlan {
-	if (element.parent?.type !== "JSXElement" && element.parent?.type !== "JSXFragment") {
-		return { refusal: { code: "not-a-child", says: "not a whole child of its parent" } };
-	}
-	let start = nodeStart(element.node);
-	let end = nodeEnd(element.node);
-	// the element's own lines go with it: the indentation in front of it, and
-	// the line break behind it, so no blank line is left where it stood
-	while (start > 0 && (source[start - 1] === " " || source[start - 1] === "\t")) start -= 1;
-	if (start > 0 && source[start - 1] === "\n") {
-		while (end < source.length && (source[end] === " " || source[end] === "\t")) end += 1;
-		if (source[end] === "\n") {
-			start -= 1;
-		} else {
-			end = nodeEnd(element.node);
-		}
-	}
-	return { patches: [{ start, end, text: "" }] };
 }
 
 function planAttribute(source: string, element: Element, name: string, value: string): OnePlan {
