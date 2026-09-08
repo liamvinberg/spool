@@ -112,4 +112,5 @@ it.each([
 			.map((effect) => effect.value),
 	);
 	expect(owned(property)).toEqual([]);
+	expect(owned(companion === "transition-duration" ? "--tw-duration" : "--tw-ease")).toEqual([]);
 });

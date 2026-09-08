@@ -69,6 +69,9 @@ export function removalComponents(
 	for (const owner of owners) {
 		const effects = certificate.effects.filter((effect) => effect.owner === owner);
 		const consumed = new Set(effects.filter((effect) => !effect.property.startsWith("--")).flatMap(propertyInputs));
+		const transitionTarget = effects.some(
+			(effect) => effect.property === "transition-property" && !roots.has(effect.property),
+		);
 		const partial =
 			effects.some((effect) => {
 				const keys = propertyKeys(effect.property, environment);
@@ -78,7 +81,7 @@ export function removalComponents(
 				effects.some((effect) => effect.property.startsWith("--tw-") && !roots.has(effect.property))) ||
 			// A declared transition target remains independently meaningful when
 			// removing one timing component from that same compiler utility.
-			(effects.some((effect) => effect.property === "transition-property" && !roots.has(effect.property)) &&
+			(transitionTarget &&
 				effects.some((effect) => propertyKeys(effect.property, environment).some((key) => roots.has(key))));
 		if (!partial) continue;
 		for (const effect of effects) {
@@ -88,9 +91,10 @@ export function removalComponents(
 			// Component utilities recreate their compiler's shared final consumer.
 			if (propertyInputs(effect).some((key) => roots.has(key))) continue;
 			if (kept.length === keys.length) {
-				// Keep unused compiler variables without introducing a new native consumer.
+				// Preserve whole transition declarations without a utility recreating
+				// its own storage variable; unused variables likewise need no consumer.
 				const token =
-					effect.property.startsWith("--") && !consumed.has(effect.property)
+					(effect.property.startsWith("--") && !consumed.has(effect.property)) || transitionTarget
 						? variableCandidate(effect.property, effect.value)
 						: candidate(effect.property, effect.value);
 				result.add(`${scope}${token}${effect.important ? "!" : ""}`);
