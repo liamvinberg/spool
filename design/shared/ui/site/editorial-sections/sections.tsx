@@ -1,3 +1,4 @@
+import { LandingEnding, type EndingTake } from "shared/ui/site/editorial-endings/ending";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { OffprintSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
 import {
@@ -306,7 +307,14 @@ export function SectionStudy({ section, take }: { section: SectionName; take: Se
 		</Bloom>
 	);
 }
-export function AssembledLanding({ hero }: { hero: "inline" | "tray" }) {
+export function EndingStudy({ take }: { take: EndingTake }) {
+	return (
+		<Bloom hero="inline">
+			<LandingEnding take={take} />
+		</Bloom>
+	);
+}
+export function AssembledLanding({ hero, ending }: { hero: "inline" | "tray"; ending?: EndingTake }) {
 	return (
 		<Bloom hero={hero}>
 			<EditorialOpening take={hero} />
@@ -315,8 +323,14 @@ export function AssembledLanding({ hero }: { hero: "inline" | "tray" }) {
 				<SectionPart section="flow" take="stage" />
 				<SectionPart section="agent" take="stage" />
 				<SectionPart section="files" take="stage" />
-				<SectionPart section="start" take={hero === "tray" ? "paper" : "stage"} />
-				<SectionPart section="footer" take="spread" />
+				{ending ? (
+					<LandingEnding take={ending} />
+				) : (
+					<>
+						<SectionPart section="start" take={hero === "tray" ? "paper" : "stage"} />
+						<SectionPart section="footer" take="spread" />
+					</>
+				)}
 			</main>
 		</Bloom>
 	);
