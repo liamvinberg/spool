@@ -11,6 +11,7 @@ import {
 	propertySignature,
 } from "./source-property-dependencies";
 import { propertyKeys, readPropertyEffects } from "./source-property-effects";
+import { removalComponents } from "./source-property-removal";
 
 /** A property name chooses a control; actual compiler output chooses its source tokens. */
 export async function planPropertyValue(
@@ -69,7 +70,10 @@ export async function planPropertyValue(
 		// Replacing that binding would also detach its other independent components.
 		return [...changed].every((name) => allowed.has(name));
 	});
-	const after = candidate.filter((token) => !owners.includes(token));
+	const after =
+		requested.kind === "remove"
+			? removalComponents(original, before, read.roots, environment, operation.scope)
+			: candidate.filter((token) => !owners.includes(token));
 	const tokens = splitClass(literal);
 	if (new Set(tokens).size !== tokens.length || new Set(candidate).size !== candidate.length)
 		throw new Error("duplicate class tokens have no independent source ownership");
