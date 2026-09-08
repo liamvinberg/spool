@@ -675,7 +675,7 @@ function AlphaField({
 				}}
 				stepDraft={(typed, units) => {
 					const value = parse(typed);
-					return value === undefined ? undefined : String(Math.min(100, Math.max(0, (value ?? 100) + units * 5)));
+					return value === undefined ? undefined : String(Math.min(100, Math.max(0, (value ?? 100) + units)));
 				}}
 			/>
 		</span>

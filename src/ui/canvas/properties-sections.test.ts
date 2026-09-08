@@ -752,9 +752,11 @@ it("previews fractional alpha and cancels repeated steps without writing", async
 	if (!field) throw new Error("missing alpha field");
 	await put(field, "25.5");
 	await step(rail, "background-color", "ArrowUp", false);
-	expect(field.value).toBe("30.5");
+	expect(field.value).toBe("26.5");
 	expect(rail.requests).toEqual([]);
 	expect(rail.previews).toHaveLength(2);
+	await step(rail, "background-color", "ArrowUp", true);
+	expect(field.value).toBe("36.5");
 	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
 	expect(rail.completions).toEqual([false]);
 });
