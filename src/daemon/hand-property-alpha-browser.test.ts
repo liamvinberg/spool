@@ -85,3 +85,82 @@ it.each(["color", "background-color"] as const)(
 			).toEqual([true, "alpha state", 1, 4]);
 	},
 );
+
+it("previews fractional reference alpha and repeated arrows as one cancellable edit", {
+	timeout: 120_000,
+}, async () => {
+	const file = "shared/label.tsx";
+	const original = 'export function Label(){return <button id="subject" className="bg-brand/50 p-6">Hello</button>}';
+	const frame = `import 'shared/tokens.css';import {Label} from 'shared/label';export default function Frame(){return <main className="p-10"><Label/><span id="reference" style={{backgroundColor:'color-mix(in oklab, #123456 30.5%, transparent)'}}>Reference</span></main>}`;
+	const f = await originCanvas(
+		{ [file]: original, "shared/tokens.css": "@theme { --color-brand: #123456; }" },
+		frame,
+		"#subject",
+		true,
+	);
+	const documents = [f.frame, f.page.frameLocator('iframe[title="second"]')];
+	const before = await f.target.evaluate((element) => getComputedStyle(element).backgroundColor);
+	const expected = await f.frame
+		.locator("#reference")
+		.evaluate((element) => getComputedStyle(element).backgroundColor);
+	await f.select();
+	const field = f.page.locator('[data-properties-row="background"] input').first();
+	await expect.poll(() => field.inputValue()).toBe("50");
+	await field.fill("25.5");
+	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(before);
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let waiting = false;
+	const replies: Promise<void>[] = [];
+	await f.page.route("**/source", async (route) => {
+		if (route.request().postDataJSON()?.action !== "preview") return route.continue();
+		const response = await route.fetch();
+		waiting = true;
+		const reply = held.then(() => route.fulfill({ response }));
+		replies.push(reply);
+		await reply;
+	});
+	try {
+		await field.press("ArrowUp");
+		expect(await field.inputValue()).toBe("30.5");
+		await expect.poll(() => waiting).toBe(true);
+		expect(f.writes).toEqual([]);
+		expect(f.bytes()[file]).toBe(original);
+		for (const document of documents)
+			await expect
+				.poll(() => document.locator("#subject").evaluate((element) => getComputedStyle(element).backgroundColor))
+				.toBe(expected);
+		await field.press("Escape");
+	} finally {
+		release();
+		await Promise.all(replies);
+		await f.page.unroute("**/source");
+	}
+	for (const document of documents)
+		await expect
+			.poll(() => document.locator("#subject").evaluate((element) => getComputedStyle(element).backgroundColor))
+			.toBe(before);
+	expect(f.writes).toEqual([]);
+	await field.fill("25.5");
+	await field.press("ArrowUp");
+	const saved = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
+	);
+	await field.press("Enter");
+	expect(await (await saved).json()).toMatchObject({ ok: true });
+	await f.settled();
+	expect(f.bytes()[file]).toBe(original.replace("bg-brand/50", "bg-brand/[30.5%]"));
+	await expect
+		.poll(() => f.page.getByRole("button", { name: "Choose background-color", exact: true }).getAttribute("title"))
+		.toBe("Linked to --color-brand");
+	await f.page.keyboard.press("ControlOrMeta+z");
+	await f.settled();
+	expect(f.bytes()[file]).toBe(original);
+	expect(f.writes).toEqual(["commit", "inverse"]);
+	for (const document of documents)
+		expect(await document.locator("#subject").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
+			before,
+		);
+});

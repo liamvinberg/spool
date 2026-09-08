@@ -551,6 +551,16 @@ function ColourRow({
 		shown.name === null
 			? { token: null, name: absent, swatch: "" }
 			: { token: shown.name, name: shown.name, swatch: shown.paint ?? "" };
+	const previewAlpha = (alpha: number | null) => {
+		if (shown.name === null) return;
+		const original = reading?.reading;
+		const paint = original?.binding.kind === "reference" ? `var(${original.binding.name})` : original?.authored;
+		control?.preview(
+			property,
+			propertyControlValue(row, { kind: "colour", name: shown.name, alpha }, atOf(view), scopeKey(view.scope)),
+			paint === undefined ? undefined : paintWith(paint, alpha),
+		);
+	};
 	const write = (nextName: string | null, alpha: number | null) => {
 		if (onWrite !== undefined) return onWrite(nextName, alpha);
 		writeValue(view, row, nextName === null ? null : { kind: "colour", name: nextName, alpha });
@@ -582,6 +592,9 @@ function ColourRow({
 							alpha={shown.alpha}
 							ok={ok && shown.name !== null}
 							faint={held.own.token === null}
+							onBegin={() => control?.begin(property)}
+							onPreview={previewAlpha}
+							onCancel={() => control?.finish(false)}
 							onCommit={(alpha) => write(shown.name, alpha)}
 						/>
 						{fold}
@@ -606,6 +619,9 @@ function ColourRow({
 				alpha={shown.alpha}
 				ok={ok && shown.name !== null}
 				faint={held.own.token === null}
+				onBegin={() => control?.begin(property)}
+				onPreview={previewAlpha}
+				onCancel={() => control?.finish(false)}
 				onCommit={(alpha) => write(shown.name, alpha)}
 			/>
 			{fold}
@@ -619,12 +635,25 @@ function AlphaField({
 	ok,
 	faint,
 	onCommit,
+	onBegin,
+	onPreview,
+	onCancel,
 }: {
 	alpha: number | null;
 	ok: boolean;
 	faint: boolean;
 	onCommit: (alpha: number | null) => void;
+	onBegin?: (() => void) | undefined;
+	onPreview?: ((alpha: number | null) => void) | undefined;
+	onCancel?: (() => void) | undefined;
 }) {
+	const parse = (typed: string): number | null | undefined => {
+		if (typed.trim() === "") return null;
+		const raw = typed.trim().replace(/%$/, " ").trim();
+		if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw)) return;
+		const value = Number(raw);
+		return Number.isFinite(value) ? (value >= 100 ? null : Math.max(0, value)) : undefined;
+	};
 	return (
 		<span className="flex w-[46px] shrink-0 items-center">
 			<span className={cn("shrink-0", FAINT)}>/</span>
@@ -633,14 +662,20 @@ function AlphaField({
 				placeholder="100"
 				ok={ok}
 				faint={faint}
-				onCommit={(typed) => {
-					const percent = Number.parseFloat(typed.replace("%", ""));
-					if (typed.trim() === "" || Number.isNaN(percent) || percent >= 100) onCommit(null);
-					else onCommit(Math.max(0, percent));
+				onBegin={onBegin}
+				onCancel={onCancel}
+				onPreview={(typed) => {
+					const value = parse(typed);
+					if (value !== undefined) onPreview?.(value);
 				}}
-				onStep={(units) => {
-					const next = Math.min(100, Math.max(0, (alpha ?? 100) + units * 5));
-					onCommit(next >= 100 ? null : next);
+				onCommit={(typed) => {
+					const value = parse(typed);
+					if (value !== undefined) onCommit(value);
+					else onCancel?.();
+				}}
+				stepDraft={(typed, units) => {
+					const value = parse(typed);
+					return value === undefined ? undefined : String(Math.min(100, Math.max(0, (value ?? 100) + units * 5)));
 				}}
 			/>
 		</span>
