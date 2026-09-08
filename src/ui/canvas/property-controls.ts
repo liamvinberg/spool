@@ -6,7 +6,7 @@ export interface PropertyControls {
 	identity: string;
 	describe(property: string): Promise<SourcePropertyReading | undefined>;
 	begin(property: string): void;
-	preview(property: string, value: SourcePropertyValue): void;
+	preview(property: string, value: SourcePropertyValue, sampleValue?: string): void;
 	apply(property: string, value: SourcePropertyValue): void;
 	finish(commit: boolean): void;
 }
@@ -27,4 +27,18 @@ export function propertyControlValue(row: Row, value: RowValue, at: At, scope: s
 	return tokens.size
 		? { kind: "binding", tokens: [...tokens].map((token) => `${scope}${token}`) }
 		: { kind: "remove" };
+}
+
+/** The numeric control's exact displayed unit, independently of candidate token spelling. */
+export function propertyNumericSample(row: Row, value: RowValue): string | undefined {
+	if (value?.kind !== "value") return;
+	const raw = value.value;
+	const custom = /^(-?)\[([^\]]+)\]$/.exec(raw);
+	if (custom) return `${custom[1]}${custom[2]}`;
+	if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw)) return;
+	const unit = row.rule.kind === "length" ? row.rule.unit : row.rule.kind === "border-width" ? "px" : undefined;
+	if (unit === undefined) return;
+	return unit === "spacing"
+		? `calc(var(--spacing) * ${raw})`
+		: `${raw}${unit === "count" ? "" : unit === "percent" ? "%" : unit}`;
 }

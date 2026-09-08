@@ -85,11 +85,11 @@ it("discards an older compiled preview and every reply after cancellation", asyn
 	session.preview("color", "", { kind: "custom", value: "blue" });
 	await Promise.resolve();
 	const result = (revision: number) => ({ generation: 1, revision, value: "candidate", frames: [] });
-	plans.get(1)!({ ok: true, preview: result(1) });
+	plans.get(3)!({ ok: true, preview: result(3) });
 	await Promise.resolve();
 	expect(preview).not.toHaveBeenCalled();
 	await session.finish(false);
-	plans.get(2)!({ ok: true, preview: result(2) });
+	plans.get(5)!({ ok: true, preview: result(5) });
 	await Promise.resolve();
 	expect(preview).not.toHaveBeenCalled();
 });
@@ -109,17 +109,17 @@ it("ignores a held preview refusal after a newer success or cancellation", async
 	await Promise.resolve();
 	session.preview("color", "", { kind: "custom", value: "new" });
 	await Promise.resolve();
-	const accepted = { generation: 1, revision: 2, value: "new", frames: [] };
-	plans.get(2)!({ ok: true, preview: accepted });
+	const accepted = { generation: 1, revision: 5, value: "new", frames: [] };
+	plans.get(5)!({ ok: true, preview: accepted });
 	await Promise.resolve();
-	plans.get(1)!({ ok: false, reason: "old failure" });
+	plans.get(3)!({ ok: false, reason: "old failure" });
 	await Promise.resolve();
 	await vi.waitFor(() => expect(preview).toHaveBeenCalledExactlyOnceWith(accepted));
 	expect(refused).not.toHaveBeenCalled();
 	session.preview("color", "", { kind: "custom", value: "cancelled" });
 	await Promise.resolve();
 	await session.finish(false);
-	plans.get(3)!({ ok: false, reason: "cancelled failure" });
+	plans.get(7)!({ ok: false, reason: "cancelled failure" });
 	await Promise.resolve();
 	expect(refused).not.toHaveBeenCalled();
 });
@@ -184,4 +184,66 @@ it("cancels completion if the control retires before its original read arrives",
 	resolveRead(read(1));
 	await completing;
 	expect(finish).toHaveBeenCalledExactlyOnceWith(read(1), { kind: "custom", value: "50" }, false);
+});
+
+it("previews current native samples before compiler replies and retires late failures on cancel", async () => {
+	vi.stubGlobal("CSS", { supports: () => true });
+	try {
+		const original: SourceRead = {
+			...read(1),
+			operation: { kind: "property", property: "opacity", scope: "hover:" },
+			propertyPreview: {
+				placeholder: "var(--sample)",
+				plan: {
+					generation: 1,
+					revision: 0,
+					value: "hover:opacity-[var(--sample)]",
+					frames: [
+						{
+							publication: "original",
+							css: "@media (hover:hover){.sample:hover{opacity:var(--sample)}}",
+							bundledCss: "",
+						},
+					],
+				},
+			},
+		};
+		const plans = new Map<number, (result: import("./property-session").PropertyPlanResult) => void>();
+		const preview = vi.fn(async (_plan: import("../../source-property").SourcePropertyPreview) => true);
+		const refused = vi.fn();
+		const finish = vi.fn();
+		const session = createPropertySession({
+			begin: async () => original,
+			plan: async (_read, revision) => new Promise((resolve) => plans.set(revision, resolve)),
+			preview,
+			refused,
+			finish,
+		});
+		session.preview("opacity", "hover:", { kind: "binding", tokens: ["hover:opacity-79"] }, "79%");
+		await Promise.resolve();
+		expect(preview.mock.calls[0]?.[0]).toMatchObject({
+			revision: 2,
+			frames: [{ css: "@media (hover:hover){.sample:hover{opacity:79%}}" }],
+		});
+		session.preview("opacity", "hover:", { kind: "binding", tokens: ["hover:opacity-81"] }, "81%");
+		await Promise.resolve();
+		expect(preview.mock.calls[1]?.[0]).toMatchObject({
+			revision: 4,
+			frames: [{ css: "@media (hover:hover){.sample:hover{opacity:81%}}" }],
+		});
+		expect(finish).not.toHaveBeenCalled();
+		plans.get(3)!({ ok: false, reason: "old failure" });
+		await session.finish(false);
+		plans.get(5)!({ ok: false, reason: "canceled failure" });
+		await Promise.resolve();
+		expect(refused).not.toHaveBeenCalled();
+		expect(preview).toHaveBeenCalledTimes(2);
+		expect(finish).toHaveBeenCalledExactlyOnceWith(
+			original,
+			{ kind: "binding", tokens: ["hover:opacity-81"] },
+			false,
+		);
+	} finally {
+		vi.unstubAllGlobals();
+	}
 });

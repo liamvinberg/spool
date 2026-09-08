@@ -1,6 +1,7 @@
 import type {
 	SourcePropertyExpectation,
 	SourcePropertyNative,
+	SourcePropertyPreviewTemplate,
 	SourcePropertyReading,
 	SourcePropertyValue,
 } from "./source-property";
@@ -75,6 +76,7 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	propertyPreview?: SourcePropertyPreviewTemplate;
 	property?: SourcePropertyReading;
 	structure?: SourceStructuralExpectation;
 	operation: SourceOperation;

@@ -381,7 +381,21 @@ export function createSourceOwner(
 		const held = reads.get(handle);
 		if (!held || held.root !== root)
 			return { ok: false as const, reason: "the original source read is no longer available" };
-		return discover(root, held, inventories);
+		const found = await discover(root, held, inventories);
+		if (!found.ok || held.read.operation.kind !== "property") return found;
+		const placeholder = `var(--spool-property-sample-${held.read.handle})`;
+		const planned = await preview(root, handle, held.read.generation, 0, held.read.original, {
+			kind: "property",
+			value: { kind: "custom", value: placeholder },
+		});
+		if (
+			planned.ok &&
+			planned.preview.frames.some(
+				(frame) => frame.css.includes(placeholder) || frame.bundledCss.includes(placeholder),
+			)
+		)
+			held.read = { ...held.read, propertyPreview: { placeholder, plan: planned.preview } };
+		return { ok: true as const, read: held.read };
 	}
 	async function describe(
 		root: string,

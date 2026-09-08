@@ -401,6 +401,75 @@ it.each([true, false])("scrubs one retained opacity gesture and completes only o
 	await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
 });
 
+it.each([false, true])(
+	"keeps a continuous native scrub current while later compiler plans are held: outside CSSOM %s",
+	{ timeout: 120_000 },
+	async (outside) => {
+		const f = await originCanvas(
+			{
+				"shared/button.tsx":
+					'export function Button(){return <button id="subject" className="opacity-75">Hello</button>}',
+			},
+			'import {Button} from "shared/button"; export default function Frame(){return <main style={{padding:40}}><Button/><i hidden className="opacity-75"/></main>}',
+			"#subject",
+		);
+		await f.select();
+		const box = await f.page.locator('[data-properties-row="opacity"] > span').first().boundingBox();
+		if (!box) throw new Error("opacity scrub label has no box");
+		const x = box.x + 5,
+			y = box.y + box.height / 2;
+		await f.page.mouse.move(x, y);
+		await f.page.mouse.down();
+		await f.page.mouse.move(x + 8, y);
+		await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.77");
+		let release = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let waiting = 0;
+		const replies: Promise<void>[] = [];
+		await f.page.route("**/source", async (route) => {
+			if (route.request().postDataJSON()?.action !== "preview") return route.continue();
+			const response = await route.fetch();
+			waiting++;
+			const reply = held.then(() => route.fulfill({ response }));
+			replies.push(reply);
+			await reply;
+		});
+		try {
+			await f.page.mouse.move(x + 16, y);
+			await expect.poll(() => waiting).toBe(1);
+			await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.79");
+			await f.page.mouse.move(x + 24, y);
+			await expect.poll(() => waiting).toBe(2);
+			await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.81");
+			if (outside) {
+				await f.target.evaluate(() => {
+					const style = document.getElementById("spool-compiled-css");
+					if (!(style instanceof HTMLStyleElement) || !style.sheet) throw new Error("missing compiled sheet");
+					style.sheet.insertRule("#subject { border-color: rgb(1, 2, 3) }", style.sheet.cssRules.length);
+				});
+				await f.page.mouse.move(x + 32, y);
+				await expect.poll(() => waiting).toBe(3);
+				// Neither an immediate sample nor its late compiled reply owns this outside CSSOM edit.
+				expect(await f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.81");
+			}
+			expect(f.writes).toEqual([]);
+			expect(f.bytes()["shared/button.tsx"]).toContain("opacity-75");
+			await f.page.keyboard.press("Escape");
+			await f.page.mouse.up();
+			await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+		} finally {
+			release();
+			await Promise.all(replies);
+		}
+		await expect.poll(() => f.target.evaluate((element) => getComputedStyle(element).opacity)).toBe("0.75");
+		if (outside)
+			expect(await f.target.evaluate((element) => getComputedStyle(element).borderTopColor)).toBe("rgb(1, 2, 3)");
+		expect(f.writes).toEqual([]);
+	},
+);
+
 it("uses the approved shared color menu with exact reference metadata and binding-restoring inverse", async () => {
 	const f = await originCanvas(
 		{

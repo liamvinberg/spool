@@ -56,3 +56,9 @@ export interface SourcePropertyReading {
 		| { kind: "mixed" };
 	native?: string;
 }
+
+/** A once-compiled temporary declaration; samples replace only its value marker. */
+export interface SourcePropertyPreviewTemplate {
+	placeholder: string;
+	plan: SourcePropertyPreview;
+}

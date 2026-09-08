@@ -415,7 +415,8 @@ function Body({
 					begin: (property) => {
 						propertySession.begin(property, propertyScope);
 					},
-					preview: (property, value) => propertySession.preview(property, propertyScope, value),
+					preview: (property, value, sampleValue) =>
+						propertySession.preview(property, propertyScope, value, sampleValue),
 					apply: (property, value) => {
 						void propertySession.apply(property, propertyScope, value);
 					},

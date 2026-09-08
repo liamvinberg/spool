@@ -72,7 +72,12 @@ import {
 import type { Scope } from "./properties-scope";
 import { scopeKey } from "./properties-scope";
 import { PropertyColorField } from "./property-color-field";
-import { appearanceProperty, type PropertyControls, propertyControlValue } from "./property-controls";
+import {
+	appearanceProperty,
+	type PropertyControls,
+	propertyControlValue,
+	propertyNumericSample,
+} from "./property-controls";
 import { PropertyNumberField } from "./property-number-field";
 
 /** Rows read candidate spellings from the shared property inventory.
@@ -149,6 +154,7 @@ function usePropertyScrub(
 					control.preview(
 						row.property,
 						propertyControlValue(row, { kind: "value", value: next }, atOf(view), scope),
+						propertyNumericSample(row, { kind: "value", value: next }),
 					);
 				},
 				end: () => finish(true),
@@ -335,7 +341,11 @@ function LengthRow({
 				onPreview={(typed) => {
 					const next = typedValue(typed);
 					if (next !== undefined)
-						control?.preview(property, propertyControlValue(row, next, atOf(view), scopeKey(view.scope)));
+						control?.preview(
+							property,
+							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
+							propertyNumericSample(row, next),
+						);
 				}}
 				onCommit={(typed) => {
 					const next = typedValue(typed);
@@ -430,7 +440,11 @@ function BorderWidthRow({
 				onPreview={(typed) => {
 					const next = typedValue(typed);
 					if (next !== undefined)
-						control?.preview(property, propertyControlValue(row, next, atOf(view), scopeKey(view.scope)));
+						control?.preview(
+							property,
+							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
+							propertyNumericSample(row, next),
+						);
 				}}
 				onCommit={(typed) => {
 					const next = typedValue(typed);
