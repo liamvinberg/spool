@@ -155,10 +155,18 @@ describe("what rides with the words", () => {
 		]);
 		expect(
 			agentPromptContent([
-				{ prompt: "match this", selection: "", attachment: { media: "image/png", data: "AAAA" } },
+				{
+					prompt: "match this",
+					selection: "",
+					attachments: [
+						{ media: "image/png", data: "AAAA" },
+						{ media: "image/jpeg", data: "BBBB" },
+					],
+				},
 			]),
 		).toEqual([
 			{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+			{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "BBBB" } },
 			{ type: "text", text: "match this" },
 		]);
 	});

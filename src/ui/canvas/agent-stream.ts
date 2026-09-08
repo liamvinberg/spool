@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Attachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit, AgentRecovery } from "../../daemon/agent-events";
@@ -14,9 +15,10 @@ import {
 	interruptAgentTurn,
 	putAgentThread,
 } from "../api";
+import { draftsFor } from "./agent-drafts";
 import type { AgentWrite } from "./agent-nouns";
 import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
-import { type AgentHandback, type AgentQueued, drawableQueue, handover } from "./agent-queue";
+import { type AgentHandback, type AgentQueued, drawableQueue } from "./agent-queue";
 import {
 	askOf,
 	bounced,
@@ -176,6 +178,8 @@ export interface AgentTurn {
 	 * come back to.
 	 */
 	readonly draft: string;
+	readonly attached: readonly Attachment[];
+	readonly onAttach: (images: readonly Attachment[], thread?: string) => Promise<void>;
 	/** the composer saying what it holds now, which is how a draft outlives the tab (#234) */
 	readonly onDraft: (text: string, thread?: string) => void;
 	/**
@@ -336,6 +340,7 @@ interface Live {
 	 * until it landed here.
 	 */
 	draft: string;
+	attached: readonly Attachment[];
 	/** a stop is one act with one outcome, so the ending it causes sends nothing (#165, #170) */
 	stopping: boolean;
 	handback: AgentHandback;
@@ -378,6 +383,7 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		waitingOn: new Map(),
 		holding: [],
 		draft: "",
+		attached: [],
 		stopping: false,
 		handback: { count: 0, messages: [] },
 		named: "",
@@ -539,7 +545,9 @@ function archive(entries: readonly AgentEntry[], token: string): AgentEntry[] {
 	return settledPicture(entries).map((entry) => ({ ...entry, key: `${token}:${entry.key}` }));
 }
 
-export function useAgentThreads(project: string, preferred: AgentEngineId = "claude"): AgentDeck {
+export function useAgentThreads(project: string, preferred: AgentEngineId = "claude", root = project): AgentDeck {
+	const [drafts] = useState(() => draftsFor(root));
+	const pendingDraft = useRef<Live | null>(null);
 	const still = useStillness();
 	const threads = useRef(new Map<string, Live>());
 	const [open, setOpen] = useState("");
@@ -593,6 +601,39 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 		threads.current.set(id, thread);
 		return thread;
 	}, []);
+
+	const keepDraft = useCallback(
+		(thread: Live) => {
+			drafts.put({
+				id: thread.id,
+				engine: thread.engine,
+				at: thread.at,
+				text: thread.draft,
+				attached: thread.attached,
+			});
+		},
+		[drafts],
+	);
+
+	useEffect(() => {
+		if (open) drafts.select(open);
+	}, [drafts, open]);
+
+	useEffect(() => {
+		const flush = () => {
+			void drafts.flush();
+		};
+		const hidden = () => {
+			if (document.visibilityState === "hidden") flush();
+		};
+		window.addEventListener("pagehide", flush);
+		document.addEventListener("visibilitychange", hidden);
+		return () => {
+			window.removeEventListener("pagehide", flush);
+			document.removeEventListener("visibilitychange", hidden);
+			flush();
+		};
+	}, [drafts]);
 
 	/**
 	 * The picture, written where a daemon restart cannot reach it (#120).
@@ -970,11 +1011,18 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	 */
 	useEffect(() => {
 		let gone = false;
-		void fetchAgentThreads(project).then((stored) => {
+		void Promise.all([fetchAgentThreads(project), drafts.ready]).then(([stored]) => {
 			if (gone) return;
+			for (const draft of drafts.entries.values()) {
+				if (threads.current.has(draft.id)) continue;
+				const saved = stored.find((one) => one.id === draft.id);
+				const thread = saved ? restored(saved) : born(draft.id, { engine: draft.engine, at: draft.at });
+				thread.draft = draft.text;
+				thread.attached = draft.attached;
+				threads.current.set(draft.id, thread);
+			}
 			for (const one of stored) {
-				if (threads.current.has(one.id)) continue;
-				const thread = restored(one);
+				const thread = threads.current.get(one.id) ?? restored(one);
 				threads.current.set(one.id, thread);
 				/*
 				 * A turn still running here is picked up rather than drawn (#211).
@@ -1007,7 +1055,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			if (openRef.current !== "") return;
 			// newest first, which is the list's own order: the one you were most likely
 			// reading is the one it opens on, and opening it is what reads it
-			const newest = [...threads.current.values()].sort((one, two) => two.at - one.at)[0];
+			const newest =
+				threads.current.get(drafts.open) ?? [...threads.current.values()].sort((one, two) => two.at - one.at)[0];
 			if (newest === undefined) {
 				setOpen(start().id);
 				return;
@@ -1019,7 +1068,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 		return () => {
 			gone = true;
 		};
-	}, [project, start, read, redraw, run, fire]);
+	}, [project, start, read, redraw, run, fire, drafts]);
 
 	/*
 	 * One clock for every thread, and the one thing that stops each of them.
@@ -1232,6 +1281,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			const going = thread.holding;
 			thread.holding = [];
 			threads.current.delete(id);
+			owed.current.delete(thread);
+			drafts.forget(id);
 			void closeAgentThread(project, id);
 			let landing = threads.current.get(openRef.current);
 			if (openRef.current === id) {
@@ -1239,13 +1290,11 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				landing = newest;
 				setOpen(newest.id);
 			}
-			// every one of them, and a reference beyond the first is the one thing that cannot
-			// come: there is one slot and the words are what matter, so the text comes home
-			// either way rather than being held back by what it was carrying
+			// Every queued message returns with all of its references.
 			if (landing !== undefined) handBack(landing, going);
 			redraw();
 		},
-		[project, start, redraw, handBack],
+		[project, start, redraw, handBack, drafts],
 	);
 
 	const onNew = useCallback(
@@ -1340,6 +1389,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			)
 				return;
 			current.engine = engine;
+			keepDraft(current);
 			redraw();
 		},
 		threads: column,
@@ -1402,15 +1452,13 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				const thread = threads.current.get(openRef.current);
 				if (thread === undefined) return;
 				// the queue goes first and unconditionally: whether or not there is still a
-				// process to ask, a stop is one act and the words it cancels come back. What is
-				// carrying a reference the box has no slot for stays a row rather than being
-				// collapsed into the blob, because a picture cannot be got again (#119, #234)
-				const { back, kept } = handover(thread.holding);
+				// process to ask, a stop is one act and its words and references come back.
+				const back = thread.holding;
 				// and the ending this press causes sends nothing, whatever is left in the box: a
 				// stop is one act with one outcome, said here rather than left to the order two
 				// things happen in
 				thread.stopping = true;
-				hold(thread, kept);
+				hold(thread, []);
 				handBack(thread, back);
 				void interruptAgentTurn(project, thread.named);
 			}, [project, hold, handBack]),
@@ -1420,16 +1468,39 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			running: useCallback(() => threads.current.get(openRef.current)?.streaming === true, []),
 			/** the words in the box that nobody has sent, as the picture last had them (#234) */
 			draft: here.draft,
+			attached: here.attached,
+			onAttach: useCallback(
+				async (images: readonly Attachment[], named?: string) => {
+					let thread = threads.current.get(named ?? openRef.current);
+					if (!thread) {
+						if (named || openRef.current) return;
+						pendingDraft.current ??= born(crypto.randomUUID(), { engine: preference.current });
+						thread = pendingDraft.current;
+						drafts.select(thread.id);
+					}
+					thread.attached = images;
+					keepDraft(thread);
+					await drafts.flush();
+				},
+				[drafts, keepDraft],
+			),
 			onDraft: useCallback(
 				(text: string, named?: string) => {
-					const thread = threads.current.get(named ?? openRef.current);
-					if (thread === undefined || thread.draft === text) return;
+					let thread = threads.current.get(named ?? openRef.current);
+					if (!thread) {
+						if (named || openRef.current) return;
+						pendingDraft.current ??= born(crypto.randomUUID(), { engine: preference.current });
+						thread = pendingDraft.current;
+						drafts.select(thread.id);
+					}
+					if (thread.draft === text) return;
 					thread.draft = text;
+					keepDraft(thread);
 					// on the throttle rather than at once, and it is the only thing here that is:
 					// a write per keystroke is a PUT per keystroke, and nothing is drawn from this
 					later(thread);
 				},
-				[later],
+				[later, drafts, keepDraft],
 			),
 			limit,
 		},

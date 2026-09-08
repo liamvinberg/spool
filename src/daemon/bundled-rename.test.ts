@@ -79,7 +79,7 @@ async function fixture() {
 						{ kind: "frame", frame: "home", path: "design/frames/home/frame.tsx", size: { w: 400, h: 300 } },
 					],
 					...(attachment
-						? { attachment: { media: "image/png", data: Buffer.from(COVER_PNG).toString("base64") } }
+						? { attachments: [{ media: "image/png", data: Buffer.from(COVER_PNG).toString("base64") }] }
 						: {}),
 				},
 			],

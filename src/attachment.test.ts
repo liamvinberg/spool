@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { attachmentBytes, isSendableAttachment, MAX_ATTACHMENT_BYTES, parseAttachment } from "./attachment";
+import {
+	attachmentBytes,
+	isSendableAttachment,
+	MAX_ATTACHMENT_BYTES,
+	parseAttachment,
+	parseAttachments,
+	restoredAttachments,
+} from "./attachment";
 
 /**
  * One rule for what may ride with a prompt (#119), read on both sides: the composer
@@ -11,6 +18,14 @@ import { attachmentBytes, isSendableAttachment, MAX_ATTACHMENT_BYTES, parseAttac
 const weighing = (bytes: number) => "A".repeat(Math.ceil(bytes / 3) * 4);
 
 describe("an attachment", () => {
+	it("rejects the whole list when any image is invalid and restores saved single references", () => {
+		const image = { media: "image/png", data: "AAAA" };
+		expect(parseAttachments([image, image])).toEqual([image, image]);
+		expect(parseAttachments([image, { media: "image/svg+xml", data: "AAAA" }])).toBeUndefined();
+		expect(restoredAttachments(image)).toEqual([image]);
+		expect(restoredAttachments(null)).toEqual([]);
+	});
+
 	it("is a picture the model reads, and nothing else", () => {
 		expect(parseAttachment({ media: "image/png", data: "AAAA" })).toEqual({ media: "image/png", data: "AAAA" });
 		for (const media of ["image/jpeg", "image/gif", "image/webp"]) {

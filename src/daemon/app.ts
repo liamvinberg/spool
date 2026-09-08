@@ -8,7 +8,7 @@ import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
-import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachment } from "../attachment";
+import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
 import type { Cover } from "../cover";
 import { DOOR_ORIGIN } from "../door";
@@ -1646,20 +1646,20 @@ export function createDaemonApp({
 				if (body.session !== undefined || (body.engine !== undefined && !isAgentEngineId(body.engine))) {
 					return c.text("choose an engine; session references belong to the daemon", 400);
 				}
-				const said: { prompt: string; selection?: SelectionEntry[]; attachment?: Attachment }[] = [];
+				const said: { prompt: string; selection?: SelectionEntry[]; attachments?: readonly Attachment[] }[] = [];
 				for (const raw of body.said) {
 					const one = (typeof raw === "object" && raw !== null ? raw : {}) as {
 						prompt?: unknown;
 						selection?: unknown;
-						attachment?: unknown;
+						attachments?: unknown;
 					};
 					if (typeof one.prompt !== "string" || one.prompt.trim() === "") {
 						return c.text('a turn is { "said": [{ "prompt": "…" }] }', 400);
 					}
 					// an attachment is optional and never guessed at: a picture spool cannot
 					// send is said out loud rather than dropped out of the message (#119)
-					const attached = one.attachment === undefined ? undefined : parseAttachment(one.attachment);
-					if (one.attachment !== undefined && attached === undefined) {
+					const attached = one.attachments === undefined ? undefined : parseAttachments(one.attachments);
+					if (one.attachments !== undefined && attached === undefined) {
 						return c.text(
 							`an attachment is { "media": "image/png", "data": "<base64>" } — png, jpeg, gif or webp under ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`,
 							400,
@@ -1674,7 +1674,7 @@ export function createDaemonApp({
 					said.push({
 						prompt: one.prompt,
 						...(captured === undefined ? {} : { selection: captured }),
-						...(attached === undefined ? {} : { attachment: attached }),
+						...(attached === undefined ? {} : { attachments: attached }),
 					});
 				}
 				if (body.recovery !== undefined && typeof body.recovery !== "string")
@@ -1725,7 +1725,7 @@ export function createDaemonApp({
 							kind: "user",
 							text: one.prompt,
 							context: null,
-							attached: null,
+							attached: one.attachments ?? [],
 						})),
 						kept: said.length,
 						plan: null,
@@ -1742,7 +1742,7 @@ export function createDaemonApp({
 					said: said.map((one) => ({
 						prompt: one.prompt,
 						selection: selectionBlock(one.selection ?? selections.get(project.root)),
-						...(one.attachment === undefined ? {} : { attachment: one.attachment }),
+						...(one.attachments === undefined ? {} : { attachments: one.attachments }),
 					})),
 					ask,
 				});

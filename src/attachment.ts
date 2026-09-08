@@ -44,6 +44,25 @@ export function parseAttachment(value: unknown): Attachment | undefined {
 	return attachmentBytes(data) > MAX_ATTACHMENT_BYTES ? undefined : { media, data };
 }
 
+/** A message is refused whole if any reference cannot be sent. */
+export function parseAttachments(value: unknown): Attachment[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const attachments: Attachment[] = [];
+	for (const item of value) {
+		const attachment = parseAttachment(item);
+		if (!attachment) return undefined;
+		attachments.push(attachment);
+	}
+	return attachments;
+}
+
+/** Read saved references from before messages could hold a list. New writes use lists. */
+export function restoredAttachments(value: unknown): readonly Attachment[] {
+	if (Array.isArray(value)) return parseAttachments(value) ?? [];
+	const single = parseAttachment(value);
+	return single ? [single] : [];
+}
+
 /** What the base64 weighs once decoded: four characters carry three bytes. */
 export function attachmentBytes(data: string): number {
 	return (data.length / 4) * 3 - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);

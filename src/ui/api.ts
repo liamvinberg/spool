@@ -1030,7 +1030,7 @@ export interface AgentSaying {
 	 * so the project gains no file. A browser never reveals a dropped file's path,
 	 * which is why this is bytes at all.
 	 */
-	readonly attached?: Attachment | undefined;
+	readonly attached?: readonly Attachment[] | undefined;
 }
 
 /**
@@ -1155,7 +1155,7 @@ function sayTurn(
 				said: said.saying.map((one) => ({
 					prompt: one.prompt,
 					...(one.selection === undefined ? {} : { selection: [...one.selection] }),
-					...(one.attached === undefined ? {} : { attachment: one.attached }),
+					...(one.attached === undefined ? {} : { attachments: one.attached }),
 				})),
 			},
 		},

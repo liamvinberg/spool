@@ -17,7 +17,7 @@ const picture: ThreadPut = {
 	entries: [{ kind: "user", text: "keep the card" }],
 	kept: 1,
 	plan: null,
-	queued: [{ prompt: "then its receipt", selection: [], attachment: { media: "image/png", data: "aGk=" } }],
+	queued: [{ prompt: "then its receipt", selection: [], attachments: [{ media: "image/png", data: "aGk=" }] }],
 	draft: "next thought",
 };
 
@@ -162,7 +162,7 @@ describe("engine ownership through the daemon", () => {
 				thread: TWO,
 				turn: "two",
 				engine: "spool",
-				said: [{ prompt: "two", selection: [], attachment: { media: "image/png", data: "aGk=" } }],
+				said: [{ prompt: "two", selection: [], attachments: [{ media: "image/png", data: "aGk=" }] }],
 			}),
 		);
 		expect((await first.next()).data).toMatchObject({ text: "claude" });
@@ -172,7 +172,7 @@ describe("engine ownership through the daemon", () => {
 		expect((await send("turn", { thread: ONE, said: [{ prompt: "duplicate" }] })).status).toBe(409);
 		expect(spool.starts[0]).toMatchObject({
 			session: (await threads()).find((thread) => thread.id === TWO)?.session,
-			said: [{ prompt: "two", selection: "", attachment: { data: "aGk=" } }],
+			said: [{ prompt: "two", selection: "", attachments: [{ data: "aGk=" }] }],
 			permissions: "ask",
 		});
 		expect((await threads()).map((thread) => [thread.engine, thread.live, thread.continuable])).toEqual([

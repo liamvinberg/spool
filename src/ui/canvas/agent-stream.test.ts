@@ -496,7 +496,7 @@ describe("a turn picked back up", () => {
 		life: "running",
 		at: 1_700_000_000_000,
 		entries: [
-			{ key: "u0", kind: "user", text: "make the header tighter", context: null, attached: null },
+			{ key: "u0", kind: "user", text: "make the header tighter", context: null, attached: [] },
 			{ key: "say:1:0", kind: "prose", full: "Reading the header.", settled: true },
 		],
 		// the human's words are the conversation's; the prose under them is the turn's, and
@@ -542,7 +542,7 @@ describe("a turn picked back up", () => {
 				life: "unread",
 				live: false,
 				ending: "failed",
-				queued: [{ id: "queued", text: "do not send yet", selection: [], attached: null }],
+				queued: [{ id: "queued", text: "do not send yet", selection: [], attached: [] }],
 			},
 		]);
 		await canvas.render();
@@ -571,7 +571,7 @@ describe("a turn picked back up", () => {
 
 	it("takes back the messages it was holding when the page went away", async () => {
 		const canvas = mount([
-			midTurn({ queued: [{ id: "held-1", text: "and the footer", context: null, attached: null }] }),
+			midTurn({ queued: [{ id: "held-1", text: "and the footer", context: null, attached: [] }] }),
 		]);
 		await canvas.render();
 		await settle(120);
@@ -604,7 +604,7 @@ describe("a turn picked back up", () => {
 			midTurn({
 				live: false,
 				stopped: true,
-				queued: [{ id: "held-1", text: "and the footer", context: null, attached: null }],
+				queued: [{ id: "held-1", text: "and the footer", context: null, attached: [] }],
 			}),
 		]);
 		await canvas.render();

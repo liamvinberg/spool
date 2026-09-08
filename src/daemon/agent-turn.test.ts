@@ -335,11 +335,22 @@ describe("one turn over the wire", () => {
 		const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
 
 		await drainTurn(
-			await startTurn(name, app, { said: [{ prompt: "match this", attachment: { media: "image/png", data } }] }),
+			await startTurn(name, app, {
+				said: [
+					{
+						prompt: "match this",
+						attachments: [
+							{ media: "image/png", data },
+							{ media: "image/jpeg", data: "AAAA" },
+						],
+					},
+				],
+			}),
 		);
 
 		expect(sentContent(agent.spawned[0]?.inputs[0])).toEqual([
 			{ type: "image", source: { type: "base64", media_type: "image/png", data } },
+			{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "AAAA" } },
 			{ type: "text", text: "match this" },
 		]);
 		// look-only: the app-owned folder gains no inbox, no lifetime and no deleter
@@ -352,7 +363,7 @@ describe("one turn over the wire", () => {
 		const agent = fixtureAgentExecutor(() => {});
 		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
 		const refused = async (attachment: unknown) =>
-			(await startTurn(name, app, { said: [{ prompt: "match this", attachment }] })).status;
+			(await startTurn(name, app, { said: [{ prompt: "match this", attachments: [attachment] }] })).status;
 
 		expect(await refused({ media: "image/svg+xml", data: "PHN2Zy8+" })).toBe(400);
 		expect(await refused({ media: "image/png", data: "not base64!" })).toBe(400);
