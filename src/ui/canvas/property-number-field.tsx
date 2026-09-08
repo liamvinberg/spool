@@ -58,6 +58,7 @@ export function PropertyNumberField({
 	const initial = numberUnit(reading?.authored ?? reading?.native ?? "");
 	const unit = initial?.unit ?? "px";
 	const [scrubbed, setScrubbed] = useState<string>();
+	const customDraft = useRef(false);
 	const scrub = useRef<{ value: string; moved: boolean } | undefined>(undefined);
 	const finishScrub = (commit: boolean) => {
 		const held = scrub.current;
@@ -74,6 +75,8 @@ export function PropertyNumberField({
 		return CSS.supports(property, value) ? { kind: "custom", value } : undefined;
 	};
 	const step = (typed: string, units: number): string | undefined => {
+		// A displayed native value does not prove a compatible reference scale.
+		if (binding && !customDraft.current) return;
 		const parsed = numberUnit(typed);
 		if (!parsed) return;
 		const next = stepLength(
@@ -100,6 +103,7 @@ export function PropertyNumberField({
 			name={name ?? property}
 			ok={reading !== undefined}
 			onScrubStart={() => {
+				customDraft.current = false;
 				scrub.current = { value: initial?.number ?? "", moved: false };
 				begin();
 			}}
@@ -122,8 +126,12 @@ export function PropertyNumberField({
 				value={scrubbed ?? initial?.number ?? ""}
 				readout={unit}
 				ok={reading !== undefined}
-				onBegin={begin}
+				onBegin={() => {
+					customDraft.current = false;
+					begin();
+				}}
 				onPreview={(typed) => {
+					customDraft.current = true;
 					const value = requested(typed);
 					if (value) preview(value);
 				}}
