@@ -1053,3 +1053,118 @@ it("resolves keyword variables before native comparison without accepting outsid
 		"unverified",
 	]);
 });
+
+it.each([
+	{ property: "outline-color", before: "outline-red-500", companion: "outline-2", tag: "div" },
+	{ property: "text-decoration-color", before: "decoration-red-500", companion: "underline", tag: "div" },
+	{ property: "caret-color", before: "caret-red-500", companion: "", tag: "input" },
+	{ property: "accent-color", before: "accent-red-500", companion: "", tag: "input" },
+	{ property: "fill", before: "fill-red-500", companion: "", tag: "rect" },
+	{ property: "stroke", before: "stroke-red-500", companion: "stroke-2", tag: "rect" },
+])("verifies compiled $property custom color and original binding inverse", async (row) => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property: row.property, scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const original = [row.before, row.companion].filter(Boolean).join(" ");
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "custom", value: "#123456" },
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property: row.property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const subject = (classes: string) =>
+		row.tag === "rect"
+			? `<svg width="40" height="40"><rect data-subject class="${classes}" x="2" y="2" width="30" height="30"/></svg>`
+			: row.tag === "input"
+				? `<input data-subject type="${row.property === "accent-color" ? "checkbox" : "text"}" checked value="native" class="${classes}"/>`
+				: `<div data-subject class="${classes}">Native text</div>`;
+	const f = await fixture(
+		`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(original)}`,
+	);
+	if (row.property === "caret-color") await f.page.locator("[data-subject]").first().focus();
+	expect(
+		(await f.inspect(expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(expected.effects),
+	).toEqual(row.property === "caret-color" ? ["verified", "unverified"] : ["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), row.property),
+	).toBe("rgb(18, 52, 86)");
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: original,
+		css: plan.original.css,
+		effects: propertyConsumers(plan.original, plan.roots, environment),
+	};
+	if (row.property === "caret-color") {
+		await f.page.locator("[data-subject]").nth(1).focus();
+		expect((await f.inspect(expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "mismatching"]);
+	}
+	expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(
+		row.property === "caret-color" ? ["unverified", "verified"] : ["mismatching", "verified"],
+	);
+	const removal = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		original,
+		operation,
+		{ kind: "remove" },
+		environment,
+	);
+	const removed: SourcePropertyExpectation = {
+		...expected,
+		className: removal.next,
+		absent: !removal.next,
+		css: removal.desired.css,
+		effects: removal.consumers,
+	};
+	const empty = await fixture(
+		`<!doctype html><style>${removal.original.css}${removed.css}</style><section style="color:#345678;fill:#345678;stroke:#345678">${subject(removal.next)}${subject(original)}</section>`,
+	);
+	if (row.property === "caret-color") await empty.page.locator("[data-subject]").first().focus();
+	const emptyOutcomes = (await empty.inspect(removed)).map((outcome) => outcome.rendered);
+	if (["caret-color", "accent-color"].includes(row.property)) {
+		expect(emptyOutcomes[0]).toBe("unverified"); // Native auto/system paint has no independent lexical color.
+	} else {
+		expect(emptyOutcomes).toEqual(["verified", "mismatching"]);
+		expect(
+			await empty.page
+				.locator("[data-subject]")
+				.first()
+				.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), row.property),
+		).toBe("rgb(52, 86, 120)");
+		expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	}
+	await f.page
+		.locator("[data-subject]")
+		.first()
+		.evaluate((element, property) => {
+			if (!(element instanceof HTMLElement || element instanceof SVGElement)) throw new Error("missing native host");
+			if (property === "outline-color") element.style.outlineStyle = "none";
+			if (property === "text-decoration-color") element.style.textDecorationLine = "none";
+			if (property === "caret-color" && element instanceof HTMLInputElement) {
+				element.readOnly = true;
+				element.focus();
+			}
+			if (property === "accent-color") element.style.appearance = "none";
+			if (property === "fill") element.setAttribute("width", "0");
+			if (property === "stroke") element.style.strokeWidth = "0";
+		}, row.property);
+	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});

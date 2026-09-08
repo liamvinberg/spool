@@ -36,7 +36,16 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return borderOutcome(element, expected);
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
 	const corner = isCorner(expected.property);
-	const color = expected.property === "color" || expected.property === "background-color";
+	const color = [
+		"color",
+		"background-color",
+		"outline-color",
+		"text-decoration-color",
+		"caret-color",
+		"accent-color",
+		"fill",
+		"stroke",
+	].includes(expected.property);
 	const weight = expected.property === "font-weight";
 	const leading = expected.property === "line-height";
 	const companion = weight ? "--tw-font-weight" : leading ? "--tw-leading" : undefined;
@@ -140,26 +149,41 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 		return { rendered: companionMatches && wanted === actual ? "verified" : "mismatching", observed };
 	}
 	if (color) {
-		let value: string | undefined;
 		if (
 			(!winner || winner.owner === null) &&
 			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
 				element.style.getPropertyValue(expected.property))
 		)
 			return unverified("this color has an independent inline context requiring proof");
-		if (winner && !(expected.property === "color" && winner.value.trim() === "inherit"))
-			value = resolvedValue(element, sheet, winner.value);
-		else {
-			if (expected.property === "background-color") value = "transparent";
+		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
+		if (winner && value === undefined) return unverified("this color needs a resolved variable context");
+		if (!winner || value === "inherit") {
+			if (expected.property === "caret-color")
+				return unverified("inherited caret color needs its original auto context");
+			if (!winner && expected.property === "background-color") value = "transparent";
+			else if (!winner && expected.property === "accent-color") value = "auto";
+			else if (!winner && ["outline-color", "text-decoration-color"].includes(expected.property))
+				value = "currentcolor";
 			else {
 				const parent = element.parentElement;
 				if (!parent) return unverified("this color needs a native inherited context proof");
-				value = view.getComputedStyle(parent).color;
+				value = view.getComputedStyle(parent).getPropertyValue(expected.property);
 			}
 		}
+		if (value?.toLowerCase() === "currentcolor") {
+			const context = expected.property === "color" ? element.parentElement : element;
+			if (!context) return unverified("this color needs an independent current color context");
+			value = view.getComputedStyle(context).color;
+		}
+		const context = paintContext(element, expected.property, value);
+		if (context) return unverified(context);
 		const observed = view.getComputedStyle(element).getPropertyValue(expected.property);
-		const wanted = value === undefined ? undefined : nativeColor(value);
-		const actual = nativeColor(observed);
+		const normalize = (color: string) =>
+			(expected.property === "fill" || expected.property === "stroke") && color.trim() === "none"
+				? "none"
+				: nativeColor(color);
+		const wanted = value === undefined ? undefined : normalize(value);
+		const actual = normalize(observed);
 		if (wanted === undefined || actual === undefined)
 			return unverified("this color needs a variable or native context proof");
 		return { rendered: wanted === actual ? "verified" : "mismatching", observed };
@@ -197,6 +221,67 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (observed === "" || !Number.isFinite(Number(observed)))
 		return unverified("this use has no resolved native opacity");
 	return { rendered: Number(observed) === wanted ? "verified" : "mismatching", observed };
+}
+
+/** Additional paint channels need their own applicable native surface, separately from color equality. */
+function paintContext(element: Element, property: string, value: string | undefined): string | undefined {
+	if (property === "color" || property === "background-color") return;
+	const view = element.ownerDocument.defaultView;
+	if (!view || !element.isConnected || element.getClientRects().length === 0)
+		return "this paint has no rendered native surface";
+	const box = element.getBoundingClientRect();
+	if (!(box.width > 0 && box.height > 0)) return "this paint has no positive native surface";
+	const native = view.getComputedStyle(element);
+	for (let node: Element | null = element; node; node = node.parentElement) {
+		const style = view.getComputedStyle(node);
+		if (style.visibility !== "visible" || style.display === "none" || Number(style.opacity) === 0)
+			return "this paint needs a visible native context";
+	}
+	if (property === "outline-color") {
+		if (["none", "hidden", "auto"].includes(native.outlineStyle) || !(Number.parseFloat(native.outlineWidth) > 0))
+			return "this outline color needs an explicit visible outline";
+	} else if (property === "text-decoration-color") {
+		if (
+			!(element instanceof HTMLElement) ||
+			!Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) ||
+			native.textDecorationLine === "none"
+		)
+			return "this decoration color needs an authored native text decoration";
+		for (let parent = element.parentElement; parent; parent = parent.parentElement)
+			if (view.getComputedStyle(parent).textDecorationLine !== "none")
+				return "this decoration color needs an independent propagation context";
+	} else if (property === "caret-color") {
+		if (
+			!(
+				(element instanceof HTMLInputElement &&
+					["text", "search", "url", "tel", "email", "password"].includes(element.type)) ||
+				element instanceof HTMLTextAreaElement
+			) ||
+			element.disabled ||
+			element.readOnly ||
+			element.ownerDocument.activeElement !== element
+		)
+			return "this caret color needs a focused editable native text control";
+	} else if (property === "accent-color") {
+		if (
+			!(element instanceof HTMLInputElement) ||
+			!["checkbox", "radio"].includes(element.type) ||
+			!element.checked ||
+			element.disabled ||
+			native.appearance === "none"
+		)
+			return "this accent color needs a checked native control appearance";
+	} else if (property === "fill" || property === "stroke") {
+		if (!(element instanceof SVGGeometryElement) || !["rect", "circle", "ellipse"].includes(element.localName))
+			return "this SVG paint needs a known native geometry";
+		const bounds = element.getBBox();
+		if (!(bounds.width > 0 && bounds.height > 0)) return "this SVG paint has no positive native geometry";
+		if (value !== "none" && !(Number(property === "fill" ? native.fillOpacity : native.strokeOpacity) > 0))
+			return "this SVG paint needs positive native paint opacity";
+		if (property === "stroke" && value !== "none" && !(Number.parseFloat(native.strokeWidth) > 0))
+			return "this stroke color needs positive native stroke width";
+	}
+	return;
 }
 
 /** Width and style are one visible border component; compiler-owned siblings remain independent. */
