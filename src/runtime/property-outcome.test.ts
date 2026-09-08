@@ -3,9 +3,10 @@ import { join } from "node:path";
 import { build } from "esbuild";
 import { type Browser, chromium } from "playwright-core";
 import { afterAll, beforeAll, expect, it, onTestFinished } from "vitest";
+import { appearanceProperties } from "../daemon/fixtures/property-appearance";
 import { readInput } from "../daemon/retained-compile";
 import { compilePropertySource } from "../daemon/source-property-compile";
-import { propertyConsumers } from "../daemon/source-property-dependencies";
+import { nativePropertyEffects, propertyConsumers } from "../daemon/source-property-dependencies";
 import { planPropertyValue } from "../daemon/source-property-plan";
 import { propertyScopePaths } from "../daemon/source-property-scope";
 import type { SourcePropertyExpectation } from "../source-property";
@@ -1168,3 +1169,107 @@ it.each([
 		}, row.property);
 	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
 });
+
+it.each(appearanceProperties.filter((row) => row.index >= 50 && row.index <= 61))(
+	"verifies compiled transform $property with preserved axes and exact inverse",
+	async (row) => {
+		const { root } = makeProject(makeTempDir());
+		writeDesignFile(root, "shared/tokens.css", "");
+		const file = realpathSync(join(root, "design/shared/tokens.css"));
+		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+		const operation = { kind: "property", property: row.property, scope: "" } as const;
+		const companions: Record<string, string> = {
+			"scale-x": "scale-y-75",
+			"scale-y": "scale-x-75",
+			"rotate-x": "rotate-y-6 skew-x-8",
+			"rotate-y": "rotate-x-6 skew-y-8",
+			"skew-x": "rotate-x-6 skew-y-8",
+			"skew-y": "rotate-y-6 skew-x-8",
+			skew: "rotate-x-6",
+			"translate-x": "translate-y-6",
+			"translate-y": "translate-x-6",
+		};
+		const original = [row.before, companions[row.property]].filter(Boolean).join(" ");
+		const plan = await planPropertyValue(
+			root,
+			new Map([[file, readInput(file)]]),
+			original,
+			operation,
+			{ kind: "binding", tokens: [row.after] },
+			environment,
+		);
+		const expected: SourcePropertyExpectation = {
+			kind: "property",
+			property: row.property,
+			scope: "",
+			className: plan.next,
+			absent: false,
+			css: plan.desired.css,
+			effects: plan.consumers,
+			scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		};
+		const subject = (classes: string) =>
+			`<div data-subject class="${classes}" style="width:80px;height:40px">Native transform</div>`;
+		const f = await fixture(
+			`<!doctype html><style>${plan.original.css}${expected.css}</style>${subject(plan.next)}${subject(original)}`,
+		);
+		expect(
+			(await f.inspect(expected)).map((outcome) => outcome.rendered),
+			JSON.stringify(expected.effects),
+		).toEqual(["verified", "mismatching"]);
+		if (companions[row.property]) {
+			const companion = expected.effects.find(
+				(effect) => effect.owner !== null && effect.owner !== row.after && effect.property.startsWith("--tw-"),
+			);
+			expect(companion, "the native expectation retains independently owned axis inputs").toBeDefined();
+			if (!companion) throw new Error("missing native companion");
+			expect(
+				(await f.inspect({ ...expected, effects: expected.effects.filter((effect) => effect !== companion) })).map(
+					(outcome) => outcome.rendered,
+				),
+			).toEqual(["unverified", "unverified"]);
+			await f.page
+				.locator("[data-subject]")
+				.first()
+				.evaluate((element, effect) => {
+					if (!(element instanceof HTMLElement)) throw new Error("missing native transform host");
+					element.style.setProperty(effect.property, effect.value.replace(/\d+/, "31"));
+				}, companion);
+			expect((await f.inspect(expected))[0]?.rendered).toBe("mismatching");
+			await f.page
+				.locator("[data-subject]")
+				.first()
+				.evaluate((element, property) => {
+					if (!(element instanceof HTMLElement)) throw new Error("missing native transform host");
+					element.style.removeProperty(property);
+				}, companion.property);
+		}
+		const inverse: SourcePropertyExpectation = {
+			...expected,
+			className: original,
+			css: plan.original.css,
+			effects: nativePropertyEffects(plan.original, plan.roots, environment),
+		};
+		expect((await f.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+		const removal = await planPropertyValue(
+			root,
+			new Map([[file, readInput(file)]]),
+			original,
+			operation,
+			{ kind: "remove" },
+			environment,
+		);
+		const removed: SourcePropertyExpectation = {
+			...expected,
+			className: removal.next,
+			absent: !removal.next,
+			css: removal.desired.css,
+			effects: removal.consumers,
+		};
+		const empty = await fixture(
+			`<!doctype html><style>${removal.original.css}${removed.css}</style>${subject(removal.next)}${subject(original)}`,
+		);
+		expect((await empty.inspect(removed)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+		expect((await empty.inspect(inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+	},
+);

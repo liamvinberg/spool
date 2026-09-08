@@ -1,5 +1,6 @@
 import type { SourcePropertyEffect, SourcePropertyExpectation } from "../source-property";
 import { type NativeKeywordProperty, nativeKeyword } from "./property-keywords";
+import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
 
 const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited: boolean }> = {
 	"text-align": { value: "start", inherited: true },
@@ -13,6 +14,21 @@ const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited:
 function keywordProperty(property: string): property is NativeKeywordProperty {
 	return Object.hasOwn(keywordDefaults, property);
 }
+
+const transformProperties: Readonly<Record<string, NativeTransformProperty>> = {
+	scale: "scale",
+	"scale-x": "scale",
+	"scale-y": "scale",
+	rotate: "rotate",
+	"rotate-x": "transform",
+	"rotate-y": "transform",
+	skew: "transform",
+	"skew-x": "transform",
+	"skew-y": "transform",
+	translate: "translate",
+	"translate-x": "translate",
+	"translate-y": "translate",
+};
 
 export interface PropertyOutcome {
 	rendered: "verified" | "mismatching" | "unverified" | "inactive";
@@ -32,6 +48,10 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("the selected property condition needs a native context proof");
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
+	const transform = Object.hasOwn(transformProperties, expected.property)
+		? transformProperties[expected.property]
+		: undefined;
+	if (transform) return transformOutcome(element, expected, transform);
 	if (expected.property === "border-width" || /^border-(?:top|right|bottom|left)-width$/.test(expected.property))
 		return borderOutcome(element, expected);
 	const keyword = keywordProperty(expected.property) ? expected.property : undefined;
@@ -221,6 +241,108 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (observed === "" || !Number.isFinite(Number(observed)))
 		return unverified("this use has no resolved native opacity");
 	return { rendered: Number(observed) === wanted ? "verified" : "mismatching", observed };
+}
+
+/** Resolve the complete captured transform declaration, including independently owned companion axes. */
+function transformOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	property: NativeTransformProperty,
+): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const declarations = new Map<string, SourcePropertyEffect[]>();
+	const ownsVariable = (name: string) =>
+		property === "scale"
+			? /^--tw-scale-[xyz]$/.test(name)
+			: property === "translate"
+				? /^--tw-translate-[xyz]$/.test(name)
+				: property === "transform" && /^--tw-(?:rotate-[xyz]|skew-[xy])$/.test(name);
+	for (const effect of expected.effects) {
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this transform needs a native condition proof");
+		if (effect.property !== property && !ownsVariable(effect.property))
+			return unverified("this transform has dependent effects requiring native proof");
+		const group = declarations.get(effect.property) ?? [];
+		group.push(effect);
+		declarations.set(effect.property, group);
+	}
+	let unresolved = false;
+	const resolve = (value: string, seen = new Set<string>()): string => {
+		const result = value.replace(
+			/var\((--[\w-]+)(?:,([^()]*))?\)/g,
+			(_reference, name: string, fallback: string | undefined) => {
+				if (seen.has(name)) {
+					unresolved = true;
+					return "";
+				}
+				const next = new Set([...seen, name]);
+				if (!ownsVariable(name)) {
+					const resolved = resolvedValue(element, sheet, `var(${name})`);
+					if (resolved === undefined) unresolved = true;
+					return resolved ?? "";
+				}
+				const selected = winningEffect(sheet, declarations.get(name) ?? []);
+				if (selected.reason) {
+					unresolved = true;
+					return "";
+				}
+				let definition = selected.winner?.value;
+				if (definition === undefined) {
+					const defaultOnly = (rules: CSSRuleList): boolean =>
+						[...rules].every((rule) => {
+							if (rule instanceof CSSSupportsRule && !CSS.supports(rule.conditionText)) return true;
+							if (rule instanceof CSSStyleRule && rule.style.getPropertyValue(name)) return false;
+							return !(rule instanceof CSSGroupingRule) || defaultOnly(rule.cssRules);
+						});
+					if (!defaultOnly(sheet.cssRules)) {
+						unresolved = true;
+						return "";
+					}
+					const registrations = [...sheet.cssRules].filter(
+						(rule) => rule instanceof CSSPropertyRule && rule.name === name,
+					);
+					const registration = registrations[0];
+					if (registrations.length !== 1 || !(registration instanceof CSSPropertyRule) || registration.inherits) {
+						unresolved = true;
+						return "";
+					}
+					definition = registration.initialValue ?? undefined;
+					if (definition === undefined || definition === "") {
+						if (fallback === undefined) unresolved = true;
+						return fallback === undefined ? "" : resolve(fallback, next);
+					}
+				}
+				const resolved = resolve(definition, next);
+				if (property === "translate") {
+					const length = nativeLength(element, sheet, property, resolved);
+					if (length === undefined) unresolved = true;
+					return length === undefined ? "" : `${length}px`;
+				}
+				return resolved;
+			},
+		);
+		if (/\b(?:var|env|attr)\(/i.test(result)) unresolved = true;
+		return result;
+	};
+	const selection = winningEffect(sheet, declarations.get(property) ?? []);
+	if (selection.reason) return unverified(selection.reason);
+	if (
+		!selection.winner &&
+		(element instanceof HTMLElement || element instanceof SVGElement) &&
+		element.style.getPropertyValue(property)
+	)
+		return unverified("this transform has an independent inline default context");
+	const value = resolve(selection.winner?.value ?? "none").trim();
+	if (unresolved) return unverified("this transform needs complete captured variable and companion evidence");
+	const result = nativeTransform(element, property, value);
+	return result.kind === "unknown"
+		? unverified(result.reason)
+		: { rendered: result.matches ? "verified" : "mismatching", observed: result.observed };
 }
 
 /** Additional paint channels need their own applicable native surface, separately from color equality. */
