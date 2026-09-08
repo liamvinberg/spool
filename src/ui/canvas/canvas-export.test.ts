@@ -3,6 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, type MockInstance, onTestFinished, vi } from "vitest";
+import { CAPTURE_AFTER_READY_MS } from "./lifecycle";
 import type { CaptureSourceMessage } from "./protocol";
 
 const broker = vi.hoisted(() => ({
@@ -31,18 +32,44 @@ const frames = [
 ];
 
 describe("multi-frame canvas export", () => {
-	it("captures selected frames one at a time at full resolution while they stay live", async () => {
+	it.each([false, true])("exports selected frames (delayed download: %s)", async (delayed) => {
+		if (delayed)
+			vi.useFakeTimers({
+				toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date"],
+			});
 		vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 		const requests: string[] = [];
+		const streams: AbortSignal[] = [];
+		let releaseDownload: (() => void) | undefined;
+		const downloadHeld = delayed
+			? new Promise<void>((resolve) => {
+					releaseDownload = resolve;
+				})
+			: Promise.resolve();
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async (input: RequestInfo | URL) => {
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const raw = input instanceof Request ? input.url : String(input);
 				if (raw.startsWith("data:image/png;base64,")) {
+					await downloadHeld;
 					return new Response(PNG_BYTES, { headers: { "content-type": "image/png" } });
 				}
 				const url = new URL(raw, window.location.href);
 				requests.push(url.pathname);
+				if (url.pathname.endsWith("/events")) {
+					const signal = init?.signal;
+					if (!signal) throw new Error("event stream did not carry its cancellation signal");
+					streams.push(signal);
+					return new Response(
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controller.enqueue(new TextEncoder().encode(": connected\n\n"));
+								signal.addEventListener("abort", () => controller.close(), { once: true });
+							},
+						}),
+						{ headers: { "content-type": "text/event-stream" } },
+					);
+				}
 				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				if (url.pathname.endsWith("/frames")) {
 					return Response.json({ root: "/project", pages: [], frames, collisions: [] });
@@ -55,13 +82,6 @@ describe("multi-frame canvas export", () => {
 				}
 				return Response.json({});
 			}),
-		);
-		vi.stubGlobal(
-			"EventSource",
-			class {
-				addEventListener() {}
-				close() {}
-			},
 		);
 		const nativeSetAttribute = HTMLIFrameElement.prototype.setAttribute;
 		vi.spyOn(HTMLIFrameElement.prototype, "setAttribute").mockImplementation(function (
@@ -92,8 +112,11 @@ describe("multi-frame canvas export", () => {
 			host.remove();
 			broker.id.mockReset();
 			broker.raster.mockReset();
+			vi.useRealTimers();
 			vi.unstubAllGlobals();
 			vi.restoreAllMocks();
+			expect(streams.length).toBeGreaterThan(0);
+			expect(streams.every((signal) => signal.aborted)).toBe(true);
 		});
 
 		await act(async () => {
@@ -139,10 +162,21 @@ describe("multi-frame canvas export", () => {
 		await act(async () => exportButton?.click());
 
 		await completeMountedCapture(host, "a", "11111111111111111111111111111111");
+		// A selected document must survive a download longer than the cover-arrival
+		// window. A JSON/EOF event fixture would reconnect and replace it here.
+		if (delayed) {
+			await act(async () => vi.advanceTimersByTimeAsync(CAPTURE_AFTER_READY_MS + 300));
+			expect(downloads).toEqual([]);
+			expect(broker.raster.mock.calls.map(([source]) => source.frame)).toEqual(["a"]);
+			expect(host.querySelector('iframe[title="b"]')).toBe(heldB);
+			expect(heldB.contentWindow).toBe(heldBWindow);
+			releaseDownload?.();
+		}
 		await completeMountedCapture(host, "b", "22222222222222222222222222222222", heldBPost);
 		await until(() => host.textContent?.includes("Exported 2 PNG images") === true);
 
 		expect(downloads).toEqual(["a.png", "b.png"]);
+		expect(broker.id).toHaveBeenCalledTimes(2);
 		expect(broker.raster.mock.calls.map(([source]) => [source.frame, source.targetWidth])).toEqual([
 			["a", 0],
 			["b", 0],
@@ -236,7 +270,9 @@ async function completeMountedCapture(
 async function until(done: () => boolean): Promise<void> {
 	for (let attempt = 0; attempt < 100; attempt++) {
 		if (done()) return;
-		await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+		await act(() =>
+			vi.isFakeTimers() ? vi.advanceTimersByTimeAsync(10) : new Promise((resolve) => setTimeout(resolve, 10)),
+		);
 	}
 	throw new Error("canvas did not settle");
 }
