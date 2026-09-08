@@ -804,3 +804,44 @@ it("reports independent shared outcomes when authored code resets one surviving 
 	expect(mismatch.uses[0].reason).toContain("native");
 	await expect.poll(() => f.page.locator('[data-hand-notice="mismatching"]').count()).toBe(1);
 });
+
+it.each([
+	{
+		name: "a clone whose carrier also renders other output",
+		definition: "function Pass({children}){return <section>{cloneElement(children,{})}<aside>Kept</aside></section>}",
+		child: '<Pass key="a"><Counter name="A"/></Pass>',
+	},
+	{
+		name: "a clone selecting one of several required inputs",
+		definition:
+			"function Pass({children}){return <section>{cloneElement(children[0],{})}{children[1]}<aside>Kept</aside></section>}",
+		child: '<Pass key="a"><Counter key="first" name="A"/><i key="second">Required input</i></Pass>',
+	},
+	{
+		name: "an unsupported component with multiple returned roots",
+		definition:
+			'function Pass(){return [<button key="first" data-name="A">A:0</button>,<aside key="second">Kept</aside>]}',
+		child: '<Pass key="a"/>',
+	},
+])(
+	"preserves the complete source and other output when refusing $name",
+	{ timeout: 120_000 },
+	async ({ definition, child }) => {
+		const source = `import {cloneElement} from 'react';${COMPONENTS}${definition}export default function Frame(){return <main style={{padding:40}}>${child}<Counter key="b" name="B"/></main>}`;
+		const f = await originCanvas({}, source, '[data-name="A"]');
+		const replies = sourceReplies(f.page);
+		await f.target.evaluate((element) => Reflect.set(window, "originalRefusedRoot", element));
+		await f.select();
+		await f.page.keyboard.press("Backspace");
+		const notice = f.page.locator('[data-hand-notice="blocked"]');
+		await expect.poll(() => notice.count()).toBe(1);
+		expect(f.writes, JSON.stringify(replies)).toEqual([]);
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+		expect(await f.target.textContent()).toBe("A:0");
+		expect(await f.target.evaluate((element) => element === Reflect.get(window, "originalRefusedRoot"))).toBe(true);
+		expect(await f.frame.locator("aside").textContent()).toBe("Kept");
+		expect(await f.frame.locator('[data-name="B"]').textContent()).toBe("B:0");
+		await notice.getByRole("button", { name: "Dismiss notice", exact: true }).click();
+		await expect.poll(() => notice.count()).toBe(0);
+	},
+);
