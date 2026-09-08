@@ -14,10 +14,8 @@ const prefixes = {
 	"border-bottom-right-radius": "rounded-br",
 	"border-bottom-left-radius": "rounded-bl",
 };
-type Property = keyof typeof prefixes;
-export function numericTokenProperty(property: string): property is Property {
-	return Object.hasOwn(prefixes, property);
-}
+/** The properties this control can name a token for, which is what it draws. */
+export type NumericTokenProperty = keyof typeof prefixes;
 
 function numberUnit(value: string): { number: string; unit: string } | undefined {
 	const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$/i.exec(value.trim());
@@ -38,7 +36,7 @@ export function PropertyNumberField({
 	name,
 	accessory,
 }: {
-	property: Property;
+	property: NumericTokenProperty;
 	reading: SourcePropertyReading | undefined;
 	reason?: string | undefined;
 	options: readonly ThemeToken[];

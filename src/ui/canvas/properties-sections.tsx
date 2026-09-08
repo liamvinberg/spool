@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { ThemeToken } from "../../daemon/theme";
 import {
 	borderColoursOf,
 	borderWidthsOf,
@@ -80,7 +81,7 @@ import {
 	propertyControlValue,
 	propertyNumericSample,
 } from "./property-controls";
-import { numericTokenProperty, PropertyNumberField } from "./property-number-field";
+import { type NumericTokenProperty, PropertyNumberField } from "./property-number-field";
 
 /** Rows read candidate spellings from the shared property inventory.
  * Appearance controls retain an original source operation through preview and completion.
@@ -305,32 +306,79 @@ function LengthRow({
 	const family = row.rule.family;
 	const kind: Kind = LENGTHS[family] ?? "spacing";
 	const step = stepOf(view.theme);
-	const { ok, reason } = rowAdmission(view, row);
 	const reader = read ?? ((scoped: string) => signedOf(lengthOf(scoped, family)));
 	const held = worn<string | null>(view, reader, (value) => value === null);
-	const value = held.shown ?? "";
-	const readoutOf = (value: string) => {
-		const parsed = takeApart(value);
-		return parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
-	};
-	const changed = view.fresh(lengthOf(view.scoped, family)?.token ?? null);
+	return (
+		<ClassNumberRow
+			view={view}
+			row={row}
+			{...(name === undefined ? {} : { name })}
+			value={held.shown ?? ""}
+			faint={held.own === null}
+			changed={view.fresh(lengthOf(view.scoped, family)?.token ?? null)}
+			placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
+			readout={(shown) => {
+				const parsed = takeApart(shown);
+				return parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
+			}}
+			typedValue={(typed) => {
+				if (typed.trim() === "") return null;
+				const next = parseTyped(kind, typed);
+				return next ? { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` } : undefined;
+			}}
+			stepped={(from, units) => {
+				const parsed = takeApart(from);
+				const start: Length | null =
+					parsed === null
+						? null
+						: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
+				const next = stepLength(kind, start, measured, units);
+				return next === null ? undefined : `${next.negative ? "-" : ""}${next.value}`;
+			}}
+			{...(aside === undefined ? {} : { aside })}
+		/>
+	);
+}
+
+/**
+ * The shape every class-written number row wears (P6).
+ *
+ * The row is one scrub label, one field and whatever the fold hangs beside it.
+ * What differs between a length and a border width is what the class says, what
+ * a typed value spells and how a step moves: those are the arguments, and the
+ * gesture around them is written once.
+ */
+function ClassNumberRow({
+	view,
+	row,
+	name,
+	value,
+	faint,
+	changed,
+	placeholder,
+	readout,
+	typedValue,
+	stepped,
+	aside,
+}: {
+	view: View;
+	row: ModelRow;
+	name?: string | undefined;
+	value: string;
+	/** nothing under this scope sets it: the value shown is the base's */
+	faint: boolean;
+	changed: boolean;
+	placeholder: string;
+	readout: (shown: string) => string | null;
+	/** what typed text writes, or nothing where this row will not take it */
+	typedValue: (typed: string) => RowValue | undefined;
+	/** the same value one or ten units along, or nothing where it cannot move */
+	stepped: (from: string, units: number) => string | undefined;
+	aside?: ReactNode;
+}) {
+	const { ok, reason } = rowAdmission(view, row);
 	const control = appearanceProperty(row) ? view.property : null;
-	const typedValue = (typed: string): RowValue | undefined => {
-		if (typed.trim() === "") return null;
-		const next = parseTyped(kind, typed);
-		return next ? { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` } : undefined;
-	};
 	const write = (next: RowValue) => writeValue(view, row, next);
-	const stepped = (value: string, units: number): string | undefined => {
-		const parsed = takeApart(value);
-		const from: Length | null =
-			parsed === null
-				? null
-				: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
-		const next = stepLength(kind, from, measured, units);
-		if (next === null) return;
-		return `${next.negative ? "-" : ""}${next.value}`;
-	};
 	const stepBy = (units: number) => {
 		const next = stepped(value, units);
 		if (next !== undefined) write({ kind: "value", value: next });
@@ -349,18 +397,18 @@ function LengthRow({
 		>
 			<NumField
 				value={scrub?.value ?? value}
-				readout={readoutOf(scrub?.value ?? value)}
+				readout={readout(scrub?.value ?? value)}
 				ok={ok}
-				faint={held.own === null}
+				faint={faint}
 				changed={changed}
-				placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
-				onBegin={() => control?.begin(property)}
+				placeholder={placeholder}
+				onBegin={() => control?.begin(row.property)}
 				onCancel={() => control?.finish(false)}
 				onPreview={(typed) => {
 					const next = typedValue(typed);
 					if (next !== undefined)
 						control?.preview(
-							property,
+							row.property,
 							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
 							propertyNumericSample(row, next),
 						);
@@ -378,13 +426,6 @@ function LengthRow({
 	);
 }
 
-/**
- * A border width, which is a length that folds to edges (P7).
- *
- * A fraction brackets rather than going bare: Tailwind refuses `border-1.5`,
- * and `border-[1.5px]` is what it takes instead — the row would otherwise offer
- * a value that lands nothing.
- */
 function BorderWidthRow({
 	view,
 	property,
@@ -398,84 +439,46 @@ function BorderWidthRow({
 }) {
 	const row = ruleRow(property, "border-width");
 	const edge = row.rule.edge;
-	const { ok, reason } = rowAdmission(view, row);
 	const step = stepOf(view.theme);
 	const held = worn<string | null>(
 		view,
 		(scoped) => (edge === "all" ? borderWidthsOf(scoped).t : borderWidthsOf(scoped)[edge]),
 		(value) => value === null,
 	);
-	const changed = view.fresh(readRow(row, view.scoped, view.theme).token);
-	const control = view.property;
-	const value = held.shown ?? "";
-	const write = (next: RowValue) => writeValue(view, row, next);
-	const typedValue = (typed: string): RowValue | undefined => {
-		if (typed.trim() === "") return null;
-		const next = parseTyped("px", typed);
-		return next && !next.negative ? { kind: "value", value: next.value } : undefined;
-	};
-	const stepped = (value: string, units: number): string | undefined => {
-		const parsed = takeApart(value);
-		const from: Length | null =
-			parsed === null
-				? null
-				: {
-						family: "border",
-						kind: "px",
-						value: parsed.value,
-						negative: parsed.negative,
-						important: false,
-						token: "",
-					};
-		const next = stepLength("px", from, held.shown === null ? 0 : Number.NaN, units);
-		if (next === null || next.negative) return;
-		return next.value;
-	};
-
-	const stepBy = (units: number) => {
-		const next = stepped(value, units);
-		if (next !== undefined) write({ kind: "value", value: next });
-	};
-	const scrub = usePropertyScrub(view, row, value, stepped);
 	return (
-		<Row
-			name={name ?? row.property}
-			ok={ok}
-			reason={reason}
-			changed={changed}
-			onScrub={ok ? (scrub?.move ?? stepBy) : undefined}
-			onScrubStart={scrub?.start}
-			onScrubEnd={scrub?.end}
-			onScrubCancel={scrub?.cancel}
-		>
-			<NumField
-				value={scrub?.value ?? value}
-				placeholder="0"
-				readout={describe("px", scrub?.value || held.shown || "0", false, step) ?? "0px"}
-				ok={ok}
-				faint={held.own === null}
-				changed={changed}
-				onBegin={() => control?.begin(property)}
-				onCancel={() => control?.finish(false)}
-				onPreview={(typed) => {
-					const next = typedValue(typed);
-					if (next !== undefined)
-						control?.preview(
-							property,
-							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
-							propertyNumericSample(row, next),
-						);
-				}}
-				onCommit={(typed) => {
-					const next = typedValue(typed);
-					if (next !== undefined) write(next);
-					else control?.finish(false);
-				}}
-				onStep={control ? undefined : stepBy}
-				stepDraft={control ? stepped : undefined}
-			/>
-			{fold}
-		</Row>
+		<ClassNumberRow
+			view={view}
+			row={row}
+			{...(name === undefined ? {} : { name })}
+			value={held.shown ?? ""}
+			faint={held.own === null}
+			changed={view.fresh(readRow(row, view.scoped, view.theme).token)}
+			placeholder="0"
+			readout={(shown) => describe("px", shown || held.shown || "0", false, step) ?? "0px"}
+			typedValue={(typed) => {
+				if (typed.trim() === "") return null;
+				const next = parseTyped("px", typed);
+				return next && !next.negative ? { kind: "value", value: next.value } : undefined;
+			}}
+			stepped={(from, units) => {
+				const parsed = takeApart(from);
+				const start: Length | null =
+					parsed === null
+						? null
+						: {
+								family: "border",
+								kind: "px",
+								value: parsed.value,
+								negative: parsed.negative,
+								important: false,
+								token: "",
+							};
+				// A width nothing sets steps from zero; a set one steps from what it says.
+				const next = stepLength("px", start, held.shown === null ? 0 : Number.NaN, units);
+				return next === null || next.negative ? undefined : next.value;
+			}}
+			{...(fold === undefined ? {} : { aside: fold })}
+		/>
 	);
 }
 
@@ -770,65 +773,41 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 	);
 }
 
-function TypographyNumberRow({
+/**
+ * A number the source owns: its own token menu, its own reading, one gesture.
+ *
+ * The class says nothing this control trusts. It draws what the source read
+ * says the property is wearing, and every gesture it makes is a source request.
+ */
+function SourceNumberRow({
 	view,
 	property,
-}: {
-	view: View;
-	property: "font-size" | "line-height" | "letter-spacing";
-}) {
-	const control = view.property;
-	const { reason } = rowAdmission(view, modelRow(property));
-	const reading = useOwnReading(control, property);
-	const options =
-		property === "font-size"
-			? view.theme?.text
-			: property === "line-height"
-				? view.theme?.leading
-				: view.theme?.tracking;
-	return (
-		<PropertyNumberField
-			property={property}
-			reading={reading}
-			reason={reason}
-			options={options ?? []}
-			scope={scopeKey(view.scope)}
-			begin={() => control?.begin(property)}
-			preview={(value) => control?.preview(property, value)}
-			apply={(value) => control?.apply(property, value)}
-			finish={(commit) => control?.finish(commit)}
-		/>
-	);
-}
-
-function RadiusNumberRow({
-	view,
-	property,
+	options,
 	name,
-	fold,
+	accessory,
 }: {
 	view: View;
-	property: string;
-	name?: string;
-	fold: ReactNode;
+	property: NumericTokenProperty;
+	options: readonly ThemeToken[];
+	name?: string | undefined;
+	accessory?: ReactNode;
 }) {
 	const control = view.property;
 	const { reason } = rowAdmission(view, modelRow(property));
 	const reading = useOwnReading(control, property);
-	if (!numericTokenProperty(property)) throw new Error("radius fold has no numeric property control");
 	return (
 		<PropertyNumberField
 			property={property}
-			{...(name ? { name } : {})}
+			{...(name === undefined ? {} : { name })}
 			reading={reading}
 			reason={reason}
-			options={view.theme?.radius ?? []}
+			options={options}
 			scope={scopeKey(view.scope)}
 			begin={() => control?.begin(property)}
 			preview={(value) => control?.preview(property, value)}
 			apply={(value) => control?.apply(property, value)}
 			finish={(commit) => control?.finish(commit)}
-			accessory={fold}
+			{...(accessory === undefined ? {} : { accessory })}
 		/>
 	);
 }
@@ -988,9 +967,9 @@ function ToggleRow({
 
 type Sides = Record<Side, string | null>;
 
-interface FoldRows {
+interface FoldRows<P extends string = string> {
 	/** one row when every side agrees, two on the axes, four on the sides */
-	levels: readonly (readonly { property: string; name?: string; sides: readonly Side[] }[])[];
+	levels: readonly (readonly { property: P; name?: string; sides: readonly Side[] }[])[];
 }
 
 function levelOf(sides: Sides, max: number): number {
@@ -1008,17 +987,17 @@ function levelOf(sides: Sides, max: number): number {
  * `p-4 pt-2` where three of four agree — is the write lane's, which is where it
  * has to be for a `hover:` write and a base write to spell the same.
  */
-function Folded({
+function Folded<P extends string>({
 	view,
 	fold,
 	read,
 	draw,
 }: {
 	view: View;
-	fold: FoldRows;
+	fold: FoldRows<P>;
 	read: (scoped: string) => Sides;
 	draw: (
-		entry: { property: string; name?: string; sides: readonly Side[] },
+		entry: { property: P; name?: string; sides: readonly Side[] },
 		caret: ReactNode,
 		read: (scoped: string) => string | null,
 	) => ReactNode;
@@ -1073,7 +1052,7 @@ const GAP_FOLD: FoldRows = {
 	],
 };
 
-const RADIUS_FOLD: FoldRows = {
+const RADIUS_FOLD: FoldRows<NumericTokenProperty> = {
 	levels: [
 		[{ property: "border-radius", sides: ["t", "r", "b", "l"] }],
 		[
@@ -1756,12 +1735,13 @@ function AppearanceSection({ view }: { view: View }) {
 				fold={RADIUS_FOLD}
 				read={(scoped) => cornersAsSides(scoped, view.theme)}
 				draw={(entry, caret) => (
-					<RadiusNumberRow
+					<SourceNumberRow
 						key={entry.property}
 						view={view}
 						property={entry.property}
+						options={view.theme?.radius ?? []}
 						{...(entry.name === undefined ? {} : { name: entry.name })}
-						fold={caret}
+						accessory={caret}
 					/>
 				)}
 			/>
@@ -1873,10 +1853,10 @@ function TextSection({ view }: { view: View }) {
 	]);
 	return (
 		<Section name="Typography" reason={sectionReason(view, ["font-size"])}>
-			<TypographyNumberRow view={view} property="font-size" />
-			<TypographyNumberRow view={view} property="line-height" />
+			<SourceNumberRow view={view} property="font-size" options={view.theme?.text ?? []} />
+			<SourceNumberRow view={view} property="line-height" options={view.theme?.leading ?? []} />
 			{readRow(modelRow("letter-spacing"), view.scoped, view.theme).token !== null ? (
-				<TypographyNumberRow view={view} property="letter-spacing" />
+				<SourceNumberRow view={view} property="letter-spacing" options={view.theme?.tracking ?? []} />
 			) : null}
 			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<Row
