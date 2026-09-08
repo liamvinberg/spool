@@ -7,6 +7,7 @@ import { afterAll, expect, it, onTestFinished } from "vitest";
 import type { SourceRead } from "../source-edit";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { designBuildOptions } from "./compile";
+import { assembleFrameDocument } from "./document";
 import { consumedChoices, lazyChoices } from "./lazy-origin-cases";
 
 let browser: Browser | undefined;
@@ -46,7 +47,7 @@ async function fixture(
 	const source =
 		authored?.source ??
 		`import {lazy,Suspense} from 'react';import {Button} from 'shared/ui/other';${sample.setup ?? ""}
- globalThis.subscriptions=0;const originalThen=Promise.prototype.then;Promise.prototype.then=function(...args){globalThis.subscriptions++;return Reflect.apply(originalThen,this,args)};globalThis.other=Button;globalThis.reads=0;globalThis.traps={get:0,descriptor:0,ownKeys:0};globalThis.loads=0;globalThis.lazyInitializers=0;globalThis.choice=true;globalThis.pick=${JSON.stringify(sample.pick ?? "first")};
+ globalThis.subscriptions=0;globalThis.subscriptionTrace=[];const promiseIds=new WeakMap();let nextPromiseId=0;const promiseId=promise=>{let id=promiseIds.get(promise);if(!id){id=++nextPromiseId;promiseIds.set(promise,id)}return id};const originalThen=Promise.prototype.then;Promise.prototype.then=function(...args){globalThis.subscriptions++;const receiver=promiseId(this);const result=Reflect.apply(originalThen,this,args);globalThis.subscriptionTrace.push([receiver,promiseId(result)]);return result};globalThis.other=Button;globalThis.reads=0;globalThis.traps={get:0,descriptor:0,ownKeys:0};globalThis.loads=0;globalThis.lazyInitializers=0;globalThis.choice=true;globalThis.pick=${JSON.stringify(sample.pick ?? "first")};
  const load=${sample.loader};const Pick=lazy(()=>{globalThis.loads++;return load()});const initialize=Pick._init;Pick._init=payload=>{globalThis.lazyInitializers++;return initialize(payload)};
  export default function Frame(){return <main style={{padding:40}}><Suspense fallback={<i>Waiting</i>}><Pick label="Same"/><Pick label="Same"/></Suspense><input id="input" defaultValue="Kept"/></main>}`;
 	writeFrame(project.root, "home", source);
@@ -75,7 +76,25 @@ async function fixture(
 	for (const [file, content] of Object.entries(authored?.files ?? {})) writeDesignFile(project.root, file, content);
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
-	const normal = await browser.newPage();
+	const normal = await browser.newPage({ viewport: { width: 700, height: 500 } });
+	for (const surface of [page, normal])
+		await surface.addInitScript(() => {
+			const requests: { id: string; targetWidth: number; settleMs: number }[] = [];
+			const results: { id: string; frame: string; error?: string }[] = [];
+			Reflect.set(globalThis, "captureRequests", requests);
+			Reflect.set(globalThis, "captureResults", results);
+			addEventListener("message", (event) => {
+				const message = event.data;
+				if (message?.spool === "capture" && typeof message.id === "string")
+					requests.push({ id: message.id, targetWidth: message.targetWidth, settleMs: message.settleMs });
+				if (message?.spool === "capture-source" && typeof message.id === "string")
+					results.push({
+						id: message.id,
+						frame: message.frame,
+						...(message.error === undefined ? {} : { error: message.error }),
+					});
+			});
+		});
 	onTestFinished(async () => {
 		await page.close();
 		await normal.close();
@@ -96,15 +115,109 @@ async function fixture(
 		jsxImportSource: "react",
 		jsxDev: false,
 	});
-	await normal.setContent('<div id="root"></div>');
-	await normal.addScriptTag({
-		type: "module",
-		content: ordinary.outputFiles!.find((f) => f.path.endsWith(".js"))!.text,
-	});
+	// Ordinary React has the identical production document/capture controller,
+	// but its bundle still excludes retained compilation and the source runtime.
+	const ordinaryUrl = `${project.url}/ordinary-lazy-comparison`;
+	await normal.route(ordinaryUrl, (route) =>
+		route.fulfill({
+			contentType: "text/html",
+			body: assembleFrameDocument({
+				project: project.name,
+				frame: "home",
+				projectCapability: "ordinary-comparison",
+				controlOrigin: project.url,
+				css: "",
+				importMap: {},
+				bootJs: ordinary.outputFiles!.find((f) => f.path.endsWith(".js"))!.text,
+			}),
+		}),
+	);
+	await normal.goto(ordinaryUrl);
 	await normal.locator("button").first().waitFor();
 	await page.goto(`${project.url}/p/${project.name}`);
 	const frame = page.frameLocator('iframe[title="home"]');
 	await frame.locator("button").first().waitFor({ timeout: 30000 });
+	interface CaptureRequest {
+		id: string;
+		targetWidth: number;
+		settleMs: number;
+	}
+	interface CaptureResult {
+		id: string;
+		frame: string;
+		error?: string;
+	}
+	const requests = () =>
+		frame.locator("main").evaluate(() => Reflect.get(globalThis, "captureRequests") as CaptureRequest[]);
+	const mirrored = new Set<string>();
+	const matchCaptures = async () => {
+		for (const request of await requests()) {
+			await expect
+				.poll(async () =>
+					(await page.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])).find(
+						(result) => result.id === request.id,
+					),
+				)
+				.toBeDefined();
+			const result = (await page.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])).find(
+				(result) => result.id === request.id,
+			)!;
+			expect(result.error).toBeUndefined();
+			if (mirrored.has(request.id)) continue;
+			await normal.evaluate(
+				(request) => window.postMessage({ spool: "capture", ...request }, location.origin),
+				request,
+			);
+			await expect
+				.poll(async () =>
+					(await normal.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])).find(
+						(result) => result.id === request.id,
+					),
+				)
+				.toBeDefined();
+			const ordinaryResult = (
+				await normal.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])
+			).find((result) => result.id === request.id)!;
+			expect(ordinaryResult.error).toBeUndefined();
+			mirrored.add(request.id);
+		}
+	};
+	const assertMatchedCaptures = async () => {
+		const expected = [...mirrored];
+		expect((await requests()).map((request) => request.id)).toEqual(expected);
+		expect(
+			(await page.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])).map(
+				(result) => result.id,
+			),
+		).toEqual(expected);
+		expect(
+			(await normal.evaluate(() => Reflect.get(globalThis, "captureRequests") as CaptureRequest[])).map(
+				(request) => request.id,
+			),
+		).toEqual(expected);
+		expect(
+			(await normal.evaluate(() => Reflect.get(globalThis, "captureResults") as CaptureResult[])).map(
+				(result) => result.id,
+			),
+		).toEqual(expected);
+	};
+	// Establish the boundary with a real capture and mirror every observed request,
+	// including background still captures. IDs and completions must match exactly.
+	const capture = async () => {
+		const id = crypto.randomUUID().replaceAll("-", "");
+		await page.evaluate(
+			(id) =>
+				(document.querySelector('iframe[title="home"]') as HTMLIFrameElement).contentWindow!.postMessage(
+					{ spool: "capture", id, targetWidth: 0, settleMs: 0 },
+					"*",
+				),
+			id,
+		);
+		await expect.poll(async () => (await requests()).some((request) => request.id === id)).toBe(true);
+		await matchCaptures();
+		await assertMatchedCaptures();
+	};
+	await capture();
 	const file = join(project.root, "design/frames/home/frame.tsx");
 	const select = async () => {
 		const box = await frame.locator("button").first().boundingBox();
@@ -113,105 +226,136 @@ async function fixture(
 		await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 		await page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
 	};
-	return { page, normal, frame, file, source, select, project };
+	return { page, normal, frame, file, source, select, project, capture, assertMatchedCaptures };
 }
 
 it.each([
-	...lazyChoices.map((sample) => ({ ...sample, consumed: false })),
-	...consumedChoices.map((sample) => ({ ...sample, consumed: true })),
-])("saves and inverses actual lazy origin: $name", { timeout: 90000 }, async (sample) => {
-	const f = await fixture(sample, sample.consumed);
-	const display = () =>
-		f.frame.locator("main").evaluate(() => ({
-			reads: Reflect.get(globalThis, "reads"),
-			subscriptions: Reflect.get(globalThis, "subscriptions"),
-			loads: Reflect.get(globalThis, "loads"),
-			lazyInitializers: Reflect.get(globalThis, "lazyInitializers"),
-			moduleInitializers: Reflect.get(globalThis, "moduleInitializers"),
-			traps: Reflect.get(globalThis, "traps"),
-		}));
-	const ordinary = () =>
-		f.normal.evaluate(() => ({
-			reads: Reflect.get(globalThis, "reads"),
-			subscriptions: Reflect.get(globalThis, "subscriptions"),
-			loads: Reflect.get(globalThis, "loads"),
-			lazyInitializers: Reflect.get(globalThis, "lazyInitializers"),
-			moduleInitializers: Reflect.get(globalThis, "moduleInitializers"),
-			traps: Reflect.get(globalThis, "traps"),
-		}));
-	await f.frame.locator("main").evaluate(() => Reflect.get(globalThis, "afterCommit")?.());
-	await f.normal.evaluate(() => Reflect.get(globalThis, "afterCommit")?.());
-	expect(await display()).toEqual(await ordinary());
-	const before = await display();
-	const commits = await f.frame.locator("main").evaluate(() => globalThis.__SPOOL_OBSERVER__.commits);
-	const observations = await f.frame
-		.locator("button")
-		.evaluateAll((elements) => elements.map((element) => globalThis.__SPOOL_OBSERVER__.observe(element)));
-	if (!sample.consumed || !refused.has(sample.name)) {
-		const choices = observations.map((o) => o.chain.find((c) => c.lazyChoice)?.lazyChoice);
-		expect(choices[0], JSON.stringify(observations)).toBeDefined();
-		expect(choices[0]?.consumedRead?.id).not.toBe(choices[1]?.consumedRead?.id);
-		if ("module" in sample && "exported" in sample)
-			expect(choices[0]).toMatchObject({ module: sample.module, export: sample.exported });
-		if (sample.name === "separate occurrences consume equal function slots") {
-			expect(choices[0]).toMatchObject({ export: "First" });
-			expect(choices[1]).toMatchObject({ export: "Alias" });
+	...lazyChoices.map((sample) => ({ ...sample, consumed: false, capture: false })),
+	...consumedChoices.map((sample) => ({ ...sample, consumed: true, capture: false })),
+	...consumedChoices
+		.filter((sample) =>
+			["getter spread has application reads", "copied then export escapes during promise resolution"].includes(
+				sample.name,
+			),
+		)
+		.map((sample) => ({ ...sample, consumed: true, capture: true })),
+])(
+	"saves and inverses actual lazy origin: $name (capture interleaving=$capture)",
+	{ timeout: 90000 },
+	async (sample) => {
+		const f = await fixture(sample, sample.consumed);
+		const display = () =>
+			f.frame.locator("main").evaluate(() => ({
+				reads: Reflect.get(globalThis, "reads"),
+				subscriptions: Reflect.get(globalThis, "subscriptions"),
+				subscriptionTrace: Reflect.get(globalThis, "subscriptionTrace") as [number, number][],
+				loads: Reflect.get(globalThis, "loads"),
+				lazyInitializers: Reflect.get(globalThis, "lazyInitializers"),
+				moduleInitializers: Reflect.get(globalThis, "moduleInitializers"),
+				traps: Reflect.get(globalThis, "traps"),
+			}));
+		const ordinary = () =>
+			f.normal.evaluate(() => ({
+				reads: Reflect.get(globalThis, "reads"),
+				subscriptions: Reflect.get(globalThis, "subscriptions"),
+				subscriptionTrace: Reflect.get(globalThis, "subscriptionTrace") as [number, number][],
+				loads: Reflect.get(globalThis, "loads"),
+				lazyInitializers: Reflect.get(globalThis, "lazyInitializers"),
+				moduleInitializers: Reflect.get(globalThis, "moduleInitializers"),
+				traps: Reflect.get(globalThis, "traps"),
+			}));
+		await f.frame.locator("main").evaluate(() => Reflect.get(globalThis, "afterCommit")?.());
+		await f.normal.evaluate(() => Reflect.get(globalThis, "afterCommit")?.());
+		await f.assertMatchedCaptures();
+		expect(await display()).toEqual(await ordinary());
+		if (sample.capture) {
+			const initial = await display();
+			await f.capture();
+			const captured = await display();
+			expect(captured).toEqual(await ordinary());
+			expect(captured.subscriptionTrace.slice(0, initial.subscriptionTrace.length)).toEqual(
+				initial.subscriptionTrace,
+			);
+			expect(captured.subscriptionTrace.length).toBeGreaterThan(initial.subscriptionTrace.length);
+			expect({
+				...captured,
+				subscriptions: initial.subscriptions,
+				subscriptionTrace: initial.subscriptionTrace,
+			}).toEqual(initial);
 		}
-		if (sample.consumed) {
-			const expected: Record<string, string> = {
-				"spread later accessor cannot overwrite default origin": "First",
-				"separate occurrences consume equal function slots": "First",
-				"getter default": "Button",
-				"getter member on arbitrary object": "Button",
-				"escaped alias replaces equal function": "Alias",
-				"detached callback can change a consumed default": "Alias",
-				"unknown call mutates result": "Alias",
-				"descriptor installs getter": "Alias",
-				"getter spread has application reads": "Alias",
-				"same function getter log changes after commit": "First",
-				"proxy spread retains ordinary traps": "First",
-				"copied then export escapes during promise resolution": "Button",
-				"proxy result descriptors": "Button",
-			};
-			expect(choices[0]?.export).toBe(expected[sample.name]);
-			if (expected[sample.name] === "Button") expect(choices[0]?.module).toBe("shared/ui/leaf.tsx");
+		const before = await display();
+		const commits = await f.frame.locator("main").evaluate(() => globalThis.__SPOOL_OBSERVER__.commits);
+		const observations = await f.frame
+			.locator("button")
+			.evaluateAll((elements) => elements.map((element) => globalThis.__SPOOL_OBSERVER__.observe(element)));
+		if (!sample.consumed || !refused.has(sample.name)) {
+			const choices = observations.map((o) => o.chain.find((c) => c.lazyChoice)?.lazyChoice);
+			expect(choices[0], JSON.stringify(observations)).toBeDefined();
+			expect(choices[0]?.consumedRead?.id).not.toBe(choices[1]?.consumedRead?.id);
+			if ("module" in sample && "exported" in sample)
+				expect(choices[0]).toMatchObject({ module: sample.module, export: sample.exported });
+			if (sample.name === "separate occurrences consume equal function slots") {
+				expect(choices[0]).toMatchObject({ export: "First" });
+				expect(choices[1]).toMatchObject({ export: "Alias" });
+			}
+			if (sample.consumed) {
+				const expected: Record<string, string> = {
+					"spread later accessor cannot overwrite default origin": "First",
+					"separate occurrences consume equal function slots": "First",
+					"getter default": "Button",
+					"getter member on arbitrary object": "Button",
+					"escaped alias replaces equal function": "Alias",
+					"detached callback can change a consumed default": "Alias",
+					"unknown call mutates result": "Alias",
+					"descriptor installs getter": "Alias",
+					"getter spread has application reads": "Alias",
+					"same function getter log changes after commit": "First",
+					"proxy spread retains ordinary traps": "First",
+					"copied then export escapes during promise resolution": "Button",
+					"proxy result descriptors": "Button",
+				};
+				expect(choices[0]?.export).toBe(expected[sample.name]);
+				if (expected[sample.name] === "Button") expect(choices[0]?.module).toBe("shared/ui/leaf.tsx");
+			}
 		}
-	}
-	await f.select();
-	const field = f.page.getByRole("textbox", { name: "Text", exact: true });
-	if (sample.consumed && refused.has(sample.name)) {
-		const box = await f.frame.locator("button").first().boundingBox();
-		if (!box) throw new Error("missing button");
-		await f.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-		expect(await f.frame.locator("button").first().getAttribute("contenteditable")).toBeNull();
-		expect(readFileSync(f.file, "utf8")).toBe(f.source);
-		expect(observations[0]?.refusal).toBeTruthy();
-		return;
-	}
-	await expect.poll(() => field.count()).toBe(1);
-	expect(await display()).toEqual(before);
-	expect(await f.frame.locator("main").evaluate(() => globalThis.__SPOOL_OBSERVER__.commits)).toBe(commits);
-	const delivery = f.page.waitForResponse(
-		(response) =>
-			response.url().endsWith("/source") && response.request().postData()?.includes('"action":"delivered"') === true,
-	);
-	await field.fill("Saved origin");
-	await field.press("Tab");
-	await expect.poll(() => readFileSync(f.file, "utf8")).toContain('label="Saved origin"');
-	await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Saved origin");
-	expect(await f.frame.locator("button").nth(1).textContent()).toBe("Same");
-	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
-	await delivery;
-	await f.page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+		await f.select();
+		const field = f.page.getByRole("textbox", { name: "Text", exact: true });
+		if (sample.consumed && refused.has(sample.name)) {
+			const box = await f.frame.locator("button").first().boundingBox();
+			if (!box) throw new Error("missing button");
+			await f.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+			expect(await f.frame.locator("button").first().getAttribute("contenteditable")).toBeNull();
+			expect(readFileSync(f.file, "utf8")).toBe(f.source);
+			expect(observations[0]?.refusal).toBeTruthy();
+			return;
+		}
+		await expect.poll(() => field.count()).toBe(1);
+		await f.assertMatchedCaptures();
+		expect(await display()).toEqual(before);
+		expect(await f.frame.locator("main").evaluate(() => globalThis.__SPOOL_OBSERVER__.commits)).toBe(commits);
+		const delivery = f.page.waitForResponse(
+			(response) =>
+				response.url().endsWith("/source") &&
+				response.request().postData()?.includes('"action":"delivered"') === true,
+		);
+		await field.fill("Saved origin");
+		await field.press("Tab");
+		await expect.poll(() => readFileSync(f.file, "utf8")).toContain('label="Saved origin"');
+		await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Saved origin");
+		expect(await f.frame.locator("button").nth(1).textContent()).toBe("Same");
+		await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+		await delivery;
+		await f.page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 
-	await f.page.mouse.click(500, 750);
-	await f.page.keyboard.press("ControlOrMeta+z");
-	await expect.poll(() => readFileSync(f.file, "utf8")).toBe(f.source);
-	await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Same");
-	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
-	await f.page.keyboard.press("ControlOrMeta+Shift+z");
-	await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Saved origin");
-});
+		await f.page.mouse.click(500, 750);
+		await f.page.keyboard.press("ControlOrMeta+z");
+		await expect.poll(() => readFileSync(f.file, "utf8")).toBe(f.source);
+		await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Same");
+		await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
+		await f.page.keyboard.press("ControlOrMeta+Shift+z");
+		await expect.poll(() => f.frame.locator("button").first().textContent()).toBe("Saved origin");
+	},
+);
 
 async function choice(f: Awaited<ReturnType<typeof fixture>>) {
 	return f.frame
