@@ -937,3 +937,62 @@ it("decodes every accepted image format through actual drop and source Undo", { 
 		"inverse",
 	]);
 });
+
+it.each(["image budget", "document budget", "computed import inventory"] as const)(
+	"refuses image resource changes beyond the original %s",
+	{ timeout: 120000 },
+	async (boundary) => {
+		const other = SVG + " ".repeat(230_000);
+		const source =
+			boundary === "document budget"
+				? SOURCE.replace("export default", "import other from 'shared/assets/other.svg';export default").replace(
+						'<img id="hero"',
+						'<img src={other}/><img id="hero"',
+					)
+				: boundary === "computed import inventory"
+					? `${SOURCE};export function imageNamed(name){return import(\`./\${name}.svg\`)}`
+					: SOURCE;
+		const f = await originCanvas(
+			{
+				"shared/assets/first.svg": SVG,
+				...(boundary === "document budget" ? { "shared/assets/other.svg": other } : {}),
+			},
+			source,
+			"#hero",
+		);
+		await f.frame.locator("#native").evaluate((element) => {
+			if (!(element instanceof HTMLInputElement)) throw new Error("missing input");
+			element.value = "kept at resource boundary";
+			Reflect.set(window, "boundaryImageInput", element);
+		});
+		await f.select();
+		const bytes =
+			SECOND + " ".repeat(boundary === "image budget" ? 400_000 : boundary === "document budget" ? 230_000 : 0);
+		const transfer = await f.target.evaluateHandle((_element, bytes) => {
+			const data = new DataTransfer();
+			data.items.add(new File([bytes], "bounded.svg", { type: "image/svg+xml" }));
+			return data;
+		}, bytes);
+		await f.target.dispatchEvent("drop", { dataTransfer: transfer });
+		const notice = f.page.locator('[data-hand-notice="blocked"]');
+		await expect.poll(() => notice.count()).toBe(1);
+		expect(await notice.textContent()).toContain(
+			boundary === "computed import inventory" ? "computed import inventory" : "budget",
+		);
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+		expect(existsSync(f.file("frames/home/bounded.svg"))).toBe(boundary === "document budget");
+		if (boundary === "document budget") expect(readFileSync(f.file("frames/home/bounded.svg"), "utf8")).toBe(bytes);
+		expect(await f.target.evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth)).toBe(
+			30,
+		);
+		expect(
+			await f.frame.locator("#native").evaluate((element) => element === Reflect.get(window, "boundaryImageInput")),
+		).toBe(true);
+		expect(await f.frame.locator("#native").inputValue()).toBe("kept at resource boundary");
+		expect(f.writes).toEqual(boundary === "document budget" ? ["commit"] : []);
+		await f.history();
+		await f.page.keyboard.press("Tab");
+		expect(f.writes).toEqual(boundary === "document budget" ? ["commit"] : []);
+		expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source);
+	},
+);
