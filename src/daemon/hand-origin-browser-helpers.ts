@@ -3,9 +3,9 @@ import { dirname, join, posix } from "node:path";
 import { build } from "esbuild";
 import { chromium, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
-import { expect, onTestFinished } from "vitest";
+import { expect } from "vitest";
 import type { SourceRead } from "../source-edit";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { closeAfterTest, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 export async function originCanvas(
 	files: Record<string, string>,
@@ -30,7 +30,7 @@ export async function originCanvas(
 		build: { outDir: uiDir, emptyOutDir: true },
 	});
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	closeAfterTest(browser);
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	const writes: string[] = [];
 	page.on("request", (request) => {
