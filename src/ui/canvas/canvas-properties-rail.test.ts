@@ -374,8 +374,14 @@ it("reads a token the hands wrote in thread colour, and the author's own quietly
 	await typeInto(fieldFor(host, "width"), "60");
 	await until(() => sourceCalls("commit").length === 1);
 	payLiteral = `${RUNGS[2]?.className ?? ""} w-60`;
-	// the save landed without a verified running result, and the reload it offers
-	// is what puts the saved literal back on screen
+
+	// This save could not be delivered to the running document, so the canvas
+	// holds the document it has rather than resetting the app behind the person
+	// who wrote it: the file's own change is not a reload, and the notice offers
+	// one. A delivered save reflows every use in place instead, which is what
+	// `hand-property-layout-browser` accepts against a real frame.
+	await changed("home");
+	expect(splicedTokens(host)).toEqual([]);
 	await until(() => reloadButton(host) !== null);
 	await press("click", {}, reloadButton(host));
 	await frame.loaded();
