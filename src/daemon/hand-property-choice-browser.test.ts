@@ -11,7 +11,19 @@ it.each(["reference", "custom at reduced zoom"] as const)(
 	async (mode) => {
 		const custom = mode === "custom at reduced zoom";
 		const original = `export function Label(){return <button id="subject" className="${custom ? "text-[8px]" : "text-tiny"} leading-6 text-red-500 p-6">Hello</button>}`;
-		const f = await originCanvas({ [file]: original, "shared/tokens.css": theme }, frame, "#subject", true);
+		// The reduced case opens at the scale it means rather than stepping down to
+		// it. The keyboard halves, and these frames stop being documents below 400px
+		// on screen: the 450-wide second frame is a picture under 0.889, so 0.9 is
+		// the reduced camera this pair can prove anything about.
+		const f = await originCanvas(
+			{ [file]: original, "shared/tokens.css": theme },
+			frame,
+			"#subject",
+			true,
+			undefined,
+			undefined,
+			custom ? { x: 60, y: 60, k: 0.9 } : undefined,
+		);
 		const second = f.page.frameLocator('iframe[title="second"]');
 		const targets = [f.target, second.locator("#subject")];
 		for (const document of [f.frame, second]) {
@@ -28,14 +40,14 @@ it.each(["reference", "custom at reduced zoom"] as const)(
 			});
 		}
 		if (custom) {
-			const before = await f.target.boundingBox();
-			if (!before) throw new Error("missing original bounds");
-			await f.page.keyboard.press("ControlOrMeta+-");
-			await f.page.keyboard.press("ControlOrMeta+-");
-			await expect
-				.poll(async () => (await f.target.boundingBox())?.width ?? before.width)
-				.toBeLessThan(before.width * 0.9);
+			// Reduced and still running, which is what this case is about: the rail
+			// reading a frame the camera has shrunk rather than retired to a picture.
+			for (const title of ["home", "second"])
+				await expect.poll(() => f.page.locator(`iframe[title="${title}"]`).count()).toBe(1);
+			const drawn = await f.page.locator('iframe[title="home"]').boundingBox();
+			expect(drawn?.width).toBeCloseTo(650 * 0.9, 0);
 		}
+
 		await f.select();
 		const field = f.page.getByRole("textbox", { name: "font-size", exact: true });
 		const trigger = f.page.getByRole("button", { name: "font-size token", exact: true });

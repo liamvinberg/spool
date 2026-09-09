@@ -14,6 +14,14 @@ export async function originCanvas(
 	shared = false,
 	beforeLoad?: (page: Page) => Promise<void>,
 	agentEngines?: NonNullable<Parameters<typeof serveProject>[0]>["agentEngines"],
+	/**
+	 * Where the camera stands when this canvas opens.
+	 *
+	 * A frame under `LIVE_MIN_CSS_PX` on screen is a picture rather than a running
+	 * document, and the keyboard's zoom halves: a case that wants a reduced camera
+	 * and a live frame states the scale it means instead of stepping down to one.
+	 */
+	camera: { x: number; y: number; k: number } = { x: 60, y: 60, k: 1 },
 ) {
 	const uiDir = join(makeTempDir(), "ui");
 	const project = await serveProject({ uiDir, ...(agentEngines ? { agentEngines } : {}) });
@@ -24,7 +32,7 @@ export async function originCanvas(
 		writeFrame(project.root, "second", frameSource);
 		writeDesignFile(project.root, "frames/second/frame.json", '{"x":700,"y":0,"w":450,"h":500}');
 	}
-	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
+	writeDesignFile(project.root, ".spool/state.json", JSON.stringify({ camera }));
 	await buildUi({
 		configFile: join(process.cwd(), "vite.config.ts"),
 		logLevel: "silent",
