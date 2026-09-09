@@ -740,6 +740,15 @@ export function ProjectCanvas({
 	const unappliedSource = useRef(new Set<string>());
 	const pendingSource = useRef(new Map<string, Promise<unknown>>());
 	const [sourceRevision, setSourceRevision] = useState(0);
+	/**
+	 * How many times each frame's own source has been installed (#306).
+	 *
+	 * A hand save rewrites the literal a read is about without reloading the
+	 * document, so a read of that frame's source is stale the moment the save
+	 * lands. Counting it per frame rather than per project keeps a save in one
+	 * frame from blanking a read that is about another.
+	 */
+	const [sourceSaves, setSourceSaves] = useState<Record<string, number>>({});
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
@@ -2080,7 +2089,8 @@ export function ProjectCanvas({
 				text,
 				...(intent ? { intent } : {}),
 			};
-			for (const publication of [result.publication, ...(result.publication.related ?? [])]) {
+			const installing = [result.publication, ...(result.publication.related ?? [])];
+			for (const publication of installing) {
 				retainedPublications.current.set(publication.frame, publication.packet.id);
 				unappliedSource.current.add(publication.frame);
 			}
@@ -2090,6 +2100,11 @@ export function ProjectCanvas({
 			const outcome = admitted ? await sourceDelivery.install(result.publication, undo) : undefined;
 			await sourceDelivered(project, result.publication.packet.id);
 			setSourceRevision((value) => value + 1);
+			setSourceSaves((counts) => {
+				const next = { ...counts };
+				for (const publication of installing) next[publication.frame] = (next[publication.frame] ?? 0) + 1;
+				return next;
+			});
 
 			if (observingSource.current?.publication === result.publication.packet.id)
 				presentSourceOutcome(
@@ -5706,8 +5721,9 @@ export function ProjectCanvas({
 			: { frame: ringPick.frame, source: ringSource },
 		// a hand save rewrites the very literal this read is about without
 		// reloading the document, so a saved source is a fresh read too: without
-		// it the ring goes on answering out of the file as it was (#306)
-		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0) + sourceRevision,
+		// it the ring goes on answering out of the file as it was (#306). Only
+		// this frame's own saves count, so a save elsewhere leaves the read alone
+		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0) + (sourceSaves[ringPick.frame] ?? 0),
 	);
 	ringRef.current = ring;
 	/** the drag in flight on the rung the ring is drawn on, and nothing else */
@@ -5763,12 +5779,12 @@ export function ProjectCanvas({
 	};
 	const gapFrame = ringPick?.frame;
 	const gapSelector = ringPick?.selector;
-	const gapNonce = gapFrame === undefined ? 0 : (docNonces[gapFrame] ?? 0);
+	const gapNonce = gapFrame === undefined ? 0 : (docNonces[gapFrame] ?? 0) + (sourceSaves[gapFrame] ?? 0);
 	const gapSettled = gapDrag === null;
 	// the container's own gaps, asked of the document that laid them out: on a
 	// fresh selection, on a reloaded document, after a save, and once a drag has
 	// let go of the band it was holding
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the nonce, the revision and a settled drag are triggers rather than values read in here
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the nonce and a settled drag are triggers rather than values read in here
 	useEffect(() => {
 		if (gapFrame === undefined || gapSelector === undefined) {
 			setGapRead(null);
@@ -5781,7 +5797,7 @@ export function ProjectCanvas({
 		return () => {
 			live = false;
 		};
-	}, [askGaps, gapFrame, gapSelector, gapNonce, gapSettled, sourceRevision]);
+	}, [askGaps, gapFrame, gapSelector, gapNonce, gapSettled]);
 	// the value belongs to the element it was opened on: a selection that moves
 	// on takes it with it, so nothing is ever written to a pick nobody holds
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the held element is the trigger, not a value this effect reads
