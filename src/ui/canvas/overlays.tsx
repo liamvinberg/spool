@@ -742,28 +742,37 @@ function GapBandTarget({
 	held: boolean;
 	says: string | null;
 }) {
+	const across = axis === "column-gap";
 	return (
 		<button
 			type="button"
 			data-element-gap={index}
-			aria-label={`Edit ${axis === "column-gap" ? "horizontal" : "vertical"} gap`}
+			aria-label={`Edit ${across ? "horizontal" : "vertical"} gap`}
 			className={cn(
-				"pointer-events-auto absolute flex items-center justify-center outline-none",
-				held ? "bg-thread/25" : "bg-thread/0 hover:bg-thread/15 focus-visible:bg-thread/15",
+				"group pointer-events-auto absolute touch-none outline-none",
+				"hover:bg-thread/10 focus-visible:bg-thread/10",
+				held && "bg-thread/10",
 			)}
 			style={{
 				left: box.x,
 				top: box.y,
 				width: Math.max(box.w, 1),
 				height: Math.max(box.h, 1),
-				cursor: axis === "column-gap" ? "ew-resize" : "ns-resize",
+				cursor: across ? "ew-resize" : "ns-resize",
 			}}
 		>
+			<span
+				className={cn(
+					"-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute top-1/2 left-1/2 rounded-[2px] bg-thread opacity-0",
+					"group-hover:opacity-100 group-focus-visible:opacity-100",
+					across ? "h-[14px] w-[3px]" : "h-[3px] w-[14px]",
+					held && "opacity-100",
+				)}
+			/>
 			{says === null ? null : (
 				<span
 					data-element-gap-readout=""
-					className="pointer-events-none absolute whitespace-nowrap rounded-xs bg-thread-strong px-2 py-[3px] text-on-thread type-detail"
-					style={axis === "column-gap" ? { top: box.h + 8 } : { left: box.w + 8 }}
+					className="-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute top-1/2 left-1/2 whitespace-nowrap rounded-xs bg-thread-strong px-[5px] py-[3px] text-on-thread type-detail"
 				>
 					{says}
 				</span>
