@@ -242,8 +242,8 @@ export function declarationFile(effect: SourcePropertyEffect, inputs: Iterable<[
  * member, then a project declaration, then an ordinary utility. Within one tier
  * the compiler's own order decides, which is the order the effects arrive in.
  *
- * A competitor whose order this reader cannot establish — a project cascade
- * layer, a container query, a scope — refuses rather than being stepped over.
+ * A competitor whose order this reader cannot establish refuses rather than
+ * being stepped over: a project cascade layer, a container query, a scope.
  */
 export function propertySourceOwner(
 	roots: ReadonlySet<string>,
