@@ -4,16 +4,15 @@ import { GuideStage, Prototype } from "shared/ui/explore/agent-start/stage";
 
 export default function Frame() {
 	const [note, setNote] = useState(
-		"codex · proposed desktop integration via the documented codex app command; app launch is simulated",
+		"chatgpt · proposed desktop integration via the documented codex app command; app launch is simulated",
 	);
 	return (
 		<Prototype note={note}>
 			<GuideStage
-				app="codex"
+				app="chatgpt"
 				onSelect={{
 					claude: () => ui.go("agent-start-guide--claude"),
-					codex: () => ui.go("agent-start-guide--codex"),
-					opencode: () => ui.go("agent-start-guide--opencode"),
+					chatgpt: () => ui.go("agent-start-guide--chatgpt"),
 					antigravity: () => ui.go("agent-start-guide--antigravity"),
 				}}
 				onClose={() => ui.go("agent-start-dialog--ready")}

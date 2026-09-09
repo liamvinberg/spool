@@ -10,8 +10,7 @@ export default function Frame() {
 				app="antigravity"
 				onSelect={{
 					claude: () => ui.go("agent-start-guide--claude"),
-					codex: () => ui.go("agent-start-guide--codex"),
-					opencode: () => ui.go("agent-start-guide--opencode"),
+					chatgpt: () => ui.go("agent-start-guide--chatgpt"),
 					antigravity: () => ui.go("agent-start-guide--antigravity"),
 				}}
 				onClose={() => ui.go("agent-start-dialog--ready")}

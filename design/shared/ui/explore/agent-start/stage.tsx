@@ -5,11 +5,12 @@ import { SpoolShell } from "shared/ui/spool/shell";
 import { AgentIcon, ArrowRightIcon, CloseIcon, FolderIcon } from "shared/ui/spool/icons";
 import { SpoolMark } from "shared/ui/spool/mark";
 import { CoffeeScreen } from "shared/ui/demo/coffee-screens";
+import { AppLogo } from "shared/ui/explore/agent-start/app-logo";
 
 export const PROJECT_PATH = "/Users/you/Projects/kaffe";
 export const START_PROMPT =
-	"Read this project's agent instructions and design/AGENTS.md, then follow its spool skill command. Help me design in the existing design/ folder. Start by asking what I want to make.";
-export type AgentApp = "claude" | "codex" | "opencode" | "antigravity";
+	"Use spool to design in this project's existing design/ folder. Read the project instructions and design/AGENTS.md, then run the project's spool skill command.";
+export type AgentApp = "claude" | "chatgpt" | "antigravity";
 export type NoticeTake = "inline" | "dialog" | "choice" | "ready" | "claude" | "empty";
 
 const PRIMARY =
@@ -119,7 +120,7 @@ export function Backdrop({
 							<SpoolMark className="mb-6 h-10 w-8 text-thread" />
 							<h1 className="type-heading">Your canvas is ready.</h1>
 							<p className="mt-3 text-muted type-body">
-								Open this project in your usual coding app and tell your agent what you’d like to design.
+								Open this project in your agent. Edits appear here as you work.
 							</p>
 							<button type="button" onClick={onGuide} className={cn(PRIMARY, "mt-7")}>
 								Use my agent <ArrowRightIcon className="h-4 w-4" />
@@ -130,7 +131,6 @@ export function Backdrop({
 									<CopyButton quiet text={PROJECT_PATH} label="Copy project path" onCopy={onCopy} />
 								</div>
 							) : null}
-							<p className="mt-7 text-muted type-label">Your agent’s edits appear here as it works.</p>
 						</div>
 					</div>
 				) : (
@@ -195,7 +195,7 @@ function LimitCopy() {
 function ClaudeCopy({ onClaude }: { onClaude: () => void }) {
 	return (
 		<p className="text-muted type-label">
-			Claude Code also runs inside spool with its own tools, including web search.{" "}
+			Claude Code in spool includes web search.{" "}
 			<button
 				type="button"
 				className="text-text underline decoration-border-raised underline-offset-4 hover:decoration-text"
@@ -338,9 +338,6 @@ export function NoticeStage({
 								<button type="button" className={QUIET} onClick={onGuide}>
 									Open in my agent <span aria-hidden="true">↗</span>
 								</button>
-								{!claude ? (
-									<p className="mt-1 text-muted type-label">The spool agent has no built-in web search.</p>
-								) : null}
 							</div>
 						) : null}
 					</div>
@@ -364,19 +361,16 @@ export function NoticeStage({
 				<AgentIcon className="h-4 w-4" />
 			</button>
 			{(take === "dialog" || (take === "empty" && railOpen)) && !read ? (
-				<Modal onClose={closeNotice} title="Use the agent you already know">
+				<Modal onClose={closeNotice} title="Use your usual agent">
 					<div className="px-8 pb-7 pt-9">
 						<h1 className="max-w-[400px] pr-7 text-[26px] font-medium leading-[33px] tracking-tight">
-							Use the agent you already know.
+							Use your usual agent.
 						</h1>
 						<p className="mt-4 text-muted type-body">
-							We recommend opening this project in your usual coding app. You keep its web search, connected
-							tools and setup.
+							We recommend your usual app for its web search and connected tools. The spool agent edits files and
+							runs commands, but has no built-in web search.
 						</p>
-						<div className="my-6 border-y border-border-raised py-5">
-							<LimitCopy />
-						</div>
-						<div className="flex gap-3">
+						<div className="mt-6 flex gap-3">
 							<button type="button" onClick={onGuide} className={PRIMARY}>
 								Use my agent <ArrowRightIcon className="h-4 w-4" />
 							</button>
@@ -403,8 +397,7 @@ export function NoticeStage({
 							<div className="flex flex-col pr-7">
 								<h2 className="type-heading">Your agent app</h2>
 								<p className="mt-3 text-muted type-body">
-									Keep the web search, tools and connections you’ve set up in Claude, Codex, OpenCode or
-									another coding app.
+									Keep the web search, tools and connections you’ve set up in Claude, ChatGPT or Antigravity.
 								</p>
 								<p className="mb-6 mt-3 text-muted type-body">
 									Changes appear on this canvas as your agent works.
@@ -434,31 +427,15 @@ export function NoticeStage({
 	);
 }
 
-// Guide steps checked against vendor docs on 2026-09-09:
+// Setup details checked against vendor docs on 2026-09-09:
 // https://code.claude.com/docs/en/desktop-quickstart
 // https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-app
-// https://opencode.ai/docs/cli/ and https://dev.opencode.ai/docs/tools/
 // https://antigravity.google/docs/getting-started
-const APPS: readonly { id: AgentApp; name: string; detail: string; letter: string }[] = [
-	{ id: "claude", name: "Claude", detail: "Code tab", letter: "C" },
-	{ id: "codex", name: "Codex", detail: "ChatGPT desktop", letter: "○" },
-	{ id: "opencode", name: "OpenCode", detail: "Terminal", letter: ">_" },
-	{ id: "antigravity", name: "Antigravity", detail: "Gemini", letter: "A" },
+const APPS: readonly { id: AgentApp; name: string; detail: string }[] = [
+	{ id: "claude", name: "Claude", detail: "Code tab" },
+	{ id: "chatgpt", name: "ChatGPT", detail: "Desktop" },
+	{ id: "antigravity", name: "Antigravity", detail: "Gemini" },
 ];
-
-function Step({ number, title, children }: { number: number; title: string; children: ReactNode }) {
-	return (
-		<div className="flex gap-3.5">
-			<span className="mt-px flex h-[23px] w-[23px] shrink-0 items-center justify-center rounded-full border border-border-raised text-muted type-detail">
-				{number}
-			</span>
-			<div className="min-w-0 flex-1">
-				<h3 className="type-title">{title}</h3>
-				<div className="mt-2 text-muted type-body">{children}</div>
-			</div>
-		</div>
-	);
-}
 
 export function GuideStage({
 	app,
@@ -480,9 +457,9 @@ export function GuideStage({
 			<Modal onClose={onClose} wide title="Open this project in your agent">
 				<header className="border-b border-border-raised px-7 py-6">
 					<h1 className="text-[23px] font-medium leading-[30px] tracking-tight">Open kaffe in your agent</h1>
-					<p className="mt-2 text-muted type-body">Same folder. Your agent’s edits appear on this canvas.</p>
+					<p className="mt-2 text-muted type-body">Edits appear on this canvas.</p>
 				</header>
-				<div className="flex min-h-[508px]">
+				<div className="flex min-h-[312px]">
 					<nav aria-label="Agent apps" className="w-[194px] shrink-0 border-r border-border-raised p-3">
 						{APPS.map((item) => (
 							<button
@@ -495,121 +472,64 @@ export function GuideStage({
 									app === item.id ? "bg-raised text-text" : "text-muted",
 								)}
 							>
-								<span
-									className="flex h-6 w-6 shrink-0 items-center justify-center font-mono text-md"
-									aria-hidden="true"
-								>
-									{item.letter}
-								</span>
+								<AppLogo app={item.id} />
 								<span>
 									<span className="block type-control">{item.name}</span>
 									<span className="mt-0.5 block text-muted type-caption">{item.detail}</span>
 								</span>
 							</button>
 						))}
-						<p className="px-3 pt-6 text-muted type-label">
-							Use another app? Open the project folder there and copy the starter prompt.
-						</p>
 					</nav>
 					<div className="min-w-0 flex-1 px-7 py-6">
-						<div className="mb-6 flex items-center gap-2.5 rounded-sm border border-border-raised px-3 py-3">
+						<h2 className="type-heading">Open in {info?.name}</h2>
+						<div className="mt-4 flex items-center gap-2.5 rounded-sm border border-border-raised px-3 py-3">
 							<FolderIcon className="h-4 w-4 shrink-0 text-muted" />
 							<code className="select-text text-muted type-detail">{PROJECT_PATH}</code>
 						</div>
-						<div className="space-y-6">
-							<Step
-								number={1}
-								title={
-									app === "opencode"
-										? "Open a terminal in this project"
-										: `Open this folder in ${info?.name ?? "your app"}`
-								}
-							>
+						<div className="mt-4 flex items-center gap-3">
+							{app === "chatgpt" ? (
+								<button type="button" onClick={onLaunch} className={PRIMARY}>
+									Open project <span aria-hidden="true">↗</span>
+								</button>
+							) : null}
+							<CopyButton
+								primary={app !== "chatgpt"}
+								text={PROJECT_PATH}
+								label="Copy project path"
+								onCopy={onCopy}
+							/>
+						</div>
+						<details className="mt-6 border-t border-border-raised pt-4 text-muted type-label">
+							<summary className="cursor-pointer hover:text-text">Setup details</summary>
+							<div className="space-y-4 pt-4">
 								{app === "claude" ? (
-									<>
-										<p>
-											In Claude, choose <span className="text-text">Code → Local → Select folder</span> and
-											select the folder above.
-										</p>
-										<div className="mt-3">
-											<CopyButton text={PROJECT_PATH} label="Copy project path" onCopy={onCopy} />
-										</div>
-										<p className="mt-3 type-label">
-											Use the project’s working folder so edits reach this canvas. A separate worktree has
-											its own files.
-										</p>
-									</>
-								) : null}
-								{app === "codex" ? (
-									<>
-										<p>
-											Open the project locally in the desktop app. Keep working in this folder so your edits
-											reach spool.
-										</p>
-										<div className="mt-3 flex gap-2">
-											<button type="button" onClick={onLaunch} className={PRIMARY}>
-												Open project <span aria-hidden="true">↗</span>
-											</button>
-											<CopyButton text={PROJECT_PATH} label="Copy path" onCopy={onCopy} />
-										</div>
-										<details className="mt-3 type-label">
-											<summary className="cursor-pointer hover:text-text">
-												Open from Terminal instead
-											</summary>
-											<code className="my-3 block select-text text-text type-detail">
-												codex app &quot;{PROJECT_PATH}&quot;
-											</code>
-											<CopyButton
-												text={`codex app "${PROJECT_PATH}"`}
-												label="Copy command"
-												onCopy={onCopy}
-											/>
-										</details>
-									</>
-								) : null}
-								{app === "opencode" ? (
-									<>
-										<p>With OpenCode installed, run this command:</p>
-										<code className="my-3 block select-text text-text type-detail">
-											opencode &quot;{PROJECT_PATH}&quot;
-										</code>
-										<CopyButton text={`opencode "${PROJECT_PATH}"`} label="Copy command" onCopy={onCopy} />
-										<p className="mt-3 type-label">
-											Web search depends on your OpenCode provider and configuration.
-										</p>
-									</>
+									<p>
+										In Claude: <span className="text-text">Code → Local → Select folder.</span> Use this
+										folder so edits reach the canvas.
+									</p>
 								) : null}
 								{app === "antigravity" ? (
+									<p>
+										In Antigravity: <span className="text-text">New Project → Add Folder.</span> Choose this
+										folder, then start in Local Mode.
+									</p>
+								) : null}
+								{app === "chatgpt" ? (
 									<>
-										<p>
-											In Antigravity, choose <span className="text-text">New Project → Add Folder</span> and
-											select this folder. Start your agent in <span className="text-text">Local Mode</span>.
-										</p>
-										<div className="mt-3">
-											<CopyButton text={PROJECT_PATH} label="Copy project path" onCopy={onCopy} />
-										</div>
-										<p className="mt-3 type-label">Local Mode works on the folder spool is watching.</p>
+										<p>Open this folder locally. You can also launch it from Terminal:</p>
+										<code className="block select-text text-text type-detail">
+											codex app &quot;{PROJECT_PATH}&quot;
+										</code>
+										<CopyButton text={`codex app "${PROJECT_PATH}"`} label="Copy command" onCopy={onCopy} />
 									</>
 								) : null}
-							</Step>
-							<Step number={2} title="Give your agent a starting point">
-								<p>
-									Read the project’s instructions, load the spool skill, and start designing in its existing
-									folder.
-								</p>
-								<div className="mt-3">
-									<CopyButton text={START_PROMPT} label="Copy starter prompt" onCopy={onCopy} />
-								</div>
-								<details className="mt-3 type-label">
-									<summary className="cursor-pointer hover:text-text">Read the prompt</summary>
-									<p className="mt-2 select-text leading-5">{START_PROMPT}</p>
-								</details>
-							</Step>
-						</div>
+								<p className="select-text">{START_PROMPT}</p>
+								<CopyButton text={START_PROMPT} label="Copy starter prompt" onCopy={onCopy} />
+							</div>
+						</details>
 					</div>
 				</div>
-				<footer className="flex items-center justify-between border-t border-border-raised px-7 py-4">
-					<p className="text-muted type-label">This opens your files. Your spool chat stays here.</p>
+				<footer className="flex justify-end border-t border-border-raised px-7 py-4">
 					<button type="button" onClick={onClose} className={QUIET}>
 						Back to canvas
 					</button>
