@@ -5704,7 +5704,10 @@ export function ProjectCanvas({
 		ringPick === undefined || ringSource === null || ringSource === ""
 			? null
 			: { frame: ringPick.frame, source: ringSource },
-		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0),
+		// a hand save rewrites the very literal this read is about without
+		// reloading the document, so a saved source is a fresh read too: without
+		// it the ring goes on answering out of the file as it was (#306)
+		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0) + sourceRevision,
 	);
 	ringRef.current = ring;
 	/** the drag in flight on the rung the ring is drawn on, and nothing else */
