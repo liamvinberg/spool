@@ -3,8 +3,10 @@
 > Amended by #68. Read-only describes frame authoring and the project read
 > verbs, not lifecycle commands that own machine-global registration.
 >
-> Amended by #253. Hands write frame source too, and only one way: as span
-> patches, gated, with the same undo surface geometry already has.
+> Amended by #253, and again by #305. Hands write frame source too, and only
+> one way: through the source owner's own read, completion and inverse, with
+> the same undo surface geometry already has. The span-patch gate that first
+> carried those writes is retired.
 >
 > Amended by #260. One of those ops writes a file as well: an image in a frame
 > is an import and never a URL, so pointing a `src` at a picture puts the
@@ -14,7 +16,7 @@ There is no `spool new` or frame-authoring write verb: a frame is born by writin
 
 Multi-agent frame safety remains by construction. Agents never write app-owned files, and parallel authors work in separate frame folders without a shared registry. Any future frame-authoring convenience must stay filesystem-first rather than becoming an API agents contend on.
 
-Hands adjust what an agent authored through typed source operations. For admitted literal text and supported literal attributes, including shared source, the daemon owns the complete original source read and an opaque undo receipt. The read binds the original mounted occurrence, compiler publication, source role and edit generation. Completion and inverse revalidate the canonical source boundary, captured bytes and file identity. They replace only the planned spans and deliver acknowledged publications to the existing affected frames. Each publication retains its own captured dependencies and admission. Every property control now uses that same source-owned path: one read of the class cell describes what each control may write and why it may not, previews are the original compiler's own temporary declaration rather than a client-composed one, and completion and inverse revalidate the captured dependencies before publishing. Layout, size and position controls joined it with #303, so the span-patch gate they used is gone; element resize and rotation are the remaining gestures that still write through it. What the element itself cannot wear, such as a size on an inline box, is still refused at the control before any request is made.
+Hands adjust what an agent authored through typed source operations. For admitted literal text and supported literal attributes, including shared source, the daemon owns the complete original source read and an opaque undo receipt. The read binds the original mounted occurrence, compiler publication, source role and edit generation. Completion and inverse revalidate the canonical source boundary, captured bytes and file identity. They replace only the planned spans and deliver acknowledged publications to the existing affected frames. Each publication retains its own captured dependencies and admission. Every property control now uses that same source-owned path: one read of the class cell describes what each control may write and why it may not, previews are the original compiler's own temporary declaration rather than a client-composed one, and completion and inverse revalidate the captured dependencies before publishing. Layout, size and position controls joined it with #303, and the ring's resize and rotation gestures with #305, so the span-patch gate they used is gone and no other writer of frame source remains. What the element itself cannot wear, such as a size on an inline box, is still refused at the control before any request is made.
 
 Delete uses that same source owner for one original authored structural unit. It preserves the original parent and source scope, including a supplied value whose removal reveals the application's authored fallback. Required carrier inputs, unrelated output and stable surviving identities constrain admission; deleting a larger unit or inventing keys cannot evade those constraints. Rendered verification checks canonical membership under the original attributed parents independently for each affected use. A disappeared selected node alone is not success. Undo restores the source unit through its guarded receipt; ordinary React may remount the restored child.
 
