@@ -11,6 +11,7 @@ import {
 	gapSteppable,
 	gapValuePixels,
 	gapWritable,
+	ownedGap,
 	steppedGap,
 } from "./hand-gap";
 
@@ -38,6 +39,7 @@ const row = (extra: Partial<GapReading> = {}): GapReading => ({
 	justify: "flex-start",
 	writing: "horizontal-tb",
 	rtl: false,
+	inline: false,
 	columnGap: "16px",
 	rowGap: "16px",
 	ambiguous: false,
@@ -303,5 +305,35 @@ describe("what one gap gesture writes", () => {
 			kind: "binding",
 			tokens: ["gap-y-2"],
 		});
+	});
+});
+
+describe("whether the class cell owns the gap the layout is using", () => {
+	it("owns it where the authored value is what the document measures", () => {
+		expect(ownedGap(row(), "column-gap", "flex gap-4", 4)).toBe("4");
+		expect(ownedGap(row(), "column-gap", "flex gap-x-[16px]", 4)).toBe("[16px]");
+	});
+
+	it("owns nothing where the class cell authors no gap at all", () => {
+		// a stylesheet or a parent rule put it there; the rail reads it for what
+		// it is and a band would offer to write a pixel count nobody authored
+		expect(ownedGap(row(), "column-gap", "flex", 4)).toBe(null);
+	});
+
+	it("owns nothing where something else in the cascade won", () => {
+		expect(ownedGap(row(), "column-gap", "flex gap-2", 4)).toBe(null);
+	});
+
+	it("owns nothing where an inline style holds the property", () => {
+		expect(ownedGap(row({ inline: true }), "column-gap", "flex gap-4", 4)).toBe(null);
+	});
+
+	it("owns nothing it could not move without renaming it", () => {
+		expect(ownedGap(row(), "column-gap", "flex gap-(--pad)", 4)).toBe(null);
+	});
+
+	it("reads the axis the container actually is", () => {
+		expect(ownedGap(column(), "row-gap", "flex flex-col gap-4", 4)).toBe("4");
+		expect(ownedGap(column(), "row-gap", "flex flex-col gap-y-4", 4)).toBe("4");
 	});
 });

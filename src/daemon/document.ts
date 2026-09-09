@@ -1042,6 +1042,8 @@ const canvasShimJs = `(() => {
 				left: pxOf(style.marginLeft),
 			},
 			rtl: style.direction === "rtl",
+			// the style attribute's own gap, which beats any class this cell writes
+			inline: ["gap", "column-gap", "row-gap"].some((name) => el.style.getPropertyValue(name) !== ""),
 			display: style.display,
 			loose: style.position === "absolute" || style.position === "fixed" || style.cssFloat !== "none",
 		};

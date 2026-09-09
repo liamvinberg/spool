@@ -95,10 +95,10 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import { GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
 import {
-	authoredGap,
 	type GapAxis,
 	type GapBand,
 	type GapReading,
+	type GapTargets,
 	gapAxisOf,
 	gapBands,
 	gapDragSign,
@@ -107,6 +107,7 @@ import {
 	gapSteppable,
 	gapValuePixels,
 	gapWritable,
+	ownedGap,
 	steppedGap,
 } from "./hand-gap";
 import { GapMenu } from "./hand-gap-menu";
@@ -972,11 +973,7 @@ export function ProjectCanvas({
 	});
 
 	/** The bands a gap gesture may grab, off the render the pointer can see (#306). */
-	const gapRef = useRef<{ axis: GapAxis | null; sign: 1 | -1; bands: readonly GapBand[] }>({
-		axis: null,
-		sign: 1,
-		bands: [],
-	});
+	const gapRef = useRef<GapTargets>({ axis: null, sign: 1, authored: null, bands: [] });
 
 	/**
 	 * The rung a write has to put back (#258).
@@ -5047,8 +5044,8 @@ export function ProjectCanvas({
 		from: Point,
 		anchor: { left: number; top: number },
 	): boolean => {
-		const authored = authoredGap(ringRef.current.read?.className ?? "", axis);
-		if (!gapSteppable(authored)) return false;
+		const authored = gapRef.current.authored;
+		if (authored === null || !gapSteppable(authored)) return false;
 		gesture.current = {
 			kind: "element-gap",
 			pick,
@@ -5754,11 +5751,15 @@ export function ProjectCanvas({
 			? gapRead.reading
 			: null;
 	const gapAxis = gapReading === null || !gapWritable(ring.read) ? null : gapAxisOf(gapReading);
+	// a measured gap is not proof of who wrote it: only the declaration this
+	// class cell owns may be dragged (#306)
+	const gapOwned =
+		gapReading === null || gapAxis === null ? null : ownedGap(gapReading, gapAxis, ring.className, ring.step);
 	const heldGap = gapDrag !== null && gapDrag.selector === ringPick?.selector ? gapDrag : null;
 	// a size or turn drag moves the boxes the bands were measured between, so the
 	// bands stand down until the reading that comes after it lands
 	const gapTargets =
-		gapReading === null || gapAxis === null || ringDrag !== null
+		gapReading === null || gapAxis === null || gapOwned === null || ringDrag !== null
 			? []
 			: gapBands(gapReading, camera?.k ?? 1).map((band, index) =>
 					heldGap !== null && heldGap.index === index ? heldGap.band : band,
@@ -5779,7 +5780,12 @@ export function ProjectCanvas({
 					gapHeld: heldGap?.index ?? null,
 					gapSays: heldGap?.says ?? null,
 				};
-	gapRef.current = { axis: gapAxis, sign: gapReading === null ? 1 : gapDragSign(gapReading), bands: gapTargets };
+	gapRef.current = {
+		axis: gapTargets.length === 0 ? null : gapAxis,
+		sign: gapReading === null ? 1 : gapDragSign(gapReading),
+		authored: gapOwned,
+		bands: gapTargets,
+	};
 	const gapFrame = ringPick?.frame;
 	const gapSelector = ringPick?.selector;
 	const gapNonce = gapFrame === undefined ? 0 : (docNonces[gapFrame] ?? 0);

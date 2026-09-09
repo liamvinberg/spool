@@ -65,6 +65,7 @@ const ROW: GapReading = {
 	justify: "flex-start",
 	writing: "horizontal-tb",
 	rtl: false,
+	inline: false,
 	columnGap: "16px",
 	rowGap: "16px",
 	ambiguous: false,
@@ -177,6 +178,37 @@ it("draws no band where the geometry does not identify a gap", async () => {
 
 	expect(host.querySelector("[data-element-gap]")).toBeNull();
 	// the honest route is still there: the rail's own row for the same property
+	expect(host.querySelector('[data-properties-row="gap"]')).not.toBeNull();
+});
+
+it("draws no band over a gap the class cell does not author", async () => {
+	// the class says nothing about a gap the document still measures: a
+	// stylesheet or a parent rule owns it, and only the rail reads it honestly
+	rung = { ...rung, className: "flex" };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	expect(host.querySelector("[data-element-gap]")).toBeNull();
+	expect(host.querySelector('[data-properties-row="gap"]')).not.toBeNull();
+});
+
+it("draws no band where an inline style holds the gap", async () => {
+	reading = { ...ROW, inline: true };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	expect(host.querySelector("[data-element-gap]")).toBeNull();
+	expect(host.querySelector('[data-properties-row="gap"]')).not.toBeNull();
+});
+
+it("draws no band where the class cell lost the cascade", async () => {
+	// the cell says 8px and the layout is using 16px: something else won, and a
+	// drag would write a value the page would go on ignoring
+	rung = { ...rung, className: "flex gap-2" };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	expect(host.querySelector("[data-element-gap]")).toBeNull();
 	expect(host.querySelector('[data-properties-row="gap"]')).not.toBeNull();
 });
 

@@ -34,6 +34,15 @@ export interface GapReading {
 	writing: string;
 	/** `direction: rtl`, which turns a row's flow around without renaming the axis */
 	rtl: boolean;
+	/**
+	 * The element's own `style` attribute holds a gap.
+	 *
+	 * An inline declaration beats every class this cell could write, so a band
+	 * over it would offer a drag the page would ignore. Only the document can
+	 * see it, and only #304's inline members can edit it, so until then the
+	 * rail keeps that gap and the canvas draws nothing.
+	 */
+	inline: boolean;
 	/** the resolved `column-gap`, as the document computes it: `16px`, `normal` */
 	columnGap: string;
 	rowGap: string;
@@ -64,6 +73,22 @@ export interface GapBand {
 	y: number;
 	w: number;
 	h: number;
+}
+
+/**
+ * Every gap the held container offers a pointer, as one answer.
+ *
+ * The axis a drag writes, the way its flow runs, the value the class cell owns
+ * and the bands themselves travel together because none of them means anything
+ * without the rest: an axis with no owned value has no drag, and a band with no
+ * axis has nothing to write.
+ */
+export interface GapTargets {
+	axis: GapAxis | null;
+	sign: 1 | -1;
+	/** what the class cell authors on that axis, where it is the declaration in use */
+	authored: string | null;
+	bands: readonly GapBand[];
 }
 
 /** The thickness a gap needs on screen before a pointer can hit it. */
@@ -172,6 +197,29 @@ export function gapDragSign(reading: GapReading): 1 | -1 {
 export function authoredGap(className: string, axis: GapAxis): string | null {
 	const gap = gapOf(scopedClass(className, BASE));
 	return axis === "column-gap" ? gap.x : gap.y;
+}
+
+/**
+ * The value this element's class cell authors on that axis, when that is the
+ * declaration the layout is actually using.
+ *
+ * The band is drawn over a measured gap, and a measured gap is not proof of
+ * who wrote it: a stylesheet rule, a parent's declaration or an inline style
+ * all show the same space. Dragging one of those would author a pixel count
+ * beside a declaration that still wins, which is a handle that does nothing
+ * and a value nobody wrote. So the class cell has to say a value, that value
+ * has to be what the document measures, and nothing inline may be holding the
+ * property. Anything else is the rail's, where the value is read for what it
+ * is rather than offered as a drag.
+ */
+export function ownedGap(reading: GapReading, axis: GapAxis, className: string, step: number): string | null {
+	if (reading.inline) return null;
+	const authored = authoredGap(className, axis);
+	if (authored === null || !gapSteppable(authored)) return null;
+	const wrote = gapValuePixels(authored, step);
+	const measured = gapPixels(reading, axis);
+	if (wrote === null || measured === null || Math.abs(wrote - measured) > GAP_TOLERANCE_PX) return null;
+	return authored;
 }
 
 /** A signed length string taken back apart, the way the rail's own rows read one. */
