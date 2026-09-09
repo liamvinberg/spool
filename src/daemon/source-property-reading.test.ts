@@ -109,6 +109,7 @@ it("claims no value for a control whose sides two sources own", async () => {
 	expect(await inlineReading("pt-8! p-6", "padding", padding, "4px")).toEqual({
 		tokens: [],
 		source: "mixed",
+		reason: "this property's declarations are owned by different sources",
 		binding: { kind: "mixed" },
 		native: "4px",
 	});
@@ -161,7 +162,7 @@ async function authoredReading(
 	css: string,
 	property: string,
 	value: string,
-	matched: readonly MatchedRuleChain[] = [{ path: [".card"], active: true }],
+	matched: readonly MatchedRuleChain[] | undefined = [{ path: [".card"], active: true }],
 ) {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", `@theme {}\n${css}`);
@@ -209,4 +210,29 @@ it("leaves the property to the utility when an important utility outranks the de
 		source: "class",
 		tokens: ["p-6!"],
 	});
+});
+
+it("says nothing about project rules for a use that reported no matched chains", async () => {
+	// no evidence is not evidence about every rule in the project
+	expect(
+		await authoredReading(
+			"p-6",
+			"@media (min-width: 48rem) { .card { padding: 12px } }",
+			"padding",
+			"24px",
+			undefined,
+		),
+	).toEqual({
+		tokens: ["p-6"],
+		source: "class",
+		binding: { kind: "reference", name: "--spacing", value: "0.25rem" },
+		native: "24px",
+	});
+});
+
+it("gives a control two sources own the refusal's own words", async () => {
+	const reading = await authoredReading("pt-8!", ".card { padding: 12px }", "padding", "12px", [
+		{ path: [".card"], active: true },
+	]);
+	expect(reading).toMatchObject({ source: "mixed", reason: expect.stringContaining("different sources") });
 });

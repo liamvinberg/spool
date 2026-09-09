@@ -46,7 +46,7 @@ export function propertyReading(
 					(effect) =>
 						admissible(effect) &&
 						propertyKeys(effect.property, environment).some((key) => roots.has(key)) &&
-						(matched === undefined || applies(effect, matched) !== undefined),
+						applies(effect, matched ?? []) !== undefined,
 				)
 				.flatMap(declarationScope),
 		),
@@ -59,10 +59,17 @@ export function propertyReading(
 	if (operation.scope === "")
 		try {
 			held = propertySourceOwner(roots, effects, inline, certificate, environment, matched);
-		} catch {
-			// Sources this reading cannot tell apart: it says so rather than showing
-			// either one's value. The write against it refuses with the reason.
-			return { tokens: [], source: "mixed", binding: { kind: "mixed" }, ...shown };
+		} catch (error) {
+			// Sources this reading cannot tell apart: it says so in the same words
+			// the write would refuse in, rather than showing either one's value.
+			return {
+				tokens: [],
+				source: "mixed",
+				reason: error instanceof Error ? error.message : "this property has no single source to write",
+				binding: { kind: "mixed" },
+				...under,
+				...shown,
+			};
 		}
 	if (held?.kind === "declaration") {
 		const values = [...new Set(held.effects.map((effect) => effect.value))];
