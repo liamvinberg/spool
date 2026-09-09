@@ -3,7 +3,8 @@ import type { AgentRecovery } from "./agent-events";
 /** Provider text stays inside the adapter. Only known, nonsecret facts leave it. */
 export function providerRecovery(words: string, account: string, offer?: string): AgentRecovery | undefined {
 	const login =
-		/\b401\b|unauthorized|authentication failed|invalid[ _]api[ _]key|not logged in|please run \/login|no authentication available|no api key found|token.*expired|invalid_grant/i.test(
+		// Google refuses a bad key as a 400 reading "API key not valid", never a 401.
+		/\b401\b|unauthorized|authentication failed|invalid[ _]api[ _]key|api[ _]key[ _]invalid|api key not valid|not logged in|please run \/login|no authentication available|no api key found|token.*expired|invalid_grant/i.test(
 			words,
 		);
 	const limited =
