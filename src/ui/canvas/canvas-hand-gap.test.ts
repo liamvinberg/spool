@@ -64,6 +64,7 @@ const ROW: GapReading = {
 	wrap: "nowrap",
 	justify: "flex-start",
 	writing: "horizontal-tb",
+	rtl: false,
 	columnGap: "16px",
 	rowGap: "16px",
 	ambiguous: false,

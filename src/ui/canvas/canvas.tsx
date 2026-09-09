@@ -101,6 +101,7 @@ import {
 	type GapReading,
 	gapAxisOf,
 	gapBands,
+	gapDragSign,
 	gapDragUnits,
 	gapField,
 	gapSteppable,
@@ -297,6 +298,8 @@ type Gesture =
 			anchor: { left: number; top: number };
 			/** what the class cell spelled on this axis when the read opened */
 			authored: string | null;
+			/** which way along the axis the flow makes the gap bigger */
+			sign: 1 | -1;
 			/** how many of the value's own units the pointer has moved it */
 			units: number;
 			/** what the gap measured then, which an unset one is stepped from */
@@ -935,7 +938,11 @@ export function ProjectCanvas({
 	});
 
 	/** The bands a gap gesture may grab, off the render the pointer can see (#306). */
-	const gapRef = useRef<{ axis: GapAxis | null; bands: readonly GapBand[] }>({ axis: null, bands: [] });
+	const gapRef = useRef<{ axis: GapAxis | null; sign: 1 | -1; bands: readonly GapBand[] }>({
+		axis: null,
+		sign: 1,
+		bands: [],
+	});
 
 	/**
 	 * The rung a write has to put back (#258).
@@ -4508,7 +4515,7 @@ export function ProjectCanvas({
 				setGapMenu(null);
 				if (
 					band !== undefined &&
-					beginElementGap(held, gapAxis, index, band, p, {
+					beginElementGap(held, gapAxis, index, band, gapRef.current.sign, p, {
 						left: rect?.left ?? p.x,
 						top: (rect?.bottom ?? p.y) + 6,
 					})
@@ -4965,6 +4972,7 @@ export function ProjectCanvas({
 		axis: GapAxis,
 		index: number,
 		band: GapBand,
+		sign: 1 | -1,
 		from: Point,
 		anchor: { left: number; top: number },
 	): boolean => {
@@ -4976,6 +4984,7 @@ export function ProjectCanvas({
 			axis,
 			index,
 			band,
+			sign,
 			from,
 			anchor,
 			authored,
@@ -4990,7 +4999,8 @@ export function ProjectCanvas({
 	/** One sample of a live gap drag, previewed in every use through the common owner. */
 	const sampleElementGap = (active: Extract<Gesture, { kind: "element-gap" }>, p: Point, coarse: boolean): void => {
 		const k = cameraRef.current?.k ?? 1;
-		const moved = (active.axis === "column-gap" ? p.x - active.from.x : p.y - active.from.y) / (k === 0 ? 1 : k);
+		const moved =
+			(active.sign * (active.axis === "column-gap" ? p.x - active.from.x : p.y - active.from.y)) / (k === 0 ? 1 : k);
 		if (active.live === null && Math.abs(moved) < DRAG_THRESHOLD_PX) return;
 		const units = gapDragUnits(active.authored, moved, ringRef.current.step, coarse);
 		const next = steppedGap(active.authored, active.measured, units);
@@ -5691,7 +5701,7 @@ export function ProjectCanvas({
 					gapHeld: heldGap?.index ?? null,
 					gapSays: heldGap?.says ?? null,
 				};
-	gapRef.current = { axis: gapAxis, bands: gapTargets };
+	gapRef.current = { axis: gapAxis, sign: gapReading === null ? 1 : gapDragSign(gapReading), bands: gapTargets };
 	const gapFrame = ringPick?.frame;
 	const gapSelector = ringPick?.selector;
 	const gapNonce = gapFrame === undefined ? 0 : (docNonces[gapFrame] ?? 0);

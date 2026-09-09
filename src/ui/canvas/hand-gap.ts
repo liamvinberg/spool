@@ -32,6 +32,8 @@ export interface GapReading {
 	wrap: string;
 	justify: string;
 	writing: string;
+	/** `direction: rtl`, which turns a row's flow around without renaming the axis */
+	rtl: boolean;
 	/** the resolved `column-gap`, as the document computes it: `16px`, `normal` */
 	columnGap: string;
 	rowGap: string;
@@ -144,6 +146,20 @@ export function gapBands(reading: GapReading, zoom: number): GapBand[] {
 		);
 	}
 	return bands;
+}
+
+/**
+ * Which way the pointer has to move to make this gap bigger.
+ *
+ * A gap grows along the flow, and the flow runs backwards in a reversed row
+ * and in a right-to-left one — and forwards again when it is both. Following
+ * the flow rather than the screen is what makes the drag do what it looks
+ * like it does wherever the layout reads from.
+ */
+export function gapDragSign(reading: GapReading): 1 | -1 {
+	const reverse = reading.direction.endsWith("-reverse");
+	if (gapAxisOf(reading) === "row-gap") return reverse ? -1 : 1;
+	return reverse !== reading.rtl ? -1 : 1;
 }
 
 /**

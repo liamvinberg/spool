@@ -1147,6 +1147,7 @@ const canvasShimJs = `(() => {
 			wrap: style.flexWrap,
 			justify: style.justifyContent,
 			writing: style.writingMode,
+			rtl: style.direction === "rtl",
 			columnGap: style.columnGap,
 			rowGap: style.rowGap,
 			ambiguous,

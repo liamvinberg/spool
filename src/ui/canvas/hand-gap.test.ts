@@ -5,6 +5,7 @@ import {
 	type GapReading,
 	gapAxisOf,
 	gapBands,
+	gapDragSign,
 	gapDragUnits,
 	gapField,
 	gapSteppable,
@@ -36,6 +37,7 @@ const row = (extra: Partial<GapReading> = {}): GapReading => ({
 	wrap: "nowrap",
 	justify: "flex-start",
 	writing: "horizontal-tb",
+	rtl: false,
 	columnGap: "16px",
 	rowGap: "16px",
 	ambiguous: false,
@@ -152,6 +154,21 @@ describe("where a handle may stand", () => {
 			children: [child(0, 0, 40, 20), child(56, 19, 40, 20), child(112, 19, 40, 20)],
 		});
 		expect(gapBands(sliver, 1)).toEqual([{ x: 96, y: 19, w: 16, h: 20 }]);
+	});
+});
+
+describe("which way a drag makes the gap bigger", () => {
+	it("follows the flow, not the screen", () => {
+		expect(gapDragSign(row())).toBe(1);
+		expect(gapDragSign(row({ direction: "row-reverse" }))).toBe(-1);
+		expect(gapDragSign(row({ rtl: true }))).toBe(-1);
+		// both turned round is the way it started
+		expect(gapDragSign(row({ direction: "row-reverse", rtl: true }))).toBe(1);
+	});
+
+	it("leaves a column's own axis alone under right-to-left", () => {
+		expect(gapDragSign(column({ rtl: true }))).toBe(1);
+		expect(gapDragSign(column({ direction: "column-reverse" }))).toBe(-1);
 	});
 });
 

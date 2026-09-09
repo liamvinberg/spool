@@ -409,7 +409,8 @@ function isGapReading(value: unknown): value is GapReading {
 	if (!isRecord(value)) return false;
 	const words = ["display", "direction", "wrap", "justify", "writing", "columnGap", "rowGap"];
 	if (!words.every((name) => typeof value[name] === "string")) return false;
-	if (typeof value.ambiguous !== "boolean" || !Array.isArray(value.children)) return false;
+	if (typeof value.ambiguous !== "boolean" || typeof value.rtl !== "boolean" || !Array.isArray(value.children))
+		return false;
 	return value.children.every((child: unknown) => {
 		if (!isRecord(child) || typeof child.out !== "boolean" || typeof child.displaced !== "boolean") return false;
 		const box = child.box;
