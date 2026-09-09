@@ -4507,7 +4507,9 @@ export function ProjectCanvas({
 			}
 			// the band over a gap, which sits inside the element rather than on its
 			// edge: a press on it is that gap's, not the frame's underneath (#306)
-			const grabbedGap = datasetHit(event.target, "element-gap");
+			// ⌥ is the measurement's own modifier (#261), and a band must not take
+			// the press that was asking how far apart two things are
+			const grabbedGap = event.altKey ? null : datasetHit(event.target, "element-gap");
 			const gapAxis = gapRef.current.axis;
 			if (grabbedGap !== null && gapAxis !== null) {
 				const index = Number(grabbedGap);
