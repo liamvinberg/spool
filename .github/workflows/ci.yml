@@ -51,7 +51,9 @@ jobs:
       # image does not carry every shared library it links against.
       # Real Linux filesystem isolation tests require the runtime's userspace helpers.
       # No kernel policy changes or privileged helper installation happen in the product.
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      # The runner image carries third-party apt sources (Chrome, Edge) whose
+      # index fetch fails from time to time; the helpers below come from Ubuntu.
+      - run: sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources && sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
       - name: inspect Linux sandbox prerequisites
         run: |
           uname -srmo
@@ -174,7 +176,9 @@ jobs:
           package-manager-cache: false
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      # The runner image carries third-party apt sources (Chrome, Edge) whose
+      # index fetch fails from time to time; the helpers below come from Ubuntu.
+      - run: sudo rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources && sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
       - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
       - name: record the actual restricted host
         run: |
