@@ -1114,12 +1114,12 @@ const canvasShimJs = `(() => {
 	// moves per pixel of written size. All of it is the running layout's, and a
 	// trial is worn and taken off inside this one task, so nothing is painted in
 	// a size the drag did not settle on.
-	var snapIds = new WeakMap();
-	var snapNext = 0;
+	const snapIds = new WeakMap();
+	let snapNext = 0;
 	// identity is the node's own: two siblings wearing one authored id are two
 	// targets, and a replacement wearing the id of the one it replaced is a third
 	function snapIdentity(el) {
-		var id = snapIds.get(el);
+		let id = snapIds.get(el);
 		if (id === undefined) { id = ++snapNext; snapIds.set(el, id); }
 		return id;
 	}

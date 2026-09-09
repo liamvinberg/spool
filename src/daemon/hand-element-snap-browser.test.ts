@@ -160,9 +160,15 @@ it.each(ZOOMS)(
 	},
 );
 
-/** A card alone in a box that reserves a scrollbar and is scrolled off its top. */
+/**
+ * A card alone in a box that is scrolled off its own top.
+ *
+ * The spacer that makes the box scroll is narrow on purpose: an `auto` width
+ * would put a sibling's right edge exactly on the content edge, and then these
+ * cases would pass just as well with the box itself left out of the pool.
+ */
 const inside = (width: string) =>
-	`import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24}}><div data-parent style={{width:${width},height:180,padding:"10px 12.25px",border:"1px solid #ccc",overflowY:"auto"}}><Card key="a" label="A"/><div style={{height:400}}/></div></main>}`;
+	`import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24}}><div data-parent style={{width:${width},height:180,padding:"10px 12.25px",border:"1px solid #ccc",overflowY:"auto"}}><Card key="a" label="A"/><div style={{width:100,height:400}}/></div></main>}`;
 
 /**
  * How far the card's right edge is from the parent's content edge, derived from

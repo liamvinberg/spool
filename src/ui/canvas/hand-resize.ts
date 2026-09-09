@@ -6,6 +6,7 @@ import type { SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { BASE, scopedClass } from "./properties-scope";
+import type { SnapTrial, SnapWear } from "./protocol";
 
 /**
  * Resize by handle (#259), as decisions over data.
@@ -471,4 +472,64 @@ export function resizeFields(
 		const token = scaledToken(family, px(live, shift, offset), step, writes[property]);
 		return { property, value: { kind: "binding", tokens: [token] } };
 	});
+}
+
+/**
+ * What the document said about the element a drag grabbed, and where the drag
+ * has taken it since.
+ *
+ * One shape rather than eight fields, because none of them is knowable before
+ * the reply and all of them are knowable after it. The properties are the ones
+ * this gesture's source read was opened for, in write order.
+ */
+export interface ResizeMeasurement {
+	modifiers: ResizeModifiers;
+	properties: readonly ResizeProperty[];
+	/** the unit each of them is written in, taken from what the file already says */
+	writes: Record<ResizeProperty, SizeWrite>;
+	start: Size;
+	/** what a `content-box` element adds on top of the width that is written */
+	extra: Size;
+	offset: { left: number; top: number };
+	limits: SizeLimits;
+	/** the size the pointer asked for, which every sample's snap begins from */
+	raw: Size;
+	live: Size;
+	shift: { x: number; y: number };
+}
+
+/* ---------- what a snapping sample asks the document (#311) ---------- */
+
+/**
+ * The values one sample would write, which is the box the document tries on
+ * to answer for it.
+ */
+export function wearOf(held: ResizeMeasurement, size: Size, edge: Edge): SnapWear {
+	const shift = placementShift(held.start, edge, held.modifiers, size);
+	const has = (property: ResizeProperty) => held.properties.includes(property);
+	return {
+		w: has("width") ? size.w - held.extra.w : null,
+		h: has("height") ? size.h - held.extra.h : null,
+		left: has("left") ? held.offset.left + shift.x : null,
+		top: has("top") ? held.offset.top + shift.y : null,
+	};
+}
+
+/** The pointer's own size, and the same one written pixel further along. */
+export function snapTrial(held: ResizeMeasurement, edge: Edge, sx: Sign, sy: Sign): SnapTrial {
+	return {
+		wear: wearOf(held, held.raw, edge),
+		probe: wearOf(held, { w: held.raw.w + (sx === 0 ? 0 : 1), h: held.raw.h + (sy === 0 ? 0 : 1) }, edge),
+		sx,
+		sy,
+	};
+}
+
+/** The sizes this drag can spell, which are the only ones it may snap to. */
+export function quantizerFor(held: ResizeMeasurement): { w(value: number): number; h(value: number): number } {
+	return {
+		w: (value) => (held.properties.includes("width") ? writableSize(value, held.extra.w, held.writes.width) : value),
+		h: (value) =>
+			held.properties.includes("height") ? writableSize(value, held.extra.h, held.writes.height) : value,
+	};
 }

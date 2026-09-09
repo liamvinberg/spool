@@ -19,10 +19,19 @@ import { snapEdge } from "./snap";
  */
 
 /** The approved reach: six screen pixels, whatever the canvas is zoomed to. */
-export const SNAP_SCREEN_PX = 6;
+const SNAP_SCREEN_PX = 6;
 
 /** Closer than this and the edge is on the stop; further and the guide would lie. */
 const LANDED = 0.02;
+
+/**
+ * How far the box that came back may be from the shape ⇧ asked for.
+ *
+ * A ratio is not a distance, so it cannot borrow the pixel tolerance: the
+ * passive axis is written in whole pixels, and on a wide box that rounding is
+ * worth a little more than a pixel of height.
+ */
+const KEPT_RATIO = 0.02;
 
 /** One thing a dragged edge may land on, identified by the node it was read off. */
 export interface SnapTarget {
@@ -37,8 +46,6 @@ export interface SnapRequest {
 	sy: Sign;
 	/** the outer canvas zoom, which turns six screen pixels into document ones */
 	zoom: number;
-	/** ⌘/Ctrl: the whole pool drops while it is held */
-	bypass: boolean;
 	/** the border box proportions ⇧ keeps, or null where the axes are free */
 	ratio: number | null;
 	/** how far the dragged edge moves per pixel of written size, per axis */
@@ -60,7 +67,7 @@ export interface ElementSnap {
 type Axis = "x" | "y";
 
 /** The edge this drag is holding, which is the one a stop may pull. */
-export const activeEdge = (box: Box, axis: Axis, sign: Sign): number =>
+const activeEdge = (box: Box, axis: Axis, sign: Sign): number =>
 	axis === "x" ? box.x + (sign > 0 ? box.w : 0) : box.y + (sign > 0 ? box.h : 0);
 
 const along = (axis: Axis): "w" | "h" => (axis === "x" ? "w" : "h");
@@ -108,7 +115,9 @@ interface AxisSnap {
  */
 export function snapResize(box: Box, size: Size, targets: readonly SnapTarget[], request: SnapRequest): ElementSnap {
 	const none: ElementSnap = { size, v: [], h: [] };
-	if (!(request.zoom > 0) || request.bypass) return none;
+	// the bypass is the canvas's own short circuit: it never asks, so nothing
+	// here needs a second opinion about it
+	if (!(request.zoom > 0)) return none;
 	const boxes = targets.map((target) => target.box);
 	const threshold = SNAP_SCREEN_PX / request.zoom;
 	const axes: AxisSnap[] = (["x", "y"] as const).map((axis) => {
@@ -189,7 +198,7 @@ export function truthful(
 	request: SnapRequest,
 	original: readonly SnapTarget[],
 ): boolean {
-	if (request.ratio !== null && Math.abs(actual.w / actual.h - request.ratio) > LANDED) return false;
+	if (request.ratio !== null && Math.abs(actual.w / actual.h - request.ratio) > KEPT_RATIO) return false;
 	const holds = (axis: Axis, guides: readonly number[], sign: Sign): boolean =>
 		guides.every(
 			(guide) =>

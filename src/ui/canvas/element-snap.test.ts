@@ -18,7 +18,6 @@ const ask = (over: Partial<SnapRequest> = {}): SnapRequest => ({
 	sx: 1,
 	sy: 0,
 	zoom: 1,
-	bypass: false,
 	ratio: null,
 	sensitivity: { w: 1, h: 1 },
 	limits: { minW: 0, minH: 0, maxW: null, maxH: null },
@@ -41,16 +40,6 @@ it("measures the six pixels on the screen, not in the document", () => {
 	expect(snapResize(box(0, 0, 191, 100), { w: 191, h: 100 }, stop, ask({ zoom: 2 })).v).toEqual([]);
 	// and at double zoom three document pixels are already six on the screen
 	expect(snapResize(box(0, 0, 197.5, 100), { w: 197.5, h: 100 }, stop, ask({ zoom: 2 })).size.w).toBe(200);
-});
-
-it("drops the whole pool while the bypass is held", () => {
-	const held = snapResize(
-		box(0, 0, 197, 100),
-		{ w: 197, h: 100 },
-		[target(1, 40, 200, 160, 40)],
-		ask({ bypass: true }),
-	);
-	expect(held).toEqual({ size: { w: 197, h: 100 }, v: [], h: [] });
 });
 
 it("leaves an edge the size cannot move to the layout that owns it", () => {

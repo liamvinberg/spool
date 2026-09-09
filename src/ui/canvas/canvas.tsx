@@ -106,19 +106,19 @@ import {
 	NO_HANDLES,
 	placementShift,
 	previewTokens,
+	quantizerFor,
 	RESIZE_PROPERTIES,
+	type ResizeMeasurement,
 	type ResizeModifiers,
 	type ResizeProperty,
 	resizedBox,
 	resizeFields,
 	rotateTokens,
-	type Sign,
 	type Size,
-	type SizeLimits,
 	type SizeWrite,
+	snapTrial,
 	turnValue,
 	useRing,
-	writableSize,
 } from "./hand-resize";
 import {
 	amend,
@@ -143,6 +143,7 @@ import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import { decompose, measuredTarget } from "./measure-spacing";
 import {
+	type ElementGuides,
 	type ElementHandles,
 	type ElementPreview,
 	type FrameHover,
@@ -178,7 +179,6 @@ import {
 	type SessionRecord,
 	type SiteAnchor,
 	type SnapTrial,
-	type SnapWear,
 	type SpacingReading,
 	sessionReply,
 	sharedStateMessage,
@@ -271,34 +271,14 @@ type Gesture =
 	  }
 	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number };
 
-/**
- * What the document said about the element a drag grabbed, and where the drag
- * has taken it since.
- *
- * One shape rather than eight fields, because none of them is knowable before
- * the reply and all of them are knowable after it. The properties are the ones
- * this gesture's source read was opened for, in write order.
- */
-interface ResizeMeasurement {
-	modifiers: ResizeModifiers;
-	properties: readonly ResizeProperty[];
-	/** the unit each of them is written in, taken from what the file already says */
-	writes: Record<ResizeProperty, SizeWrite>;
-	start: Size;
-	/** what a `content-box` element adds on top of the width that is written */
-	extra: Size;
-	offset: { left: number; top: number };
-	limits: SizeLimits;
-	/** the size the pointer asked for, which every sample's snap begins from */
-	raw: Size;
-	live: Size;
-	shift: { x: number; y: number };
-}
-
 /** Both of the ring's own drags, which share every way of being interrupted. */
 function isRingGesture(active: Gesture): active is Extract<Gesture, { kind: "element-size" | "element-turn" }> {
 	return active.kind === "element-size" || active.kind === "element-turn";
 }
+
+/** Two lists of guide coordinates saying the same thing. */
+const same = (a: readonly number[], b: readonly number[]): boolean =>
+	a.length === b.length && a.every((value, at) => value === b[at]);
 
 /** One size a resize drag worked out, and the guides that belong to it. */
 interface ResizePaint {
@@ -496,7 +476,7 @@ export function ProjectCanvas({
 	 * frame document's own coordinates. Drawn only after the layout the
 	 * correction made has been measured and still says so.
 	 */
-	const [elementGuides, setElementGuides] = useState<{ frame: string; v: number[]; h: number[] } | null>(null);
+	const [elementGuides, setElementGuides] = useState<ElementGuides | null>(null);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
@@ -4952,37 +4932,6 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * The values one sample would write, which is the box the document tries on
-	 * to answer for it (#311).
-	 */
-	const wearOf = (held: ResizeMeasurement, size: Size, edge: Edge): SnapWear => {
-		const shift = placementShift(held.start, edge, held.modifiers, size);
-		const has = (property: ResizeProperty) => held.properties.includes(property);
-		return {
-			w: has("width") ? size.w - held.extra.w : null,
-			h: has("height") ? size.h - held.extra.h : null,
-			left: has("left") ? held.offset.left + shift.x : null,
-			top: has("top") ? held.offset.top + shift.y : null,
-		};
-	};
-
-	/** The pointer's own size, and the same one written pixel further along. */
-	const trialOf = (held: ResizeMeasurement, edge: Edge, sx: Sign, sy: Sign): SnapTrial => ({
-		wear: wearOf(held, held.raw, edge),
-		probe: wearOf(held, { w: held.raw.w + (sx === 0 ? 0 : 1), h: held.raw.h + (sy === 0 ? 0 : 1) }, edge),
-		sx,
-		sy,
-	});
-
-	/** The sizes this drag can spell, which are the only ones it may snap to. */
-	const writableSizes = (held: ResizeMeasurement) => ({
-		w: (value: number) =>
-			held.properties.includes("width") ? writableSize(value, held.extra.w, held.writes.width) : value,
-		h: (value: number) =>
-			held.properties.includes("height") ? writableSize(value, held.extra.h, held.writes.height) : value,
-	});
-
-	/**
 	 * The size one sample settles on, and the alignments it may claim (#311).
 	 *
 	 * Every sample begins from the raw pointer intent, asks the document what
@@ -5012,10 +4961,24 @@ export function ProjectCanvas({
 				? now
 				: null;
 		};
-		const settle = async (size: Size, guides: { v: number[]; h: number[] } | null): Promise<boolean> => {
+		/** Undefined leaves what is drawn alone; null takes it down. */
+		const showGuides = (guides: { v: number[]; h: number[] } | null | undefined) => {
+			if (guides === undefined) return;
+			setElementGuides((current) =>
+				guides === null
+					? null
+					: current !== null &&
+							current.frame === pick.frame &&
+							same(current.v, guides.v) &&
+							same(current.h, guides.h)
+						? current
+						: { frame: pick.frame, ...guides },
+			);
+		};
+		const settle = async (size: Size, guides: { v: number[]; h: number[] } | null | undefined): Promise<boolean> => {
 			const now = current();
 			if (now === null || now.measured === null) return false;
-			setElementGuides(guides === null ? null : { frame: pick.frame, ...guides });
+			showGuides(guides);
 			// the size already on the layout is not written again: the pointer's own
 			// sample put it there, and only a correction is news
 			if (now.measured.live.w === size.w && now.measured.live.h === size.h) return true;
@@ -5034,18 +4997,17 @@ export function ProjectCanvas({
 			await settle(held.raw, null);
 			return;
 		}
-		const before = await askSnapping(pick.frame, pick.selector, trialOf(held, edge, sx, sy));
+		const before = await askSnapping(pick.frame, pick.selector, snapTrial(held, edge, sx, sy));
 		if (current() === null) return;
 		const request: SnapRequest = {
 			sx,
 			sy,
 			zoom,
-			bypass: false,
 			// ⇧ holds the proportions the border box started at
 			ratio: held.modifiers.proportional && held.start.h > 0 ? held.start.w / held.start.h : null,
 			sensitivity: before?.sensitivity ?? { w: 0, h: 0 },
 			limits: held.limits,
-			quantize: writableSizes(held),
+			quantize: quantizerFor(held),
 		};
 		const snap: ElementSnap | null =
 			before === null ? null : snapResize(before.box, held.raw, before.targets, request);
@@ -5053,11 +5015,14 @@ export function ProjectCanvas({
 			await settle(held.raw, null);
 			return;
 		}
-		if (!(await settle(snap.size, null))) return;
+		// the correction goes on with the guides the last sample earned still up:
+		// they come down when this sample's own answer replaces them, so a held
+		// snap reads as one steady line rather than one that blinks per sample
+		if (!(await settle(snap.size, undefined))) return;
 		const after = await askSnapping(pick.frame, pick.selector, null);
 		if (current() === null) return;
 		if (after !== null && truthful(snap, after.box, after.targets, request, before.targets))
-			setElementGuides({ frame: pick.frame, v: snap.v, h: snap.h });
+			showGuides({ v: snap.v, h: snap.h });
 		else await settle(held.raw, null);
 	};
 
