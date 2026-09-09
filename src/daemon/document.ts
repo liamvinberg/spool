@@ -1091,6 +1091,18 @@ const canvasShimJs = `(() => {
 			return Number.isFinite(value) ? value : null;
 		};
 		const free = style.position === "absolute" || style.position === "fixed";
+		// which way a keyboard move may take a normal-flow child, from the parent
+		// that decides it: a grid or an authored order property decides the position
+		// itself, a flex parent lays out on one axis, and ordinary flow is a column
+		const parent = el.parentElement;
+		const layout = parent ? getComputedStyle(parent) : null;
+		const flex = layout ? ["flex", "inline-flex"].includes(layout.display) : false;
+		const row = flex && layout.flexDirection.startsWith("row");
+		const ordered = parent
+			? [...parent.children].some((child) => getComputedStyle(child).order !== "0")
+			: false;
+		const axis = !layout || ordered || layout.display.includes("grid") ? null : flex ? (row ? "row" : "column") : "column";
+		const reversed = flex && layout.flexDirection.endsWith("reverse") !== (row && layout.direction === "rtl");
 		// what one of each relative unit is worth on this element, so a size
 		// authored in one can be written back in it rather than in pixels
 		const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
@@ -1099,6 +1111,7 @@ const canvasShimJs = `(() => {
 			box: { w: box.width, h: box.height },
 			extra: { w: extraW, h: extraH },
 			free,
+			flow: { axis, reversed },
 			offset: { left: free ? offset("left") : null, top: free ? offset("top") : null },
 			limits: {
 				minW: limit("min-width", extraW, extraW),

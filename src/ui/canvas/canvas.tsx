@@ -2650,89 +2650,100 @@ export function ProjectCanvas({
 		[project, setEdit, showRefusal, sourceDelivery, pointing.entries],
 	);
 
+	/**
+	 * One structural operation on one original authored unit, through the source
+	 * owner and its inverse receipt: a removal, or a move among its siblings.
+	 *
+	 * Both are the same errand. The unit is read through the frame's own
+	 * committed observation, the owner derives what the operation may touch from
+	 * that read alone, and the save it makes is one entry on the one history.
+	 * Nothing about either is decided from where the element sits on screen.
+	 */
+	const commitStructural = useCallback(
+		(pick: PickedSelection, operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>, action: string) => {
+			const change: SourceChange = operation.kind === "delete" ? { kind: "delete" } : { kind: "reorder" };
+			const initial: SourceIntent = { ...sourceIntent(pick, pointing.entries), operation, change, action };
+			writing.current = true;
+			setRefused(null);
+			const generation = ++pickSeq.current;
+			const completion = (async () => {
+				let intent = initial;
+				const original = await sourceDelivery.read(pick.frame, pick.selector, generation, undefined, operation);
+				if (!original) {
+					showRefusal(
+						pick.frame,
+						pick.selector,
+						{ code: "source", says: "this element has no committed structural source observation" },
+						intent,
+					);
+					return;
+				}
+				intent = { ...intent, original };
+				const result = await readSource(
+					project,
+					pick.frame,
+					original,
+					generation,
+					sourceDelivery.observer,
+					operation,
+				);
+				if (!result?.ok) {
+					await sourceDelivery.cancel(pick.frame, generation);
+					showRefusal(
+						pick.frame,
+						pick.selector,
+						{ code: "source", says: result?.reason ?? "the original structural read did not arrive" },
+						intent,
+					);
+					return;
+				}
+				const read = await sourceDelivery.prepare(pick.frame, result.read);
+				intent = attributedIntent(intent, read);
+				retainedPublications.current.set(pick.frame, original.publication);
+				setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
+				const saved = await commitSource(project, read, change);
+				if (saved?.ok && saved.receipt)
+					recordEntry({
+						kind: "source",
+						frame: pick.frame,
+						receipt: saved.receipt,
+						intent,
+						structuralGeneration: generation,
+					});
+				if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
+				await showSourceResult(pick.frame, saved, "", false, intent);
+			})();
+			pendingSource.current.set(pick.frame, completion);
+			void completion.finally(() => {
+				writing.current = false;
+				pendingSource.current.delete(pick.frame);
+			});
+		},
+		[project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult],
+	);
+
 	/** Delete one original authored unit through the source owner and its inverse receipt. */
 	const deleteElements = useCallback((): boolean => {
 		const pick = pickedRef.current[0];
 		if (!pick) return false;
-		const initial: SourceIntent = {
-			...sourceIntent(pick, pointing.entries),
-			operation: { kind: "delete" },
-			change: { kind: "delete" },
-			action: "delete this element",
-		};
 		if (pickedRef.current.length !== 1) {
 			showRefusal(
 				pick.frame,
 				pick.selector,
 				{ code: "source", says: "Delete requires one identifiable authored source unit" },
-				initial,
+				{
+					...sourceIntent(pick, pointing.entries),
+					operation: { kind: "delete" },
+					change: { kind: "delete" },
+					action: "delete this element",
+				},
 			);
 			return true;
 		}
 		if (writing.current || pendingSource.current.size > 0) return true;
-		writing.current = true;
-		setRefused(null);
-		const generation = ++pickSeq.current;
-		const completion = (async () => {
-			let intent = initial;
-			const original = await sourceDelivery.read(
-				pick.frame,
-				pick.selector,
-				generation,
-				undefined,
-				initial.operation,
-			);
-			if (!original) {
-				showRefusal(
-					pick.frame,
-					pick.selector,
-					{ code: "source", says: "this element has no committed structural source observation" },
-					intent,
-				);
-				return;
-			}
-			intent = { ...intent, original };
-			const result = await readSource(
-				project,
-				pick.frame,
-				original,
-				generation,
-				sourceDelivery.observer,
-				initial.operation,
-			);
-			if (!result?.ok) {
-				await sourceDelivery.cancel(pick.frame, generation);
-				showRefusal(
-					pick.frame,
-					pick.selector,
-					{ code: "source", says: result?.reason ?? "the original structural read did not arrive" },
-					intent,
-				);
-				return;
-			}
-			const read = await sourceDelivery.prepare(pick.frame, result.read);
-			intent = attributedIntent(intent, read);
-			retainedPublications.current.set(pick.frame, original.publication);
-			setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
-			const saved = await commitSource(project, read, { kind: "delete" });
-			if (saved?.ok && saved.receipt)
-				recordEntry({
-					kind: "source",
-					frame: pick.frame,
-					receipt: saved.receipt,
-					intent,
-					structuralGeneration: generation,
-				});
-			if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
-			await showSourceResult(pick.frame, saved, "", false, intent);
-		})();
-		pendingSource.current.set(pick.frame, completion);
-		void completion.finally(() => {
-			writing.current = false;
-			pendingSource.current.delete(pick.frame);
-		});
+		commitStructural(pick, { kind: "delete" }, "delete this element");
 		return true;
-	}, [project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult]);
+	}, [pointing.entries, showRefusal, commitStructural]);
 
 	/**
 	 * The drop half of the asset swap (#260): the frame is armed, never open.
@@ -3150,6 +3161,192 @@ export function ProjectCanvas({
 		},
 		[finishRailSource],
 	);
+
+	/**
+	 * Moving the held element with the arrow keys (#308).
+	 *
+	 * One press means one of two different things, and only the document knows
+	 * which: an element the file already places freely moves by a pixel, and an
+	 * element the parent lays out moves one place along the row it is in. Both
+	 * are one gesture for as long as the key is down, which is one save and one
+	 * press of undo however many times the key repeated.
+	 *
+	 * A move never invents a placement. A normal-flow element is not given
+	 * offsets, an axis the parent layout decides refuses by name, and siblings
+	 * without stable identities refuse before anything is written, because two
+	 * of them changing places would take each other's running state with them.
+	 */
+	const keyMove = useRef<{
+		key: string;
+		pick: PickedSelection;
+		/** where this gesture is: waiting on the document, or what it turned out to be */
+		kind: "asking" | "reorder" | "nudge" | "refused";
+		/** presses so far, one place each, forward positive */
+		presses: number;
+		/** what those presses asked for in pixels: one each, ten with shift */
+		pixels: number;
+		horizontal: boolean;
+		/** a reversed flex row or column draws the authored order backwards */
+		reversed: boolean;
+		/** the release that arrived before the document answered */
+		ended: boolean | null;
+		offset: { left: number; top: number };
+		properties: ResizeProperty[];
+		writes: Partial<Record<ResizeProperty, SizeWrite>>;
+	} | null>(null);
+
+	/** One sample of a held arrow, in the element's own authored placement. */
+	const sampleKeyMove = useCallback(() => {
+		const held = keyMove.current;
+		if (held === null || held.kind !== "nudge") return;
+		sampleRingWrite({
+			kind: "fields",
+			changes: resizeFields(
+				held.properties,
+				{ w: 0, h: 0 },
+				{ x: held.horizontal ? held.pixels : 0, y: held.horizontal ? 0 : held.pixels },
+				held.offset,
+				ringRef.current.step,
+				held.writes as Record<ResizeProperty, SizeWrite>,
+			).map((change) => ({ ...change, scope: "" })),
+		});
+	}, [sampleRingWrite]);
+
+	/** Where a held arrow ends: one save for the whole of it, or nothing at all. */
+	const finishKeyMove = useCallback(
+		(commit: boolean) => {
+			const held = keyMove.current;
+			if (held === null) return;
+			// a release that beats the document's answer is remembered, not lost
+			if (held.kind === "asking") {
+				held.ended = commit;
+				return;
+			}
+			keyMove.current = null;
+			if (held.kind === "nudge") {
+				closeRingWrite(commit && held.pixels !== 0);
+				return;
+			}
+			if (held.kind !== "reorder" || !commit || held.presses === 0) return;
+			const steps = held.reversed ? -held.presses : held.presses;
+			if (writing.current || pendingSource.current.size > 0) return;
+			commitStructural(
+				held.pick,
+				{ kind: "reorder", steps },
+				`move this element ${steps > 0 ? "after" : "before"} ${Math.abs(steps) === 1 ? "its neighbour" : `${Math.abs(steps)} of its siblings`}`,
+			);
+		},
+		[closeRingWrite, commitStructural],
+	);
+	const finishKeyMoveRef = useRef(finishKeyMove);
+	finishKeyMoveRef.current = finishKeyMove;
+
+	/** What the document says this element is, which decides what an arrow does to it. */
+	const openKeyMove = useCallback(
+		(pick: PickedSelection, horizontal: boolean) => {
+			askSizing(pick.frame, pick.selector, (sizing) => {
+				const held = keyMove.current;
+				if (held === null || held.kind !== "asking" || held.pick.selector !== pick.selector) return;
+				const refuse = (code: Refusal["code"], says: string) => {
+					held.kind = "refused";
+					showRefusal(pick.frame, pick.selector, { code, says });
+				};
+				if (sizing === null) {
+					keyMove.current = null;
+					return;
+				}
+				if (sizing.free) {
+					const property: ResizeProperty = horizontal ? "left" : "top";
+					const placed = horizontal ? sizing.offset.left : sizing.offset.top;
+					if (placed === null)
+						refuse("authored-unit", `this element has no ${property} of its own for a key to move`);
+					else {
+						const spelling = authoredSpelling(
+							ringRef.current.className,
+							RESIZE_PROPERTIES[property].family,
+							sizing.units,
+						);
+						if (spelling.kind === "refused") refuse("authored-unit", spelling.says);
+						else {
+							held.kind = "nudge";
+							held.properties = [property];
+							held.offset = { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 };
+							held.writes = { [property]: spelling.kind === "pixels" ? { unit: "px", per: 1 } : spelling };
+							openRingWrite(pick, [{ property, scope: "" }]);
+							sampleKeyMove();
+						}
+					}
+				} else if (sizing.flow.axis !== (horizontal ? "row" : "column"))
+					refuse("source", "the parent layout decides this position; use its alignment or spacing");
+				else {
+					held.kind = "reorder";
+					held.reversed = sizing.flow.reversed;
+				}
+				if (held.ended !== null) finishKeyMoveRef.current(held.ended);
+			});
+		},
+		[askSizing, openRingWrite, sampleKeyMove, showRefusal],
+	);
+
+	/**
+	 * One arrow press on the held element. A different key ends the gesture the
+	 * last one opened, so each key is its own save.
+	 */
+	const moveElement = useCallback(
+		(event: KeyboardEvent): boolean => {
+			if (enteredRef.current !== null || editingRef.current !== null) return false;
+			const pick = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
+			if (pick === undefined || pick.generated) return false;
+			const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
+			const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+			if (keyMove.current !== null && keyMove.current.key !== event.key) finishKeyMove(true);
+			const step = (forward ? 1 : -1) * (event.shiftKey ? 10 : 1);
+			const held = keyMove.current;
+			if (held !== null && held.key === event.key) {
+				if (held.kind === "refused") return true;
+				held.presses += forward ? 1 : -1;
+				held.pixels += step;
+				sampleKeyMove();
+				return true;
+			}
+			if (writing.current || pendingSource.current.size > 0) return true;
+			keyMove.current = {
+				key: event.key,
+				pick,
+				kind: "asking",
+				presses: forward ? 1 : -1,
+				pixels: step,
+				horizontal,
+				reversed: false,
+				ended: null,
+				offset: { left: 0, top: 0 },
+				properties: [],
+				writes: {},
+			};
+			setRefused(null);
+			openKeyMove(pick, horizontal);
+			return true;
+		},
+		[finishKeyMove, openKeyMove, sampleKeyMove],
+	);
+
+	/**
+	 * The release that ends one. Every arrow answers here, including the one a
+	 * different key already completed, and a window that loses focus mid-hold
+	 * cancels rather than saving a move nobody finished asking for.
+	 */
+	useEffect(() => {
+		const up = (event: KeyboardEvent) => {
+			if (keyMove.current?.key === event.key) finishKeyMoveRef.current(true);
+		};
+		const cancel = () => finishKeyMoveRef.current(false);
+		window.addEventListener("keyup", up);
+		window.addEventListener("blur", cancel);
+		return () => {
+			window.removeEventListener("keyup", up);
+			window.removeEventListener("blur", cancel);
+		};
+	}, []);
 
 	const verifyReloadedIntent = useCallback(
 		async (frame: string) => {
@@ -5160,6 +5357,12 @@ export function ProjectCanvas({
 		};
 		const nudgeArrow = (event: KeyboardEvent | undefined, step: number) => {
 			if (event === undefined) return;
+			// a held element is what the arrows move first: the element's own
+			// placement or its place among its siblings, never the frame behind it
+			if (moveElement(event)) {
+				event.preventDefault();
+				return;
+			}
 			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
 			event.preventDefault();
 			const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
@@ -5327,6 +5530,8 @@ export function ProjectCanvas({
 				if (walkSibling(event?.shiftKey === true ? "previous" : "next")) event?.preventDefault();
 			},
 			"canvas.escape": () => {
+				// a held arrow is retired before anything else it might have opened
+				finishKeyMove(false);
 				cancelPicks();
 				setPreview(null);
 				// an edit still waiting on the gate has no frame to press Esc in yet
@@ -5422,6 +5627,8 @@ export function ProjectCanvas({
 		climbRung,
 		walkSibling,
 		deleteElements,
+		moveElement,
+		finishKeyMove,
 		endEdit,
 	]);
 
