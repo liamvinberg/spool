@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SourcePropertyEffect } from "../source-property";
 import {
 	authoredCandidates,
+	declarationPath,
 	locateDeclaration,
 	planDeclarationLiteral,
 	propertySourceOwner,
@@ -157,5 +158,49 @@ describe("which source owns the winning effect", () => {
 		expect(propertySourceOwner(roots, [], [], { effects: [authored] }, ltr, [[".elsewhere"]])).toEqual({
 			kind: "class",
 		});
+	});
+});
+
+describe("a project rule the compiler named after a class the element wears", () => {
+	const ltr = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const named: SourcePropertyEffect = {
+		owner: "card",
+		path: ["$"],
+		property: "color",
+		value: "red",
+		important: false,
+	};
+
+	it("reads its own selector back out of the compiler's subject", () => {
+		expect(declarationPath(named)).toEqual([".card"]);
+		expect(declarationPath({ ...named, path: ["@media (min-width: 48rem)", "$:hover"] })).toEqual([
+			"@media (min-width: 48rem)",
+			".card:hover",
+		]);
+	});
+
+	it("finds it in the file by the selector, not by the compiler's placeholder", () => {
+		const found = locateDeclaration(css, { ...named, owner: "card", path: ["$"] });
+		expect(css.slice(found.start, found.end)).toBe("red");
+	});
+
+	it("owns the property over the utility it outranks, and needs the element to match it", () => {
+		const utility: SourcePropertyEffect = {
+			owner: "text-blue-500",
+			path: ["@layer utilities", "$"],
+			property: "color",
+			value: "blue",
+			important: false,
+		};
+		const roots = new Set(["color"]);
+		expect(propertySourceOwner(roots, [named, utility], [], { effects: [utility, named] }, ltr, [[".card"]])).toEqual(
+			{
+				kind: "declaration",
+				effects: [named],
+			},
+		);
+		expect(
+			propertySourceOwner(roots, [named, utility], [], { effects: [utility, named] }, ltr, [[".elsewhere"]]),
+		).toEqual({ kind: "class" });
 	});
 });

@@ -23,9 +23,27 @@ function conditional(part: string): boolean {
 	return CONDITIONS.some((name) => part.startsWith(name));
 }
 
+/**
+ * The selector chain a declaration was written with.
+ *
+ * The compiler names a rule after the class it selects when the element wears
+ * that class, and writes the class back as `$`. That subject is the selector
+ * the stylesheet actually spells, so it goes back in before anything looks for
+ * the rule in a file or asks the document whether it matched.
+ */
+export function declarationPath(effect: SourcePropertyEffect): readonly string[] {
+	if (effect.owner === null) return effect.path;
+	if (!/^[a-zA-Z_][\w-]*$/.test(effect.owner))
+		throw new Error("this declaration's own subject has no plain authored spelling");
+	return effect.path.map((part) => (part.startsWith("@") ? part : part.replaceAll("$", `.${effect.owner}`)));
+}
+
 /** One authored, unlayered declaration whose condition chain this reader can establish. */
 export function admissible(effect: SourcePropertyEffect): boolean {
-	if (effect.owner !== null) return false;
+	// Everything the compiler generates for itself sits in a layer. A rule with
+	// no layer is the project's own, whether or not a class names it.
+	if (effect.path.some((part) => part.startsWith("@layer "))) return false;
+	if (effect.owner !== null && !/^[a-zA-Z_][\w-]*$/.test(effect.owner)) return false;
 	const selectors = effect.path.filter((part) => !part.startsWith("@"));
 	return selectors.length === 1 && effect.path.every((part) => !part.startsWith("@") || conditional(part));
 }
@@ -53,7 +71,7 @@ export function authoredCandidates(
  * client cannot name a chain the document did not report.
  */
 export function applies(effect: SourcePropertyEffect, matched: readonly (readonly string[])[]): boolean {
-	const path = effect.path.map(collapse);
+	const path = declarationPath(effect).map(collapse);
 	return matched.some(
 		(chain) => chain.length === path.length && chain.every((part, index) => collapse(part) === path[index]),
 	);
@@ -135,7 +153,7 @@ export function locateDeclaration(
 	effect: SourcePropertyEffect,
 ): { start: number; end: number; important: boolean } {
 	if (!admissible(effect)) throw new Error("this declaration's cascade order is not established in its own file");
-	const path = effect.path.map(collapse);
+	const path = declarationPath(effect).map(collapse);
 	const wanted = collapse(effect.value);
 	const found = declarations(source).filter(
 		(declaration) =>
@@ -195,27 +213,30 @@ export function propertySourceOwner(
 	const winners = new Map<string, SourcePropertyEffect | undefined>();
 	for (const root of roots) {
 		for (const effect of certificate.effects) {
-			if (effect.owner !== null || !covers(effect, root) || admissible(effect)) continue;
-			if (!applies(effect, matched)) continue;
+			if (!covers(effect, root) || admissible(effect)) continue;
 			const layers = effect.path.filter((part) => part.startsWith("@layer ")).map((part) => part.slice(7).trim());
 			if (layers.length && layers.every((name) => COMPILER_LAYERS.includes(name.split(".")[0]!))) continue;
+			// Only a rule this element really matched can constrain what it can be
+			// told about its own property; the rest of the project is not evidence.
+			if (effect.owner === null && !applies(effect, matched)) continue;
 			throw new Error("this property has a declaration whose cascade order is not established");
 		}
 		const authored = certificate.effects.filter(
 			(effect) => admissible(effect) && covers(effect, root) && applies(effect, matched),
 		);
+		const utilities = classEffects.filter((effect) => !admissible(effect));
 		const tiers = [
-			classEffects.filter((effect) => effect.important && covers(effect, root)),
+			utilities.filter((effect) => effect.important && covers(effect, root)),
 			authored.filter((effect) => effect.important),
 			styleEffects.filter((effect) => covers(effect, root)),
 			authored.filter((effect) => !effect.important),
-			classEffects.filter((effect) => !effect.important && covers(effect, root)),
+			utilities.filter((effect) => !effect.important && covers(effect, root)),
 		];
 		winners.set(root, tiers.find((tier) => tier.length > 0)?.at(-1));
 	}
 	const held = [...winners.values()];
 	const inline = held.filter((effect) => effect && styleEffects.includes(effect));
-	const declared = held.filter((effect) => effect && effect.owner === null);
+	const declared = held.filter((effect) => effect && !styleEffects.includes(effect) && admissible(effect));
 	if (inline.length === 0 && declared.length === 0) return { kind: "class" };
 	if (inline.length + declared.length !== held.length || (inline.length > 0 && declared.length > 0))
 		throw new Error("this property's declarations are owned by different sources");
