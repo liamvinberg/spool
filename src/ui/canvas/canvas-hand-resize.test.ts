@@ -60,7 +60,7 @@ it("drags the corner and writes both axes as one patch", async () => {
 	// is left exactly as it was
 	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("224 × 84");
 	// and the matching field in the rail ticks with it, in the token about to land
-	expect(host.querySelector('[data-properties-row="width"] .type-value')?.textContent).toBe("[224px]");
+	expect(host.querySelector<HTMLInputElement>('[data-properties-row="width"] input')?.value).toBe("[224px]");
 	expect(writes()).toHaveLength(0);
 
 	await pointerUp(canvas);

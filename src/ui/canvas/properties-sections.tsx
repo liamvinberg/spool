@@ -36,6 +36,7 @@ import {
 } from "../../properties/families";
 import {
 	type At,
+	boxRefusal,
 	displayOf,
 	type Row as ModelRow,
 	optionsFor,
@@ -46,11 +47,12 @@ import {
 	rowFor,
 	rowsIn,
 	type Section as SectionName,
+	signedRow,
 	unlinkTo,
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
-import { propertySamplePlaceholder } from "../../source-property";
+import { propertySamplePlaceholder, type SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -77,6 +79,7 @@ import {
 	type PropertyDescription,
 	propertyControlValue,
 	propertyNumericSample,
+	readsFromSource,
 	sourceProperty,
 	sourcePropertyName,
 } from "./property-controls";
@@ -114,7 +117,7 @@ function writeValue(view: View, row: ModelRow, value: RowValue): void {
 	view.property?.apply(sourcePropertyName(row), propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
 }
 
-/** Two properties one control decides together — an alignment is both of them. */
+/** Two properties one control decides together: an alignment is both of them. */
 function writeFields(view: View, changes: readonly { row: ModelRow; value: RowValue }[]): void {
 	view.property?.applyFields(
 		changes.map((change) => ({
@@ -200,22 +203,23 @@ function okOf(view: View, row: ModelRow): boolean {
 }
 
 /**
- * What an appearance control is allowed to write, in the source's own words.
+ * What a control is allowed to write, in the source's own words.
  *
  * An open session is somewhere to send a request, never evidence that the source
  * will take one: the element's own description says whether its class cell can
- * be written and what each property is wearing, and a row that has no such
- * reading refuses before it is used rather than at the write.
+ * be written, and a control that draws the source's own reading has nothing to
+ * offer until it has one. A control that reads the class keeps its field while
+ * the source is still answering, and loses it when the source refuses.
  */
 function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
-	// What the element itself cannot wear comes first: an inline box has no
-	// padding to change whatever the source says about its class cell. The write
-	// lane's own refusal is not asked about — a class cell shared by several uses
-	// is what the source owner edits, and its description is the answer here.
-	const { refusal: _lane, ...element } = view.element;
-	const verdict = verdictFor(row, element, view.scoped);
-	if (!verdict.ok) return { ok: false, reason: verdict.reason };
-	return { ok: view.property !== null && view.described?.readings !== undefined, reason: view.described?.reason };
+	// What the element itself cannot wear comes first. The write lane's own
+	// refusal is not asked about: a class cell shared by several uses is what
+	// the source owner edits, and its description is the answer here.
+	const box = boxRefusal(row, view.element, view.scoped);
+	if (box !== undefined) return { ok: false, reason: box };
+	if (view.described?.reason !== undefined) return { ok: false, reason: view.described.reason };
+	const answered = view.described?.readings !== undefined;
+	return { ok: view.property !== null && (answered || !readsFromSource(row)), reason: undefined };
 }
 
 /**
@@ -334,7 +338,8 @@ function LengthRow({
 			typedValue={(typed) => {
 				if (typed.trim() === "") return null;
 				const next = parseTyped(kind, typed);
-				return next ? { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` } : undefined;
+				if (!next || (next.negative && !signedRow(row))) return undefined;
+				return { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` };
 			}}
 			stepped={(from, units) => {
 				const parsed = takeApart(from);
@@ -343,7 +348,11 @@ function LengthRow({
 						? null
 						: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
 				const next = stepLength(kind, start, measured, units);
-				return next === null ? undefined : `${next.negative ? "-" : ""}${next.value}`;
+				if (next === null) return undefined;
+				// a family with no negative spelling stops at nothing rather than
+				// stepping into a value the compiler cannot write
+				if (next.negative && !signedRow(row)) return "0";
+				return `${next.negative ? "-" : ""}${next.value}`;
 			}}
 			{...(aside === undefined ? {} : { aside })}
 		/>
@@ -1428,11 +1437,25 @@ function AutoRow({ view, row }: { view: View; row: ModelRow }) {
  * wearing and has no row for is reached by the `+ class` at the foot, which is
  * what P5 is for.
  */
-function Rest({ view, section, drawn }: { view: View; section: SectionName; drawn: ReadonlySet<string> }) {
-	const worn = rowsIn(section).filter(
-		(row) =>
-			!drawn.has(row.property) && row.primitive !== "read" && readRow(row, view.scoped, view.theme).token !== null,
-	);
+function Rest({
+	view,
+	section,
+	drawn,
+}: {
+	view: View;
+	/** the sections this header covers, in the order it draws them */
+	section: SectionName | readonly SectionName[];
+	drawn: ReadonlySet<string>;
+}) {
+	const sections = typeof section === "string" ? [section] : section;
+	const worn = sections
+		.flatMap((name) => rowsIn(name))
+		.filter(
+			(row) =>
+				!drawn.has(row.property) &&
+				row.primitive !== "read" &&
+				readRow(row, view.scoped, view.theme).token !== null,
+		);
 	return (
 		<>
 			{worn.map((row) => (
@@ -1452,10 +1475,14 @@ const INSET_SIDES: readonly { side: Side; property: string }[] = [
 	{ side: "l", property: "left" },
 ];
 
-/** The rows that place an element, drawn only where its position is not static. */
-function PositionRows({ view }: { view: View }) {
+/** Whether this element is placed, which is what its offsets are drawn for. */
+function placedIn(view: View): boolean {
 	const position = wordThrough(view, "position");
-	const placed = position !== null && PLACED.has(position);
+	return position !== null && PLACED.has(position);
+}
+
+/** The rows that place an element, drawn only where its position is not static. */
+function PositionRows({ view, placed }: { view: View; placed: boolean }) {
 	return (
 		<>
 			<WordRow view={view} property="position" />
@@ -1477,9 +1504,7 @@ function PositionRows({ view }: { view: View }) {
 }
 
 /** Which position rows the section led with, so `Rest` does not draw them twice. */
-function positionDrawn(view: View): string[] {
-	const position = wordThrough(view, "position");
-	const placed = position !== null && PLACED.has(position);
+function positionDrawn(placed: boolean): string[] {
 	return ["position", "z-index", ...(placed ? INSET_SIDES.map((entry) => entry.property) : [])];
 }
 
@@ -1556,6 +1581,7 @@ function LayoutSection({ view }: { view: View }) {
 	const column = (own.direction ?? base.direction) === "flex-col";
 	const overflow = wordThrough(view, "overflow");
 	const scrolls = overflow !== null && SCROLLS.has(overflow);
+	const placed = placedIn(view);
 	const directionRow = modelRow("flex-direction");
 	const wrapRow = modelRow("flex-wrap");
 	const alignRow = modelRow("align-items");
@@ -1593,7 +1619,7 @@ function LayoutSection({ view }: { view: View }) {
 		"margin-right",
 		"margin-bottom",
 		"margin-left",
-		...positionDrawn(view),
+		...positionDrawn(placed),
 		...(flex ? ["flex-direction", "flex-wrap", "align-items", "justify-content"] : []),
 		...(grid ? ["grid-template-columns"] : []),
 		...(gapped ? ["gap", "column-gap", "row-gap"] : []),
@@ -1715,12 +1741,10 @@ function LayoutSection({ view }: { view: View }) {
 					)}
 				/>
 			) : null}
-			<PositionRows view={view} />
+			<PositionRows view={view} placed={placed} />
 			<WordRow view={view} property="overflow" />
 			{scrolls ? <ToggleRow view={view} property="scroll-snap-type" /> : null}
-			<Rest view={view} section="size" drawn={drawn} />
-			<Rest view={view} section="position" drawn={drawn} />
-			<Rest view={view} section="layout" drawn={drawn} />
+			<Rest view={view} section={["size", "position", "layout"]} drawn={drawn} />
 		</Section>
 	);
 }
@@ -1946,30 +1970,35 @@ function TextSection({ view }: { view: View }) {
  */
 const OPTIONAL_PROPERTIES: readonly string[] = [
 	"gap",
+	"letter-spacing",
+	"border-width",
 	"min-height",
 	"max-width",
 	"margin-top",
 	"margin-right",
 	"margin-bottom",
 	"margin-left",
-	"letter-spacing",
-	"border-width",
 ];
 
 /**
- * What an optional property starts at.
+ * What an optional property is added at.
  *
- * A constraint the element already meets changes nothing until it is edited, so
- * a `max-width` opens at the box this element already has rather than at zero,
- * which would collapse it the moment it was added. A border with no width
- * paints nothing, so it opens at one.
+ * Its own initial value, so adding it moves nothing and the number that lands
+ * in the source is the property's, never the pixels one use happens to be
+ * showing: a constraint opens at `none`, a spacing at zero. A border with no
+ * width paints nothing, so it opens at one.
  */
-function openingValue(view: View, property: string): string {
-	if (property === "border-width") return "1px";
-	if (property === "min-width" || property === "max-width") return `${Math.round(view.box.w)}px`;
-	if (property === "min-height" || property === "max-height") return `${Math.round(view.box.h)}px`;
-	return "0px";
+function openingRequest(property: string): SourcePropertyValue {
+	const none = MAX_CONSTRAINTS[property];
+	if (none !== undefined) return { kind: "binding", tokens: [none] };
+	return { kind: "custom", value: property === "border-width" ? "1px" : "0px" };
 }
+
+/** The constraints whose initial value is a word rather than a length. */
+const MAX_CONSTRAINTS: Readonly<Record<string, string>> = {
+	"max-width": "max-w-none",
+	"max-height": "max-h-none",
+};
 
 function AddProperty({ view }: { view: View }) {
 	// An optional property is offered where its own source admits it, and the
@@ -1990,7 +2019,7 @@ function AddProperty({ view }: { view: View }) {
 				filter
 				ok={view.property !== null && options.length > 0}
 				onPick={(property) => {
-					if (property) view.property?.apply(property, { kind: "custom", value: openingValue(view, property) });
+					if (property) view.property?.apply(property, openingRequest(property));
 				}}
 			/>
 		</div>

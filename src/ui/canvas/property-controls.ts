@@ -28,6 +28,19 @@ export function sourceProperty(row: Row): boolean {
 }
 
 /**
+ * Whether this control draws the source's own reading rather than the class.
+ *
+ * A colour, a font size and a radius are drawn from what the source says the
+ * property is wearing, so they have nothing to show until that description
+ * lands. A length, a word and a mode read the class cell the rail already has,
+ * so they keep their control while the source is still answering, and lose it
+ * when the source actually refuses.
+ */
+export function readsFromSource(row: Row): boolean {
+	return ["appearance", "fill", "stroke", "text"].includes(row.section);
+}
+
+/**
  * The CSS property a row's request is about.
  *
  * A row is a control, and two controls can be about one property: the width

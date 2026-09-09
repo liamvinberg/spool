@@ -84,26 +84,27 @@ it("offers the approved optional layout properties, and adds one through its sou
 	await act(() => trigger?.click());
 	expect(optionNames(rail, "Add property")).toEqual([
 		"gap",
+		"letter-spacing",
+		"border-width",
 		"min-height",
 		"max-width",
 		"margin-top",
 		"margin-right",
 		"margin-bottom",
 		"margin-left",
-		"letter-spacing",
-		"border-width",
 	]);
 	const option = document.querySelector<HTMLButtonElement>('[data-menu-option="gap"]');
 	await act(() => option?.click());
 	expect(rail.requests).toEqual([{ property: "gap", value: { kind: "custom", value: "0px" } }]);
 });
 
-it("adds a constraint at the box it already has, so nothing moves until it is edited", async () => {
+it("adds a constraint at the value it already has, so nothing moves until it is edited", async () => {
 	const rail = await mount("flex");
 	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
 	await act(() => trigger?.click());
 	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="max-width"]')?.click());
-	expect(rail.requests).toEqual([{ property: "max-width", value: { kind: "custom", value: "120px" } }]);
+	// the property's own initial value, never the pixels one use happens to be
+	expect(rail.requests).toEqual([{ property: "max-width", value: { kind: "binding", tokens: ["max-w-none"] } }]);
 });
 
 it("leaves an optional property off the list once the element wears it", async () => {
@@ -213,14 +214,27 @@ it("steps by one scale unit on an arrow and by ten on shift", async () => {
 	await step(rail, "padding", "ArrowUp", false);
 	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["p-5"] } });
 
+	// there is no negative padding to step into, so the step stops at nothing
 	await step(rail, "padding", "ArrowDown", true);
-	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } });
+	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["p-0"] } });
 	expect(rail.requests).toEqual([]);
 
 	const field = fieldIn(rail, "padding");
 	if (!field) throw new Error("missing padding field");
 	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-	expect(rail.requests).toEqual([{ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } }]);
+	expect(rail.requests).toEqual([{ property: "padding", value: { kind: "binding", tokens: ["p-0"] } }]);
+});
+
+it("keeps a margin signed and refuses a padding nobody can spell", async () => {
+	const rail = await mount("p-4 m-4");
+	// a margin the compiler spells with a leading `-` is authored as typed
+	await type(rail, "margin", "-6");
+	expect(rail.requests).toEqual([{ property: "margin", value: { kind: "binding", tokens: ["-m-6"] } }]);
+
+	// a padding has no such spelling, so the field saves nothing at all
+	await type(rail, "padding", "-6");
+	expect(rail.requests).toHaveLength(1);
+	expect(rail.completions).toEqual([false]);
 });
 
 /* ---------- P7: the folds ---------- */
@@ -1085,4 +1099,47 @@ it("takes no layout request from a field left on the value it was already showin
 	await put(field, "4");
 	await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
 	expect(rail.requests).toEqual([]);
+});
+
+it("keeps a layout control while the source has not answered, and retires it when the source refuses", async () => {
+	// the class is a reading of its own, so a number the rail can already see
+	// keeps its field until something actually says the cell cannot be written
+	const pending = await mount("p-4", BASE, undefined, () => new Promise(() => {}));
+	expect(fieldIn(pending, "padding")).not.toBeNull();
+	expect(fieldIn(pending, "opacity")).toBeNull();
+
+	const refused = await mount("p-4", BASE, undefined, async () => ({ reason: "className is an expression" }));
+	await act(async () => {});
+	expect(fieldIn(refused, "padding")).toBeNull();
+	expect(rowOf(refused, "padding")?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
+});
+
+it("sends the alignment picker's two properties as one saved group", async () => {
+	const rail = await mount("flex items-start justify-start");
+	const dot = rail.host.querySelector<HTMLButtonElement>('button[title="items-center justify-end"]');
+	expect(dot).not.toBeNull();
+	await act(() => dot?.click());
+	expect(rail.groups).toEqual([
+		[
+			{ property: "align-items", value: { kind: "binding", tokens: ["items-center"] } },
+			{ property: "justify-content", value: { kind: "binding", tokens: ["justify-end"] } },
+		],
+	]);
+	// one gesture, one group: neither property is sent on its own as well
+	expect(rail.requests).toHaveLength(2);
+});
+
+it("sends a flex direction and a wrap chip as their own single requests", async () => {
+	const rail = await mount("flex");
+	const column = rail.host.querySelector<HTMLButtonElement>(
+		'[data-properties-row="flex-direction"] button:nth-child(2)',
+	);
+	await act(() => column?.click());
+	const wrap = chipIn(rail, "flex-direction", "wrap");
+	await act(() => wrap?.click());
+	expect(rail.requests).toEqual([
+		{ property: "flex-direction", value: { kind: "binding", tokens: ["flex-col"] } },
+		{ property: "flex-wrap", value: { kind: "binding", tokens: ["flex-wrap"] } },
+	]);
+	expect(rail.groups).toEqual([]);
 });

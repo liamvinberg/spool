@@ -1,5 +1,5 @@
 ---
-"spool.page": patch
+"spool.page": minor
 ---
 
-Edit spacing and layout precisely in Properties: padding, margins, gaps, dimensions, sizing modes, constraints, display and the flex rows all write through the common source property path, under one approved Layout section, with token-aware fields, cancellation, one-gesture Undo and Show again after hiding.
+Set spacing and layout from Properties. Padding, margins, gaps, width, height, sizing modes, constraints, display and the flex rows are now exact fields and menus, grouped under one Layout heading. A change saves in the source that owns it and every use follows. Typing, stepping, scrubbing and Escape all work the way the other fields do, one edit is one Undo, and hiding an element keeps it selected so you can show it again.
