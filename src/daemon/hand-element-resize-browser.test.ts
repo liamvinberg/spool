@@ -355,3 +355,29 @@ it("takes a shared edit back after the frame that made it is gone", { timeout: 1
 	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card);
 	await expect.poll(() => computed(second, "width"), { timeout: 30_000 }).toEqual(["160px", "160px"]);
 });
+
+it("resizes a rung the keyboard reached, on the project's own scale", { timeout: 120_000 }, async () => {
+	// one step is 8px here, so what a drag lands is this project's own class
+	const nested =
+		'import "shared/tokens.css";export function Card({label}){return <section data-subject={label} className="p-6"><div data-inner className="w-40 h-24 bg-black/10">{label}</div></section>}';
+	const f = await originCanvas(
+		{ [owner]: nested, "shared/tokens.css": "@theme { --spacing: 8px; }" },
+		frameSource,
+		'[data-subject="A"]',
+	);
+	const inner = f.page.frameLocator('iframe[title="home"]').locator("[data-inner]").first();
+	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("160px");
+
+	// down the ladder by kinship rather than by pointer (#254), then resize it
+	await f.select();
+	await f.page.keyboard.press("ControlOrMeta+Enter");
+	await expect.poll(() => f.page.locator('[data-element-handle="e"]').count(), { timeout: 30_000 }).toBe(1);
+
+	const committed = reply(f, "commit");
+	await dragHandle(f, "e", 40, 0);
+	await saved(f, committed);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(nested.replace("w-40", "w-25"));
+	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("200px");
+	// the padding the section wears is nobody else's to change
+	expect(f.bytes()[owner]).toContain("p-6");
+});
