@@ -2999,3 +2999,57 @@ it("changes only the width of a use, leaving its padding and height rules alone"
 			}),
 	).toEqual(["96px", "32px", "8px", "4px"]);
 });
+
+it("verifies a compiled between-children color on every native child the row separates", async () => {
+	const p = await planned("divide-red-500 divide-x-2", "border-color, between children", {
+		kind: "binding",
+		tokens: ["divide-blue-500"],
+	});
+	// The row paints all four sides through the child's own border box; only the color is the row's.
+	const cell = 'style="display:block;width:40px;height:20px;border-style:solid;border-width:2px"';
+	const children = `<i ${cell}>One</i><i ${cell}>Two</i><i ${cell}>Three</i>`;
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">${children}</div><div data-subject class="divide-red-500 divide-x-2">${children}</div><div data-subject class="${p.plan.next}"><i ${cell}>Only</i></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(outcomes[2]?.reason).toBe("this use has no native child this row separates");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"verified",
+		"unverified",
+	]);
+});
+
+it.each(["column-gap, between children", "row-gap, between children"])(
+	"refuses %s until its reverse companion is captured evidence",
+	async (property) => {
+		const token = property.startsWith("column") ? "space-x" : "space-y";
+		const p = await planned(`${token}-2`, property, { kind: "binding", tokens: [`${token}-4`] });
+		const f = await fixture(
+			`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><i>One</i><i>Two</i></div>`,
+		);
+		// The compiled spacing multiplies by --tw-space-*-reverse, which the captured effects omit.
+		expect(await f.inspect(p.expected)).toEqual([
+			{ rendered: "unverified", reason: "this box spacing needs a variable context proof" },
+		]);
+	},
+);
+
+it("does not certify a between-children row one native child no longer carries", async () => {
+	const p = await planned("divide-red-500 divide-x-2", "border-color, between children", {
+		kind: "binding",
+		tokens: ["divide-blue-500"],
+	});
+	const cell = 'style="display:block;width:40px;height:20px;border-style:solid;border-width:2px"';
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><i ${cell}>One</i><i ${cell} data-outside>Two</i><i ${cell}>Three</i></div>`,
+	);
+	await f.page.locator("[data-outside]").evaluate((element) => {
+		if (element instanceof HTMLElement) element.style.borderColor = "#ff0000";
+	});
+	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
+});

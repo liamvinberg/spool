@@ -264,6 +264,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const view = element.ownerDocument.defaultView;
 	if (!view) return unverified("this use has no native document context");
 	if (expected.property === "placeholder color") return propertyOutcome(element, { ...expected, property: "color" });
+	if (Object.hasOwn(childRows, expected.property))
+		return childrenOutcome(element, expected, childRows[expected.property]!);
 	const pseudo = selectedPseudo(expected.scopePaths);
 	if (pseudo === undefined) return unverified("this property has no single native pseudo-element context");
 	if (pseudo !== "" && !supportedPseudos.includes(pseudo))
@@ -1356,6 +1358,55 @@ const initialSizes: Readonly<Record<string, string>> = {
 	"min-height": "auto",
 	"max-height": "none",
 };
+
+/** Rows the compiler writes onto the children a use separates, not onto the use itself. */
+const childRows: Readonly<Record<string, string>> = {
+	"column-gap, between children": "margin-inline",
+	"row-gap, between children": "margin-block",
+	"border-color, between children": "border-color",
+};
+
+/**
+ * A between-children row renders on the children the compiled scope selects. Each of them is read
+ * independently through the family that owns the native declaration, and all of them must agree.
+ */
+function childrenOutcome(element: Element, expected: SourcePropertyExpectation, native: string): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const filters = new Set<string>();
+	for (const path of expected.scopePaths) {
+		const selectors = path.filter((part) => !part.startsWith("@"));
+		const scope = selectors.length === 1 ? /^:where\(\$ > (.+)\)$/.exec(selectors[0]!) : null;
+		if (!scope) return unverified("this row has no single native child scope");
+		filters.add(scope[1]!);
+	}
+	if (filters.size !== 1) return unverified("this row has more than one native child scope");
+	const filter = [...filters][0]!;
+	const subject = `:where($ > ${filter})`;
+	let targets: Element[];
+	try {
+		targets = [...element.children].filter((child) => child.matches(filter));
+	} catch {
+		return unverified("this child scope is not a native selector");
+	}
+	if (targets.length === 0) return unverified("this use has no native child this row separates");
+	// The child was selected by the compiled scope itself, so only the child's own states remain.
+	const carried: SourcePropertyExpectation = {
+		...expected,
+		property: native,
+		scopePaths: expected.scopePaths.map((path) => path.map((part) => (part === subject ? "$" : part))),
+		effects: expected.effects.map((effect) => ({
+			...effect,
+			path: effect.path.map((part) => (effect.owner !== null && part === subject ? "$" : part)),
+		})),
+	};
+	const outcomes = targets.map((target) => propertyOutcome(target, carried));
+	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
+	if (refused) return refused;
+	return {
+		rendered: outcomes.every((outcome) => outcome.rendered === "verified") ? "verified" : "mismatching",
+		observed: outcomes.map((outcome) => outcome.observed ?? "").join(", "),
+	};
+}
 
 const borderColorRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?color$/;
 
