@@ -296,36 +296,36 @@ it("edits the project's own declaration in its own stylesheet, and steps back", 
 it("leaves an unsatisfied condition alone and edits what the base row is running", {
 	timeout: 120_000,
 }, async () => {
-	const css = tokens("12px", "0.25");
+	const css = "@theme {}\n@media (min-width: 5000px) { .tile { padding: 40px } }\n";
 	const f = await originCanvas({ [owner]: carded, [sheet]: css }, tiles, '[data-subject="A"]');
 	// the frame is narrower than the condition, so the utility is what it runs
-	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["24px", "24px"]);
 
 	await f.select();
 	// the row says the rule is there and under what, while the value beside it
 	// stays the one the element is actually running
 	await expect
-		.poll(() => f.page.locator('[data-properties-row="opacity"] span[title]').first().getAttribute("title"))
+		.poll(() => f.page.locator('[data-properties-row="padding"] span[title]').first().getAttribute("title"))
 		.toBe("also written under @media (min-width: 5000px)");
 
-	await row(f, "opacity").fill("40");
-	await complete(f, "opacity", carded.replace("opacity-75", "opacity-40"));
+	await row(f, "padding").fill("5");
+	await complete(f, "padding", carded.replace("p-6", "p-5"));
 	// the base row wrote the class it is running; the rule for a viewport this
 	// frame is not at is exactly as it was
 	expect(f.bytes()[sheet]).toBe(css);
-	await expect.poll(() => computed(f, "opacity")).toEqual(["0.4", "0.4"]);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["20px", "20px"]);
 
 	const stepped = reply(f, "inverse");
 	await f.history(false);
 	expect((await (await stepped).json()).ok).toBe(true);
 	await expect.poll(() => f.bytes()[owner]).toBe(carded);
-	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["24px", "24px"]);
 
 	// and forward again: one step each way, each taking its own edit
 	const forward = reply(f, "inverse");
 	await f.history(true);
 	expect((await (await forward).json()).ok).toBe(true);
-	await expect.poll(() => f.bytes()[owner]).toBe(carded.replace("opacity-75", "opacity-40"));
+	await expect.poll(() => f.bytes()[owner]).toBe(carded.replace("p-6", "p-5"));
 	expect(f.bytes()[sheet]).toBe(css);
 });
 

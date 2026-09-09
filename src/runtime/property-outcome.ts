@@ -1727,9 +1727,11 @@ function pathCondition(element: Element, path: readonly string[], owned: boolean
 				continue;
 			}
 			const states = body.slice(1);
-			// Relations and authored class tests need prospective ancestry/cascade proof.
+			// Relations and authored class tests need prospective ancestry/cascade
+			// proof. A state or an attribute on the subject itself is neither: the
+			// document answers both by matching the element as it stands.
 			if (
-				!/^(?::(?:hover|focus|focus-visible|focus-within|active|disabled|enabled|checked|indeterminate|valid|invalid|required|optional|read-only|read-write|placeholder-shown|empty|first-child|last-child|only-child|first-of-type|last-of-type|only-of-type))*$/.test(
+				!/^(?::(?:hover|focus|focus-visible|focus-within|active|disabled|enabled|checked|indeterminate|valid|invalid|required|optional|read-only|read-write|placeholder-shown|empty|first-child|last-child|only-child|first-of-type|last-of-type|only-of-type)|\[[^\]]*\])*$/.test(
 					states,
 				)
 			) {
