@@ -4,7 +4,15 @@ import type { SourcePropertyEffect } from "../source-property";
 import { makeProject, makeTempDir, writeFrame } from "../test-helpers";
 import { createFrameCompiler } from "./compile";
 import { type Selection, Sources, sourceRead } from "./source-origins";
-import { styleMemberEffects, stylePropertyOwner } from "./source-property-style";
+import {
+	planStyleLiteral,
+	planStyleMembers,
+	type StyleMember,
+	styleMemberEffects,
+	styleMemberKey,
+	styleMemberProperty,
+	stylePropertyOwner,
+} from "./source-property-style";
 
 async function fixture() {
 	const { root } = makeProject(makeTempDir());
@@ -150,5 +158,106 @@ describe("which source owns a property's winning effects", () => {
 		expect(stylePropertyOwner(new Set(["opacity"]), [classEffect("opacity", false)], style, ltr)).toEqual({
 			kind: "class",
 		});
+	});
+});
+
+describe("the member key a declaration is spelled with", () => {
+	it.each([
+		["opacity", "opacity"],
+		["padding-left", "paddingLeft"],
+		["-webkit-line-clamp", "WebkitLineClamp"],
+		["-ms-grid-row", "msGridRow"],
+		["--brand", "--brand"],
+	])("spells %s as %s, and reads it back", (property, key) => {
+		expect(styleMemberKey(property)).toBe(key);
+		expect(styleMemberProperty(key)).toBe(property);
+	});
+});
+
+describe("planning one member change", () => {
+	const members: StyleMember[] = [
+		{ key: "padding", value: 4, enumerable: true },
+		{ key: "opacity", value: 0.5, enumerable: true },
+	];
+
+	it("changes the member that already spells the property, keeping its numeric form", () => {
+		expect(planStyleMembers(members, "opacity", ["opacity"], { kind: "custom", value: "0.25" })).toEqual([
+			{ key: "padding", value: 4, enumerable: true },
+			{ key: "opacity", value: 0.25, enumerable: true },
+		]);
+	});
+
+	it("overrides one side after the shorthand that owns it, in the shorthand's own form", () => {
+		expect(planStyleMembers(members, "padding-left", ["padding"], { kind: "custom", value: "12px" })).toEqual([
+			...members,
+			{ key: "paddingLeft", value: 12, enumerable: true },
+		]);
+	});
+
+	it("keeps a quoted value quoted when the authored member is a string", () => {
+		expect(
+			planStyleMembers([{ key: "padding", value: "1rem", enumerable: true }], "padding", ["padding"], {
+				kind: "custom",
+				value: "2rem",
+			}),
+		).toEqual([{ key: "padding", value: "2rem", enumerable: true }]);
+	});
+
+	it("removes the member itself, and nothing else", () => {
+		expect(planStyleMembers(members, "opacity", ["opacity"], { kind: "remove" })).toEqual([members[0]]);
+	});
+
+	it("refuses a theme binding, which no inline member spells", () => {
+		expect(() =>
+			planStyleMembers(members, "opacity", ["opacity"], { kind: "binding", tokens: ["opacity-25"] }),
+		).toThrow(/binding/);
+	});
+
+	it("refuses removing a side the shorthand still declares", () => {
+		expect(() => planStyleMembers(members, "padding-left", ["padding"], { kind: "remove" })).toThrow(/shorthand/);
+	});
+});
+
+describe("writing the member back into its object literal", () => {
+	const source = 'export function L(){return <b style={{padding: 4, opacity: 0.5}} className="p-2">x</b>}';
+	const target = {
+		address: { file: "f.tsx", start: source.indexOf("<b"), end: source.indexOf("</b>") + 4 },
+		source: "f.tsx:1:1",
+		role: "definition",
+		slot: "attribute",
+		attribute: "style",
+		expected: "",
+		scope: "",
+		repeated: false,
+	} as const;
+	const before: StyleMember[] = [
+		{ key: "padding", value: 4, enumerable: true },
+		{ key: "opacity", value: 0.5, enumerable: true },
+	];
+	const written = (after: readonly StyleMember[]) => {
+		let text = source;
+		for (const patch of [...planStyleLiteral(source, target, before, after)].sort((a, b) => b.start - a.start))
+			text = text.slice(0, patch.start) + patch.text + text.slice(patch.end);
+		return text;
+	};
+
+	it("replaces only the changed member's value", () => {
+		expect(written([before[0]!, { key: "opacity", value: 0.25, enumerable: true }])).toBe(
+			source.replace("0.5", "0.25"),
+		);
+	});
+
+	it("appends a new member after the ones already written", () => {
+		expect(written([...before, { key: "paddingLeft", value: 12, enumerable: true }])).toBe(
+			source.replace("opacity: 0.5", "opacity: 0.5, paddingLeft: 12"),
+		);
+	});
+
+	it("removes a member with the separator that carried it", () => {
+		expect(written([before[0]!])).toBe(source.replace(", opacity: 0.5", ""));
+	});
+
+	it("refuses when the authored members no longer match the original read", () => {
+		expect(() => planStyleLiteral(source.replace("4", "6"), target, before, before)).toThrow();
 	});
 });

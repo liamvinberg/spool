@@ -1,5 +1,11 @@
-import type { SourcePropertyEffect, SourcePropertyEnvironment } from "../source-property";
+import { parse } from "@babel/parser";
+import type { CallExpression, JSXElement, Node, ObjectExpression } from "@babel/types";
+import type { SourcePropertyEffect, SourcePropertyEnvironment, SourcePropertyValue } from "../source-property";
+import type { SpanPatch } from "./hand-write";
+import { walkNodes } from "./jsx-walk";
+import type { Target } from "./source-origins";
 import { propertyKeys } from "./source-property-effects";
+import { literalStyleMembers } from "./source-style-members";
 
 /**
  * The inline style member as a source role.
@@ -134,4 +140,153 @@ export function stylePropertyOwner(
 	if (inline.length === 0) return { kind: "class" };
 	if (inline.length !== owners.length) throw new Error("this property's declarations are owned by different sources");
 	return { kind: "style", members: [...new Set(inline.map((effect) => effect!.owner!))] };
+}
+
+/** The member key a declaration is spelled with; a custom property keeps its name. */
+export function styleMemberKey(property: string): string {
+	if (property.startsWith("--")) return property;
+	const vendor = /^-(ms|webkit|moz|o)-/.exec(property);
+	const rest = (vendor ? property.slice(vendor[0].length) : property).replace(/-([a-z])/g, (_, letter: string) =>
+		letter.toUpperCase(),
+	);
+	if (!vendor) return rest;
+	// React spells `-ms-` lowercase and every other vendor prefix capitalised.
+	const prefix = vendor[1] === "ms" ? "ms" : vendor[1]![0]!.toUpperCase() + vendor[1]!.slice(1);
+	return prefix + rest[0]!.toUpperCase() + rest.slice(1);
+}
+
+/** A changed value keeps the form its author wrote: a bare number stays a number. */
+function authoredValue(key: string, value: string, form: StyleMember | undefined): string | number {
+	const css = value.trim();
+	if (typeof form?.value !== "number") return css;
+	if (UNITLESS.has(key) || key.startsWith("--")) return /^-?\d*\.?\d+$/.test(css) ? Number(css) : css;
+	const pixels = /^(-?\d*\.?\d+)px$/.exec(css);
+	if (pixels) return Number(pixels[1]);
+	return css === "0" ? 0 : css;
+}
+
+/**
+ * The member list one supported change produces.
+ *
+ * A member already spelling the property is changed where it stands, so the
+ * order that decides inline priority is untouched. A property a shorthand owns
+ * gets its own longhand after every member the read proved, which is the only
+ * place a longhand overrides a shorthand.
+ */
+export function planStyleMembers(
+	members: readonly StyleMember[],
+	property: string,
+	owner: readonly string[],
+	requested: SourcePropertyValue,
+): readonly StyleMember[] {
+	if (requested.kind === "binding")
+		throw new Error("an inline style member has no theme binding; write it as a custom value");
+	const key = styleMemberKey(property);
+	const held = members.find((member) => member.key === key && owner.includes(member.key));
+	if (requested.kind === "remove") {
+		if (!held) throw new Error("this side belongs to a shorthand member that its other sides still need");
+		return members.filter((member) => member !== held);
+	}
+	const form = held ?? members.find((member) => owner.includes(member.key));
+	const next: StyleMember = { key, value: authoredValue(key, requested.value, form), enumerable: true };
+	// A written value keeps its own effect: the read already refused a member
+	// React would drop, and this one is held to the same account.
+	styleMemberEffects([next]);
+	return held ? members.map((member) => (member === held ? next : member)) : [...members, next];
+}
+
+function styleObject(source: string, target: Target): ObjectExpression {
+	let creation: JSXElement | CallExpression | undefined;
+	walkNodes(parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }), [], (node) => {
+		if (
+			(node.type === "JSXElement" || node.type === "CallExpression") &&
+			node.start === target.address.start &&
+			node.end === target.address.end
+		)
+			creation = node;
+	});
+	if (!creation || target.attribute !== "style") throw new Error("the original inline style source role changed");
+	let object: Node | undefined;
+	if (creation.type === "JSXElement") {
+		const attributes = creation.openingElement.attributes;
+		if (attributes.some((attribute) => attribute.type === "JSXSpreadAttribute"))
+			throw new Error("a spread has no independent inline style field proof");
+		const fields = attributes.filter(
+			(attribute) =>
+				attribute.type === "JSXAttribute" &&
+				attribute.name.type === "JSXIdentifier" &&
+				attribute.name.name === "style",
+		);
+		const field = fields.length === 1 ? fields[0] : undefined;
+		if (field?.type === "JSXAttribute" && field.value?.type === "JSXExpressionContainer")
+			object = field.value.expression;
+	} else {
+		const config = creation.arguments[1];
+		if (
+			config?.type !== "ObjectExpression" ||
+			config.properties.some((p) => p.type !== "ObjectProperty" || p.computed)
+		)
+			throw new Error("the factory style field has no independent literal config");
+		const fields = config.properties.filter(
+			(property) =>
+				property.type === "ObjectProperty" &&
+				((property.key.type === "Identifier" && property.key.name === "style") ||
+					(property.key.type === "StringLiteral" && property.key.value === "style")),
+		);
+		const field = fields.length === 1 ? fields[0] : undefined;
+		if (field?.type === "ObjectProperty") object = field.value;
+	}
+	if (object?.type !== "ObjectExpression") throw new Error("the original inline style literal changed");
+	return object;
+}
+
+/** An added member is written the way an author would spell it, key and value both. */
+function memberSyntax(member: StyleMember): string {
+	const key = /^[A-Za-z_$][\w$]*$/.test(member.key) ? member.key : JSON.stringify(member.key);
+	return `${key}: ${typeof member.value === "number" ? String(member.value) : JSON.stringify(member.value)}`;
+}
+
+/**
+ * The patches one member change makes in the authored object.
+ *
+ * Every other member keeps its own bytes: its spelling, its quotes and its
+ * spacing. The literal is re-read here rather than trusted, so a source that
+ * moved under the edit refuses instead of writing over someone else's member.
+ */
+export function planStyleLiteral(
+	source: string,
+	target: Target,
+	before: readonly StyleMember[],
+	after: readonly StyleMember[],
+): SpanPatch[] {
+	const object = styleObject(source, target);
+	const current = literalStyleMembers(object);
+	if (JSON.stringify(current) !== JSON.stringify(before))
+		throw new Error("the inline style members no longer match their original source read");
+	const kept = after.filter((member) => before.some((held) => held.key === member.key));
+	const surviving = before.filter((member) => after.some((held) => held.key === member.key));
+	if (JSON.stringify(kept.map((member) => member.key)) !== JSON.stringify(surviving.map((member) => member.key)))
+		throw new Error("an inline style member cannot be reordered by a property change");
+	const patches: SpanPatch[] = [];
+	object.properties.forEach((property, index) => {
+		if (property.type !== "ObjectProperty") throw new Error("the original inline style literal changed");
+		const held = before[index]!;
+		const wanted = after.find((member) => member.key === held.key);
+		if (!wanted) {
+			const previous = object.properties[index - 1];
+			patches.push({ start: previous ? previous.end! : object.start! + 1, end: property.end!, text: "" });
+		} else if (wanted.value !== held.value)
+			patches.push({
+				start: property.value.start!,
+				end: property.value.end!,
+				text: memberSyntax(wanted).slice(memberSyntax(wanted).indexOf(": ") + 2),
+			});
+	});
+	const added = after.filter((member) => !before.some((held) => held.key === member.key));
+	if (added.length) {
+		const last = object.properties.at(-1);
+		const at = last ? last.end! : object.start! + 1;
+		patches.push({ start: at, end: at, text: `${last ? ", " : ""}${added.map(memberSyntax).join(", ")}` });
+	}
+	return patches;
 }
