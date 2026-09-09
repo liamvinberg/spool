@@ -43,7 +43,6 @@ export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boo
 	return a.kind === b.kind;
 }
 
-/** Transient source authority shared by canvas input, frame delivery and history. */
 /** One rule chain a use matched, and whether its own condition holds right now. */
 export interface MatchedRuleChain {
 	path: readonly string[];
@@ -53,6 +52,7 @@ export interface MatchedRuleChain {
 /** The most matched chains one occurrence reports; a document with more reports none of the rest. */
 export const MATCHED_RULE_LIMIT = 200;
 
+/** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
 	/** Original native presentation, not part of source identity or write authority. */
 	propertyNative?: SourcePropertyNative | undefined;

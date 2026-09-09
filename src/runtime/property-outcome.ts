@@ -403,10 +403,7 @@ function selectedOutcome(
 		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
 		if (winner && value === undefined) return unverified("this keyword needs a resolved variable context");
 		if (!winner || value === "inherit" || value === "unset" || value === "initial") {
-			if (
-				(element instanceof HTMLElement || element instanceof SVGElement) &&
-				foreignInline(element, expected, keyword)
-			)
+			if (foreignInline(element, expected, keyword))
 				return unverified("this keyword has an independent inline context requiring proof");
 			if (value === "inherit" || (value !== "initial" && fallback.inherited)) {
 				const parent = element.parentElement;

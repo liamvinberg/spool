@@ -1502,12 +1502,12 @@ export function createSourceOwner(
 			valid(root, held.compilation);
 			const { target, plan, proof } = await planReadProperty(held, change);
 			const current = await checkPropertyChanges(held, proof, held.compilation);
-			const written = (proof.written?.kind === "declaration" ? proof.written.file : undefined) ?? held.file;
-			const input = held.compilation.inputs.get(written);
+			const file = (proof.written?.kind === "declaration" ? proof.written.file : undefined) ?? held.file;
+			const input = held.compilation.inputs.get(file);
 			if (!input) throw new Error("the original property source input is missing");
 			const text = input.bytes.toString("utf8");
 			const patches = journal.transform(
-				written,
+				file,
 				input,
 				proof.written?.kind === "declaration"
 					? planDeclarationLiteral(text, proof.written.effect, proof.written.value)
@@ -1515,7 +1515,7 @@ export function createSourceOwner(
 						? planStyleLiteral(text, proof.written.address, proof.written.members, proof.written.after)
 						: planPropertyLiteral(text, target, plan.before, plan.after),
 			);
-			const now = current.inputs.get(written);
+			const now = current.inputs.get(file);
 			if (!now) throw new Error("the current property source input is missing");
 			const next = applySourcePatches(now.bytes.toString("utf8"), patches).text;
 			const frames: SourcePropertyPreview["frames"][number][] = [];
@@ -1531,7 +1531,7 @@ export function createSourceOwner(
 				const inputs = new Map(
 					[...publication.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
 				);
-				inputs.set(written, { ...now, bytes: Buffer.from(next) });
+				inputs.set(file, { ...now, bytes: Buffer.from(next) });
 				const snapshot = await compiler.compileSnapshot(
 					root,
 					use.frame,
@@ -1637,8 +1637,8 @@ export function createSourceOwner(
 				) {
 					const { target, environment, plan, proof } = await planReadProperty(held, change);
 					const current = await checkPropertyChanges(held, proof, held.compilation);
-					const written = (proof.written?.kind === "declaration" ? proof.written.file : undefined) ?? held.file;
-					const input = held.compilation.inputs.get(written);
+					const file = (proof.written?.kind === "declaration" ? proof.written.file : undefined) ?? held.file;
+					const input = held.compilation.inputs.get(file);
 					if (!input) throw new Error("the original property source input is missing");
 					const authored = input.bytes.toString("utf8");
 					const patches =
@@ -1647,15 +1647,15 @@ export function createSourceOwner(
 							: proof.written?.kind === "style"
 								? planStyleLiteral(source, proof.written.address, proof.written.members, proof.written.after)
 								: planPropertyLiteral(source, target, plan.before, plan.after);
-					const transformed = journal.transform(written, input, patches);
-					const currentSource = current.inputs.get(written)?.bytes.toString("utf8");
+					const transformed = journal.transform(file, input, patches);
+					const currentSource = current.inputs.get(file)?.bytes.toString("utf8");
 					if (currentSource === undefined) throw new Error("the current property source input is missing");
 					const next = applySourcePatches(currentSource, transformed).text;
 					// A stylesheet write changes an input the class cell still reads
-					// from, so the expectation compiles against the written bytes while
+					// from, so the expectation compiles against the file bytes while
 					// the executable source it belongs to stays where it was.
 					const inputs = new Map(current.inputs);
-					if (proof.written?.kind === "declaration") inputs.set(written, { ...input, bytes: Buffer.from(next) });
+					if (proof.written?.kind === "declaration") inputs.set(file, { ...input, bytes: Buffer.from(next) });
 					const after = await propertyState(
 						{
 							root,
@@ -1681,7 +1681,7 @@ export function createSourceOwner(
 					held.property = proof;
 					held.inverseExpected = current.state.expected;
 					return await publish(
-						proof.written?.kind === "declaration" ? { ...held, written } : held,
+						proof.written?.kind === "declaration" ? { ...held, written: file } : held,
 						next,
 						after.expected,
 						transformed,

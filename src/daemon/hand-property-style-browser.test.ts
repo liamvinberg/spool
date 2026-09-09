@@ -360,3 +360,37 @@ it("keeps a stylesheet Undo through later work that retires a pending read", { t
 	await expect.poll(() => f.bytes()[sheet]).toBe(css);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
 });
+
+/** The two refusals a declaration-owned row meets in the owner itself (#304, AC5). */
+it("refuses a control whose sides its stylesheet declares one by one", { timeout: 120_000 }, async () => {
+	const css = "@theme {}\n.tile { padding-top: 1px; padding-right: 2px; padding-bottom: 3px; padding-left: 4px }\n";
+	const f = await originCanvas({ [owner]: carded, [sheet]: css }, tiles, '[data-subject="A"]');
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["4px", "4px"]);
+
+	await f.select();
+	const refused = reply(f, "commit");
+	await row(f, "padding").fill("5");
+	await row(f, "padding").press("Enter");
+	expect(await (await refused).json()).toMatchObject({
+		ok: false,
+		reason: expect.stringMatching(/declared separately/),
+	});
+	expect(f.bytes()[sheet]).toBe(css);
+	expect(f.bytes()[owner]).toBe(carded);
+});
+
+it("refuses removing a declaration its stylesheet owns", { timeout: 120_000 }, async () => {
+	const css = "@theme {}\n.tile { padding: 12px }\n";
+	const f = await originCanvas({ [owner]: carded, [sheet]: css }, tiles, '[data-subject="A"]');
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
+
+	await f.select();
+	const refused = reply(f, "commit");
+	await row(f, "padding").fill("");
+	await row(f, "padding").press("Enter");
+	expect(await (await refused).json()).toMatchObject({
+		ok: false,
+		reason: expect.stringMatching(/removing an authored declaration/),
+	});
+	expect(f.bytes()[sheet]).toBe(css);
+});
