@@ -294,6 +294,7 @@ describe("the declaration forms the readers can prove, and the ones they cannot"
 });
 
 describe("the refusals a write meets before it saves", () => {
+	const ltr = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const inputs = (files: Record<string, string>) =>
 		Object.entries(files).map(([file, text]) => [file, { bytes: Buffer.from(text) }] as [string, { bytes: Buffer }]);
 
@@ -319,6 +320,22 @@ describe("the refusals a write meets before it saves", () => {
 				inputs({ "a.css": ".other { color: blue }", "b.css": ".card { color: red }", "c.tsx": ".card{color:red}" }),
 			),
 		).toBe("b.css");
+	});
+
+	it("names another source for a grouped selection, which is what makes the group refuse", () => {
+		// a grouped change writes classes; where any selection is owned elsewhere
+		// the class it wrote would never apply, so the group refuses on this answer
+		const member: SourcePropertyEffect = {
+			owner: "backgroundImage",
+			path: [],
+			property: "background-image",
+			value: "linear-gradient(red, blue)",
+			important: false,
+		};
+		expect(propertySourceOwner(new Set(["background-image"]), [], [member], { effects: [] }, ltr, [])).toEqual({
+			kind: "style",
+			members: ["backgroundImage"],
+		});
 	});
 
 	it("refuses a removal, which an authored declaration has no operation for", async () => {
