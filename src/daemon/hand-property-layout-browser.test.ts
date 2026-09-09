@@ -134,7 +134,8 @@ it("sets a width mode and adds a constraint without touching the padding or the 
 	await f.page.locator('button[aria-label="Add property"]').click();
 	await f.page.locator('[data-menu-option="max-width"]').first().click();
 	expect(((await (await added).json()) as SourceResult).ok).toBe(true);
-	await expect.poll(() => f.bytes()[owner]).toContain("max-w-[602px]");
+	// added at the constraint's own initial value: nothing moves in either use
+	await expect.poll(() => f.bytes()[owner]).toBe(filled.replace("w-full", "w-full max-w-none"));
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["602px", "602px"]);
 	await expect.poll(() => computed(second, "width")).toEqual(["402px", "402px"]);

@@ -84,26 +84,27 @@ it("offers the approved optional layout properties, and adds one through its sou
 	await act(() => trigger?.click());
 	expect(optionNames(rail, "Add property")).toEqual([
 		"gap",
+		"letter-spacing",
+		"border-width",
 		"min-height",
 		"max-width",
 		"margin-top",
 		"margin-right",
 		"margin-bottom",
 		"margin-left",
-		"letter-spacing",
-		"border-width",
 	]);
 	const option = document.querySelector<HTMLButtonElement>('[data-menu-option="gap"]');
 	await act(() => option?.click());
 	expect(rail.requests).toEqual([{ property: "gap", value: { kind: "custom", value: "0px" } }]);
 });
 
-it("adds a constraint at the box it already has, so nothing moves until it is edited", async () => {
+it("adds a constraint at the value it already has, so nothing moves until it is edited", async () => {
 	const rail = await mount("flex");
 	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
 	await act(() => trigger?.click());
 	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="max-width"]')?.click());
-	expect(rail.requests).toEqual([{ property: "max-width", value: { kind: "custom", value: "120px" } }]);
+	// the property's own initial value, never the pixels one use happens to be
+	expect(rail.requests).toEqual([{ property: "max-width", value: { kind: "binding", tokens: ["max-w-none"] } }]);
 });
 
 it("leaves an optional property off the list once the element wears it", async () => {

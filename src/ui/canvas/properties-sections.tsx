@@ -52,7 +52,7 @@ import {
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
-import { propertySamplePlaceholder } from "../../source-property";
+import { propertySamplePlaceholder, type SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -1955,30 +1955,35 @@ function TextSection({ view }: { view: View }) {
  */
 const OPTIONAL_PROPERTIES: readonly string[] = [
 	"gap",
+	"letter-spacing",
+	"border-width",
 	"min-height",
 	"max-width",
 	"margin-top",
 	"margin-right",
 	"margin-bottom",
 	"margin-left",
-	"letter-spacing",
-	"border-width",
 ];
 
 /**
- * What an optional property starts at.
+ * What an optional property is added at.
  *
- * A constraint the element already meets changes nothing until it is edited, so
- * a `max-width` opens at the box this element already has rather than at zero,
- * which would collapse it the moment it was added. A border with no width
- * paints nothing, so it opens at one.
+ * Its own initial value, so adding it moves nothing and the number that lands
+ * in the source is the property's, never the pixels one use happens to be
+ * showing: a constraint opens at `none`, a spacing at zero. A border with no
+ * width paints nothing, so it opens at one.
  */
-function openingValue(view: View, property: string): string {
-	if (property === "border-width") return "1px";
-	if (property === "min-width" || property === "max-width") return `${Math.round(view.box.w)}px`;
-	if (property === "min-height" || property === "max-height") return `${Math.round(view.box.h)}px`;
-	return "0px";
+function openingRequest(property: string): SourcePropertyValue {
+	const none = MAX_CONSTRAINTS[property];
+	if (none !== undefined) return { kind: "binding", tokens: [none] };
+	return { kind: "custom", value: property === "border-width" ? "1px" : "0px" };
 }
+
+/** The constraints whose initial value is a word rather than a length. */
+const MAX_CONSTRAINTS: Readonly<Record<string, string>> = {
+	"max-width": "max-w-none",
+	"max-height": "max-h-none",
+};
 
 function AddProperty({ view }: { view: View }) {
 	// An optional property is offered where its own source admits it, and the
@@ -1999,7 +2004,7 @@ function AddProperty({ view }: { view: View }) {
 				filter
 				ok={view.property !== null && options.length > 0}
 				onPick={(property) => {
-					if (property) view.property?.apply(property, { kind: "custom", value: openingValue(view, property) });
+					if (property) view.property?.apply(property, openingRequest(property));
 				}}
 			/>
 		</div>
