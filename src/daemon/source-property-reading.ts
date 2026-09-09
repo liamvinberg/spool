@@ -11,15 +11,24 @@ import {
 import { propertyInputs, propertyKeys, readPropertyEffects } from "./source-property-effects";
 import { type StyleMember, styleMemberEffects } from "./source-property-style";
 
+/** What the use itself reports about this property, beside what the compiler says. */
+export interface PropertyReadingContext {
+	/** the value this use is computing right now */
+	native?: SourcePropertyNative | undefined;
+	/** the element's own proven literal members */
+	style?: readonly StyleMember[] | undefined;
+	/** the rule chains this use matched, and whether each is applying */
+	matched?: readonly MatchedRuleChain[] | undefined;
+}
+
 /** Binding identity comes from the captured compiler, never equality with native pixels. */
 export function propertyReading(
 	certificate: PropertyCertificate,
 	operation: Extract<SourceOperation, { kind: "property" }>,
 	environment: SourcePropertyEnvironment,
-	native?: SourcePropertyNative,
-	style?: readonly StyleMember[],
-	matched?: readonly MatchedRuleChain[],
+	context: PropertyReadingContext = {},
 ): SourcePropertyReading {
+	const { native, style, matched } = context;
 	const { roots, effects, owners } = readPropertyEffects(
 		certificate,
 		operation.property,

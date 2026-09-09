@@ -17,7 +17,7 @@ async function reading(literal: string, property: string, value: string) {
 		certificate,
 		{ kind: "property", property, scope: "" },
 		{ direction: "ltr", writingMode: "horizontal-tb" },
-		{ property, value },
+		{ native: { property, value } },
 	);
 }
 
@@ -74,8 +74,7 @@ async function inlineReading(literal: string, property: string, members: StyleMe
 		certificate,
 		{ kind: "property", property, scope: "" },
 		{ direction: "ltr", writingMode: "horizontal-tb" },
-		{ property, value },
-		members,
+		{ native: { property, value }, style: members },
 	);
 }
 
@@ -125,8 +124,7 @@ it("leaves a scoped row to its class literal, which is the only source a scope h
 			certificate,
 			{ kind: "property", property: "padding", scope: "hover:" },
 			{ direction: "ltr", writingMode: "horizontal-tb" },
-			undefined,
-			padding,
+			{ style: padding },
 		),
 	).toMatchObject({ source: "class", tokens: ["hover:p-8"] });
 });
@@ -146,7 +144,7 @@ it("reports the scope's own written value apart from what the viewport is applyi
 			{ kind: "property", property: "opacity", scope },
 			{ direction: "ltr", writingMode: "horizontal-tb" },
 			// the frame is narrow, so the breakpoint rule is written but not applied
-			{ property: "opacity", value: "0.75" },
+			{ native: { property: "opacity", value: "0.75" } },
 		);
 	expect(at("md:")).toEqual({
 		tokens: ["md:opacity-25"],
@@ -173,9 +171,7 @@ async function authoredReading(
 		certificate,
 		{ kind: "property", property, scope: "" },
 		{ direction: "ltr", writingMode: "horizontal-tb" },
-		{ property, value },
-		undefined,
-		matched,
+		{ native: { property, value }, matched },
 	);
 }
 

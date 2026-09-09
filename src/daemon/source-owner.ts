@@ -419,9 +419,7 @@ export function createSourceOwner(
 					await compilePropertySource(root, compilation.inputs, cell.value, compilation.packet.bundledCss),
 					operation,
 					resolved.environment,
-					observed.propertyNative,
-					target?.style?.members,
-					observed.propertyRules,
+					{ native: observed.propertyNative, style: target?.style?.members, matched: observed.propertyRules },
 				);
 			}
 			const found = lookupFrame(root, frame);
@@ -639,26 +637,17 @@ export function createSourceOwner(
 					publication.compilation.packet.bundledCss,
 				);
 				const members = target?.style?.members;
-				property = propertyReading(
-					certificate,
-					operation,
-					resolved.environment,
-					original.propertyNative,
-					members,
-					original.propertyRules,
-				);
+				const context = {
+					native: original.propertyNative,
+					style: members,
+					matched: original.propertyRules,
+				};
+				property = propertyReading(certificate, operation, resolved.environment, context);
 				if (readings.length)
 					properties = Object.fromEntries(
 						readings.map((name) => [
 							name,
-							propertyReading(
-								certificate,
-								{ ...operation, property: name },
-								resolved.environment,
-								original.propertyNative,
-								members,
-								original.propertyRules,
-							),
+							propertyReading(certificate, { ...operation, property: name }, resolved.environment, context),
 						]),
 					);
 			}
