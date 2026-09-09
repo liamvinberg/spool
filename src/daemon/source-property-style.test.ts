@@ -241,3 +241,24 @@ describe("writing the member back through a factory call", () => {
 		expect(() => planStyleLiteral(aliased, target.address, before, before)).toThrow();
 	});
 });
+
+describe("the refusals a member write meets before it saves", () => {
+	const before: StyleMember[] = [
+		{ key: "padding", value: 4, enumerable: true },
+		{ key: "opacity", value: 0.5, enumerable: true },
+	];
+	const source = 'export function L(){return <b style={{padding: 4, opacity: 0.5}} className="p-2">x</b>}';
+	const address = { start: source.indexOf("<b"), end: source.indexOf("</b>") + 4 };
+
+	it("refuses members put back in another order", () => {
+		expect(() => planStyleLiteral(source, address, before, [before[1]!, before[0]!])).toThrow(/reordered/);
+	});
+
+	it("refuses a side the shorthand still declares", () => {
+		expect(() => planStyleMembers(before, "padding-left", ["padding"], null)).toThrow(/shorthand/);
+	});
+
+	it("refuses a source whose members moved under the write", () => {
+		expect(() => planStyleLiteral(source.replace("0.5", "0.75"), address, before, before)).toThrow();
+	});
+});

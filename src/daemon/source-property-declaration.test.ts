@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { SourcePropertyEffect } from "../source-property";
 import {
+	declarationFile,
 	declarationPath,
+	declarationScope,
 	locateDeclaration,
 	planDeclarationLiteral,
 	propertySourceOwner,
+	requestedDeclaration,
 } from "./source-property-declaration";
 
 const css = `/* project rules */
@@ -247,5 +250,101 @@ describe("a rule that is written for the element but is not applying", () => {
 				{ path: [".card"], active: false },
 			]),
 		).toEqual({ kind: "class" });
+	});
+});
+
+describe("the declaration forms the readers can prove, and the ones they cannot", () => {
+	const attributes = `.card[data-state="open"] { padding: 12px }
+[data-theme="dark"] .card { color: var(--color-brand) }
+.card:not(.plain) { margin: 4px }
+`;
+
+	it("finds a declaration under an attribute selector by its own spelling", () => {
+		const found = locateDeclaration(attributes, effect(['.card[data-state="open"]'], "padding", "12px"));
+		expect(attributes.slice(found.start, found.end)).toBe("12px");
+	});
+
+	it("finds one whose subject is a captured state on an ancestor", () => {
+		const found = locateDeclaration(attributes, effect(['[data-theme="dark"] .card'], "color", "var(--color-brand)"));
+		expect(attributes.slice(found.start, found.end)).toBe("var(--color-brand)");
+	});
+
+	it("keeps a theme reference as the value it is written as", () => {
+		const patches = planDeclarationLiteral(
+			attributes,
+			effect(['[data-theme="dark"] .card'], "color", "var(--color-brand)"),
+			"var(--color-raised)",
+		);
+		expect(patches).toEqual([{ start: expect.any(Number), end: expect.any(Number), text: "var(--color-raised)" }]);
+	});
+
+	it("reads an attribute condition as part of what the row is written under", () => {
+		expect(declarationScope(effect(['.card[data-state="open"]'], "padding", "12px"))).toEqual([]);
+		expect(declarationScope(effect(["@media (min-width: 48rem)", ".card"], "padding", "12px"))).toEqual([
+			"@media (min-width: 48rem)",
+		]);
+		expect(declarationScope(effect([".card:hover"], "padding", "12px"))).toEqual([".card:hover"]);
+	});
+
+	it("refuses a declaration whose own scope this reader cannot order", () => {
+		expect(() =>
+			locateDeclaration(attributes, effect(["@container (min-width: 20rem)", ".card"], "padding", "12px")),
+		).toThrow(/cascade order/);
+	});
+});
+
+describe("the refusals a write meets before it saves", () => {
+	const inputs = (files: Record<string, string>) =>
+		Object.entries(files).map(([file, text]) => [file, { bytes: Buffer.from(text) }] as [string, { bytes: Buffer }]);
+
+	it("refuses a declaration two stylesheets both carry", () => {
+		expect(() =>
+			declarationFile(
+				effect([".card"], "color", "red"),
+				inputs({ "a.css": ".card { color: red }", "b.css": ".card { color: red }" }),
+			),
+		).toThrow(/single authored stylesheet range/);
+	});
+
+	it("refuses a declaration no stylesheet carries", () => {
+		expect(() =>
+			declarationFile(effect([".card"], "color", "red"), inputs({ "a.css": ".other { color: red }" })),
+		).toThrow(/single authored stylesheet range/);
+	});
+
+	it("names the stylesheet that does carry it", () => {
+		expect(
+			declarationFile(
+				effect([".card"], "color", "red"),
+				inputs({ "a.css": ".other { color: blue }", "b.css": ".card { color: red }", "c.tsx": ".card{color:red}" }),
+			),
+		).toBe("b.css");
+	});
+
+	it("refuses a removal, which an authored declaration has no operation for", async () => {
+		await expect(requestedDeclaration("color", { kind: "remove" }, async () => ({ effects: [] }))).resolves.toBe(
+			null,
+		);
+	});
+
+	it("refuses a binding that spells more than one value for the property", async () => {
+		await expect(
+			requestedDeclaration("color", { kind: "binding", tokens: ["text-a", "text-b"] }, async () => ({
+				effects: [
+					{ owner: "text-a", path: [], property: "color", value: "red", important: false },
+					{ owner: "text-b", path: [], property: "color", value: "blue", important: false },
+				],
+			})),
+		).rejects.toThrow(/one declaration for this property/);
+	});
+
+	it("gives a binding the declaration the compiler spells for it", async () => {
+		await expect(
+			requestedDeclaration("color", { kind: "binding", tokens: ["text-brand"] }, async () => ({
+				effects: [
+					{ owner: "text-brand", path: [], property: "color", value: "var(--color-brand)", important: false },
+				],
+			})),
+		).resolves.toBe("var(--color-brand)");
 	});
 });
