@@ -75,3 +75,18 @@ it("retains a factory config's style members the same way a JSX attribute's are"
 	// the executable shape does not follow it
 	expect(lowerLiterals("frames/home/frame.tsx", source.replace("padding:4", "padding:6")).shape).toBe(before.shape);
 });
+
+it("leaves a plain object with a style field alone, which is not an element's own", () => {
+	const source =
+		'const theme = { style: { padding: 4 } };export default function Frame(){return <h1 className="p-2">{theme.style.padding}</h1>}';
+	const lowered = lowerLiterals("frames/home/frame.tsx", source);
+	expect(Object.values(lowered.cells).some((cell) => cell.field?.startsWith("style:"))).toBe(false);
+	expect(lowered.code).not.toContain("Style(");
+});
+
+it("leaves a style field nested inside a config alone, which is not the element's own", () => {
+	const source =
+		'import {createElement} from "react"; export default function Frame(){return createElement("h1",{data:{style:{padding:4}},className:"p-2"},"Words")}';
+	const lowered = lowerLiterals("frames/home/frame.tsx", source);
+	expect(Object.values(lowered.cells).some((cell) => cell.field?.startsWith("style:"))).toBe(false);
+});

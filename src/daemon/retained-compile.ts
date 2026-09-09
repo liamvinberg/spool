@@ -428,6 +428,7 @@ export function lowerLiterals(
 			for (const name of Object.keys(getBindingIdentifiers(node))) factories.delete(name);
 	});
 	let factory = 0;
+	const factoryConfigs = new Set<Node>();
 	walk(ast, (node, ancestors) => {
 		if (node.type !== "CallExpression" || node.optional || !node.loc) return;
 		const callee = node.callee;
@@ -448,6 +449,10 @@ export function lowerLiterals(
 		});
 		if (unsafe) return;
 		factory++;
+		// The config of an admitted element call is where a style object can be an
+		// element's own. Any other object with a `style` field is ordinary data.
+		if (api === "createElement" && node.arguments[1]?.type === "ObjectExpression")
+			factoryConfigs.add(node.arguments[1]);
 		const id = `${structural.paths.get(node)}#factory`;
 		sites.push({ node, id });
 		patches.push({
@@ -559,7 +564,8 @@ export function lowerLiterals(
 			node.type === "ObjectProperty" &&
 			!node.computed &&
 			((node.key.type === "Identifier" && node.key.name === "style") ||
-				(node.key.type === "StringLiteral" && node.key.value === "style"))
+				(node.key.type === "StringLiteral" && node.key.value === "style")) &&
+			factoryConfigs.has(ancestors.at(-1) as Node)
 		)
 			object = node.value;
 		if (!object) return;
