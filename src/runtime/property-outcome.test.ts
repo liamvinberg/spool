@@ -10,7 +10,7 @@ import { nativePropertyEffects, propertyConsumers } from "../daemon/source-prope
 import { planPropertyValue } from "../daemon/source-property-plan";
 import { propertyScopePaths } from "../daemon/source-property-scope";
 import { FILTER_SET } from "../properties/families";
-import type { SourcePropertyExpectation, SourcePropertyValue } from "../source-property";
+import type { SourcePropertyEnvironment, SourcePropertyExpectation, SourcePropertyValue } from "../source-property";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import type { PropertyOutcome } from "./property-outcome";
 
@@ -2465,12 +2465,16 @@ it("compares a compiled gradient whose own branch carries no interpolation space
 });
 
 /** Plan one retained row from the real compiler, then read it back as this use's expectation. */
-async function planned(literal: string, property: string, value: SourcePropertyValue) {
+async function planned(
+	literal: string,
+	property: string,
+	value: SourcePropertyValue,
+	environment: SourcePropertyEnvironment = { direction: "ltr", writingMode: "horizontal-tb" },
+) {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", "");
 	const file = realpathSync(join(root, "design/shared/tokens.css"));
 	const operation = { kind: "property", property, scope: "" } as const;
-	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const plan = await planPropertyValue(
 		root,
 		new Map([[file, readInput(file)]]),
@@ -2579,4 +2583,121 @@ it("refuses a visible overflow the other native axis has already coupled", async
 	expect(await f.inspect(p.expected)).toEqual([
 		{ rendered: "unverified", reason: "this visible overflow is coupled to the other native axis" },
 	]);
+});
+
+it.each([
+	{ property: "padding", before: "p-2", after: "p-4", sides: ["16px", "16px", "16px", "16px"] },
+	{ property: "padding-inline", before: "px-2", after: "px-4", sides: ["8px", "16px", "8px", "16px"] },
+	{ property: "padding-block", before: "py-2", after: "py-4", sides: ["16px", "8px", "16px", "8px"] },
+	{ property: "padding-top", before: "pt-2", after: "pt-4", sides: ["16px", "8px", "8px", "8px"] },
+	{ property: "padding-inline-start", before: "ps-2", after: "ps-4", sides: ["8px", "8px", "8px", "16px"] },
+	{ property: "margin", before: "m-2", after: "m-4", sides: ["16px", "16px", "16px", "16px"] },
+	{ property: "margin-inline", before: "mx-2", after: "mx-4", sides: ["8px", "16px", "8px", "16px"] },
+	{ property: "margin-bottom", before: "mb-2", after: "mb-4", sides: ["8px", "8px", "16px", "8px"] },
+	{ property: "margin-inline-end", before: "me-2", after: "me-4", sides: ["8px", "16px", "8px", "8px"] },
+])("verifies the compiled $property side independently of the retained ones", async (row) => {
+	// Every use starts from all four sides, so a change must move exactly the row's own sides.
+	const whole = row.before.startsWith("p") ? "p-2" : "m-2";
+	const start = row.before === whole ? whole : `${whole} ${row.before}`;
+	const p = await planned(start, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${start}">Retained</div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	const box = row.before.startsWith("p") ? "padding" : "margin";
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate(
+				(element, name) =>
+					["top", "right", "bottom", "left"].map((side) =>
+						getComputedStyle(element).getPropertyValue(`${name}-${side}`),
+					),
+				box,
+			),
+	).toEqual(row.sides);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it.each([
+	{ mode: "horizontal-tb", direction: "rtl", side: "padding-right" },
+	{ mode: "vertical-rl", direction: "ltr", side: "padding-top" },
+	{ mode: "vertical-lr", direction: "rtl", side: "padding-bottom" },
+])("reads a logical spacing in the $mode $direction context this use actually resolves", async (row) => {
+	const p = await planned(
+		"p-2",
+		"padding-inline-start",
+		{ kind: "binding", tokens: ["ps-4"] },
+		{
+			direction: row.direction as "ltr" | "rtl",
+			writingMode: row.mode,
+		},
+	);
+	const style = `writing-mode:${row.mode};direction:${row.direction}`;
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="${style}">Logical</div><div data-subject class="p-2" style="${style}">Retained</div><div data-subject class="${p.plan.next}" style="writing-mode:sideways-rl">Unknown mode</div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, side) => getComputedStyle(element).getPropertyValue(side), row.side),
+	).toBe("16px");
+});
+
+it("verifies removed spacing against the compiler's own zero declaration", async () => {
+	const p = await planned("p-4 m-4", "padding", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Cleared</div><div data-subject class="p-4 m-4">Retained</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect(p.plan.next).toContain("m-4");
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => [getComputedStyle(element).paddingTop, getComputedStyle(element).marginTop]),
+	).toEqual(["0px", "16px"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a negative compiled margin and an authored zero", async () => {
+	const p = await planned("mt-4", "margin-top", { kind: "binding", tokens: ["-mt-4"] });
+	const zero = await planned("mt-4", "margin-top", { kind: "binding", tokens: ["mt-0"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}${zero.plan.desired.css}</style><div data-subject class="${p.plan.next}">Negative</div><div data-subject class="${zero.plan.next}">Zero</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("-16px");
+	expect((await f.inspect(zero.expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("refuses an automatic margin and a percentage this use resolves against its own box", async () => {
+	const auto = await planned("mx-4", "margin-inline", { kind: "binding", tokens: ["mx-auto"] });
+	const percent = await planned("p-4", "padding", { kind: "custom", value: "10%" });
+	const f = await fixture(
+		`<!doctype html><style>${auto.style}${percent.plan.desired.css}</style><div data-subject class="${auto.plan.next} ${percent.plan.next}">Both</div>`,
+	);
+	expect(await f.inspect(auto.expected)).toEqual([
+		{ rendered: "unverified", reason: "this box spacing has no independent native length" },
+	]);
+	expect(await f.inspect(percent.expected)).toEqual([
+		{ rendered: "unverified", reason: "this box spacing has no independent native length" },
+	]);
+});
+
+it("needs a rendered native box before reading its spacing", async () => {
+	const p = await planned("p-2", "padding", { kind: "binding", tokens: ["p-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="display:none">Hidden</div><div data-subject class="${p.plan.next}" style="display:contents">Contents</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "unverified"]);
 });

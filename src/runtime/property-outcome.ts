@@ -140,6 +140,7 @@ type PropertyFamily =
 	| { kind: "border-color" }
 	| { kind: "radius" }
 	| { kind: "axes" }
+	| { kind: "box"; box: "padding" | "margin" }
 	| { kind: "selected"; select: SelectedFamily };
 
 const filterProperties = ["filter", "brightness", "contrast", "saturate", "hue-rotate"];
@@ -158,6 +159,7 @@ const metricRows: Readonly<Record<string, { companion: string; measure: "weight"
 	"line-height": { companion: "--tw-leading", measure: "leading" },
 	"letter-spacing": { companion: "--tw-tracking", measure: "spacing" },
 };
+const boxRow = /^(padding|margin)(?:-(top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end)))?$/;
 const borderWidthRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?width$/;
 
 /** Every retained property is read by exactly one family; an unlisted one has no native proof. */
@@ -173,6 +175,8 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	if (borderColorRow.test(property)) return { kind: "border-color" };
 	if (property === "border-radius") return { kind: "radius" };
 	if (property === "overflow") return { kind: "axes" };
+	const box = boxRow.exec(property);
+	if (box) return { kind: "box", box: box[1] as "padding" | "margin" };
 	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
 	if (Object.hasOwn(lengthRows, property))
 		return { kind: "selected", select: { kind: "length", row: lengthRows[property]! } };
@@ -245,6 +249,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (family.kind === "border-color") return borderColorOutcome(element, expected);
 	if (family.kind === "radius") return radiusOutcome(element, expected);
 	if (family.kind === "axes") return axesOutcome(element, expected);
+	if (family.kind === "box") return boxOutcome(element, expected, family.box);
 	return selectedOutcome(element, view, expected, family.select, pseudo);
 }
 
@@ -927,6 +932,84 @@ function borderOutcome(element: Element, expected: SourcePropertyExpectation): P
 			matches &&= component === "width" ? Number.parseFloat(actual) === wanted : actual === wanted;
 			observed.push(actual);
 		}
+	}
+	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
+}
+
+/** Nine source roles over four native sides of one box, read in this use's own writing context. */
+function boxOutcome(element: Element, expected: SourcePropertyExpectation, box: "padding" | "margin"): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this box spacing has no native document context");
+	if (!element.isConnected || element.getClientRects().length === 0)
+		return unverified("this box spacing has no rendered native box");
+	const style = view.getComputedStyle(element);
+	// A box with no principal box of its own, or one the table algorithm owns, honours neither.
+	if (["contents", "table-row", "table-row-group", "table-header-group", "table-footer-group"].includes(style.display))
+		return unverified("this display has no native box for its own spacing");
+	const physical = physicalSides(style);
+	if (!physical) return unverified("this box spacing needs a known native writing mode context");
+	const logical = new Map([...physical].map(([role, side]) => [side, role]));
+	const group = boxRow.exec(expected.property)?.[2] ?? "";
+	const sides =
+		group === ""
+			? ["top", "right", "bottom", "left"]
+			: group === "inline" || group === "block"
+				? [physical.get(`${group}-start`), physical.get(`${group}-end`)]
+				: physical.has(group)
+					? [physical.get(group)]
+					: [group];
+	if (sides.some((side) => side === undefined)) return unverified("this box spacing has no known native side");
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	let matches = true;
+	const observed: string[] = [];
+	for (const side of sides as string[]) {
+		const role = logical.get(side);
+		const property = `${box}-${side}`;
+		const applicable: SourcePropertyEffect[] = [];
+		for (const effect of expected.effects) {
+			if (effect.owner !== null && !classes.has(effect.owner)) continue;
+			const parts = boxRow.exec(effect.property);
+			if (!parts || parts[1] !== box) return unverified("this box spacing has dependent effects requiring proof");
+			const declared = parts[2] ?? "";
+			// Each declaration is read back through its own family; only the side is mapped.
+			const target =
+				declared === "" || declared === side
+					? property
+					: declared === role ||
+							((declared === "inline" || declared === "block") && role?.startsWith(`${declared}-`))
+						? `${box}-${role}`
+						: undefined;
+			if (target === undefined) continue;
+			const condition = pathCondition(element, effect.path, effect.owner !== null);
+			if (condition === "inactive") continue;
+			if (condition === "unverified") return unverified("this box spacing needs a native conditional context proof");
+			const value = resolvedValue(element, sheet, effect.value);
+			if (value === undefined) return unverified("this box spacing needs a variable context proof");
+			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+			const rule = sheet.cssRules[index];
+			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+			rule.style.setProperty(effect.property, value);
+			const expanded = rule.style.getPropertyValue(target);
+			if (!expanded) return unverified("this box spacing has no native shorthand component proof");
+			applicable.push({ ...effect, property, value: expanded });
+		}
+		if ((element instanceof HTMLElement || element instanceof SVGElement) && element.style.getPropertyValue(property))
+			return unverified("this box spacing has an independent inline context requiring proof");
+		const selection = winningEffect(sheet, applicable);
+		if (selection.reason) return unverified(selection.reason);
+		if (!selection.winner) return unverified("this box spacing has no independent initial declaration");
+		const wanted = nativeLength(element, sheet, property, selection.winner.value);
+		// An automatic margin resolves to the free space this evaluator does not compute.
+		if (wanted === undefined) return unverified("this box spacing has no independent native length");
+		const actual = style.getPropertyValue(property);
+		// The engine stores a used length as a whole number of 1/64 pixels; anything else is truncated.
+		if (!actual.endsWith("px") || !Number.isInteger(wanted * 64))
+			return unverified("this box spacing needs a native length context proof");
+		matches &&= Number.parseFloat(actual) === wanted;
+		observed.push(actual);
 	}
 	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
 }
