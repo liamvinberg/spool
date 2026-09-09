@@ -43,6 +43,8 @@
  * decreases, worst 28px. Drawing them raw scored 2. This scores 0.
  */
 
+import { cellsOf, delimits } from "./agent-markdown";
+
 /** the opening fence that has not been closed yet, or -1 */
 function openFence(lines: readonly string[]): number {
 	let at = -1;
@@ -71,6 +73,9 @@ export function closedText(text: string): string {
 		}
 		return [...lines.slice(0, fence + 1), ...body, "```"].join("\n");
 	}
+
+	const unheld = holdTable(text);
+	if (unheld !== text) return unheld;
 
 	// the last line is the only place an inline marker can still be open: a paragraph
 	// break closes one either way
@@ -104,6 +109,46 @@ export function closedText(text: string): string {
 	}
 
 	return head + tail;
+}
+
+/**
+ * A table that has not finished becoming one waits, because its header is not text.
+ *
+ * A table is made by its second line: `| page | deleted |` is a paragraph with pipes
+ * in it until `|---|---|` lands under it, and at that moment every character of the
+ * header *leaves* the drawn text, to come back as labels beside each row. That is the
+ * link's failure at paragraph scale, so it gets the link's answer: a line with a pipe
+ * in it is held while it could still be a header, which is until the line after it
+ * has begun and is not a delimiter. A delimiter still arriving is held with it, since
+ * `|---|` is one column short of the header above it for a frame.
+ *
+ * Once the delimiter has landed the table is open, and a row still arriving is
+ * drawn as it is: its cells so far are a prefix of its cells, and the stack the
+ * renderer draws only ever gains a line.
+ */
+function holdTable(text: string): string {
+	const lines = text.split("\n");
+	const last = lines[lines.length - 1] ?? "";
+	const prev = lines.length >= 2 ? (lines[lines.length - 2] ?? "") : null;
+	if (prev !== null && tableOpenAt(lines, lines.length - 2)) return text;
+	const keep = (count: number) => (count === 0 ? "" : `${lines.slice(0, count).join("\n")}\n`);
+	// a delimiter still arriving has pipes of its own, so the header above it is asked
+	// about first: both wait together
+	if (prev?.includes("|") === true && /^\s*\|?[\s:|-]*$/.test(last)) return keep(lines.length - 2);
+	if (last.includes("|")) return keep(lines.length - 1);
+	return text;
+}
+
+/** whether the line at `at` is inside a table the lines above it have already made */
+function tableOpenAt(lines: readonly string[], at: number): boolean {
+	let start = at;
+	while (start > 0 && (lines[start - 1] ?? "").trim() !== "") start -= 1;
+	for (let delimiter = at; delimiter > start; delimiter -= 1) {
+		const head = cellsOf(lines[delimiter - 1] ?? "");
+		if (head === null || !delimits(lines[delimiter] ?? "", head.length)) continue;
+		return lines.slice(delimiter + 1, at + 1).every((line) => line.includes("|"));
+	}
+	return false;
 }
 
 /**
