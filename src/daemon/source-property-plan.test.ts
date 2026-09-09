@@ -457,3 +457,23 @@ it("writes a logical spacing side in the writing context it is actually read in"
 	}
 	expect(sides).toEqual([["padding-left"], ["padding-right"]]);
 });
+
+it.each([
+	["width mode", "w-auto", "w-full", "width"],
+	["height mode", "h-auto", "h-full", "height"],
+	["width and height", "size-2", "size-4", "width"],
+])("plans the %s control against the axis it actually declares", async (property, before, after, declared) => {
+	const f = fixture();
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		f.root,
+		f.inputs,
+		`${before} text-red-500`,
+		{ kind: "property", property, scope: "" },
+		{ kind: "binding", tokens: [after] },
+		environment,
+	);
+	expect(plan.before).toEqual([before]);
+	expect(plan.next).toBe(`text-red-500 ${after}`);
+	expect([...plan.roots]).toContain(declared);
+});
