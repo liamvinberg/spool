@@ -1,8 +1,6 @@
-import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 const LANDING = `export default function Frame() {
 	return <main style={{ background: "#111", color: "white" }}>
@@ -17,18 +15,12 @@ const LANDING = `export default function Frame() {
 it("resizes a tiny frame live, snaps to its content, and prepares the next picture while selected", {
 	timeout: 120_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const uiDir = join(makeTempDir(), "ui");
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "landing", LANDING);
 	writeDesignFile(project.root, "frames/landing/frame.json", JSON.stringify({ x: 0, y: 0, w: 800, h: 800 }));
 	writeDesignFile(project.root, ".spool/state.json", JSON.stringify({ camera: { x: 100, y: 120, k: 0.3 } }));
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const iframe = page.locator('iframe[title="landing"]');

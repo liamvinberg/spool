@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { chromium, type Page, type Request } from "playwright-core";
-import { build as buildUi } from "vite";
+import type { Page, Request } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 interface GeometryPut {
 	surface: string;
@@ -19,10 +19,9 @@ const VIEWPORT_OBSERVATION_TIMEOUT_MS = 5_000;
 it("keeps authored geometry byte-identical across idle player and canvas viewport changes", {
 	timeout: 180_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	const authored = '{ "x": 41, "y": 73, "w": 390, "h": 1900 }\n';
 	const sidecar = join(project.root, "design", "frames", "authored", "frame.json");
@@ -35,11 +34,6 @@ it("keeps authored geometry byte-identical across idle player and canvas viewpor
 `,
 	);
 	writeDesignFile(project.root, "frames/authored/frame.json", authored);
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 	const session = await fetch(`${project.url}/api/session`, {
 		method: "PUT",
 		headers: {

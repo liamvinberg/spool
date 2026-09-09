@@ -3,10 +3,9 @@ import { once } from "node:events";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
 
@@ -36,17 +35,11 @@ it("renders every generic provider interaction through the shared host and keeps
 				}),
 		);
 	});
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, agentEngines: [createSpoolEngine(directory, client)] });
 	writeFrame(project.root, "home", "export default function Home() { return <h1>Reference frame</h1>; }");
 	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":600,"h":400}');
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	await build({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
+	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	const shots = process.env.SPOOL_TEST_SHOTS;
 	const shot = async (name: string) => {

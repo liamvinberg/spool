@@ -1,9 +1,7 @@
-import { join } from "node:path";
 import { build } from "esbuild";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeFrame } from "../test-helpers";
 
 function luminance(color: string): number {
 	const channels = color
@@ -19,20 +17,14 @@ function luminance(color: string): number {
 }
 
 it("loads real typefaces and keeps prose, names and supporting text readable", { timeout: 120_000 }, async () => {
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(
 		project.root,
 		"checkout--empty",
 		'export default function Frame() { return <main style={{ fontFamily: "Georgia" }}><p>Sample frame</p><a href="https://example.com">External link</a></main>; }',
 	);
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, reducedMotion: "reduce" });
 	await page.goto(`${project.url}/p/${project.name}`, { waitUntil: "domcontentloaded" });
 	await page.getByRole("heading", { name: "Pages", exact: true }).waitFor();

@@ -1,8 +1,6 @@
-import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 const plain = (color: string) => `export default function Frame() {
 	return <div style={{ width: "100%", height: "100%", background: "${color}" }} />;
@@ -10,9 +8,8 @@ const plain = (color: string) => `export default function Frame() {
 `;
 
 it("paints a frame label above a neighboring frame", { timeout: 180_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const uiDir = join(makeTempDir(), "ui");
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 
 	writeFrame(project.root, "upper", plain("#ff0000"));
@@ -20,12 +17,6 @@ it("paints a frame label above a neighboring frame", { timeout: 180_000 }, async
 	writeFrame(project.root, "lower", plain("#0000ff"));
 	writeDesignFile(project.root, "frames/lower/frame.json", '{ "x": 0, "y": 310, "w": 800, "h": 300 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
-
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);

@@ -1,17 +1,16 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { initProject } from "../init";
 import { readRegistry } from "../registry";
-import { makeTempDir, serveProject } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, makeTempDir, serveProject } from "../test-helpers";
 import { createSettingsStore } from "./settings";
 
 it("walks all three project jobs through the compact picker with one explicit confirmation", {
 	timeout: 120_000,
 }, async () => {
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	const parent = realpathSync(makeTempDir());
 	const codebase = join(parent, "existing-codebase");
@@ -24,13 +23,7 @@ it("walks all three project jobs through the compact picker with one explicit co
 	const sharedCanvas = readFileSync(join(shared, "design", "canvas.json"), "utf8");
 	const store = createSettingsStore(project.spoolDir);
 	store.write("projects.location", parent);
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage({
 		viewport: { width: 1360, height: 900 },
 		reducedMotion: "reduce",
