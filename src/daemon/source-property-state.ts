@@ -23,6 +23,8 @@ export interface PropertyContext {
 	selections?: SourcePropertyGroupExpectation["selections"] | undefined;
 	/** The element's own members for this state, when an inline member owns the write. */
 	style?: readonly StyleMember[] | undefined;
+	/** Which authored source owns the winning effect this state is about. */
+	source?: SourcePropertyExpectation["source"];
 }
 
 /** Read the same retained class cell from a proposed or acknowledged source snapshot. */
@@ -30,7 +32,19 @@ export async function propertyState(
 	context: PropertyContext,
 	snapshot: { compilation: RetainedCompilation; source: string },
 ) {
-	const { root, inputs, file, cellKey, operation, environment, roots, scopePaths, selections, style } = context;
+	const {
+		root,
+		inputs,
+		file,
+		cellKey,
+		operation,
+		environment,
+		roots,
+		scopePaths,
+		selections,
+		style,
+		source: owner,
+	} = context;
 	const { compilation, source } = snapshot;
 	const path = relative(realDesignDir(root), file);
 	const lowered = lowerLiterals(path, source);
@@ -50,12 +64,15 @@ export async function propertyState(
 			scopePaths,
 			// The class keeps its own effects; the element's members are declarations
 			// of their own, and the selected roots are where the two meet.
+			...(owner ? { source: owner } : {}),
 			effects: [
 				...nativePropertyEffects(certificate, roots, environment),
+				// A member has no selector and no condition; an empty path is what
+				// the evaluator reads that as, so it needs no owner of its own.
 				...(style
-					? styleMemberEffects(style).filter((effect) =>
-							propertyKeys(effect.property, environment).some((key) => roots.has(key)),
-						)
+					? styleMemberEffects(style)
+							.filter((effect) => propertyKeys(effect.property, environment).some((key) => roots.has(key)))
+							.map((effect) => ({ ...effect, owner: null }))
 					: []),
 			],
 		};

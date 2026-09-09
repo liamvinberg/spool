@@ -1412,6 +1412,7 @@ export function createSourceOwner(
 			scopePaths: proof.scopePaths,
 			selections: proof.selections,
 			...(proof.style ? { style: proof.style.members } : {}),
+			source: proof.declaration ? "declaration" : proof.style ? "style" : "class",
 		};
 		const state = (source: string, snapshot: RetainedCompilation) =>
 			propertyState(context, { compilation: snapshot, source });
@@ -1639,6 +1640,7 @@ export function createSourceOwner(
 							scopePaths: proof.scopePaths,
 							selections: proof.selections,
 							...(proof.style ? { style: proof.style.after } : {}),
+							source: proof.declaration ? "declaration" : proof.style ? "style" : "class",
 						},
 						{
 							compilation: current.snapshot,

@@ -23,6 +23,12 @@ export interface SourcePropertyExpectation {
 	kind: "property";
 	property: string;
 	scope: string;
+	/**
+	 * The authored source whose winning effect this expectation is about.
+	 * A declaration is matched against the element by its own selector; the
+	 * element's own member has no selector and no condition at all.
+	 */
+	source?: "class" | "style" | "declaration";
 	className: string;
 	absent: boolean;
 	/** Selected compiler paths, including conditions retained from removed declarations. */
