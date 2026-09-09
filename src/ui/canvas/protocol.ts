@@ -391,9 +391,11 @@ function isSpacingReading(value: unknown): value is SpacingReading {
 /** A sizing reply, checked the way every other one is: the shape, and finite numbers. */
 function isElementSizing(value: unknown): value is ElementSizing {
 	if (!isRecord(value)) return false;
-	const { box, extra, offset, limits } = value;
+	const { box, extra, offset, limits, units } = value;
 	return (
 		typeof value.free === "boolean" &&
+		isRecord(units) &&
+		Object.values(units).every(finite) &&
 		isRecord(box) &&
 		finite(box.w) &&
 		finite(box.h) &&
@@ -578,6 +580,8 @@ export const measureMessage = (selector: string, x: number, y: number, id: numbe
  * nothing about the rules that made it.
  */
 export interface ElementSizing {
+	/** what one of each relative unit measures on this element, in document pixels */
+	units: Readonly<Record<string, number>>;
 	box: { w: number; h: number };
 	/** what a `content-box` element adds on top of the width that is written */
 	extra: { w: number; h: number };

@@ -143,7 +143,7 @@ export function useRing(
 	project: string,
 	held: { frame: string; source: string } | null,
 	revision: number,
-): { live: LiveHandles; step: number; rotation: number } {
+): { live: LiveHandles; step: number; rotation: number; className: string } {
 	const [read, setRead] = useState<RungRead | undefined>(undefined);
 	const [theme, setTheme] = useState<CompiledTheme | null>(null);
 	const asked = held === null ? "" : `${revision}\n${held.frame}\n${held.source}`;
@@ -175,6 +175,8 @@ export function useRing(
 		live: handlesFor(read),
 		step: stepOf(theme),
 		rotation: read === undefined ? 0 : rotationOf(read.className),
+		/** the literal a drag reads its authored units out of */
+		className: read?.className ?? "",
 	};
 }
 
@@ -316,13 +318,69 @@ export function turnValue(deg: number): SourcePropertyValue {
 export type ResizeProperty = "width" | "height" | "left" | "top";
 
 /**
+ * How a drag may spell one of them, given what the file already says.
+ *
+ * A size is an authored value in an authored unit, and the box it happens to
+ * be is a different question (#305). So a drag writes in the family the author
+ * used: pixels where the file says pixels or says nothing, the same relative
+ * unit where it says one, and nothing at all where the authored form is not a
+ * length a pointer can move. `w-full` and `w-1/2` are the layout's answer
+ * rather than a number, and rewriting either as pixels would throw away what
+ * the file meant.
+ */
+export type SizeSpelling =
+	| { kind: "pixels" }
+	/** `per` is what one of that unit measures on this element, in document pixels */
+	| { kind: "unit"; unit: string; per: number }
+	| { kind: "refused"; says: string };
+
+/** What one property's value is written in, once the spelling is settled. */
+export interface SizeWrite {
+	unit: string;
+	per: number;
+}
+
+const RELATIVE_UNITS = ["rem", "em"];
+
+/**
+ * The spelling this element's own literal leaves open for one family.
+ *
+ * Nothing authored is pixels: there is no unit to keep, and the drag means the
+ * box it is making. A bare step or an authored `px` is pixels too. A `rem` or
+ * `em` is kept, measured against what that unit is worth on this element. Every
+ * other authored form refuses by name.
+ */
+export function authoredSpelling(
+	className: string,
+	family: string,
+	units: Readonly<Record<string, number>>,
+): SizeSpelling {
+	const worn = lengthOf(scopedClass(className, BASE), family);
+	if (worn === null) return { kind: "pixels" };
+	const refused = (says: string): SizeSpelling => ({ kind: "refused", says });
+	const bracket = /^\[(.+)\]$/.exec(worn.value);
+	if (bracket === null) {
+		if (/^\d+(?:\.\d+)?$/.test(worn.value)) return { kind: "pixels" };
+		return refused(`${family}-${worn.value} is what the layout decides, not a length a drag can move`);
+	}
+	const unit = /^-?[\d.]+([a-z%]+)$/i.exec(bracket[1] ?? "")?.[1];
+	if (unit === undefined) return refused(`${worn.token} is not a length a drag can move`);
+	if (unit === "px") return { kind: "pixels" };
+	const per = units[unit];
+	if (!RELATIVE_UNITS.includes(unit) || per === undefined || per <= 0) {
+		return refused(`${worn.token} is written in ${unit}, which this drag cannot measure`);
+	}
+	return { kind: "unit", unit, per };
+}
+
+/**
  * What each of them is spelled in, and which number it takes.
  *
  * One table rather than a lookup and a ternary that have to agree: the family
  * a token wears and the pixel it is measured from are the same fact about the
  * property, said once.
  */
-const RESIZE_PROPERTIES: Readonly<
+export const RESIZE_PROPERTIES: Readonly<
 	Record<ResizeProperty, { family: string; px(box: Size, shift: { x: number; y: number }, offset: Offset): number }>
 > = {
 	width: { family: "w", px: (box) => box.w },
@@ -337,10 +395,21 @@ export interface Offset {
 	top: number;
 }
 
-/** A signed length on the project's own scale: a whole step is the bare class. */
-function scaledToken(family: string, px: number, step: number): string {
-	const rounded = Math.round(px);
-	return `${rounded < 0 ? "-" : ""}${family}-${scaleValue(Math.abs(rounded), step)}`;
+/**
+ * One length as a token, in the unit the author used.
+ *
+ * Pixels fold onto the project's scale where they sit on a whole step, because
+ * that is byte-identical to what the frame's author would have written; a
+ * relative unit stays itself, to three places, because rewriting it as pixels
+ * would be a different promise about what the size follows.
+ */
+function scaledToken(family: string, px: number, step: number, write: SizeWrite): string {
+	if (write.unit === "px") {
+		const rounded = Math.round(px);
+		return `${rounded < 0 ? "-" : ""}${family}-${scaleValue(Math.abs(rounded), step)}`;
+	}
+	const value = Number((px / write.per).toFixed(3));
+	return `${value < 0 ? "-" : ""}${family}-[${Math.abs(value)}${write.unit}]`;
 }
 
 /**
@@ -358,9 +427,11 @@ export function resizeFields(
 	shift: { x: number; y: number },
 	offset: Offset,
 	step: number,
+	writes: Readonly<Record<ResizeProperty, SizeWrite>>,
 ): { property: ResizeProperty; value: SourcePropertyValue }[] {
 	return properties.map((property) => {
 		const { family, px } = RESIZE_PROPERTIES[property];
-		return { property, value: { kind: "binding", tokens: [scaledToken(family, px(live, shift, offset), step)] } };
+		const token = scaledToken(family, px(live, shift, offset), step, writes[property]);
+		return { property, value: { kind: "binding", tokens: [token] } };
 	});
 }

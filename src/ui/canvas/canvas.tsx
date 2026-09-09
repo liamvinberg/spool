@@ -96,6 +96,7 @@ import { FrameShell } from "./frame-shell";
 import { GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
 import { HandNotice, type HandSaid } from "./hand-notice";
 import {
+	authoredSpelling,
 	draggedAngle,
 	draggedRect,
 	type Edge,
@@ -103,6 +104,7 @@ import {
 	type LiveHandles,
 	NO_HANDLES,
 	previewTokens,
+	RESIZE_PROPERTIES,
 	type ResizeModifiers,
 	type ResizeProperty,
 	resizedBox,
@@ -110,6 +112,7 @@ import {
 	rotateTokens,
 	type Size,
 	type SizeLimits,
+	type SizeWrite,
 	turnValue,
 	useRing,
 } from "./hand-resize";
@@ -271,6 +274,8 @@ type Gesture =
 interface ResizeMeasurement {
 	modifiers: ResizeModifiers;
 	properties: readonly ResizeProperty[];
+	/** the unit each of them is written in, taken from what the file already says */
+	writes: Record<ResizeProperty, SizeWrite>;
 	start: Size;
 	/** what a `content-box` element adds on top of the width that is written */
 	extra: Size;
@@ -891,10 +896,11 @@ export function ProjectCanvas({
 	 * handlers are written before it and a grab has to answer off the file
 	 * rather than off a render.
 	 */
-	const ringRef = useRef<{ live: LiveHandles; step: number; rotation: number }>({
+	const ringRef = useRef<{ live: LiveHandles; step: number; rotation: number; className: string }>({
 		live: NO_HANDLES,
 		step: STEP,
 		rotation: 0,
+		className: "",
 	});
 
 	/**
@@ -4853,9 +4859,26 @@ export function ProjectCanvas({
 				cancelGesture();
 				return;
 			}
+			// what the file already says each of them is written in; a form no
+			// drag can move refuses by name rather than being rewritten in pixels
+			const writes: Partial<Record<ResizeProperty, SizeWrite>> = {};
+			for (const property of properties) {
+				const spelling = authoredSpelling(
+					ringRef.current.className,
+					RESIZE_PROPERTIES[property].family,
+					sizing.units,
+				);
+				if (spelling.kind === "refused") {
+					cancelGesture();
+					showRefusal(pick.frame, pick.selector, { code: "authored-unit", says: spelling.says });
+					return;
+				}
+				writes[property] = spelling.kind === "pixels" ? { unit: "px", per: 1 } : spelling;
+			}
 			const measured: ResizeMeasurement = {
 				modifiers: { center, proportional: asked.proportional },
 				properties,
+				writes: writes as Record<ResizeProperty, SizeWrite>,
 				start: sizing.box,
 				extra: sizing.extra,
 				offset: { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 },
@@ -4882,6 +4905,7 @@ export function ProjectCanvas({
 				measured.shift,
 				measured.offset,
 				ringRef.current.step,
+				measured.writes,
 			).map((change) => ({ ...change, scope: "" })),
 		});
 	};

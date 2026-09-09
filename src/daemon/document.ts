@@ -1091,7 +1091,11 @@ const canvasShimJs = `(() => {
 			return Number.isFinite(value) ? value : null;
 		};
 		const free = style.position === "absolute" || style.position === "fixed";
+		// what one of each relative unit is worth on this element, so a size
+		// authored in one can be written back in it rather than in pixels
+		const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 		return {
+			units: { rem: root, em: parseFloat(style.fontSize) || root },
 			box: { w: box.width, h: box.height },
 			extra: { w: extraW, h: extraH },
 			free,

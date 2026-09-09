@@ -231,6 +231,23 @@ it("turns from the zone outside a corner, and writes the rotation it settled on"
 	});
 });
 
+it("refuses a size the layout decides rather than rewriting it in pixels", async () => {
+	rung = { source: STAMP, name: "article", className: "w-full", path: "design/frames/home/frame.tsx", line: 7 };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y);
+	await pointerMove(canvas, EAST.x + 40, EAST.y);
+	await settle();
+
+	expect(host.querySelector('[data-hand-refusal="authored-unit"]')?.textContent).toBe(
+		"w-full is what the layout decides, not a length a drag can move",
+	);
+	await pointerUp(canvas);
+	await settle();
+	expect(sourceCalls("commit")).toHaveLength(0);
+});
+
 it("keeps the source as it was when a drag ends where it began", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
@@ -338,6 +355,7 @@ const THEME = {
 
 /** What the document says about the element a drag has grabbed. */
 const SIZING = {
+	units: { rem: 16, em: 16 },
 	box: { w: 200, h: 120 },
 	extra: { w: 0, h: 0 },
 	free: false,
