@@ -477,8 +477,8 @@ function radiusNameOk(theme: CompiledTheme | null, name: string): boolean {
  * `rounded-md rounded-tl-none` as four corners; a corner nothing sets is null.
  *
  * Which half of `rounded-<a>-<b>` is the side is a question only the theme can
- * answer — `rounded-ss-lg` is a logical corner and `rounded-2xl` is a name with
- * a dash in it — so the theme is what tells them apart.
+ * answer: `rounded-ss-lg` is a logical corner and `rounded-2xl` is a name with
+ * a dash in it, so the theme is what tells them apart.
  */
 export function cornersOf(scoped: string, theme: CompiledTheme | null): Record<Corner, string | null> {
 	const corners: Record<Corner, string | null> = { tl: null, tr: null, br: null, bl: null };

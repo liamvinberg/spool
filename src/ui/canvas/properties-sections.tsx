@@ -557,7 +557,7 @@ function usePropertyDescription(control: PropertyControls | null | undefined, pr
 	}>();
 	const describe = useRef(control?.describe);
 	describe.current = control?.describe;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `identity` is not read in here, it is the trigger — the same element read again describes again
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `identity` is not read in here, it is the trigger; the same element read again describes again
 	useEffect(() => {
 		let live = true;
 		if (properties.length)

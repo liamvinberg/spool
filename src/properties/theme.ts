@@ -3,7 +3,7 @@ import type { CompiledTheme, ThemeToken } from "../daemon/theme";
 /**
  * The compiled theme, as the rail's menus read it (#257).
  *
- * The daemon answers with the theme the frames are compiled against — this
+ * The daemon answers with the theme the frames are compiled against, and this
  * project's colours, sizes, radii and breakpoints, each marked as the
  * project's own or as one of Tailwind's it left alone. This module is the
  * canvas's half: it turns those lists into what a menu offers, and it resolves
@@ -136,7 +136,7 @@ export function paintWith(paint: string, alpha: number | null): string {
 
 /**
  * Whether a name is one the theme knows, which is how a colour token is told
- * from a utility that merely starts the same way — `bg-thread` is a colour and
+ * from a utility that merely starts the same way: `bg-thread` is a colour and
  * `bg-linear-to-r` is a gradient, and only the theme can say which.
  */
 export function knowsColour(theme: CompiledTheme | null, name: string): boolean {

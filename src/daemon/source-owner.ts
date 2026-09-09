@@ -1950,11 +1950,44 @@ export function createSourceOwner(
 				if (transformed.length === 0) throw new Error("the inverse source span is missing");
 				const cell = held.compilation.cells[held.cell];
 				if (!cell && !held.structure) throw new Error("the original source role changed");
+				// A receipt answers from its own structural read or from the cell it
+				// saved. Either is enough; neither is a state to invent a read for.
+				const structural = held.structuralRead && held.structure ? held.structuralRead : undefined;
+				let read: SourceRead;
+				if (structural)
+					read = {
+						...structural,
+						operation: held.purpose,
+						original,
+						...(reach ? { reach } : {}),
+						...(held.structuralAfter ? { structure: held.structuralAfter } : {}),
+					};
+				else {
+					if (!cell) throw new Error("the original source cell is no longer present");
+					read = {
+						operation: held.purpose,
+						handle: "",
+						owner,
+						original,
+						generation: held.generation,
+						role: cell.image ? "image-binding" : cell.field ? "literal-attribute" : "literal-child",
+						cell: held.cell,
+						...(reach ? { reach } : {}),
+						source: cell.source,
+						value: cell.value,
+					};
+				}
+				if (held.imageRestore && !cell) throw new Error("the original image source cell is no longer present");
+				const restoring =
+					held.imageRestore && cell
+						? {
+								imageRestore: held.imageRestore,
+								inverseExpected: imageExpectation(cell, realDesignDir(root)),
+							}
+						: undefined;
 				const inverseRead: OriginalRead = {
 					observer: "",
-					...(held.imageRestore
-						? { imageRestore: held.imageRestore, inverseExpected: imageExpectation(cell!, realDesignDir(root)) }
-						: {}),
+					...(restoring ?? {}),
 					...(held.structure
 						? {
 								structure: held.structure,
@@ -1969,27 +2002,7 @@ export function createSourceOwner(
 					...(held.written ? { written: held.written } : {}),
 					compilation,
 					history: held.required,
-					read:
-						held.structuralRead && held.structure
-							? {
-									...held.structuralRead,
-									operation: held.purpose,
-									original,
-									...(reach ? { reach } : {}),
-									...(held.structuralAfter ? { structure: held.structuralAfter } : {}),
-								}
-							: {
-									operation: held.purpose,
-									handle: "",
-									owner,
-									original,
-									generation: held.generation,
-									role: cell?.image ? "image-binding" : cell?.field ? "literal-attribute" : "literal-child",
-									cell: held.cell,
-									...(reach ? { reach } : {}),
-									source: cell!.source,
-									value: cell!.value,
-								},
+					read,
 				};
 				const next = applySourcePatches(journal.current(written, input).bytes.toString("utf8"), transformed).text;
 				let expected = held.expected;
