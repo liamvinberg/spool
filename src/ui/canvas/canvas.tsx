@@ -4967,7 +4967,7 @@ export function ProjectCanvas({
 			const active = gesture.current;
 			if (active.kind !== "element-size" || active.pick.selector !== pick.selector) return;
 			const live = ringRef.current.live;
-			const center = asked.center && sizing !== null && sizing.free;
+			const center = asked.center && (sizing?.free ?? false);
 			const properties: ResizeProperty[] =
 				sizing === null
 					? []
