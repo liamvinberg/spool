@@ -100,6 +100,20 @@ it("retires original reads when an absent compiler dependency appears", async ()
 	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
 });
 
+it("tells a project with nothing catching hand edits", async () => {
+	// #253's one line, on the path that writes source now: hand edits are
+	// ordinary working-tree changes, and a project with `history: false` has
+	// nothing catching them
+	const f = await fixture((root) => writeDesignFile(root, "canvas.json", '{ "format": 1, "history": false }\n'));
+	expect(await f.commit(f.read, "first")).toMatchObject({ ok: true, source: "saved", uncaught: true });
+});
+
+it("says nothing to a project that keeps history", async () => {
+	const f = await fixture((root) => writeDesignFile(root, "canvas.json", '{ "format": 1, "history": true }\n'));
+	const saved = await f.commit(f.read, "kept");
+	expect(saved.ok && saved.uncaught).toBeUndefined();
+});
+
 it("does not write or mint an undo receipt for unchanged content", async () => {
 	const f = await fixture();
 	expect(await f.commit(f.read, "Hello")).toEqual({ ok: true, source: "unchanged", publication: null });

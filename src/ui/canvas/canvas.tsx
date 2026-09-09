@@ -457,6 +457,14 @@ export function ProjectCanvas({
 	 * the readout that rides beside it, and the tokens the rail's own fields
 	 * tick in. Nothing here is written until the pointer comes up.
 	 */
+	/**
+	 * The one line a project with `history: false` has earned (#253).
+	 *
+	 * Its own state rather than the notice a save leaves, because it is about
+	 * the project rather than about that edit: it must not take the strip from
+	 * the outcome the save is reporting, and it is said once per project.
+	 */
+	const [uncaught, setUncaught] = useState(false);
 	const [elementDrag, setElementDrag] = useState<{
 		frame: string;
 		selector: string;
@@ -1934,6 +1942,7 @@ export function ProjectCanvas({
 				}
 			}
 			observingSource.current = undefined;
+			if (result?.ok && result.uncaught === true) setUncaught(true);
 			if (!result) {
 				unappliedSource.current.add(frame);
 				setSaid({
@@ -5768,9 +5777,10 @@ export function ProjectCanvas({
 
 				{notice !== null ? <Toast notice={notice} /> : null}
 
-				{(collisions.length > 0 || (said !== null && said.kind !== "source")) && (
+				{(collisions.length > 0 || uncaught || (said !== null && said.kind !== "source")) && (
 					<NoticeStrip>
 						{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
+						{uncaught && <HandNotice said={{ kind: "uncaught" }} onDismiss={() => setUncaught(false)} />}
 						{said !== null && said.kind !== "source" && (
 							<HandNotice
 								said={said}
