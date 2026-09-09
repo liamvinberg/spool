@@ -37,6 +37,12 @@ export interface SourcePropertyPreview {
 	revision: number;
 	value: string;
 	frames: readonly { publication: string; css: string; bundledCss: string }[];
+	/**
+	 * The element's own proposed declarations, where an inline member owns the
+	 * write. An empty value is the removal of that declaration. A class-owned
+	 * write carries none of these: its preview is the compiled sheet.
+	 */
+	inline?: readonly { property: string; value: string }[];
 }
 
 /** Read-only original native presentation; it does not confer source authority. */

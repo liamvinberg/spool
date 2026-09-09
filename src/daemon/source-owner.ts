@@ -1497,7 +1497,17 @@ export function createSourceOwner(
 			if (reads.get(handle) !== held) throw new Error("the property preview was cancelled");
 			valid(root, held.compilation);
 			if (value === undefined) throw new Error("no property preview frame was available");
-			return { ok: true, preview: { generation, revision, value, frames } };
+			// A member that leaves the list is the removal of its declaration, which
+			// an empty value is; every remaining member proposes its own value.
+			const authored = proof.style ? styleMemberEffects(proof.style.members) : [];
+			const wanted = proof.style ? styleMemberEffects(proof.style.after) : [];
+			const inline = [
+				...wanted.map((effect) => ({ property: effect.property, value: effect.value })),
+				...authored
+					.filter((effect) => !wanted.some((next) => next.property === effect.property))
+					.map((effect) => ({ property: effect.property, value: "" })),
+			];
+			return { ok: true, preview: { generation, revision, value, frames, ...(inline.length ? { inline } : {}) } };
 		} catch (error) {
 			return { ok: false, reason: reason(error) };
 		}

@@ -109,11 +109,10 @@ it("edits the property an inline member owns, on every use, and steps back", { t
 	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
 	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 
-	// a cancelled edit writes nothing and leaves every use where it was
-	// (an inline member has no compiled CSS to preview through, so the frames
-	// hold their authored value until a save installs the new source)
+	// a cancelled edit previews on both uses and writes nothing
 	await f.select();
 	await row(f, "opacity").fill("50");
+	await expect.poll(() => computed(f, "opacity")).toEqual(["0.5", "0.5"]);
 	await row(f, "opacity").press("Escape");
 	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 	expect(f.bytes()[owner]).toBe(original);

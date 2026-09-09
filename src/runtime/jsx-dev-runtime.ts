@@ -626,7 +626,14 @@ function previewProperty(plan: SourcePropertyPreview): boolean {
 	const uses = leases.has(plan.generation) ? [leases.get(plan.generation)!] : sharedPreviews.get(plan.generation);
 	if (!sourcePacket || !uses?.length || uses.some((use) => use.original.field !== "className")) return false;
 	if (leases.has(plan.generation) && !validLease(plan.generation)) return false;
-	if (!previewPropertyStyles(plan, sourcePacket)) return false;
+	if (
+		!previewPropertyStyles(
+			plan,
+			sourcePacket,
+			uses.map((use) => use.element),
+		)
+	)
+		return false;
 	return previewSource(plan.generation, plan.value);
 }
 
