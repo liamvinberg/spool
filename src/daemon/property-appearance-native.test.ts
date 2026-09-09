@@ -5,6 +5,7 @@ import { afterAll, beforeAll, expect, it, onTestFinished } from "vitest";
 import type { SourcePropertyValue } from "../source-property";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { appearanceProperties } from "./fixtures/property-appearance";
+import { compoundLayout } from "./fixtures/property-layout";
 import {
 	appearanceCustom,
 	appearanceCustomRefusals,
@@ -24,45 +25,6 @@ beforeAll(async () => {
 afterAll(async () => {
 	await browser?.close();
 }, 35_000);
-
-const compoundLayout = [
-	{
-		index: 39,
-		property: "column-gap, between children",
-		before: "space-x-2",
-		after: "space-x-4",
-		companion: "",
-		placeholder: false,
-	},
-	{
-		index: 40,
-		property: "row-gap, between children",
-		before: "space-y-2",
-		after: "space-y-4",
-		companion: "",
-		placeholder: false,
-	},
-	{ index: 43, property: "grid-column", before: "col-span-2", after: "col-span-4", companion: "", placeholder: false },
-	{ index: 44, property: "grid-row", before: "row-span-2", after: "row-span-4", companion: "", placeholder: false },
-	{ index: 47, property: "columns", before: "columns-2", after: "columns-4", companion: "", placeholder: false },
-	{ index: 102, property: "flex", before: "flex-1", after: "flex-auto", companion: "", placeholder: false },
-	{
-		index: 117,
-		property: "border-color, between children",
-		before: "divide-red-500",
-		after: "divide-blue-500",
-		companion: "divide-x-2",
-		placeholder: false,
-	},
-	{
-		index: 139,
-		property: "scroll-snap-type",
-		before: "snap-none",
-		after: "snap-x",
-		companion: "",
-		placeholder: false,
-	},
-];
 
 // The 33 appearance cases plus these eight layout cases retain all 41 compound/default contracts.
 const compoundIndices = [
