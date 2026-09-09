@@ -247,6 +247,23 @@ const radiusCorners = [
 ];
 
 /**
+ * True where an inline declaration on the element is somebody else's.
+ *
+ * An inline declaration usually makes a rule unreadable, because nothing says
+ * what it holds. Where the member *is* what was saved, it is the expected
+ * declaration instead, and the comparison against the used value stands on its
+ * own: a member the frame did not take reads as a mismatch to show, never as a
+ * declaration to reapply.
+ */
+function foreignInline(element: Element, expected: SourcePropertyExpectation, property: string): boolean {
+	return (
+		(element instanceof HTMLElement || element instanceof SVGElement) &&
+		element.style.getPropertyValue(property) !== "" &&
+		!ownedInline(element, expected)
+	);
+}
+
+/**
  * True where the element's own style declaration is this edit's own source.
  *
  * An inline declaration usually makes a rule unreadable, because nothing says
@@ -388,8 +405,7 @@ function selectedOutcome(
 		if (!winner || value === "inherit" || value === "unset" || value === "initial") {
 			if (
 				(element instanceof HTMLElement || element instanceof SVGElement) &&
-				element.style.getPropertyValue(keyword) &&
-				!ownedInline(element, expected)
+				foreignInline(element, expected, keyword)
 			)
 				return unverified("this keyword has an independent inline context requiring proof");
 			if (value === "inherit" || (value !== "initial" && fallback.inherited)) {
@@ -414,7 +430,7 @@ function selectedOutcome(
 		if (
 			(!winner || (winner.owner === null && winner.path.length > 0)) &&
 			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
-				(element.style.getPropertyValue(expected.property) && !ownedInline(element, expected)))
+				foreignInline(element, expected, expected.property))
 		)
 			return unverified("this native length has an independent inline context requiring proof");
 		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
@@ -461,7 +477,7 @@ function selectedOutcome(
 		if (
 			(!winner || (winner.owner === null && winner.path.length > 0)) &&
 			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
-				(element.style.getPropertyValue("font-family") && !ownedInline(element, expected)))
+				foreignInline(element, expected, "font-family"))
 		)
 			return unverified("this font family has an independent inline context requiring proof");
 		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
@@ -501,7 +517,7 @@ function selectedOutcome(
 		if (!winner || winner.value.trim() === "inherit") {
 			if (
 				!(element instanceof HTMLElement || element instanceof SVGElement) ||
-				(element.style.getPropertyValue(expected.property) && !ownedInline(element, expected))
+				foreignInline(element, expected, expected.property)
 			)
 				return unverified("this type metric has an independent inline context requiring proof");
 			const parent = element.parentElement;
@@ -524,7 +540,7 @@ function selectedOutcome(
 			!pseudo &&
 			(!winner || (winner.owner === null && winner.path.length > 0)) &&
 			(!(element instanceof HTMLElement || element instanceof SVGElement) ||
-				(element.style.getPropertyValue(expected.property) && !ownedInline(element, expected)))
+				foreignInline(element, expected, expected.property))
 		)
 			return unverified("this color has an independent inline context requiring proof");
 		let value = winner ? resolvedValue(element, sheet, winner.value) : undefined;
@@ -1139,11 +1155,7 @@ function boxOutcome(
 			if (!expanded) return unverified("this box spacing has no native shorthand component proof");
 			applicable.push({ ...effect, property, value: expanded });
 		}
-		if (
-			(element instanceof HTMLElement || element instanceof SVGElement) &&
-			element.style.getPropertyValue(property) &&
-			!ownedInline(element, expected)
-		)
+		if (foreignInline(element, expected, property))
 			return unverified("this box spacing has an independent inline context requiring proof");
 		const selection = winningEffect(sheet, applicable);
 		if (selection.reason) return unverified(selection.reason);
@@ -1268,11 +1280,7 @@ function declarationOutcome(
 		if (condition === "unverified") return unverified("this declaration needs a native condition proof");
 		applicable.push(effect);
 	}
-	if (
-		(element instanceof HTMLElement || element instanceof SVGElement) &&
-		element.style.getPropertyValue(expected.property) &&
-		!ownedInline(element, expected)
-	)
+	if (foreignInline(element, expected, expected.property))
 		return unverified("this declaration has an independent inline context requiring proof");
 	const selection = winningEffect(sheet, applicable);
 	if (selection.reason) return unverified(selection.reason);
@@ -1394,11 +1402,7 @@ function sizeOutcome(element: Element, expected: SourcePropertyExpectation, nati
 		if (condition === "unverified") return unverified("this size needs a native condition proof");
 		applicable.push(effect);
 	}
-	if (
-		(element instanceof HTMLElement || element instanceof SVGElement) &&
-		element.style.getPropertyValue(native) &&
-		!ownedInline(element, expected)
-	)
+	if (foreignInline(element, expected, native))
 		return unverified("this size has an independent inline context requiring proof");
 	const selection = winningEffect(sheet, applicable);
 	if (selection.reason) return unverified(selection.reason);

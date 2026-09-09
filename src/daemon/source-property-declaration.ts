@@ -1,5 +1,5 @@
 import type { MatchedRuleChain } from "../source-edit";
-import type { SourcePropertyEffect, SourcePropertyEnvironment } from "../source-property";
+import type { SourcePropertyEffect, SourcePropertyEnvironment, SourcePropertyValue } from "../source-property";
 import type { SpanPatch } from "./hand-write";
 import { propertyKeys } from "./source-property-effects";
 
@@ -194,6 +194,45 @@ export type PropertySource =
 	| { kind: "class" }
 	| { kind: "style"; members: readonly string[] }
 	| { kind: "declaration"; effects: readonly SourcePropertyEffect[] };
+
+/**
+ * The declaration a request spells, for a source that holds CSS and not classes.
+ *
+ * A binding names utilities, and neither a member nor an authored declaration
+ * can hold one. What they can hold is the declaration that binding compiles to,
+ * which is where its theme reference lives. `null` is a removal.
+ */
+export async function requestedDeclaration(
+	property: string,
+	value: SourcePropertyValue,
+	compile: (tokens: readonly string[]) => Promise<{ effects: readonly SourcePropertyEffect[] }>,
+): Promise<string | null> {
+	if (value.kind === "remove") return null;
+	if (value.kind === "custom") return value.value;
+	const spelled = await compile(value.tokens);
+	const values = [
+		...new Set(
+			spelled.effects.filter((effect) => effect.owner !== null && effect.property === property).map((e) => e.value),
+		),
+	];
+	if (values.length !== 1) throw new Error("this binding does not spell one declaration for this property");
+	return values[0]!;
+}
+
+/** The one stylesheet that carries this declaration, or a refusal naming why not. */
+export function declarationFile(effect: SourcePropertyEffect, inputs: Iterable<[string, { bytes: Buffer }]>): string {
+	const files = [...inputs].filter(([file, input]) => {
+		if (!file.endsWith(".css")) return false;
+		try {
+			locateDeclaration(input.bytes.toString("utf8"), effect);
+			return true;
+		} catch {
+			return false;
+		}
+	});
+	if (files.length !== 1) throw new Error("this declaration has no single authored stylesheet range");
+	return files[0]![0];
+}
 
 /**
  * Which authored source declares the winning effect for every selected root.
