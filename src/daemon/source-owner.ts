@@ -38,6 +38,7 @@ import { assertDesignFile, realDesignDir, resolveDesignPath } from "./design-pat
 import type { SourceObservation } from "./events";
 import { planFactoryLiteral } from "./factory-literal";
 import { identifierHint, specifierFrom } from "./hand-asset";
+import { uncaughtNotice } from "./hand-notice";
 import { applySpan, type HandOp, planOps, type SpanPatch, spanBetween } from "./hand-write";
 import { lookupFrame } from "./projection";
 import {
@@ -1042,6 +1043,9 @@ export function createSourceOwner(
 		const forward = applySourcePatches(before, executed ?? [spanBetween(next, before)]);
 		if (forward.text !== next) throw new Error("the source operation does not match its planned spans");
 		writeAtomic(target, next);
+		// the one line a project with history off has earned (#253): said on the
+		// first hand save it catches nothing of, and never again
+		const uncaught = uncaughtNotice(held.root) ? ({ uncaught: true } as const) : {};
 		const after = readInput(target);
 		const operation = journal.record(
 			target,
@@ -1115,6 +1119,7 @@ export function createSourceOwner(
 				source: "saved",
 				publication: null,
 				receipt,
+				...uncaught,
 				reason: "Source saved; no mounted affected use was available to verify.",
 			};
 		}
@@ -1246,6 +1251,7 @@ export function createSourceOwner(
 			return {
 				ok: true,
 				source: "saved",
+				...uncaught,
 				publication: {
 					expected,
 					admission,
@@ -1265,7 +1271,7 @@ export function createSourceOwner(
 				receipt,
 			};
 		} catch (error) {
-			return { ok: true, source: "saved", publication: null, receipt, reason: reason(error) };
+			return { ok: true, source: "saved", publication: null, receipt, ...uncaught, reason: reason(error) };
 		}
 	}
 

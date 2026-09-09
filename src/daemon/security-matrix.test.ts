@@ -238,11 +238,20 @@ describe("daemon authority matrix", () => {
 
 	it("keeps the write lane behind the control door, out of reach of a frame document", async () => {
 		const { project, request, control, render } = makeSecurityHarness();
-		const path = `/api/p/${encodeURIComponent(project.name)}/patch`;
+		const path = `/api/p/${encodeURIComponent(project.name)}/source`;
 		const body = JSON.stringify({
-			frame: "home",
-			fingerprint: "whatever",
-			ops: [{ kind: "set-class", source: "frames/home/frame.tsx:1:40", token: "p-4", scope: "" }],
+			action: "commit",
+			handle: "not-a-held-read",
+			generation: 1,
+			original: {
+				publication: "publication",
+				cell: "className",
+				occurrence: "occurrence",
+				invocation: "invocation",
+				context: "context",
+				value: "p-4",
+			},
+			change: { kind: "literal", text: "written" },
 		});
 		const init = { method: "POST", headers: { "content-type": "application/json" }, body };
 
@@ -250,9 +259,11 @@ describe("daemon authority matrix", () => {
 		// shares neither origin nor token with the canvas, and cannot reach it
 		expect((await request(CONTROL_HOST, path, init)).status).toBe(401);
 		expect((await render(path, init)).status).toBe(404);
-		// with the token it is a lane like any other, and the stale fingerprint is
+		// with the token it is a lane like any other, and the read it names is
 		// what stops this one rather than the door
-		expect((await control(path, init)).status).toBe(409);
+		const answered = await control(path, init);
+		expect(answered.status).toBe(200);
+		expect(await answered.json()).toMatchObject({ ok: false });
 		expect(readFileSync(join(project.root, "design", "frames", "home", "frame.tsx"), "utf8")).toContain("<main>safe");
 	});
 

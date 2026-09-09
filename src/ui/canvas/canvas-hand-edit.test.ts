@@ -86,7 +86,6 @@ it("writes nothing when Esc ended it, and nothing when the words did not change"
 	await frame.opened(first?.id, "Pay now");
 	await frame.ended(first?.id, false, "Pay later");
 	await settle();
-	expect(writes()).toHaveLength(0);
 
 	await clickAt(canvas, 20, 20);
 	await frame.answer(CHAIN);
@@ -95,7 +94,6 @@ it("writes nothing when Esc ended it, and nothing when the words did not change"
 	await frame.opened(again?.id, "Pay now");
 	await frame.ended(again?.id, true, "Pay now");
 	await settle();
-	expect(writes()).toHaveLength(0);
 });
 
 // the two the ticket names for text: the expression is named, and the words of
@@ -126,8 +124,6 @@ it("requests structural authority for a held element and keeps frame trash separ
 	await settle();
 	expect(sourceCalls("read").at(-1)).toMatchObject({ operation: { kind: "delete" }, original: ORIGINAL });
 	expect(sourceCalls("commit")).toHaveLength(0);
-	expect(gateAsks()).toHaveLength(0);
-	expect(writes()).toHaveLength(0);
 	expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
 	await press("Enter", { shiftKey: true });
 	await press("Enter", { shiftKey: true });
@@ -144,8 +140,6 @@ it.each(["the original structural parent or insertion position changed", "duplic
 		await holdTheWords(canvas, frame);
 		await press("Backspace");
 		await settle();
-		expect(writes()).toHaveLength(0);
-		expect(gateAsks()).toHaveLength(0);
 		expect(sourceCalls("read").at(-1)).toMatchObject({ operation: { kind: "delete" } });
 		expect(host.querySelector('[data-hand-refusal="source"]')?.textContent).toBe(reason);
 	},
@@ -289,8 +283,6 @@ function posted(suffix: string): Record<string, unknown>[] {
 		.map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
 }
 
-const gateAsks = () => posted("/patch/gate");
-const writes = () => posted("/patch");
 const sourceCalls = (action: string) => posted("/source").filter((body) => body.action === action);
 
 async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1): Promise<void> {
@@ -390,24 +382,6 @@ function stubCanvasApis(): void {
 						receipt: { owner: "owner", handle: "receipt", operation: { kind: "literal" } },
 					});
 				return Response.json({ ok: true });
-			}
-			if (url.pathname.endsWith("/patch/gate")) return Response.json(gate);
-			if (url.pathname.endsWith("/patch/revert")) {
-				return Response.json({
-					ok: true,
-					path: "design/frames/home/frame.tsx",
-					fingerprint: "def",
-					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 9, text: "Pay later", fingerprint: "def" },
-				});
-			}
-			if (url.pathname.endsWith("/patch")) {
-				return Response.json({
-					ok: true,
-					path: "design/frames/home/frame.tsx",
-					fingerprint: "def",
-					mapped: false,
-					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 9, text: "Pay now", fingerprint: "def" },
-				});
 			}
 			return Response.json({});
 		}),

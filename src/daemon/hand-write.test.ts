@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySpan, fingerprintOf, type HandOp, parseHandOps, planOps, readElements, spanBetween } from "./hand-write";
+import { applySpan, fingerprintOf, type HandOp, planOps, readElements, spanBetween } from "./hand-write";
 import { readJsxText } from "./jsx-text";
 
 /**
@@ -164,10 +164,6 @@ describe("set-text", () => {
 	});
 });
 
-it("rejects Delete in the legacy operation parser", () => {
-	expect(parseHandOps([{ kind: "delete", source: stamp(FRAME, "<img") }])).toBeUndefined();
-});
-
 describe("set-attribute", () => {
 	it("replaces one string literal and nothing else on the tag", () => {
 		const text = written([{ kind: "set-attribute", source: stamp(FRAME, "<img"), name: "alt", value: "a latte" }]);
@@ -208,13 +204,6 @@ describe("set-attribute", () => {
 		expect(
 			refusal([{ kind: "set-attribute", source: stamp(FRAME, "<h1"), name: "style", value: "color:red" }]).code,
 		).toBe("inline-style");
-	});
-});
-
-describe("the ops off the wire", () => {
-	it("never takes an asset swap outside the original source owner", () => {
-		const source = stamp(FRAME, "<img");
-		expect(parseHandOps([{ kind: "set-asset", source, specifier: "./hero.png", hint: "hero" }])).toBeUndefined();
 	});
 });
 

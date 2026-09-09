@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { makeApp, makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import type { CompiledClass, CompiledTheme } from "./theme";
 
 /**
@@ -78,37 +77,5 @@ describe("the theme API", () => {
 		const res = await app.request(`/api/p/${name}/theme`);
 		expect(res.status).toBe(422);
 		expect(await res.text()).toContain("@plugin and @config are not supported");
-	});
-
-	/**
-	 * The theme reaches the write lane too (#257): a size this project named
-	 * itself has to be read as a size, or writing one takes the colour away.
-	 */
-	it("writes a size this project named itself without touching its colour", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/tokens.css", tokens);
-		const frame =
-			'export default function Frame() {\n\treturn <span className="text-muted text-sm">126 kr</span>;\n}\n';
-		writeFrame(root, "cart", frame);
-		const app = makeApp(spoolDir);
-		const source = "frames/cart/frame.tsx:2:9";
-		const ops = [{ kind: "set-class", source, token: "text-md", scope: "" }];
-
-		const asked = (await (
-			await app.request(`/api/p/${name}/patch/gate`, jsonPost({ frame: "cart", ops }))
-		).json()) as {
-			ok: boolean;
-			fingerprint: string;
-		};
-		expect(asked.ok).toBe(true);
-		const res = await app.request(
-			`/api/p/${name}/patch`,
-			jsonPost({ frame: "cart", fingerprint: asked.fingerprint, ops }),
-		);
-		expect(res.status).toBe(200);
-
-		const written = readFileSync(join(root, "design", "frames", "cart", "frame.tsx"), "utf8");
-		expect(written).toContain('className="text-muted text-md"');
 	});
 });

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { screenConflict } from "../../daemon/class-write";
 import { lengthOf, lengthPx, scaleValue } from "../../properties/families";
 import { stepOf } from "../../properties/theme";
-import type { CompiledTheme, HandOp, RungRead } from "../api";
+import type { SourcePropertyValue } from "../../source-property";
+import type { CompiledTheme, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { BASE, scopedClass } from "./properties-scope";
 
@@ -33,28 +34,9 @@ export interface LiveHandles {
 
 export const NO_HANDLES: LiveHandles = { w: false, h: false, rotate: false };
 
-/** The smallest an element may be dragged to, in the document's own pixels. */
-export const MIN_ELEMENT_PX = 8;
-
-/** How far the box the document came back with may miss what was written. */
-export const SIZE_SLACK_PX = 1.5;
-
 export interface Size {
 	w: number;
 	h: number;
-}
-
-/**
- * The claim a size drag makes, which is what the box that comes back is read
- * against: the size it wrote, and which axes it wrote at all.
- *
- * One thing rather than three, because the three are never apart — a turn
- * makes no claim of this kind and simply has none.
- */
-export interface Measure {
-	intent: Size;
-	sx: Sign;
-	sy: Sign;
 }
 
 /**
@@ -72,7 +54,7 @@ export interface Measure {
  * width nobody asked for. The rail's number boxes still reach both axes.
  */
 export function handlesFor(read: RungRead | undefined): LiveHandles {
-	if (read === undefined || read.name === undefined || read.refusal !== undefined) return NO_HANDLES;
+	if (read === undefined || read.name === undefined || blocks(read.refusal)) return NO_HANDLES;
 	const literal = read.className === "" ? null : read.className;
 	// asked of the lane's own rule rather than re-derived here: a token of the
 	// family stands in for the write, so the ring greys for exactly the reason
@@ -82,28 +64,25 @@ export function handlesFor(read: RungRead | undefined): LiveHandles {
 	return { w: !turned && free("w-1"), h: !turned && free("h-1"), rotate: free("rotate-1") };
 }
 
+/**
+ * Whether this rung's refusal is one the ring must respect.
+ *
+ * All but one of them are: an expression, an inline style, spread props with
+ * no literal, a stamp that hits nothing: none of them leaves an axis a write
+ * could take. `shared-definition` is the exception, and the reason is #303's: a
+ * class cell several uses share is exactly what the source owner edits, so a
+ * ring that greyed for it would refuse the ordinary case.
+ */
+function blocks(refusal: RungRead["refusal"]): boolean {
+	return refusal !== undefined && refusal.code !== "shared-definition";
+}
+
 /** The degrees the base scope already carries, which a rotate drag starts from. */
 export function rotationOf(className: string): number {
 	const worn = lengthOf(scopedClass(className, BASE), "rotate");
 	if (worn === null) return 0;
 	const deg = lengthPx("deg", worn.value);
 	return deg === null ? 0 : worn.negative ? -deg : deg;
-}
-
-/**
- * The box a size drag is at, in the document's own pixels.
- *
- * Whole pixels on both axes, dragged or not: the box the drag started from is
- * a `getBoundingClientRect` and comes fractional, and a readout that says
- * `220.53125 × 48` is one nobody can act on. Rounding the axis nobody touched
- * is also what lets a drag back to where it began be recognised as one.
- */
-export function draggedSize(start: Size, sx: Sign, sy: Sign, dx: number, dy: number): Size {
-	const held = { w: Math.round(start.w), h: Math.round(start.h) };
-	return {
-		w: sx === 0 ? held.w : Math.max(MIN_ELEMENT_PX, Math.round(start.w + sx * dx)),
-		h: sy === 0 ? held.h : Math.max(MIN_ELEMENT_PX, Math.round(start.h + sy * dy)),
-	};
 }
 
 /**
@@ -146,58 +125,9 @@ export function previewTokens(size: Size, sx: Sign, sy: Sign): string[] {
 	return tokens;
 }
 
-/**
- * The tokens a size drag writes when it is let go.
- *
- * Scale or arbitrary is policy rather than capability: v4 bare steps take
- * quarter multiples, so on a 4px step every whole pixel is expressible as a
- * bare class. It is written as pixels off integer steps anyway — a whole step
- * gets the bare class because it is byte-identical to what the frame's author
- * would have written, and anything else stays `w-[347px]` because the drag
- * meant absolute pixels and a bare class silently rescales if `--spacing`
- * moves. The step comes from the compiled stylesheet, never from an assumption.
- */
-export function sizeTokens(size: Size, sx: Sign, sy: Sign, step: number): string[] {
-	const tokens: string[] = [];
-	if (sx !== 0) tokens.push(`w-${scaleValue(size.w, step)}`);
-	if (sy !== 0) tokens.push(`h-${scaleValue(size.h, step)}`);
-	return tokens;
-}
-
 /** The token a rotate drag is showing, or nothing where it is back at rest. */
 export function rotateTokens(deg: number): string[] {
 	return deg === 0 ? [] : [`${deg < 0 ? "-" : ""}rotate-${Math.abs(deg)}`];
-}
-
-/** Every token as a `set-class` op at the base scope, which is one patch. */
-export function sizeOps(source: string, tokens: readonly string[]): HandOp[] {
-	return tokens.map((token) => ({ kind: "set-class", source, token, scope: "" }));
-}
-
-/** A rotation back at rest takes the family away rather than writing a zero. */
-export function rotateOps(source: string, deg: number): HandOp[] {
-	const tokens = rotateTokens(deg);
-	const written = tokens[0];
-	return written === undefined
-		? [{ kind: "set-class", source, token: "rotate-0", scope: "", remove: true }]
-		: [{ kind: "set-class", source, token: written, scope: "" }];
-}
-
-/**
- * Whether the box the reloaded document came back with is the size that was
- * written (#259's measure after apply).
- *
- * Load-bearing rather than paranoia: utilities land in `@layer utilities`, so
- * an unlayered rule in a project's `tokens.css` beats the written class
- * silently, and layout — `flex-basis`, grid tracks, min and max clamps — can
- * ignore or clamp what the class states. Only the dragged axes are asked
- * about: the other one was never written and whatever it does is the layout's
- * own business.
- */
-export function landed(claim: Measure, measured: Size): boolean {
-	if (claim.sx !== 0 && Math.abs(measured.w - claim.intent.w) > SIZE_SLACK_PX) return false;
-	if (claim.sy !== 0 && Math.abs(measured.h - claim.intent.h) > SIZE_SLACK_PX) return false;
-	return true;
 }
 
 /**
@@ -213,7 +143,7 @@ export function useRing(
 	project: string,
 	held: { frame: string; source: string } | null,
 	revision: number,
-): { live: LiveHandles; step: number; rotation: number } {
+): { live: LiveHandles; step: number; rotation: number; className: string } {
 	const [read, setRead] = useState<RungRead | undefined>(undefined);
 	const [theme, setTheme] = useState<CompiledTheme | null>(null);
 	const asked = held === null ? "" : `${revision}\n${held.frame}\n${held.source}`;
@@ -245,5 +175,264 @@ export function useRing(
 		live: handlesFor(read),
 		step: stepOf(theme),
 		rotation: read === undefined ? 0 : rotationOf(read.className),
+		/** the literal a drag reads its authored units out of */
+		className: read?.className ?? "",
 	};
+}
+
+/* ---------- the approved handle set, and the box it drags to ---------- */
+
+/** The eight targets the approved outline wears, clockwise from the top left. */
+export type Edge = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+export const EDGES: readonly Edge[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+
+/** The smaller dimension a box needs before it wears any handle at all. */
+export const SMALL_TARGET_PX = 24;
+
+/** The length a side needs before it wears an edge strip of its own. */
+export const EDGE_TARGET_PX = 72;
+
+/** Which axes a target moves: -1 the near side, 1 the far side, 0 not at all. */
+export function edgeSigns(edge: Edge): { sx: Sign; sy: Sign } {
+	return {
+		sx: edge.includes("w") ? -1 : edge.includes("e") ? 1 : 0,
+		sy: edge.includes("n") ? -1 : edge.includes("s") ? 1 : 0,
+	};
+}
+
+/**
+ * Which of the eight targets the ring draws, at this size on this file.
+ *
+ * The approved outline's own rule (`editing-interface` at 48a07fb): a box
+ * under 24px on its smaller dimension wears nothing, because handles that
+ * overlap each other are handles nobody can hit; a side under 72px wears no
+ * strip, because a strip that short is a corner with worse aim. The corners
+ * survive both, which is how a small box is resized at all.
+ *
+ * The one exception is the target already being dragged. A box shrinking under
+ * the pointer must not drop the handle the pointer is holding.
+ */
+export function drawnHandles(ring: Size, live: LiveHandles, active: Edge | null): Edge[] {
+	return EDGES.filter((edge) => {
+		if (edge === active) return true;
+		const { sx, sy } = edgeSigns(edge);
+		if (!(sx !== 0 && live.w) && !(sy !== 0 && live.h)) return false;
+		if (Math.min(ring.w, ring.h) < SMALL_TARGET_PX) return false;
+		if (edge.length === 2) return true;
+		return (sy === 0 ? ring.h : ring.w) >= EDGE_TARGET_PX;
+	});
+}
+
+/** What the drag is measured against: the element's own limits, in its own pixels. */
+export interface SizeLimits {
+	minW: number;
+	minH: number;
+	/** no maximum is `null`: the engine set none, which is not a number */
+	maxW: number | null;
+	maxH: number | null;
+}
+
+/** The modifiers a resize gesture opens with, which fix what it may write. */
+export interface ResizeModifiers {
+	/** ⌥ on an already free-positioned element: grow from the centre. */
+	center: boolean;
+	/** ⇧: keep the proportions the box started at. */
+	proportional: boolean;
+}
+
+const MIN_SIZE = 0.01;
+const MAX_SIZE = Number.MAX_SAFE_INTEGER;
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const finite = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
+
+function bounds(min: number, max: number | null): { min: number; max: number } {
+	const lower = clamp(finite(min, MIN_SIZE), MIN_SIZE, MAX_SIZE);
+	// CSS gives the minimum precedence when a minimum and a maximum contradict
+	const upper = Math.max(lower, max === null ? MAX_SIZE : clamp(finite(max, MAX_SIZE), MIN_SIZE, MAX_SIZE));
+	return { min: lower, max: upper };
+}
+
+/**
+ * The box a handle has dragged to, and how far the element's near edges moved
+ * with it, which is the approved playground's own geometry, unchanged.
+ *
+ * Everything is relative to the gesture's original border box in the
+ * document's own pixels, so the canvas divides the pointer by its zoom before
+ * asking. The shift is the answer to "where did the top left go", which only
+ * an already free-positioned element can honestly write.
+ */
+export function resizedBox(
+	start: Size,
+	edge: Edge,
+	dx: number,
+	dy: number,
+	modifiers: ResizeModifiers,
+	limits: SizeLimits,
+): { w: number; h: number; shiftX: number; shiftY: number } {
+	const originalWidth = clamp(finite(start.w, 1), MIN_SIZE, MAX_SIZE);
+	const originalHeight = clamp(finite(start.h, 1), MIN_SIZE, MAX_SIZE);
+	const { sx, sy } = edgeSigns(edge);
+	const multiplier = modifiers.center ? 2 : 1;
+	const changeWidth = sx * clamp(finite(dx, 0), -MAX_SIZE, MAX_SIZE) * multiplier;
+	const changeHeight = sy * clamp(finite(dy, 0), -MAX_SIZE, MAX_SIZE) * multiplier;
+	const widthBounds = bounds(limits.minW, limits.maxW);
+	const heightBounds = bounds(limits.minH, limits.maxH);
+	let w = originalWidth + changeWidth;
+	let h = originalHeight + changeHeight;
+	if (modifiers.proportional) {
+		const relativeWidth = changeWidth / originalWidth;
+		const relativeHeight = changeHeight / originalHeight;
+		const dominant = Math.abs(relativeWidth) >= Math.abs(relativeHeight) ? relativeWidth : relativeHeight;
+		const minimumScale = Math.max(widthBounds.min / originalWidth, heightBounds.min / originalHeight);
+		const maximumScale = Math.min(widthBounds.max / originalWidth, heightBounds.max / originalHeight);
+		// where no shared scale satisfies both axes, the dimension limits win
+		const scale = minimumScale <= maximumScale ? clamp(1 + dominant, minimumScale, maximumScale) : 1 + dominant;
+		w = originalWidth * scale;
+		h = originalHeight * scale;
+	}
+	w = clamp(w, widthBounds.min, widthBounds.max);
+	h = clamp(h, heightBounds.min, heightBounds.max);
+	const shiftX =
+		modifiers.center || (modifiers.proportional && sx === 0)
+			? (originalWidth - w) / 2
+			: sx < 0
+				? originalWidth - w
+				: 0;
+	const shiftY =
+		modifiers.center || (modifiers.proportional && sy === 0)
+			? (originalHeight - h) / 2
+			: sy < 0
+				? originalHeight - h
+				: 0;
+	return { w, h, shiftX, shiftY };
+}
+
+/** What a turn writes: the signed token it is at, or the family taken away at rest. */
+export function turnValue(deg: number): SourcePropertyValue {
+	const [token] = rotateTokens(deg);
+	return token === undefined ? { kind: "remove" } : { kind: "binding", tokens: [token] };
+}
+
+/** Everything one resize gesture may write, and nothing else. */
+export type ResizeProperty = "width" | "height" | "left" | "top";
+
+/**
+ * How a drag may spell one of them, given what the file already says.
+ *
+ * A size is an authored value in an authored unit, and the box it happens to
+ * be is a different question (#305). So a drag writes in the family the author
+ * used: pixels where the file says pixels or says nothing, the same relative
+ * unit where it says one, and nothing at all where the authored form is not a
+ * length a pointer can move. `w-full` and `w-1/2` are the layout's answer
+ * rather than a number, and rewriting either as pixels would throw away what
+ * the file meant.
+ */
+export type SizeSpelling =
+	| { kind: "pixels" }
+	/** `per` is what one of that unit measures on this element, in document pixels */
+	| { kind: "unit"; unit: string; per: number }
+	| { kind: "refused"; says: string };
+
+/** What one property's value is written in, once the spelling is settled. */
+export interface SizeWrite {
+	unit: string;
+	per: number;
+}
+
+const RELATIVE_UNITS = ["rem", "em"];
+
+/**
+ * The spelling this element's own literal leaves open for one family.
+ *
+ * Nothing authored is pixels: there is no unit to keep, and the drag means the
+ * box it is making. A bare step or an authored `px` is pixels too. A `rem` or
+ * `em` is kept, measured against what that unit is worth on this element. Every
+ * other authored form refuses by name.
+ */
+export function authoredSpelling(
+	className: string,
+	family: string,
+	units: Readonly<Record<string, number>>,
+): SizeSpelling {
+	const worn = lengthOf(scopedClass(className, BASE), family);
+	if (worn === null) return { kind: "pixels" };
+	const refused = (says: string): SizeSpelling => ({ kind: "refused", says });
+	const bracket = /^\[(.+)\]$/.exec(worn.value);
+	if (bracket === null) {
+		// a bare step, and `px`, which is Tailwind's own name for one pixel
+		if (worn.value === "px" || /^\d+(?:\.\d+)?$/.test(worn.value)) return { kind: "pixels" };
+		return refused(`${family}-${worn.value} is what the layout decides, not a length a drag can move`);
+	}
+	const unit = /^-?[\d.]+([a-z%]+)$/i.exec(bracket[1] ?? "")?.[1];
+	if (unit === undefined) return refused(`${worn.token} is not a length a drag can move`);
+	if (unit === "px") return { kind: "pixels" };
+	const per = units[unit];
+	if (!RELATIVE_UNITS.includes(unit) || per === undefined || per <= 0) {
+		return refused(`${worn.token} is written in ${unit}, which this drag cannot measure`);
+	}
+	return { kind: "unit", unit, per };
+}
+
+/**
+ * What each of them is spelled in, and which number it takes.
+ *
+ * One table rather than a lookup and a ternary that have to agree: the family
+ * a token wears and the pixel it is measured from are the same fact about the
+ * property, said once.
+ */
+export const RESIZE_PROPERTIES: Readonly<
+	Record<ResizeProperty, { family: string; px(box: Size, shift: { x: number; y: number }, offset: Offset): number }>
+> = {
+	width: { family: "w", px: (box) => box.w },
+	height: { family: "h", px: (box) => box.h },
+	left: { family: "left", px: (_box, shift, offset) => offset.left + shift.x },
+	top: { family: "top", px: (_box, shift, offset) => offset.top + shift.y },
+};
+
+/** Where an already free-positioned element is placed, in the document's own pixels. */
+export interface Offset {
+	left: number;
+	top: number;
+}
+
+/**
+ * One length as a token, in the unit the author used.
+ *
+ * Pixels fold onto the project's scale where they sit on a whole step, because
+ * that is byte-identical to what the frame's author would have written; a
+ * relative unit stays itself, to three places, because rewriting it as pixels
+ * would be a different promise about what the size follows.
+ */
+function scaledToken(family: string, px: number, step: number, write: SizeWrite): string {
+	if (write.unit === "px") {
+		const rounded = Math.round(px);
+		return `${rounded < 0 ? "-" : ""}${family}-${scaleValue(Math.abs(rounded), step)}`;
+	}
+	const value = Number((px / write.per).toFixed(3));
+	return `${value < 0 ? "-" : ""}${family}-[${Math.abs(value)}${write.unit}]`;
+}
+
+/**
+ * What one resize gesture writes, as the source property path's own fields.
+ *
+ * The properties are fixed when the gesture opens, because the source read it
+ * opens is about exactly those fields; the values are whatever the pointer
+ * last made. A size lands on the scale where it sits on a whole step and stays
+ * absolute pixels where it does not, because the drag meant pixels and a bare class
+ * silently rescales if `--spacing` moves.
+ */
+export function resizeFields(
+	properties: readonly ResizeProperty[],
+	live: Size,
+	shift: { x: number; y: number },
+	offset: Offset,
+	step: number,
+	writes: Readonly<Record<ResizeProperty, SizeWrite>>,
+): { property: ResizeProperty; value: SourcePropertyValue }[] {
+	return properties.map((property) => {
+		const { family, px } = RESIZE_PROPERTIES[property];
+		const token = scaledToken(family, px(live, shift, offset), step, writes[property]);
+		return { property, value: { kind: "binding", tokens: [token] } };
+	});
 }
