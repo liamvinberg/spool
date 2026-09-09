@@ -132,13 +132,44 @@ describe("the markdown subset", () => {
 		expect(drawnText(chunksOf("one\n\n---\n\ntwo"))).toBe("onetwo");
 	});
 
-	/**
-	 * The two that are deliberately still out, so a later ticket has to delete a test
-	 * rather than discover an accident.
-	 */
-	it("leaves a table and a heading as their own source", () => {
+	/** the one deliberately still out, so a later ticket has to delete a test rather than discover an accident */
+	it("leaves a heading as its own source", () => {
 		expect(chunksOf("# not a heading")).toEqual([{ kind: "p", spans: [{ text: "# not a heading" }] }]);
-		expect(chunksOf("| a | b |").map((chunk) => chunk.kind)).toEqual(["p"]);
+	});
+
+	it("reads a table as its header and its rows, and draws no pipe", () => {
+		const text =
+			"before\n| page | deleted | ADR |\n|---|:---:|--|\n| admin | `a`, `b` | 0019 |\n| ticket | ops |\nafter";
+
+		expect(chunksOf(text)).toEqual([
+			{ kind: "p", spans: [{ text: "before" }] },
+			{
+				kind: "table",
+				head: [[{ text: "page" }], [{ text: "deleted" }], [{ text: "ADR" }]],
+				rows: [
+					[
+						[{ text: "admin" }],
+						[{ text: "a", code: true }, { text: ", " }, { text: "b", code: true }],
+						[{ text: "0019" }],
+					],
+					[[{ text: "ticket" }], [{ text: "ops" }]],
+				],
+			},
+			{ kind: "p", spans: [{ text: "after" }] },
+		]);
+		expect(drawnText(chunksOf(text))).toBe("beforeadmina, b0019ticketopsafter");
+	});
+
+	it("reads a table without outer pipes, keeps an escaped pipe, and cuts a row to the header", () => {
+		expect(chunksOf("a | b\n-- | --\n1 \\| one | 2 | 3")).toEqual([
+			{ kind: "table", head: [[{ text: "a" }], [{ text: "b" }]], rows: [[[{ text: "1 | one" }], [{ text: "2" }]]] },
+		]);
+	});
+
+	it("leaves a delimiter of the wrong width, or under nothing, as prose", () => {
+		expect(chunksOf("| a | b |\n|---|").map((chunk) => chunk.kind)).toEqual(["p"]);
+		expect(chunksOf("|---|---|").map((chunk) => chunk.kind)).toEqual(["p"]);
+		expect(chunksOf("- item\n|---|").map((chunk) => chunk.kind)).toEqual(["item"]);
 	});
 
 	/**
@@ -220,6 +251,22 @@ describe("closing what has not been written yet", () => {
 	});
 
 	/** `--` is a nascent rule for exactly the same reason `-` is a nascent list marker */
+	it("holds a line with a pipe in it until the line after it says it was not a header", () => {
+		expect(closedText("one\n| a | b")).toBe("one\n");
+		expect(closedText("one\n| a | b |\n")).toBe("one\n");
+		expect(closedText("one\n| a | b |\n|--")).toBe("one\n");
+		expect(closedText("one\n| a | b |\n|---|")).toBe("one\n");
+		expect(closedText("one\na | b\nprose")).toBe("one\na | b\nprose");
+	});
+
+	it("draws a row still arriving once the table is open", () => {
+		const open = "| a | b |\n|---|---|\n";
+
+		expect(closedText(`${open}| 1 | tw`)).toBe(`${open}| 1 | tw`);
+		expect(closedText(`${open}| 1 | two |\n| 3`)).toBe(`${open}| 1 | two |\n| 3`);
+		expect(closedText(`${open}| 1 | two |\n\n| c`)).toBe(`${open}| 1 | two |\n\n`);
+	});
+
 	it("holds a nascent rule back until its third dash", () => {
 		expect(closedText("done.\n--")).toBe("done.\n");
 		expect(closedText("done.\n---")).toBe("done.\n---");

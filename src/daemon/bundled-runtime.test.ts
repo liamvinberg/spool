@@ -8,6 +8,7 @@ import type { EngineTurnOptions } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
 import { BundledRuntime } from "./bundled-runtime";
 import { BundledCredentialStore, writePrivate } from "./bundled-store";
+import { ownFetchRuntime } from "./fixtures/bundled-own-fetch-provider";
 import { deterministicBundledRuntime } from "./fixtures/bundled-provider";
 
 function options(root: string, id = randomUUID(), prompt = "hello"): EngineTurnOptions {
@@ -167,4 +168,23 @@ it("saves before idle disposal and reloads exact context with current instructio
 	await runtime.turn("second", { ...first, said: [{ prompt: "continue", selection: "" }] }, () => {});
 	expect(contexts[1]?.systemPrompt).toContain("Instruction changed after idle disposal");
 	expect(contexts[1]?.messages.filter((message) => message.role === "user")).toHaveLength(2);
+});
+
+it("leaves inference to adapters that refuse a foreign fetch and keeps the wrapper for the rest", async () => {
+	const directory = makeTempDir();
+	const { runtime, wrapped } = await ownFetchRuntime(directory);
+	onTestFinished(() => runtime.close());
+	await runtime.request({ kind: "connect", provider: "google", key: "fixture-key" });
+	await runtime.request({ kind: "connect", provider: "openai", key: "fixture-key" });
+	const root = makeTempDir();
+	const gemini: AgentEvent[] = [];
+	await runtime.turn(
+		"gemini",
+		{ ...options(root), ask: { value: "spool/google/api_key/gemini-test", effort: "high" } },
+		(event) => gemini.push(event),
+	);
+	expect(gemini.find((event) => event.kind === "ended")).toMatchObject({ ending: "done", reason: null });
+	expect(wrapped.filter((call) => call.provider === "google")).toEqual([{ provider: "google", fetched: false }]);
+	await runtime.turn("openai", options(root), () => {});
+	expect(wrapped.filter((call) => call.provider === "openai").at(-1)).toEqual({ provider: "openai", fetched: true });
 });

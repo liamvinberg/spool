@@ -17,11 +17,17 @@
  * So the rule here is now the other one: a marker the agent can write is a marker
  * this file reads, unless drawing it costs more than the syntax does.
  *
- * **Two are deliberately still out.** A table cannot be laid out in a 200–480px
- * column without deciding what it becomes, which is a design question and not a
- * parsing one. A heading has no size in a rail whose prose is all one size. Both
- * keep their syntax visible on purpose, because a wrong drawing is worse than a
- * legible `|` — and legible is what the raw source is.
+ * **A table is read, and it is decided what it becomes.** A grid cannot be laid out
+ * in a 200–480px column: three columns of prose at 300px are three ribbons of two
+ * words each, and a grid that scrolls sideways hides the cell the reader is after.
+ * So a table is a stack of its rows, each row a block whose first cell is the lead
+ * and whose other cells are label–value lines, labelled by the header. That is the
+ * only shape that survives the whole width range, and a comparison down a column
+ * was never available at this width anyway.
+ *
+ * **A heading is deliberately still out.** It has no size in a rail whose prose is
+ * all one size, so its `#` stays visible on purpose: a wrong drawing is worse than
+ * a legible marker, and legible is what the raw source is.
  *
  * **The streaming invariant governs every addition** (see `agent-markers.ts`):
  * what is on screen must always be a prefix of what the finished message draws.
@@ -58,7 +64,14 @@ export type Chunk =
 			readonly spans: readonly Span[];
 	  }
 	| { readonly kind: "fence"; readonly text: string }
-	| { readonly kind: "rule" };
+	| { readonly kind: "rule" }
+	| {
+			readonly kind: "table";
+			/** the header row, which the renderer draws as labels rather than as a row of its own */
+			readonly head: readonly (readonly Span[])[];
+			/** the body rows, each cut to the header's width; a short row is short */
+			readonly rows: readonly (readonly Span[])[][];
+	  };
 
 /** what a marker adds to the spans inside it, which is everything a span is but its text */
 type Style = Omit<Span, "text">;
@@ -135,6 +148,39 @@ const ITEM = /^(\s*)(?:([-*])|(\d+)\.)\s+(?:\[([ xX])\]\s+)?(.*)$/;
 const RULE = /^\s*-{3,}\s*$/;
 
 const QUOTE = /^\s*>\s?(.*)$/;
+
+/**
+ * The row under a table's header: `|---|:--:|`, one dashed cell per column.
+ *
+ * This row is what makes the lines a table at all, which is why the header before
+ * it is read as a paragraph until it lands and why `closedText` holds the header
+ * until then. The colons are read and dropped: alignment is a property of a column,
+ * and the stack the renderer draws has none.
+ */
+const DELIMITER = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/**
+ * A row's cells, in GitHub's reading: the outer pipes are optional and dropped, a
+ * `\|` is a pipe inside a cell, and every cell is trimmed.
+ *
+ * `null` for a line that is not a row, which is a line with no pipe in it. A pipe
+ * inside a code span still splits, as it does on GitHub, because reading the spans
+ * first would parse every line of the message twice to save the one table in a
+ * thousand that puts a bare pipe in a path.
+ */
+export function cellsOf(line: string): string[] | null {
+	if (!line.includes("|")) return null;
+	let inner = line.trim();
+	if (inner.startsWith("|")) inner = inner.slice(1);
+	if (inner.endsWith("|") && !inner.endsWith("\\|")) inner = inner.slice(0, -1);
+	return inner.split(/(?<!\\)\|/).map((cell) => cell.replace(/\\\|/g, "|").trim());
+}
+
+/** whether `line` is a delimiter row with exactly `width` columns, so it closes the header above it */
+export function delimits(line: string, width: number): boolean {
+	if (!line.includes("|") || !DELIMITER.test(line)) return false;
+	return (cellsOf(line)?.length ?? 0) === width;
+}
 
 /**
  * How many parses are kept, which is bounded because a stream mints keys.
@@ -215,6 +261,23 @@ function parseChunks(text: string): readonly Chunk[] {
 		if (paragraph.length > 0) chunks.push({ kind: "p", spans: spansOf(paragraph.join(" ")) });
 		paragraph = [];
 	};
+	/**
+	 * The open table: its header, and the rows under it so far. A row is any line with a
+	 * pipe in it; the first line without one ends the table, as a blank line does.
+	 */
+	let table: { head: string[]; rows: string[][] } | null = null;
+	const shutTable = () => {
+		if (table !== null) {
+			const width = table.head.length;
+			const rows = table.rows;
+			chunks.push({
+				kind: "table",
+				head: table.head.map((cell) => spansOf(cell)),
+				rows: rows.map((row) => row.slice(0, width).map((cell) => spansOf(cell))),
+			});
+		}
+		table = null;
+	};
 	const shutQuote = () => {
 		if (quote.length > 0) chunks.push({ kind: "quote", spans: spansOf(quote.join(" ")) });
 		quote = [];
@@ -237,6 +300,7 @@ function parseChunks(text: string): readonly Chunk[] {
 		shutParagraph();
 		shutItem();
 		shutQuote();
+		shutTable();
 		indents.length = 0;
 	};
 
@@ -255,6 +319,30 @@ function parseChunks(text: string): readonly Chunk[] {
 		if (line.trim() === "") {
 			shut();
 			continue;
+		}
+		if (table !== null) {
+			const cells = cellsOf(line);
+			if (cells !== null) {
+				table.rows.push(cells);
+				continue;
+			}
+			shutTable();
+		}
+		/*
+		 * A table is its header line and the delimiter under it, and the header has
+		 * already been read as the paragraph's last line by the time the delimiter
+		 * arrives. So the delimiter reaches back one line: the paragraph gives up its
+		 * tail and the table opens on it. A delimiter of the wrong width, or with no
+		 * line above it, is prose with dashes in it.
+		 */
+		if (paragraph.length > 0) {
+			const head = cellsOf(paragraph[paragraph.length - 1] ?? "");
+			if (head !== null && delimits(line, head.length)) {
+				paragraph.pop();
+				shutParagraph();
+				table = { head, rows: [] };
+				continue;
+			}
 		}
 		if (RULE.test(line)) {
 			shut();
@@ -304,6 +392,10 @@ export function drawnText(chunks: readonly Chunk[]): string {
 		.map((chunk) => {
 			if (chunk.kind === "rule") return "";
 			if (chunk.kind === "fence") return chunk.text;
+			// the header is drawn as labels beside every row, which makes it the renderer's
+			// glyph rather than the agent's text, exactly as a list marker is
+			if (chunk.kind === "table")
+				return chunk.rows.map((row) => row.map((cell) => cell.map((span) => span.text).join("")).join("")).join("");
 			return chunk.spans.map((span) => span.text).join("");
 		})
 		.join("");
