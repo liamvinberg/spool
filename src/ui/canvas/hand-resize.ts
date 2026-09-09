@@ -68,8 +68,8 @@ export function handlesFor(read: RungRead | undefined): LiveHandles {
  * Whether this rung's refusal is one the ring must respect.
  *
  * All but one of them are: an expression, an inline style, spread props with
- * no literal, a stamp that hits nothing — none leaves an axis a write could
- * take. `shared-definition` is the exception, and the reason is #303's: a
+ * no literal, a stamp that hits nothing: none of them leaves an axis a write
+ * could take. `shared-definition` is the exception, and the reason is #303's: a
  * class cell several uses share is exactly what the source owner edits, so a
  * ring that greyed for it would refuse the ordinary case.
  */
@@ -225,18 +225,14 @@ export function drawnHandles(ring: Size, live: LiveHandles, active: Edge | null)
 /** What the drag is measured against: the element's own limits, in its own pixels. */
 export interface SizeLimits {
 	minW: number;
-	maxW: number;
 	minH: number;
-	maxH: number;
+	/** no maximum is `null`: the engine set none, which is not a number */
+	maxW: number | null;
+	maxH: number | null;
 }
 
 /** What an unmeasured box is held to: nothing, until the document says otherwise. */
-export const NO_LIMITS: SizeLimits = {
-	minW: 0,
-	maxW: Number.POSITIVE_INFINITY,
-	minH: 0,
-	maxH: Number.POSITIVE_INFINITY,
-};
+export const NO_LIMITS: SizeLimits = { minW: 0, minH: 0, maxW: null, maxH: null };
 
 /** The modifiers a resize gesture opens with, which fix what it may write. */
 export interface ResizeModifiers {
@@ -251,16 +247,16 @@ const MAX_SIZE = Number.MAX_SAFE_INTEGER;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const finite = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
 
-function bounds(min: number, max: number): { min: number; max: number } {
+function bounds(min: number, max: number | null): { min: number; max: number } {
 	const lower = clamp(finite(min, MIN_SIZE), MIN_SIZE, MAX_SIZE);
 	// CSS gives the minimum precedence when a minimum and a maximum contradict
-	const upper = Math.max(lower, clamp(Number.isNaN(max) ? MAX_SIZE : max, MIN_SIZE, MAX_SIZE));
+	const upper = Math.max(lower, max === null ? MAX_SIZE : clamp(finite(max, MAX_SIZE), MIN_SIZE, MAX_SIZE));
 	return { min: lower, max: upper };
 }
 
 /**
  * The box a handle has dragged to, and how far the element's near edges moved
- * with it — the approved playground's own geometry, unchanged.
+ * with it, which is the approved playground's own geometry, unchanged.
  *
  * Everything is relative to the gesture's original border box in the
  * document's own pixels, so the canvas divides the pointer by its zoom before
@@ -334,7 +330,7 @@ function scaledToken(family: string, px: number, step: number): string {
  * The properties are fixed when the gesture opens, because the source read it
  * opens is about exactly those fields; the values are whatever the pointer
  * last made. A size lands on the scale where it sits on a whole step and stays
- * absolute pixels where it does not — the drag meant pixels, and a bare class
+ * absolute pixels where it does not, because the drag meant pixels and a bare class
  * silently rescales if `--spacing` moves.
  */
 export function resizeFields(

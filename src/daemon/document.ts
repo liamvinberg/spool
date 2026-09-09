@@ -1081,6 +1081,7 @@ const canvasShimJs = `(() => {
 		const border = style.boxSizing === "border-box";
 		const extraW = border ? 0 : px("padding-left") + px("padding-right") + px("border-left-width") + px("border-right-width");
 		const extraH = border ? 0 : px("padding-top") + px("padding-bottom") + px("border-top-width") + px("border-bottom-width");
+		// a maximum the engine does not set is no number at all, and says so
 		const limit = (name, extra, fallback) => {
 			const value = style.getPropertyValue(name);
 			return value.endsWith("px") ? parseFloat(value) + extra : fallback;
@@ -1098,8 +1099,8 @@ const canvasShimJs = `(() => {
 			limits: {
 				minW: limit("min-width", extraW, extraW),
 				minH: limit("min-height", extraH, extraH),
-				maxW: limit("max-width", extraW, Infinity),
-				maxH: limit("max-height", extraH, Infinity),
+				maxW: limit("max-width", extraW, null),
+				maxH: limit("max-height", extraH, null),
 			},
 		};
 	}

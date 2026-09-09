@@ -3040,7 +3040,7 @@ export function ProjectCanvas({
 	 * A ring gesture's write (#305), which is the rail's own.
 	 *
 	 * One source read is opened when the pointer goes down, every sample
-	 * previews against it in the running layout, and letting go completes it —
+	 * previews against it in the running layout, and letting go completes it:
 	 * one save, one entry on the one history. The properties are fixed when the
 	 * read opens because the read is about exactly those fields; the values are
 	 * whatever the pointer last made.
@@ -4774,8 +4774,8 @@ export function ProjectCanvas({
 	 *
 	 * ⇧ and ⌥ are read here and nowhere else. The read is about exactly the
 	 * fields this gesture may write, and a modifier picked up half way through
-	 * would change that set — so the drag that opened without them keeps its
-	 * own promise, and the readout says which one it made.
+	 * would change that set, so the drag that opened without them keeps its own
+	 * promise and the readout says which one it made.
 	 */
 	const beginElementResize = (pick: PickedSelection, edge: Edge, from: Point, asked: ResizeModifiers) => {
 		const { sx, sy } = edgeSigns(edge);

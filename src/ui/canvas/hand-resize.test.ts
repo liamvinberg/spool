@@ -159,7 +159,7 @@ describe("which of the eight targets the ring draws", () => {
 });
 
 describe("the box a handle drags to", () => {
-	const free = { minW: 0, maxW: Number.POSITIVE_INFINITY, minH: 0, maxH: Number.POSITIVE_INFINITY };
+	const free = { minW: 0, minH: 0, maxW: null, maxH: null };
 	const still = { center: false, proportional: false };
 
 	it("moves the grabbed axes and leaves the rest of the box alone", () => {
@@ -202,10 +202,10 @@ describe("the box a handle drags to", () => {
 	});
 
 	it("clamps to the measured minimum and maximum, and the minimum wins a contradiction", () => {
-		const bounded = { minW: 120, maxW: 260, minH: 0, maxH: Number.POSITIVE_INFINITY };
+		const bounded = { minW: 120, maxW: 260, minH: 0, maxH: null };
 		expect(resizedBox({ w: 200, h: 120 }, "e", 400, 0, still, bounded).w).toBe(260);
 		expect(resizedBox({ w: 200, h: 120 }, "e", -400, 0, still, bounded).w).toBe(120);
-		const contradictory = { minW: 300, maxW: 100, minH: 0, maxH: Number.POSITIVE_INFINITY };
+		const contradictory = { minW: 300, maxW: 100, minH: 0, maxH: null };
 		expect(resizedBox({ w: 200, h: 120 }, "e", 0, 0, still, contradictory).w).toBe(300);
 	});
 });

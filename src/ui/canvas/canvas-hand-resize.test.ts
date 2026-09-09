@@ -14,8 +14,8 @@ import type { PickedHit } from "./protocol";
  * The ring wears the approved outline's set on a held element: a cube on each
  * corner, a grab strip on each side long enough to hold one, and a rotate zone
  * diagonally outside each corner. Nothing is written while the pointer is
- * down — every sample is a preview in the running layout — and letting go is
- * one source operation and one press of undo. Every way a drag can be
+ * down, because every sample is a preview in the running layout, and letting
+ * go is one source operation and one press of undo. Every way a drag can be
  * interrupted retires the samples and saves nothing.
  */
 
@@ -245,7 +245,7 @@ it("keeps the source as it was when a drag ends where it began", async () => {
 
 /**
  * Every way a drag ends without a save (#305). Each retires the samples, puts
- * the previews the gesture owned back, and leaves the source untouched — and a
+ * the previews the gesture owned back, and leaves the source untouched. A
  * release that arrives afterwards cannot revive the generation it cancelled.
  */
 const INTERRUPTIONS = [
@@ -342,7 +342,7 @@ const SIZING = {
 	extra: { w: 0, h: 0 },
 	free: false,
 	offset: { left: null, top: null },
-	limits: { minW: 0, maxW: Number.MAX_SAFE_INTEGER, minH: 0, maxH: Number.MAX_SAFE_INTEGER },
+	limits: { minW: 0, minH: 0, maxW: null, maxH: null },
 };
 
 let rung: RungRead = {
