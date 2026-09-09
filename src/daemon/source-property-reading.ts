@@ -1,7 +1,13 @@
-import type { SourceOperation } from "../source-edit";
+import type { MatchedRuleChain, SourceOperation } from "../source-edit";
 import type { SourcePropertyEnvironment, SourcePropertyNative, SourcePropertyReading } from "../source-property";
 import type { PropertyCertificate } from "./source-property-compile";
-import { type PropertySource, propertySourceOwner } from "./source-property-declaration";
+import {
+	admissible,
+	applies,
+	declarationScope,
+	type PropertySource,
+	propertySourceOwner,
+} from "./source-property-declaration";
 import { propertyInputs, propertyKeys, readPropertyEffects } from "./source-property-effects";
 import { type StyleMember, styleMemberEffects } from "./source-property-style";
 
@@ -12,7 +18,7 @@ export function propertyReading(
 	environment: SourcePropertyEnvironment,
 	native?: SourcePropertyNative,
 	style?: readonly StyleMember[],
-	matched?: readonly (readonly string[])[],
+	matched?: readonly MatchedRuleChain[],
 ): SourcePropertyReading {
 	const { roots, effects, owners } = readPropertyEffects(
 		certificate,
@@ -21,6 +27,22 @@ export function propertyReading(
 		environment,
 	);
 	const shown = native?.property === operation.property ? { native: native.value } : {};
+	// The conditions the project's own rules declare this property under, whether
+	// or not one of them is what applies here. This is the written half of the
+	// row: what the viewport is doing to the element is the native half.
+	const written = [
+		...new Set(
+			certificate.effects
+				.filter(
+					(effect) =>
+						admissible(effect) &&
+						propertyKeys(effect.property, environment).some((key) => roots.has(key)) &&
+						(matched === undefined || applies(effect, matched) !== undefined),
+				)
+				.flatMap(declarationScope),
+		),
+	];
+	const under = written.length ? { written } : {};
 	// A scope is a condition on a rule, and an inline member carries none, so a
 	// scoped row reads its class literal even where a member also declares it.
 	const inline = style && operation.scope === "" ? styleMemberEffects(style) : [];
@@ -39,6 +61,7 @@ export function propertyReading(
 		return {
 			tokens: [],
 			source: "declaration",
+			...under,
 			binding: authored === undefined ? { kind: "mixed" } : { kind: "custom" },
 			...(authored === undefined ? {} : { authored }),
 			...shown,
@@ -59,6 +82,7 @@ export function propertyReading(
 		return {
 			tokens: [],
 			source: "style",
+			...under,
 			binding: authored === undefined ? { kind: "mixed" } : { kind: "custom" },
 			...(authored === undefined ? {} : { authored }),
 			...shown,
@@ -76,6 +100,7 @@ export function propertyReading(
 	return {
 		tokens: owners,
 		source: "class",
+		...under,
 		binding,
 		...(binding.kind === "custom" ? { authored: values[0]! } : {}),
 		...shown,

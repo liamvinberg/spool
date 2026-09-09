@@ -1203,3 +1203,15 @@ it("says why a box nobody owns cannot be written, instead of offering the write"
 	const input = row()?.querySelector<HTMLInputElement>("input");
 	expect(input === null || input === undefined || input.disabled).toBe(true);
 });
+
+it("says what a row is also written under, apart from what the viewport is doing", async () => {
+	const rail = await mount(
+		"p-6",
+		BASE,
+		undefined,
+		sourced({ padding: { source: "class", tokens: ["p-6"], written: ["@media (min-width: 48rem)"] } }),
+	);
+	const said = () =>
+		rail.host.querySelector('[data-properties-row="padding"]')?.querySelector("span[title]")?.getAttribute("title");
+	await vi.waitFor(() => expect(said()).toBe("also written under @media (min-width: 48rem)"));
+});

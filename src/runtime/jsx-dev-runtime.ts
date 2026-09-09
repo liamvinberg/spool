@@ -89,6 +89,8 @@ import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import {
 	combineUseOutcomes,
+	MATCHED_RULE_LIMIT,
+	type MatchedRuleChain,
 	type RetainedValues,
 	type SourceInventory,
 	type SourceOccurrence,
@@ -387,7 +389,7 @@ function inspectSource(
 		operation.kind === "property" ? getComputedStyle(element).getPropertyValue(operation.property) : "";
 	// One read answers several properties, so the chains are the element's own
 	// rather than one property's; the compiler still decides what any of them own.
-	const rules = operation.kind === "property" ? matchedRulePaths(element).slice(0, 200) : [];
+	const rules = operation.kind === "property" ? matchedRulePaths(element).slice(0, MATCHED_RULE_LIMIT) : [];
 	let structure: SourceOccurrence["structure"];
 	if (operation.kind === "delete") {
 		const parent = element.parentElement;
@@ -429,41 +431,71 @@ const DYNAMIC =
  * this one. A selector this document's own parser will not take, or a grouping
  * rule whose order is not the cascade's own, is left out rather than guessed at.
  */
-function matchedRulePaths(element: Element): string[][] {
-	const found: string[][] = [];
+function matchedRulePaths(element: Element): MatchedRuleChain[] {
+	const found: MatchedRuleChain[] = [];
 	const seen = new Set<string>();
-	const applies = (selector: string): boolean => {
-		const resting = selector.replace(DYNAMIC, "");
-		if (!resting.trim()) return false;
+	const view = element.ownerDocument.defaultView;
+	const matches = (selector: string, resting: boolean): boolean => {
+		const text = resting ? selector.replace(DYNAMIC, "") : selector;
+		if (!text.trim()) return false;
 		try {
-			return element.matches(resting);
+			return element.matches(text);
 		} catch {
 			return false;
 		}
 	};
-	const walk = (rules: CSSRuleList, path: readonly string[]): void => {
+	const walk = (rules: CSSRuleList, path: readonly string[], live: boolean): void => {
 		for (const rule of rules) {
 			if (rule instanceof CSSStyleRule) {
 				const next = [...path, rule.selectorText];
 				const key = JSON.stringify(next);
-				if (rule.style.length > 0 && !seen.has(key) && applies(rule.selectorText)) {
+				if (rule.style.length > 0 && !seen.has(key) && matches(rule.selectorText, true)) {
 					seen.add(key);
-					found.push(next);
+					// Written and applying are different facts. A rule the element
+					// matches only with its state stripped, or under a condition this
+					// document does not satisfy, is written for it and inactive now.
+					found.push({ path: next, active: live && matches(rule.selectorText, false) });
 				}
-				if (rule.cssRules.length) walk(rule.cssRules, next);
-			} else if (rule instanceof CSSMediaRule) walk(rule.cssRules, [...path, `@media ${rule.conditionText}`]);
-			else if (rule instanceof CSSSupportsRule) walk(rule.cssRules, [...path, `@supports ${rule.conditionText}`]);
-			else if (rule instanceof CSSLayerBlockRule) walk(rule.cssRules, [...path, `@layer ${rule.name}`]);
+				if (rule.cssRules.length) walk(rule.cssRules, next, live);
+			} else if (rule instanceof CSSMediaRule)
+				walk(
+					rule.cssRules,
+					[...path, `@media ${rule.conditionText}`],
+					live && matchesMedia(view, rule.conditionText),
+				);
+			else if (rule instanceof CSSSupportsRule)
+				walk(
+					rule.cssRules,
+					[...path, `@supports ${rule.conditionText}`],
+					live && supportsCondition(rule.conditionText),
+				);
+			else if (rule instanceof CSSLayerBlockRule) walk(rule.cssRules, [...path, `@layer ${rule.name}`], live);
 		}
 	};
 	for (const sheet of element.ownerDocument.styleSheets) {
 		try {
-			walk(sheet.cssRules, []);
+			walk(sheet.cssRules, [], true);
 		} catch {
 			// A stylesheet this document may not read is not evidence about it.
 		}
 	}
 	return found;
+}
+
+function matchesMedia(view: Window | null, condition: string): boolean {
+	try {
+		return view?.matchMedia(condition).matches === true;
+	} catch {
+		return false;
+	}
+}
+
+function supportsCondition(condition: string): boolean {
+	try {
+		return CSS.supports(condition);
+	} catch {
+		return false;
+	}
 }
 
 function renderedField(element: HTMLElement, field?: string): string {

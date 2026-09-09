@@ -69,6 +69,8 @@ export interface SourcePropertyReading {
 	authored?: string;
 	/** Why no single source can be named for this property, where none can. */
 	reason?: string;
+	/** The condition an authored declaration is written under, where it has one. */
+	written?: readonly string[];
 	binding:
 		| { kind: "page" }
 		| { kind: "custom" }

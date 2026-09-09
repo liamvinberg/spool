@@ -1,3 +1,4 @@
+import type { MatchedRuleChain } from "../source-edit";
 import type { SourcePropertyEffect, SourcePropertyEnvironment } from "../source-property";
 import type { SpanPatch } from "./hand-write";
 import { propertyKeys } from "./source-property-effects";
@@ -53,13 +54,13 @@ export function authoredCandidates(
 	certificate: { effects: readonly SourcePropertyEffect[] },
 	roots: ReadonlySet<string>,
 	environment: SourcePropertyEnvironment,
-	matched?: readonly (readonly string[])[],
+	matched?: readonly MatchedRuleChain[],
 ): SourcePropertyEffect[] {
 	return certificate.effects.filter(
 		(effect) =>
 			admissible(effect) &&
 			propertyKeys(effect.property, environment).some((key) => roots.has(key)) &&
-			(matched === undefined || applies(effect, matched)),
+			(matched === undefined || applies(effect, matched) !== undefined),
 	);
 }
 
@@ -70,11 +71,31 @@ export function authoredCandidates(
  * chains the element actually matched are evidence about this element, and the
  * client cannot name a chain the document did not report.
  */
-export function applies(effect: SourcePropertyEffect, matched: readonly (readonly string[])[]): boolean {
+export function applies(
+	effect: SourcePropertyEffect,
+	matched: readonly MatchedRuleChain[],
+): MatchedRuleChain | undefined {
 	const path = declarationPath(effect).map(collapse);
-	return matched.some(
-		(chain) => chain.length === path.length && chain.every((part, index) => collapse(part) === path[index]),
+	return matched.find(
+		(chain) => chain.path.length === path.length && chain.path.every((part, index) => collapse(part) === path[index]),
 	);
+}
+
+/** The state pseudo-classes a rule may name and an element may not be in right now. */
+const DYNAMIC =
+	/:(?:hover|focus|focus-visible|focus-within|active|disabled|enabled|checked|indeterminate|valid|invalid|required|optional|read-only|read-write|placeholder-shown|target|visited|link|any-link)\b/;
+
+/**
+ * The condition a declaration is written under, in the order it was written.
+ *
+ * A media or supports group is one; so is a state the selector names. A row at
+ * the base scope is about what applies unconditionally, so a declaration with a
+ * condition of its own belongs to that condition's scope and not to this row.
+ */
+export function declarationScope(effect: SourcePropertyEffect): readonly string[] {
+	const path = declarationPath(effect);
+	const selector = path.find((part) => !part.startsWith("@")) ?? "";
+	return [...path.filter((part) => part.startsWith("@")), ...(DYNAMIC.test(selector) ? [selector] : [])];
 }
 
 function collapse(value: string): string {
@@ -206,8 +227,13 @@ export function propertySourceOwner(
 	styleEffects: readonly SourcePropertyEffect[],
 	certificate: { effects: readonly SourcePropertyEffect[] },
 	environment: SourcePropertyEnvironment,
-	matched: readonly (readonly string[])[] = [],
+	matched: readonly MatchedRuleChain[] = [],
 ): PropertySource {
+	// A declaration owns an unconditional row only while it is the one applying:
+	// a rule written for a viewport this document is not at, or for a state, is
+	// written for its own scope and is not what this row edits.
+	const owns = (effect: SourcePropertyEffect) =>
+		admissible(effect) && declarationScope(effect).length === 0 && applies(effect, matched)?.active === true;
 	const covers = (effect: SourcePropertyEffect, root: string) =>
 		propertyKeys(effect.property, environment).includes(root);
 	const winners = new Map<string, SourcePropertyEffect | undefined>();
@@ -218,12 +244,10 @@ export function propertySourceOwner(
 			if (layers.length && layers.every((name) => COMPILER_LAYERS.includes(name.split(".")[0]!))) continue;
 			// Only a rule this element really matched can constrain what it can be
 			// told about its own property; the rest of the project is not evidence.
-			if (effect.owner === null && !applies(effect, matched)) continue;
+			if (effect.owner === null && applies(effect, matched) === undefined) continue;
 			throw new Error("this property has a declaration whose cascade order is not established");
 		}
-		const authored = certificate.effects.filter(
-			(effect) => admissible(effect) && covers(effect, root) && applies(effect, matched),
-		);
+		const authored = certificate.effects.filter((effect) => covers(effect, root) && owns(effect));
 		const utilities = classEffects.filter((effect) => !admissible(effect));
 		const tiers = [
 			utilities.filter((effect) => effect.important && covers(effect, root)),

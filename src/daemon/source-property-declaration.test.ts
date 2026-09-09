@@ -112,13 +112,15 @@ describe("which source owns the winning effect", () => {
 				[],
 				{ effects: [utility("padding", "1.5rem"), authored] },
 				ltr,
-				[[".card"]],
+				[{ path: [".card"], active: true }],
 			),
 		).toEqual({ kind: "declaration", effects: [authored] });
 	});
 
 	it("leaves the element's own member above an ordinary project declaration", () => {
-		expect(propertySourceOwner(roots, [], [member], { effects: [authored] }, ltr, [[".card"]])).toEqual({
+		expect(
+			propertySourceOwner(roots, [], [member], { effects: [authored] }, ltr, [{ path: [".card"], active: true }]),
+		).toEqual({
 			kind: "style",
 			members: ["padding"],
 		});
@@ -126,7 +128,9 @@ describe("which source owns the winning effect", () => {
 
 	it("leaves an important project declaration above the element's own member", () => {
 		const strong = effect([".card"], "padding", "12px", true);
-		expect(propertySourceOwner(roots, [], [member], { effects: [strong] }, ltr, [[".card"]])).toEqual({
+		expect(
+			propertySourceOwner(roots, [], [member], { effects: [strong] }, ltr, [{ path: [".card"], active: true }]),
+		).toEqual({
 			kind: "declaration",
 			effects: [strong],
 		});
@@ -141,7 +145,11 @@ describe("which source owns the winning effect", () => {
 
 	it("ignores the compiler's own layers, which an unlayered rule already outranks", () => {
 		const preflight = effect(["@layer base", "*"], "padding", "0");
-		expect(propertySourceOwner(roots, [], [], { effects: [preflight] }, ltr, [["@layer base", "*"]])).toEqual({
+		expect(
+			propertySourceOwner(roots, [], [], { effects: [preflight] }, ltr, [
+				{ path: ["@layer base", "*"], active: true },
+			]),
+		).toEqual({
 			kind: "class",
 		});
 	});
@@ -151,11 +159,15 @@ describe("which source owns the winning effect", () => {
 		["a container query", effect(["@container (min-width: 20rem)", ".card"], "padding", "12px")],
 		["a nested selector chain", effect([".page", ".card"], "padding", "12px")],
 	])("refuses %s it cannot order", (_name, held) => {
-		expect(() => propertySourceOwner(roots, [], [], { effects: [held] }, ltr, [held.path])).toThrow();
+		expect(() =>
+			propertySourceOwner(roots, [], [], { effects: [held] }, ltr, [{ path: held.path, active: true }]),
+		).toThrow();
 	});
 
 	it("leaves a project rule that does not apply to this element out of the cascade", () => {
-		expect(propertySourceOwner(roots, [], [], { effects: [authored] }, ltr, [[".elsewhere"]])).toEqual({
+		expect(
+			propertySourceOwner(roots, [], [], { effects: [authored] }, ltr, [{ path: [".elsewhere"], active: true }]),
+		).toEqual({
 			kind: "class",
 		});
 	});
@@ -193,14 +205,66 @@ describe("a project rule the compiler named after a class the element wears", ()
 			important: false,
 		};
 		const roots = new Set(["color"]);
-		expect(propertySourceOwner(roots, [named, utility], [], { effects: [utility, named] }, ltr, [[".card"]])).toEqual(
-			{
-				kind: "declaration",
-				effects: [named],
-			},
-		);
 		expect(
-			propertySourceOwner(roots, [named, utility], [], { effects: [utility, named] }, ltr, [[".elsewhere"]]),
+			propertySourceOwner(roots, [named, utility], [], { effects: [utility, named] }, ltr, [
+				{ path: [".card"], active: true },
+			]),
+		).toEqual({
+			kind: "declaration",
+			effects: [named],
+		});
+		expect(
+			propertySourceOwner(roots, [named, utility], [], { effects: [utility, named] }, ltr, [
+				{ path: [".elsewhere"], active: true },
+			]),
+		).toEqual({ kind: "class" });
+	});
+});
+
+describe("a rule that is written for the element but is not applying", () => {
+	const ltr = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const utility: SourcePropertyEffect = {
+		owner: "opacity-75",
+		path: ["@layer utilities", "$"],
+		property: "opacity",
+		value: "75%",
+		important: false,
+	};
+	const roots = new Set(["opacity"]);
+
+	it("leaves an unsatisfied condition to its own scope, and the base row to what is applying", () => {
+		const conditional = effect(["@media (min-width: 5000px)", ".card"], "opacity", "0.25");
+		expect(
+			propertySourceOwner(roots, [utility], [], { effects: [utility, conditional] }, ltr, [
+				{ path: ["@media (min-width: 5000px)", ".card"], active: false },
+			]),
+		).toEqual({ kind: "class" });
+	});
+
+	it("leaves a state rule to its own scope, even while the element is in that state", () => {
+		const hovered = effect([".card:hover"], "opacity", "0.25");
+		expect(
+			propertySourceOwner(roots, [utility], [], { effects: [utility, hovered] }, ltr, [
+				{ path: [".card:hover"], active: true },
+			]),
+		).toEqual({ kind: "class" });
+	});
+
+	it("gives the base row an unconditional rule that is applying", () => {
+		const plain = effect([".card"], "opacity", "0.25");
+		expect(
+			propertySourceOwner(roots, [utility], [], { effects: [utility, plain] }, ltr, [
+				{ path: [".card"], active: true },
+			]),
+		).toEqual({ kind: "declaration", effects: [plain] });
+	});
+
+	it("leaves an unconditional rule that has stopped applying out of the cascade", () => {
+		const plain = effect([".card"], "opacity", "0.25");
+		expect(
+			propertySourceOwner(roots, [utility], [], { effects: [utility, plain] }, ltr, [
+				{ path: [".card"], active: false },
+			]),
 		).toEqual({ kind: "class" });
 	});
 });

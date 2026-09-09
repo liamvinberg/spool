@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import type { MatchedRuleChain } from "../source-edit";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { readInput } from "./retained-compile";
 import { compilePropertySource } from "./source-property-compile";
@@ -162,7 +163,7 @@ async function authoredReading(
 	css: string,
 	property: string,
 	value: string,
-	matched: readonly (readonly string[])[] = [[".card"]],
+	matched: readonly MatchedRuleChain[] = [{ path: [".card"], active: true }],
 ) {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", `@theme {}\n${css}`);
@@ -178,6 +179,14 @@ async function authoredReading(
 	);
 }
 
+it("says what a conditional rule is written under, apart from what the viewport is doing", async () => {
+	expect(
+		await authoredReading("p-6", "@media (min-width: 48rem) { .card { padding: 12px } }", "padding", "24px", [
+			{ path: ["@media (min-width: 48rem)", ".card"], active: true },
+		]),
+	).toMatchObject({ source: "class", written: ["@media (min-width: 48rem)"], tokens: ["p-6"] });
+});
+
 it("reads the project's own declaration as the source, over the utility it outranks", async () => {
 	expect(await authoredReading("p-6", ".card { padding: 12px }", "padding", "12px")).toEqual({
 		tokens: [],
@@ -189,7 +198,11 @@ it("reads the project's own declaration as the source, over the utility it outra
 });
 
 it("leaves a project rule this element does not match out of its own reading", async () => {
-	expect(await authoredReading("p-6", ".card { padding: 12px }", "padding", "24px", [[".elsewhere"]])).toMatchObject({
+	expect(
+		await authoredReading("p-6", ".card { padding: 12px }", "padding", "24px", [
+			{ path: [".elsewhere"], active: true },
+		]),
+	).toMatchObject({
 		source: "class",
 		tokens: ["p-6"],
 	});
