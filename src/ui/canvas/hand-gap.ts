@@ -281,19 +281,18 @@ export interface GapDrag {
  * still a click, and a sample that lands on the value already showing is not a
  * sample at all.
  */
-/** How far a pointer must travel before a press counts as a drag rather than a click. */
-const GAP_DRAG_THRESHOLD_PX = 3;
-
 export function gapSample(
 	drag: GapDrag,
 	at: { x: number; y: number },
 	coarse: boolean,
 	zoom: number,
 	step: number,
+	/** how far a press must travel before it counts as a drag, which the canvas owns */
+	threshold: number,
 ): { units: number; live: string } | null {
 	const travelled = drag.axis === "column-gap" ? at.x - drag.from.x : at.y - drag.from.y;
 	const moved = (drag.sign * travelled) / (zoom === 0 ? 1 : zoom);
-	if (drag.live === null && Math.abs(moved) < GAP_DRAG_THRESHOLD_PX) return null;
+	if (drag.live === null && Math.abs(moved) < threshold) return null;
 	const units = gapDragUnits(drag.authored, moved, step, coarse);
 	const live = steppedGap(drag.authored, drag.measured, units);
 	if (live === undefined || (live === drag.live && units === drag.units)) return null;

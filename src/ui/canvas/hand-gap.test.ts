@@ -352,23 +352,23 @@ describe("what one drag decides", () => {
 	});
 
 	it("is still a click until the pointer has travelled", () => {
-		expect(gapSample(drag(), { x: 102, y: 100 }, false, 1, 4)).toBe(null);
+		expect(gapSample(drag(), { x: 102, y: 100 }, false, 1, 4, 3)).toBe(null);
 	});
 
 	it("reads the pointer along its own axis, in the document's pixels", () => {
-		expect(gapSample(drag(), { x: 116, y: 100 }, false, 1, 4)).toEqual({ units: 4, live: "8" });
+		expect(gapSample(drag(), { x: 116, y: 100 }, false, 1, 4, 3)).toEqual({ units: 4, live: "8" });
 		// the same travel under a doubled camera is half as far in the document
-		expect(gapSample(drag(), { x: 116, y: 100 }, false, 2, 4)).toEqual({ units: 2, live: "6" });
+		expect(gapSample(drag(), { x: 116, y: 100 }, false, 2, 4, 3)).toEqual({ units: 2, live: "6" });
 		// movement across the axis is not this drag's
-		expect(gapSample(drag(), { x: 100, y: 140 }, false, 1, 4)).toBe(null);
+		expect(gapSample(drag(), { x: 100, y: 140 }, false, 1, 4, 3)).toBe(null);
 	});
 
 	it("follows the flow when it runs backwards", () => {
-		expect(gapSample(drag({ sign: -1 }), { x: 84, y: 100 }, false, 1, 4)).toEqual({ units: 4, live: "8" });
+		expect(gapSample(drag({ sign: -1 }), { x: 84, y: 100 }, false, 1, 4, 3)).toEqual({ units: 4, live: "8" });
 	});
 
 	it("samples nothing where the value has not moved", () => {
-		expect(gapSample(drag({ units: 4, live: "8" }), { x: 116, y: 100 }, false, 1, 4)).toBe(null);
+		expect(gapSample(drag({ units: 4, live: "8" }), { x: 116, y: 100 }, false, 1, 4, 3)).toBe(null);
 	});
 
 	it("draws the band the size the value makes, and reads it in pixels", () => {

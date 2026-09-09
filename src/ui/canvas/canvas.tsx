@@ -5052,7 +5052,7 @@ export function ProjectCanvas({
 
 	/** One sample of a live gap drag, previewed in every use through the common owner. */
 	const sampleElementGap = (active: Extract<Gesture, { kind: "element-gap" }>, p: Point, coarse: boolean): void => {
-		const sampled = gapSample(active, p, coarse, cameraRef.current?.k ?? 1, ringRef.current.step);
+		const sampled = gapSample(active, p, coarse, cameraRef.current?.k ?? 1, ringRef.current.step, DRAG_THRESHOLD_PX);
 		if (sampled === null) return;
 		const next: Gesture = { ...active, units: sampled.units, live: sampled.live };
 		gesture.current = next;
