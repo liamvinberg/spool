@@ -81,6 +81,12 @@ type LengthRow = { initial?: string; inherited: boolean; keywords: readonly stri
 
 const lengthRows: Readonly<Record<string, LengthRow>> = {
 	// The initial outline width is a keyword with no native length, so a cleared use stays unverified.
+	"flex-basis": {
+		initial: "auto",
+		inherited: false,
+		keywords: ["auto", "content", "min-content", "max-content", "fit-content"],
+		guarded: [],
+	},
 	"column-gap": { initial: "normal", inherited: false, keywords: ["normal"], guarded: [] },
 	"row-gap": { initial: "normal", inherited: false, keywords: ["normal"], guarded: [] },
 	"outline-width": { inherited: false, keywords: [], guarded: outlineGuards },
@@ -152,6 +158,7 @@ type PropertyFamily =
 	| { kind: "axes"; axes: readonly [string, string] }
 	| { kind: "box"; box: "padding" | "margin" | "inset" }
 	| { kind: "declaration"; row: DeclarationRow }
+	| { kind: "size"; native: string }
 	| { kind: "selected"; select: SelectedFamily };
 
 const filterProperties = ["filter", "brightness", "contrast", "saturate", "hue-rotate"];
@@ -199,6 +206,8 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	const box = boxParts(property);
 	if (box) return { kind: "box", box: box.box };
 	if (Object.hasOwn(declarationRows, property)) return { kind: "declaration", row: declarationRows[property]! };
+	if (property === "width and height") return { kind: "axes", axes: ["width", "height"] };
+	if (Object.hasOwn(sizeRows, property)) return { kind: "size", native: sizeRows[property]! };
 	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
 	if (Object.hasOwn(lengthRows, property))
 		return { kind: "selected", select: { kind: "length", row: lengthRows[property]! } };
@@ -244,7 +253,7 @@ function axesOutcome(
 }
 
 export interface PropertyOutcome {
-	rendered: "verified" | "mismatching" | "unverified" | "inactive";
+	rendered: "verified" | "mismatching" | "unverified" | "inactive" | "constrained";
 	observed?: string;
 	reason?: string;
 }
@@ -275,6 +284,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (family.kind === "axes") return axesOutcome(element, expected, family.axes);
 	if (family.kind === "box") return boxOutcome(element, expected, family.box);
 	if (family.kind === "declaration") return declarationOutcome(element, expected, family.row);
+	if (family.kind === "size") return sizeOutcome(element, expected, family.native);
 	return selectedOutcome(element, view, expected, family.select, pseudo);
 }
 
@@ -1196,6 +1206,157 @@ const initialDeclarations: Readonly<Record<string, string>> = {
 	"grid-template-rows": "none",
 };
 
+/** Source rows over the native sizing declarations, including the two size-mode controls. */
+const sizeRows: Readonly<Record<string, string>> = {
+	width: "width",
+	height: "height",
+	"width mode": "width",
+	"height mode": "height",
+	"min-width": "min-width",
+	"max-width": "max-width",
+	"min-height": "min-height",
+	"max-height": "max-height",
+};
+
+/** The containing block a percentage size of this use resolves against, in native pixels. */
+function containingSize(view: Window, element: Element, style: CSSStyleDeclaration): number | undefined {
+	if (style.writingMode !== "horizontal-tb") return;
+	if (!["static", "relative", "sticky"].includes(style.position)) return;
+	const parent = element.parentElement;
+	if (!parent) return;
+	const outer = view.getComputedStyle(parent);
+	if (outer.display.startsWith("table") || outer.writingMode !== "horizontal-tb") return;
+	const width = Number.parseFloat(outer.width);
+	if (!outer.width.endsWith("px") || !Number.isFinite(width)) return;
+	if (outer.boxSizing !== "border-box") return width;
+	const edges = ["padding-left", "padding-right", "border-left-width", "border-right-width"].map((name) =>
+		Number.parseFloat(outer.getPropertyValue(name)),
+	);
+	if (edges.some((edge) => !Number.isFinite(edge))) return;
+	return width - edges.reduce((total, edge) => total + edge, 0);
+}
+
+/**
+ * The authored size and the box the engine used are different readings. This compares them and,
+ * where they differ for a constraint it can name, reports the constraint rather than a mismatch.
+ */
+function sizeOutcome(element: Element, expected: SourcePropertyExpectation, native: string): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this size has no native document context");
+	if (!element.isConnected || element.getClientRects().length === 0)
+		return unverified("this size has no rendered native box");
+	const style = view.getComputedStyle(element);
+	if (["inline", "contents", "table-row", "table-row-group", "table-column-group"].includes(style.display))
+		return unverified("this display has no native box a size applies to");
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const applicable: SourcePropertyEffect[] = [];
+	for (const effect of expected.effects) {
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		if (!Object.values(sizeRows).includes(effect.property))
+			return unverified("this size has dependent effects requiring native proof");
+		if (effect.property !== native) continue;
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this size needs a native condition proof");
+		applicable.push(effect);
+	}
+	if ((element instanceof HTMLElement || element instanceof SVGElement) && element.style.getPropertyValue(native))
+		return unverified("this size has an independent inline context requiring proof");
+	const selection = winningEffect(sheet, applicable);
+	if (selection.reason) return unverified(selection.reason);
+	const declared = selection.winner ? resolvedValue(element, sheet, selection.winner.value) : initialSizes[native];
+	if (declared === undefined) return unverified("this size needs a resolved variable context");
+	const axis = native.endsWith("width") ? "width" : "height";
+	const observed = style.getPropertyValue(native);
+	// A minimum or maximum is reported as it was computed, so it is compared as an authored value.
+	if (native !== "width" && native !== "height") {
+		const wanted = sizeValue(element, view, sheet, style, native, declared, axis);
+		if (typeof wanted === "string") return unverified(wanted);
+		if (wanted === undefined) {
+			const same = declared.trim().toLowerCase() === observed.trim().toLowerCase();
+			return { rendered: same ? "verified" : "mismatching", observed };
+		}
+		const actual = Number.parseFloat(observed);
+		if (!observed.endsWith("px") || !Number.isFinite(actual))
+			return unverified("this constraint has no resolved native length");
+		return { rendered: actual === wanted ? "verified" : "mismatching", observed };
+	}
+	const wanted = sizeValue(element, view, sheet, style, native, declared, axis);
+	if (typeof wanted === "string") return unverified(wanted);
+	if (wanted === undefined) return unverified("this sizing mode has no native used-box proof");
+	const used = Number.parseFloat(observed);
+	if (!observed.endsWith("px") || !Number.isFinite(used)) return unverified("this size has no resolved native box");
+	const constraint = sizeConstraint(view, element, style, axis, wanted, used);
+	if (constraint) return { rendered: "constrained", observed, reason: constraint };
+	if (!Number.isInteger(wanted * 64)) return unverified("this size needs an exact native pixel proof");
+	return { rendered: used === wanted ? "verified" : "mismatching", observed };
+}
+
+/** A declared size as native pixels, a refusal reason, or undefined when it is a keyword. */
+function sizeValue(
+	element: Element,
+	view: Window,
+	sheet: CSSStyleSheet,
+	style: CSSStyleDeclaration,
+	native: string,
+	declared: string,
+	axis: "width" | "height",
+): number | string | undefined {
+	const value = declared.trim();
+	const percentage = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))%$/.exec(value);
+	if (percentage) {
+		if (axis !== "width") return "this percentage size needs a definite native containing block";
+		const outer = containingSize(view, element, style);
+		if (outer === undefined) return "this percentage size needs a definite native containing block";
+		return (outer * Number(percentage[1])) / 100;
+	}
+	if (/^[a-z-]+$/i.test(value)) return;
+	const length = nativeLength(element, sheet, native, value);
+	return length === undefined ? "this size has no independent native length" : length;
+}
+
+/** Name the definite native constraint that decided this used box, if one did. */
+function sizeConstraint(
+	view: Window,
+	element: Element,
+	style: CSSStyleDeclaration,
+	axis: "width" | "height",
+	wanted: number,
+	used: number,
+): string | undefined {
+	const parent = element.parentElement;
+	const outer = parent ? view.getComputedStyle(parent) : undefined;
+	const flexible = outer !== undefined && ["flex", "inline-flex"].includes(outer.display);
+	const main = flexible && (outer.flexDirection.startsWith("row") ? axis === "width" : axis === "height");
+	// A flex basis, not this row, decides the main size of a flexible item that declares one.
+	if (main && style.flexBasis.trim().toLowerCase() !== "auto") return "this main size comes from a native flex basis";
+	if (used === wanted) return;
+	for (const bound of [`min-${axis}`, `max-${axis}`]) {
+		const limit = style.getPropertyValue(bound);
+		if (!limit.endsWith("px")) continue;
+		const number = Number.parseFloat(limit);
+		if (!Number.isFinite(number) || used !== number) continue;
+		if (bound.startsWith("min") ? wanted < number : wanted > number)
+			return `this used box is held by a definite native ${bound}`;
+	}
+	if (main) return "this used size is under a native flexible box constraint";
+	if (style.getPropertyValue(`min-${axis}`).trim().toLowerCase() === "auto" && flexible && used > wanted)
+		return "this used size is held by the native automatic minimum of a flexible item";
+	return;
+}
+
+const initialSizes: Readonly<Record<string, string>> = {
+	width: "auto",
+	height: "auto",
+	"min-width": "auto",
+	"max-width": "none",
+	"min-height": "auto",
+	"max-height": "none",
+};
+
 const borderColorRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?color$/;
 
 /** Nine source roles over four native sides. Only the side is mapped; the comparator owns paint. */
@@ -1567,7 +1728,11 @@ function lengthContext(element: Element, property: string): string | undefined {
 	const text = () =>
 		element instanceof HTMLElement &&
 		Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
-	if (property === "column-gap" || property === "row-gap") {
+	if (property === "flex-basis") {
+		const parent = element.parentElement;
+		if (!parent || !["flex", "inline-flex"].includes(view.getComputedStyle(parent).display))
+			return "this flex basis needs a native flexible item";
+	} else if (property === "column-gap" || property === "row-gap") {
 		const multicol = native.columnCount !== "auto" || native.columnWidth !== "auto";
 		if (!["flex", "inline-flex", "grid", "inline-grid"].includes(native.display) && !multicol)
 			return "this gap needs a native flexible, grid or multi-column container";

@@ -2919,3 +2919,83 @@ it("verifies removed declarations against the initial value each row stands at",
 	expect((await f.inspect(p.expected))[0]?.observed).toBe("0 1 auto");
 	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
 });
+
+it.each([
+	{ property: "width", before: "w-2", after: "w-4", host: "", observed: "16px" },
+	{ property: "height", before: "h-2", after: "h-4", host: "", observed: "16px" },
+	{ property: "min-width", before: "min-w-2", after: "min-w-4", host: "", observed: "16px" },
+	{ property: "max-width", before: "max-w-2", after: "max-w-4", host: "", observed: "16px" },
+	{ property: "min-height", before: "min-h-2", after: "min-h-4", host: "", observed: "16px" },
+	{ property: "max-height", before: "max-h-2", after: "max-h-4", host: "", observed: "16px" },
+	{ property: "flex-basis", before: "basis-2", after: "basis-4", host: "display:flex", observed: "16px" },
+])("verifies the compiled $property against the box this use actually has", async (row) => {
+	const p = await planned(row.before, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px;${row.host}"><div data-subject class="${p.plan.next}">A</div><div data-subject class="${row.before}">B</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe(row.observed);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a compiled percentage width against its own native containing block", async () => {
+	const p = await planned("w-2", "width", { kind: "binding", tokens: ["w-full"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px;padding:0 20px"><div data-subject class="${p.plan.next}">Full</div><div data-subject class="w-2">Retained</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("260px");
+});
+
+it("refuses an automatic sizing mode rather than reading a box it did not compute", async () => {
+	const p = await planned("w-4", "width", { kind: "binding", tokens: ["w-auto"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Auto</div></div>`,
+	);
+	expect(await f.inspect(p.expected)).toEqual([
+		{ rendered: "unverified", reason: "this sizing mode has no native used-box proof" },
+	]);
+});
+
+it("reports a definite constraint on the used box separately from a mismatch", async () => {
+	const p = await planned("w-2", "width", { kind: "binding", tokens: ["w-96"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}" style="max-width:100px">Clamped</div><div data-subject class="${p.plan.next}" style="min-width:600px">Floored</div><div data-subject class="${p.plan.next}">Free</div></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(outcomes.map((outcome) => outcome.rendered)).toEqual(["constrained", "constrained", "verified"]);
+	expect(outcomes[0]?.reason).toBe("this used box is held by a definite native max-width");
+	expect(outcomes[1]?.reason).toBe("this used box is held by a definite native min-width");
+	expect(outcomes[0]?.observed).toBe("100px");
+});
+
+it("names the flexible box that decided a main size instead of reporting a mismatch", async () => {
+	const p = await planned("w-2", "width", { kind: "binding", tokens: ["w-24"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px;display:flex"><div data-subject class="${p.plan.next}" style="flex-grow:1">Grown</div><div data-subject class="${p.plan.next}" style="flex-basis:50px">Based</div></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(outcomes.map((outcome) => outcome.rendered)).toEqual(["constrained", "constrained"]);
+	expect(outcomes[0]?.reason).toBe("this used size is under a native flexible box constraint");
+	expect(outcomes[1]?.reason).toBe("this main size comes from a native flex basis");
+});
+
+it("changes only the width of a use, leaving its padding and height rules alone", async () => {
+	const p = await planned("w-2 h-8 p-2 min-w-1", "width", { kind: "binding", tokens: ["w-24"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Wide</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => {
+				const style = getComputedStyle(element);
+				return [style.width, style.height, style.paddingLeft, style.minWidth];
+			}),
+	).toEqual(["96px", "32px", "8px", "4px"]);
+});
