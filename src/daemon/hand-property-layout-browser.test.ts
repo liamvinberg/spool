@@ -179,3 +179,40 @@ it("hides an element through display and shows it again from the selection it ke
 	const latest = (await outcomes(f)).at(-1);
 	expect.soft(latest, JSON.stringify(latest)).toBeDefined();
 });
+
+it("reads project spacing and measures a fixed width at reduced canvas zoom", { timeout: 120_000 }, async () => {
+	// this project's own scale: one step is 8px, so `p-1` is 8px and `p-3` is 24px
+	const theme = "@theme { --spacing: 8px; }";
+	const scaled =
+		'import "shared/tokens.css";export function Card({label}){return <section data-subject={label} className="flex justify-end p-1 w-[160px]"><span>{label}</span></section>}';
+	const f = await originCanvas({ [owner]: scaled, "shared/tokens.css": theme }, frameSource, '[data-subject="A"]');
+	await everyUse([f.frame], "padding-left", "8px");
+	// held first, then zoomed out: a picture at 47% is a smaller picture of the
+	// same element, and the rail keeps the rung it was already reading
+	await f.select();
+	const before = await f.target.boundingBox();
+	if (!before) throw new Error("missing original bounds");
+	await f.page.keyboard.press("ControlOrMeta+-");
+	await f.page.keyboard.press("ControlOrMeta+-");
+	await expect
+		.poll(async () => (await f.target.boundingBox())?.width ?? before.width)
+		.toBeLessThan(before.width * 0.9);
+
+	// the canvas is smaller; what the project's scale says is not
+	await expect.poll(() => field(f, "padding").inputValue()).toBe("1");
+	await expect
+		.poll(() => f.page.locator('[data-properties-row="padding"] .type-detail').last().textContent())
+		.toBe("8px");
+	await field(f, "padding").fill("3");
+	await complete(f, "padding", scaled.replace("p-1", "p-3"));
+	await everyUse([f.frame], "padding-left", "24px");
+
+	// a fixed width measures the element's own box, never the zoomed picture of it
+	const committed = reply(f, "commit");
+	await f.page.locator('button[aria-label="width mode"]').first().click();
+	await f.page.locator('[data-menu-option="fixed"]').first().click();
+	expect(((await (await committed).json()) as SourceResult).ok).toBe(true);
+	await expect.poll(() => f.bytes()[owner]).toContain("w-20");
+	await f.settled();
+	await everyUse([f.frame], "width", "160px");
+});
