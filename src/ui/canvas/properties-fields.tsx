@@ -59,14 +59,18 @@ export function Section({
 /** the CSS name on the left, one control on the right, a hairline under each */
 export function Row({
 	name,
+	reason,
 	ok = true,
 	tall = false,
 	changed = false,
 	onScrub,
+	onScrubStart,
 	onScrubEnd,
+	onScrubCancel,
 	children,
 }: {
 	name: string;
+	reason?: string | undefined;
 	ok?: boolean;
 	/** a control taller than one line: the label sits at the top of it */
 	tall?: boolean;
@@ -74,30 +78,85 @@ export function Row({
 	changed?: boolean;
 	/** a numeric row: dragging the label steps the value by the units crossed */
 	onScrub?: ((units: number) => void) | undefined;
+	/** establish the original edit before the first scrub preview */
+	onScrubStart?: (() => void) | undefined;
 	/** the pointer let go: whatever the scrub was making is done being made */
 	onScrubEnd?: (() => void) | undefined;
+	onScrubCancel?: (() => void) | undefined;
 	children: ReactNode;
 }) {
-	const scrub = useRef<{ from: number; sent: number } | null>(null);
+	const cancelScrub = useRef<(() => void) | null>(null);
+	const callbacks = useRef({ onScrub, onScrubStart, onScrubEnd, onScrubCancel });
+	useLayoutEffect(() => {
+		callbacks.current = { onScrub, onScrubStart, onScrubEnd, onScrubCancel };
+	});
+	const scrubbable = ok && onScrub !== undefined;
+	useEffect(() => {
+		if (!scrubbable) cancelScrub.current?.();
+		return () => cancelScrub.current?.();
+	}, [scrubbable]);
 	const down = (event: ReactPointerEvent<HTMLSpanElement>) => {
-		if (onScrub === undefined || !ok) return;
+		if (!scrubbable || event.button !== 0 || cancelScrub.current !== null) return;
 		event.preventDefault();
-		event.currentTarget.setPointerCapture(event.pointerId);
-		scrub.current = { from: event.clientX, sent: 0 };
-	};
-	const move = (event: ReactPointerEvent<HTMLSpanElement>) => {
-		const held = scrub.current;
-		if (held === null || onScrub === undefined) return;
-		const units = Math.round((event.clientX - held.from) / 4);
-		if (units === held.sent) return;
-		onScrub(units - held.sent);
-		held.sent = units;
-	};
-	const up = (event: ReactPointerEvent<HTMLSpanElement>) => {
-		if (scrub.current === null) return;
-		event.currentTarget.releasePointerCapture(event.pointerId);
-		scrub.current = null;
-		onScrubEnd?.();
+		const target = event.currentTarget,
+			doc = target.ownerDocument;
+		const pointer = event.pointerId,
+			from = event.clientX;
+		let sent = 0,
+			finished = false;
+		const finish = (canceled: boolean) => {
+			if (finished) return;
+			finished = true;
+			cancelScrub.current = null;
+			doc.removeEventListener("pointermove", move, true);
+			doc.removeEventListener("pointerup", up, true);
+			doc.removeEventListener("pointercancel", cancelPointer, true);
+			doc.defaultView?.removeEventListener("keydown", key, true);
+			target.removeEventListener("lostpointercapture", cancelPointer);
+			doc.defaultView?.removeEventListener("blur", cancel);
+			try {
+				if (target.hasPointerCapture(pointer)) target.releasePointerCapture(pointer);
+			} catch {
+				/* The document listeners also work when capture is unavailable. */
+			}
+			if (canceled) callbacks.current.onScrubCancel?.();
+			else callbacks.current.onScrubEnd?.();
+		};
+		const move = (next: PointerEvent) => {
+			if (next.pointerId !== pointer || finished) return;
+			const units = Math.round((next.clientX - from) / 4);
+			if (units === sent) return;
+			const delta = units - sent;
+			sent = units;
+			callbacks.current.onScrub?.(delta);
+		};
+		const up = (next: PointerEvent) => {
+			if (next.pointerId === pointer) finish(false);
+		};
+		const cancelPointer = (next: PointerEvent) => {
+			if (next.pointerId === pointer) finish(true);
+		};
+		const cancel = () => finish(true);
+		const key = (next: KeyboardEvent) => {
+			if (next.key !== "Escape") return;
+			next.preventDefault();
+			next.stopPropagation();
+			cancel();
+		};
+		cancelScrub.current = cancel;
+		// The dock stops bubbling pointer events before they can move the canvas.
+		doc.addEventListener("pointermove", move, true);
+		doc.addEventListener("pointerup", up, true);
+		doc.addEventListener("pointercancel", cancelPointer, true);
+		doc.defaultView?.addEventListener("keydown", key, true);
+		target.addEventListener("lostpointercapture", cancelPointer);
+		doc.defaultView?.addEventListener("blur", cancel);
+		try {
+			target.setPointerCapture(pointer);
+		} catch {
+			/* Keep the document fallback. */
+		}
+		callbacks.current.onScrubStart?.();
 	};
 	const long = name.length > 14;
 	return (
@@ -109,10 +168,8 @@ export function Row({
 			)}
 		>
 			<span
+				title={reason}
 				onPointerDown={down}
-				onPointerMove={move}
-				onPointerUp={up}
-				onPointerCancel={up}
 				className={cn(
 					tall ? "self-start pt-1.5 " : long ? "break-words " : "truncate",
 					LABEL,
@@ -146,8 +203,13 @@ export function NumField({
 	changed = false,
 	faint = false,
 	placeholder,
+	onBegin,
+	onPreview,
+	onCancel,
 	onCommit,
 	onStep,
+	stepDraft,
+	label,
 	className,
 }: {
 	value: string;
@@ -158,12 +220,53 @@ export function NumField({
 	/** the value comes from the base scope or a fallback: read it quietly */
 	faint?: boolean;
 	placeholder?: string | undefined;
+	onBegin?: (() => void) | undefined;
+	onPreview?: ((typed: string) => void) | undefined;
+	onCancel?: (() => void) | undefined;
 	onCommit: (typed: string) => void;
 	/** whole units, signed: arrows send 1, shift sends 10 */
 	onStep?: ((units: number) => void) | undefined;
+	/** Exact numeric gestures remain one preview until Enter or blur. */
+	stepDraft?: ((typed: string, units: number) => string | undefined) | undefined;
+	label?: string;
 	className?: string;
 }) {
 	const [draft, setDraft] = useState<string | null>(null);
+	const session = useRef<{ original: string; draft: string | null } | null>(null);
+	const cancel = useRef(onCancel);
+	useLayoutEffect(() => {
+		cancel.current = onCancel;
+	});
+	useEffect(() => {
+		const abandon = () => {
+			if (session.current === null) return;
+			session.current = null;
+			cancel.current?.();
+		};
+		if (!ok) {
+			abandon();
+			setDraft(null);
+		}
+		return abandon;
+	}, [ok]);
+	const begin = () => {
+		if (session.current !== null) return session.current;
+		const held: { original: string; draft: string | null } = { original: value, draft: null };
+		session.current = held;
+		onBegin?.();
+		return held;
+	};
+	const clear = () => {
+		if (session.current !== null) session.current.draft = null;
+		setDraft(null);
+	};
+	const finish = (canceled: boolean) => {
+		const held = session.current;
+		session.current = null;
+		setDraft(null);
+		if (!canceled && held !== null && held.draft !== null && held.draft !== held.original) onCommit(held.draft);
+		else if (held !== null) onCancel?.();
+	};
 	if (!ok) {
 		return (
 			<span className={cn("flex min-w-0 flex-1 items-center gap-1 px-1", className)}>
@@ -179,30 +282,50 @@ export function NumField({
 	return (
 		<label className={cn("flex min-w-0 flex-1 items-center gap-1 px-1", BOX, className)}>
 			<input
+				aria-label={label}
 				value={draft ?? value}
 				placeholder={placeholder}
 				spellCheck={false}
-				onChange={(event) => setDraft(event.target.value)}
-				onFocus={(event) => event.target.select()}
-				onBlur={() => {
-					if (draft !== null && draft !== value) onCommit(draft);
-					setDraft(null);
+				onChange={(event) => {
+					const held = begin();
+					if (session.current !== held) return;
+					held.draft = event.target.value;
+					setDraft(event.target.value);
+					onPreview?.(event.target.value);
 				}}
+				// Focus alone selects the number to type over. Taking the source lane
+				// waits for an edit, so tabbing through the rail cancels nothing.
+				onFocus={(event) => event.target.select()}
+				onBlur={() => finish(false)}
 				onKeyDown={(event) => {
 					event.stopPropagation();
+					if (event.nativeEvent.isComposing) return;
 					if (event.key === "Enter") {
-						if (draft !== null && draft !== value) onCommit(draft);
-						setDraft(null);
+						event.preventDefault();
+						finish(false);
 						event.currentTarget.blur();
 					}
 					if (event.key === "Escape") {
-						setDraft(null);
+						event.preventDefault();
+						finish(true);
 						event.currentTarget.blur();
 					}
-					if ((event.key === "ArrowUp" || event.key === "ArrowDown") && onStep !== undefined) {
+					if ((event.key === "ArrowUp" || event.key === "ArrowDown") && (onStep || stepDraft)) {
 						event.preventDefault();
-						setDraft(null);
-						onStep((event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1));
+						const held = begin();
+						const units = (event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1);
+						if (stepDraft) {
+							const next = stepDraft(held.draft ?? value, units);
+							if (next !== undefined && session.current === held) {
+								held.draft = next;
+								setDraft(next);
+								onPreview?.(next);
+							}
+							return;
+						}
+						clear();
+						onStep?.(units);
+						if (session.current === held) session.current = null;
 					}
 				}}
 				className={cn(
@@ -475,11 +598,12 @@ export function Menu({
 				aria-expanded={open}
 				onClick={() => (open ? setOpen(false) : show())}
 				onKeyDown={(event) => {
+					// The trigger keeps focus after a pick, so it owns only the keys it
+					// opens with; everything else is the canvas's, Undo included.
+					if (event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== " ") return;
 					event.stopPropagation();
-					if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-						event.preventDefault();
-						show();
-					}
+					event.preventDefault();
+					show();
 				}}
 				className={cn(
 					"flex h-6 min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-1 text-left focus:outline-none",

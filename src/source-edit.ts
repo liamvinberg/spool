@@ -1,29 +1,52 @@
 import type { SourceImageExpectation } from "./source-image";
-import type { SourcePropertyExpectation, SourcePropertyValue } from "./source-property";
+import type {
+	SourcePropertyExpectation,
+	SourcePropertyNative,
+	SourcePropertyPreviewTemplate,
+	SourcePropertyReading,
+	SourcePropertyValue,
+} from "./source-property";
+import {
+	type SourcePropertyGroupExpectation,
+	type SourcePropertyGroupTarget,
+	type SourcePropertyGroupValue,
+	samePropertyGroupTarget,
+} from "./source-property-group";
 import type { SourceStructuralExpectation, SourceStructuralParent } from "./source-structure";
 
 /** Purpose is captured before reading source and retained through completion and recovery. */
 export type SourceOperation =
 	| { kind: "literal"; field?: string }
 	| { kind: "property"; property: string; scope: string }
+	| { kind: "properties"; target: SourcePropertyGroupTarget }
 	| { kind: "image" }
 	| { kind: "delete" };
+
+export function isPropertyOperation(
+	operation: SourceOperation,
+): operation is Extract<SourceOperation, { kind: "property" | "properties" }> {
+	return operation.kind === "property" || operation.kind === "properties";
+}
 
 /** Requested value is separate from the original source operation's authority. */
 export type SourceChange =
 	| { kind: "literal"; text: string }
 	| { kind: "property"; value: SourcePropertyValue }
+	| { kind: "properties"; value: SourcePropertyGroupValue }
 	| { kind: "image"; path: string }
 	| { kind: "delete" };
 
 export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boolean {
 	if (a.kind === "literal") return b.kind === "literal" && a.field === b.field;
 	if (a.kind === "property") return b.kind === "property" && a.property === b.property && a.scope === b.scope;
+	if (a.kind === "properties") return b.kind === "properties" && samePropertyGroupTarget(a.target, b.target);
 	return a.kind === b.kind;
 }
 
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
+	/** Original native presentation, not part of source identity or write authority. */
+	propertyNative?: SourcePropertyNative | undefined;
 	structure?: { parent: string; source?: SourceStructuralParent | undefined } | undefined;
 	absent?: boolean | undefined;
 	field?: string | undefined;
@@ -71,6 +94,10 @@ export interface SourceReach {
 }
 
 export interface SourceRead {
+	propertyPreview?: SourcePropertyPreviewTemplate;
+	property?: SourcePropertyReading;
+	/** What each asked property reads on this same class cell, for the controls that draw it. */
+	properties?: Record<string, SourcePropertyReading>;
 	asset?: string;
 	structure?: SourceStructuralExpectation;
 	operation: SourceOperation;
@@ -116,6 +143,7 @@ export interface SourcePublication {
 	expected:
 		| { kind: "literal"; value: string; absent: boolean }
 		| SourcePropertyExpectation
+		| SourcePropertyGroupExpectation
 		| SourceImageExpectation
 		| SourceStructuralExpectation;
 	admission: { token: string; expires: number };
@@ -133,7 +161,15 @@ export interface SourcePublication {
 	receipt: SourceReceipt;
 }
 
-export type RenderOutcome = "verified" | "mismatching" | "pending" | "failed" | "unverified" | "unmounted";
+export type RenderOutcome =
+	| "verified"
+	| "mismatching"
+	| "pending"
+	| "failed"
+	| "unverified"
+	| "unmounted"
+	| "inactive"
+	| "constrained";
 export interface UseOutcome {
 	frame?: string;
 	occurrence: string;
@@ -156,7 +192,16 @@ export type SourceResult =
 
 /** A successful occurrence cannot conceal another occurrence's delivery result. */
 export function combineUseOutcomes(uses: UseOutcome[], occurrence = ""): UseOutcome {
-	const order: RenderOutcome[] = ["failed", "mismatching", "pending", "unverified", "unmounted", "verified"];
+	const order: RenderOutcome[] = [
+		"failed",
+		"mismatching",
+		"pending",
+		"unverified",
+		"unmounted",
+		"constrained",
+		"inactive",
+		"verified",
+	];
 	const worst = order.map((state) => uses.find((use) => use.rendered === state)).find((use) => use !== undefined);
 	return { ...(worst ?? { occurrence, installation: "refused", rendered: "unverified" }), uses };
 }

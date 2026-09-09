@@ -2216,12 +2216,54 @@ export function createDaemonApp({
 		.post(
 			"/api/p/:project/source",
 			validator("json", (value, c) => {
+				const propertyValue = z.discriminatedUnion("kind", [
+					z
+						.object({ kind: z.literal("binding"), tokens: z.array(z.string().max(10_000)).max(100).readonly() })
+						.strict(),
+					z.object({ kind: z.literal("custom"), value: z.string().max(10_000) }).strict(),
+					z.object({ kind: z.literal("remove") }).strict(),
+				]);
+				const groupTarget = z.discriminatedUnion("kind", [
+					z
+						.object({
+							kind: z.literal("fields"),
+							fields: z
+								.array(z.object({ property: z.string(), scope: z.string() }).strict())
+								.min(1)
+								.max(100)
+								.readonly(),
+						})
+						.strict(),
+					z.object({ kind: z.literal("remove-scope"), scope: z.string().min(1) }).strict(),
+					z.object({ kind: z.literal("tokens") }).strict(),
+				]);
+				const groupValue = z.discriminatedUnion("kind", [
+					z
+						.object({
+							kind: z.literal("fields"),
+							changes: z
+								.array(z.object({ property: z.string(), scope: z.string(), value: propertyValue }).strict())
+								.min(1)
+								.max(100)
+								.readonly(),
+						})
+						.strict(),
+					z.object({ kind: z.literal("remove-scope"), scope: z.string().min(1) }).strict(),
+					z
+						.object({
+							kind: z.literal("tokens"),
+							add: z.array(z.string().max(10_000)).max(100).readonly(),
+							remove: z.array(z.string().max(10_000)).max(100).readonly(),
+						})
+						.strict(),
+				]);
 				const operation = z.discriminatedUnion("kind", [
 					z
 						.object({ kind: z.literal("literal"), field: z.string().optional() })
 						.strict()
 						.transform(({ kind, field }) => ({ kind, ...(field === undefined ? {} : { field }) })),
 					z.object({ kind: z.literal("property"), property: z.string(), scope: z.string() }).strict(),
+					z.object({ kind: z.literal("properties"), target: groupTarget }).strict(),
 					z.object({ kind: z.literal("image") }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
 				]);
@@ -2229,21 +2271,8 @@ export function createDaemonApp({
 					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
 					z.object({ kind: z.literal("image"), path: z.string().max(10_000) }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
-					z
-						.object({
-							kind: z.literal("property"),
-							value: z.discriminatedUnion("kind", [
-								z
-									.object({
-										kind: z.literal("binding"),
-										tokens: z.array(z.string().max(10_000)).max(100).readonly(),
-									})
-									.strict(),
-								z.object({ kind: z.literal("custom"), value: z.string().max(10_000) }).strict(),
-								z.object({ kind: z.literal("remove") }).strict(),
-							]),
-						})
-						.strict(),
+					z.object({ kind: z.literal("property"), value: propertyValue }).strict(),
+					z.object({ kind: z.literal("properties"), value: groupValue }).strict(),
 				]);
 				const occurrence = z
 					.object({
@@ -2266,6 +2295,10 @@ export function createDaemonApp({
 						absent: z.boolean().optional(),
 						value: z.string().max(IMAGE_BUDGET_BYTES),
 						context: z.string().max(100_000),
+						propertyNative: z
+							.object({ property: z.string().max(200), value: z.string().max(100_000) })
+							.strict()
+							.optional(),
 					})
 					.strict();
 				const inventory = z
@@ -2303,6 +2336,7 @@ export function createDaemonApp({
 								frame: z.string(),
 								original: occurrence,
 								inventories: z.array(inventory),
+								readings: z.array(z.string()).optional(),
 							})
 							.strict(),
 						z
@@ -2314,6 +2348,16 @@ export function createDaemonApp({
 								frame: z.string(),
 								original: occurrence,
 								generation: z.number().int().positive(),
+							})
+							.strict(),
+						z
+							.object({
+								action: z.literal("preview"),
+								handle: z.string(),
+								generation: z.number().int().positive(),
+								revision: z.number().int().positive(),
+								original: occurrence,
+								change,
 							})
 							.strict(),
 						z
@@ -2345,6 +2389,7 @@ export function createDaemonApp({
 						z
 							.object({
 								action: z.literal("reach"),
+								preview: propertyValue.optional(),
 								handle: z.string(),
 								inventories: z.array(
 									z
@@ -2387,7 +2432,7 @@ export function createDaemonApp({
 							),
 						);
 					case "reach":
-						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories));
+						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories, body.preview));
 					case "observed":
 						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
 						return c.json({ ok: true });
@@ -2399,6 +2444,18 @@ export function createDaemonApp({
 								body.original,
 								body.inventories,
 								body.operation,
+								body.readings ?? [],
+							),
+						);
+					case "preview":
+						return c.json(
+							await sourceOwner.preview(
+								project.root,
+								body.handle,
+								body.generation,
+								body.revision,
+								body.original,
+								body.change,
 							),
 						);
 					case "commit":

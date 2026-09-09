@@ -1,10 +1,13 @@
 import type { ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import type { SourceImagePreview } from "../source-image";
+import type { SourcePropertyPreview } from "../source-property";
 import type { SourceStructuralExpectation } from "../source-structure";
 import { captureAttribute, hasRenderedField, previewAttribute, renderedAttribute } from "./field-projection";
+import { propertyOutcome } from "./property-outcome";
 import { decodeImage, observeImage } from "./source-image";
 import { installObserver } from "./source-observer";
+import { previewPropertyStyles, restorePropertyStyles } from "./source-property-preview";
 import { changedStructure, compatibleStructure, structuralList, structuralOptional } from "./source-structure";
 import { createStructuralBaselines } from "./source-structure-baselines";
 import {
@@ -276,6 +279,11 @@ export function useSourceValues(owner: string, component?: unknown): void {
 		() => held.revision,
 	);
 }
+/** The compiler marks only direct data objects; their identity and members are unchanged. */
+export function sourceStyle<T extends object>(value: T): T {
+	return globalThis.__SPOOL_VALUES__?.styleLiteral(value) ?? value;
+}
+
 export function observeSource<T>(cell: string, element: T): T {
 	if (
 		sourcePacket &&
@@ -300,21 +308,27 @@ export function observeSource<T>(cell: string, element: T): T {
 function committedFiber(element: Element): Fiber | undefined {
 	return committedHosts.get(element)?.fiber;
 }
-function sourceContext(element: Element): string {
+function sourceContext(element: Element, field?: string): string {
 	const path: string[] = [];
 	let at: Element | null = element;
 	while (at) {
-		path.push(`${at.tagName}:${at.getAttribute("class") ?? ""}:${at.getAttribute("style") ?? ""}`);
+		const ownedClass = at === element && field === "className";
+		const className = ownedClass
+			? Object.getOwnPropertyDescriptor(committedFiber(at)?.memoizedProps ?? {}, "className")?.value
+			: at.getAttribute("class");
+		path.push(`${at.tagName}:${typeof className === "string" ? className : ""}:${at.getAttribute("style") ?? ""}`);
 		at = at.parentElement;
 	}
-	return JSON.stringify(path);
+	if (field !== "className") return JSON.stringify(path);
+	const native = getComputedStyle(element);
+	return JSON.stringify({ path, native: { direction: native.direction, writingMode: native.writingMode } });
 }
 function inspectSource(
 	element: HTMLElement,
 	field?: string,
 	operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 ): SourceOccurrence | undefined {
-	if (operation.kind === "property") return;
+	if ((operation.kind === "property" || operation.kind === "properties") && field !== "className") return;
 	if (operation.kind === "image" && (!(element instanceof HTMLImageElement) || field !== "src")) return;
 	if (!element.isConnected || globalThis.__SPOOL_OBSERVER__.failure) return;
 	const fiber = committedFiber(element);
@@ -352,6 +366,8 @@ function inspectSource(
 		id = String(++occurrence);
 		nodes.set(element, id);
 	}
+	const nativeValue =
+		operation.kind === "property" ? getComputedStyle(element).getPropertyValue(operation.property) : "";
 	let structure: SourceOccurrence["structure"];
 	if (operation.kind === "delete") {
 		const parent = element.parentElement;
@@ -366,13 +382,16 @@ function inspectSource(
 	}
 	return {
 		...origin,
+		...(operation.kind === "property" && nativeValue
+			? { propertyNative: { property: operation.property, value: nativeValue } }
+			: {}),
 		...(structure ? { structure } : {}),
 		// Retained props keep their original invocation/value even when React
 		// skips recreating them. This observation belongs to the installed packet.
 		publication: sourcePacket?.id ?? origin.publication,
 		occurrence: id,
 		...(field === undefined ? {} : { field, absent: value === undefined }),
-		context: sourceContext(element),
+		context: sourceContext(element, field),
 		...(provenance === undefined ? {} : { provenance }),
 	};
 }
@@ -543,6 +562,7 @@ function ownsPreview(held: PreviewedUse): boolean {
 	);
 }
 function cancelSourceUses(generation: number, reason: "cancel" | "prepare" | "install" = "cancel"): void {
+	if (reason !== "install") restorePropertyStyles(generation);
 	const held = sharedPreviews.get(generation);
 	sharedPreviews.delete(generation);
 	for (const use of held ?? []) {
@@ -602,6 +622,14 @@ function previewSource(generation: number, value: string): boolean {
 	previewSourceUses(generation, value);
 	return true;
 }
+function previewProperty(plan: SourcePropertyPreview): boolean {
+	const uses = leases.has(plan.generation) ? [leases.get(plan.generation)!] : sharedPreviews.get(plan.generation);
+	if (!sourcePacket || !uses?.length || uses.some((use) => use.original.field !== "className")) return false;
+	if (leases.has(plan.generation) && !validLease(plan.generation)) return false;
+	if (!previewPropertyStyles(plan, sourcePacket)) return false;
+	return previewSource(plan.generation, plan.value);
+}
+
 async function previewImage(generation: number, value: string): Promise<SourceImagePreview> {
 	if (!(await decodeImage(value))) return "failed";
 	return previewSource(generation, value) ? "ready" : "unavailable";
@@ -666,37 +694,82 @@ function observedUse(
 			})),
 			original.occurrence,
 		);
-	if (expected.kind !== "literal")
+	if (expected.kind === "properties") {
+		const outcomes = expected.selections.flatMap((selection) =>
+			selection.observations.map((observation) =>
+				observedUse(
+					original,
+					element,
+					{
+						kind: "property",
+						property: observation.property,
+						scope: selection.scope,
+						className: expected.className,
+						absent: expected.absent,
+						css: expected.css,
+						scopePaths: observation.scopePaths,
+						effects: observation.effects,
+					},
+					failed,
+				),
+			),
+		);
+		const combined = combineUseOutcomes(outcomes, original.occurrence);
+		// These are effects of one use, not additional governed occurrences.
 		return {
 			occurrence: original.occurrence,
 			installation: "installed",
-			rendered: "unverified",
-			reason: "this rendered source effect has no verifier",
+			rendered: combined.rendered,
+			...(combined.observed === undefined ? {} : { observed: combined.observed }),
+			...(combined.reason === undefined ? {} : { reason: combined.reason }),
 		};
-	const observed = element ? renderedField(element, original.field) : undefined;
-	const matches = original.field
-		? !!element &&
+	}
+	let property = expected.kind === "property" && element ? propertyOutcome(element, expected) : undefined;
+	if (property?.rendered === "verified" && expected.kind === "property" && element) {
+		const props = committedFiber(element)?.memoizedProps;
+		const declaration = props ? Object.getOwnPropertyDescriptor(props, "className") : undefined;
+		const applied =
+			props !== undefined &&
 			(expected.absent
-				? !hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps)
-				: hasRenderedField(element, original.field, committedFiber(element)?.memoizedProps) &&
-					observed === expected.value)
-		: observed === expected.value;
-	const rendered = !element?.isConnected
-		? element && failed.has(element)
-			? "failed"
-			: "unmounted"
-		: pendingIn(element)
-			? "pending"
-			: matches
-				? "verified"
-				: element && failed.has(element)
-					? "failed"
-					: "mismatching";
+				? declaration === undefined || ("value" in declaration && declaration.value === undefined)
+				: declaration !== undefined && "value" in declaration && declaration.value === expected.className);
+		if (!applied)
+			property = {
+				...property,
+				rendered: "unverified",
+				reason: "the native value matches, but the committed class declaration has not received this source change",
+			};
+	}
+	function observedValue(): string | undefined {
+		if (expected.kind === "property") return property?.observed;
+		return element ? renderedField(element, original.field) : undefined;
+	}
+	const observed = observedValue();
+	function fieldMatches(field: string): boolean {
+		if (!element || expected.kind !== "literal") return false;
+		const props = committedFiber(element)?.memoizedProps;
+		if (expected.absent) return !hasRenderedField(element, field, props);
+		return hasRenderedField(element, field, props) && observed === expected.value;
+	}
+	function matching(): boolean {
+		if (expected.kind === "property") return property?.rendered === "verified";
+		if (expected.kind !== "literal") return false;
+		return original.field ? fieldMatches(original.field) : observed === expected.value;
+	}
+	function renderedAs(): UseOutcome["rendered"] {
+		if (!element?.isConnected) return element && failed.has(element) ? "failed" : "unmounted";
+		if (pendingIn(element)) return "pending";
+		if (matching()) return "verified";
+		if (failed.has(element)) return "failed";
+		return property?.rendered ?? "mismatching";
+	}
+	const rendered = renderedAs();
 	return {
 		occurrence: original.occurrence,
 		installation: "installed",
 		rendered,
 		...(observed === undefined ? {} : { observed }),
+		...(property?.reason === undefined ? {} : { reason: property.reason }),
 	};
 }
 function observedOutcome(held: AcceptedOutcome): UseOutcome {
@@ -917,6 +990,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	if (undo && leases.size > 0) return refused("another edit is in progress");
 	// Remove only this generation's temporary value, then let React reconcile
 	// synchronously in this same task. No paint can expose the restored old text.
+	restorePropertyStyles(publication.generation);
 	if (held && ownsPreview(held)) restoreField(held.element, held.original, held.children, held.restoreAttribute);
 	cancelSourceUses(publication.generation, "install");
 	feedbackTimer = setTimeout(clearGestureFeedback, 450);
@@ -1035,6 +1109,7 @@ declare global {
 			clearFeedback: typeof clearSourceFeedback;
 			valid: typeof validLease;
 			preview: typeof previewSource;
+			previewProperty: typeof previewProperty;
 			previewImage: typeof previewImage;
 			complete: typeof completeSource;
 			cancel: typeof cancelSource;
@@ -1057,6 +1132,7 @@ if (typeof window !== "undefined")
 		clearFeedback: clearSourceFeedback,
 		valid: validLease,
 		preview: previewSource,
+		previewProperty,
 		previewImage,
 		complete: completeSource,
 		cancel: cancelSource,

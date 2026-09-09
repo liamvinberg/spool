@@ -34,6 +34,7 @@ import type {
 	SourceResult,
 } from "../source-edit";
 import type { SourceImagePut, SourceImageStaged } from "../source-image";
+import type { SourcePropertyPreview, SourcePropertyValue } from "../source-property";
 
 declare global {
 	interface Window {
@@ -1564,14 +1565,41 @@ export async function sourceReach(
 	project: string,
 	handle: string,
 	inventories: SourceInventory[],
+	preview?: SourcePropertyValue,
 ): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "reach", handle, inventories },
+			json: { action: "reach", handle, inventories, ...(preview ? { preview } : {}) },
 		});
 		return res.ok
 			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export async function previewPropertySource(
+	project: string,
+	read: SourceRead,
+	revision: number,
+	value: SourcePropertyValue,
+): Promise<{ ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string } | undefined> {
+	try {
+		const res = await client.api.p[":project"].source.$post({
+			param: { project },
+			json: {
+				action: "preview",
+				handle: read.handle,
+				generation: read.generation,
+				revision,
+				original: read.original,
+				change: { kind: "property", value },
+			},
+		});
+		return res.ok
+			? ((await res.json()) as { ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string })
 			: undefined;
 	} catch {
 		return undefined;
@@ -1664,15 +1692,18 @@ export async function describeSource(
 	original: SourceOccurrence,
 	inventories: SourceInventory[],
 	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
-): Promise<SourceDescription | undefined> {
+	readings: readonly string[] = [],
+): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
-			json: { action: "describe", frame, original, inventories, operation },
+			json: { action: "describe", frame, original, inventories, operation, readings: [...readings] },
 		});
-		const result = (await res.json()) as { ok: boolean; description?: SourceDescription };
-		return res.ok && result.ok ? result.description : undefined;
+		const result = (await res.json()) as { ok: boolean; description?: SourceDescription; reason?: string };
+		return res.ok && result.ok && result.description
+			? { ok: true, description: result.description }
+			: { ok: false, reason: result.reason ?? "Source description is unavailable." };
 	} catch {
-		return undefined;
+		return { ok: false, reason: "Source description could not be reached." };
 	}
 }

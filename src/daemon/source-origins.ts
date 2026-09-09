@@ -18,6 +18,7 @@ import { fingerprintOf } from "./hand-write";
 import { walkNodes } from "./jsx-walk";
 import type { RetainedCompilation } from "./retained-compile";
 import { type Binding, ModuleBindings } from "./source-module-bindings";
+import { literalStyleMembers } from "./source-style-members";
 import { elementAt, sourceTarget } from "./source-syntax";
 
 export interface Revision {
@@ -67,7 +68,7 @@ export interface Selection {
 	refusal?: string;
 }
 export type Operation =
-	| { kind: "text" | "delete" | "reorder" | "asset" }
+	| { kind: "text" | "delete" | "reorder" | "asset" | "properties" }
 	| { kind: "attribute"; attribute: string }
 	| { kind: "property"; property: string; scope: string };
 export interface Target {
@@ -284,6 +285,43 @@ function immutableSlot(fn: Component, slot: string, unit: Unit): boolean {
 	};
 	return visit(body) && count === 1;
 }
+/** A retained consumer can transport its exact committed child without consuming the newer input. */
+function retainsSelectedChild(call: Call, selection: Selection): boolean {
+	const ownsChildrenField = (snapshot: ValueSnapshot | undefined): boolean => {
+		const origin = snapshot?.fields.children?.origin;
+		const via = origin?.via[0];
+		return (
+			snapshot?.kind === "jsx" &&
+			snapshot.source === call.source &&
+			origin?.kind === "jsx" &&
+			origin.source === call.source &&
+			origin.field === "children" &&
+			origin.slot === "prop" &&
+			origin.element === snapshot.id &&
+			origin.via.length === 1 &&
+			via?.kind === "jsx" &&
+			via.source === call.source &&
+			via.element === snapshot.id &&
+			!via.replaced
+		);
+	};
+	const child = call.renderedValues?.fields.children?.value;
+	return (
+		call.retainedProps === true &&
+		call.renderedSource === call.source &&
+		ownsChildrenField(call.values) &&
+		ownsChildrenField(call.renderedValues) &&
+		selection.values?.kind === "jsx" &&
+		selection.values.source === selection.source &&
+		child !== null &&
+		typeof child === "object" &&
+		"kind" in child &&
+		"id" in child &&
+		child.kind === "element" &&
+		child.id === selection.values.id
+	);
+}
+
 function sameFlowElement(call: Call, slot: string, selection: Selection): boolean {
 	const value = call.values?.fields[slot]?.value;
 	return (
@@ -766,9 +804,9 @@ export class Sources {
 			}
 			if (actual.unit.file !== current.unit.file || actual.fn.start !== owner(current).start) {
 				// Transport is separate from authorship. Prove both the exact
-				// incoming element identity and the bounded source forwarding form.
+				// incoming or retained element identity and the bounded source forwarding form.
 				const direct =
-					call.passedChild &&
+					(call.passedChild || retainsSelectedChild(call, selection)) &&
 					site.node.children.some(
 						(child) => child.start === transported.node.start && child.end === transported.node.end,
 					) &&
@@ -1164,9 +1202,37 @@ function factoryLiteral(site: Creation, field: string, kind: "clone" | "create")
 	return value?.type === "ObjectProperty" && value.value.type === "StringLiteral" ? value.value.value : undefined;
 }
 
+/** Read-only context: these literal members cannot author color or opacity. */
+function independentPropertyStyle(sources: Sources, selection: Selection, operation: Operation): void {
+	if (operation.kind !== "property" || !["color", "background-color", "opacity"].includes(operation.property))
+		throw new Error("inline styles prevent proving ownership of this class property");
+	if (!selection.values?.fields.style) throw new Error("inline style has no original literal member descriptors");
+	// Reuse the full authored-origin and native descriptor check. This never
+	// admits a style member as an edit target or evaluates a style expression.
+	const proof = factoryRead(sources, selection, { kind: "attribute", attribute: "style" });
+	const members: unknown = JSON.parse(proof.expected ?? "null");
+	if (
+		!Array.isArray(members) ||
+		!members.every(
+			(member: unknown) =>
+				typeof member === "object" &&
+				member !== null &&
+				"key" in member &&
+				typeof member.key === "string" &&
+				(member.key === "fontWeight" ||
+					/^padding(?:Top|Right|Bottom|Left|Block|Inline|BlockStart|BlockEnd|InlineStart|InlineEnd)?$/.test(
+						member.key,
+					)),
+		)
+	)
+		throw new Error("inline style members may affect this property; their independence is unproved");
+}
+
 function factoryRead(sources: Sources, selection: Selection, operation: Operation, history?: OwnedLiteral): Target {
 	if (selection.refusal) throw new Error(selection.refusal);
 	const leaf = selection.values!;
+	if ((operation.kind === "property" || operation.kind === "properties") && leaf.fields.style)
+		independentPropertyStyle(sources, selection, operation);
 	const calls = [...selection.chain].reverse();
 	verifyFactoryInput(sources, leaf, calls[0]);
 	calls.forEach((call, index) => {
@@ -1303,31 +1369,7 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 			);
 			if (props.length === 1 && props[0]?.type === "ObjectProperty") object = props[0].value;
 		}
-		if (object?.type !== "ObjectExpression")
-			throw new Error("style must be a direct literal object; alias and mutation ownership unproved");
-		const members: { key: string; value: unknown; enumerable: boolean }[] = [];
-		for (const prop of object.properties) {
-			if (prop.type !== "ObjectProperty" || prop.computed || prop.shorthand)
-				throw new Error("style spread, getter, computed or shorthand expression unproved");
-			const key =
-				prop.key.type === "Identifier"
-					? prop.key.name
-					: prop.key.type === "StringLiteral"
-						? prop.key.value
-						: undefined;
-			if (!key || key === "__proto__" || members.some((m) => m.key === key))
-				throw new Error("style key duplicated or special");
-			let value: unknown;
-			if (prop.value.type === "StringLiteral" || prop.value.type === "NumericLiteral") value = prop.value.value;
-			else if (
-				prop.value.type === "UnaryExpression" &&
-				prop.value.operator === "-" &&
-				prop.value.argument.type === "NumericLiteral"
-			)
-				value = -prop.value.argument.value;
-			else throw new Error("style member expression needs original evaluated origin");
-			members.push({ key, value, enumerable: true });
-		}
+		const members = literalStyleMembers(object);
 		const held = cell.value as { kind?: string; members?: unknown };
 		if (held?.kind !== "style-members" || JSON.stringify(held.members) !== JSON.stringify(members))
 			throw new Error("style member descriptors differ from authored literals");
@@ -1344,7 +1386,12 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 		address: { file: origin.unit.file, start: origin.node.start!, end: origin.node.end! },
 		source: origin.source,
 		role,
-		slot: operation.kind === "property" ? "class" : field === "children" ? "text" : "attribute",
+		slot:
+			operation.kind === "property" || operation.kind === "properties"
+				? "class"
+				: field === "children"
+					? "text"
+					: "attribute",
 		...(field === "children" ? {} : { attribute: field }),
 		expected,
 		scope: operation.kind === "property" ? operation.scope : "",
@@ -1399,11 +1446,11 @@ export function sourceRead(
 		if (value === undefined) throw new Error("data or transformed text is not inverted");
 		expected = value;
 		slot = name === undefined ? "text" : "attribute";
-	} else if (operation.kind === "property") {
+	} else if (operation.kind === "property" || operation.kind === "properties") {
 		const attr = attribute(site, "className");
 		expected = attr === undefined ? null : (literal(site, "className") ?? null);
 		if (attr !== undefined && expected === null) throw new Error("class expression is preserved");
-		if (attribute(site, "style")) throw new Error("inline style ownership is outside this probe");
+		if (attribute(site, "style")) independentPropertyStyle(sources, selection, operation);
 		slot = "class";
 	} else if (operation.kind === "attribute") {
 		name = operation.attribute;

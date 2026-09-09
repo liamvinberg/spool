@@ -9,8 +9,10 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
-import type { SourceUse } from "../../source-edit";
+import type { SourceChange, SourceOccurrence, SourceOperation, SourceUse } from "../../source-edit";
 import { type SourceRead, type SourceResult, sameSourceOccurrence, type UseOutcome } from "../../source-edit";
+import type { SourcePropertyValue } from "../../source-property";
+import { propertyGroupTarget } from "../../source-property-group";
 import type {
 	Camera,
 	FlowEdge,
@@ -40,6 +42,7 @@ import {
 	postSeen,
 	postTrash,
 	postWalk,
+	previewPropertySource,
 	putCanvasState,
 	putCover,
 	putGeometry,
@@ -1933,7 +1936,9 @@ export function ProjectCanvas({
 					says:
 						result.current?.kind === "literal"
 							? `${result.reason}. Checked current source: ${JSON.stringify(result.current.text)}.`
-							: result.reason,
+							: result.current?.kind === "property"
+								? `${result.reason}. Checked current source: ${result.current.value.kind === "binding" ? result.current.value.tokens.join(" ") : result.current.value.kind === "custom" ? result.current.value.value : "no authored declaration"}.`
+								: result.reason,
 				});
 				return;
 			}
@@ -3042,22 +3047,64 @@ export function ProjectCanvas({
 	);
 
 	const beginRailText = useCallback(
-		async (frame: string, selector: string, field?: string): Promise<SourceRead | undefined> => {
+		async (
+			frame: string,
+			selector: string,
+			field?: string,
+			purpose: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
+			request?: { signal: AbortSignal; change(): SourceChange | undefined; preview?: SourcePropertyValue },
+		): Promise<SourceRead | undefined> => {
 			if (pendingSource.current.size > 0) return;
 			const pick = pickedRef.current.find((pick) => pick.frame === frame && pick.selector === selector);
-			const intent = pick ? sourceIntent(pick, pointing.entries, field) : undefined;
+			const intent = pick
+				? {
+						...sourceIntent(pick, pointing.entries, field),
+						operation: purpose,
+						action:
+							purpose.kind === "properties"
+								? "change classes"
+								: purpose.kind === "property"
+									? `change ${purpose.property}`
+									: field
+										? `change ${field}`
+										: "change text",
+					}
+				: undefined;
 			const generation = ++pickSeq.current;
-			const original = await sourceDelivery.read(frame, selector, generation, field);
+			const requestedIntent = (original?: SourceOccurrence) => {
+				const change = request?.change();
+				return intent
+					? {
+							...intent,
+							...(original ? { original } : {}),
+							...(change ? { change } : {}),
+						}
+					: undefined;
+			};
+			request?.signal.addEventListener(
+				"abort",
+				() => {
+					void sourceDelivery.cancel(frame, generation);
+				},
+				{ once: true },
+			);
+			if (request?.signal.aborted) return;
+			const original = await sourceDelivery.read(frame, selector, generation, field, purpose);
+			if (request?.signal.aborted) return;
 			if (!original) {
 				showRefusal(
 					frame,
 					selector,
 					{ code: "source", says: "these words have no editable local literal source" },
-					intent,
+					requestedIntent(),
 				);
 				return;
 			}
-			const result = await readSource(project, frame, original, generation, sourceDelivery.observer);
+			const result = await readSource(project, frame, original, generation, sourceDelivery.observer, purpose);
+			if (request?.signal.aborted) {
+				if (result?.ok) void cancelSource(project, result.read.handle);
+				return;
+			}
 			if (!result?.ok) {
 				showRefusal(
 					frame,
@@ -3066,26 +3113,35 @@ export function ProjectCanvas({
 						code: "source",
 						says: result?.reason ?? "the original read did not arrive",
 					},
-					intent ? { ...intent, original } : undefined,
+					requestedIntent(original),
 				);
 				return;
 			}
 			retainedPublications.current.set(frame, original.publication);
-			const ready = await sourceDelivery.prepare(frame, result.read);
+			const ready = await sourceDelivery.prepare(frame, result.read, request?.signal, request?.preview);
+			if (request?.signal.aborted) {
+				void cancelSource(project, ready.handle);
+				return;
+			}
 			if (intent) railIntents.current.set(ready, attributedIntent(intent, ready));
 			return ready;
 		},
 		[project, sourceDelivery, showRefusal, pointing.entries],
 	);
-	const finishRailText = useCallback(
-		(frame: string, read: SourceRead, text: string, commit: boolean) => {
-			if (!commit || (text === read.value && !(read.field && read.original.absent))) {
+	const finishRailSource = useCallback(
+		(frame: string, read: SourceRead, change: SourceChange | undefined, commit: boolean) => {
+			if (
+				!commit ||
+				!change ||
+				(change.kind === "literal" && change.text === read.value && !(read.field && read.original.absent))
+			) {
 				void cancelSource(project, read.handle);
 				void sourceDelivery.cancel(frame, read.generation);
 				return;
 			}
 			const before = railIntents.current.get(read);
-			const intent: SourceIntent | undefined = before ? { ...before, change: { kind: "literal", text } } : undefined;
+			const intent: SourceIntent | undefined = before ? { ...before, change } : undefined;
+			const text = change.kind === "literal" ? change.text : "";
 			const operation = sourceDelivery.complete(frame, read.generation).then(async (original) => {
 				if (!original || !sameSourceOccurrence(original, read.original)) {
 					void cancelSource(project, read.handle);
@@ -3096,11 +3152,11 @@ export function ProjectCanvas({
 						frame,
 						status: "blocked",
 						text,
-						says: "The original element changed. Your text was not saved.",
+						says: "The original element changed. Your edit was not saved.",
 					});
 					return;
 				}
-				const result = await commitSource(project, read, { kind: "literal", text });
+				const result = await commitSource(project, read, change);
 				if (result?.ok && result.receipt)
 					recordEntry({ kind: "source", ...(intent ? { intent } : {}), frame, receipt: result.receipt });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(frame, read.generation);
@@ -3111,6 +3167,13 @@ export function ProjectCanvas({
 			void operation.finally(() => pendingSource.current.delete(frame));
 		},
 		[project, sourceDelivery, recordEntry, showSourceResult],
+	);
+
+	const finishRailText = useCallback(
+		(frame: string, read: SourceRead, text: string, commit: boolean) => {
+			finishRailSource(frame, read, { kind: "literal", text }, commit);
+		},
+		[finishRailSource],
 	);
 
 	const verifyReloadedIntent = useCallback(
@@ -3131,9 +3194,20 @@ export function ProjectCanvas({
 
 	const checkUnknownSource = useCallback(
 		async (intent: SourceIntent) => {
-			if (intent.operation.kind !== "literal" || pendingSource.current.size || editingRef.current) return;
+			if (
+				(intent.operation.kind !== "literal" && intent.operation.kind !== "property") ||
+				pendingSource.current.size ||
+				editingRef.current
+			)
+				return;
 			const generation = ++pickSeq.current;
-			const original = await sourceDelivery.read(intent.frame, intent.selector, generation, intent.field);
+			const original = await sourceDelivery.read(
+				intent.frame,
+				intent.selector,
+				generation,
+				intent.field,
+				intent.operation,
+			);
 			const asked =
 				original && original.occurrence === intent.original?.occurrence
 					? await readSource(
@@ -3166,24 +3240,32 @@ export function ProjectCanvas({
 			if (
 				pendingSource.current.size ||
 				editingRef.current ||
-				intent.operation.kind !== "literal" ||
-				intent.change?.kind !== "literal" ||
+				(intent.operation.kind !== "literal" && intent.operation.kind !== "property") ||
+				!intent.change ||
+				intent.change.kind !== intent.operation.kind ||
 				!intent.original ||
 				intent.inverse
 			)
 				return;
 			const change = intent.change;
+			const text = change.kind === "literal" ? change.text : "";
 			const generation = ++pickSeq.current;
 			setSaid({
 				kind: "source",
 				frame: intent.frame,
-				text: change.text,
+				text,
 				status: "saving",
 				says: "Checking the original target…",
 				intent,
 			});
 			const operation = (async () => {
-				const original = await sourceDelivery.read(intent.frame, intent.selector, generation, intent.field);
+				const original = await sourceDelivery.read(
+					intent.frame,
+					intent.selector,
+					generation,
+					intent.field,
+					intent.operation,
+				);
 				if (!original || original.occurrence !== intent.original?.occurrence) {
 					await sourceDelivery.cancel(intent.frame, generation);
 					await showSourceResult(
@@ -3193,7 +3275,7 @@ export function ProjectCanvas({
 							reason:
 								"The original target is no longer available. Locate it in current source before trying again.",
 						},
-						change.text,
+						text,
 						false,
 						intent,
 					);
@@ -3213,7 +3295,7 @@ export function ProjectCanvas({
 					await showSourceResult(
 						intent.frame,
 						{ ok: false, reason: asked?.reason ?? "The fresh source read did not arrive. Nothing was retried." },
-						change.text,
+						text,
 						false,
 						intent,
 					);
@@ -3234,7 +3316,7 @@ export function ProjectCanvas({
 							ok: false,
 							reason: "The original source owner changed. Confirm it in current source before retrying.",
 						},
-						change.text,
+						text,
 						false,
 						intent,
 					);
@@ -3244,7 +3326,7 @@ export function ProjectCanvas({
 				if (result?.ok && result.receipt)
 					recordEntry({ kind: "source", frame: intent.frame, receipt: result.receipt, intent });
 				if (!result?.ok || !result.publication) await sourceDelivery.cancel(intent.frame, generation);
-				await showSourceResult(intent.frame, result, change.text, false, intent);
+				await showSourceResult(intent.frame, result, text, false, intent);
 			})();
 			pendingSource.current.set(intent.frame, operation);
 			try {
@@ -5714,16 +5796,17 @@ export function ProjectCanvas({
 									}}
 									onAsk={() => askAgent(said)}
 									onCheck={
-										said.intent?.operation.kind === "literal"
+										said.intent?.operation.kind === "literal" || said.intent?.operation.kind === "property"
 											? () => {
 													if (said.intent) void checkUnknownSource(said.intent);
 												}
 											: undefined
 									}
 									onRetry={
-										said.intent?.operation.kind === "literal" &&
+										(said.intent?.operation.kind === "literal" ||
+											said.intent?.operation.kind === "property") &&
 										said.intent.original &&
-										intentText(said.intent) !== undefined &&
+										said.intent.change?.kind === said.intent.operation.kind &&
 										!said.intent.inverse
 											? () => {
 													if (said.intent) void retrySource(said.intent);
@@ -5759,6 +5842,57 @@ export function ProjectCanvas({
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
 							onWrite: writeOps,
+							group: async (frame, selector, value, signal) => {
+								const change: SourceChange = { kind: "properties", value };
+								const read = await beginRailText(
+									frame,
+									selector,
+									"className",
+									{
+										kind: "properties",
+										target: propertyGroupTarget(value),
+									},
+									{ signal, change: () => change },
+								);
+								if (read) finishRailSource(frame, read, change, !signal.aborted);
+							},
+							property: {
+								describe: sourceDelivery.describeProperty,
+								begin: (frame, selector, property, scope, request) =>
+									beginRailText(
+										frame,
+										selector,
+										"className",
+										{ kind: "property", property, scope },
+										{
+											signal: request.signal,
+											...(request.preview ? { preview: request.preview } : {}),
+											change: () => {
+												const value = request.value();
+												return value ? { kind: "property", value } : undefined;
+											},
+										},
+									),
+								plan: async (_frame, read, revision, value) =>
+									(await previewPropertySource(project, read, revision, value)) ?? {
+										ok: false,
+										reason: "The property preview did not arrive.",
+									},
+								refused: (frame, read, value, reason) => {
+									const before = railIntents.current.get(read);
+									void showSourceResult(
+										frame,
+										{ ok: false, reason },
+										"",
+										false,
+										before ? { ...before, change: { kind: "property", value } } : undefined,
+									);
+									void sourceDelivery.cancel(frame, read.generation);
+								},
+								preview: sourceDelivery.previewProperty,
+								finish: (frame, read, value, commit) =>
+									finishRailSource(frame, read, value ? { kind: "property", value } : undefined, commit),
+							},
 							text: {
 								describe: sourceDelivery.describeField,
 								begin: beginRailText,

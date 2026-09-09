@@ -4,6 +4,11 @@ export type SourcePropertyValue =
 	| { kind: "custom"; value: string }
 	| { kind: "remove" };
 
+export interface SourcePropertyEnvironment {
+	direction: "ltr" | "rtl";
+	writingMode: string;
+}
+
 /** Declarations and their nested conditions come from the captured project compiler. */
 export interface SourcePropertyEffect {
 	owner: string | null;
@@ -20,6 +25,43 @@ export interface SourcePropertyExpectation {
 	scope: string;
 	className: string;
 	absent: boolean;
+	/** Selected compiler paths, including conditions retained from removed declarations. */
+	scopePaths: readonly (readonly string[])[];
 	effects: readonly SourcePropertyEffect[];
 	css: string;
+}
+
+/** Read-only proposed effects, bound to an existing edit and each installed frame. */
+export interface SourcePropertyPreview {
+	generation: number;
+	revision: number;
+	value: string;
+	frames: readonly { publication: string; css: string; bundledCss: string }[];
+}
+
+/** Read-only original native presentation; it does not confer source authority. */
+export interface SourcePropertyNative {
+	property: string;
+	value: string;
+}
+
+export interface SourcePropertyReading {
+	tokens: readonly string[];
+	/** One compiler-proven custom declaration, preserving its authored unit. */
+	authored?: string;
+	binding:
+		| { kind: "page" }
+		| { kind: "custom" }
+		| { kind: "reference"; name: string; value?: string }
+		| { kind: "mixed" };
+	native?: string;
+}
+
+export const propertySamplePlaceholder = "var(--spool-property-input)";
+
+/** A once-compiled temporary declaration; samples replace only its value marker. */
+export interface SourcePropertyPreviewTemplate {
+	placeholder: string;
+	declarations: readonly { property: string; value: string }[];
+	plan: SourcePropertyPreview;
 }

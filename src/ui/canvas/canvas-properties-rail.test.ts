@@ -145,6 +145,38 @@ it("scrubs a frame's w against the screen alone, and writes once at release", as
 	expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 640, h: 480 } });
 });
 
+it.each(["pointercancel", "Escape", "reselection"])(
+	"cancels frame geometry on %s without saving late pointer work",
+	async (ending) => {
+		const { host, canvas } = await readyCanvas();
+		await clickAt(canvas, 40, 40);
+		const label = rowLabel(host, "w");
+		if (!label) throw new Error("missing width label");
+		await act(() => {
+			label.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, pointerId: 7 }));
+			label.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 140, pointerId: 7 }));
+		});
+		expect(fieldFor(host, "w")?.value).toBe("680");
+		if (ending === "Escape") await press("Escape");
+		else if (ending === "reselection") await clickAt(canvas, 940, 40);
+		else await act(() => label.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 7 })));
+		await act(() => {
+			document.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 180, pointerId: 7 }));
+			document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 7 }));
+		});
+		if (ending === "reselection") {
+			expect(fieldFor(host, "w")?.value).toBe("390");
+			await clickAt(canvas, 40, 40);
+		}
+		expect(fieldFor(host, "w")?.value).toBe("640");
+		expect(await geometryPut()).toBeUndefined();
+		await typeInto(fieldFor(host, "w"), "644");
+		expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 644, h: 480 } });
+		await press("z", ACCEL);
+		expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 640, h: 480 } });
+	},
+);
+
 it("crumbs the frame and every rung above the one held, by the names the file gave them", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await descendTo(canvas, frame, 3);
@@ -249,17 +281,16 @@ it("drops every token under a scope in one write, and falls back to the base", a
 	await pressChip(host, "hover:");
 
 	await press("×", {}, host.querySelector<HTMLElement>('[aria-label="remove hover:"]'));
-	const gated = await gatedOps();
-	expect(gated).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "bg-thread", scope: "hover:", remove: true },
-		{
-			kind: "set-class",
-			source: "frames/home/frame.tsx:12:3",
-			token: "text-on-thread",
-			scope: "hover:",
-			remove: true,
-		},
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("read")[0]?.operation).toEqual({
+		kind: "properties",
+		target: { kind: "remove-scope", scope: "hover:" },
+	});
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "properties",
+		value: { kind: "remove-scope", scope: "hover:" },
+	});
+	expect(await gatedOps()).toBeUndefined();
 	expect(chips(host).filter((chip) => chip === "hover:")).toHaveLength(1);
 });
 
@@ -301,17 +332,23 @@ it("writes a row's change to the lane as one op under the live scope", async () 
 	await pressChip(host, "hover:");
 
 	await typeInto(fieldFor(host, "opacity"), "60");
-	expect(await gatedOps()).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "opacity-60", scope: "hover:" },
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("read")[0]?.operation).toEqual({ kind: "property", property: "opacity", scope: "hover:" });
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "property",
+		value: { kind: "binding", tokens: ["hover:opacity-60"] },
+	});
+	expect(await gatedOps()).toBeUndefined();
 });
 
-it("keeps the rung it is editing when its own write reloads the frame", async () => {
+it("keeps the rung when a layout write reloads the frame", async () => {
 	const { host, canvas, frame } = await readyCanvas();
-	await descendTo(canvas, frame, 3);
+	const chain = CHAIN.map((hit) => ({ ...hit, tag: "div" }));
+	await descendTo(canvas, frame, 3, chain);
 	await until(() => crumbs(host).length === 4);
 
-	await typeInto(fieldFor(host, "opacity"), "60");
+	await until(() => fieldFor(host, "width") !== null);
+	await typeInto(fieldFor(host, "width"), "60");
 	await changed("home");
 	await frame.loaded();
 
@@ -321,28 +358,30 @@ it("keeps the rung it is editing when its own write reloads the frame", async ()
 	// and the fresh document is asked for the same element, so the geometry the
 	// overlay draws is the one the new render produced
 	expect(frame.asked()).toMatchObject({ spool: "kin", selector: "pay", step: "self" });
-	await frame.answer(CHAIN);
+	await frame.answer(chain);
 	expect(await heldElements()).toEqual(["pay"]);
 });
 
 it("reads a token the hands wrote in thread colour, and the author's own quietly", async () => {
 	const { host, canvas, frame } = await readyCanvas();
-	await descendTo(canvas, frame, 3);
+	const chain = CHAIN.map((hit) => ({ ...hit, tag: "div" }));
+	await descendTo(canvas, frame, 3, chain);
 	await until(() => crumbs(host).length === 4);
 
 	expect(splicedTokens(host)).toEqual([]);
 
-	await typeInto(fieldFor(host, "opacity"), "60");
-	payLiteral = `${RUNGS[2]?.className ?? ""} opacity-60`;
+	await until(() => fieldFor(host, "width") !== null);
+	await typeInto(fieldFor(host, "width"), "60");
+	payLiteral = `${RUNGS[2]?.className ?? ""} w-60`;
 	await changed("home");
 	await frame.loaded();
-	await frame.answer(CHAIN);
+	await frame.answer(chain);
 	await until(() => splicedTokens(host).length > 0);
 
 	// what you changed reads in thread colour and what the file was written with
 	// does not, which is how you tell your own work from the agent's
-	expect(splicedTokens(host)).toEqual(["opacity-60"]);
-	expect(rowLabel(host, "opacity")?.className).toContain("text-thread");
+	expect(splicedTokens(host)).toEqual(["w-60"]);
+	expect(rowLabel(host, "width")?.className).toContain("text-thread");
 	expect(rowLabel(host, "border-radius")?.className).not.toContain("text-thread");
 });
 
@@ -369,9 +408,12 @@ it("gates the `+` on the compiler, and lands what it accepts under the live scop
 
 	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "md:hidden");
 	await press("click", {}, candidate(host, "md:hidden"));
-	expect(await gatedOps()).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "hidden", scope: "md:" },
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "properties",
+		value: { kind: "tokens", add: ["md:hidden"], remove: [] },
+	});
+	expect(await gatedOps()).toBeUndefined();
 });
 
 it("removes a token from the source line, which is the only way back out for a `+`", async () => {
@@ -380,9 +422,12 @@ it("removes a token from the source line, which is the only way back out for a `
 	await until(() => crumbs(host).length === 4);
 
 	await press("click", {}, sourceToken(host, "hover:bg-thread"));
-	expect(await gatedOps()).toEqual([
-		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "bg-thread", scope: "hover:", remove: true },
-	]);
+	await until(() => sourceCalls("commit").length === 1);
+	expect(sourceCalls("commit")[0]?.change).toEqual({
+		kind: "properties",
+		value: { kind: "tokens", add: [], remove: ["hover:bg-thread"] },
+	});
+	expect(await gatedOps()).toBeUndefined();
 });
 
 // Literal attributes retain the original field read through the shared source lane.
@@ -924,6 +969,7 @@ function stubCanvasApis(refused = false): void {
 					generation: number;
 					operation: SourceOperation;
 					original: SourceOccurrence;
+					readings?: string[];
 				};
 				if (body.action === "read") {
 					sourceRead = {
@@ -939,6 +985,31 @@ function stubCanvasApis(refused = false): void {
 					};
 					return Response.json({ ok: true, read: sourceRead });
 				}
+				// The daemon describes this element's class cell before a control may
+				// write it, answering every property the rail asked for.
+				if (body.action === "describe" && body.operation.kind === "property")
+					return Response.json({
+						ok: true,
+						description: {
+							operation: body.operation,
+							original: body.original,
+							source: "frames/home/frame.tsx:12:3",
+							role: "literal-attribute",
+							value: body.original.value,
+							property: { tokens: [], binding: { kind: "page" }, native: "1" },
+							properties: Object.fromEntries(
+								(body.readings ?? []).map((property) => [
+									property,
+									{ tokens: [], binding: { kind: "page" }, native: "1" },
+								]),
+							),
+						},
+					});
+				if (body.action === "preview")
+					return Response.json({
+						ok: true,
+						preview: { generation: sourceRead?.generation, revision: 1, value: "opacity-60", frames: [] },
+					});
 				if (body.action === "stage-image")
 					return Response.json({
 						ok: true,

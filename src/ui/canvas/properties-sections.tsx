@@ -1,9 +1,11 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { ThemeToken } from "../../daemon/theme";
 import {
 	borderColoursOf,
 	borderWidthsOf,
 	type Colour,
 	colourOf,
+	colourToken,
 	cornersOf,
 	DIRECTIONS,
 	describe,
@@ -11,6 +13,7 @@ import {
 	type Gradient,
 	type GradientShape,
 	gapOf,
+	gradientAngle,
 	gradientCss,
 	gradientOf,
 	insetOf,
@@ -49,6 +52,7 @@ import {
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
+import { propertySamplePlaceholder } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -60,7 +64,6 @@ import {
 	Fold,
 	IconField,
 	LABEL,
-	LinesIcon,
 	Menu,
 	NumField,
 	type Option,
@@ -69,29 +72,25 @@ import {
 	Section,
 } from "./properties-fields";
 import type { Scope } from "./properties-scope";
+import { scopeKey } from "./properties-scope";
+import { PropertyColorField } from "./property-color-field";
+import {
+	appearanceProperty,
+	type PropertyControls,
+	type PropertyDescription,
+	propertyControlValue,
+	propertyNumericSample,
+} from "./property-controls";
+import { type NumericTokenProperty, PropertyNumberField } from "./property-number-field";
 
-/**
- * The rail's rows (#258): every section, drawn out of the property model.
- *
- * The model (#257) already says what each of about 130 class families reads,
- * writes and refuses; this file is where those answers become controls. Nothing
- * here decides what a token means — a row asks `readRow` what it is wearing,
- * `optionsFor` what it may offer, `editsFor` what a change comes to, and
- * `verdictFor` whether it may be written at all. What comes back is handed to
- * the write lane as `set-class` ops, which is what keeps the spelling — the
- * fewest tokens, the logical sides, the zero that drops at the base and
- * overrides under a scope — in one place rather than two.
- *
- * The sections and their order are Figma's, and which rows each one leads with
- * is `design/frames/manipulate/properties--rail`. A section's other rows draw
- * themselves when the element wears one, and a `+ more` at its foot reaches the
- * rest: a rail of a hundred and thirty rows is not a surface anybody reads, and
- * a family with nowhere to be reached is exactly the absence this ticket exists
- * to remove.
+/** Rows read candidate spellings from the shared property inventory.
+ * Appearance controls retain an original source operation through preview and completion.
+ * Layout controls keep their existing writer until their operation-specific migration.
  */
 
 /** What every row is handed: the element under one scope, and how to write under it. */
 export interface View {
+	property: PropertyControls | null;
 	scope: Scope;
 	/** the tokens under the live scope, prefixes off, which is what the model reads */
 	scoped: string;
@@ -104,12 +103,69 @@ export interface View {
 	compiler: Compiler;
 	/** true when a bare token under this scope is not one the file was written with */
 	fresh: (token: string | null) => boolean;
-	/** the row's edits, as one patch under the live scope */
+	/** What the source says this element's class cell wears, or why it cannot be written. */
+	described?: PropertyDescription | undefined;
+	/** Remaining layout edits under the live scope. */
 	put: (edits: readonly RowEdit[]) => void;
 }
 
 function atOf(view: View): At {
 	return { scoped: view.scoped, theme: view.theme };
+}
+
+function writeValue(view: View, row: ModelRow, value: RowValue): void {
+	if (appearanceProperty(row)) {
+		view.property?.apply(row.property, propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
+	} else view.put(editsFor(row, value, atOf(view)));
+}
+
+/** Pointer moves preview one original number; only release completes that source operation. */
+function usePropertyScrub(
+	view: View,
+	row: ModelRow,
+	value: string,
+	step: (from: string, units: number) => string | undefined,
+) {
+	const control = appearanceProperty(row) ? view.property : null;
+	const held = useRef<{ value: string; moved: boolean } | undefined>(undefined);
+	const [draft, setDraft] = useState<string>();
+	const scope = scopeKey(view.scope);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: new authored values or scopes retire the displayed scrub draft
+	useEffect(() => {
+		setDraft(undefined);
+	}, [value, scope]);
+	const finish = (commit: boolean) => {
+		const original = held.current;
+		if (!original) return;
+		held.current = undefined;
+		control?.finish(commit && original.moved);
+		if (!commit || !original.moved) setDraft(undefined);
+	};
+	return control
+		? {
+				value: draft ?? value,
+				start: () => {
+					held.current = { value, moved: false };
+					control.begin(row.property);
+				},
+				move: (units: number) => {
+					const original = held.current;
+					if (!original) return;
+					const next = step(original.value, units);
+					if (next === undefined) return;
+					original.value = next;
+					original.moved = true;
+					setDraft(next);
+					control.preview(
+						row.property,
+						propertyControlValue(row, { kind: "value", value: next }, atOf(view), scope),
+						propertyNumericSample(row, { kind: "value", value: next }),
+					);
+				},
+				end: () => finish(true),
+				cancel: () => finish(false),
+			}
+		: undefined;
 }
 
 /** The model row this property is, which is a programming error when it is missing. */
@@ -135,7 +191,21 @@ function ruleRow<K extends Rule["kind"]>(property: string, kind: K): ModelRow & 
 
 /** Whether this row may be written here, and the reason it may not. */
 function okOf(view: View, row: ModelRow): boolean {
+	if (appearanceProperty(row)) return view.property !== null;
 	return verdictFor(row, view.element, view.scoped).ok;
+}
+
+/**
+ * What an appearance control is allowed to write, in the source's own words.
+ *
+ * An open session is somewhere to send a request, never evidence that the source
+ * will take one: the element's own description says whether its class cell can
+ * be written and what each property is wearing, and a row that has no such
+ * reading refuses before it is used rather than at the write.
+ */
+function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
+	if (!appearanceProperty(row)) return { ok: verdictFor(row, view.element, view.scoped).ok, reason: undefined };
+	return { ok: view.property !== null && view.described?.readings !== undefined, reason: view.described?.reason };
 }
 
 /**
@@ -236,51 +306,126 @@ function LengthRow({
 	const family = row.rule.family;
 	const kind: Kind = LENGTHS[family] ?? "spacing";
 	const step = stepOf(view.theme);
-	const ok = okOf(view, row);
 	const reader = read ?? ((scoped: string) => signedOf(lengthOf(scoped, family)));
 	const held = worn<string | null>(view, reader, (value) => value === null);
-	const value = held.shown ?? "";
-	const parsed = takeApart(value);
-	const readout = parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
-	const changed = view.fresh(lengthOf(view.scoped, family)?.token ?? null);
-	const write = (next: RowValue) => view.put(editsFor(row, next, atOf(view)));
-	const stepBy = (units: number) => {
-		const from: Length | null =
-			parsed === null
-				? null
-				: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
-		const next = stepLength(kind, from, measured, units, step);
-		write({ kind: "value", value: `${next.negative ? "-" : ""}${next.value}` });
-	};
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed} onScrub={ok ? stepBy : undefined}>
+		<ClassNumberRow
+			view={view}
+			row={row}
+			{...(name === undefined ? {} : { name })}
+			value={held.shown ?? ""}
+			faint={held.own === null}
+			changed={view.fresh(lengthOf(view.scoped, family)?.token ?? null)}
+			placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
+			readout={(shown) => {
+				const parsed = takeApart(shown);
+				return parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
+			}}
+			typedValue={(typed) => {
+				if (typed.trim() === "") return null;
+				const next = parseTyped(kind, typed);
+				return next ? { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` } : undefined;
+			}}
+			stepped={(from, units) => {
+				const parsed = takeApart(from);
+				const start: Length | null =
+					parsed === null
+						? null
+						: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
+				const next = stepLength(kind, start, measured, units);
+				return next === null ? undefined : `${next.negative ? "-" : ""}${next.value}`;
+			}}
+			{...(aside === undefined ? {} : { aside })}
+		/>
+	);
+}
+
+/**
+ * The shape every class-written number row wears (P6).
+ *
+ * The row is one scrub label, one field and whatever the fold hangs beside it.
+ * What differs between a length and a border width is what the class says, what
+ * a typed value spells and how a step moves: those are the arguments, and the
+ * gesture around them is written once.
+ */
+function ClassNumberRow({
+	view,
+	row,
+	name,
+	value,
+	faint,
+	changed,
+	placeholder,
+	readout,
+	typedValue,
+	stepped,
+	aside,
+}: {
+	view: View;
+	row: ModelRow;
+	name?: string | undefined;
+	value: string;
+	/** nothing under this scope sets it: the value shown is the base's */
+	faint: boolean;
+	changed: boolean;
+	placeholder: string;
+	readout: (shown: string) => string | null;
+	/** what typed text writes, or nothing where this row will not take it */
+	typedValue: (typed: string) => RowValue | undefined;
+	/** the same value one or ten units along, or nothing where it cannot move */
+	stepped: (from: string, units: number) => string | undefined;
+	aside?: ReactNode;
+}) {
+	const { ok, reason } = rowAdmission(view, row);
+	const control = appearanceProperty(row) ? view.property : null;
+	const write = (next: RowValue) => writeValue(view, row, next);
+	const stepBy = (units: number) => {
+		const next = stepped(value, units);
+		if (next !== undefined) write({ kind: "value", value: next });
+	};
+	const scrub = usePropertyScrub(view, row, value, stepped);
+	return (
+		<Row
+			name={name ?? row.property}
+			ok={ok}
+			reason={reason}
+			changed={changed}
+			onScrub={ok ? (scrub?.move ?? stepBy) : undefined}
+			onScrubStart={scrub?.start}
+			onScrubEnd={scrub?.end}
+			onScrubCancel={scrub?.cancel}
+		>
 			<NumField
-				value={value}
-				readout={readout}
+				value={scrub?.value ?? value}
+				readout={readout(scrub?.value ?? value)}
 				ok={ok}
-				faint={held.own === null}
+				faint={faint}
 				changed={changed}
-				placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
-				onCommit={(typed) => {
-					const text = typed.trim();
-					if (text === "") return write(null);
-					const next = parseTyped(kind, text, step);
-					if (next !== null) write({ kind: "value", value: `${next.negative ? "-" : ""}${next.value}` });
+				placeholder={placeholder}
+				onBegin={() => control?.begin(row.property)}
+				onCancel={() => control?.finish(false)}
+				onPreview={(typed) => {
+					const next = typedValue(typed);
+					if (next !== undefined)
+						control?.preview(
+							row.property,
+							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
+							propertyNumericSample(row, next),
+						);
 				}}
-				onStep={stepBy}
+				onCommit={(typed) => {
+					const next = typedValue(typed);
+					if (next !== undefined) write(next);
+					else control?.finish(false);
+				}}
+				onStep={control ? undefined : stepBy}
+				stepDraft={control ? stepped : undefined}
 			/>
 			{aside}
 		</Row>
 	);
 }
 
-/**
- * A border width, which is a length that folds to edges (P7).
- *
- * A fraction brackets rather than going bare: Tailwind refuses `border-1.5`,
- * and `border-[1.5px]` is what it takes instead — the row would otherwise offer
- * a value that lands nothing.
- */
 function BorderWidthRow({
 	view,
 	property,
@@ -294,39 +439,46 @@ function BorderWidthRow({
 }) {
 	const row = ruleRow(property, "border-width");
 	const edge = row.rule.edge;
-	const ok = okOf(view, row);
 	const step = stepOf(view.theme);
 	const held = worn<string | null>(
 		view,
 		(scoped) => (edge === "all" ? borderWidthsOf(scoped).t : borderWidthsOf(scoped)[edge]),
 		(value) => value === null,
 	);
-	const changed = view.fresh(readRow(row, view.scoped, view.theme).token);
-	const write = (next: RowValue) => view.put(editsFor(row, next, atOf(view)));
-	const stepBy = (units: number) => {
-		const now = held.shown === null ? 0 : Number.parseFloat(held.shown.replace(/[^\d.]/g, "")) || 1;
-		const next = Math.max(0, Math.round(now + units));
-		if (next === 0) write(null);
-		else write({ kind: "value", value: String(next) });
-	};
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed} onScrub={ok ? stepBy : undefined}>
-			<NumField
-				value={held.shown ?? ""}
-				placeholder="0"
-				readout={describe("px", held.shown ?? "0", false, step) ?? "0px"}
-				ok={ok}
-				faint={held.own === null}
-				changed={changed}
-				onCommit={(typed) => {
-					const next = parseTyped("px", typed.trim(), step);
-					if (next === null || next.value === "0") return write(null);
-					write({ kind: "value", value: next.value });
-				}}
-				onStep={stepBy}
-			/>
-			{fold}
-		</Row>
+		<ClassNumberRow
+			view={view}
+			row={row}
+			{...(name === undefined ? {} : { name })}
+			value={held.shown ?? ""}
+			faint={held.own === null}
+			changed={view.fresh(readRow(row, view.scoped, view.theme).token)}
+			placeholder="0"
+			readout={(shown) => describe("px", shown || held.shown || "0", false, step) ?? "0px"}
+			typedValue={(typed) => {
+				if (typed.trim() === "") return null;
+				const next = parseTyped("px", typed);
+				return next && !next.negative ? { kind: "value", value: next.value } : undefined;
+			}}
+			stepped={(from, units) => {
+				const parsed = takeApart(from);
+				const start: Length | null =
+					parsed === null
+						? null
+						: {
+								family: "border",
+								kind: "px",
+								value: parsed.value,
+								negative: parsed.negative,
+								important: false,
+								token: "",
+							};
+				// A width nothing sets steps from zero; a set one steps from what it says.
+				const next = stepLength("px", start, held.shown === null ? 0 : Number.NaN, units);
+				return next === null || next.negative ? undefined : next.value;
+			}}
+			{...(fold === undefined ? {} : { aside: fold })}
+		/>
 	);
 }
 
@@ -364,7 +516,77 @@ function colourTyped(theme: CompiledTheme | null, typed: string): Option | null 
 	return { token: name, name, group: "arbitrary", ...(paint === undefined ? {} : { swatch: paint }) };
 }
 
-/** the swatch, the name out of the compiled theme, and the alpha after the slash */
+/**
+ * What the source says about this element, kept while it is being read again.
+ *
+ * A description belongs to one element under one scope, so a different subject
+ * retires it immediately. A re-read of the same subject does not: dropping the
+ * description while its replacement is in flight would retire the controls it
+ * admits, and the gesture already under way with them. What that read answers
+ * stands in its place, including a read that retired or refused.
+ */
+function usePropertyDescription(control: PropertyControls | null | undefined, properties: readonly string[]) {
+	const subject = JSON.stringify([control?.subject, properties]);
+	const identity = JSON.stringify([control?.identity, properties]);
+	const [described, setDescribed] = useState<{
+		subject: string;
+		description: PropertyDescription | undefined;
+	}>();
+	const describe = useRef(control?.describe);
+	describe.current = control?.describe;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `identity` is not read in here, it is the trigger — the same element read again describes again
+	useEffect(() => {
+		let live = true;
+		if (properties.length)
+			void describe.current?.(properties).then((description) => {
+				if (live) setDescribed({ subject, description });
+			});
+		return () => {
+			live = false;
+		};
+	}, [subject, identity, properties]);
+	return described?.subject === subject ? described.description : undefined;
+}
+
+/**
+ * One control's own reading, measured against its own property.
+ *
+ * The element's description says whether the cell can be written; a control
+ * that draws the source's value also needs that property's native measurement,
+ * which the frame captures for the property the read names.
+ */
+function useOwnReading(view: View, property: string) {
+	// The element's own description already measured the property it was read
+	// against; every other control asks for its own native reading.
+	const shared = view.described?.readings?.[property];
+	const measured = shared?.native !== undefined;
+	// Until that description lands there is nothing to ask about: a control that
+	// asked first would pay for a second reading of the same class cell.
+	const own = view.described !== undefined && !measured;
+	const properties = useMemo(() => (own ? [property] : []), [property, own]);
+	const asked = usePropertyDescription(view.property, properties)?.readings?.[property];
+	return measured ? shared : asked;
+}
+
+/**
+ * The controls that read the source's own value rather than the class it can see.
+ *
+ * The first is what the element's own read is measured against, so it is the one
+ * control this description can hand a native value to.
+ */
+const DESCRIBED_PROPERTIES: readonly string[] = [
+	"color",
+	"background-color",
+	"font-size",
+	"line-height",
+	"letter-spacing",
+	"border-radius",
+	"border-top-left-radius",
+	"border-top-right-radius",
+	"border-bottom-right-radius",
+	"border-bottom-left-radius",
+];
+
 function ColourRow({
 	view,
 	property,
@@ -384,9 +606,12 @@ function ColourRow({
 	onWrite?: ((name: string | null, alpha: number | null) => void) | undefined;
 	fold?: ReactNode;
 }) {
+	const control = view.property;
 	const row = ruleRow(property, "colour");
 	const prefix = row.rule.prefix;
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
+	const own = useOwnReading(view, property);
+	const reading = property === "color" || property === "background-color" ? own : undefined;
 	const reader = read ?? ((scoped: string) => colourOf(scoped, prefix, view.theme));
 	const held = worn<Colour>(view, reader, (colour) => colour.token === null);
 	const shown = held.shown;
@@ -395,12 +620,59 @@ function ColourRow({
 		shown.name === null
 			? { token: null, name: absent, swatch: "" }
 			: { token: shown.name, name: shown.name, swatch: shown.paint ?? "" };
+	const previewAlpha = (alpha: number | null) => {
+		if (shown.name === null) return;
+		const original = reading;
+		const paint = original?.binding.kind === "reference" ? `var(${original.binding.name})` : original?.authored;
+		control?.preview(
+			property,
+			propertyControlValue(row, { kind: "colour", name: shown.name, alpha }, atOf(view), scopeKey(view.scope)),
+			paint === undefined ? undefined : paintWith(paint, alpha),
+		);
+	};
 	const write = (nextName: string | null, alpha: number | null) => {
 		if (onWrite !== undefined) return onWrite(nextName, alpha);
-		view.put(editsFor(row, nextName === null ? null : { kind: "colour", name: nextName, alpha }, atOf(view)));
+		writeValue(view, row, nextName === null ? null : { kind: "colour", name: nextName, alpha });
 	};
+	if (property === "color" || property === "background-color")
+		return (
+			<PropertyColorField
+				property={property}
+				reading={reading}
+				reason={reason}
+				options={[
+					...(view.theme?.colour ?? []).map((token) => ({ ...token, reference: `--color-${token.name}` })),
+					...KEYWORD_COLOURS.map((color) => ({
+						name: color.name,
+						value: color.paint,
+						from: "default" as const,
+						reference: null,
+					})),
+				]}
+				begin={() => control?.begin(property)}
+				preview={(value) => control?.preview(property, { kind: "custom", value })}
+				apply={(choice) =>
+					choice.kind === "binding" ? write(choice.name, shown.alpha) : control?.apply(property, choice)
+				}
+				finish={(commit) => control?.finish(commit)}
+				accessory={
+					<>
+						<AlphaField
+							alpha={shown.alpha}
+							ok={ok && shown.name !== null}
+							faint={held.own.token === null}
+							onBegin={() => control?.begin(property)}
+							onPreview={previewAlpha}
+							onCancel={() => control?.finish(false)}
+							onCommit={(alpha) => write(shown.name, alpha)}
+						/>
+						{fold}
+					</>
+				}
+			/>
+		);
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed}>
+		<Row name={name ?? row.property} ok={ok} reason={reason} changed={changed}>
 			<Menu
 				current={current}
 				options={[{ token: null, name: absent, swatch: "" }, ...colourOptions(view.theme)]}
@@ -416,6 +688,9 @@ function ColourRow({
 				alpha={shown.alpha}
 				ok={ok && shown.name !== null}
 				faint={held.own.token === null}
+				onBegin={() => control?.begin(property)}
+				onPreview={previewAlpha}
+				onCancel={() => control?.finish(false)}
 				onCommit={(alpha) => write(shown.name, alpha)}
 			/>
 			{fold}
@@ -429,12 +704,25 @@ function AlphaField({
 	ok,
 	faint,
 	onCommit,
+	onBegin,
+	onPreview,
+	onCancel,
 }: {
 	alpha: number | null;
 	ok: boolean;
 	faint: boolean;
 	onCommit: (alpha: number | null) => void;
+	onBegin?: (() => void) | undefined;
+	onPreview?: ((alpha: number | null) => void) | undefined;
+	onCancel?: (() => void) | undefined;
 }) {
+	const parse = (typed: string): number | null | undefined => {
+		if (typed.trim() === "") return null;
+		const raw = typed.trim().replace(/%$/, " ").trim();
+		if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw)) return;
+		const value = Number(raw);
+		return Number.isFinite(value) ? (value >= 100 ? null : Math.max(0, value)) : undefined;
+	};
 	return (
 		<span className="flex w-[46px] shrink-0 items-center">
 			<span className={cn("shrink-0", FAINT)}>/</span>
@@ -443,14 +731,20 @@ function AlphaField({
 				placeholder="100"
 				ok={ok}
 				faint={faint}
-				onCommit={(typed) => {
-					const percent = Number.parseFloat(typed.replace("%", ""));
-					if (typed.trim() === "" || Number.isNaN(percent) || percent >= 100) onCommit(null);
-					else onCommit(Math.max(0, percent));
+				onBegin={onBegin}
+				onCancel={onCancel}
+				onPreview={(typed) => {
+					const value = parse(typed);
+					if (value !== undefined) onPreview?.(value);
 				}}
-				onStep={(units) => {
-					const next = Math.min(100, Math.max(0, (alpha ?? 100) + units * 5));
-					onCommit(next >= 100 ? null : next);
+				onCommit={(typed) => {
+					const value = parse(typed);
+					if (value !== undefined) onCommit(value);
+					else onCancel?.();
+				}}
+				stepDraft={(typed, units) => {
+					const value = parse(typed);
+					return value === undefined ? undefined : String(Math.min(100, Math.max(0, (value ?? 100) + units)));
 				}}
 			/>
 		</span>
@@ -469,7 +763,7 @@ const UNSET: Option = { token: null, name: "unset" };
 function WordRow({ view, property, name }: { view: View; property: string; name?: string }) {
 	const row = ruleRow(property, "word");
 	const word = row.rule.word;
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const held = worn<string | null>(
 		view,
 		(scoped) => wordOf(scoped, word),
@@ -489,7 +783,7 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 			? { token: null, name: WORDS[word].fallback }
 			: (options.find((option) => option.token === held.shown) ?? { token: held.shown, name: held.shown });
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed}>
+		<Row name={name ?? row.property} ok={ok} reason={reason} changed={changed}>
 			<Menu
 				current={current}
 				options={options}
@@ -497,11 +791,48 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 				faint={held.own === null}
 				changed={changed}
 				label={name ?? row.property}
-				onPick={(token) =>
-					view.put(editsFor(row, token === null ? null : { kind: "value", value: token }, atOf(view)))
-				}
+				onPick={(token) => writeValue(view, row, token === null ? null : { kind: "value", value: token })}
 			/>
 		</Row>
+	);
+}
+
+/**
+ * A number the source owns: its own token menu, its own reading, one gesture.
+ *
+ * The class says nothing this control trusts. It draws what the source read
+ * says the property is wearing, and every gesture it makes is a source request.
+ */
+function SourceNumberRow({
+	view,
+	property,
+	options,
+	name,
+	accessory,
+}: {
+	view: View;
+	property: NumericTokenProperty;
+	options: readonly ThemeToken[];
+	name?: string | undefined;
+	accessory?: ReactNode;
+}) {
+	const control = view.property;
+	const { reason } = rowAdmission(view, modelRow(property));
+	const reading = useOwnReading(view, property);
+	return (
+		<PropertyNumberField
+			property={property}
+			{...(name === undefined ? {} : { name })}
+			reading={reading}
+			reason={reason}
+			options={options}
+			scope={scopeKey(view.scope)}
+			begin={() => control?.begin(property)}
+			preview={(value) => control?.preview(property, value)}
+			apply={(value) => control?.apply(property, value)}
+			finish={(commit) => control?.finish(commit)}
+			{...(accessory === undefined ? {} : { accessory })}
+		/>
 	);
 }
 
@@ -537,7 +868,7 @@ function TokenRow({
 	fold?: ReactNode;
 }) {
 	const row = modelRow(property);
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const held = worn(
 		view,
 		(scoped) => readRow(row, scoped, view.theme),
@@ -566,7 +897,7 @@ function TokenRow({
 					value: held.shown.says ?? "",
 				});
 	return (
-		<Row name={name ?? row.property} ok={ok} changed={changed}>
+		<Row name={name ?? row.property} ok={ok} reason={reason} changed={changed}>
 			<Menu
 				current={current}
 				options={options}
@@ -578,7 +909,7 @@ function TokenRow({
 				arbitrary={(typed) => arbitraryOption(row, typed)}
 				onPick={(token) => {
 					const explicit = token === null && clearTo !== undefined && view.scope.length > 0 ? clearTo : token;
-					view.put(editsFor(row, explicit === null ? null : { kind: "value", value: explicit }, atOf(view)));
+					writeValue(view, row, explicit === null ? null : { kind: "value", value: explicit });
 				}}
 			/>
 			{fold}
@@ -614,16 +945,15 @@ function ToggleRow({
 }) {
 	const row = ruleRow(property, "toggles");
 	const set = row.rule.set;
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const on = toggledOf(view.scoped, set);
 	const inherited = view.scope.length > 0 ? toggledOf(view.base, set) : new Set<string>();
 	const chips = set.groups.filter((group) => group !== menuGroup).flat();
 	const menuOn = menuGroup === undefined ? null : (menuGroup.find((token) => on.has(token)) ?? null);
 	const none = `${menuGroup?.[0]?.split("-")[0] ?? ""}-none`;
-	const write = (token: string, next: boolean) =>
-		view.put(editsFor(row, { kind: "toggle", token, on: next }, atOf(view)));
+	const write = (token: string, next: boolean) => writeValue(view, row, { kind: "toggle", token, on: next });
 	return (
-		<Row name={row.property} ok={ok} tall changed={[...on].some((token) => view.fresh(token))}>
+		<Row name={row.property} ok={ok} reason={reason} tall changed={[...on].some((token) => view.fresh(token))}>
 			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
 				{chips.map((token) => (
 					<Chip
@@ -661,9 +991,9 @@ function ToggleRow({
 
 type Sides = Record<Side, string | null>;
 
-interface FoldRows {
+interface FoldRows<P extends string = string> {
 	/** one row when every side agrees, two on the axes, four on the sides */
-	levels: readonly (readonly { property: string; name?: string; sides: readonly Side[] }[])[];
+	levels: readonly (readonly { property: P; name?: string; sides: readonly Side[] }[])[];
 }
 
 function levelOf(sides: Sides, max: number): number {
@@ -681,17 +1011,17 @@ function levelOf(sides: Sides, max: number): number {
  * `p-4 pt-2` where three of four agree — is the write lane's, which is where it
  * has to be for a `hover:` write and a base write to spell the same.
  */
-function Folded({
+function Folded<P extends string>({
 	view,
 	fold,
 	read,
 	draw,
 }: {
 	view: View;
-	fold: FoldRows;
+	fold: FoldRows<P>;
 	read: (scoped: string) => Sides;
 	draw: (
-		entry: { property: string; name?: string; sides: readonly Side[] },
+		entry: { property: P; name?: string; sides: readonly Side[] },
 		caret: ReactNode,
 		read: (scoped: string) => string | null,
 	) => ReactNode;
@@ -746,7 +1076,7 @@ const GAP_FOLD: FoldRows = {
 	],
 };
 
-const RADIUS_FOLD: FoldRows = {
+const RADIUS_FOLD: FoldRows<NumericTokenProperty> = {
 	levels: [
 		[{ property: "border-radius", sides: ["t", "r", "b", "l"] }],
 		[
@@ -821,7 +1151,7 @@ const DIRECTION_OPTIONS: readonly Option[] = DIRECTIONS.map((direction) => ({
  */
 function GradientRows({ view }: { view: View }) {
 	const row = modelRow("background-image");
-	const ok = okOf(view, row);
+	const { ok, reason } = rowAdmission(view, row);
 	const own = gradientOf(view.scoped, view.theme);
 	const gradient = through(
 		view,
@@ -829,12 +1159,48 @@ function GradientRows({ view }: { view: View }) {
 		(held) => held === null,
 	);
 	const changed = view.fresh(own?.token ?? null);
-	const write = (next: Gradient | null) => view.put(editsFor(row, { kind: "gradient", gradient: next }, atOf(view)));
+	const write = (next: Gradient | null) => writeValue(view, row, { kind: "gradient", gradient: next });
+	const control = view.property;
+	const preview = (next: Gradient, sample?: string) =>
+		control?.preview(
+			row.property,
+			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
+			sample,
+		);
+	const begin = (next: Gradient) =>
+		control?.begin(
+			row.property,
+			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
+		);
+	const beginAlpha = (stop: Stop) => {
+		if (!gradient || !stop.colour?.name) return;
+		const value = propertyControlValue(row, { kind: "gradient", gradient }, atOf(view), scopeKey(view.scope));
+		if (value.kind !== "binding") return;
+		const prefix = scopeKey(view.scope);
+		const original = `${prefix}${colourToken(stop.at, stop.colour.name, stop.colour.alpha)}`;
+		const sample = `${prefix}${stop.at}-${stop.colour.name}/[${propertySamplePlaceholder}]`;
+		control?.begin(row.property, {
+			kind: "binding",
+			tokens: value.tokens.map((token) => (token === original ? sample : token)),
+		});
+	};
+	const direction = (typed: string): Gradient | undefined => {
+		const degrees = gradientAngle(typed.trim().replace(/deg$/, ""));
+		return gradient && degrees !== undefined ? { ...gradient, direction: String(degrees) } : undefined;
+	};
+	const position = (index: number, typed: string): Gradient | undefined => {
+		if (!gradient) return;
+		if (!typed.trim()) return withStop(gradient, index, (held) => ({ ...held, position: null }));
+		const value = gradientAngle(typed.trim().replace(/%$/, ""));
+		return value === undefined
+			? undefined
+			: withStop(gradient, index, (held) => ({ ...held, position: `${Math.max(0, Math.min(100, value))}%` }));
+	};
 	const current =
 		gradient === null ? SHAPES[0] : (SHAPES.find((shape) => shape.token === gradient.shape) ?? SHAPES[0]);
 	return (
 		<>
-			<Row name="background-image" ok={ok} changed={changed}>
+			<Row name="background-image" ok={ok} reason={reason} changed={changed}>
 				<Menu
 					current={current ?? { token: null, name: "none" }}
 					options={SHAPES}
@@ -883,22 +1249,27 @@ function GradientRows({ view }: { view: View }) {
 							<span className="w-[48px] shrink-0">
 								<NumField
 									value={
-										gradient.direction !== null && /^\d+$/.test(gradient.direction) ? gradient.direction : ""
+										gradientAngle(gradient.direction) === undefined
+											? ""
+											: String(gradientAngle(gradient.direction))
 									}
 									placeholder="deg"
 									ok={ok}
 									faint
-									onCommit={(typed) => {
-										const degrees = Number.parseInt(typed, 10);
-										if (!Number.isNaN(degrees))
-											write({ ...gradient, direction: String(((degrees % 360) + 360) % 360) });
+									onBegin={() => begin({ ...gradient, direction: `[${propertySamplePlaceholder}]` })}
+									onCancel={() => control?.finish(false)}
+									onPreview={(typed) => {
+										const next = direction(typed);
+										if (next) preview(next, `${next.direction}deg`);
 									}}
-									onStep={(units) => {
-										const now =
-											gradient.direction !== null && /^\d+$/.test(gradient.direction)
-												? Number(gradient.direction)
-												: 90;
-										write({ ...gradient, direction: String((((now + units * 15) % 360) + 360) % 360) });
+									onCommit={(typed) => {
+										const next = direction(typed);
+										if (next) write(next);
+										else control?.finish(false);
+									}}
+									stepDraft={(typed, units) => {
+										const from = typed.trim() ? gradientAngle(typed.trim().replace(/deg$/, "")) : 90;
+										return from === undefined ? undefined : String(from + units);
 									}}
 								/>
 							</span>
@@ -947,6 +1318,16 @@ function GradientRows({ view }: { view: View }) {
 								alpha={stop.colour?.alpha ?? null}
 								ok={ok && stop.colour !== null}
 								faint={false}
+								onBegin={() => beginAlpha(stop)}
+								onCancel={() => control?.finish(false)}
+								onPreview={(alpha) =>
+									preview(
+										withStop(gradient, index, (held) =>
+											held.colour ? { ...held, colour: { ...held.colour, alpha } } : held,
+										),
+										`${alpha ?? 100}%`,
+									)
+								}
 								onCommit={(alpha) =>
 									write({
 										...gradient,
@@ -965,24 +1346,29 @@ function GradientRows({ view }: { view: View }) {
 									readout="%"
 									ok={ok && stop.colour !== null}
 									faint={stop.position === null}
-									onCommit={(typed) => {
-										const percent = Number.parseFloat(typed);
-										write(
+									onBegin={() =>
+										begin(
 											withStop(gradient, index, (held) => ({
 												...held,
-												position: Number.isNaN(percent) ? null : `${Math.max(0, Math.min(100, percent))}%`,
+												position: `[percentage:${propertySamplePlaceholder}]`,
 											})),
-										);
+										)
+									}
+									onCancel={() => control?.finish(false)}
+									onPreview={(typed) => {
+										const next = position(index, typed);
+										if (next) preview(next, next.stops[index]?.position ?? undefined);
 									}}
-									onStep={(units) => {
-										const now =
-											stop.position === null ? (SPACED[index] ?? 0) : Number.parseFloat(stop.position);
-										write(
-											withStop(gradient, index, (held) => ({
-												...held,
-												position: `${Math.max(0, Math.min(100, now + units * 5))}%`,
-											})),
-										);
+									onCommit={(typed) => {
+										const next = position(index, typed);
+										if (next) write(next);
+										else control?.finish(false);
+									}}
+									stepDraft={(typed, units) => {
+										const from = typed.trim()
+											? gradientAngle(typed.trim().replace(/%$/, ""))
+											: (SPACED[index] ?? 0);
+										return from === undefined ? undefined : String(Math.max(0, Math.min(100, from + units)));
 									}}
 								/>
 							</span>
@@ -1152,7 +1538,18 @@ function LayoutSection({ view }: { view: View }) {
 	const wrapRow = modelRow("flex-wrap");
 	const alignRow = modelRow("align-items");
 	const justifyRow = modelRow("justify-content");
+	// The approved frame draws an added border width with Layout's other optional
+	// numbers, so it is here rather than under a header of its own.
+	const widths = borderWidthsOf(view.scoped);
+	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
+	const bordered = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
 	const drawn = new Set([
+		...(bordered ? BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property) : []),
+		// `border-s` and `border-e` are the fold's left and right edges under
+		// their logical names: it already draws them, and reading `border` as
+		// both would put the same width on screen three times
+		"border-inline-start-width",
+		"border-inline-end-width",
 		"display",
 		"overflow",
 		"padding",
@@ -1275,6 +1672,22 @@ function LayoutSection({ view }: { view: View }) {
 					/>
 				)}
 			/>
+			{bordered ? (
+				<Folded
+					view={view}
+					fold={BORDER_WIDTH_FOLD}
+					read={borderWidthsOf}
+					draw={(entry, caret) => (
+						<BorderWidthRow
+							key={entry.property}
+							view={view}
+							property={entry.property}
+							{...(entry.name === undefined ? {} : { name: entry.name })}
+							fold={caret}
+						/>
+					)}
+				/>
+			) : null}
 			<WordRow view={view} property="overflow" />
 			{scrolls ? <ToggleRow view={view} property="scroll-snap-type" /> : null}
 			<Rest view={view} section="layout" drawn={drawn} />
@@ -1308,9 +1721,7 @@ function PlaceMenu({
 			faint={own === null}
 			changed={view.fresh(own)}
 			label={row.property}
-			onPick={(token) =>
-				view.put(editsFor(row, token === null ? null : { kind: "value", value: token }, atOf(view)))
-			}
+			onPick={(token) => writeValue(view, row, token === null ? null : { kind: "value", value: token })}
 		/>
 	);
 }
@@ -1326,6 +1737,10 @@ function AppearanceSection({ view }: { view: View }) {
 	const easing = themeOf(view.scoped, "ease", "ease", view.theme) !== null;
 	const filters = toggledOf(view.scoped, FILTER_SET).size > 0;
 	const opened = more || transforms || easing || filters;
+	// A width is what gives an edge a colour to read, so the colours draw with it.
+	const widths = borderWidthsOf(view.scoped);
+	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
+	const bordered = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
 	const drawn = new Set([
 		"opacity",
 		"border-radius",
@@ -1334,27 +1749,29 @@ function AppearanceSection({ view }: { view: View }) {
 		"border-bottom-right-radius",
 		"border-bottom-left-radius",
 		"box-shadow",
+		...(bordered ? BORDER_COLOUR_FOLD.levels.flat().map((entry) => entry.property) : []),
 		...(opened ? ["filter", ...MORE_APPEARANCE, "transition-timing-function"] : []),
 	]);
 	return (
-		<Section name="appearance" reason={sectionReason(view, ["opacity"])}>
-			<LengthRow view={view} property="opacity" placeholder="100" fallback="100%" />
+		<Section name="Appearance" reason={sectionReason(view, ["opacity"])}>
 			<Folded
 				view={view}
 				fold={RADIUS_FOLD}
 				read={(scoped) => cornersAsSides(scoped, view.theme)}
 				draw={(entry, caret) => (
-					<TokenRow
+					<SourceNumberRow
 						key={entry.property}
 						view={view}
 						property={entry.property}
+						options={view.theme?.radius ?? []}
 						{...(entry.name === undefined ? {} : { name: entry.name })}
-						absent={{ token: null, name: "rounded-none", value: "0" }}
-						clearTo="none"
-						fold={caret}
+						accessory={caret}
 					/>
 				)}
 			/>
+			<LengthRow view={view} property="opacity" placeholder="100" fallback="100%" />
+			<ColourRow view={view} property="color" absent="inherit" />
+			<ColourRow view={view} property="background-color" absent="transparent" />
 			{/* a shadow nobody had set used to be dead text with no way in: it is a menu */}
 			<TokenRow
 				view={view}
@@ -1391,58 +1808,7 @@ function AppearanceSection({ view }: { view: View }) {
 					</button>
 				</div>
 			)}
-			<Rest view={view} section="appearance" drawn={drawn} />
-		</Section>
-	);
-}
-
-function FillSection({ view }: { view: View }) {
-	return (
-		<Section name="fill" reason={sectionReason(view, ["background-color"])}>
-			<ColourRow view={view} property="background-color" absent="transparent" />
-			<GradientRows view={view} />
-			<Rest view={view} section="fill" drawn={new Set(["background-color", "background-image"])} />
-		</Section>
-	);
-}
-
-/**
- * Width and colour, each folding to the four edges.
- *
- * The colour rows appear only once a width exists: a border colour with no
- * width paints nothing, so offering one is offering a field that cannot change
- * a pixel.
- */
-function StrokeSection({ view }: { view: View }) {
-	const widths = borderWidthsOf(view.scoped);
-	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
-	const any = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
-	const drawn = new Set([
-		...BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property),
-		// `border-s` and `border-e` are the fold's left and right edges under
-		// their logical names: it already draws them, and reading `border` as
-		// both would put the same width on screen three times
-		"border-inline-start-width",
-		"border-inline-end-width",
-		...(any ? BORDER_COLOUR_FOLD.levels.flat().map((entry) => entry.property) : []),
-	]);
-	return (
-		<Section name="stroke" reason={sectionReason(view, ["border-width"])}>
-			<Folded
-				view={view}
-				fold={BORDER_WIDTH_FOLD}
-				read={borderWidthsOf}
-				draw={(entry, caret) => (
-					<BorderWidthRow
-						key={entry.property}
-						view={view}
-						property={entry.property}
-						{...(entry.name === undefined ? {} : { name: entry.name })}
-						fold={caret}
-					/>
-				)}
-			/>
-			{any ? (
+			{bordered ? (
 				<Folded
 					view={view}
 					fold={BORDER_COLOUR_FOLD}
@@ -1466,13 +1832,38 @@ function StrokeSection({ view }: { view: View }) {
 					}}
 				/>
 			) : null}
-			<Rest view={view} section="stroke" drawn={drawn} />
+			<GradientRows view={view} />
+			<Rest view={view} section="fill" drawn={new Set(["background-color", "background-image"])} />
+			<Rest view={view} section="appearance" drawn={drawn} />
+			<Rest
+				view={view}
+				section="stroke"
+				drawn={
+					new Set([
+						...drawn,
+						// Layout draws the widths; reading them again here would put the
+						// same number on screen twice.
+						...BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property),
+						"border-inline-start-width",
+						"border-inline-end-width",
+					])
+				}
+			/>
 		</Section>
 	);
 }
 
+/**
+ * Width and colour, each folding to the four edges.
+ *
+ * The colour rows appear only once a width exists: a border colour with no
+ * width paints nothing, so offering one is offering a field that cannot change
+ * a pixel.
+ */
+
 function TextSection({ view }: { view: View }) {
 	const alignRow = modelRow("text-align");
+	const { ok: alignOk, reason: alignReason } = rowAdmission(view, alignRow);
 	const align = wordThrough(view, "text-align");
 	const drawn = new Set([
 		"font-family",
@@ -1485,42 +1876,81 @@ function TextSection({ view }: { view: View }) {
 		"font-variant-numeric",
 	]);
 	return (
-		<Section name="text" reason={sectionReason(view, ["font-size", "color"])}>
-			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />
-			<TokenRow view={view} property="font-size" absent={{ token: null, name: "inherit" }} />
+		<Section name="Typography" reason={sectionReason(view, ["font-size"])}>
+			<SourceNumberRow view={view} property="font-size" options={view.theme?.text ?? []} />
+			<SourceNumberRow view={view} property="line-height" options={view.theme?.leading ?? []} />
+			{readRow(modelRow("letter-spacing"), view.scoped, view.theme).token !== null ? (
+				<SourceNumberRow view={view} property="letter-spacing" options={view.theme?.tracking ?? []} />
+			) : null}
 			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
-			<TokenRow view={view} property="line-height" absent={{ token: null, name: "inherit" }} />
-			<TokenRow view={view} property="letter-spacing" absent={{ token: null, name: "inherit" }} />
-			<Row name="text-align" ok={okOf(view, alignRow)} changed={view.fresh(wordOf(view.scoped, "text-align"))}>
-				<IconField
-					value={align ?? "text-left"}
-					ok={okOf(view, alignRow)}
-					options={[
-						{ token: "text-left", icon: <LinesIcon at="left" /> },
-						{ token: "text-center", icon: <LinesIcon at="center" /> },
-						{ token: "text-right", icon: <LinesIcon at="right" /> },
-					]}
-					onPick={(token) => view.put(editsFor(alignRow, { kind: "value", value: token }, atOf(view)))}
+			<Row
+				name="text-align"
+				ok={alignOk}
+				reason={alignReason}
+				changed={view.fresh(wordOf(view.scoped, "text-align"))}
+			>
+				<Menu
+					label="text-align"
+					current={{ token: align, name: align?.replace(/^text-/, "") ?? "start" }}
+					faint={align === null}
+					ok={alignOk}
+					options={["start", "left", "center", "right"].map((value) => ({ token: `text-${value}`, name: value }))}
+					onPick={(token) => {
+						if (token) writeValue(view, alignRow, { kind: "value", value: token });
+					}}
 				/>
 			</Row>
-			<ColourRow view={view} property="color" absent="inherit" />
+			<TokenRow view={view} property="font-family" absent={{ token: null, name: "inherit" }} />
 			<ToggleRow view={view} property="font-variant-numeric" />
 			<Rest view={view} section="text" drawn={drawn} />
 		</Section>
 	);
 }
 
-/** Every section, in Figma's order, which is the order the rail draws them. */
+function AddProperty({ view }: { view: View }) {
+	// An optional property is offered where its own source admits it, and the
+	// refusal it would have met is said here rather than after a failed save.
+	const optional = [
+		{ property: "letter-spacing", admission: rowAdmission(view, modelRow("letter-spacing")) },
+		{ property: "border-width", admission: rowAdmission(view, modelRow("border-width")) },
+	];
+	const unset = optional.filter(({ property }) => readRow(modelRow(property), view.scoped, view.theme).token === null);
+	const options = unset.map(({ property }) => property);
+	const reason = unset.map(({ admission }) => admission.reason).find((said) => said !== undefined);
+	return (
+		<div data-add-property="" title={reason} className="flex h-8 items-center border-border-raised border-t px-2.5">
+			<Menu
+				label="Add property"
+				current={{ token: null, name: "+ Add property" }}
+				options={options.map((property) => ({ token: property, name: property }))}
+				filter
+				ok={view.property !== null && options.length > 0}
+				onPick={(property) => {
+					if (property)
+						view.property?.apply(property, {
+							kind: "custom",
+							value: property === "border-width" ? "1px" : "0px",
+						});
+				}}
+			/>
+		</div>
+	);
+}
+
+/** Typography and Appearance follow the approved editing controls; remaining layout rows retain their sections. */
 export function PropertySections({ view }: { view: View }) {
+	// One description of this element's class cell: whether it can be written at
+	// all, and what each drawn control is wearing.
+	const described = usePropertyDescription(view.property, DESCRIBED_PROPERTIES);
+	const held: View = { ...view, described: view.described ?? described };
 	return (
 		<>
-			<PositionSection view={view} />
-			<SizeSection view={view} />
-			<LayoutSection view={view} />
-			<AppearanceSection view={view} />
-			<FillSection view={view} />
-			<StrokeSection view={view} />
-			<TextSection view={view} />
+			<PositionSection view={held} />
+			<SizeSection view={held} />
+			<LayoutSection view={held} />
+			<TextSection view={held} />
+			<AppearanceSection view={held} />
+			<AddProperty view={held} />
 		</>
 	);
 }
@@ -1579,10 +2009,12 @@ const NOT_INLINE = /^(flex-1|min-h-0|size-full|aspect-square|self-center|order-f
 
 export function AddClassRow({
 	view,
+	editable,
 	taken,
 	onAdd,
 }: {
 	view: View;
+	editable: boolean;
 	/** the whole literal's tokens, so one the element already wears is not offered */
 	taken: ReadonlySet<string>;
 	onAdd: (token: string) => void;
@@ -1592,7 +2024,7 @@ export function AddClassRow({
 		<AddField
 			candidates={SEEDS.filter((token) => !(inline && NOT_INLINE.test(token))).map((token) => ({ token }))}
 			taken={taken}
-			ok={view.element.refusal === undefined}
+			ok={editable}
 			verdictOf={view.compiler.verdictOf}
 			onAsk={view.compiler.ask}
 			onAdd={onAdd}

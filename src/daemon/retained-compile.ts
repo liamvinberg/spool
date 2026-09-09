@@ -13,6 +13,7 @@ import { assertDesignFile } from "./design-path";
 import { observeCacheSource } from "./source-cache-compile";
 import { observeLazySource } from "./source-lazy-compile";
 import { planStructureCompilation } from "./source-structure-compile";
+import { literalStyleMembers } from "./source-style-members";
 
 export interface SourceInput {
 	bytes: Buffer;
@@ -257,7 +258,7 @@ export function lowerLiterals(
 				if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") continue;
 				const field = attribute.name.name;
 				if (/^(?:on[A-Z]|data-spool-)/.test(field)) continue;
-				if (["key", "ref", "data-go", "className", "style"].includes(field)) continue;
+				if (["key", "ref", "data-go", "style"].includes(field)) continue;
 				const image = field === "src" && open.name.type === "JSXIdentifier" && open.name.name === "img";
 				if (
 					open.attributes.filter(
@@ -312,7 +313,7 @@ export function lowerLiterals(
 			!open.attributes.some((attr) => attr.type === "JSXSpreadAttribute")
 		) {
 			const tag = open.name.name;
-			const names = [...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY];
+			const names = ["className", ...(LITERAL_ATTRIBUTES_BY_TAG[tag] ?? []), ...LITERAL_ATTRIBUTES_EVERY];
 			for (const field of names) {
 				if (
 					open.attributes.some(
@@ -491,8 +492,7 @@ export function lowerLiterals(
 			return;
 		const owner = functions.get(fn) ?? `${structural.paths.get(fn)}#owner`;
 		const retain = (literal: Node, field: string) => {
-			if (literal.type !== "StringLiteral" || ["key", "ref", "data-go", "src", "className", "style"].includes(field))
-				return;
+			if (literal.type !== "StringLiteral" || ["key", "ref", "data-go", "src", "style"].includes(field)) return;
 			const key = `${id}@${field}`;
 			cells[key] = {
 				file,
@@ -537,6 +537,31 @@ export function lowerLiterals(
 			}
 		}
 		if (node.arguments.length === 3 && node.arguments[2]) retain(node.arguments[2], "children");
+	});
+
+	let styleObjects = 0;
+	walk(ast, (node) => {
+		if (
+			node.type !== "JSXAttribute" ||
+			node.name.type !== "JSXIdentifier" ||
+			node.name.name !== "style" ||
+			node.value?.type !== "JSXExpressionContainer"
+		)
+			return;
+		const object = node.value.expression;
+		try {
+			literalStyleMembers(object);
+		} catch {
+			return;
+		}
+		styleObjects++;
+		patches.push({
+			start: position(object).start,
+			end: position(object).start,
+			wrap: object,
+			text: `${prefix}Style(`,
+		});
+		patches.push({ start: position(object).end, end: position(object).end, wrap: object, text: ")", order: 2 });
 	});
 
 	const structureOwners: Record<string, string> = {};
@@ -658,8 +683,8 @@ export function lowerLiterals(
 	const shape = digest(JSON.stringify(normalize(ast)));
 	const structure = structural.state((node) => normalize(node, false));
 	const imports =
-		functions.size || factory > 0 || structural.groups.length > 0
-			? `\nimport {sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom,sourceOptional as ${prefix}Optional,sourceList as ${prefix}List} from "spool/jsx-dev-runtime";`
+		functions.size || factory > 0 || structural.groups.length > 0 || styleObjects > 0
+			? `\nimport {sourceStyle as ${prefix}Style,sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom,sourceOptional as ${prefix}Optional,sourceList as ${prefix}List} from "spool/jsx-dev-runtime";`
 			: "";
 	const priorStamps = Object.values(stamps);
 	transformed = structural.render(

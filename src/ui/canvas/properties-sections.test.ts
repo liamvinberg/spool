@@ -3,20 +3,18 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
-import type { RowEdit, RowElement } from "../../properties/rows";
+import { colourOf } from "../../properties/families";
+import { editsFor, type RowEdit, type RowElement, rowFor } from "../../properties/rows";
+import type { SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import type { Compiler } from "./properties-compile";
 import { BASE, type Scope, scopedClass, scopeKey } from "./properties-scope";
 import { PropertySections, type View } from "./properties-sections";
+import type { PropertyControls, PropertyDescription } from "./property-controls";
 
-/**
- * The seven primitives, on the rows that need them (#258).
- *
- * What is proved here is what a control reads off a literal and what a change
- * to it comes to: the tokens handed to the write lane. The lane's own spelling
- * — the fewest tokens, the logical sides kept, the zero that drops at the base
- * — is `class-write.test.ts`'s, and the model behind these readings is
- * `properties-rows.test.ts`'s. This file is the surface between them.
+/** These surface tests verify displayed values and requested candidates.
+ * Appearance changes carry typed source requests; planner/native tests prove their effects.
+ * Layout rows retain their existing writer until their operation-specific migration.
  */
 
 /** kaffe's theme: its own colours, sizes and radii, and one breakpoint of its own. */
@@ -41,6 +39,66 @@ const THEME: CompiledTheme = {
 	step: 4,
 };
 
+it("groups the approved typography and appearance controls without duplicating color rows", async () => {
+	const rail = await mount("text-md leading-6 rounded-lg bg-raised text-thread");
+	const groups = [...rail.host.children];
+	const named = (name: string) =>
+		groups.find((group) => group.firstElementChild?.firstElementChild?.textContent === name);
+	const typography = named("Typography");
+	const appearance = named("Appearance");
+	expect(typography).toBeDefined();
+	expect(appearance).toBeDefined();
+	for (const property of ["font-size", "line-height", "font-weight", "text-align"])
+		expect(typography?.querySelector(`[data-properties-row="${property}"]`)).not.toBeNull();
+	for (const property of ["border-radius", "opacity"])
+		expect(appearance?.querySelector(`[data-properties-row="${property}"]`)).not.toBeNull();
+	for (const property of ["color", "background-color"]) {
+		expect(appearance?.querySelector(`button[aria-label="Choose ${property}"]`)).not.toBeNull();
+		expect(rail.host.querySelectorAll(`button[aria-label="Choose ${property}"]`)).toHaveLength(1);
+	}
+	expect(groups.indexOf(typography!)).toBeLessThan(groups.indexOf(appearance!));
+});
+
+it("keeps the approved four headers, with the border controls in their approved places", async () => {
+	const rail = await mount("border-2 border-red-500 rounded-lg p-4 text-md");
+	const groups = [...rail.host.children];
+	const headed = (group: Element) => group.firstElementChild?.firstElementChild?.textContent ?? "";
+	expect(groups.map(headed).filter(Boolean)).toEqual([
+		"position",
+		"size",
+		"layout",
+		"Typography",
+		"Appearance",
+		"+ Add property",
+	]);
+	const named = (name: string) => groups.find((group) => headed(group) === name);
+	// The approved frame draws an added border width with Layout's optional
+	// numbers, and gives its colour no slot of its own, so it reads under Appearance.
+	expect(named("layout")?.querySelector('[data-properties-row="border-width"]')).not.toBeNull();
+	expect(named("Appearance")?.querySelector('[data-properties-row="border-width"]')).toBeNull();
+	expect(named("Appearance")?.querySelector('[data-properties-row="border-color"]')).not.toBeNull();
+	expect(rail.host.querySelectorAll('[data-properties-row="border-width"]')).toHaveLength(1);
+	expect(rail.host.querySelectorAll('[data-properties-row="border-color"]')).toHaveLength(1);
+});
+
+it.each(["letter-spacing", "border-width"])(
+	"adds the optional %s through its typed source control",
+	async (property) => {
+		const rail = await mount("");
+		expect(rail.host.querySelector(`[data-properties-row="${property}"]`)).toBeNull();
+		const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+		expect(trigger).not.toBeNull();
+		await act(() => trigger?.click());
+		const option = document.querySelector<HTMLButtonElement>(`[data-menu-option="${property}"]`);
+		expect(option).not.toBeNull();
+		await act(() => option?.click());
+		expect(rail.requests).toEqual([
+			{ property, value: { kind: "custom", value: property === "border-width" ? "1px" : "0px" } },
+		]);
+		expect(rail.legacy).toEqual([]);
+	},
+);
+
 /* ---------- P6: a sign, a fraction and a unit in every number box ---------- */
 
 it("takes a sign, a fraction, a unit and a bare count", async () => {
@@ -50,13 +108,12 @@ it("takes a sign, a fraction, a unit and a bare count", async () => {
 	expect(rail.wrote()).toEqual([{ token: "-m-4" }]);
 
 	await type(rail, "width", "50%");
-	expect(rail.wrote()).toEqual([{ token: "w-1/2" }]);
+	expect(rail.wrote()).toEqual([{ token: "w-[50%]" }]);
 
 	await type(rail, "width", "347px");
 	expect(rail.wrote()).toEqual([{ token: "w-[347px]" }]);
 
-	// a percent that is not on the fraction table stays a bare number, which is
-	// what v4 takes: `opacity-37.5` compiles and `opacity-[37.5%]` is noise
+	// A bare percentage amount keeps its candidate spelling; an explicit unit stays custom.
 	await type(rail, "opacity", "37.5");
 	expect(rail.wrote()).toEqual([{ token: "opacity-37.5" }]);
 
@@ -64,7 +121,47 @@ it("takes a sign, a fraction, a unit and a bare count", async () => {
 	await type(await mount("absolute"), "z-index", "10");
 	const turned = await mount("rotate-6");
 	await type(turned, "rotate", "12deg");
-	expect(turned.wrote()).toEqual([{ token: "rotate-12" }]);
+	expect(turned.wrote()).toEqual([{ token: "rotate-[12deg]" }]);
+});
+
+it.each([
+	["border-[1.25px]", false, "border-[2.25px]"],
+	["border-[.333rem]", true, "border-[10.333rem]"],
+])("steps the actual border field without losing its unit: %s", async (source, shift, token) => {
+	const rail = await mount(source);
+	await step(rail, "border-width", "ArrowUp", shift);
+	expect(rail.requests).toEqual([]);
+	const field = fieldIn(rail, "border-width");
+	if (!field) throw new Error("missing border field");
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+	expect(rail.wrote()).toEqual([{ token }]);
+});
+
+it("scrubs the actual border field in its fractional displayed unit", async () => {
+	const rail = await mount("border-[1.25px]");
+	const label = rowOf(rail, "border-width")?.firstElementChild;
+	if (!label) throw new Error("missing border label");
+	await act(async () =>
+		label.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, button: 0, clientX: 100, bubbles: true })),
+	);
+	await act(async () =>
+		document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 104, bubbles: true })),
+	);
+	expect(rail.previews).toEqual([
+		{ property: "border-width", value: { kind: "binding", tokens: ["border-[2.25px]"] } },
+	]);
+	expect(rail.requests).toEqual([]);
+	await act(async () =>
+		document.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: 104, bubbles: true })),
+	);
+});
+
+it("does not save a positive substitute or remove the border for invalid signed input", async () => {
+	for (const typed of ["-1.25px", "invalid"]) {
+		const rail = await mount("border-2");
+		await type(rail, "border-width", typed);
+		expect(rail.wrote(), typed).toEqual([]);
+	}
 });
 
 it("reads the token in the box and what it measures beside it", async () => {
@@ -172,24 +269,34 @@ it("offers this project's colours first and Tailwind's under a default divider",
 	const rail = await mount("bg-thread");
 	await open(rail, "background-color");
 
-	// the absent reading heads it, then the project's own, then Tailwind's
-	expect(optionNames(rail, "background-color").slice(0, 3)).toEqual(["transparent", "thread", "raised"]);
-	expect(dividersIn(rail, "background-color")).toEqual(["default"]);
+	// The approved menu separates actual project choices from defaults.
+	expect(optionNames(rail, "background-color")).toEqual([
+		"thread",
+		"raised",
+		"red-500",
+		"transparent",
+		"current",
+		"inherit",
+		"Remove background color",
+	]);
+	expect(dividersIn(rail, "background-color")).toEqual(["Project", "Default"]);
 
 	await pick(rail, "background-color", "red-500");
 	expect(rail.wrote()).toEqual([{ token: "bg-red-500" }]);
 });
 
-it("takes an arbitrary colour typed into the same menu, and reads it back", async () => {
+it("previews and completes an explicit custom color in the approved menu", async () => {
 	const rail = await mount("");
 	await open(rail, "background-color");
-	await find(rail, "background-color", "#ff0044");
-
-	expect(optionNames(rail, "background-color")).toContain("[#ff0044]");
-	await pick(rail, "background-color", "[#ff0044]");
-	expect(rail.wrote()).toEqual([{ token: "bg-[#ff0044]" }]);
-
-	expect(shows(await mount("bg-[#ff0044]"), "background-color")).toBe("[#ff0044]");
+	const field = rail.host.querySelector<HTMLInputElement>('input[aria-label="background-color"]');
+	if (!field) throw new Error("missing custom color input");
+	await act(() => field.focus());
+	await put(field, "#ff0044");
+	expect(rail.previews).toEqual([{ property: "background-color", value: { kind: "custom", value: "#ff0044" } }]);
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+	expect(rail.completions).toEqual([true]);
+	expect(rail.legacy).toEqual([]);
+	expect(shows(await mount("bg-[#ff0044]"), "background-color")).toBe("#ff0044");
 });
 
 /* ---------- P3: the gradient, as rows ---------- */
@@ -209,13 +316,17 @@ it("writes a gradient as a shape, a direction and stop rows", async () => {
 
 	await pick(linear, "gradient via", "raised");
 	expect(linear.wrote()).toEqual([
-		{ token: "bg-linear-to-br", remove: true },
-		{ token: "from-thread", remove: true },
-		{ token: "to-raised", remove: true },
 		{ token: "bg-linear-to-br" },
 		{ token: "from-thread" },
 		{ token: "via-raised" },
 		{ token: "to-raised" },
+	]);
+	// The source plan owns one class per token, so the control sends them apart.
+	expect(linear.requests).toEqual([
+		{
+			property: "background-image",
+			value: { kind: "binding", tokens: ["bg-linear-to-br", "from-thread", "via-raised", "to-raised"] },
+		},
 	]);
 });
 
@@ -237,11 +348,7 @@ it("knocks out the exclusive group and its reset when a chip goes on", async () 
 	const rail = await mount("proportional-nums normal-nums");
 
 	await press(rail, chipIn(rail, "font-variant-numeric", "tabular-nums"));
-	expect(rail.wrote()).toEqual([
-		{ token: "proportional-nums", remove: true },
-		{ token: "normal-nums", remove: true },
-		{ token: "tabular-nums" },
-	]);
+	expect(rail.wrote()).toEqual([{ token: "tabular-nums" }]);
 
 	// a chip already on comes off on its own, without touching the rest
 	await press(rail, chipIn(rail, "font-variant-numeric", "proportional-nums"));
@@ -330,17 +437,155 @@ it("greys every row on a literal no hand may write", async () => {
 	expect(rowNames(rail, "padding")).toEqual(["padding"]);
 });
 
+it("admits every control from one description of the element, and reads each control's own property", async () => {
+	const rail = await mount("text-thread bg-raised");
+	// One description says whether this class cell can be written at all; the
+	// controls that draw the source's value read their own property beside it.
+	expect(rail.asked).toContainEqual(
+		expect.arrayContaining(["color", "background-color", "font-size", "line-height", "border-radius"]),
+	);
+	expect(rail.asked.filter((asked) => asked.length > 1)).toHaveLength(1);
+	// Only the property that read was measured against carries a native, so the
+	// other controls that draw a value ask once for their own, and colour does not.
+	expect(new Set(rail.asked.filter((asked) => asked.length === 1).flat())).toEqual(
+		new Set(["background-color", "font-size", "line-height", "border-radius"]),
+	);
+	expect(swatchIn(rail, "color")).toBe("#F5391A");
+	expect(swatchIn(rail, "background")).toBe("#282828");
+});
+
+it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "background-image"])(
+	"carries the source's own refusal on the generic %s control, not a session's silence",
+	async (property) => {
+		const rail = await mount("opacity-75 border-2", BASE, undefined, async () => ({
+			reason: "className is an expression",
+		}));
+		expect(rowOf(rail, property)?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
+		expect(rail.requests).toEqual([]);
+		expect(rail.legacy).toEqual([]);
+	},
+);
+
+// A re-read of the same element replaces its description. It must not retire the
+// controls mid-gesture while the replacement is in flight, and it must retire
+// them when that read comes back with nothing.
+it("keeps its controls while the element is read again, and retires them when that read refuses", async () => {
+	const rail = await mount("opacity-75 border-2");
+	expect(fieldIn(rail, "opacity")).not.toBeNull();
+	const answer = await rail.reread("pending");
+	expect(fieldIn(rail, "opacity")).not.toBeNull();
+	expect(fieldIn(rail, "border-width")).not.toBeNull();
+	await answer(undefined);
+	expect(fieldIn(rail, "opacity")).toBeNull();
+	expect(fieldIn(rail, "border-width")).toBeNull();
+});
+
+// A menu keeps focus after it commits, and canvas Undo is a canvas key: the
+// trigger owns only the keys it opens with.
+it("lets a canvas key through the menu trigger it does not use", async () => {
+	const rail = await mount("text-md");
+	const trigger = menuIn(rail, "font-weight");
+	if (!trigger) throw new Error("missing font-weight menu");
+	const seen: string[] = [];
+	const listen = (event: KeyboardEvent) => seen.push(event.key);
+	document.addEventListener("keydown", listen);
+	onTestFinished(() => document.removeEventListener("keydown", listen));
+	await act(() => {
+		trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true }));
+		trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+	});
+	expect(seen).toEqual(["z"]);
+});
+
+// Tabbing out of another control lands here: a field nobody has edited must not
+// take the source lane and cancel the edit that is still saving.
+it("takes the source lane on an edit, never on focus alone", async () => {
+	const rail = await mount("opacity-75");
+	const field = fieldIn(rail, "opacity");
+	if (!field) throw new Error("missing opacity field");
+	await act(() => field.focus());
+	expect(rail.begins).toEqual([]);
+	await put(field, "50");
+	expect(rail.begins).toEqual(["opacity"]);
+});
+
+// Unknown ownership refuses at the control, before a request is ever made.
+it("takes no request from a control whose source refuses the element", async () => {
+	const rail = await mount("opacity-75", BASE, undefined, async () => ({ reason: "className is an expression" }));
+	expect(fieldIn(rail, "opacity")).toBeNull();
+	expect(rowOf(rail, "opacity")?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
+	expect(rail.requests).toEqual([]);
+	expect(rail.legacy).toEqual([]);
+});
+
+it("says why an optional property would be refused before it is added", async () => {
+	const rail = await mount("", BASE, undefined, async () => ({ reason: "className is an expression" }));
+	const add = rail.host.querySelector<HTMLElement>("[data-add-property]");
+	expect(add?.getAttribute("title")).toBe("className is an expression");
+	expect(rail.requests).toEqual([]);
+});
+
+it("sends appearance values to source operations without falling through to the legacy class writer", async () => {
+	const rail = await mount("opacity-75 text-thread border-2");
+	await type(rail, "opacity", "50");
+	await type(rail, "border-width", "3.5px");
+	await pick(rail, "color", "raised");
+	expect(rail.requests).toEqual([
+		{ property: "opacity", value: { kind: "binding", tokens: ["opacity-50"] } },
+		{ property: "border-width", value: { kind: "binding", tokens: ["border-[3.5px]"] } },
+		{ property: "color", value: { kind: "binding", tokens: ["text-raised"] } },
+	]);
+	expect(rail.legacy).toEqual([]);
+});
+
+it("accumulates scrub previews from the original number without saving before release", async () => {
+	const rail = await mount("opacity-75");
+	const label = rowOf(rail, "opacity")?.firstElementChild;
+	if (!label) throw new Error("missing opacity label");
+	await act(async () =>
+		label.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, button: 0, clientX: 100, bubbles: true })),
+	);
+	for (const clientX of [104, 108])
+		await act(async () =>
+			document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX, bubbles: true })),
+		);
+	expect(rail.requests).toEqual([]);
+	expect(rail.previews).toEqual([
+		{ property: "opacity", value: { kind: "binding", tokens: ["opacity-76"] } },
+		{ property: "opacity", value: { kind: "binding", tokens: ["opacity-77"] } },
+	]);
+	await act(async () => document.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, bubbles: true })));
+	expect(rail.completions).toEqual([true]);
+});
+
 /* ---------- the harness ---------- */
 
 interface Rail {
 	host: HTMLElement;
+	requests: { property: string; value: SourcePropertyValue }[];
+	legacy: RowEdit[][];
+	previews: { property: string; value: SourcePropertyValue }[];
+	completions: boolean[];
+	/** every property list the rail asked one description for */
+	asked: (readonly string[])[];
+	/** every property that took the source lane, in order */
+	begins: string[];
+	/** re-read the same element: hold the new description, or answer it at once */
+	reread: (
+		answer: PropertyDescription | undefined | "pending",
+	) => Promise<(later: PropertyDescription | undefined) => Promise<void>>;
 	/** the edits the last change came to, as the write lane would be handed them */
 	wrote: () => RowEdit[];
 	/** the scope those edits were written under */
 	scoped: () => string;
 }
 
-async function mount(className: string, scope: Scope = BASE, element?: RowElement): Promise<Rail> {
+async function mount(
+	className: string,
+	scope: Scope = BASE,
+	element?: RowElement,
+	describe?: PropertyControls["describe"],
+): Promise<Rail> {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -351,7 +596,65 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 		vi.unstubAllGlobals();
 	});
 	let wrote: RowEdit[] = [];
+	const requests: Rail["requests"] = [];
+	const legacy: RowEdit[][] = [];
+	const previews: Rail["previews"] = [];
+	const completions: boolean[] = [];
+	const asked: (readonly string[])[] = [];
+	const begins: string[] = [];
 	const view: View = {
+		property: element?.refusal
+			? null
+			: {
+					subject: className,
+					identity: className,
+					// Surface fixture readings are supplied evidence, not source admission.
+					describe:
+						describe ??
+						(async (properties) => {
+							asked.push(properties);
+							const readings: Record<string, SourcePropertyReading> = {};
+							// The daemon measures the property the read names, which is the first.
+							for (const [index, property] of properties.entries()) {
+								const reading = colourOf(
+									scopedClass(className, scope),
+									property === "color" ? "text" : "bg",
+									THEME,
+								);
+								const token = THEME.colour.find((token) => token.name === reading.name);
+								readings[property] = {
+									tokens: reading.token ? [reading.token] : [],
+									binding: token
+										? { kind: "reference", name: `--color-${token.name}`, value: token.value }
+										: reading.token
+											? { kind: "custom" }
+											: { kind: "page" },
+									...(index === 0 ? { native: token?.value ?? reading.paint ?? "transparent" } : {}),
+								};
+							}
+							return { readings };
+						}),
+					begin: (property) => {
+						begins.push(property);
+					},
+					preview: (property, value) => {
+						previews.push({ property, value });
+					},
+					finish: (commit) => {
+						completions.push(commit);
+					},
+					apply: (property, value) => {
+						requests.push({ property, value });
+						const row = rowFor(property);
+						if (!row) throw new Error("unknown property request");
+						wrote =
+							value.kind === "binding"
+								? value.tokens.map((token) => ({ token: token.slice(scopeKey(scope).length) }))
+								: value.kind === "remove"
+									? editsFor(row, null, { scoped: scopedClass(className, scope), theme: THEME })
+									: [];
+					},
+				},
 		scope,
 		scoped: scopedClass(className, scope),
 		base: scopedClass(className, BASE),
@@ -361,13 +664,53 @@ async function mount(className: string, scope: Scope = BASE, element?: RowElemen
 		compiler: stubCompiler(),
 		fresh: () => false,
 		put: (edits) => {
+			legacy.push([...edits]);
 			wrote = [...edits];
 		},
 	};
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
 	});
-	return { host, wrote: () => wrote, scoped: () => scopeKey(scope) };
+	/** The same element read again, answered now or when this hands the answer over. */
+	const reread = async (answer: PropertyDescription | undefined | "pending") => {
+		let settle = (_: PropertyDescription | undefined) => {};
+		await act(async () => {
+			root.render(
+				createElement(PropertySections, {
+					view: {
+						...view,
+						property: view.property
+							? {
+									...view.property,
+									identity: `${className}:again`,
+									describe: () =>
+										answer === "pending"
+											? new Promise<PropertyDescription | undefined>((resolve) => {
+													settle = resolve;
+												})
+											: Promise.resolve(answer),
+								}
+							: null,
+					},
+				}),
+			);
+		});
+		return async (later: PropertyDescription | undefined) => {
+			await act(async () => settle(later));
+		};
+	};
+	return {
+		host,
+		reread,
+		requests,
+		legacy,
+		previews,
+		completions,
+		asked,
+		begins,
+		wrote: () => wrote,
+		scoped: () => scopeKey(scope),
+	};
 }
 
 function stubCompiler(): Compiler {
@@ -376,7 +719,11 @@ function stubCompiler(): Compiler {
 
 /** Every drawn row whose label is this one, in the order the rail draws them. */
 function rowsFor(rail: Rail, name: string): HTMLElement[] {
-	return [...rail.host.querySelectorAll<HTMLElement>(`[data-properties-row="${name}"]`)];
+	return [
+		...rail.host.querySelectorAll<HTMLElement>(
+			`[data-properties-row="${name === "background-color" ? "background" : name}"]`,
+		),
+	];
 }
 
 function rowOf(rail: Rail, name: string): HTMLElement | null {
@@ -418,7 +765,7 @@ function fieldIn(rail: Rail, row: string): HTMLInputElement | null {
 
 /** What the row's first control is showing: a field's value, or a menu's name. */
 function shows(rail: Rail, row: string): string {
-	const held = rowOf(rail, row)?.querySelector("[data-menu-value], input");
+	const held = rowOf(rail, row)?.querySelector("[data-menu-value], .ep-color-trigger > span:nth-child(2), input");
 	if (held === null || held === undefined) return "";
 	return held instanceof HTMLInputElement ? held.value : (held.textContent ?? "");
 }
@@ -430,7 +777,11 @@ function asideOf(rail: Rail, row: string): string {
 }
 
 function swatchIn(rail: Rail, row: string): string {
-	return rowOf(rail, row)?.querySelector<HTMLElement>("[data-swatch]")?.dataset.swatch ?? "";
+	return (
+		rowOf(rail, row)?.querySelector<HTMLElement>("[data-swatch]")?.dataset.swatch ??
+		rowOf(rail, row)?.querySelector<HTMLElement>(".ep-swatch")?.style.background ??
+		""
+	);
 }
 
 function alphaOf(rail: Rail, row: string): string {
@@ -457,11 +808,17 @@ function sectionReason(rail: Rail, section: string): string {
 }
 
 function menuIn(rail: Rail, label: string): HTMLElement | null {
-	return rail.host.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+	return rail.host.querySelector<HTMLElement>(
+		`button[aria-label="Choose ${label}"], button[aria-label="${label}"], button[aria-label="${label} token"]`,
+	);
 }
 
 function listFor(rail: Rail, label: string): HTMLElement | null {
-	return menuIn(rail, label)?.parentElement?.querySelector<HTMLElement>('[role="listbox"]') ?? null;
+	return (
+		rail.host.querySelector<HTMLElement>(`fieldset[aria-label="${label} options"]`) ??
+		menuIn(rail, label)?.parentElement?.querySelector<HTMLElement>('[role="listbox"]') ??
+		null
+	);
 }
 
 async function open(rail: Rail, label: string): Promise<void> {
@@ -469,28 +826,31 @@ async function open(rail: Rail, label: string): Promise<void> {
 }
 
 function optionNames(rail: Rail, label: string): string[] {
-	return [...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option]") ?? [])].map(
-		(option) => option.dataset.menuOption ?? "",
+	return [
+		...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option], .ep-color-options button") ?? []),
+	].map(
+		(option) =>
+			option.dataset.menuOption ??
+			option.getAttribute("aria-label")?.replace(/^Apply (?:--color-)?/, "") ??
+			option.textContent ??
+			"",
 	);
 }
 
 /** The `default` line above where Tailwind's own names begin. */
 function dividersIn(rail: Rail, label: string): string[] {
-	return [...(listFor(rail, label)?.querySelectorAll("[data-menu-divider]") ?? [])].map(
+	return [...(listFor(rail, label)?.querySelectorAll("[data-menu-divider], .ep-color-options > p") ?? [])].map(
 		(divider) => divider.textContent ?? "",
 	);
 }
 
-async function find(rail: Rail, label: string, typed: string): Promise<void> {
-	const field = listFor(rail, label)?.querySelector("input") ?? null;
-	if (field === null) throw new Error(`no find line on ${label}`);
-	await put(field, typed);
-}
-
 async function pick(rail: Rail, label: string, name: string): Promise<void> {
 	if (listFor(rail, label) === null) await open(rail, label);
-	const found = [...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option]") ?? [])].find(
-		(option) => option.dataset.menuOption === name,
+	const found = [
+		...(listFor(rail, label)?.querySelectorAll<HTMLElement>("[data-menu-option], .ep-color-options button") ?? []),
+	].find(
+		(option) =>
+			(option.dataset.menuOption ?? option.getAttribute("aria-label")?.replace(/^Apply (?:--color-)?/, "")) === name,
 	);
 	if (found === undefined) throw new Error(`no option "${name}" on ${label}`);
 	await press(rail, found);
@@ -543,3 +903,100 @@ async function press(_rail: Rail, target: HTMLElement | null): Promise<void> {
 		target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 	});
 }
+
+it("keeps an explicit zero border request distinct from removing its source binding", async () => {
+	const rail = await mount("border-2");
+	await type(rail, "border-width", "0");
+	expect(rail.requests).toEqual([{ property: "border-width", value: { kind: "binding", tokens: ["border-0"] } }]);
+});
+
+it("routes the numeric typography control through one exact custom source gesture", async () => {
+	const rail = await mount("text-md leading-6");
+	await type(rail, "font-size", "7.999px");
+	expect(rail.previews.at(-1)).toEqual({ property: "font-size", value: { kind: "custom", value: "7.999px" } });
+	expect(rail.completions).toEqual([true]);
+	expect(rail.legacy).toEqual([]);
+});
+
+it.each(["opacity", "border-width"])("keeps repeated %s arrows as previews until completion", async (property) => {
+	const rail = await mount(property === "opacity" ? "opacity-75" : "border-2");
+	await step(rail, property, "ArrowUp", false);
+	await step(rail, property, "ArrowUp", false);
+	expect(rail.requests).toEqual([]);
+	expect(rail.previews).toHaveLength(2);
+	const field = fieldIn(rail, property);
+	if (!field) throw new Error("missing numeric field");
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+	expect(rail.completions).toEqual([false]);
+	expect(rail.requests).toEqual([]);
+});
+
+it("previews fractional alpha and cancels repeated steps without writing", async () => {
+	const rail = await mount("bg-thread/50");
+	const field = fieldIn(rail, "background-color");
+	if (!field) throw new Error("missing alpha field");
+	await put(field, "25.5");
+	await step(rail, "background-color", "ArrowUp", false);
+	expect(field.value).toBe("26.5");
+	expect(rail.requests).toEqual([]);
+	expect(rail.previews).toHaveLength(2);
+	await step(rail, "background-color", "ArrowUp", true);
+	expect(field.value).toBe("36.5");
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+	expect(rail.completions).toEqual([false]);
+});
+
+it.each(["direction", "from"])("keeps fractional gradient %s arrows as a cancellable preview", async (row) => {
+	const rail = await mount("bg-linear-45 from-thread from-10% to-raised");
+	const fields = rowOf(rail, row)?.querySelectorAll<HTMLInputElement>("input");
+	const field = fields?.[fields.length - 1];
+	if (!field) throw new Error("missing gradient number");
+	await put(field, row === "direction" ? "45.1" : "12.5");
+	await act(() =>
+		field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })),
+	);
+	expect(field.value).toBe(row === "direction" ? "46.1" : "13.5");
+	expect(rail.requests).toEqual([]);
+	expect(rail.previews).toHaveLength(2);
+	expect(rail.previews[1]?.value).toMatchObject({
+		kind: "binding",
+		tokens: expect.arrayContaining([row === "direction" ? "bg-linear-[46.1deg]" : "from-[13.5%]"]),
+	});
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+	expect(rail.completions).toEqual([false]);
+	expect(rail.requests).toEqual([]);
+});
+
+it("removes authored arbitrary gradient angles and fractional stops as one existing gradient operation", async () => {
+	const rail = await mount("bg-linear-[45.5deg] from-thread from-[13.5%] to-raised");
+	await pick(rail, "background-image", "none");
+	expect(rail.wrote()).toEqual([
+		{ token: "bg-linear-[45.5deg]", remove: true },
+		{ token: "from-thread", remove: true },
+		{ token: "from-[13.5%]", remove: true },
+		{ token: "to-raised", remove: true },
+	]);
+});
+
+it("offers the approved start alignment through the typography menu and original property writer", async () => {
+	const rail = await mount("text-left");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="text-align"]');
+	expect(trigger).not.toBeNull();
+	await act(() => trigger?.click());
+	expect(
+		[...document.querySelectorAll("[data-menu-option]")].map((element) => element.getAttribute("data-menu-option")),
+	).toEqual(["start", "left", "center", "right"]);
+	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="start"]')?.click());
+	expect(rail.requests).toEqual([{ property: "text-align", value: { kind: "binding", tokens: ["text-start"] } }]);
+	expect(rail.legacy).toEqual([]);
+});
+
+it.each([false, true])("reads the authored start alignment in its selected scope (hover: %s)", async (hovered) => {
+	const rail = await mount(hovered ? "text-left hover:text-start" : "text-start", hovered ? ["hover"] : BASE);
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="text-align"]');
+	expect(trigger?.textContent).toContain("start");
+	await act(() => trigger?.click());
+	const option = document.querySelector('[data-menu-option="start"]');
+	expect(option?.getAttribute("aria-selected")).toBe("true");
+	expect(rail.requests).toEqual([]);
+});

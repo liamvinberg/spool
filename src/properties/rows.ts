@@ -12,6 +12,7 @@ import {
 	type Gradient,
 	gapOf,
 	gradientOf,
+	gradientPositionToken,
 	gradientShapeToken,
 	insetOf,
 	isGradientToken,
@@ -627,7 +628,8 @@ export function editsFor(row: Row, value: RowValue, at: At): RowEdit[] {
 		for (const stop of gradient.stops) {
 			if (stop.colour?.name != null)
 				stops.push({ token: colourToken(stop.at, stop.colour.name, stop.colour.alpha) });
-			if (stop.position !== null && stop.colour !== null) stops.push({ token: `${stop.at}-${stop.position}` });
+			if (stop.position !== null && stop.colour !== null)
+				stops.push({ token: gradientPositionToken(stop.at, stop.position) });
 		}
 		return [...gone, { token: gradientShapeToken(gradient.shape, gradient.direction) }, ...stops];
 	}

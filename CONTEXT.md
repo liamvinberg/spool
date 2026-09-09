@@ -98,6 +98,14 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Span patch**: The characters an operation replaces, leaving source outside that range intact. Source-owned operations retain the inverse on the daemon and expose an opaque undo receipt; client-provided spans are not authority for those operations. _Avoid_: source mirror
 
+**Property certificate**: What the pinned compiler says one class cell is: the literal it read, every declaration it emitted with the condition path and owning token of each, the registrations and theme entries those declarations reach, and the stylesheet files the compile read. It is evidence about a cell rather than a document — nothing renders it, and two cells that produce the same pixels have different certificates when different tokens produced them. Every property read, plan, guard and native expectation is derived from one. _Avoid_: compiled style, snapshot
+
+**Property proof**: What a property read selected inside its cell, kept for as long as the read lives: the roots it owns, the compiler conditions those roots sit under, the writing environment it was read in, and the selections a grouped request made. Completion, inverse and retry all revalidate against it, so a save that would land on a different selection than the one the hand was shown refuses instead. _Avoid_: plan, intent, snapshot
+
+**Witness**: The record that something already happened, which a later claim is checked against rather than assumed from. A walked session witnesses a flow edge; the acknowledged cell a reversal or a retry names witnesses what that source said before, so an inverse restores what was actually there and a retry states both sides of the change it is replaying. _Avoid_: history, log
+
+**Native oracle**: The independent check that a browser really rendered what a source operation claimed: a fixture that mounts the compiled CSS in a real page and reads computed values back through the engine, never through spool's own comparison. It is what lets a use be reported verified, mismatching or explicitly unverified, and a family it has no reading for is unverified rather than assumed to match. _Avoid_: golden file, snapshot test
+
 **Fingerprint**: A content hash used to compare source bytes. Matching hashes do not prove that no writer touched a file. Independent hand and bundled-agent changes can coexist only while their complete original reads, recorded operations and source observation remain available. An opaque replacement or a recorded competing touch retires that evidence even when the bytes return. _Avoid_: outside-write guarantee
 
 ### Flows

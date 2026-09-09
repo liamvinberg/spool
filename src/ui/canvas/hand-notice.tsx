@@ -67,7 +67,11 @@ export function HandNotice({
 								? "Saved · rendering pending"
 								: said.status === "failed"
 									? "Saved · render failed"
-									: "Saved · result unverified";
+									: said.status === "inactive"
+										? "Saved · scope inactive"
+										: said.status === "constrained"
+											? "Saved · result constrained"
+											: "Saved · result unverified";
 		return (
 			<div
 				data-hand-notice={said.status}

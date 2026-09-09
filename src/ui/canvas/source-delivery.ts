@@ -11,6 +11,7 @@ import {
 	type UseOutcome,
 } from "../../source-edit";
 import type { SourceImagePreview } from "../../source-image";
+import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
 import { describeSource, respondSourceObservation, sourceIsCurrent, sourceReach, subscribeSse } from "../api";
 import type { PickedHit } from "./protocol";
 import type { SourceIntent } from "./source-intent";
@@ -267,9 +268,10 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				},
 				lifetime,
 			);
-			const description = original
+			const described = original
 				? await describeSource(project, frame, original, await inventory(original.field, operation), operation)
 				: undefined;
+			const description = described?.ok ? described.description : undefined;
 			if (version === descriptionVersion.current)
 				setLiveFrames(new Set(description?.reach?.uses.map((use) => use.frame) ?? []));
 			return description;
@@ -278,12 +280,28 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 	);
 
 	return {
+		describeProperty: useCallback(
+			async (frame: string, selector: string, properties: readonly string[], scope: string) => {
+				// One inspection and one compile answer every control this element draws.
+				const operation: SourceOperation = { kind: "property", property: properties[0] ?? "color", scope };
+				const original = await request<SourceOccurrence>(frame, {
+					action: "inspect",
+					selector,
+					field: "className",
+					operation,
+				});
+				if (!original) return { reason: "The selected source could not be inspected." };
+				const result = await describeSource(project, frame, original, [], operation, properties);
+				return result.ok ? { readings: result.description.properties ?? {} } : { reason: result.reason };
+			},
+			[project, request],
+		),
 		describeField: useCallback(
 			async (
 				frame: string,
 				selector: string,
 				field: string,
-				operation: SourceOperation = { kind: "literal", field },
+				operation: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
 			) => {
 				const original = await request<SourceOccurrence>(frame, {
 					action: "inspect",
@@ -291,7 +309,8 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					field,
 					operation,
 				});
-				return original ? describeSource(project, frame, original, [], operation) : undefined;
+				const described = original ? await describeSource(project, frame, original, [], operation) : undefined;
+				return described?.ok ? described.description : undefined;
 			},
 			[project, request],
 		),
@@ -323,7 +342,8 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 				if (
 					!(
 						(operation.kind === "literal" && expected?.kind === "literal") ||
-						(operation.kind === "image" && expected?.kind === "image")
+						(operation.kind === "image" && expected?.kind === "image") ||
+						(operation.kind === "property" && expected?.kind === "property")
 					)
 				)
 					return;
@@ -334,13 +354,14 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 					operation,
 				});
 				if (!original || !(await sourceIsCurrent(project, original.publication))) return;
-				const description = await describeSource(
+				const described = await describeSource(
 					project,
 					frame,
 					original,
 					await inventory(field, operation),
 					operation,
 				);
+				const description = described.ok ? described.description : undefined;
 				if (!description?.reach) return;
 				const outcomes = await Promise.all(
 					description.reach.uses.map(
@@ -350,7 +371,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 								publication: use.original.publication,
 								original: use.original,
 								expected:
-									expected.kind === "image"
+									expected.kind !== "literal"
 										? expected
 										: { kind: "literal", value: description.value, absent: original.absent ?? false },
 							})) ?? { occurrence: use.original.occurrence, installation: "refused", rendered: "unverified" }),
@@ -358,7 +379,7 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 						}),
 					),
 				);
-				if (expected.kind === "image") {
+				if (expected.kind !== "literal") {
 					for (const name of intent.recovery?.frames ?? [frame]) {
 						const uses = description.reach.uses.filter((use) => use.frame === name);
 						if (!uses.length || !(await sourceIsCurrent(project, uses[0]!.original.publication)))
@@ -435,10 +456,17 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		describe,
 		inventory,
 		prepare: useCallback(
-			async (frame: string, read: SourceRead): Promise<SourceRead> => {
+			async (
+				frame: string,
+				read: SourceRead,
+				signal?: AbortSignal,
+				preview?: SourcePropertyValue,
+			): Promise<SourceRead> => {
+				if (signal?.aborted) return read;
 				const inventories = await inventory(read.original.field, read.operation);
-				const result = await sourceReach(project, read.handle, inventories);
-				if (!result?.ok) return read;
+				if (signal?.aborted) return read;
+				const result = await sourceReach(project, read.handle, inventories, preview);
+				if (signal?.aborted || !result?.ok) return read;
 				const amended = result.read;
 				const frames = [...new Set(amended.reach?.uses.map((use) => use.frame) ?? [frame])];
 				prepared.current.set(read.generation, { initiator: frame, frames });
@@ -536,6 +564,18 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 			},
 			[iframes, request],
 		),
+		previewProperty: useCallback(
+			async (frame: string, plan: SourcePropertyPreview) => {
+				const targets = prepared.current.get(plan.generation)?.frames ?? [frame];
+				return (
+					await Promise.all(
+						targets.map((frame) => request<boolean>(frame, { action: "preview-property", preview: plan })),
+					)
+				).every(Boolean);
+			},
+			[request],
+		),
+
 		previewImage: useCallback(
 			async (frame: string, generation: number, value: string): Promise<SourceImagePreview> => {
 				const targets = prepared.current.get(generation)?.frames ?? [frame];
