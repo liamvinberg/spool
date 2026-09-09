@@ -53,6 +53,8 @@ import { createSourceJournal } from "./source-journal";
 import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
+import { externalPropertySignature, nativePropertyEffects } from "./source-property-dependencies";
+import { readPropertyEffects } from "./source-property-effects";
 import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
@@ -61,6 +63,13 @@ import { propertyPreviewDeclarations } from "./source-property-preview";
 import { propertyReading } from "./source-property-reading";
 import { propertyScopePaths } from "./source-property-scope";
 import { type PropertyContext, propertyState } from "./source-property-state";
+import {
+	planStyleLiteral,
+	planStyleMembers,
+	type StyleMember,
+	styleMemberEffects,
+	stylePropertyOwner,
+} from "./source-property-style";
 import { resolvePropertySource } from "./source-property-target";
 import { retryPropertySource, retryTextSource } from "./source-retry";
 import { readStructuralAncestry } from "./source-structure";
@@ -79,6 +88,7 @@ interface PropertyProof {
 	environment: SourcePropertyEnvironment;
 	roots: ReadonlySet<string>;
 	scopePaths: Extract<SourcePublication["expected"], { kind: "property" }>["scopePaths"];
+	style?: NonNullable<Target["style"]> & { after: readonly StyleMember[] };
 }
 interface StructuralParent {
 	frame: string;
@@ -386,6 +396,7 @@ export function createSourceOwner(
 					operation,
 					resolved.environment,
 					observed.propertyNative,
+					target?.style?.members,
 				);
 			}
 			const found = lookupFrame(root, frame);
@@ -602,18 +613,30 @@ export function createSourceOwner(
 					cell.value,
 					publication.compilation.packet.bundledCss,
 				);
-				property = propertyReading(certificate, operation, resolved.environment, original.propertyNative);
+				const members = target?.style?.members;
+				property = propertyReading(certificate, operation, resolved.environment, original.propertyNative, members);
 				if (readings.length)
 					properties = Object.fromEntries(
-						readings.map((name) => [
-							name,
-							propertyReading(
-								certificate,
-								{ ...operation, property: name },
-								resolved.environment,
-								original.propertyNative,
-							),
-						]),
+						readings.flatMap((name) => {
+							try {
+								return [
+									[
+										name,
+										propertyReading(
+											certificate,
+											{ ...operation, property: name },
+											resolved.environment,
+											original.propertyNative,
+											members,
+										),
+									],
+								];
+							} catch {
+								// One row whose sources cannot be told apart is that row's own
+								// refusal; it does not take the rest of the rail with it.
+								return [];
+							}
+						}),
 					);
 			}
 			const read: SourceRead = {
@@ -1243,6 +1266,44 @@ export function createSourceOwner(
 				: undefined,
 		);
 		const planned = await (async () => {
+			const inline =
+				operation.kind === "property" && change.kind === "property" && operation.scope === "" && target.style
+					? {
+							members: target.style.members,
+							address: target.style.address,
+							property: operation.property,
+							value: change.value,
+						}
+					: undefined;
+			if (inline) {
+				// One class compile answers who owns this property here. An inline
+				// member that wins keeps the class literal exactly as authored.
+				const certificate = await compilePropertySource(
+					held.root,
+					held.compilation.inputs,
+					held.read.value,
+					held.compilation.packet.bundledCss,
+				);
+				const read = readPropertyEffects(certificate, inline.property, "", environment);
+				const owner = stylePropertyOwner(read.roots, read.effects, styleMemberEffects(inline.members), environment);
+				if (owner.kind === "style") {
+					const members = planStyleMembers(inline.members, inline.property, owner.members, inline.value);
+					return {
+						plan: {
+							before: [] as readonly string[],
+							after: [] as readonly string[],
+							original: certificate,
+							desired: certificate,
+							roots: read.roots,
+							consumers: nativePropertyEffects(certificate, read.roots, environment),
+							external: externalPropertySignature(certificate, read.roots, [], environment),
+							next: held.read.value,
+							style: { address: inline.address, members: inline.members, after: members },
+						},
+						selections: undefined,
+					};
+				}
+			}
 			if (operation.kind === "property" && change.kind === "property")
 				return {
 					plan: await planPropertyValue(
@@ -1275,14 +1336,19 @@ export function createSourceOwner(
 		const selections: SourcePropertyGroupExpectation["selections"] | undefined = planned.selections?.map(
 			({ consumers, roots, ...selection }) => ({ ...selection, roots: [...roots], effects: consumers }),
 		);
+		const style = "style" in plan ? plan.style : undefined;
 		const proof: PropertyProof = {
 			environment,
 			roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
-			scopePaths:
-				operation.kind === "property"
+			// An inline member is one unconditional declaration on the element: it
+			// has no compiled condition, and an empty path is what that means.
+			scopePaths: style
+				? [[]]
+				: operation.kind === "property"
 					? propertyScopePaths(plan.original, plan.desired, operation, environment)
 					: (selections?.flatMap((selection) => selection.scopePaths) ?? []),
 			...(selections ? { selections } : {}),
+			...(style ? { style } : {}),
 		};
 		return { target, environment, plan, proof };
 	}
@@ -1303,6 +1369,7 @@ export function createSourceOwner(
 			roots: proof.roots,
 			scopePaths: proof.scopePaths,
 			selections: proof.selections,
+			...(proof.style ? { style: proof.style.members } : {}),
 		};
 		const state = (source: string, snapshot: RetainedCompilation) =>
 			propertyState(context, { compilation: snapshot, source });
@@ -1368,10 +1435,13 @@ export function createSourceOwner(
 			const current = await checkPropertyChanges(held, proof, held.compilation);
 			const input = held.compilation.inputs.get(held.file);
 			if (!input) throw new Error("the original property source input is missing");
+			const text = input.bytes.toString("utf8");
 			const patches = journal.transform(
 				held.file,
 				input,
-				planPropertyLiteral(input.bytes.toString("utf8"), target, plan.before, plan.after),
+				proof.style
+					? planStyleLiteral(text, target, proof.style.members, proof.style.after)
+					: planPropertyLiteral(text, target, plan.before, plan.after),
 			);
 			const now = current.inputs.get(held.file);
 			if (!now) throw new Error("the current property source input is missing");
@@ -1486,7 +1556,9 @@ export function createSourceOwner(
 					const current = await checkPropertyChanges(held, proof, held.compilation);
 					const input = held.compilation.inputs.get(held.file);
 					if (!input) throw new Error("the original property source input is missing");
-					const patches = planPropertyLiteral(source, target, plan.before, plan.after);
+					const patches = proof.style
+						? planStyleLiteral(source, target, proof.style.members, proof.style.after)
+						: planPropertyLiteral(source, target, plan.before, plan.after);
 					const transformed = journal.transform(held.file, input, patches);
 					const currentSource = current.inputs.get(held.file)?.bytes.toString("utf8");
 					if (currentSource === undefined) throw new Error("the current property source input is missing");
@@ -1502,6 +1574,7 @@ export function createSourceOwner(
 							roots: proof.roots,
 							scopePaths: proof.scopePaths,
 							selections: proof.selections,
+							...(proof.style ? { style: proof.style.after } : {}),
 						},
 						{ compilation: current.snapshot, source: next },
 					);
