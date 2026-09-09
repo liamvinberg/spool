@@ -243,10 +243,7 @@ it("centers an already free element under option, and leaves a normal-flow one w
 
 	// the same modifier on an element the layout places writes its size alone:
 	// nothing here makes a near edge movable
-	await f.page.locator('iframe[title="home"]').click({ position: { x: 40, y: 200 } });
 	const flow = f.page.frameLocator('iframe[title="home"]').locator("[data-flow]");
-	const box = await flow.boundingBox();
-	if (!box) throw new Error("the flowed element has no box");
 	await flow.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
 	const second = reply(f, "commit");
 	await dragHandle(f, "e", 20, 0, { modifiers: ["Alt"] });
@@ -301,7 +298,14 @@ it("writes a width authored in rem back in rem", { timeout: 120_000 }, async () 
 
 /** Every way a drag ends without a save, on the served canvas. */
 const INTERRUPTIONS = [
-	{ name: "pointer cancellation", interrupt: (f: Canvas) => f.page.mouse.move(-50, -50) },
+	{
+		name: "pointer cancellation",
+		interrupt: (f: Canvas) => f.page.locator('[role="application"]').dispatchEvent("pointercancel"),
+	},
+	{
+		name: "lost capture",
+		interrupt: (f: Canvas) => f.page.locator('[role="application"]').dispatchEvent("lostpointercapture"),
+	},
 	{
 		name: "a window that loses focus",
 		interrupt: (f: Canvas) => f.page.evaluate(() => window.dispatchEvent(new Event("blur"))),
@@ -366,7 +370,8 @@ it("resizes a rung the keyboard reached, on the project's own scale", { timeout:
 		'[data-subject="A"]',
 	);
 	const inner = f.page.frameLocator('iframe[title="home"]').locator("[data-inner]").first();
-	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("160px");
+	// `w-40` on an 8px step is 320px, which is the whole point of asking the theme
+	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("320px");
 
 	// down the ladder by kinship rather than by pointer (#254), then resize it
 	await f.select();
@@ -376,8 +381,8 @@ it("resizes a rung the keyboard reached, on the project's own scale", { timeout:
 	const committed = reply(f, "commit");
 	await dragHandle(f, "e", 40, 0);
 	await saved(f, committed);
-	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(nested.replace("w-40", "w-25"));
-	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("200px");
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(nested.replace("w-40", "w-45"));
+	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("360px");
 	// the padding the section wears is nobody else's to change
 	expect(f.bytes()[owner]).toContain("p-6");
 });
