@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createFrameCompiler } from "./compile";
 import { deterministicBundledRuntime } from "./fixtures/bundled-provider";
+import { readInput } from "./retained-compile";
 import { createSourceOwner } from "./source-owner";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2"/>';
@@ -468,8 +469,18 @@ it.each(["bytes", "equal-byte replacement"] as const)(
 		if (!staged.ok) throw new Error(staged.reason);
 		const file = join(f.root, "design", staged.path);
 		expect(f.owner.stagedAddition(f.root, file)).toBeTypeOf("function");
+		const stagedInput = readInput(file);
 		if (change === "equal-byte replacement") rmSync(file);
 		writeFileSync(file, change === "bytes" ? `${SVG} ` : SVG);
+		if (change === "equal-byte replacement") {
+			// A recreated file can land on the freed inode inside one timestamp tick,
+			// and equal bytes with an identical stat are the outside write nothing can
+			// see (ADR 0005's limit). This case is about a replacement the filesystem
+			// does report, so it states one and proves the report before asserting.
+			const earlier = new Date(Date.now() - 2_000);
+			utimesSync(file, earlier, earlier);
+			expect(readInput(file).identity).not.toBe(stagedInput.identity);
+		}
 		expect(f.owner.stagedAddition(f.root, file)).toBeUndefined();
 	},
 );

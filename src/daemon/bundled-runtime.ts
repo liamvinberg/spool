@@ -28,6 +28,13 @@ import { bundledResources } from "./bundled-resources";
 import { BundledCredentialStore, privateDirectory, writePrivate } from "./bundled-store";
 import type { SourceAgentClient } from "./source-agent";
 
+/**
+ * The Google adapters refuse any fetch they did not install themselves, throwing
+ * before the request is built. Their errors carry the response body already, so
+ * recovery reads it from the failed message instead of the response.
+ */
+const OWN_FETCH_ONLY: ReadonlySet<string> = new Set(["google-generative-ai", "google-vertex"]);
+
 interface HeldSession {
 	root: string;
 	manager: SessionManager;
@@ -413,6 +420,7 @@ export class BundledRuntime {
 			const stream = streamBefore;
 			session.agent.streamFunction = (model, context, settings) => {
 				responseRecovery = undefined;
+				if (OWN_FETCH_ONLY.has(model.api)) return stream(model, context, settings);
 				return stream(model, context, {
 					...settings,
 					fetch: async (input, init) => {
