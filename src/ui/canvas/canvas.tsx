@@ -102,9 +102,9 @@ import {
 	edgeSigns,
 	type LiveHandles,
 	NO_HANDLES,
-	NO_LIMITS,
 	previewTokens,
 	type ResizeModifiers,
+	type ResizeProperty,
 	resizedBox,
 	resizeFields,
 	rotateTokens,
@@ -252,20 +252,38 @@ type Gesture =
 			kind: "element-size";
 			pick: PickedSelection;
 			edge: Edge;
-			/** ⇧ and ⌥ are read once, because they decide which properties this read may write */
-			modifiers: ResizeModifiers;
-			/** the properties this gesture's source read was opened for, in write order */
-			properties: readonly string[];
-			start: Size;
-			/** what a `content-box` element adds on top of the width that is written */
-			extra: Size;
-			offset: { left: number; top: number };
-			limits: SizeLimits;
 			from: Point;
-			live: Size;
-			shift: { x: number; y: number };
+			/** ⇧ and ⌥ as the grab found them; what they may mean waits on the measurement */
+			asked: ResizeModifiers;
+			/** null until the document answers: an unmeasured grab draws and writes nothing */
+			measured: ResizeMeasurement | null;
 	  }
 	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number };
+
+/**
+ * What the document said about the element a drag grabbed, and where the drag
+ * has taken it since.
+ *
+ * One shape rather than eight fields, because none of them is knowable before
+ * the reply and all of them are knowable after it. The properties are the ones
+ * this gesture's source read was opened for, in write order.
+ */
+interface ResizeMeasurement {
+	modifiers: ResizeModifiers;
+	properties: readonly ResizeProperty[];
+	start: Size;
+	/** what a `content-box` element adds on top of the width that is written */
+	extra: Size;
+	offset: { left: number; top: number };
+	limits: SizeLimits;
+	live: Size;
+	shift: { x: number; y: number };
+}
+
+/** Both of the ring's own drags, which share every way of being interrupted. */
+function isRingGesture(active: Gesture): active is Extract<Gesture, { kind: "element-size" | "element-turn" }> {
+	return active.kind === "element-size" || active.kind === "element-turn";
+}
 
 /** One size a resize drag worked out, and the guides that belong to it. */
 interface ResizePaint {
@@ -3983,6 +4001,35 @@ export function ProjectCanvas({
 		sourceDelivery.retainStructures,
 	]);
 
+	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
+	useEffect(() => {
+		const el = viewportRef.current;
+		if (el === null) return;
+		const onWheel = (event: WheelEvent) => {
+			// Leave the finder's native list scrolling alone before cancelling the wheel.
+			if (findingRef.current) return;
+			event.preventDefault();
+			stopAnimation();
+			setMenu(null);
+			const dx = wheelPixels(event.deltaX, event.deltaMode, el.clientHeight);
+			const dy = wheelPixels(event.deltaY, event.deltaMode, el.clientHeight);
+			if (event.ctrlKey || event.metaKey) {
+				const rect = el.getBoundingClientRect();
+				zoomAtPoint(
+					event.clientX - rect.left,
+					event.clientY - rect.top,
+					wheelZoomFactor(event.deltaY, event.deltaMode, el.clientHeight),
+				);
+			} else {
+				setCamera((c) =>
+					c === null ? c : event.shiftKey && dx === 0 ? { ...c, x: c.x - dy } : { ...c, x: c.x - dx, y: c.y - dy },
+				);
+			}
+		};
+		el.addEventListener("wheel", onWheel, { passive: false });
+		return () => el.removeEventListener("wheel", onWheel);
+	}, [stopAnimation, zoomAtPoint]);
+
 	// Camera motion is a React value for drawing only. The lifecycle reads its ref
 	// after this short quiet window, so frames mount where the camera stopped
 	// rather than throughout the gesture. The same window is the whole of "the
@@ -4065,18 +4112,22 @@ export function ProjectCanvas({
 	/** What the ring draws while an element drag is live (#259). */
 	const showElementDrag = (active: Gesture): void => {
 		if (active.kind === "element-size") {
-			const { pick, edge, live, modifiers } = active;
+			const { pick, edge, measured } = active;
+			if (measured === null) return;
 			const { sx, sy } = edgeSigns(edge);
-			const moved = { x: sx !== 0 || modifiers.proportional, y: sy !== 0 || modifiers.proportional };
+			// whole pixels once: the readout, the ring and the rail's fields are all
+			// about the same box, and a rounding each is three chances to disagree
+			const whole = { w: Math.round(measured.live.w), h: Math.round(measured.live.h) };
+			const both = measured.modifiers.proportional;
 			setElementDrag({
 				frame: pick.frame,
 				selector: pick.selector,
-				rect: draggedRect(pick.rect, live),
-				says: `${Math.round(live.w)} × ${Math.round(live.h)}`,
+				rect: draggedRect(pick.rect, whole),
+				says: `${whole.w} × ${whole.h}`,
 				turning: false,
 				edge,
-				tokens: previewTokens({ w: Math.round(live.w), h: Math.round(live.h) }, moved.x ? 1 : 0, moved.y ? 1 : 0),
-				box: { w: Math.round(live.w), h: Math.round(live.h) },
+				tokens: previewTokens(whole, sx !== 0 || both ? 1 : 0, sy !== 0 || both ? 1 : 0),
+				box: whole,
 			});
 			return;
 		}
@@ -4249,7 +4300,7 @@ export function ProjectCanvas({
 		gesture.current = { kind: "idle" };
 		// a ring gesture's samples are retired and its previews put back; a
 		// release that arrives after this finds an idle gesture and no session
-		if (active.kind === "element-size" || active.kind === "element-turn") closeRingWrite(false);
+		if (isRingGesture(active)) closeRingWrite(false);
 		dropResize();
 		setMarks(NO_MARKS);
 		setMarquee(null);
@@ -4271,48 +4322,27 @@ export function ProjectCanvas({
 		}
 	}, [dropResize, closeRingWrite]);
 
-	// a window that loses focus mid-drag never sees the release: the gesture is
-	// cancelled where it stands rather than left holding a preview nobody owns
-	useEffect(() => {
-		const lost = () => {
-			const active = gesture.current;
-			if (active.kind === "element-size" || active.kind === "element-turn") cancelGesture();
-		};
-		window.addEventListener("blur", lost);
-		return () => window.removeEventListener("blur", lost);
-	}, [cancelGesture]);
-
-	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
+	/**
+	 * The two interruptions a ring drag never sees coming.
+	 *
+	 * A window that loses focus never sees the release, and a canvas that
+	 * scrolls or zooms moves the box out from under the pointer: both end the
+	 * gesture where it stands rather than leave it holding a preview nobody
+	 * owns. The wheel is watched on the way down so the pan it also means still
+	 * happens.
+	 */
 	useEffect(() => {
 		const el = viewportRef.current;
-		if (el === null) return;
-		const onWheel = (event: WheelEvent) => {
-			// Leave the finder's native list scrolling alone before cancelling the wheel.
-			if (findingRef.current) return;
-			// scrolling or zooming the canvas moves the box out from under a live
-			// ring drag, which is an interruption rather than a smaller drag
-			if (gesture.current.kind === "element-size" || gesture.current.kind === "element-turn") cancelGesture();
-			event.preventDefault();
-			stopAnimation();
-			setMenu(null);
-			const dx = wheelPixels(event.deltaX, event.deltaMode, el.clientHeight);
-			const dy = wheelPixels(event.deltaY, event.deltaMode, el.clientHeight);
-			if (event.ctrlKey || event.metaKey) {
-				const rect = el.getBoundingClientRect();
-				zoomAtPoint(
-					event.clientX - rect.left,
-					event.clientY - rect.top,
-					wheelZoomFactor(event.deltaY, event.deltaMode, el.clientHeight),
-				);
-			} else {
-				setCamera((c) =>
-					c === null ? c : event.shiftKey && dx === 0 ? { ...c, x: c.x - dy } : { ...c, x: c.x - dx, y: c.y - dy },
-				);
-			}
+		const interrupted = () => {
+			if (isRingGesture(gesture.current)) cancelGesture();
 		};
-		el.addEventListener("wheel", onWheel, { passive: false });
-		return () => el.removeEventListener("wheel", onWheel);
-	}, [stopAnimation, zoomAtPoint, cancelGesture]);
+		window.addEventListener("blur", interrupted);
+		el?.addEventListener("wheel", interrupted, { capture: true });
+		return () => {
+			window.removeEventListener("blur", interrupted);
+			el?.removeEventListener("wheel", interrupted, { capture: true });
+		};
+	}, [cancelGesture]);
 
 	const originsOf = (names: readonly string[]): Map<string, Point> => {
 		const origins = new Map<string, Point>();
@@ -4595,21 +4625,32 @@ export function ProjectCanvas({
 		// the element ring's drags: nothing is written until the pointer is up,
 		// so what moves here is the ring, the readout and the rail's fields
 		if (active.kind === "element-size") {
+			const held = active.measured;
+			if (held === null) return;
 			const dragged = resizedBox(
-				active.start,
+				held.start,
 				active.edge,
 				(p.x - active.from.x) / cam.k,
 				(p.y - active.from.y) / cam.k,
-				active.modifiers,
-				active.limits,
+				held.modifiers,
+				held.limits,
 			);
-			const live = { w: dragged.w, h: dragged.h };
-			const shift = { x: dragged.shiftX, y: dragged.shiftY };
-			if (live.w === active.live.w && live.h === active.live.h && shift.x === active.shift.x) return;
-			const next: Gesture = { ...active, live, shift };
+			const measured: ResizeMeasurement = {
+				...held,
+				live: { w: dragged.w, h: dragged.h },
+				shift: { x: dragged.shiftX, y: dragged.shiftY },
+			};
+			if (
+				measured.live.w === held.live.w &&
+				measured.live.h === held.live.h &&
+				measured.shift.x === held.shift.x &&
+				measured.shift.y === held.shift.y
+			)
+				return;
+			const next: Gesture = { ...active, measured };
 			gesture.current = next;
 			showElementDrag(next);
-			sampleElementResize(next);
+			sampleElementResize(measured);
 			return;
 		}
 
@@ -4779,43 +4820,42 @@ export function ProjectCanvas({
 	 */
 	const beginElementResize = (pick: PickedSelection, edge: Edge, from: Point, asked: ResizeModifiers) => {
 		const { sx, sy } = edgeSigns(edge);
-		gesture.current = {
-			kind: "element-size",
-			pick,
-			edge,
-			modifiers: { center: false, proportional: asked.proportional },
-			properties: [],
-			start: { w: pick.rect.w, h: pick.rect.h },
-			extra: { w: 0, h: 0 },
-			offset: { left: 0, top: 0 },
-			limits: NO_LIMITS,
-			from,
-			live: { w: pick.rect.w, h: pick.rect.h },
-			shift: { x: 0, y: 0 },
-		};
-		showElementDrag(gesture.current);
+		gesture.current = { kind: "element-size", pick, edge, from, asked, measured: null };
 		askSizing(pick.frame, pick.selector, (sizing) => {
 			const active = gesture.current;
-			if (active.kind !== "element-size" || active.pick.selector !== pick.selector || sizing === null) return;
+			if (active.kind !== "element-size" || active.pick.selector !== pick.selector) return;
 			const live = ringRef.current.live;
-			const center = asked.center && sizing.free;
-			const properties = [
-				...(sx !== 0 || asked.proportional ? (live.w ? ["width"] : []) : []),
-				...(sy !== 0 || asked.proportional ? (live.h ? ["height"] : []) : []),
-				// an already free element's own placement, and only where it has one
-				...(sizing.free && sizing.offset.left !== null && (center || sx === -1) ? ["left"] : []),
-				...(sizing.free && sizing.offset.top !== null && (center || sy === -1) ? ["top"] : []),
-			];
-			if (properties.length === 0) return;
-			gesture.current = {
-				...active,
+			const center = asked.center && sizing !== null && sizing.free;
+			const properties: ResizeProperty[] =
+				sizing === null
+					? []
+					: [
+							...(sx !== 0 || asked.proportional ? (live.w ? (["width"] as const) : []) : []),
+							...(sy !== 0 || asked.proportional ? (live.h ? (["height"] as const) : []) : []),
+							// an already free element's own placement, and only where it has one
+							...(sizing.free && sizing.offset.left !== null && (center || sx === -1)
+								? (["left"] as const)
+								: []),
+							...(sizing.free && sizing.offset.top !== null && (center || sy === -1) ? (["top"] as const) : []),
+						];
+			// a document that says nothing about the box, or a box with nothing this
+			// grab may write, is not a drag anybody should be left holding
+			if (sizing === null || properties.length === 0) {
+				cancelGesture();
+				return;
+			}
+			const measured: ResizeMeasurement = {
 				modifiers: { center, proportional: asked.proportional },
 				properties,
 				start: sizing.box,
 				extra: sizing.extra,
 				offset: { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 },
 				limits: sizing.limits,
+				live: sizing.box,
+				shift: { x: 0, y: 0 },
 			};
+			gesture.current = { ...active, measured };
+			showElementDrag(gesture.current);
 			openRingWrite(
 				pick,
 				properties.map((property) => ({ property, scope: "" })),
@@ -4824,15 +4864,14 @@ export function ProjectCanvas({
 	};
 
 	/** One sample of a live size drag, in the element's own authored dimensions. */
-	const sampleElementResize = (active: Extract<Gesture, { kind: "element-size" }>) => {
-		if (active.properties.length === 0) return;
+	const sampleElementResize = (measured: ResizeMeasurement) => {
 		sampleRingWrite({
 			kind: "fields",
 			changes: resizeFields(
-				active.properties,
-				{ w: active.live.w - active.extra.w, h: active.live.h - active.extra.h },
-				active.shift,
-				active.offset,
+				measured.properties,
+				{ w: measured.live.w - measured.extra.w, h: measured.live.h - measured.extra.h },
+				measured.shift,
+				measured.offset,
 				ringRef.current.step,
 			).map((change) => ({ ...change, scope: "" })),
 		});
@@ -4845,10 +4884,12 @@ export function ProjectCanvas({
 	 * this and completing it would be a save nobody asked for.
 	 */
 	const commitElementSize = (active: Extract<Gesture, { kind: "element-size" }>) => {
-		const moved =
-			Math.round(active.live.w) !== Math.round(active.start.w) ||
-			Math.round(active.live.h) !== Math.round(active.start.h);
-		closeRingWrite(moved);
+		const measured = active.measured;
+		closeRingWrite(
+			measured !== null &&
+				(Math.round(measured.live.w) !== Math.round(measured.start.w) ||
+					Math.round(measured.live.h) !== Math.round(measured.start.h)),
+		);
 	};
 
 	/** The angle a turn settled on. A turn back to rest takes the family away. */
@@ -5492,7 +5533,7 @@ export function ProjectCanvas({
 				onPointerCancel={cancelGesture}
 				onLostPointerCapture={() => {
 					const active = gesture.current;
-					if (active.kind === "element-size" || active.kind === "element-turn") cancelGesture();
+					if (isRingGesture(active)) cancelGesture();
 				}}
 				onPointerLeave={() => {
 					setPreview(null);

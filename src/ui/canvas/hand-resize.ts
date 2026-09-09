@@ -231,9 +231,6 @@ export interface SizeLimits {
 	maxH: number | null;
 }
 
-/** What an unmeasured box is held to: nothing, until the document says otherwise. */
-export const NO_LIMITS: SizeLimits = { minW: 0, minH: 0, maxW: null, maxH: null };
-
 /** The modifiers a resize gesture opens with, which fix what it may write. */
 export interface ResizeModifiers {
 	/** ⌥ on an already free-positioned element: grow from the centre. */
@@ -315,8 +312,30 @@ export function turnValue(deg: number): SourcePropertyValue {
 	return token === undefined ? { kind: "remove" } : { kind: "binding", tokens: [token] };
 }
 
-/** The token family each property a resize may write is spelled in. */
-const RESIZE_FAMILIES: Readonly<Record<string, string>> = { width: "w", height: "h", left: "left", top: "top" };
+/** Everything one resize gesture may write, and nothing else. */
+export type ResizeProperty = "width" | "height" | "left" | "top";
+
+/**
+ * What each of them is spelled in, and which number it takes.
+ *
+ * One table rather than a lookup and a ternary that have to agree: the family
+ * a token wears and the pixel it is measured from are the same fact about the
+ * property, said once.
+ */
+const RESIZE_PROPERTIES: Readonly<
+	Record<ResizeProperty, { family: string; px(box: Size, shift: { x: number; y: number }, offset: Offset): number }>
+> = {
+	width: { family: "w", px: (box) => box.w },
+	height: { family: "h", px: (box) => box.h },
+	left: { family: "left", px: (_box, shift, offset) => offset.left + shift.x },
+	top: { family: "top", px: (_box, shift, offset) => offset.top + shift.y },
+};
+
+/** Where an already free-positioned element is placed, in the document's own pixels. */
+export interface Offset {
+	left: number;
+	top: number;
+}
 
 /** A signed length on the project's own scale: a whole step is the bare class. */
 function scaledToken(family: string, px: number, step: number): string {
@@ -334,23 +353,14 @@ function scaledToken(family: string, px: number, step: number): string {
  * silently rescales if `--spacing` moves.
  */
 export function resizeFields(
-	properties: readonly string[],
+	properties: readonly ResizeProperty[],
 	live: Size,
 	shift: { x: number; y: number },
-	offset: { left: number; top: number },
+	offset: Offset,
 	step: number,
-): { property: string; value: SourcePropertyValue }[] {
-	return properties.flatMap((property) => {
-		const family = RESIZE_FAMILIES[property];
-		if (family === undefined) return [];
-		const px =
-			property === "width"
-				? live.w
-				: property === "height"
-					? live.h
-					: property === "left"
-						? offset.left + shift.x
-						: offset.top + shift.y;
-		return [{ property, value: { kind: "binding" as const, tokens: [scaledToken(family, px, step)] } }];
+): { property: ResizeProperty; value: SourcePropertyValue }[] {
+	return properties.map((property) => {
+		const { family, px } = RESIZE_PROPERTIES[property];
+		return { property, value: { kind: "binding", tokens: [scaledToken(family, px(live, shift, offset), step)] } };
 	});
 }
