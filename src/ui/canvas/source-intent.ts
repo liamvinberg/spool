@@ -134,6 +134,11 @@ export function preparedHelp(intent: SourceIntent, reason: string, saved: boolea
 			? [`Property: ${intent.operation.property}. Property scope: ${intent.operation.scope}.`]
 			: []),
 		...(intent.change?.kind === "property" ? [`Requested value: ${JSON.stringify(intent.change.value)}.`] : []),
+		...(intent.operation.kind === "reorder"
+			? [
+					`Requested move: ${Math.abs(intent.operation.steps)} place${Math.abs(intent.operation.steps) === 1 ? "" : "s"} ${intent.operation.steps > 0 ? "later" : "earlier"} among its authored siblings.`,
+				]
+			: []),
 		saved
 			? "Inspect the saved source and the affected app to diagnose why the result is missing. Ask before a reload that would reset application state. Do not repeat an acknowledged source write."
 			: "Inspect the current source and reconcile my requested change with it, preserving unrelated edits. Confirm the original target before applying the change; do not replay an uncertain save.",
