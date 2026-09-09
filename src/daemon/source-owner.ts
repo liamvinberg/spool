@@ -617,26 +617,16 @@ export function createSourceOwner(
 				property = propertyReading(certificate, operation, resolved.environment, original.propertyNative, members);
 				if (readings.length)
 					properties = Object.fromEntries(
-						readings.flatMap((name) => {
-							try {
-								return [
-									[
-										name,
-										propertyReading(
-											certificate,
-											{ ...operation, property: name },
-											resolved.environment,
-											original.propertyNative,
-											members,
-										),
-									],
-								];
-							} catch {
-								// One row whose sources cannot be told apart is that row's own
-								// refusal; it does not take the rest of the rail with it.
-								return [];
-							}
-						}),
+						readings.map((name) => [
+							name,
+							propertyReading(
+								certificate,
+								{ ...operation, property: name },
+								resolved.environment,
+								original.propertyNative,
+								members,
+							),
+						]),
 					);
 			}
 			const read: SourceRead = {

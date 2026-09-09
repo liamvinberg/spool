@@ -105,8 +105,13 @@ it("leaves a property no inline member declares to its class binding", async () 
 	});
 });
 
-it("refuses to read one control whose sides two sources own", async () => {
-	await expect(inlineReading("pt-8! p-6", "padding", padding, "4px")).rejects.toThrow(/different sources/);
+it("claims no value for a control whose sides two sources own", async () => {
+	expect(await inlineReading("pt-8! p-6", "padding", padding, "4px")).toEqual({
+		tokens: [],
+		source: "mixed",
+		binding: { kind: "mixed" },
+		native: "4px",
+	});
 });
 
 it("leaves a scoped row to its class literal, which is the only source a scope has", async () => {

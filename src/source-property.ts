@@ -53,8 +53,12 @@ export interface SourcePropertyNative {
 
 export interface SourcePropertyReading {
 	tokens: readonly string[];
-	/** Which authored source declares this property's winning effects here. */
-	source: "class" | "style";
+	/**
+	 * Which authored source declares this property's winning effects here.
+	 * `mixed` is a reading that cannot attribute them to one source; it claims no
+	 * value, and a write against it refuses with the reason before saving.
+	 */
+	source: "class" | "style" | "mixed";
 	/** One compiler-proven custom declaration, preserving its authored unit. */
 	authored?: string;
 	binding:

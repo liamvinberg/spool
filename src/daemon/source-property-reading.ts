@@ -22,7 +22,17 @@ export function propertyReading(
 	// A scope is a condition on a rule, and an inline member carries none, so a
 	// scoped row reads its class literal even where a member also declares it.
 	const inline = style && operation.scope === "" ? styleMemberEffects(style) : [];
-	if (inline.length && stylePropertyOwner(roots, effects, inline, environment).kind === "style") {
+	let owner: "class" | "style" | "mixed" = "class";
+	if (inline.length)
+		try {
+			owner = stylePropertyOwner(roots, effects, inline, environment).kind;
+		} catch {
+			// Two sources over one control: the reading says so rather than showing
+			// either one's value. The write against it refuses with the reason.
+			owner = "mixed";
+		}
+	if (owner === "mixed") return { tokens: [], source: "mixed", binding: { kind: "mixed" }, ...shown };
+	if (owner === "style") {
 		const values = [
 			...new Set(
 				[...roots].map((root) => {
