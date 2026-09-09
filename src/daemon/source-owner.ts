@@ -19,7 +19,12 @@ import {
 	type UseOutcome,
 } from "../source-edit";
 import type { SourceImagePut, SourceImageStaged } from "../source-image";
-import type { SourcePropertyEnvironment, SourcePropertyPreview, SourcePropertyReading } from "../source-property";
+import type {
+	SourcePropertyEffect,
+	SourcePropertyEnvironment,
+	SourcePropertyPreview,
+	SourcePropertyReading,
+} from "../source-property";
 import { propertySamplePlaceholder, type SourcePropertyValue } from "../source-property";
 import {
 	propertyGroupTarget,
@@ -53,6 +58,7 @@ import { createSourceJournal } from "./source-journal";
 import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
+import { locateDeclaration, planDeclarationLiteral, propertySourceOwner } from "./source-property-declaration";
 import { externalPropertySignature, nativePropertyEffects } from "./source-property-dependencies";
 import { propertyKeys, readPropertyEffects } from "./source-property-effects";
 import { planPropertyGroup } from "./source-property-group";
@@ -63,13 +69,7 @@ import { propertyPreviewDeclarations } from "./source-property-preview";
 import { propertyReading } from "./source-property-reading";
 import { propertyScopePaths } from "./source-property-scope";
 import { type PropertyContext, propertyState } from "./source-property-state";
-import {
-	planStyleLiteral,
-	planStyleMembers,
-	type StyleMember,
-	styleMemberEffects,
-	stylePropertyOwner,
-} from "./source-property-style";
+import { planStyleLiteral, planStyleMembers, type StyleMember, styleMemberEffects } from "./source-property-style";
 import { resolvePropertySource } from "./source-property-target";
 import { retryPropertySource, retryTextSource } from "./source-retry";
 import { readStructuralAncestry } from "./source-structure";
@@ -89,6 +89,7 @@ interface PropertyProof {
 	roots: ReadonlySet<string>;
 	scopePaths: Extract<SourcePublication["expected"], { kind: "property" }>["scopePaths"];
 	style?: NonNullable<Target["style"]> & { after: readonly StyleMember[] };
+	declaration?: { file: string; effect: SourcePropertyEffect; value: string };
 }
 interface StructuralParent {
 	frame: string;
@@ -1256,45 +1257,64 @@ export function createSourceOwner(
 				: undefined,
 		);
 		const planned = await (async () => {
-			const inline =
-				operation.kind === "property" && change.kind === "property" && operation.scope === "" && target.style
-					? {
-							members: target.style.members,
-							address: target.style.address,
-							property: operation.property,
-							value: change.value,
-						}
-					: undefined;
-			if (inline) {
-				// One class compile answers who owns this property here. An inline
-				// member that wins keeps the class literal exactly as authored.
+			if (operation.kind === "property" && change.kind === "property") {
+				// One class compile answers who owns this property here, and the same
+				// certificate goes on to plan the class write when the class owns it.
 				const certificate = await compilePropertySource(
 					held.root,
 					held.compilation.inputs,
 					held.read.value,
 					held.compilation.packet.bundledCss,
 				);
-				const read = readPropertyEffects(certificate, inline.property, "", environment);
-				const owner = stylePropertyOwner(read.roots, read.effects, styleMemberEffects(inline.members), environment);
-				if (owner.kind === "style") {
-					const members = planStyleMembers(inline.members, inline.property, owner.members, inline.value);
+				const read = readPropertyEffects(certificate, operation.property, operation.scope, environment);
+				const members = operation.scope === "" ? (target.style?.members ?? []) : [];
+				const owner =
+					operation.scope === ""
+						? propertySourceOwner(read.roots, read.effects, styleMemberEffects(members), certificate, environment)
+						: ({ kind: "class" } as const);
+				const kept = {
+					before: [] as readonly string[],
+					after: [] as readonly string[],
+					original: certificate,
+					desired: certificate,
+					roots: read.roots,
+					consumers: nativePropertyEffects(certificate, read.roots, environment),
+					external: externalPropertySignature(certificate, read.roots, [], environment),
+					next: held.read.value,
+				};
+				if (owner.kind === "style" && target.style)
 					return {
 						plan: {
-							before: [] as readonly string[],
-							after: [] as readonly string[],
-							original: certificate,
-							desired: certificate,
-							roots: read.roots,
-							consumers: nativePropertyEffects(certificate, read.roots, environment),
-							external: externalPropertySignature(certificate, read.roots, [], environment),
-							next: held.read.value,
-							style: { address: inline.address, members: inline.members, after: members },
+							...kept,
+							style: {
+								address: target.style.address,
+								members,
+								after: planStyleMembers(members, operation.property, owner.members, change.value),
+							},
 						},
 						selections: undefined,
 					};
+				if (owner.kind === "declaration") {
+					if (owner.effects.length !== 1)
+						throw new Error("this control's sides are declared separately in their own stylesheet");
+					if (change.value.kind !== "custom")
+						throw new Error("an authored declaration takes an exact value, not a theme binding");
+					const effect = owner.effects[0]!;
+					const files = [...held.compilation.inputs].filter(([file, input]) => {
+						if (!file.endsWith(".css")) return false;
+						try {
+							locateDeclaration(input.bytes.toString("utf8"), effect);
+							return true;
+						} catch {
+							return false;
+						}
+					});
+					if (files.length !== 1) throw new Error("this declaration has no single authored stylesheet range");
+					return {
+						plan: { ...kept, declaration: { file: files[0]![0], effect, value: change.value.value } },
+						selections: undefined,
+					};
 				}
-			}
-			if (operation.kind === "property" && change.kind === "property")
 				return {
 					plan: await planPropertyValue(
 						held.root,
@@ -1304,9 +1324,11 @@ export function createSourceOwner(
 						change.value,
 						environment,
 						held.compilation.packet.bundledCss,
+						certificate,
 					),
 					selections: undefined,
 				};
+			}
 			if (operation.kind === "properties" && change.kind === "properties") {
 				if (!samePropertyGroupTarget(operation.target, propertyGroupTarget(change.value)))
 					throw new Error("the grouped request differs from its original source purpose");
@@ -1321,14 +1343,28 @@ export function createSourceOwner(
 				// A grouped change writes classes. Where an inline member wins one of
 				// its selections, the class it wrote would never apply, so it refuses
 				// here rather than saving a declaration nothing uses.
-				if (target.style) {
-					const inline = styleMemberEffects(target.style.members);
-					const owned = plan.selections.some((selection) =>
-						[...selection.roots].some((root) =>
-							inline.some((effect) => propertyKeys(effect.property, environment).includes(root)),
+				const inline = target.style ? styleMemberEffects(target.style.members) : [];
+				const grouped = await compilePropertySource(
+					held.root,
+					held.compilation.inputs,
+					held.read.value,
+					held.compilation.packet.bundledCss,
+				);
+				for (const selection of plan.selections) {
+					const roots = new Set(selection.roots);
+					const owner = propertySourceOwner(
+						roots,
+						grouped.effects.filter(
+							(effect) =>
+								effect.owner !== null &&
+								propertyKeys(effect.property, environment).some((key) => roots.has(key)),
 						),
+						inline,
+						grouped,
+						environment,
 					);
-					if (owned) throw new Error("this grouped change includes a property an inline style member owns");
+					if (owner.kind !== "class")
+						throw new Error("this grouped change includes a property another source owns");
 				}
 				return { plan, selections: plan.selections };
 			}
@@ -1339,18 +1375,22 @@ export function createSourceOwner(
 			({ consumers, roots, ...selection }) => ({ ...selection, roots: [...roots], effects: consumers }),
 		);
 		const style = "style" in plan ? plan.style : undefined;
+		const declaration = "declaration" in plan ? plan.declaration : undefined;
 		const proof: PropertyProof = {
 			environment,
 			roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
 			// An inline member is one unconditional declaration on the element: it
 			// has no compiled condition, and an empty path is what that means.
-			scopePaths: style
-				? [[]]
-				: operation.kind === "property"
-					? propertyScopePaths(plan.original, plan.desired, operation, environment)
-					: (selections?.flatMap((selection) => selection.scopePaths) ?? []),
+			scopePaths: declaration
+				? [declaration.effect.path]
+				: style
+					? [[]]
+					: operation.kind === "property"
+						? propertyScopePaths(plan.original, plan.desired, operation, environment)
+						: (selections?.flatMap((selection) => selection.scopePaths) ?? []),
 			...(selections ? { selections } : {}),
 			...(style ? { style } : {}),
+			...(declaration ? { declaration } : {}),
 		};
 		return { target, environment, plan, proof };
 	}
@@ -1435,17 +1475,20 @@ export function createSourceOwner(
 			valid(root, held.compilation);
 			const { target, plan, proof } = await planReadProperty(held, change);
 			const current = await checkPropertyChanges(held, proof, held.compilation);
-			const input = held.compilation.inputs.get(held.file);
+			const written = proof.declaration?.file ?? held.file;
+			const input = held.compilation.inputs.get(written);
 			if (!input) throw new Error("the original property source input is missing");
 			const text = input.bytes.toString("utf8");
 			const patches = journal.transform(
-				held.file,
+				written,
 				input,
-				proof.style
-					? planStyleLiteral(text, target, proof.style.members, proof.style.after)
-					: planPropertyLiteral(text, target, plan.before, plan.after),
+				proof.declaration
+					? planDeclarationLiteral(text, proof.declaration.effect, proof.declaration.value)
+					: proof.style
+						? planStyleLiteral(text, target, proof.style.members, proof.style.after)
+						: planPropertyLiteral(text, target, plan.before, plan.after),
 			);
-			const now = current.inputs.get(held.file);
+			const now = current.inputs.get(written);
 			if (!now) throw new Error("the current property source input is missing");
 			const next = applySourcePatches(now.bytes.toString("utf8"), patches).text;
 			const frames: SourcePropertyPreview["frames"][number][] = [];
@@ -1461,7 +1504,7 @@ export function createSourceOwner(
 				const inputs = new Map(
 					[...publication.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
 				);
-				inputs.set(held.file, { ...now, bytes: Buffer.from(next) });
+				inputs.set(written, { ...now, bytes: Buffer.from(next) });
 				const snapshot = await compiler.compileSnapshot(
 					root,
 					use.frame,
@@ -1566,19 +1609,28 @@ export function createSourceOwner(
 				) {
 					const { target, environment, plan, proof } = await planReadProperty(held, change);
 					const current = await checkPropertyChanges(held, proof, held.compilation);
-					const input = held.compilation.inputs.get(held.file);
+					const written = proof.declaration?.file ?? held.file;
+					const input = held.compilation.inputs.get(written);
 					if (!input) throw new Error("the original property source input is missing");
-					const patches = proof.style
-						? planStyleLiteral(source, target, proof.style.members, proof.style.after)
-						: planPropertyLiteral(source, target, plan.before, plan.after);
-					const transformed = journal.transform(held.file, input, patches);
-					const currentSource = current.inputs.get(held.file)?.bytes.toString("utf8");
+					const authored = input.bytes.toString("utf8");
+					const patches = proof.declaration
+						? planDeclarationLiteral(authored, proof.declaration.effect, proof.declaration.value)
+						: proof.style
+							? planStyleLiteral(source, target, proof.style.members, proof.style.after)
+							: planPropertyLiteral(source, target, plan.before, plan.after);
+					const transformed = journal.transform(written, input, patches);
+					const currentSource = current.inputs.get(written)?.bytes.toString("utf8");
 					if (currentSource === undefined) throw new Error("the current property source input is missing");
 					const next = applySourcePatches(currentSource, transformed).text;
+					// A stylesheet write changes an input the class cell still reads
+					// from, so the expectation compiles against the written bytes while
+					// the executable source it belongs to stays where it was.
+					const inputs = new Map(current.inputs);
+					if (proof.declaration) inputs.set(written, { ...input, bytes: Buffer.from(next) });
 					const after = await propertyState(
 						{
 							root,
-							inputs: current.inputs,
+							inputs,
 							file: held.file,
 							cellKey: held.read.cell ?? original.cell,
 							operation: held.read.operation,
@@ -1588,11 +1640,21 @@ export function createSourceOwner(
 							selections: proof.selections,
 							...(proof.style ? { style: proof.style.after } : {}),
 						},
-						{ compilation: current.snapshot, source: next },
+						{
+							compilation: current.snapshot,
+							source: proof.declaration
+								? (current.inputs.get(held.file)?.bytes.toString("utf8") ?? source)
+								: next,
+						},
 					);
 					held.property = proof;
 					held.inverseExpected = current.state.expected;
-					return await publish(held, next, after.expected, transformed);
+					return await publish(
+						proof.declaration ? { ...held, file: written } : held,
+						next,
+						after.expected,
+						transformed,
+					);
 				}
 				if (change.kind === "image") {
 					held.compilation = afterStaging(root, held.compilation);
