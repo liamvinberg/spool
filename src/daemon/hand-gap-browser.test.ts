@@ -153,6 +153,94 @@ it("makes a reversed right-to-left row's gap bigger by dragging along its flow",
 	expect(f.writes).toEqual(["commit"]);
 });
 
+it("shrinks a right-to-left row's gap when the pointer goes right", { timeout: 120_000 }, async () => {
+	// the flow runs right to left, so the gap grows the way it reads: a pointer
+	// travelling right is taking the space away rather than adding to it
+	const arabic = rowSource.replace('className="flex gap-4"', 'dir="rtl" className="flex gap-4"');
+	const f = await originCanvas({ [owner]: arabic }, frameSource, '[data-subject="A"]');
+	await f.select();
+	const committed = reply(f, "commit");
+	await dragBand(f, 0, 8, 0);
+	await saved(f, committed);
+
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(arabic.replace("gap-4", "gap-4 gap-x-2"));
+	await f.settled();
+	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["8px", "8px"]);
+	expect(f.writes).toEqual(["commit"]);
+});
+
+it("grows a reversed left-to-right row's gap when the pointer goes left", { timeout: 120_000 }, async () => {
+	const backwards = rowSource.replace('className="flex gap-4"', 'className="flex flex-row-reverse gap-4"');
+	const f = await originCanvas({ [owner]: backwards }, frameSource, '[data-subject="A"]');
+	await f.select();
+	const committed = reply(f, "commit");
+	await dragBand(f, 0, -8, 0);
+	await saved(f, committed);
+
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(backwards.replace("gap-4", "gap-4 gap-x-6"));
+	await f.settled();
+	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["24px", "24px"]);
+	expect(f.writes).toEqual(["commit"]);
+});
+
+it("draws no band over a gap a stylesheet owns", { timeout: 120_000 }, async () => {
+	// the class cell says nothing about a gap the page still shows: a band would
+	// offer to write a pixel count beside a rule that goes on winning
+	const ruled = rowSource.replace('className="flex gap-4"', 'className="flex ruled-row"');
+	const styled = frameSource.replace(
+		"<main style={{padding:24}}>",
+		'<main style={{padding:24}}><style>{".ruled-row{gap:16px}"}</style>',
+	);
+	const f = await originCanvas({ [owner]: ruled }, styled, '[data-subject="A"]');
+	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["16px", "16px"]);
+	await f.select();
+	await expect.poll(() => f.page.locator('[data-properties-row="gap"]').count(), { timeout: 30_000 }).toBe(1);
+	await f.page.waitForTimeout(500);
+	expect(await f.page.locator("[data-element-gap]").count()).toBe(0);
+	expect(f.writes).toEqual([]);
+});
+
+it("draws no band over a gap the element's own style attribute holds", { timeout: 120_000 }, async () => {
+	const inline = rowSource.replace('className="flex gap-4"', 'style={{gap:16}} className="flex gap-4"');
+	const f = await originCanvas({ [owner]: inline }, frameSource, '[data-subject="A"]');
+	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["16px", "16px"]);
+	await f.select();
+	// the rail lands on the element and says what it can about it; the canvas
+	// offers no drag over a declaration a class could not beat
+	await expect.poll(() => f.page.locator("[data-properties-rail]").count(), { timeout: 30_000 }).toBe(1);
+	await f.page.waitForTimeout(500);
+	expect(await f.page.locator("[data-element-gap]").count()).toBe(0);
+	expect(f.writes).toEqual([]);
+});
+
+it("moves the token it already wrote on a second drag", { timeout: 120_000 }, async () => {
+	const f = await originCanvas({ [owner]: rowSource }, frameSource, '[data-subject="A"]');
+	await f.select();
+
+	const first = reply(f, "commit");
+	await dragBand(f, 0, 16, 0);
+	await saved(f, first);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(rowSource.replace("gap-4", "gap-4 gap-x-8"));
+	await f.settled();
+
+	const second = reply(f, "commit");
+	await dragBand(f, 0, 16, 0);
+	await saved(f, second);
+
+	// the axis token it wrote is the one it moves: a third token would leave two
+	// declarations of the same property racing each other
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(rowSource.replace("gap-4", "gap-4 gap-x-12"));
+	await f.settled();
+	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["48px", "48px"]);
+
+	// and the canvas reads back what the rail would: the value the cell authors
+	const band = await f.page.locator('[data-element-gap="0"]').boundingBox();
+	if (band === null) throw new Error("the ring drew no band");
+	await f.page.mouse.click(band.x + band.width / 2, band.y + band.height / 2);
+	await expect.poll(() => f.page.locator("[data-gap-popover] input").inputValue(), { timeout: 30_000 }).toBe("12");
+	expect(f.writes).toEqual(["commit", "commit"]);
+});
+
 it("opens the band's own exact value and takes a fraction of a pixel", { timeout: 120_000 }, async () => {
 	const f = await originCanvas({ [owner]: rowSource }, frameSource, '[data-subject="A"]');
 	await f.select();
