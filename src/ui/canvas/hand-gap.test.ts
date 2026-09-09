@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
 	authoredGap,
+	type GapChild,
+	type GapReading,
 	gapAxisOf,
 	gapBands,
 	gapDragUnits,
-	type GapChild,
-	type GapReading,
 	gapSteppable,
 	steppedGap,
 } from "./hand-gap";

@@ -79,7 +79,11 @@ const GAP_TOLERANCE_PX = 0.5;
 export function gapAxisOf(reading: GapReading): GapAxis | null {
 	if (!["flex", "inline-flex"].includes(reading.display)) return null;
 	if (reading.writing !== "horizontal-tb") return null;
-	return reading.direction.startsWith("row") ? "column-gap" : reading.direction.startsWith("column") ? "row-gap" : null;
+	return reading.direction.startsWith("row")
+		? "column-gap"
+		: reading.direction.startsWith("column")
+			? "row-gap"
+			: null;
 }
 
 /** The px a gap resolves to, or nothing where it is a keyword or a relative length. */
@@ -206,7 +210,14 @@ export function steppedGap(authored: string | null, measured: number, units: num
 		"spacing",
 		parsed === null
 			? null
-			: { family: "gap", kind: "spacing", value: parsed.value, negative: parsed.negative, important: false, token: "" },
+			: {
+					family: "gap",
+					kind: "spacing",
+					value: parsed.value,
+					negative: parsed.negative,
+					important: false,
+					token: "",
+				},
 		measured,
 		units,
 	);
