@@ -2299,6 +2299,13 @@ export function createDaemonApp({
 							.object({ property: z.string().max(200), value: z.string().max(100_000) })
 							.strict()
 							.optional(),
+						// The rule chains this element's own document matched. A chain is
+						// evidence, not authority: the compiler still has to carry it.
+						propertyRules: z
+							.array(z.array(z.string().max(2000)).max(20).readonly())
+							.max(200)
+							.readonly()
+							.optional(),
 					})
 					.strict();
 				const inventory = z
