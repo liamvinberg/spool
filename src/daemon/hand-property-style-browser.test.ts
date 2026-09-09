@@ -237,7 +237,9 @@ it("edits an existing responsive type rule under its own scope, and steps forwar
 	await f.select();
 	await f.page.locator("[data-scope-chip]", { hasText: "sm:" }).first().click();
 	await row(f, "font-size").fill("30");
-	await complete(f, "font-size", original.replace("sm:text-2xl", "sm:text-[30px]"));
+	// the size token also carries the scope's leading, so it stays authored and
+	// the exact size lands beside it as the override the compiler makes it
+	await complete(f, "font-size", original.replace('sm:text-2xl"', 'sm:text-2xl sm:text-[30px]"'));
 	expect(f.bytes()[owner]).toContain("text-base");
 	await expect.poll(() => computed(f, "font-size")).toEqual(["30px", "30px"]);
 
@@ -250,7 +252,7 @@ it("edits an existing responsive type rule under its own scope, and steps forwar
 	const forward = reply(f, "inverse");
 	await f.history(true);
 	expect((await (await forward).json()).ok).toBe(true);
-	await expect.poll(() => f.bytes()[owner]).toBe(original.replace("sm:text-2xl", "sm:text-[30px]"));
+	await expect.poll(() => f.bytes()[owner]).toBe(original.replace('sm:text-2xl"', 'sm:text-2xl sm:text-[30px]"'));
 	await expect.poll(() => computed(f, "font-size")).toEqual(["30px", "30px"]);
 });
 
