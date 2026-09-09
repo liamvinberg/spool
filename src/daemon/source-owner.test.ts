@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "@babel/parser";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import type { RetainedValues, SourceOccurrence, SourceRead, SourceResult } from "../source-edit";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { buildDesignEntry, createFrameCompiler } from "./compile";
@@ -44,6 +44,40 @@ async function fixture(configure?: (root: string) => void) {
 		owner.commit(root, read.handle, read.generation, occurrence, { kind: "literal", text });
 	return { root, compiler, owner, read: asked.read, file, commit, observation };
 }
+
+it("answers queued work during a large disclosure and does not revive its cancelled read", async () => {
+	const f = await fixture();
+	let elapsed = 0;
+	const clock = vi.spyOn(performance, "now").mockImplementation(() => (elapsed += 4));
+	onTestFinished(() => clock.mockRestore());
+	let visiting = -1;
+	let answeredAt = -1;
+	const uses = Array.from({ length: 256 }, (_, index) => {
+		const original = { ...f.read.original, occurrence: `node-${index}` };
+		return {
+			get original() {
+				visiting = index;
+				return original;
+			},
+			visible: true,
+		};
+	});
+	const answered = new Promise<void>((resolve) => {
+		setImmediate(() => {
+			answeredAt = visiting;
+			f.owner.cancel(f.root, f.read.handle);
+			resolve();
+		});
+	});
+	const reached = await f.owner.reach(f.root, f.read.handle, [
+		{ frame: "home", publication: f.read.original.publication, uses, unknown: 0 },
+	]);
+	await answered;
+	expect(answeredAt).toBeGreaterThanOrEqual(0);
+	expect(answeredAt).toBeLessThan(uses.length - 1);
+	expect(reached).toMatchObject({ ok: false, reason: "the original source read is no longer available" });
+	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
+});
 
 it("publishes literal source and exact dependencies, then guards undo and redo with source-owned receipts", async () => {
 	const f = await fixture();

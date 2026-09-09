@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { writeAtomic } from "../atomic-write";
 import {
 	isPropertyOperation,
@@ -733,7 +734,7 @@ export function createSourceOwner(
 		}
 	}
 	/** Both fresh reads and receipt-owned inverses inspect the same frozen inventories. */
-	function observedUses(
+	async function observedUses(
 		root: string,
 		cell: string,
 		generation: number,
@@ -744,6 +745,7 @@ export function createSourceOwner(
 		const uses: SourceUse[] = [];
 		const unverified: UseOutcome[] = [];
 		const unknown = new Set<string>();
+		let yieldAt = performance.now() + 16;
 		const refuse = (frame: string, occurrence: string, says: string) =>
 			unverified.push({
 				frame,
@@ -767,6 +769,12 @@ export function createSourceOwner(
 			}
 			if (inventory.unknown > 0) unknown.add(inventory.frame);
 			for (const use of inventory.uses) {
+				// Large disclosures must leave time for the initiating frame's
+				// observation reply, which shares this server's event loop.
+				if (performance.now() >= yieldAt) {
+					await setImmediate();
+					yieldAt = performance.now() + 16;
+				}
 				if (use.original.publication !== inventory.publication) {
 					unknown.add(inventory.frame);
 					// A stale candidate can establish uncertainty, never a current occurrence.
@@ -936,9 +944,14 @@ export function createSourceOwner(
 						held.read.generation,
 						inventories,
 					)
-				: observedUses(root, cell, held.read.generation, inventories, "read", held.read.operation);
+				: await observedUses(root, cell, held.read.generation, inventories, "read", held.read.operation);
 			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const dependent = await dependencyFrames(root, held.file);
+			valid(root, held.compilation);
+			if (held.coverage !== (coverage.get(root) ?? 0))
+				throw new Error("source observation changed during discovery");
+			if (held.read.handle && reads.get(held.read.handle) !== held)
+				throw new Error("the original source read is no longer available");
 			if (!dependent) unknown.add("source coverage");
 			const unmounted = (dependent ?? []).filter((frame) => !mounted.has(frame));
 			held.read = { ...held.read, reach: { uses, unmounted, unknown: [...unknown], unverified } };
@@ -1900,7 +1913,7 @@ export function createSourceOwner(
 				if (inventories) {
 					const { uses, unverified, unknown } = held.structure
 						? structuralInverseUses(root, held, inventories)
-						: observedUses(root, held.cell, held.generation, inventories, "inverse", held.purpose);
+						: await observedUses(root, held.cell, held.generation, inventories, "inverse", held.purpose);
 					const dependent = await dependencyFrames(root, held.file);
 					reach = {
 						uses,
