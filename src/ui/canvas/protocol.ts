@@ -161,6 +161,7 @@ export type FrameMessage =
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "measured"; frame: string; id: number; reading: SpacingReading | null }
 	| { spool: "sized"; frame: string; id: number; sizing: ElementSizing | null }
+	| { spool: "snapped"; frame: string; id: number; snapping: ElementSnapping | null }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; text: string }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
@@ -259,6 +260,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "sized":
 			return typeof m.id === "number" && (m.sizing === null || isElementSizing(m.sizing))
+				? (m as unknown as FrameMessage)
+				: undefined;
+		case "snapped":
+			return typeof m.id === "number" && (m.snapping === null || isElementSnapping(m.snapping))
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "edit-open":
@@ -411,6 +416,24 @@ function isElementSizing(value: unknown): value is ElementSizing {
 		(limits.maxW === null || finite(limits.maxW)) &&
 		(limits.maxH === null || finite(limits.maxH))
 	);
+}
+
+/** A snapping reply: the element's own box, what its stops are, and the pool. */
+function isElementSnapping(value: unknown): value is ElementSnapping {
+	if (!isRecord(value)) return false;
+	const { box, sensitivity, targets } = value;
+	return (
+		isSnapBox(box) &&
+		isRecord(sensitivity) &&
+		finite(sensitivity.w) &&
+		finite(sensitivity.h) &&
+		Array.isArray(targets) &&
+		targets.every((target: unknown) => isRecord(target) && Number.isSafeInteger(target.id) && isSnapBox(target.box))
+	);
+}
+
+function isSnapBox(value: unknown): value is { x: number; y: number; w: number; h: number } {
+	return isRecord(value) && finite(value.x) && finite(value.y) && finite(value.w) && finite(value.h);
 }
 
 function isMeasuredBox(value: unknown): value is MeasuredBox {
@@ -594,6 +617,50 @@ export interface ElementSizing {
 }
 
 export const sizingMessage = (selector: string, id: number) => ({ spool: "sizing", selector, id }) as const;
+
+/**
+ * What a snapping sample asks the document for (#311).
+ *
+ * The element's own box and the boxes it may align with, measured together so
+ * they are one layout rather than two. A trial states the size the sample is
+ * about: the document wears it, reads the layout it makes and takes it off
+ * again inside the one task, so nothing is ever painted in a size the drag did
+ * not settle on. Sensitivity is the extra pixel that trial asks for — how far
+ * the dragged edge moves per pixel of written size, which only the running
+ * layout can say.
+ *
+ * A trial-less ask is the check afterwards: the size the sample really wrote
+ * is already on, and this reads what it made of it.
+ */
+export interface SnapWear {
+	/** the values this sample would write, or null for a property it never writes */
+	w: number | null;
+	h: number | null;
+	left: number | null;
+	top: number | null;
+}
+
+export interface SnapTrial {
+	/** the box this sample means */
+	wear: SnapWear;
+	/** the same box one written pixel further along each dragged axis */
+	probe: SnapWear;
+	/** which edge each axis is dragging: -1 near, 1 far, 0 not dragged */
+	sx: -1 | 0 | 1;
+	sy: -1 | 0 | 1;
+}
+
+export interface ElementSnapping {
+	/** the element's own border box, in the document's own pixels */
+	box: { x: number; y: number; w: number; h: number };
+	/** how far the dragged edge moved per written pixel; zero where it cannot move */
+	sensitivity: { w: number; h: number };
+	/** every stop this element may align with, siblings first and the parent last */
+	targets: { id: number; box: { x: number; y: number; w: number; h: number } }[];
+}
+
+export const snappingMessage = (selector: string, trial: SnapTrial | null, id: number) =>
+	({ spool: "snapping", selector, trial, id }) as const;
 /**
  * The in-place text edit (#255): the element's own words become the field,
  * with the caret where the click landed. The frame answers `edit-open` at
