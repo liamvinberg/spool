@@ -4716,6 +4716,10 @@ export function ProjectCanvas({
 			const next: Gesture = { ...active, measured };
 			gesture.current = next;
 			showElementDrag(next);
+			// the pointer's own size goes to the running layout at once, and the
+			// alignment refines it after: a release that beats the correction saves
+			// what the pointer asked for rather than an older sample's answer
+			void sampleElementResize(measured);
 			void alignElementResize(next, accelPressed(event), cam.k);
 			return;
 		}
@@ -5011,6 +5015,10 @@ export function ProjectCanvas({
 		const settle = async (size: Size, guides: { v: number[]; h: number[] } | null): Promise<boolean> => {
 			const now = current();
 			if (now === null || now.measured === null) return false;
+			setElementGuides(guides === null ? null : { frame: pick.frame, ...guides });
+			// the size already on the layout is not written again: the pointer's own
+			// sample put it there, and only a correction is news
+			if (now.measured.live.w === size.w && now.measured.live.h === size.h) return true;
 			const measured: ResizeMeasurement = {
 				...now.measured,
 				live: size,
@@ -5019,7 +5027,6 @@ export function ProjectCanvas({
 			const next: Gesture = { ...now, measured };
 			gesture.current = next;
 			showElementDrag(next);
-			setElementGuides(guides === null ? null : { frame: pick.frame, ...guides });
 			await sampleElementResize(measured);
 			return true;
 		};

@@ -93,6 +93,7 @@ it("pulls the dragged edge onto a sibling's and saves the size it drew", { timeo
 	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card.replace("w-40", "w-52"));
 	// the guide belongs to the gesture, and goes with it
 	await expect.poll(() => guides(f)).toBe(0);
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count(), { timeout: 30_000 }).toBe(0);
 
 	// one gesture, one save, one step back
 	const undone = reply(f, "inverse");
@@ -159,52 +160,80 @@ it.each(ZOOMS)(
 	},
 );
 
-it("aligns to a scrolled parent's own fractional content edge", { timeout: 120_000 }, async () => {
-	// half a percent of the frame is not a whole number of pixels, and the
-	// parent is scrolled in both directions under two real scrollbars
-	const scrolled =
-		'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24}}><div data-parent style={{width:"50.3%",height:180,padding:"10.25px 12.5px",border:"1px solid #ccc",overflow:"auto"}}><Card key="a" label="A"/><div style={{width:900,height:400}}/></div></main>}';
-	const f = await originCanvas({ [owner]: card }, scrolled, '[data-subject="A"]');
-	await f.frame.locator("[data-parent]").evaluate((element) => {
-		element.scrollLeft = 30;
-		element.scrollTop = 24;
-	});
-	/**
-	 * How far the card's right edge is from the parent's content edge, derived
-	 * from the parent's own client box rather than from the reading the canvas
-	 * takes, so the two are independent statements about the same boundary.
-	 */
-	const shortOf = () =>
-		f.frame.locator("[data-parent]").evaluate((parent) => {
-			const style = getComputedStyle(parent);
-			const held = parent.querySelector("[data-subject]");
-			const edge =
-				parent.getBoundingClientRect().left +
-				parent.clientLeft +
-				parent.clientWidth -
-				Number.parseFloat(style.paddingRight) -
-				parent.scrollLeft;
-			return edge - (held?.getBoundingClientRect().right ?? 0);
-		});
-	const edge = await f.frame.locator("[data-parent]").evaluate((parent) => {
+/** A card alone in a box that reserves a scrollbar and is scrolled off its top. */
+const inside = (width: string) =>
+	`import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24}}><div data-parent style={{width:${width},height:180,padding:"10px 12.25px",border:"1px solid #ccc",overflowY:"auto"}}><Card key="a" label="A"/><div style={{height:400}}/></div></main>}`;
+
+/**
+ * How far the card's right edge is from the parent's content edge, derived from
+ * the parent's own client box rather than from the reading the canvas takes, so
+ * the two are independent statements about the same boundary.
+ */
+function shortOfContent(f: Canvas) {
+	return f.frame.locator("[data-parent]").evaluate((parent) => {
 		const style = getComputedStyle(parent);
-		return (
-			parent.getBoundingClientRect().left +
-			parent.clientLeft +
-			parent.clientWidth -
-			Number.parseFloat(style.paddingRight) -
-			parent.scrollLeft
-		);
+		const held = parent.querySelector("[data-subject]");
+		// this browser draws overlay scrollbars, so nothing is reserved beside the
+		// padding; the edge is the border box less its own border and padding
+		const edge =
+			parent.getBoundingClientRect().right -
+			Number.parseFloat(style.borderRightWidth) -
+			Number.parseFloat(style.paddingRight);
+		return edge - (held?.getBoundingClientRect().right ?? 0);
 	});
-	// the boundary this case is about is not on a whole pixel
-	expect(Number.isInteger(edge)).toBe(false);
-	const gap = await shortOf();
+}
+
+it("aligns to the content edge of the scrolled box it sits in", { timeout: 120_000 }, async () => {
+	// fractional padding puts every edge in this box off the pixel grid, and a
+	// real scrollbar is reserved out of the content the card is measured against
+	const f = await originCanvas({ [owner]: card }, inside('"300px"'), '[data-subject="A"]');
+	await f.frame.locator("[data-parent]").evaluate((parent) => {
+		// the box keeps its fractional outside and is nudged until the inside of
+		// it lands on a whole pixel, which is where a whole-pixel drag can reach
+		const style = getComputedStyle(parent);
+		const width = parent.getBoundingClientRect().width;
+		const content =
+			width -
+			Number.parseFloat(style.borderLeftWidth) -
+			Number.parseFloat(style.borderRightWidth) -
+			Number.parseFloat(style.paddingLeft) -
+			Number.parseFloat(style.paddingRight);
+		parent.style.width = `${width + (Math.ceil(content) - content)}px`;
+		parent.scrollTop = 24;
+	});
+	// the padding puts the card's own edges off the pixel grid
+	const left = await f.frame.locator('[data-subject="A"]').evaluate((element) => element.getBoundingClientRect().left);
+	expect(Number.isInteger(left)).toBe(false);
+	const gap = await shortOfContent(f);
 
 	await f.select();
+	const scrolled = await f.frame.locator("[data-parent]").evaluate((parent) => parent.scrollTop);
+	expect(scrolled).toBeGreaterThan(0);
 	// three pixels short of the content edge, which is inside the six
 	await dragHandle(f, "e", gap - 3, 0, { release: false });
 	await expect.poll(() => guides(f), { timeout: 30_000 }).toBe(1);
-	expect(Math.abs(await shortOf())).toBeLessThan(0.05);
+	expect(Math.abs(await shortOfContent(f))).toBeLessThan(0.05);
+	// the box was read where it stands, and the drag left it standing there
+	expect(await f.frame.locator("[data-parent]").evaluate((parent) => parent.scrollTop)).toBe(scrolled);
+
+	await f.page.keyboard.press("Escape");
+	await f.page.mouse.up();
+	expect(f.writes).toEqual([]);
+});
+
+it("leaves a fractional stop a whole-pixel drag cannot land on", { timeout: 120_000 }, async () => {
+	// the same box, sized as a fraction of the frame: its content edge is not on
+	// a whole pixel, and a width written in whole pixels never lands there. The
+	// size the pointer asked for stands, with nothing drawn over it
+	const f = await originCanvas({ [owner]: card }, inside('"50.3%"'), '[data-subject="A"]');
+	const gap = await shortOfContent(f);
+	expect(Number.isInteger(gap)).toBe(false);
+
+	await f.select();
+	await dragHandle(f, "e", gap - 3, 0, { release: false });
+	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).not.toEqual(["160px"]);
+	expect(await guides(f)).toBe(0);
+	expect(Math.abs((await shortOfContent(f)) - 3)).toBeLessThan(0.6);
 
 	await f.page.keyboard.press("Escape");
 	await f.page.mouse.up();
@@ -296,11 +325,11 @@ it("draws no guide over a size the element's own maximum refuses", { timeout: 12
 });
 
 it("keeps no guide over a target the correction itself moved", { timeout: 120_000 }, async () => {
-	// the parent is shrink-to-fit and the sibling is a percentage of it, so the
-	// stop moves the moment the card reaches it: an alignment that runs away
-	// from the box that landed is not one, and the pointer's own size stands
+	// the sibling sits four pixels along the same row, so every pixel the card
+	// takes takes the stop with it: an alignment that runs away from the box
+	// that landed is not one, and the size the pointer asked for stands
 	const chasing =
-		'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24,display:"inline-flex",flexDirection:"column"}}><Card key="a" label="A"/><div data-sibling style={{width:"130%",height:40}}/></main>}';
+		'import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24,display:"flex",flexWrap:"wrap",width:400,gap:4,alignItems:"flex-start"}}><Card key="a" label="A"/><div data-sibling style={{width:190,height:40}}/></main>}';
 	const f = await originCanvas({ [owner]: card }, chasing, '[data-subject="A"]');
 	await f.select();
 
@@ -399,6 +428,10 @@ it("aligns the initiating use to 200 while the shared uses stay at 120", { timeo
 		JSON.stringify(settled),
 	).toEqual(["verified", "constrained", "constrained"]);
 	expect(f.writes).toEqual(["commit"]);
+	// the field in the third use kept its words and its caret across the save
+	// that changed the source it is rendered from. The focus ring is the
+	// canvas's now, because holding an element and dragging it is a click out here
+	expect(await typing(f)).toMatchObject({ value: "kept", caret: 2 });
 
 	// a frame that opens after the save reads the aligned size from the source
 	writeDesignFile(f.project.root, "frames/cold/frame.tsx", constrained);
@@ -412,12 +445,14 @@ it("aligns the initiating use to 200 while the shared uses stay at 120", { timeo
 	await f.history(false);
 	await saved(f, undone);
 	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["160px", "120px", "120px"]);
-	expect(await typing(f)).toEqual({ value: "kept", caret: 2, focused: true });
+	// the words and the caret are the use's own through the inverse; the focus
+	// ring moved because taking it back is a click and a chord on the canvas
+	expect(await typing(f)).toMatchObject({ value: "kept", caret: 2 });
 	const redone = reply(f, "inverse");
 	await f.history(true);
 	await saved(f, redone);
 	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["200px", "120px", "120px"]);
-	expect(await typing(f)).toEqual({ value: "kept", caret: 2, focused: true });
+	expect(await typing(f)).toMatchObject({ value: "kept", caret: 2 });
 });
 
 /** Every way a snapped drag ends without a save. */
@@ -467,14 +502,16 @@ it("refuses the old inverse after a competing edit to the same source", { timeou
 	const f = await originCanvas({ [owner]: card }, beside(208), '[data-subject="A"]');
 	await f.select();
 	const committed = reply(f, "commit");
-	await dragHandle(f, "e", 45, 0);
+	await dragHandle(f, "e", 45, 0, { release: false });
+	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["208px"]);
+	await f.page.mouse.up();
 	await saved(f, committed);
 	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card.replace("w-40", "w-52"));
 
 	// somebody else writes the same declaration; the receipt is about bytes that
 	// are no longer there, so taking it back is refused rather than guessed at
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count(), { timeout: 30_000 }).toBe(0);
 	writeFileSync(f.file(owner), card.replace("w-40", "w-64"), "utf8");
-	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["256px"]);
 
 	const refused = reply(f, "inverse");
 	await f.history(false);
