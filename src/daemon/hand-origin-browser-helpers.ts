@@ -69,9 +69,16 @@ export async function originCanvas(
 			.toBe("none");
 		const box = await target.boundingBox();
 		if (!box) throw new Error("target has no box");
-		await page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
-		await page.mouse.click(box.x + 8, box.y + box.height / 2);
-		await page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
+		// Click the element rather than a page coordinate: under a reduced camera
+		// the box can sit part-way outside the viewport, where a raw mouse click
+		// lands on nothing at all and the selection silently never happens.
+		const viewport = page.viewportSize();
+		expect(
+			viewport === null ||
+				(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height),
+			`the target is outside the viewport: ${JSON.stringify({ box, viewport })}`,
+		).toBe(true);
+		await target.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
 		await expect
 			.poll(
 				async () => {
