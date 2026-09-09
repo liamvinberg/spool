@@ -571,7 +571,13 @@ it("discloses a potentially affected stale structural inventory without admittin
 	const reach = f.page.waitForResponse(
 		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "reach",
 	);
-	const replies = sourceReplies(f.page);
+	// Wait for the delivery itself, the way every other case in this file does:
+	// a poll over collected replies gives a loaded runner one second to have
+	// finished a save it has only just begun.
+	const delivered = f.page.waitForResponse(
+		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
+	);
+	void delivered.catch(() => {});
 	await f.page.keyboard.press("Backspace");
 	const reached = await (await reach).json();
 	expect(reached).toMatchObject({ ok: true, read: { reach: { unknown: expect.arrayContaining(["second"]) } } });
@@ -581,13 +587,7 @@ it("discloses a potentially affected stale structural inventory without admittin
 			expect.objectContaining({ frame: "second", occurrence: "", installation: "refused", rendered: "unverified" }),
 		]),
 	);
-	await expect
-		.poll(() =>
-			replies.some(
-				(reply) => !!reply && typeof reply === "object" && "action" in reply && reply.action === "delivered",
-			),
-		)
-		.toBe(true);
+	expect(await (await delivered).json()).toMatchObject({ ok: true });
 	expect(readFileSync(f.file("shared/pair.tsx"), "utf8")).toBe(component.replace(removed, ""));
 	await expect.poll(() => f.target.count()).toBe(0);
 	expect(f.writes).toEqual(["commit"]);
