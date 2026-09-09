@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { screenConflict } from "../../daemon/class-write";
 import { lengthOf, lengthPx, scaleValue } from "../../properties/families";
 import { stepOf } from "../../properties/theme";
+import type { SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme, HandOp, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { BASE, scopedClass } from "./properties-scope";
@@ -246,4 +247,171 @@ export function useRing(
 		step: stepOf(theme),
 		rotation: read === undefined ? 0 : rotationOf(read.className),
 	};
+}
+
+/* ---------- the approved handle set, and the box it drags to ---------- */
+
+/** The eight targets the approved outline wears, clockwise from the top left. */
+export type Edge = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+export const EDGES: readonly Edge[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+
+/** The smaller dimension a box needs before it wears any handle at all. */
+export const SMALL_TARGET_PX = 24;
+
+/** The length a side needs before it wears an edge strip of its own. */
+export const EDGE_TARGET_PX = 72;
+
+/** Which axes a target moves: -1 the near side, 1 the far side, 0 not at all. */
+export function edgeSigns(edge: Edge): { sx: Sign; sy: Sign } {
+	return {
+		sx: edge.includes("w") ? -1 : edge.includes("e") ? 1 : 0,
+		sy: edge.includes("n") ? -1 : edge.includes("s") ? 1 : 0,
+	};
+}
+
+/**
+ * Which of the eight targets the ring draws, at this size on this file.
+ *
+ * The approved outline's own rule (`editing-interface` at 48a07fb): a box
+ * under 24px on its smaller dimension wears nothing, because handles that
+ * overlap each other are handles nobody can hit; a side under 72px wears no
+ * strip, because a strip that short is a corner with worse aim. The corners
+ * survive both, which is how a small box is resized at all.
+ *
+ * The one exception is the target already being dragged. A box shrinking under
+ * the pointer must not drop the handle the pointer is holding.
+ */
+export function drawnHandles(ring: Size, live: LiveHandles, active: Edge | null): Edge[] {
+	return EDGES.filter((edge) => {
+		if (edge === active) return true;
+		const { sx, sy } = edgeSigns(edge);
+		if (!(sx !== 0 && live.w) && !(sy !== 0 && live.h)) return false;
+		if (Math.min(ring.w, ring.h) < SMALL_TARGET_PX) return false;
+		if (edge.length === 2) return true;
+		return (sy === 0 ? ring.h : ring.w) >= EDGE_TARGET_PX;
+	});
+}
+
+/** What the drag is measured against: the element's own limits, in its own pixels. */
+export interface SizeLimits {
+	minW: number;
+	maxW: number;
+	minH: number;
+	maxH: number;
+}
+
+/** The modifiers a resize gesture opens with, which fix what it may write. */
+export interface ResizeModifiers {
+	/** ⌥ on an already free-positioned element: grow from the centre. */
+	center: boolean;
+	/** ⇧: keep the proportions the box started at. */
+	proportional: boolean;
+}
+
+const MIN_SIZE = 0.01;
+const MAX_SIZE = Number.MAX_SAFE_INTEGER;
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const finite = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
+
+function bounds(min: number, max: number): { min: number; max: number } {
+	const lower = clamp(finite(min, MIN_SIZE), MIN_SIZE, MAX_SIZE);
+	// CSS gives the minimum precedence when a minimum and a maximum contradict
+	const upper = Math.max(lower, clamp(Number.isNaN(max) ? MAX_SIZE : max, MIN_SIZE, MAX_SIZE));
+	return { min: lower, max: upper };
+}
+
+/**
+ * The box a handle has dragged to, and how far the element's near edges moved
+ * with it — the approved playground's own geometry, unchanged.
+ *
+ * Everything is relative to the gesture's original border box in the
+ * document's own pixels, so the canvas divides the pointer by its zoom before
+ * asking. The shift is the answer to "where did the top left go", which only
+ * an already free-positioned element can honestly write.
+ */
+export function resizedBox(
+	start: Size,
+	edge: Edge,
+	dx: number,
+	dy: number,
+	modifiers: ResizeModifiers,
+	limits: SizeLimits,
+): { w: number; h: number; shiftX: number; shiftY: number } {
+	const originalWidth = clamp(finite(start.w, 1), MIN_SIZE, MAX_SIZE);
+	const originalHeight = clamp(finite(start.h, 1), MIN_SIZE, MAX_SIZE);
+	const { sx, sy } = edgeSigns(edge);
+	const multiplier = modifiers.center ? 2 : 1;
+	const changeWidth = sx * clamp(finite(dx, 0), -MAX_SIZE, MAX_SIZE) * multiplier;
+	const changeHeight = sy * clamp(finite(dy, 0), -MAX_SIZE, MAX_SIZE) * multiplier;
+	const widthBounds = bounds(limits.minW, limits.maxW);
+	const heightBounds = bounds(limits.minH, limits.maxH);
+	let w = originalWidth + changeWidth;
+	let h = originalHeight + changeHeight;
+	if (modifiers.proportional) {
+		const relativeWidth = changeWidth / originalWidth;
+		const relativeHeight = changeHeight / originalHeight;
+		const dominant = Math.abs(relativeWidth) >= Math.abs(relativeHeight) ? relativeWidth : relativeHeight;
+		const minimumScale = Math.max(widthBounds.min / originalWidth, heightBounds.min / originalHeight);
+		const maximumScale = Math.min(widthBounds.max / originalWidth, heightBounds.max / originalHeight);
+		// where no shared scale satisfies both axes, the dimension limits win
+		const scale = minimumScale <= maximumScale ? clamp(1 + dominant, minimumScale, maximumScale) : 1 + dominant;
+		w = originalWidth * scale;
+		h = originalHeight * scale;
+	}
+	w = clamp(w, widthBounds.min, widthBounds.max);
+	h = clamp(h, heightBounds.min, heightBounds.max);
+	const shiftX =
+		modifiers.center || (modifiers.proportional && sx === 0)
+			? (originalWidth - w) / 2
+			: sx < 0
+				? originalWidth - w
+				: 0;
+	const shiftY =
+		modifiers.center || (modifiers.proportional && sy === 0)
+			? (originalHeight - h) / 2
+			: sy < 0
+				? originalHeight - h
+				: 0;
+	return { w, h, shiftX, shiftY };
+}
+
+/** The token family each property a resize may write is spelled in. */
+const RESIZE_FAMILIES: Readonly<Record<string, string>> = { width: "w", height: "h", left: "left", top: "top" };
+
+/** A signed length on the project's own scale: a whole step is the bare class. */
+function scaledToken(family: string, px: number, step: number): string {
+	const rounded = Math.round(px);
+	return `${rounded < 0 ? "-" : ""}${family}-${scaleValue(Math.abs(rounded), step)}`;
+}
+
+/**
+ * What one resize gesture writes, as the source property path's own fields.
+ *
+ * The properties are fixed when the gesture opens, because the source read it
+ * opens is about exactly those fields; the values are whatever the pointer
+ * last made. A size lands on the scale where it sits on a whole step and stays
+ * absolute pixels where it does not — the drag meant pixels, and a bare class
+ * silently rescales if `--spacing` moves.
+ */
+export function resizeFields(
+	properties: readonly string[],
+	live: Size,
+	shift: { x: number; y: number },
+	offset: { left: number; top: number },
+	step: number,
+): { property: string; value: SourcePropertyValue }[] {
+	return properties.flatMap((property) => {
+		const family = RESIZE_FAMILIES[property];
+		if (family === undefined) return [];
+		const px =
+			property === "width"
+				? live.w
+				: property === "height"
+					? live.h
+					: property === "left"
+						? offset.left + shift.x
+						: offset.top + shift.y;
+		return [{ property, value: { kind: "binding" as const, tokens: [scaledToken(family, px, step)] } }];
+	});
 }

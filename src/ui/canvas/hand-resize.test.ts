@@ -4,9 +4,12 @@ import {
 	draggedAngle,
 	draggedRect,
 	draggedSize,
+	drawnHandles,
 	handlesFor,
 	landed,
 	previewTokens,
+	resizedBox,
+	resizeFields,
 	rotateOps,
 	rotateTokens,
 	rotationOf,
@@ -158,5 +161,116 @@ describe("measure after apply", () => {
 	it("takes sub-pixel slack, and nothing a clamp would leave", () => {
 		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 1 }, { w: 240.5, h: 99.5 })).toBe(true);
 		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 1 }, { w: 240, h: 64 })).toBe(false);
+	});
+});
+
+describe("which of the eight targets the ring draws", () => {
+	const live = { w: true, h: true, rotate: true };
+
+	it("draws four corners and four edges on a box with room for them", () => {
+		expect(drawnHandles({ w: 200, h: 120 }, live, null)).toEqual(["nw", "n", "ne", "e", "se", "s", "sw", "w"]);
+	});
+
+	it("keeps an edge target off a side shorter than the approved 72px", () => {
+		// a 64px-wide box has no room for a top or bottom strip, and the corners
+		// stay: they are how that box is resized at all
+		expect(drawnHandles({ w: 64, h: 120 }, live, null)).toEqual(["nw", "ne", "e", "se", "sw", "w"]);
+		expect(drawnHandles({ w: 200, h: 64 }, live, null)).toEqual(["nw", "n", "ne", "se", "s", "sw"]);
+	});
+
+	it("draws nothing on a target under 24px on its smaller dimension", () => {
+		expect(drawnHandles({ w: 200, h: 20 }, live, null)).toEqual([]);
+	});
+
+	it("keeps the grabbed target drawn however small the box becomes mid-drag", () => {
+		expect(drawnHandles({ w: 200, h: 6 }, live, "se")).toEqual(["se"]);
+	});
+
+	it("omits every target whose only axis the file has pinned", () => {
+		expect(drawnHandles({ w: 200, h: 120 }, { w: false, h: true, rotate: true }, null)).toEqual([
+			"nw",
+			"n",
+			"ne",
+			"se",
+			"s",
+			"sw",
+		]);
+	});
+});
+
+describe("the box a handle drags to", () => {
+	const free = { minW: 0, maxW: Number.POSITIVE_INFINITY, minH: 0, maxH: Number.POSITIVE_INFINITY };
+	const still = { center: false, proportional: false };
+
+	it("moves the grabbed axes and leaves the rest of the box alone", () => {
+		expect(resizedBox({ w: 200, h: 120 }, "e", 40, 90, still, free)).toEqual({
+			w: 240,
+			h: 120,
+			shiftX: 0,
+			shiftY: 0,
+		});
+	});
+
+	it("moves the near edge off a west or north grab", () => {
+		// the far edge is where it was: the box grew to the left, so its own
+		// left moved by exactly what it gained
+		expect(resizedBox({ w: 200, h: 120 }, "nw", -40, -20, still, free)).toEqual({
+			w: 240,
+			h: 140,
+			shiftX: -40,
+			shiftY: -20,
+		});
+	});
+
+	it("grows from the centre while option is held, at twice the pointer", () => {
+		expect(resizedBox({ w: 200, h: 120 }, "e", 40, 0, { center: true, proportional: false }, free)).toEqual({
+			w: 280,
+			h: 120,
+			shiftX: -40,
+			shiftY: 0,
+		});
+	});
+
+	it("keeps the proportions it started with while shift is held", () => {
+		// the dominant relative change decides one scale, and both axes take it
+		expect(resizedBox({ w: 200, h: 100 }, "se", 100, 0, { center: false, proportional: true }, free)).toEqual({
+			w: 300,
+			h: 150,
+			shiftX: 0,
+			shiftY: 0,
+		});
+	});
+
+	it("clamps to the measured minimum and maximum, and the minimum wins a contradiction", () => {
+		const bounded = { minW: 120, maxW: 260, minH: 0, maxH: Number.POSITIVE_INFINITY };
+		expect(resizedBox({ w: 200, h: 120 }, "e", 400, 0, still, bounded).w).toBe(260);
+		expect(resizedBox({ w: 200, h: 120 }, "e", -400, 0, still, bounded).w).toBe(120);
+		const contradictory = { minW: 300, maxW: 100, minH: 0, maxH: Number.POSITIVE_INFINITY };
+		expect(resizedBox({ w: 200, h: 120 }, "e", 0, 0, still, contradictory).w).toBe(300);
+	});
+});
+
+describe("what one resize gesture writes", () => {
+	const at = { left: 24, top: 16 };
+
+	it("writes the grabbed axis alone, on the project's own scale", () => {
+		expect(resizeFields(["width"], { w: 224, h: 84 }, { x: 0, y: 0 }, at, 4)).toEqual([
+			{ property: "width", value: { kind: "binding", tokens: ["w-56"] } },
+		]);
+	});
+
+	it("writes both axes of a corner as one gesture's fields", () => {
+		expect(resizeFields(["width", "height"], { w: 224, h: 347 }, { x: 0, y: 0 }, at, 4)).toEqual([
+			{ property: "width", value: { kind: "binding", tokens: ["w-56"] } },
+			{ property: "height", value: { kind: "binding", tokens: ["h-[347px]"] } },
+		]);
+	});
+
+	it("moves an already free element's own offsets, signed", () => {
+		expect(resizeFields(["width", "left", "top"], { w: 224, h: 84 }, { x: -40, y: -20 }, at, 4)).toEqual([
+			{ property: "width", value: { kind: "binding", tokens: ["w-56"] } },
+			{ property: "left", value: { kind: "binding", tokens: ["-left-4"] } },
+			{ property: "top", value: { kind: "binding", tokens: ["-top-1"] } },
+		]);
 	});
 });
