@@ -1,8 +1,6 @@
-import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 it("scrolls the finder without moving the canvas underneath", { timeout: 180_000 }, async () => {
 	const { page, finder, camera } = await openFinder();
@@ -63,9 +61,8 @@ it("keeps drags and backdrop scrolling out of the canvas until the finder closes
 });
 
 async function openFinder() {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const uiDir = join(makeTempDir(), "ui");
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	for (let index = 0; index < 11; index++) {
 		const name = `frame-${String(index).padStart(2, "0")}`;
@@ -77,11 +74,6 @@ async function openFinder() {
 		);
 	}
 	writeDesignFile(project.root, ".spool/state.json", JSON.stringify({ camera: { x: 60, y: 60, k: 1 } }));
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);

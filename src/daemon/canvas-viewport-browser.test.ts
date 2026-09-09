@@ -1,8 +1,6 @@
-import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 // The camera is the only thing that may move the canvas. The viewport box holds
 // a frame layer thousands of pixels tall, so were it a scroll container the
@@ -26,9 +24,8 @@ const autoFocused = `export default function Frame() {
 `;
 
 it("never scrolls the canvas viewport when a frame below the fold takes focus", { timeout: 180_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const uiDir = join(makeTempDir(), "ui");
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 
 	writeFrame(project.root, "at-camera", plain("at camera"));
@@ -37,12 +34,6 @@ it("never scrolls the canvas viewport when a frame below the fold takes focus", 
 	writeFrame(project.root, "below-fold", autoFocused);
 	writeDesignFile(project.root, "frames/below-fold/frame.json", '{ "x": 0, "y": 1000, "w": 800, "h": 700 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
-
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);

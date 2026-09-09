@@ -3,10 +3,9 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { serveDaemon } from "./server";
 
@@ -48,7 +47,7 @@ it.each([false, true])(
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "home", "export default () => <h1>Command fixture</h1>");
 		writeDesignFile(root, "frames/home/frame.json", '{"w":600,"h":2600}');
-		const uiDir = join(makeTempDir(), "ui");
+		const uiDir = await builtUi();
 		const daemon = await serveDaemon({
 			spoolDir,
 			version: "0.0.0-test",
@@ -58,13 +57,7 @@ it.each([false, true])(
 			agentEngines: [createSpoolEngine(directory, client)],
 		});
 		onTestFinished(() => daemon.close());
-		await build({
-			configFile: join(process.cwd(), "vite.config.ts"),
-			logLevel: "silent",
-			build: { outDir: uiDir, emptyOutDir: true },
-		});
-		const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-		onTestFinished(() => browser.close());
+		const browser = await testBrowser();
 		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 		await page.goto(`${daemon.url}/p/${encodeURIComponent(name)}`);
 		await page.locator('[data-dock-glyph="agent"]').click();

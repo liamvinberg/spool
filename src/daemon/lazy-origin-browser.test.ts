@@ -2,10 +2,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
 import { type Browser, chromium } from "playwright-core";
-import { build as buildUi } from "vite";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import type { SourceRead } from "../source-edit";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { designBuildOptions } from "./compile";
 import { assembleFrameDocument } from "./document";
 import { consumedChoices, lazyChoices } from "./lazy-origin-cases";
@@ -36,13 +35,7 @@ async function fixture(
 	authored?: { source: string; files?: Record<string, string> },
 ) {
 	if (!browser) browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	// Each test keeps its build directory alive only until its daemon closes.
-	const uiDir = join(makeTempDir(), "ui");
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	const source =
 		authored?.source ??

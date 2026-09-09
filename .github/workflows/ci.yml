@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     concurrency:
       group: ci-tests-${{ github.ref }}-${{ matrix.shard }}
       cancel-in-progress: true
@@ -70,7 +70,7 @@ jobs:
       - name: prove actual command sandbox startup
         run: pnpm exec vitest run src/daemon/bundled-sandbox.test.ts --maxWorkers=2
       - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
-      - run: pnpm exec vitest run --shard=${{ matrix.shard }}/3 --reporter=default --reporter=json --outputFile=${{ runner.temp }}/tests.json
+      - run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=${{ runner.temp }}/tests.json
         env:
           SPOOL_TEST_EVIDENCE_DIR: ${{ runner.temp }}/spool-delivery
       - name: record installed npm runtime evidence from its shard
