@@ -54,7 +54,7 @@ export interface Size {
  * width nobody asked for. The rail's number boxes still reach both axes.
  */
 export function handlesFor(read: RungRead | undefined): LiveHandles {
-	if (read === undefined || read.name === undefined || read.refusal !== undefined) return NO_HANDLES;
+	if (read === undefined || read.name === undefined || blocks(read.refusal)) return NO_HANDLES;
 	const literal = read.className === "" ? null : read.className;
 	// asked of the lane's own rule rather than re-derived here: a token of the
 	// family stands in for the write, so the ring greys for exactly the reason
@@ -62,6 +62,19 @@ export function handlesFor(read: RungRead | undefined): LiveHandles {
 	const free = (token: string): boolean => screenConflict(literal, { token, scope: "" }) === undefined;
 	const turned = rotationOf(read.className) !== 0;
 	return { w: !turned && free("w-1"), h: !turned && free("h-1"), rotate: free("rotate-1") };
+}
+
+/**
+ * Whether this rung's refusal is one the ring must respect.
+ *
+ * All but one of them are: an expression, an inline style, spread props with
+ * no literal, a stamp that hits nothing — none leaves an axis a write could
+ * take. `shared-definition` is the exception, and the reason is #303's: a
+ * class cell several uses share is exactly what the source owner edits, so a
+ * ring that greyed for it would refuse the ordinary case.
+ */
+function blocks(refusal: RungRead["refusal"]): boolean {
+	return refusal !== undefined && refusal.code !== "shared-definition";
 }
 
 /** The degrees the base scope already carries, which a rotate drag starts from. */

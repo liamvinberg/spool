@@ -46,6 +46,15 @@ describe("which handles are live", () => {
 		expect(handlesFor(rung(""))).toEqual({ w: true, h: true, rotate: true });
 	});
 
+	it("keeps every handle on an element a shared file defines", () => {
+		// a class cell several uses share is exactly what the source owner edits,
+		// so the old lane's shared-definition no is not this ring's answer
+		const shared = rung("w-40 h-24", {
+			refusal: { code: "shared-definition", says: "defined in shared/card.tsx:1, rendered by 2 frames" },
+		});
+		expect(handlesFor(shared)).toEqual({ w: true, h: true, rotate: true });
+	});
+
 	it("takes one axis off where a breakpoint pins it, and leaves the other", () => {
 		// a base `w-56` under a live `md:w-96` is a class the frame would not
 		// show, so there is no honest width drag — the height is untouched
