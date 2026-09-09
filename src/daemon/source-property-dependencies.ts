@@ -156,11 +156,31 @@ export function nativePropertyEffects(
 			}
 		return added;
 	};
-	// A native value is read from the declaration that states it, and whatever
-	// that declaration reads is part of the reading: a transform reads its
-	// components, a gradient its stop list, a between-children margin the
-	// reverse flag that decides which side it lands on.
-	for (const effect of effects) carried(effect);
+	// A composed native value hands over what it is composed from: a transform
+	// its components, a gradient its stop list, and a between-children margin
+	// the reverse flag that decides which side of the child it lands on.
+	for (const effect of effects)
+		if (
+			[
+				"transform",
+				"translate",
+				"rotate",
+				"scale",
+				"filter",
+				"backdrop-filter",
+				"box-shadow",
+				"background-image",
+				"margin-inline-start",
+				"margin-inline-end",
+				"margin-block-start",
+				"margin-block-end",
+				"margin-top",
+				"margin-right",
+				"margin-bottom",
+				"margin-left",
+			].includes(effect.property)
+		)
+			carried(effect);
 	let growing = true;
 	while (growing) {
 		growing = false;
