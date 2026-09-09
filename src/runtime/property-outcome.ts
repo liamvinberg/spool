@@ -151,6 +151,7 @@ type PropertyFamily =
 	| { kind: "radius" }
 	| { kind: "axes"; axes: readonly [string, string] }
 	| { kind: "box"; box: "padding" | "margin" | "inset" }
+	| { kind: "declaration"; row: DeclarationRow }
 	| { kind: "selected"; select: SelectedFamily };
 
 const filterProperties = ["filter", "brightness", "contrast", "saturate", "hue-rotate"];
@@ -197,6 +198,7 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	if (property === "gap") return { kind: "axes", axes: ["row-gap", "column-gap"] };
 	const box = boxParts(property);
 	if (box) return { kind: "box", box: box.box };
+	if (Object.hasOwn(declarationRows, property)) return { kind: "declaration", row: declarationRows[property]! };
 	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
 	if (Object.hasOwn(lengthRows, property))
 		return { kind: "selected", select: { kind: "length", row: lengthRows[property]! } };
@@ -272,6 +274,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (family.kind === "radius") return radiusOutcome(element, expected);
 	if (family.kind === "axes") return axesOutcome(element, expected, family.axes);
 	if (family.kind === "box") return boxOutcome(element, expected, family.box);
+	if (family.kind === "declaration") return declarationOutcome(element, expected, family.row);
 	return selectedOutcome(element, view, expected, family.select, pseudo);
 }
 
@@ -1055,6 +1058,143 @@ function boxOutcome(
 	}
 	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
 }
+
+/**
+ * Retained rows whose whole value is one native declaration: the engine reports what it was
+ * given, so each one names the longhands to compare and the box that has to exist first.
+ */
+type DeclarationRow = {
+	longhands: readonly string[];
+	context: "positioned" | "flex" | "grid" | "grid-container" | "column" | "scroll";
+};
+
+const declarationRows: Readonly<Record<string, DeclarationRow>> = {
+	"z-index": { longhands: ["z-index"], context: "positioned" },
+	order: { longhands: ["order"], context: "flex" },
+	flex: { longhands: ["flex-grow", "flex-shrink", "flex-basis"], context: "flex" },
+	"grid-column": { longhands: ["grid-column-start", "grid-column-end"], context: "grid" },
+	"grid-row": { longhands: ["grid-row-start", "grid-row-end"], context: "grid" },
+	"grid-column-start": { longhands: ["grid-column-start"], context: "grid" },
+	"grid-row-start": { longhands: ["grid-row-start"], context: "grid" },
+	columns: { longhands: ["column-count", "column-width"], context: "column" },
+	"scroll-snap-type": { longhands: ["scroll-snap-type"], context: "scroll" },
+	"grid-template-columns": { longhands: ["grid-template-columns"], context: "grid-container" },
+	"grid-template-rows": { longhands: ["grid-template-rows"], context: "grid-container" },
+};
+
+function boxContainer(view: Window, element: Element, style: CSSStyleDeclaration, context: string): string | undefined {
+	const parent = element.parentElement;
+	const parentDisplay = parent ? view.getComputedStyle(parent).display : "";
+	if (context === "positioned") {
+		if (style.position === "static" && !["flex", "inline-flex", "grid", "inline-grid"].includes(parentDisplay))
+			return "this stacking order needs a positioned native box or a flexible or grid item";
+	} else if (context === "flex") {
+		if (!["flex", "inline-flex"].includes(parentDisplay)) return "this row needs a native flexible item";
+	} else if (context === "grid") {
+		if (!["grid", "inline-grid"].includes(parentDisplay)) return "this row needs a native grid item";
+	} else if (context === "grid-container") {
+		if (!["grid", "inline-grid"].includes(style.display)) return "this track list needs a native grid container";
+	} else if (context === "column") {
+		if (!["block", "flow-root", "inline-block", "list-item"].includes(style.display))
+			return "this column count needs a native block container";
+	} else if (context === "scroll") {
+		if ([style.overflowX, style.overflowY].every((axis) => ["visible", "clip"].includes(axis)))
+			return "this snap type needs a native scroll container";
+	}
+	return;
+}
+
+/** Compare one whole compiled declaration against what the engine reports for the same use. */
+function declarationOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	row: DeclarationRow,
+): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this declaration has no native document context");
+	if (!element.isConnected || element.getClientRects().length === 0)
+		return unverified("this declaration has no rendered native box");
+	const style = view.getComputedStyle(element);
+	const context = boxContainer(view, element, style, row.context);
+	if (context) return unverified(context);
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const applicable: SourcePropertyEffect[] = [];
+	for (const effect of expected.effects) {
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		// A companion variable is an input to the declaration, resolved with it rather than compared.
+		if (effect.property.startsWith("--")) continue;
+		if (effect.property !== expected.property)
+			return unverified("this declaration has dependent effects requiring native proof");
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this declaration needs a native condition proof");
+		applicable.push(effect);
+	}
+	if (
+		(element instanceof HTMLElement || element instanceof SVGElement) &&
+		element.style.getPropertyValue(expected.property)
+	)
+		return unverified("this declaration has an independent inline context requiring proof");
+	const selection = winningEffect(sheet, applicable);
+	if (selection.reason) return unverified(selection.reason);
+	const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+	const rule = sheet.cssRules[index];
+	if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+	if (selection.winner) {
+		const value = resolvedValue(element, sheet, selection.winner.value);
+		if (value === undefined) return unverified("this declaration needs a resolved variable context");
+		rule.style.setProperty(expected.property, value);
+		if (!rule.style.getPropertyValue(expected.property))
+			return unverified("this declaration is not a native declaration of its own row");
+	}
+	let matches = true;
+	const observed: string[] = [];
+	for (const longhand of row.longhands) {
+		const wanted = selection.winner ? rule.style.getPropertyValue(longhand) : initialDeclarations[longhand];
+		const actual = style.getPropertyValue(longhand);
+		if (wanted === undefined || wanted === "" || actual === "")
+			return unverified("this declaration has no independent native reading");
+		observed.push(actual);
+		const repeat = /^repeat\(\s*(\d+)\s*,/.exec(wanted.trim());
+		if (repeat) {
+			// A grid container reports the tracks it used, so the proof is the track count it made.
+			const tracks = actual.trim().split(/\s+/);
+			if (!tracks.every((track) => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)px$/i.test(track)))
+				return unverified("this track list needs a native used-track proof");
+			matches &&= tracks.length === Number(repeat[1]);
+			continue;
+		}
+		rule.style.removeProperty(longhand);
+		rule.style.setProperty(longhand, actual);
+		const normalized = rule.style.getPropertyValue(longhand);
+		if (!normalized) return unverified("this declaration has no supported native serialization");
+		rule.style.removeProperty(longhand);
+		rule.style.setProperty(longhand, wanted);
+		matches &&= rule.style.getPropertyValue(longhand) === normalized;
+	}
+	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
+}
+
+/** The initial declaration each retained row stands at when nothing declares it. */
+const initialDeclarations: Readonly<Record<string, string>> = {
+	"z-index": "auto",
+	order: "0",
+	"flex-grow": "0",
+	"flex-shrink": "1",
+	"flex-basis": "auto",
+	"grid-column-start": "auto",
+	"grid-column-end": "auto",
+	"grid-row-start": "auto",
+	"grid-row-end": "auto",
+	"column-count": "auto",
+	"column-width": "auto",
+	"scroll-snap-type": "none",
+	"grid-template-columns": "none",
+	"grid-template-rows": "none",
+};
 
 const borderColorRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?color$/;
 

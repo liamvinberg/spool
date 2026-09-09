@@ -2845,3 +2845,77 @@ it("verifies a removed offset only where a native box still reports it as automa
 	]);
 	expect((await f.inspect(p.expected))[0]?.observed).toBe("auto");
 });
+
+it.each([
+	{ property: "z-index", before: "relative z-2", after: "z-4", host: "", observed: "4" },
+	{ property: "order", before: "order-2", after: "order-4", host: "display:flex", observed: "4" },
+	{ property: "flex", before: "flex-1", after: "flex-auto", host: "display:flex", observed: "1 1 auto" },
+	{
+		property: "grid-column",
+		before: "col-span-2",
+		after: "col-span-4",
+		host: "display:grid",
+		observed: "span 4 span 4",
+	},
+	{ property: "grid-row", before: "row-span-2", after: "row-span-4", host: "display:grid", observed: "span 4 span 4" },
+	{ property: "grid-column-start", before: "col-start-2", after: "col-start-4", host: "display:grid", observed: "4" },
+	{ property: "grid-row-start", before: "row-start-2", after: "row-start-4", host: "display:grid", observed: "4" },
+	{ property: "columns", before: "columns-2", after: "columns-4", host: "", observed: "4 auto" },
+	{ property: "scroll-snap-type", before: "snap-none", after: "snap-x", host: "", observed: "x" },
+])("verifies the whole compiled $property declaration against its own native box", async (row) => {
+	const p = await planned(row.before, row.property, { kind: "binding", tokens: [row.after] });
+	const scroll = row.property === "scroll-snap-type" ? "overflow:auto;" : "";
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="${row.host}"><div data-subject class="${p.plan.next}" style="${scroll}">Changed</div><div data-subject class="${row.before}" style="${scroll}">Retained</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe(row.observed);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it.each(["z-index", "order", "grid-column-start", "columns", "scroll-snap-type"])(
+	"refuses a %s the native box it sits in never applies",
+	async (property) => {
+		const rows: Record<string, { before: string; after: string }> = {
+			"z-index": { before: "relative z-2", after: "z-4" },
+			order: { before: "order-2", after: "order-4" },
+			"grid-column-start": { before: "col-start-2", after: "col-start-4" },
+			columns: { before: "columns-2", after: "columns-4" },
+			"scroll-snap-type": { before: "snap-none", after: "snap-x" },
+		};
+		const row = rows[property]!;
+		const p = await planned(row.before, property, { kind: "binding", tokens: [row.after] });
+		// Each case puts the row on a native box that never applies it: an unpositioned box, a
+		// block parent for an item row, a flexible box for a column count, an unscrollable box.
+		const style = property === "z-index" ? "position:static" : property === "columns" ? "display:flex" : "";
+		const f = await fixture(
+			`<!doctype html><style>${p.style}</style><div><div data-subject class="${p.plan.next.replace("relative", "")}" style="${style}">Outside</div></div>`,
+		);
+		expect((await f.inspect(p.expected))[0]?.rendered).toBe("unverified");
+	},
+);
+
+it("verifies a compiled track list by the number of tracks the grid actually made", async () => {
+	const p = await planned("grid grid-cols-2", "grid-template-columns", { kind: "binding", tokens: ["grid-cols-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="width:400px"><i>a</i></div><div data-subject class="grid grid-cols-2" style="width:400px"><i>a</i></div><div data-subject class="${p.plan.next.replace("grid ", "")}" style="width:400px"><i>a</i></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"unverified",
+	]);
+});
+
+it("verifies removed declarations against the initial value each row stands at", async () => {
+	const p = await planned("flex-1", "flex", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="display:flex"><div data-subject class="${p.plan.next}">Cleared</div><div data-subject class="flex-1">Retained</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("0 1 auto");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
