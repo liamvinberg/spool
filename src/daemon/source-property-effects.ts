@@ -5,6 +5,8 @@ import type { PropertyCertificate } from "./source-property-compile";
 /** Control identities for compound compiler components, not token-prefix ownership. */
 const components: Readonly<Record<string, readonly string[]>> = {
 	scale: ["scale", "--tw-scale-x", "--tw-scale-y", "--tw-scale-z"],
+	// `size-*` is one control over both axes, the way `scale` is one over three
+	"width and height": ["width", "height"],
 	"column-gap, between children": ["margin-inline-start", "margin-inline-end"],
 	"row-gap, between children": ["margin-block-start", "margin-block-end"],
 	"border-color, between children": ["border-color"],
