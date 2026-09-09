@@ -3,7 +3,7 @@ import { cn } from "../cn";
 import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
-import type { GapAxis, GapBand } from "./hand-gap";
+import type { GapAxis, GapHandles } from "./hand-gap";
 import { drawnHandles, type Edge, type LiveHandles, type Sign } from "./hand-resize";
 import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
@@ -103,13 +103,7 @@ export interface ElementHandles {
 	/** the readout sits above the ring for a turn and below it for a size */
 	turning: boolean;
 	/** the gaps this container's layout identifies, in frame-local pixels (#306) */
-	gaps: readonly GapBand[];
-	/** which gap one drag would write: nothing where the layout names none */
-	gapAxis: GapAxis | null;
-	/** the band the pointer is holding, which stays drawn while the layout moves */
-	gapHeld: number | null;
-	/** what the held band reads, which is the value the drag is making */
-	gapSays: string | null;
+	gaps: GapHandles;
 }
 
 /** Figma's own rotate cursor, drawn rather than fetched: nothing loads over CSP. */
@@ -362,20 +356,20 @@ export function SelectionOverlay({
 				})()}
 
 			{handles !== null &&
-				handles.gapAxis !== null &&
-				handles.gaps.map((band, index) => {
+				handles.gaps.axis !== null &&
+				handles.gaps.bands.map((band, index) => {
 					const box = elementBox(handles.frame, band);
-					const axis = handles.gapAxis;
+					const axis = handles.gaps.axis;
 					if (box === undefined || axis === null) return null;
 					return (
 						<GapBandTarget
-							// biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity — it names one adjacent pair for the whole of one drag
+							// biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity, naming one adjacent pair for the whole of one drag
 							key={`gap-${index}`}
 							index={index}
 							box={box}
 							axis={axis}
-							held={handles.gapHeld === index}
-							says={handles.gapHeld === index ? handles.gapSays : null}
+							held={handles.gaps.held === index}
+							says={handles.gaps.held === index ? handles.gaps.says : null}
 						/>
 					);
 				})}

@@ -222,6 +222,113 @@ export function ownedGap(reading: GapReading, axis: GapAxis, className: string, 
 	return authored;
 }
 
+/**
+ * What the ring draws over a container's gaps, as one thing.
+ *
+ * The bands, the axis they write and the one the pointer is holding are never
+ * separately true: an axis with no bands draws nothing, and a held band with
+ * no reading has nothing to say. They ride together so a caller cannot pass
+ * three of the four.
+ */
+export interface GapHandles {
+	bands: readonly GapBand[];
+	/** which gap one drag would write: nothing where the layout names none */
+	axis: GapAxis | null;
+	/** the band the pointer is holding, which stays drawn while the layout moves */
+	held: number | null;
+	/** what the held band reads, which is the value the drag is making */
+	says: string | null;
+}
+
+/** Where the value a click opens instead of a drag stands, in screen pixels. */
+export interface GapAnchor {
+	left: number;
+	top: number;
+}
+
+/**
+ * One gap drag, as the numbers it decides from.
+ *
+ * The canvas holds the pick and the session; everything a sample, a readout
+ * and a completion actually read is here, so all three are decisions over data
+ * rather than handlers reaching into a component.
+ */
+export interface GapDrag {
+	axis: GapAxis;
+	/** which adjacent pair the pointer grabbed, for the whole of one drag */
+	index: number;
+	/** the band as it stood when it was grabbed */
+	band: GapBand;
+	/** which way along the axis the flow makes the gap bigger */
+	sign: 1 | -1;
+	from: { x: number; y: number };
+	/** what the class cell owned on this axis when the read opened */
+	authored: string | null;
+	/** what the gap measured then */
+	measured: number;
+	/** how many of the value's own units the pointer has moved it */
+	units: number;
+	/** the value the last sample made, or nothing where none has moved it */
+	live: string | null;
+}
+
+/** How far a pointer must travel before a press counts as a drag rather than a click. */
+const GAP_DRAG_THRESHOLD_PX = 3;
+
+/**
+ * What one sample of a live drag comes to, or nothing where it moves it nowhere.
+ *
+ * The pointer's travel is measured along the axis and against the flow, taken
+ * back into the document's own pixels, and read as units of whatever the value
+ * is already written in. A press that has not yet passed the threshold is
+ * still a click, and a sample that lands on the value already showing is not a
+ * sample at all.
+ */
+export function gapSample(
+	drag: GapDrag,
+	at: { x: number; y: number },
+	coarse: boolean,
+	zoom: number,
+	step: number,
+): { units: number; live: string } | null {
+	const travelled = drag.axis === "column-gap" ? at.x - drag.from.x : at.y - drag.from.y;
+	const moved = (drag.sign * travelled) / (zoom === 0 ? 1 : zoom);
+	if (drag.live === null && Math.abs(moved) < GAP_DRAG_THRESHOLD_PX) return null;
+	const units = gapDragUnits(drag.authored, moved, step, coarse);
+	const live = steppedGap(drag.authored, drag.measured, units);
+	if (live === undefined || (live === drag.live && units === drag.units)) return null;
+	return { units, live };
+}
+
+/**
+ * The band a live drag draws, and what it reads.
+ *
+ * The band is the space itself, so it has to be the size the value makes; a
+ * value only the document could resolve leaves it the size it was grabbed at
+ * rather than guessing one.
+ */
+export function gapPaint(drag: GapDrag, step: number): { band: GapBand; says: string } {
+	const px = drag.live === null ? null : gapValuePixels(drag.live, step);
+	const grown = px === null ? 0 : px - drag.measured;
+	return {
+		band:
+			drag.axis === "column-gap"
+				? { ...drag.band, w: Math.max(drag.band.w + grown, 0) }
+				: { ...drag.band, h: Math.max(drag.band.h + grown, 0) },
+		says: px === null ? (drag.live ?? "") : `${Number(px.toFixed(2))}px`,
+	};
+}
+
+/**
+ * Whether this drag has anything to save.
+ *
+ * A drag that never moved a step writes nothing: the source already says this,
+ * and a save nobody asked for is still a save.
+ */
+export function gapMoved(drag: GapDrag): boolean {
+	return drag.units !== 0 && drag.live !== null && drag.live !== drag.authored;
+}
+
 /** Whether this value is a bare reference to the project's spacing scale. */
 export function gapOnScale(value: string): boolean {
 	return writtenLength(value)?.scale === true;

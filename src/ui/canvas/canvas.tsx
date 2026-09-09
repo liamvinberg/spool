@@ -95,20 +95,22 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import { GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
 import {
+	type GapAnchor,
 	type GapAxis,
 	type GapBand,
+	type GapDrag,
 	type GapReading,
 	type GapTargets,
 	gapAxisOf,
 	gapBands,
 	gapDragSign,
-	gapDragUnits,
 	gapField,
+	gapMoved,
+	gapPaint,
+	gapSample,
 	gapSteppable,
-	gapValuePixels,
 	gapWritable,
 	ownedGap,
-	steppedGap,
 } from "./hand-gap";
 import { GapMenu } from "./hand-gap-menu";
 import { HandNotice, type HandSaid } from "./hand-notice";
@@ -282,28 +284,12 @@ type Gesture =
 	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number }
 	// the gap between a held container's children (#306): the same one read,
 	// preview and save the ring's other drags use, over the space itself
-	| {
+	| ({
 			kind: "element-gap";
 			pick: PickedSelection;
-			axis: GapAxis;
-			/** which adjacent pair the pointer grabbed, for the whole of one drag */
-			index: number;
-			/** the band as it stood when it was grabbed */
-			band: GapBand;
-			from: Point;
-			/** where the popover a click opens instead would stand */
-			anchor: { left: number; top: number };
-			/** what the class cell spelled on this axis when the read opened */
-			authored: string | null;
-			/** which way along the axis the flow makes the gap bigger */
-			sign: 1 | -1;
-			/** how many of the value's own units the pointer has moved it */
-			units: number;
-			/** what the gap measured then, which an unset one is stepped from */
-			measured: number;
-			/** the value the last sample made, or nothing where none has moved it */
-			live: string | null;
-	  };
+			/** where the value a click opens instead of a drag would stand */
+			anchor: GapAnchor;
+	  } & GapDrag);
 
 /**
  * What the document said about the element a drag grabbed, and where the drag
@@ -544,7 +530,7 @@ export function ProjectCanvas({
 		axis: GapAxis;
 		authored: string | null;
 		measured: number;
-		at: { left: number; top: number };
+		at: GapAnchor;
 	} | null>(null);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
@@ -5042,7 +5028,7 @@ export function ProjectCanvas({
 		band: GapBand,
 		sign: 1 | -1,
 		from: Point,
-		anchor: { left: number; top: number },
+		anchor: GapAnchor,
 	): boolean => {
 		const authored = gapRef.current.authored;
 		if (authored === null || !gapSteppable(authored)) return false;
@@ -5066,46 +5052,25 @@ export function ProjectCanvas({
 
 	/** One sample of a live gap drag, previewed in every use through the common owner. */
 	const sampleElementGap = (active: Extract<Gesture, { kind: "element-gap" }>, p: Point, coarse: boolean): void => {
-		const k = cameraRef.current?.k ?? 1;
-		const moved =
-			(active.sign * (active.axis === "column-gap" ? p.x - active.from.x : p.y - active.from.y)) / (k === 0 ? 1 : k);
-		if (active.live === null && Math.abs(moved) < DRAG_THRESHOLD_PX) return;
-		const units = gapDragUnits(active.authored, moved, ringRef.current.step, coarse);
-		const next = steppedGap(active.authored, active.measured, units);
-		if (next === undefined || (next === active.live && units === active.units)) return;
-		gesture.current = { ...active, units, live: next };
-		showGapDrag(gesture.current);
+		const sampled = gapSample(active, p, coarse, cameraRef.current?.k ?? 1, ringRef.current.step);
+		if (sampled === null) return;
+		const next: Gesture = { ...active, units: sampled.units, live: sampled.live };
+		gesture.current = next;
+		showGapDrag(next);
 		sampleRingWrite({
 			kind: "fields",
-			changes: [{ property: active.axis, scope: "", value: gapField(active.axis, next, ringScoped()) }],
+			changes: [{ property: active.axis, scope: "", value: gapField(active.axis, sampled.live, ringScoped()) }],
 		});
 	};
 
 	/** What the band draws while a gap drag is live: the space the pointer is making. */
 	const showGapDrag = (active: Extract<Gesture, { kind: "element-gap" }>): void => {
-		const px = active.live === null ? null : gapValuePixels(active.live, ringRef.current.step);
-		// the band is the space itself, so it has to be the size the value makes;
-		// a value only the document could resolve leaves it where it was grabbed
-		const grown = px === null ? 0 : px - active.measured;
-		setGapDrag({
-			selector: active.pick.selector,
-			index: active.index,
-			band:
-				active.axis === "column-gap"
-					? { ...active.band, w: Math.max(active.band.w + grown, 0) }
-					: { ...active.band, h: Math.max(active.band.h + grown, 0) },
-			says: px === null ? (active.live ?? "") : `${Number(px.toFixed(2))}px`,
-		});
+		setGapDrag({ selector: active.pick.selector, index: active.index, ...gapPaint(active, ringRef.current.step) });
 	};
 
-	/**
-	 * The gap a drag settled on, saved once (#306).
-	 *
-	 * A drag that never moved a step writes nothing: the source already says
-	 * this, and a save nobody asked for is still a save.
-	 */
+	/** The gap a drag settled on, saved once (#306). */
 	const commitElementGap = (active: Extract<Gesture, { kind: "element-gap" }>): void => {
-		closeRingWrite(active.units !== 0 && active.live !== null && active.live !== active.authored);
+		closeRingWrite(gapMoved(active));
 	};
 
 	/** One value the popover picked, written through the same read the drag uses. */
@@ -5780,10 +5745,12 @@ export function ProjectCanvas({
 					active: ringDrag?.edge ?? null,
 					says: ringDrag?.says ?? null,
 					turning: ringDrag?.turning ?? false,
-					gaps: gapTargets,
-					gapAxis: gapTargets.length === 0 ? null : gapAxis,
-					gapHeld: heldGap?.index ?? null,
-					gapSays: heldGap?.says ?? null,
+					gaps: {
+						bands: gapTargets,
+						axis: gapTargets.length === 0 ? null : gapAxis,
+						held: heldGap?.index ?? null,
+						says: heldGap?.says ?? null,
+					},
 				};
 	gapRef.current = {
 		axis: gapTargets.length === 0 ? null : gapAxis,

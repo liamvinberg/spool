@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
 	authoredGap,
 	type GapChild,
+	type GapDrag,
 	type GapReading,
 	gapAxisOf,
 	gapBands,
 	gapDragSign,
 	gapDragUnits,
 	gapField,
+	gapMoved,
+	gapPaint,
+	gapSample,
 	gapSteppable,
 	gapValuePixels,
 	gapWritable,
@@ -335,5 +339,65 @@ describe("whether the class cell owns the gap the layout is using", () => {
 	it("reads the axis the container actually is", () => {
 		expect(ownedGap(column(), "row-gap", "flex flex-col gap-4", 4)).toBe("4");
 		expect(ownedGap(column(), "row-gap", "flex flex-col gap-y-4", 4)).toBe("4");
+	});
+});
+
+describe("what one drag decides", () => {
+	const drag = (extra: Partial<GapDrag> = {}): GapDrag => ({
+		axis: "column-gap",
+		index: 0,
+		band: { x: 40, y: 0, w: 16, h: 20 },
+		sign: 1,
+		from: { x: 100, y: 100 },
+		authored: "4",
+		measured: 16,
+		units: 0,
+		live: null,
+		...extra,
+	});
+
+	it("is still a click until the pointer has travelled", () => {
+		expect(gapSample(drag(), { x: 102, y: 100 }, false, 1, 4)).toBe(null);
+	});
+
+	it("reads the pointer along its own axis, in the document's pixels", () => {
+		expect(gapSample(drag(), { x: 116, y: 100 }, false, 1, 4)).toEqual({ units: 4, live: "8" });
+		// the same travel under a doubled camera is half as far in the document
+		expect(gapSample(drag(), { x: 116, y: 100 }, false, 2, 4)).toEqual({ units: 2, live: "6" });
+		// movement across the axis is not this drag's
+		expect(gapSample(drag(), { x: 100, y: 140 }, false, 1, 4)).toBe(null);
+	});
+
+	it("follows the flow when it runs backwards", () => {
+		expect(gapSample(drag({ sign: -1 }), { x: 84, y: 100 }, false, 1, 4)).toEqual({ units: 4, live: "8" });
+	});
+
+	it("samples nothing where the value has not moved", () => {
+		expect(gapSample(drag({ units: 4, live: "8" }), { x: 116, y: 100 }, false, 1, 4)).toBe(null);
+	});
+
+	it("draws the band the size the value makes, and reads it in pixels", () => {
+		expect(gapPaint(drag({ units: 4, live: "8" }), 4)).toEqual({
+			band: { x: 40, y: 0, w: 32, h: 20 },
+			says: "32px",
+		});
+		// a column grows across the other axis
+		expect(gapPaint(drag({ axis: "row-gap", band: { x: 0, y: 20, w: 40, h: 16 }, units: 4, live: "8" }), 4)).toEqual({
+			band: { x: 0, y: 20, w: 40, h: 32 },
+			says: "32px",
+		});
+	});
+
+	it("leaves the band where it was grabbed for a value only the document resolves", () => {
+		expect(gapPaint(drag({ authored: "[50%]", units: 1, live: "[51%]" }), 4)).toEqual({
+			band: { x: 40, y: 0, w: 16, h: 20 },
+			says: "[51%]",
+		});
+	});
+
+	it("has nothing to save until it moved a step", () => {
+		expect(gapMoved(drag())).toBe(false);
+		expect(gapMoved(drag({ units: 0, live: "4" }))).toBe(false);
+		expect(gapMoved(drag({ units: 4, live: "8" }))).toBe(true);
 	});
 });
