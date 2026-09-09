@@ -5814,6 +5814,7 @@ export function ProjectCanvas({
 	}, [askGaps, gapFrame, gapSelector, gapNonce, gapSettled, sourceRevision]);
 	// the value belongs to the element it was opened on: a selection that moves
 	// on takes it with it, so nothing is ever written to a pick nobody holds
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the held element is the trigger, not a value this effect reads
 	useEffect(() => {
 		setGapMenu(null);
 	}, [gapFrame, gapSelector]);

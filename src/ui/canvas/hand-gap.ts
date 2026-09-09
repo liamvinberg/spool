@@ -1,5 +1,5 @@
 import { screenConflict } from "../../daemon/class-write";
-import { gapOf, stepLength } from "../../properties/families";
+import { gapOf, stepLength, writtenLength } from "../../properties/families";
 import { type At, editsFor, rowFor } from "../../properties/rows";
 import type { SourcePropertyValue } from "../../source-property";
 import type { RungRead } from "../api";
@@ -222,15 +222,10 @@ export function ownedGap(reading: GapReading, axis: GapAxis, className: string, 
 	return authored;
 }
 
-/** A signed length string taken back apart, the way the rail's own rows read one. */
-function takeApart(value: string): { value: string; negative: boolean } | null {
-	if (value === "") return null;
-	const negative = value.startsWith("-");
-	return { value: (negative ? value.slice(1) : value).replace(/!$/, ""), negative };
+/** Whether this value is a bare reference to the project's spacing scale. */
+export function gapOnScale(value: string): boolean {
+	return writtenLength(value)?.scale === true;
 }
-
-/** The custom-value spelling a step can move without changing what the value is. */
-const CUSTOM = /^\[([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)\]$/i;
 
 /**
  * Whether a drag can move this value without renaming what it is.
@@ -244,9 +239,9 @@ const CUSTOM = /^\[([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)\]$/i;
  */
 export function gapSteppable(authored: string | null): boolean {
 	if (authored === null) return true;
-	const parsed = takeApart(authored);
-	if (parsed === null) return false;
-	return /^\d+(?:\.\d+)?$/.test(parsed.value) || parsed.value === "px" || CUSTOM.test(parsed.value);
+	const written = writtenLength(authored);
+	if (written === null) return false;
+	return written.scale || written.value === "px" || written.custom !== null;
 }
 
 /**
@@ -258,9 +253,7 @@ export function gapSteppable(authored: string | null): boolean {
  * round numbers rather than racing past them.
  */
 export function gapDragUnits(authored: string | null, delta: number, step: number, coarse: boolean): number {
-	const parsed = authored === null ? null : takeApart(authored);
-	const scale = parsed !== null && /^\d+(?:\.\d+)?$/.test(parsed.value);
-	const unit = scale ? Math.max(step, 1) : 1;
+	const unit = authored !== null && gapOnScale(authored) ? Math.max(step, 1) : 1;
 	const grain = coarse ? 10 : 1;
 	return Math.round(delta / unit / grain) * grain;
 }
@@ -274,16 +267,16 @@ export function gapDragUnits(authored: string | null, delta: number, step: numbe
  */
 export function steppedGap(authored: string | null, measured: number, units: number): string | undefined {
 	if (!gapSteppable(authored)) return undefined;
-	const parsed = authored === null ? null : takeApart(authored);
+	const written = authored === null ? null : writtenLength(authored);
 	const next = stepLength(
 		"spacing",
-		parsed === null
+		written === null
 			? null
 			: {
 					family: "gap",
 					kind: "spacing",
-					value: parsed.value,
-					negative: parsed.negative,
+					value: written.value,
+					negative: written.negative,
 					important: false,
 					token: "",
 				},
@@ -333,9 +326,10 @@ export function gapField(axis: GapAxis, value: string, at: At): SourcePropertyVa
  * the band keeps the width it was grabbed at rather than inventing one.
  */
 export function gapValuePixels(value: string, step: number): number | null {
-	if (/^\d+(?:\.\d+)?$/.test(value)) return Number(value) * step;
-	if (value === "px") return 1;
-	const custom = CUSTOM.exec(value);
-	if (custom?.[2] === "px" && custom[1] !== undefined) return Number(custom[1]);
+	const written = writtenLength(value);
+	if (written === null) return null;
+	if (written.scale) return Number(written.value) * step;
+	if (written.value === "px") return 1;
+	if (written.custom?.unit === "px") return Number(written.custom.number);
 	return null;
 }

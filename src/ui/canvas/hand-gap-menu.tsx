@@ -1,22 +1,23 @@
 import { describe as describeLength, parseTyped, stepLength } from "../../properties/families";
 import { cn } from "../cn";
-import { type GapAxis, gapSteppable, steppedGap } from "./hand-gap";
-import { FAINT, LABEL, NumField, VALUE } from "./properties-fields";
+import { type GapAxis, gapOnScale, gapSteppable, steppedGap } from "./hand-gap";
+import { FAINT, LABEL, NumField } from "./properties-fields";
 
 /**
  * The gap's own exact value, opened from the band (#306).
  *
- * The same treatment the rail's spacing fields wear, over the band a person
- * just clicked rather than a row twenty rows down: the value as the file
- * spells it, one step per arrow and ten with ⇧, the project's own scale to
- * pick from, and one deliberate way off the scale into a pixel count. Nothing
- * here renames a value — a percentage or an expression is shown for what it
- * is, and the scale offers itself without claiming the current value is on it.
+ * The treatment the rail's spacing fields wear, over the band a person just
+ * clicked rather than a row twenty rows down: the value as the file spells it,
+ * the pixels it comes to, one step per arrow and ten with shift, and one
+ * deliberate way off the scale into a pixel count.
+ *
+ * It offers no list of its own, because the rail's spacing rows offer none.
+ * This project's scale is a step and a number, not a set of names, so a menu
+ * of guessed steps would be a second spacing model beside the one the rail
+ * already uses. Nothing here renames a value either: a percentage or an
+ * expression is shown for what it is, and only a value that can move without
+ * changing what it is has arrows at all.
  */
-
-/** The steps of the project's own scale a gap is usually written on. */
-const SCALE = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24];
-
 export function GapMenu({
 	axis,
 	authored,
@@ -27,9 +28,9 @@ export function GapMenu({
 	onClose,
 }: {
 	axis: GapAxis;
-	/** what the class cell spells on this axis, or nothing where it sets none */
+	/** what the class cell authors on this axis, which is the declaration in use */
 	authored: string | null;
-	/** what the gap measures in the running layout, which an unset one steps from */
+	/** what the gap measures in the running layout */
 	measured: number;
 	step: number;
 	at: { left: number; top: number };
@@ -38,7 +39,6 @@ export function GapMenu({
 }) {
 	const value = authored ?? "";
 	const readout = describeLength("spacing", value === "" ? null : value, false, step);
-	const scale = /^\d+(?:\.\d+)?$/.test(value);
 	return (
 		<div
 			data-gap-popover=""
@@ -72,29 +72,7 @@ export function GapMenu({
 					return steppedGap(from === "" ? null : from, measured, units);
 				}}
 			/>
-			<div className="mt-1 max-h-40 overflow-y-auto">
-				{SCALE.map((unit) => (
-					<button
-						key={unit}
-						type="button"
-						data-gap-step={unit}
-						aria-pressed={scale && Number(value) === unit}
-						className={cn(
-							"flex w-full items-center gap-2 rounded-xs px-1 py-[3px] text-left hover:bg-surface",
-							VALUE,
-							scale && Number(value) === unit ? "text-thread-strong" : "text-text",
-						)}
-						onClick={() => {
-							onWrite(String(unit));
-							onClose();
-						}}
-					>
-						<span className="flex-1">{unit}</span>
-						<span className={FAINT}>{`${unit * step}px`}</span>
-					</button>
-				))}
-			</div>
-			{scale ? (
+			{gapOnScale(value) ? (
 				<button
 					type="button"
 					data-gap-custom=""
