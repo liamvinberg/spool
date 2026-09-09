@@ -686,6 +686,7 @@ async function mount(
 								const token = THEME.colour.find((token) => token.name === reading.name);
 								readings[property] = {
 									tokens: reading.token ? [reading.token] : [],
+									source: "class",
 									binding: token
 										? { kind: "reference", name: `--color-${token.name}`, value: token.value }
 										: reading.token

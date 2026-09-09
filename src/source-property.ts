@@ -47,6 +47,8 @@ export interface SourcePropertyNative {
 
 export interface SourcePropertyReading {
 	tokens: readonly string[];
+	/** Which authored source declares this property's winning effects here. */
+	source: "class" | "style";
 	/** One compiler-proven custom declaration, preserving its authored unit. */
 	authored?: string;
 	binding:
