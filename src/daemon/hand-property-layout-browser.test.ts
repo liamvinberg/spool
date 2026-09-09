@@ -36,6 +36,13 @@ async function everyUse(frames: (FrameLocator | Page)[], property: string, value
 		await expect.poll(() => computed(frame, property), { timeout: 15_000 }).toEqual([value, value]);
 }
 
+/** One saved reply, read as the source result the daemon sent. */
+async function saved(response: Promise<{ json(): Promise<unknown> }>, f: Canvas) {
+	const result = (await (await response).json()) as SourceResult;
+	expect(result.ok, JSON.stringify({ result, source: f.bytes()[owner] })).toBe(true);
+	return result;
+}
+
 async function outcomes(f: Canvas) {
 	return f.page.evaluate(() => Reflect.get(window, "originOutcomes")) as Promise<UseOutcome[]>;
 }
@@ -46,8 +53,7 @@ async function complete(f: Canvas, property: string, expected: string) {
 		delivered = reply(f, "delivered");
 	void delivered.catch(() => {});
 	await field(f, property).press("Enter");
-	const result = (await (await committed).json()) as SourceResult;
-	expect(result.ok, JSON.stringify({ result, source: f.bytes()[owner] })).toBe(true);
+	await saved(committed, f);
 	await delivered;
 	await expect.poll(() => f.bytes()[owner]).toBe(expected);
 	await f.settled();
@@ -58,8 +64,7 @@ async function inverse(f: Canvas, redo: boolean) {
 		delivered = reply(f, "delivered");
 	void delivered.catch(() => {});
 	await f.history(redo);
-	const result = (await (await response).json()) as SourceResult;
-	expect(result.ok, JSON.stringify({ result, source: f.bytes()[owner] })).toBe(true);
+	await saved(response, f);
 	await delivered;
 	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count()).toBe(0);
 }
@@ -119,7 +124,7 @@ it("sets a width mode and adds a constraint without touching the padding or the 
 	const committed = reply(f, "commit");
 	await f.page.locator('button[aria-label="width mode"]').first().click();
 	await f.page.locator('[data-menu-option="fill"]').first().click();
-	expect(((await (await committed).json()) as SourceResult).ok).toBe(true);
+	await saved(committed, f);
 	const filled = card.replace("w-40", "w-full");
 	await expect.poll(() => f.bytes()[owner]).toBe(filled);
 	await f.settled();
@@ -133,7 +138,7 @@ it("sets a width mode and adds a constraint without touching the padding or the 
 	const added = reply(f, "commit");
 	await f.page.locator('button[aria-label="Add property"]').click();
 	await f.page.locator('[data-menu-option="max-width"]').first().click();
-	expect(((await (await added).json()) as SourceResult).ok).toBe(true);
+	await saved(added, f);
 	await expect.poll(() => f.bytes()[owner]).toContain("max-w-[602px]");
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["602px", "602px"]);
@@ -157,7 +162,7 @@ it("hides an element through display and shows it again from the selection it ke
 	const hidden = reply(f, "commit");
 	await f.page.locator('button[aria-label="display"]').first().click();
 	await f.page.locator('[data-menu-option="hidden"]').first().click();
-	expect(((await (await hidden).json()) as SourceResult).ok).toBe(true);
+	await saved(hidden, f);
 	await expect.poll(() => f.bytes()[owner]).toBe(card.replace("flex gap-2", "hidden gap-2"));
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "display")).toEqual(["none", "none"]);
@@ -168,7 +173,7 @@ it("hides an element through display and shows it again from the selection it ke
 	const shown = reply(f, "commit");
 	await f.page.locator('button[aria-label="display"]').first().click();
 	await f.page.locator('[data-menu-option="flex"]').first().click();
-	expect(((await (await shown).json()) as SourceResult).ok).toBe(true);
+	await saved(shown, f);
 	await expect.poll(() => f.bytes()[owner]).toBe(card);
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "display")).toEqual(["flex", "flex"]);
@@ -211,7 +216,7 @@ it("reads project spacing and measures a fixed width at reduced canvas zoom", { 
 	const committed = reply(f, "commit");
 	await f.page.locator('button[aria-label="width mode"]').first().click();
 	await f.page.locator('[data-menu-option="fixed"]').first().click();
-	expect(((await (await committed).json()) as SourceResult).ok).toBe(true);
+	await saved(committed, f);
 	await expect.poll(() => f.bytes()[owner]).toContain("w-20");
 	await f.settled();
 	await everyUse([f.frame], "width", "160px");
