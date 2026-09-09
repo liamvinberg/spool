@@ -16,7 +16,7 @@ import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { ProjectAsset } from "../daemon/hand-asset";
 import type { RungRead } from "../daemon/hand-lane";
-import type { AttributeRead, HandOp, HeldPatch, PatchRefusal } from "../daemon/hand-write";
+import type { AttributeRead, HandOp, PatchRefusal } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
@@ -35,6 +35,7 @@ import type {
 } from "../source-edit";
 import type { SourceImagePut, SourceImageStaged } from "../source-image";
 import type { SourcePropertyPreview, SourcePropertyValue } from "../source-property";
+import type { SourcePropertyGroupValue } from "../source-property-group";
 
 declare global {
 	interface Window {
@@ -65,7 +66,6 @@ export type {
 	FsSearch,
 	Geometry,
 	HandOp,
-	HeldPatch,
 	LocatedRange,
 	PatchRefusal,
 	Place,
@@ -304,27 +304,6 @@ export async function putGeometry(project: string, frames: Record<string, Geomet
 }
 
 /**
- * The write lane (#253): the canvas's one way into frame source.
- *
- * Three calls, one shape. `gatePatch` asks before a gesture starts, so a
- * control greys with the reason rather than dying mid-drag. `applyPatch`
- * writes, carrying the fingerprint of the file the ask was answered against,
- * and hands back the patch that puts it right again. `revertPatch` runs that
- * patch, which is both undo and the rollback after a measurement disagrees,
- * and answers with its own inverse so a redo is the same call.
- *
- * Undefined is a door that never answered — a write that was accepted and
- * could not land has to say so, unlike a refusal, which is quiet.
- */
-export type PatchAsked =
-	| { ok: true; path: string; fingerprint: string; mapped: boolean }
-	| { ok: false; refusal: PatchRefusal };
-
-export type PatchWritten =
-	| { ok: true; path: string; fingerprint: string; mapped: boolean; undo: HeldPatch; uncaught?: true }
-	| { ok: false; refusal: PatchRefusal };
-
-/**
  * The asset swap (#260): the picture, and what came back from putting it in.
  *
  * Its answer is a patch's, with the file it wrote named — an image in a frame
@@ -382,42 +361,6 @@ export async function listAssets(project: string, frame: string): Promise<Projec
 		const res = await client.api.p[":project"].assets.$get({ param: { project }, query: { frame } });
 		if (!res.ok) return undefined;
 		return ((await res.json()) as { assets: ProjectAsset[] }).assets;
-	} catch {
-		return undefined;
-	}
-}
-
-export async function gatePatch(
-	project: string,
-	frame: string,
-	ops: readonly HandOp[],
-): Promise<PatchAsked | undefined> {
-	try {
-		const res = await client.api.p[":project"].patch.gate.$post({
-			param: { project },
-			json: { frame, ops: [...ops] },
-		});
-		if (!res.ok) return undefined;
-		return (await res.json()) as PatchAsked;
-	} catch {
-		return undefined;
-	}
-}
-
-export async function applyPatch(
-	project: string,
-	frame: string,
-	fingerprint: string,
-	ops: readonly HandOp[],
-): Promise<PatchWritten | undefined> {
-	try {
-		const res = await client.api.p[":project"].patch.$post({
-			param: { project },
-			json: { frame, fingerprint, ops: [...ops] },
-		});
-		// a refusal comes back as one; anything else is a write that could not land
-		if (!res.ok && res.status !== 409) return undefined;
-		return (await res.json()) as PatchWritten;
 	} catch {
 		return undefined;
 	}
@@ -520,17 +463,6 @@ export async function compileClasses(project: string, tokens: readonly string[])
 		});
 		if (!res.ok) return undefined;
 		return ((await res.json()) as { compiled: CompiledClass[] }).compiled;
-	} catch {
-		return undefined;
-	}
-}
-
-/** The patch run, and its own inverse; nothing when the file moved underneath. */
-export async function revertPatch(project: string, patch: HeldPatch): Promise<HeldPatch | undefined> {
-	try {
-		const res = await client.api.p[":project"].patch.revert.$post({ param: { project }, json: patch });
-		if (!res.ok) return undefined;
-		return ((await res.json()) as { undo: HeldPatch }).undo;
 	} catch {
 		return undefined;
 	}
@@ -1580,12 +1512,24 @@ export async function sourceReach(
 	}
 }
 
+/**
+ * One read-only sample of a property edit, in the running frames.
+ *
+ * A single control asks about its own property; a gesture that decides several
+ * fields together — the resize ring's width, height and placement — asks about
+ * the group its read was opened for. The two value kinds are disjoint, so the
+ * change the owner is sent follows from the value itself.
+ */
 export async function previewPropertySource(
 	project: string,
 	read: SourceRead,
 	revision: number,
-	value: SourcePropertyValue,
+	value: SourcePropertyValue | SourcePropertyGroupValue,
 ): Promise<{ ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string } | undefined> {
+	const change: SourceChange =
+		value.kind === "binding" || value.kind === "custom" || value.kind === "remove"
+			? { kind: "property", value }
+			: { kind: "properties", value };
 	try {
 		const res = await client.api.p[":project"].source.$post({
 			param: { project },
@@ -1595,7 +1539,7 @@ export async function previewPropertySource(
 				generation: read.generation,
 				revision,
 				original: read.original,
-				change: { kind: "property", value },
+				change,
 			},
 		});
 		return res.ok

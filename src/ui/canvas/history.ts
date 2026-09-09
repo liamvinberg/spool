@@ -1,6 +1,6 @@
 import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import type { SourceReceipt } from "../../source-edit";
-import type { Geometry, HeldPatch, Place } from "../api";
+import type { Geometry, Place } from "../api";
 import type { SourceIntent } from "./source-intent";
 
 /**
@@ -107,7 +107,6 @@ export type HistoryEntry =
 			readonly structuralGeneration?: number;
 			readonly intent?: SourceIntent;
 	  }
-	| { readonly kind: "patch"; readonly frame: string; readonly patch: HeldPatch }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {
 			readonly kind: "move";
@@ -397,10 +396,6 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 		}
 		case "source":
 			return entry;
-		case "patch":
-			// the daemon's fingerprint is the real check and it happens on the wire;
-			// what the projection can say is whether the frame is still there to edit
-			return alive.frames.has(entry.frame) ? entry : undefined;
 		case "reorder":
 			return entry;
 		case "gather": {

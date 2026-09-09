@@ -3,18 +3,14 @@ import type { RungRead } from "../api";
 import {
 	draggedAngle,
 	draggedRect,
-	draggedSize,
 	drawnHandles,
 	handlesFor,
-	landed,
 	previewTokens,
 	resizedBox,
 	resizeFields,
-	rotateOps,
 	rotateTokens,
 	rotationOf,
-	sizeOps,
-	sizeTokens,
+	turnValue,
 } from "./hand-resize";
 
 /**
@@ -83,22 +79,6 @@ describe("the turn a literal already wears", () => {
 });
 
 describe("the numbers a drag makes", () => {
-	it("moves only the axes the handle grabbed", () => {
-		expect(draggedSize({ w: 200, h: 120 }, 1, 0, 47, 300)).toEqual({ w: 247, h: 120 });
-		expect(draggedSize({ w: 200, h: 120 }, 0, 1, 300, -20)).toEqual({ w: 200, h: 100 });
-	});
-
-	it("grows to the left off a west grab, and never shrinks past the floor", () => {
-		expect(draggedSize({ w: 200, h: 120 }, -1, 0, -47, 0)).toEqual({ w: 247, h: 120 });
-		expect(draggedSize({ w: 200, h: 120 }, 1, 1, -400, -400)).toEqual({ w: 8, h: 8 });
-	});
-
-	it("rounds the axis nobody touched, because the box it started from is measured", () => {
-		// a `getBoundingClientRect` comes fractional, and a readout saying
-		// `220.53125 × 48` is one nobody can act on
-		expect(draggedSize({ w: 220.53125, h: 48 }, 0, 1, 0, 12)).toEqual({ w: 221, h: 60 });
-	});
-
 	it("keeps the corner layout gave the element: a ring pins nothing", () => {
 		// anchoring the far edge would promise a position the write cannot keep
 		expect(draggedRect({ x: 10, y: 20, w: 200, h: 120 }, { w: 247, h: 84 })).toEqual({
@@ -125,42 +105,13 @@ describe("what a drag writes", () => {
 		expect(previewTokens({ w: 247, h: 120 }, 1, 0)).toEqual(["w-[247px]"]);
 	});
 
-	it("lands a whole step as the bare class and everything else as pixels", () => {
-		// a whole step is byte-identical to what the frame's author would have
-		// written; anything else meant absolute pixels and stays them
-		expect(sizeTokens({ w: 224, h: 347 }, 1, 1, 4)).toEqual(["w-56", "h-[347px]"]);
-		// the step is the compiled stylesheet's, never an assumption
-		expect(sizeTokens({ w: 224, h: 347 }, 1, 1, 8)).toEqual(["w-28", "h-[347px]"]);
-	});
-
-	it("writes both axes of a corner as one gesture's ops", () => {
-		expect(sizeOps("frames/cart/frame.tsx:9:4", ["w-56", "h-24"])).toEqual([
-			{ kind: "set-class", source: "frames/cart/frame.tsx:9:4", token: "w-56", scope: "" },
-			{ kind: "set-class", source: "frames/cart/frame.tsx:9:4", token: "h-24", scope: "" },
-		]);
-	});
-
 	it("writes a turn as one signed token, and takes the family away at rest", () => {
 		expect(rotateTokens(12)).toEqual(["rotate-12"]);
 		expect(rotateTokens(-45)).toEqual(["-rotate-45"]);
 		expect(rotateTokens(0)).toEqual([]);
-		expect(rotateOps("frames/cart/frame.tsx:9:4", 0)).toEqual([
-			{ kind: "set-class", source: "frames/cart/frame.tsx:9:4", token: "rotate-0", scope: "", remove: true },
-		]);
-	});
-});
-
-describe("measure after apply", () => {
-	it("asks only about the axes the drag wrote", () => {
-		// the other one was never written, so whatever layout does with it is
-		// layout's own business rather than a mismatch
-		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 0 }, { w: 240, h: 733 })).toBe(true);
-		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 0 }, { w: 180, h: 100 })).toBe(false);
-	});
-
-	it("takes sub-pixel slack, and nothing a clamp would leave", () => {
-		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 1 }, { w: 240.5, h: 99.5 })).toBe(true);
-		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 1 }, { w: 240, h: 64 })).toBe(false);
+		// a turn back to rest takes the family away rather than writing a zero
+		expect(turnValue(0)).toEqual({ kind: "remove" });
+		expect(turnValue(-45)).toEqual({ kind: "binding", tokens: ["-rotate-45"] });
 	});
 });
 

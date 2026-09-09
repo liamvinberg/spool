@@ -95,52 +95,7 @@ export interface HeldPatch extends SpanPatch {
 /** The one attribute this lane never writes: its value is a walk target (#260). */
 export const WALK_TARGET = "data-go";
 
-/** A token is one word; a scope is a chain of variant prefixes or nothing. */
-const TOKEN = /^-?[A-Za-z0-9][^\s]*$/;
-const SCOPE = /^([a-z0-9][a-z0-9-]*:)*$/;
-const ATTRIBUTE = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
 const STAMP = /^[^\s:]+:\d+:\d+$/;
-const TEXT_CAP = 4096;
-/**
- * The ops off the wire, or nothing. Strict: an op the daemon cannot read is a
- * 400 rather than a guess, because every one of them writes to a file.
- *
- * The cap is a bound on one gesture rather than a budget: a corner drag is two
- * ops and dropping a whole scope is one op per token under it (#256), which is
- * as many as an element has. Thirty-two is the same ceiling the rail's read
- * takes, and every one of them folds into a single patch on one literal.
- */
-export function parseHandOps(value: unknown): HandOp[] | undefined {
-	// The original source owner alone can plan image imports after staging and
-	// checking their canonical bytes and complete document budget.
-	if (!Array.isArray(value) || value.length === 0 || value.length > 32) return undefined;
-	const ops: HandOp[] = [];
-	for (const raw of value) {
-		if (typeof raw !== "object" || raw === null) return undefined;
-		const { kind, source, text, token, scope, remove, name, value: attribute } = raw as Record<string, unknown>;
-		if (typeof source !== "string" || !STAMP.test(source)) return undefined;
-		if (kind === "set-text") {
-			if (typeof text !== "string" || text.length > TEXT_CAP) return undefined;
-			ops.push({ kind, source, text });
-			continue;
-		}
-		if (kind === "set-class") {
-			if (typeof token !== "string" || !TOKEN.test(token)) return undefined;
-			if (typeof scope !== "string" || !SCOPE.test(scope)) return undefined;
-			if (remove !== undefined && typeof remove !== "boolean") return undefined;
-			ops.push({ kind, source, token, scope, ...(remove === true ? { remove: true } : {}) });
-			continue;
-		}
-		if (kind === "set-attribute") {
-			if (typeof name !== "string" || !ATTRIBUTE.test(name)) return undefined;
-			if (typeof attribute !== "string" || attribute.length > TEXT_CAP) return undefined;
-			ops.push({ kind, source, name, value: attribute });
-			continue;
-		}
-		return undefined;
-	}
-	return ops;
-}
 
 /**
  * The stamps a read asks about, or nothing. Strict for the same reason the ops

@@ -2,7 +2,7 @@ import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
-import type { LiveHandles, Sign } from "./hand-resize";
+import { drawnHandles, type Edge, type LiveHandles, type Sign } from "./hand-resize";
 import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
@@ -95,6 +95,8 @@ export interface ElementHandles {
 	selector: string;
 	rect: { x: number; y: number; w: number; h: number };
 	live: LiveHandles;
+	/** the target the pointer is holding, which stays drawn however small the box gets */
+	active: Edge | null;
 	says: string | null;
 	/** the readout sits above the ring for a turn and below it for a size */
 	turning: boolean;
@@ -432,6 +434,7 @@ function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandle
 		x: sx === -1 ? ring.x : ring.x + ring.w,
 		y: sy === -1 ? ring.y : ring.y + ring.h,
 	});
+	const drawn = new Set(drawnHandles({ w: ring.w, h: ring.h }, live, handles.active));
 	return (
 		<>
 			{live.rotate
@@ -452,52 +455,53 @@ function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandle
 						);
 					})
 				: null}
-			{live.w
-				? ([-1, 1] as const).map((sx) => (
-						<div
-							key={`edge-x-${sx}`}
-							data-element-handle={sx === -1 ? "w" : "e"}
-							className="pointer-events-auto absolute w-[6px]"
-							style={{
-								left: at(sx, -1).x - 3,
-								top: ring.y + 8,
-								height: Math.max(ring.h - 16, 0),
-								cursor: HANDLE_CURSORS.e,
-							}}
-						/>
-					))
-				: null}
-			{live.h
-				? ([-1, 1] as const).map((sy) => (
-						<div
-							key={`edge-y-${sy}`}
-							data-element-handle={sy === -1 ? "n" : "s"}
-							className="pointer-events-auto absolute h-[6px]"
-							style={{
-								top: at(-1, sy).y - 3,
-								left: ring.x + 8,
-								width: Math.max(ring.w - 16, 0),
-								cursor: HANDLE_CURSORS.n,
-							}}
-						/>
-					))
-				: null}
-			{live.w || live.h
-				? CORNERS.map((name) => {
-						const { sx, sy } = signsOf(name);
-						const spot = at(sx, sy);
-						return (
-							<div
-								key={`corner-${name}`}
-								data-element-handle={name}
-								className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
-								style={{ left: spot.x - 8, top: spot.y - 8, cursor: HANDLE_CURSORS[name] }}
-							>
-								<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
-							</div>
-						);
-					})
-				: null}
+			{([-1, 1] as const).map((sx) => {
+				const name = sx === -1 ? "w" : "e";
+				return drawn.has(name) ? (
+					<div
+						key={`edge-x-${sx}`}
+						data-element-handle={name}
+						className="pointer-events-auto absolute w-[6px]"
+						style={{
+							left: at(sx, -1).x - 3,
+							top: ring.y + 8,
+							height: Math.max(ring.h - 16, 0),
+							cursor: HANDLE_CURSORS.e,
+						}}
+					/>
+				) : null;
+			})}
+			{([-1, 1] as const).map((sy) => {
+				const name = sy === -1 ? "n" : "s";
+				return drawn.has(name) ? (
+					<div
+						key={`edge-y-${sy}`}
+						data-element-handle={name}
+						className="pointer-events-auto absolute h-[6px]"
+						style={{
+							top: at(-1, sy).y - 3,
+							left: ring.x + 8,
+							width: Math.max(ring.w - 16, 0),
+							cursor: HANDLE_CURSORS.n,
+						}}
+					/>
+				) : null;
+			})}
+			{CORNERS.map((name) => {
+				if (!drawn.has(name)) return null;
+				const { sx, sy } = signsOf(name);
+				const spot = at(sx, sy);
+				return (
+					<div
+						key={`corner-${name}`}
+						data-element-handle={name}
+						className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
+						style={{ left: spot.x - 8, top: spot.y - 8, cursor: HANDLE_CURSORS[name] }}
+					>
+						<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
+					</div>
+				);
+			})}
 			{handles.says === null ? null : (
 				<div
 					data-element-readout=""

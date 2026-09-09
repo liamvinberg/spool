@@ -12,21 +12,19 @@ import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import type { SourceChange, SourceOccurrence, SourceOperation, SourceUse } from "../../source-edit";
 import { type SourceRead, type SourceResult, sameSourceOccurrence, type UseOutcome } from "../../source-edit";
 import type { SourcePropertyValue } from "../../source-property";
-import { propertyGroupTarget } from "../../source-property-group";
+import { propertyGroupTarget, type SourcePropertyGroupValue } from "../../source-property-group";
 import type {
 	Camera,
 	FlowEdge,
 	FrameCollision,
 	FrameCopy,
 	Geometry,
-	HeldPatch,
 	Place,
 	ProjectedFrame,
 	SelectionEntry,
 	SelectionPut,
 } from "../api";
 import {
-	applyPatch,
 	beaconTrash,
 	cancelSource,
 	commitSource,
@@ -35,8 +33,6 @@ import {
 	fetchFlows,
 	fetchProjection,
 	fileAsAsset,
-	gatePatch,
-	type HandOp,
 	inverseSource,
 	postCaptureFailure,
 	postSeen,
@@ -51,7 +47,6 @@ import {
 	putSetting,
 	readSource,
 	resolveFlows,
-	revertPatch,
 	sourceDelivered,
 	sourceIsCurrent,
 	stageImage,
@@ -103,18 +98,19 @@ import { HandNotice, type HandSaid } from "./hand-notice";
 import {
 	draggedAngle,
 	draggedRect,
-	draggedSize,
+	type Edge,
+	edgeSigns,
 	type LiveHandles,
-	landed,
-	type Measure,
 	NO_HANDLES,
+	NO_LIMITS,
 	previewTokens,
-	rotateOps,
+	type ResizeModifiers,
+	resizedBox,
+	resizeFields,
 	rotateTokens,
-	type Sign,
 	type Size,
-	sizeOps,
-	sizeTokens,
+	type SizeLimits,
+	turnValue,
 	useRing,
 } from "./hand-resize";
 import {
@@ -134,7 +130,6 @@ import {
 	takeRedo,
 	takeUndo,
 	type Way,
-	withdraw,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
@@ -152,7 +147,6 @@ import {
 	type PickedSelection,
 	ROTATE_CURSOR,
 	SelectionOverlay,
-	signsOf,
 	sourcePathOf,
 } from "./overlays";
 import { PageObjectLabel, PageObjectView } from "./page-object";
@@ -163,6 +157,7 @@ import { type Held, PropertiesRail } from "./properties-rail";
 import {
 	clipboardCopyAllowed,
 	dropTargetMessage,
+	type ElementSizing,
 	editMessage,
 	endEditMessage,
 	type KinStep,
@@ -178,6 +173,7 @@ import {
 	sessionReply,
 	sharedStateMessage,
 	sitesMessage,
+	sizingMessage,
 	walkRejectionReason,
 } from "./protocol";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
@@ -252,7 +248,23 @@ type Gesture =
 	// the element ring's own two drags (#259), which write classes rather than
 	// geometry: the file is left alone until the pointer comes up, so one
 	// gesture is one patch and one press of undo
-	| { kind: "element-size"; pick: PickedSelection; sx: Sign; sy: Sign; start: Size; from: Point; live: Size }
+	| {
+			kind: "element-size";
+			pick: PickedSelection;
+			edge: Edge;
+			/** ⇧ and ⌥ are read once, because they decide which properties this read may write */
+			modifiers: ResizeModifiers;
+			/** the properties this gesture's source read was opened for, in write order */
+			properties: readonly string[];
+			start: Size;
+			/** what a `content-box` element adds on top of the width that is written */
+			extra: Size;
+			offset: { left: number; top: number };
+			limits: SizeLimits;
+			from: Point;
+			live: Size;
+			shift: { x: number; y: number };
+	  }
 	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number };
 
 /** One size a resize drag worked out, and the guides that belong to it. */
@@ -433,6 +445,8 @@ export function ProjectCanvas({
 		rect: { x: number; y: number; w: number; h: number };
 		says: string;
 		turning: boolean;
+		/** the target the pointer is holding, so the ring keeps drawing it */
+		edge: Edge | null;
 		tokens: readonly string[];
 		box: Size;
 	} | null>(null);
@@ -647,6 +661,7 @@ export function ProjectCanvas({
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
+	const sizingWaiters = useRef(new Map<number, (sizing: ElementSizing | null) => void>());
 	const pickSeq = useRef(0);
 	// picks apply only while their generation is current: a superseding intent
 	// (a fresh press, a drag, Esc) bumps it and voids them — while a click and
@@ -867,18 +882,6 @@ export function ProjectCanvas({
 	 * for the same one and the rail draws it again.
 	 */
 	const repick = useRef<{ frame: string; selector: string } | null>(null);
-
-	/**
-	 * The size a resize wrote, waiting on the document that comes back (#259).
-	 *
-	 * Static analysis cannot promise two things, so the gate is not the last
-	 * word: utilities land in `@layer utilities`, where an unlayered rule in a
-	 * project's `tokens.css` beats the written class silently, and layout can
-	 * ignore or clamp what a class states. So the drag applies, the reloaded
-	 * document is measured through the re-pick it already asks for, and a size
-	 * that did not take is put back and said out loud.
-	 */
-	const measuring = useRef<{ frame: string; selector: string; claim: Measure } | null>(null);
 
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
@@ -2098,21 +2101,6 @@ export function ProjectCanvas({
 				});
 				return;
 			}
-			if (entry.kind === "patch") {
-				const ran = history.current;
-				// an undo reloads the frame it wrote, and that reload is ours (#253)
-				holdNext.current.add(entry.frame);
-				void revertPatch(project, entry.patch).then((next) => {
-					// a press that landed after this one owns the stacks now
-					if (history.current !== ran) return;
-					updateHistory(
-						next === undefined
-							? drop(history.current, way)
-							: amend(history.current, way, { ...entry, patch: next }),
-					);
-				});
-				return;
-			}
 			// a gather is a page the rail made and the frames it gathered into it, and
 			// the order the two halves go in is the whole reason it is one entry: going
 			// back, the frames leave before the page is staged, or they would ride into
@@ -2255,6 +2243,23 @@ export function ProjectCanvas({
 				frame,
 				measureWaiters.current,
 				(id) => measureMessage(selector, local.x, local.y, id),
+				apply,
+				() => apply(null),
+			);
+		},
+		[askFrame],
+	);
+
+	/**
+	 * A resize gesture's own ask (#305): the box, the engine's limits on it and
+	 * the placement it already has, from the one place that knows them.
+	 */
+	const askSizing = useCallback(
+		(frame: string, selector: string, apply: (sizing: ElementSizing | null) => void) => {
+			askFrame(
+				frame,
+				sizingWaiters.current,
+				(id) => sizingMessage(selector, id),
 				apply,
 				() => apply(null),
 			);
@@ -2612,60 +2617,6 @@ export function ProjectCanvas({
 		[project, setEdit, showRefusal, sourceDelivery, pointing.entries],
 	);
 
-	/**
-	 * One patch, from the gesture that formed it to the stack it joins.
-	 *
-	 * Everything both gestures share is here: the write, the undo entry it
-	 * leaves, the hold on the reload it causes, and the two things a write says
-	 * out loud. The gate's own no is quiet and lands on the element; a write
-	 * that was accepted and could not land is not, because nothing else would
-	 * say so.
-	 */
-	/**
-	 * What a write that has landed leaves behind, whichever gesture made it.
-	 *
-	 * The undo entry, the hold on the reload it causes, and the one line a
-	 * project with nothing catching hand edits hears once. `refused` is how the
-	 * two doors differ: a gated write's no means the file moved underneath a
-	 * gesture that was already accepted, which has to interrupt, while the asset
-	 * door is not gated first and its no is the ordinary quiet refusal.
-	 */
-	const settleWrite = useCallback(
-		(
-			frame: string,
-			written: { ok: true; undo: HeldPatch; uncaught?: true } | { ok: false; refusal: Refusal } | undefined,
-			refused: (refusal: Refusal) => void,
-		) => {
-			writing.current = false;
-			if (written === undefined) {
-				repick.current = null;
-				setSaid({ kind: "failed", frame });
-				return;
-			}
-			if (!written.ok) {
-				repick.current = null;
-				refused(written.refusal);
-				return;
-			}
-			recordEntry({ kind: "patch", frame, patch: written.undo });
-			holdNext.current.add(frame);
-			if (written.uncaught === true) setSaid({ kind: "uncaught" });
-		},
-		[recordEntry],
-	);
-
-	const writePatch = useCallback(
-		(frame: string, fingerprint: string, ops: readonly HandOp[]) => {
-			void applyPatch(project, frame, fingerprint, ops).then((written) => {
-				// the gate had already said yes, so a no here is the file moving
-				// underneath a gesture that was accepted — a failure rather than a
-				// quiet answer, and the one kind of refusal that has to interrupt
-				settleWrite(frame, written, (refusal) => setSaid({ kind: "failed", frame, says: refusal.says }));
-			});
-		},
-		[project, settleWrite],
-	);
-
 	/** Delete one original authored unit through the source owner and its inverse receipt. */
 	const deleteElements = useCallback((): boolean => {
 		const pick = pickedRef.current[0];
@@ -2907,69 +2858,6 @@ export function ProjectCanvas({
 	);
 
 	/**
-	 * The measurement's own answer (#259): the size did not take, so put it back.
-	 *
-	 * The patch the write just recorded is run in reverse and taken off the
-	 * stack, because a gesture that did not land is not a future anybody has to
-	 * undo. Failures are not quiet — nothing else would say that a drag you
-	 * watched happen is not what the file now says.
-	 */
-	const rollBackResize = useCallback(
-		(frame: string, selector: string) => {
-			const entry = history.current.undo.at(-1);
-			if (entry === undefined || entry.kind !== "patch" || entry.frame !== frame) return;
-			updateHistory(withdraw(history.current));
-			repick.current = { frame, selector };
-			setSaid({ kind: "clamped", frame });
-			void revertPatch(project, entry.patch).then((next) => {
-				if (next === undefined) {
-					repick.current = null;
-					setSaid({ kind: "failed", frame });
-					return;
-				}
-				holdNext.current.add(frame);
-			});
-		},
-		[project, updateHistory],
-	);
-
-	/**
-	 * A ring gesture's write (#259), which is the rail's with a measurement
-	 * behind it.
-	 *
-	 * One patch however many tokens the drag moved — a corner writes width and
-	 * height and undoes once — and the claim it made is remembered until the
-	 * document it reloaded reports its own box. A turn makes no such claim and
-	 * passes none.
-	 */
-	const writeRing = useCallback(
-		(pick: PickedSelection, ops: readonly HandOp[], claim: Measure | null) => {
-			if (ops.length === 0 || writing.current) return;
-			setRefused(null);
-			writing.current = true;
-			measuring.current = null;
-			repick.current = { frame: pick.frame, selector: pick.selector };
-			void gatePatch(project, pick.frame, ops).then((asked) => {
-				if (asked === undefined) {
-					writing.current = false;
-					repick.current = null;
-					setSaid({ kind: "failed", frame: pick.frame });
-					return;
-				}
-				if (!asked.ok) {
-					writing.current = false;
-					repick.current = null;
-					showRefusal(pick.frame, pick.selector, asked.refusal);
-					return;
-				}
-				if (claim !== null) measuring.current = { frame: pick.frame, selector: pick.selector, claim };
-				writePatch(pick.frame, asked.fingerprint, ops);
-			});
-		},
-		[project, showRefusal, writePatch],
-	);
-
-	/**
 	 * The frame reporting how an edit ended.
 	 *
 	 * An edit that ends on the words it began with writes nothing: the lane
@@ -3144,6 +3032,88 @@ export function ProjectCanvas({
 	const finishRailText = useCallback(
 		(frame: string, read: SourceRead, text: string, commit: boolean) => {
 			finishRailSource(frame, read, { kind: "literal", text }, commit);
+		},
+		[finishRailSource],
+	);
+
+	/**
+	 * A ring gesture's write (#305), which is the rail's own.
+	 *
+	 * One source read is opened when the pointer goes down, every sample
+	 * previews against it in the running layout, and letting go completes it —
+	 * one save, one entry on the one history. The properties are fixed when the
+	 * read opens because the read is about exactly those fields; the values are
+	 * whatever the pointer last made.
+	 */
+	const ringWrite = useRef<{
+		frame: string;
+		abort: AbortController;
+		read: Promise<SourceRead | undefined>;
+		value: SourcePropertyGroupValue | undefined;
+		revision: number;
+		done: boolean;
+	} | null>(null);
+
+	const openRingWrite = useCallback(
+		(pick: PickedSelection, fields: readonly { property: string; scope: string }[]) => {
+			const abort = new AbortController();
+			const held: NonNullable<typeof ringWrite.current> = {
+				frame: pick.frame,
+				abort,
+				read: Promise.resolve(undefined),
+				value: undefined,
+				revision: 0,
+				done: false,
+			};
+			ringWrite.current = held;
+			held.read = beginRailText(
+				pick.frame,
+				pick.selector,
+				"className",
+				{ kind: "properties", target: { kind: "fields", fields } },
+				{
+					signal: abort.signal,
+					change: () => (held.value ? { kind: "properties", value: held.value } : undefined),
+				},
+			);
+		},
+		[beginRailText],
+	);
+
+	/** One sample of a live gesture, previewed in every use through the common owner. */
+	const sampleRingWrite = useCallback(
+		(value: SourcePropertyGroupValue) => {
+			const held = ringWrite.current;
+			if (held === null || held.done) return;
+			held.value = value;
+			const revision = ++held.revision;
+			void held.read.then(async (read) => {
+				if (!read || held.done || ringWrite.current !== held || held.revision !== revision) return;
+				const plan = await previewPropertySource(project, read, revision, value);
+				if (held.done || ringWrite.current !== held || held.revision !== revision) return;
+				if (plan?.ok) await sourceDelivery.previewProperty(held.frame, plan.preview);
+			});
+		},
+		[project, sourceDelivery],
+	);
+
+	/**
+	 * Where a ring gesture ends. A cancelled one retires its samples and puts
+	 * every preview it owns back; a late release finds nothing left to revive.
+	 */
+	const closeRingWrite = useCallback(
+		(commit: boolean) => {
+			const held = ringWrite.current;
+			if (held === null || held.done) return;
+			held.done = true;
+			ringWrite.current = null;
+			const value = held.value;
+			if (!commit || value === undefined) held.abort.abort();
+			void held.read.then((read) => {
+				if (!read) return;
+				const saving = commit && value !== undefined && !held.abort.signal.aborted;
+				finishRailSource(held.frame, read, saving ? { kind: "properties", value } : undefined, saving);
+			});
 		},
 		[finishRailSource],
 	);
@@ -3761,16 +3731,6 @@ export function ProjectCanvas({
 								const target = chain[chain.length - 1];
 								if (target === undefined || target.selector !== again.selector) return;
 								applyPick(message.frame, chain, target);
-								// measure after apply (#259): the document is back, so the
-								// size the drag wrote is now a box that can be read
-								const wanted = measuring.current;
-								measuring.current = null;
-								if (wanted === null || wanted.frame !== message.frame || wanted.selector !== again.selector) {
-									return;
-								}
-								if (!landed(wanted.claim, target.rect)) {
-									rollBackResize(wanted.frame, wanted.selector);
-								}
 							},
 						);
 					}
@@ -3833,6 +3793,12 @@ export function ProjectCanvas({
 					const waiter = pickWaiters.current.get(message.id);
 					pickWaiters.current.delete(message.id);
 					waiter?.(message.chain);
+					return;
+				}
+				case "sized": {
+					const waiter = sizingWaiters.current.get(message.id);
+					sizingWaiters.current.delete(message.id);
+					waiter?.(message.sizing);
 					return;
 				}
 				case "measured": {
@@ -4012,40 +3978,10 @@ export function ProjectCanvas({
 		askChain,
 		applyPick,
 		verifyReloadedIntent,
-		rollBackResize,
 		swapPicture,
 		cancelImage,
 		sourceDelivery.retainStructures,
 	]);
-
-	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
-	useEffect(() => {
-		const el = viewportRef.current;
-		if (el === null) return;
-		const onWheel = (event: WheelEvent) => {
-			// Leave the finder's native list scrolling alone before cancelling the wheel.
-			if (findingRef.current) return;
-			event.preventDefault();
-			stopAnimation();
-			setMenu(null);
-			const dx = wheelPixels(event.deltaX, event.deltaMode, el.clientHeight);
-			const dy = wheelPixels(event.deltaY, event.deltaMode, el.clientHeight);
-			if (event.ctrlKey || event.metaKey) {
-				const rect = el.getBoundingClientRect();
-				zoomAtPoint(
-					event.clientX - rect.left,
-					event.clientY - rect.top,
-					wheelZoomFactor(event.deltaY, event.deltaMode, el.clientHeight),
-				);
-			} else {
-				setCamera((c) =>
-					c === null ? c : event.shiftKey && dx === 0 ? { ...c, x: c.x - dy } : { ...c, x: c.x - dx, y: c.y - dy },
-				);
-			}
-		};
-		el.addEventListener("wheel", onWheel, { passive: false });
-		return () => el.removeEventListener("wheel", onWheel);
-	}, [stopAnimation, zoomAtPoint]);
 
 	// Camera motion is a React value for drawing only. The lifecycle reads its ref
 	// after this short quiet window, so frames mount where the camera stopped
@@ -4129,15 +4065,18 @@ export function ProjectCanvas({
 	/** What the ring draws while an element drag is live (#259). */
 	const showElementDrag = (active: Gesture): void => {
 		if (active.kind === "element-size") {
-			const { pick, sx, sy, live } = active;
+			const { pick, edge, live, modifiers } = active;
+			const { sx, sy } = edgeSigns(edge);
+			const moved = { x: sx !== 0 || modifiers.proportional, y: sy !== 0 || modifiers.proportional };
 			setElementDrag({
 				frame: pick.frame,
 				selector: pick.selector,
 				rect: draggedRect(pick.rect, live),
-				says: `${live.w} × ${live.h}`,
+				says: `${Math.round(live.w)} × ${Math.round(live.h)}`,
 				turning: false,
-				tokens: previewTokens(live, sx, sy),
-				box: live,
+				edge,
+				tokens: previewTokens({ w: Math.round(live.w), h: Math.round(live.h) }, moved.x ? 1 : 0, moved.y ? 1 : 0),
+				box: { w: Math.round(live.w), h: Math.round(live.h) },
 			});
 			return;
 		}
@@ -4149,6 +4088,7 @@ export function ProjectCanvas({
 				rect: pick.rect,
 				says: `${live}°`,
 				turning: true,
+				edge: null,
 				tokens: rotateTokens(live),
 				box: { w: pick.rect.w, h: pick.rect.h },
 			});
@@ -4307,6 +4247,9 @@ export function ProjectCanvas({
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
+		// a ring gesture's samples are retired and its previews put back; a
+		// release that arrives after this finds an idle gesture and no session
+		if (active.kind === "element-size" || active.kind === "element-turn") closeRingWrite(false);
 		dropResize();
 		setMarks(NO_MARKS);
 		setMarquee(null);
@@ -4326,7 +4269,50 @@ export function ProjectCanvas({
 				current.map((frame) => (frame.name === active.frame ? { ...frame, ...active.origin } : frame)),
 			);
 		}
-	}, [dropResize]);
+	}, [dropResize, closeRingWrite]);
+
+	// a window that loses focus mid-drag never sees the release: the gesture is
+	// cancelled where it stands rather than left holding a preview nobody owns
+	useEffect(() => {
+		const lost = () => {
+			const active = gesture.current;
+			if (active.kind === "element-size" || active.kind === "element-turn") cancelGesture();
+		};
+		window.addEventListener("blur", lost);
+		return () => window.removeEventListener("blur", lost);
+	}, [cancelGesture]);
+
+	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
+	useEffect(() => {
+		const el = viewportRef.current;
+		if (el === null) return;
+		const onWheel = (event: WheelEvent) => {
+			// Leave the finder's native list scrolling alone before cancelling the wheel.
+			if (findingRef.current) return;
+			// scrolling or zooming the canvas moves the box out from under a live
+			// ring drag, which is an interruption rather than a smaller drag
+			if (gesture.current.kind === "element-size" || gesture.current.kind === "element-turn") cancelGesture();
+			event.preventDefault();
+			stopAnimation();
+			setMenu(null);
+			const dx = wheelPixels(event.deltaX, event.deltaMode, el.clientHeight);
+			const dy = wheelPixels(event.deltaY, event.deltaMode, el.clientHeight);
+			if (event.ctrlKey || event.metaKey) {
+				const rect = el.getBoundingClientRect();
+				zoomAtPoint(
+					event.clientX - rect.left,
+					event.clientY - rect.top,
+					wheelZoomFactor(event.deltaY, event.deltaMode, el.clientHeight),
+				);
+			} else {
+				setCamera((c) =>
+					c === null ? c : event.shiftKey && dx === 0 ? { ...c, x: c.x - dy } : { ...c, x: c.x - dx, y: c.y - dy },
+				);
+			}
+		};
+		el.addEventListener("wheel", onWheel, { passive: false });
+		return () => el.removeEventListener("wheel", onWheel);
+	}, [stopAnimation, zoomAtPoint, cancelGesture]);
 
 	const originsOf = (names: readonly string[]): Map<string, Point> => {
 		const origins = new Map<string, Point>();
@@ -4409,27 +4395,21 @@ export function ProjectCanvas({
 					};
 					setResizeCursor(ROTATE_CURSOR);
 					showElementDrag(gesture.current);
+					openRingWrite(held, [{ property: "rotate", scope: "" }]);
 					return;
 				}
 			}
 			if (grab !== null && isHandle(grab)) {
 				// a handle only moves the axes the file leaves live, so a corner on
 				// an element a breakpoint pins the height of drags width alone
-				const grabbed = signsOf(grab);
+				const grabbed = edgeSigns(grab);
 				const live = ringRef.current.live;
-				const moves = { sx: live.w ? grabbed.sx : 0, sy: live.h ? grabbed.sy : 0 } as const;
-				if (moves.sx !== 0 || moves.sy !== 0) {
-					gesture.current = {
-						kind: "element-size",
-						pick: held,
-						sx: moves.sx,
-						sy: moves.sy,
-						start: { w: held.rect.w, h: held.rect.h },
-						from: p,
-						live: { w: Math.round(held.rect.w), h: Math.round(held.rect.h) },
-					};
+				if ((grabbed.sx !== 0 && live.w) || (grabbed.sy !== 0 && live.h)) {
+					beginElementResize(held, grab, p, {
+						center: event.altKey,
+						proportional: event.shiftKey,
+					});
 					setResizeCursor(HANDLE_CURSORS[grab]);
-					showElementDrag(gesture.current);
 					return;
 				}
 			}
@@ -4615,17 +4595,21 @@ export function ProjectCanvas({
 		// the element ring's drags: nothing is written until the pointer is up,
 		// so what moves here is the ring, the readout and the rail's fields
 		if (active.kind === "element-size") {
-			const live = draggedSize(
+			const dragged = resizedBox(
 				active.start,
-				active.sx,
-				active.sy,
+				active.edge,
 				(p.x - active.from.x) / cam.k,
 				(p.y - active.from.y) / cam.k,
+				active.modifiers,
+				active.limits,
 			);
-			if (live.w === active.live.w && live.h === active.live.h) return;
-			const next: Gesture = { ...active, live };
+			const live = { w: dragged.w, h: dragged.h };
+			const shift = { x: dragged.shiftX, y: dragged.shiftY };
+			if (live.w === active.live.w && live.h === active.live.h && shift.x === active.shift.x) return;
+			const next: Gesture = { ...active, live, shift };
 			gesture.current = next;
 			showElementDrag(next);
+			sampleElementResize(next);
 			return;
 		}
 
@@ -4636,6 +4620,7 @@ export function ProjectCanvas({
 			const next: Gesture = { ...active, live };
 			gesture.current = next;
 			showElementDrag(next);
+			sampleRingWrite({ kind: "fields", changes: [{ property: "rotate", scope: "", value: turnValue(live) }] });
 			return;
 		}
 
@@ -4784,36 +4769,91 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * The size a drag settled on, written as one patch (#259).
+	 * Where a size drag begins (#305): the facts only the document has, and the
+	 * one source read the whole gesture writes through.
 	 *
-	 * A drag that ended where it began writes nothing: the file already says
-	 * this and asking the lane about it is a round trip nobody needs. What is
-	 * written is the size the pointer stopped at, folded onto the scale where
-	 * it sits on a whole step and kept as pixels where it does not.
+	 * ⇧ and ⌥ are read here and nowhere else. The read is about exactly the
+	 * fields this gesture may write, and a modifier picked up half way through
+	 * would change that set — so the drag that opened without them keeps its
+	 * own promise, and the readout says which one it made.
 	 */
-	const commitElementSize = (active: Extract<Gesture, { kind: "element-size" }>) => {
-		const { pick, sx, sy, live, start } = active;
-		if (live.w === Math.round(start.w) && live.h === Math.round(start.h)) return;
-		const stamp = stampOf(pick);
-		if (typeof stamp !== "string") {
-			showRefusal(pick.frame, pick.selector, stamp);
-			return;
-		}
-		writeRing(pick, sizeOps(stamp, sizeTokens(live, sx, sy, ringRef.current.step)), { intent: live, sx, sy });
+	const beginElementResize = (pick: PickedSelection, edge: Edge, from: Point, asked: ResizeModifiers) => {
+		const { sx, sy } = edgeSigns(edge);
+		gesture.current = {
+			kind: "element-size",
+			pick,
+			edge,
+			modifiers: { center: false, proportional: asked.proportional },
+			properties: [],
+			start: { w: pick.rect.w, h: pick.rect.h },
+			extra: { w: 0, h: 0 },
+			offset: { left: 0, top: 0 },
+			limits: NO_LIMITS,
+			from,
+			live: { w: pick.rect.w, h: pick.rect.h },
+			shift: { x: 0, y: 0 },
+		};
+		showElementDrag(gesture.current);
+		askSizing(pick.frame, pick.selector, (sizing) => {
+			const active = gesture.current;
+			if (active.kind !== "element-size" || active.pick.selector !== pick.selector || sizing === null) return;
+			const live = ringRef.current.live;
+			const center = asked.center && sizing.free;
+			const properties = [
+				...(sx !== 0 || asked.proportional ? (live.w ? ["width"] : []) : []),
+				...(sy !== 0 || asked.proportional ? (live.h ? ["height"] : []) : []),
+				// an already free element's own placement, and only where it has one
+				...(sizing.free && sizing.offset.left !== null && (center || sx === -1) ? ["left"] : []),
+				...(sizing.free && sizing.offset.top !== null && (center || sy === -1) ? ["top"] : []),
+			];
+			if (properties.length === 0) return;
+			gesture.current = {
+				...active,
+				modifiers: { center, proportional: asked.proportional },
+				properties,
+				start: sizing.box,
+				extra: sizing.extra,
+				offset: { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 },
+				limits: sizing.limits,
+			};
+			openRingWrite(
+				pick,
+				properties.map((property) => ({ property, scope: "" })),
+			);
+		});
 	};
 
-	/** The angle a turn settled on. A turn back to rest takes the token away. */
+	/** One sample of a live size drag, in the element's own authored dimensions. */
+	const sampleElementResize = (active: Extract<Gesture, { kind: "element-size" }>) => {
+		if (active.properties.length === 0) return;
+		sampleRingWrite({
+			kind: "fields",
+			changes: resizeFields(
+				active.properties,
+				{ w: active.live.w - active.extra.w, h: active.live.h - active.extra.h },
+				active.shift,
+				active.offset,
+				ringRef.current.step,
+			).map((change) => ({ ...change, scope: "" })),
+		});
+	};
+
+	/**
+	 * The size a drag settled on, saved once (#305).
+	 *
+	 * A drag that ended where it began writes nothing: the source already says
+	 * this and completing it would be a save nobody asked for.
+	 */
+	const commitElementSize = (active: Extract<Gesture, { kind: "element-size" }>) => {
+		const moved =
+			Math.round(active.live.w) !== Math.round(active.start.w) ||
+			Math.round(active.live.h) !== Math.round(active.start.h);
+		closeRingWrite(moved);
+	};
+
+	/** The angle a turn settled on. A turn back to rest takes the family away. */
 	const commitElementTurn = (active: Extract<Gesture, { kind: "element-turn" }>) => {
-		const { pick, live, base } = active;
-		if (live === base) return;
-		const stamp = stampOf(pick);
-		if (typeof stamp !== "string") {
-			showRefusal(pick.frame, pick.selector, stamp);
-			return;
-		}
-		// a turn changes no layout box, so there is nothing for the measurement
-		// to compare: the ring is drawn around what the document reports either way
-		writeRing(pick, rotateOps(stamp, live), null);
+		closeRingWrite(active.live !== active.base);
 	};
 
 	/**
@@ -5394,6 +5434,7 @@ export function ProjectCanvas({
 					selector: ringPick.selector,
 					rect: ringDrag?.rect ?? ringPick.rect,
 					live: ring.live,
+					active: ringDrag?.edge ?? null,
 					says: ringDrag?.says ?? null,
 					turning: ringDrag?.turning ?? false,
 				};
@@ -5449,6 +5490,10 @@ export function ProjectCanvas({
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerUp}
 				onPointerCancel={cancelGesture}
+				onLostPointerCapture={() => {
+					const active = gesture.current;
+					if (active.kind === "element-size" || active.kind === "element-turn") cancelGesture();
+				}}
 				onPointerLeave={() => {
 					setPreview(null);
 					hideFrameHover();

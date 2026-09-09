@@ -1069,6 +1069,41 @@ const canvasShimJs = `(() => {
 		return null;
 	}
 
+	// What a resize gesture may write (#305): the element's own border box, the
+	// engine's limits on it, the padding and border a content box adds back, and
+	// the placement it already has. Only the document knows any of it.
+	function elementSizing(selector) {
+		const el = elementFor(selector);
+		if (!el) return null;
+		const style = getComputedStyle(el);
+		const px = (name) => parseFloat(style.getPropertyValue(name)) || 0;
+		const box = el.getBoundingClientRect();
+		const border = style.boxSizing === "border-box";
+		const extraW = border ? 0 : px("padding-left") + px("padding-right") + px("border-left-width") + px("border-right-width");
+		const extraH = border ? 0 : px("padding-top") + px("padding-bottom") + px("border-top-width") + px("border-bottom-width");
+		const limit = (name, extra, fallback) => {
+			const value = style.getPropertyValue(name);
+			return value.endsWith("px") ? parseFloat(value) + extra : fallback;
+		};
+		const offset = (name) => {
+			const value = parseFloat(style.getPropertyValue(name));
+			return Number.isFinite(value) ? value : null;
+		};
+		const free = style.position === "absolute" || style.position === "fixed";
+		return {
+			box: { w: box.width, h: box.height },
+			extra: { w: extraW, h: extraH },
+			free,
+			offset: { left: free ? offset("left") : null, top: free ? offset("top") : null },
+			limits: {
+				minW: limit("min-width", extraW, extraW),
+				minH: limit("min-height", extraH, extraH),
+				maxW: limit("max-width", extraW, Infinity),
+				maxH: limit("max-height", extraH, Infinity),
+			},
+		};
+	}
+
 	function spacingReading(selector, x, y) {
 		const anchor = elementFor(selector);
 		if (!anchor) return null;
@@ -1505,6 +1540,13 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			let chain = [];
 			try { chain = kinChain(m.selector, m.step); } catch {}
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
+			return;
+		}
+		if (m.spool === "sizing") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let sizing = null;
+			try { sizing = elementSizing(m.selector); } catch {}
+			parent.postMessage({ spool: "sized", frame, id: m.id, sizing }, "*");
 			return;
 		}
 		if (m.spool === "measure") {

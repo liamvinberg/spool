@@ -3,7 +3,7 @@ import { screenConflict } from "../../daemon/class-write";
 import { lengthOf, lengthPx, scaleValue } from "../../properties/families";
 import { stepOf } from "../../properties/theme";
 import type { SourcePropertyValue } from "../../source-property";
-import type { CompiledTheme, HandOp, RungRead } from "../api";
+import type { CompiledTheme, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { BASE, scopedClass } from "./properties-scope";
 
@@ -34,28 +34,9 @@ export interface LiveHandles {
 
 export const NO_HANDLES: LiveHandles = { w: false, h: false, rotate: false };
 
-/** The smallest an element may be dragged to, in the document's own pixels. */
-export const MIN_ELEMENT_PX = 8;
-
-/** How far the box the document came back with may miss what was written. */
-export const SIZE_SLACK_PX = 1.5;
-
 export interface Size {
 	w: number;
 	h: number;
-}
-
-/**
- * The claim a size drag makes, which is what the box that comes back is read
- * against: the size it wrote, and which axes it wrote at all.
- *
- * One thing rather than three, because the three are never apart — a turn
- * makes no claim of this kind and simply has none.
- */
-export interface Measure {
-	intent: Size;
-	sx: Sign;
-	sy: Sign;
 }
 
 /**
@@ -89,22 +70,6 @@ export function rotationOf(className: string): number {
 	if (worn === null) return 0;
 	const deg = lengthPx("deg", worn.value);
 	return deg === null ? 0 : worn.negative ? -deg : deg;
-}
-
-/**
- * The box a size drag is at, in the document's own pixels.
- *
- * Whole pixels on both axes, dragged or not: the box the drag started from is
- * a `getBoundingClientRect` and comes fractional, and a readout that says
- * `220.53125 × 48` is one nobody can act on. Rounding the axis nobody touched
- * is also what lets a drag back to where it began be recognised as one.
- */
-export function draggedSize(start: Size, sx: Sign, sy: Sign, dx: number, dy: number): Size {
-	const held = { w: Math.round(start.w), h: Math.round(start.h) };
-	return {
-		w: sx === 0 ? held.w : Math.max(MIN_ELEMENT_PX, Math.round(start.w + sx * dx)),
-		h: sy === 0 ? held.h : Math.max(MIN_ELEMENT_PX, Math.round(start.h + sy * dy)),
-	};
 }
 
 /**
@@ -147,58 +112,9 @@ export function previewTokens(size: Size, sx: Sign, sy: Sign): string[] {
 	return tokens;
 }
 
-/**
- * The tokens a size drag writes when it is let go.
- *
- * Scale or arbitrary is policy rather than capability: v4 bare steps take
- * quarter multiples, so on a 4px step every whole pixel is expressible as a
- * bare class. It is written as pixels off integer steps anyway — a whole step
- * gets the bare class because it is byte-identical to what the frame's author
- * would have written, and anything else stays `w-[347px]` because the drag
- * meant absolute pixels and a bare class silently rescales if `--spacing`
- * moves. The step comes from the compiled stylesheet, never from an assumption.
- */
-export function sizeTokens(size: Size, sx: Sign, sy: Sign, step: number): string[] {
-	const tokens: string[] = [];
-	if (sx !== 0) tokens.push(`w-${scaleValue(size.w, step)}`);
-	if (sy !== 0) tokens.push(`h-${scaleValue(size.h, step)}`);
-	return tokens;
-}
-
 /** The token a rotate drag is showing, or nothing where it is back at rest. */
 export function rotateTokens(deg: number): string[] {
 	return deg === 0 ? [] : [`${deg < 0 ? "-" : ""}rotate-${Math.abs(deg)}`];
-}
-
-/** Every token as a `set-class` op at the base scope, which is one patch. */
-export function sizeOps(source: string, tokens: readonly string[]): HandOp[] {
-	return tokens.map((token) => ({ kind: "set-class", source, token, scope: "" }));
-}
-
-/** A rotation back at rest takes the family away rather than writing a zero. */
-export function rotateOps(source: string, deg: number): HandOp[] {
-	const tokens = rotateTokens(deg);
-	const written = tokens[0];
-	return written === undefined
-		? [{ kind: "set-class", source, token: "rotate-0", scope: "", remove: true }]
-		: [{ kind: "set-class", source, token: written, scope: "" }];
-}
-
-/**
- * Whether the box the reloaded document came back with is the size that was
- * written (#259's measure after apply).
- *
- * Load-bearing rather than paranoia: utilities land in `@layer utilities`, so
- * an unlayered rule in a project's `tokens.css` beats the written class
- * silently, and layout — `flex-basis`, grid tracks, min and max clamps — can
- * ignore or clamp what the class states. Only the dragged axes are asked
- * about: the other one was never written and whatever it does is the layout's
- * own business.
- */
-export function landed(claim: Measure, measured: Size): boolean {
-	if (claim.sx !== 0 && Math.abs(measured.w - claim.intent.w) > SIZE_SLACK_PX) return false;
-	if (claim.sy !== 0 && Math.abs(measured.h - claim.intent.h) > SIZE_SLACK_PX) return false;
-	return true;
 }
 
 /**
@@ -301,6 +217,14 @@ export interface SizeLimits {
 	maxH: number;
 }
 
+/** What an unmeasured box is held to: nothing, until the document says otherwise. */
+export const NO_LIMITS: SizeLimits = {
+	minW: 0,
+	maxW: Number.POSITIVE_INFINITY,
+	minH: 0,
+	maxH: Number.POSITIVE_INFINITY,
+};
+
 /** The modifiers a resize gesture opens with, which fix what it may write. */
 export interface ResizeModifiers {
 	/** ⌥ on an already free-positioned element: grow from the centre. */
@@ -374,6 +298,12 @@ export function resizedBox(
 				? originalHeight - h
 				: 0;
 	return { w, h, shiftX, shiftY };
+}
+
+/** What a turn writes: the signed token it is at, or the family taken away at rest. */
+export function turnValue(deg: number): SourcePropertyValue {
+	const [token] = rotateTokens(deg);
+	return token === undefined ? { kind: "remove" } : { kind: "binding", tokens: [token] };
 }
 
 /** The token family each property a resize may write is spelled in. */
