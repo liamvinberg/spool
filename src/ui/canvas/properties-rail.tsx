@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
+import { anatomyOf, splitClass } from "../../daemon/class-write";
 import type { RowElement } from "../../properties/rows";
 import type { SourceDescription, SourceOperation, SourceRead } from "../../source-edit";
 import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
@@ -94,13 +94,11 @@ export type Held =
  * A gesture in flight on the canvas, as the rail reads it (#259).
  *
  * A resize writes nothing until it is let go, so the fields would sit still
- * through the whole drag if they read only the file. These are the tokens the
- * drag is making and the box it is making them in: every row reads the literal
- * it will land, so the size fields tick and the source line shows what is
- * about to be written.
+ * through the whole drag if they read only the file. The source owner supplies
+ * the proposed class literal, while the canvas supplies the measured box.
  */
 export interface RailPreview {
-	tokens: readonly string[];
+	className: string | undefined;
 	box: { w: number; h: number };
 }
 
@@ -297,19 +295,7 @@ function Body({
 	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const filed = read?.className ?? "";
-	/**
-	 * The literal the rail reads: the file's, with a drag in flight folded in.
-	 *
-	 * A resize writes nothing until it is let go (#259), so a rail reading only
-	 * the file would sit still through the whole gesture. Folding the drag's own
-	 * tokens through the same write-back the lane runs makes every row read what
-	 * is about to be written — the size fields tick, and the source line shows
-	 * the token that will land rather than the one that is there.
-	 */
-	const literal =
-		preview === null
-			? filed
-			: preview.tokens.reduce((held, token) => writeClass(held === "" ? null : held, { token, scope: "" }), filed);
+	const literal = preview?.className ?? filed;
 	const identity = element === null ? "" : `${element.frame} ${element.selector}`;
 	const active = acts.ownership?.active;
 	const purpose =

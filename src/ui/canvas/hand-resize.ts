@@ -112,20 +112,6 @@ export function draggedAngle(base: number, from: number, to: number, snap: boole
 	return ((((whole + 180) % 360) + 360) % 360) - 180;
 }
 
-/**
- * The tokens a size drag is showing mid-drag: absolute pixels, always.
- *
- * The rail reads these while the pointer is down, so the field ticks in the
- * numbers the drag is actually making. Letting go rounds each axis onto the
- * scale, which is what `sizeTokens` writes.
- */
-export function previewTokens(size: Size, sx: Sign, sy: Sign): string[] {
-	const tokens: string[] = [];
-	if (sx !== 0) tokens.push(`w-[${size.w}px]`);
-	if (sy !== 0) tokens.push(`h-[${size.h}px]`);
-	return tokens;
-}
-
 /** The token a rotate drag is showing, or nothing where it is back at rest. */
 export function rotateTokens(deg: number): string[] {
 	return deg === 0 ? [] : [`${deg < 0 ? "-" : ""}rotate-${Math.abs(deg)}`];

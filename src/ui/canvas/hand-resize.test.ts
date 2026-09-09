@@ -6,7 +6,6 @@ import {
 	draggedRect,
 	drawnHandles,
 	handlesFor,
-	previewTokens,
 	resizedBox,
 	resizeFields,
 	rotateTokens,
@@ -110,11 +109,6 @@ describe("the numbers a drag makes", () => {
 });
 
 describe("what a drag writes", () => {
-	it("shows absolute pixels while the pointer is down", () => {
-		expect(previewTokens({ w: 247, h: 120 }, 1, 1)).toEqual(["w-[247px]", "h-[120px]"]);
-		expect(previewTokens({ w: 247, h: 120 }, 1, 0)).toEqual(["w-[247px]"]);
-	});
-
 	it("writes a turn as one signed token, and takes the family away at rest", () => {
 		expect(rotateTokens(12)).toEqual(["rotate-12"]);
 		expect(rotateTokens(-45)).toEqual(["-rotate-45"]);

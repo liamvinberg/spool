@@ -40,12 +40,10 @@ export const GONE: Refusal = { code: "stale-stamp", says: "the element is no lon
 export interface HandEdit {
 	frame: string;
 	selector: string;
-	/** the stamp the `set-text` op will carry */
+	/** the source stamp used to find the original occurrence */
 	source: string;
 	/** the ask the frame answers; a reply carrying another is a dead edit */
 	id: number;
-	/** the hash of the file the gate answered against */
-	fingerprint: string;
 	read?: SourceRead;
 	intent?: SourceIntent;
 	phase: "asking" | "open";

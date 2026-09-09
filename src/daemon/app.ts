@@ -2183,12 +2183,10 @@ export function createDaemonApp({
 			},
 		)
 		/*
-		 * The write lane (#253). Hands write frame source only as span patches:
-		 * one typed op, parsed fresh and gated, the exact characters replaced,
-		 * every other byte left alone. A refusal is the answer rather than an
-		 * error — the gesture does not apply, nothing is forwarded to an agent,
-		 * and the surface says why. The watcher announces the write like any
-		 * other edit, so the document reloads down the one path it always has.
+		 * The source owner captures an original read, plans its previews and
+		 * completes or reverses that edit. Saved source reaches running frames
+		 * through retained publications, with delivery reported separately.
+		 * A refusal leaves source untouched and gives the surface its reason.
 		 */
 		.post(
 			"/api/p/:project/source",

@@ -123,7 +123,6 @@ import {
 	edgeSigns,
 	NO_HANDLES,
 	placementShift,
-	previewTokens,
 	quantizerFor,
 	RESIZE_PROPERTIES,
 	type ResizeMeasurement,
@@ -131,7 +130,6 @@ import {
 	type ResizeProperty,
 	resizedBox,
 	resizeFields,
-	rotateTokens,
 	type Size,
 	type SizeWrite,
 	snapTrial,
@@ -499,9 +497,9 @@ export function ProjectCanvas({
 		turning: boolean;
 		/** the target the pointer is holding, so the ring keeps drawing it */
 		edge: Edge | null;
-		tokens: readonly string[];
 		box: Size;
 	} | null>(null);
+	const [ringClassPreview, setRingClassPreview] = useState<string>();
 	/**
 	 * The alignments a snapped resize is a true statement about (#311), in the
 	 * frame document's own coordinates. Drawn only after the layout the
@@ -2681,10 +2679,8 @@ export function ProjectCanvas({
 	 * The text gesture (#255): a second click on an element's own words opens
 	 * an edit on the element itself.
 	 *
-	 * The gate is asked first and its no is the whole of what happens — the
-	 * element stays what it was and the reason sits under it. Its yes carries
-	 * the fingerprint of the file it answered against, which is what the write
-	 * at the end of the edit is checked with.
+	 * The source owner captures the original before the editor opens. Completion
+	 * is checked against that read; a refusal leaves the element unchanged.
 	 */
 	const beginTextEdit = useCallback(
 		(pick: PickedSelection, local: Point) => {
@@ -2701,7 +2697,6 @@ export function ProjectCanvas({
 				selector: pick.selector,
 				source: stamp,
 				id,
-				fingerprint: "",
 				phase: "asking",
 				start: "",
 				intent,
@@ -3212,6 +3207,7 @@ export function ProjectCanvas({
 
 	const openRingWrite = useCallback(
 		(pick: PickedSelection, fields: readonly { property: string; scope: string }[]) => {
+			setRingClassPreview(undefined);
 			const abort = new AbortController();
 			const held: NonNullable<typeof ringWrite.current> = {
 				frame: pick.frame,
@@ -3252,7 +3248,10 @@ export function ProjectCanvas({
 				if (!read || held.done || ringWrite.current !== held || held.revision !== revision) return;
 				const plan = await previewPropertySource(project, read, revision, value);
 				if (held.done || ringWrite.current !== held || held.revision !== revision) return;
-				if (plan?.ok) await sourceDelivery.previewProperty(held.frame, plan.preview);
+				if (plan?.ok) {
+					setRingClassPreview(read.field === "className" ? plan.preview.value : undefined);
+					await sourceDelivery.previewProperty(held.frame, plan.preview);
+				}
 			});
 		},
 		[project, sourceDelivery],
@@ -3268,6 +3267,7 @@ export function ProjectCanvas({
 			if (held === null || held.done) return;
 			held.done = true;
 			ringWrite.current = null;
+			setRingClassPreview(undefined);
 			const value = held.value;
 			if (!commit || value === undefined) held.abort.abort();
 			void held.read.then((read) => {
@@ -4285,11 +4285,9 @@ export function ProjectCanvas({
 		if (active.kind === "element-size") {
 			const { pick, edge, measured } = active;
 			if (measured === null) return;
-			const { sx, sy } = edgeSigns(edge);
 			// whole pixels once: the readout, the ring and the rail's fields are all
 			// about the same box, and a rounding each is three chances to disagree
 			const whole = { w: Math.round(measured.live.w), h: Math.round(measured.live.h) };
-			const both = measured.modifiers.proportional;
 			setElementDrag({
 				frame: pick.frame,
 				selector: pick.selector,
@@ -4297,7 +4295,6 @@ export function ProjectCanvas({
 				says: `${whole.w} × ${whole.h}`,
 				turning: false,
 				edge,
-				tokens: previewTokens(whole, sx !== 0 || both ? 1 : 0, sy !== 0 || both ? 1 : 0),
 				box: whole,
 			});
 			return;
@@ -4311,7 +4308,6 @@ export function ProjectCanvas({
 				says: `${live}°`,
 				turning: true,
 				edge: null,
-				tokens: rotateTokens(live),
 				box: { w: pick.rect.w, h: pick.rect.h },
 			});
 		}
@@ -6396,7 +6392,7 @@ export function ProjectCanvas({
 						revision={sourceRevision + (railFrame === null ? 0 : (docNonces[railFrame] ?? 0))}
 						width={width}
 						onCollapse={shut}
-						preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
+						preview={elementDrag === null ? null : { className: ringClassPreview, box: elementDrag.box }}
 						acts={{
 							onAsk: () => askAgent(),
 							ownership: {

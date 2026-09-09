@@ -79,7 +79,7 @@ it("drags the corner and saves both axes as one source operation", async () => {
 	// the readout rides beside the ring, the matching rail field ticks in the
 	// size the drag is making, and the source is left exactly as it was
 	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("304 × 164");
-	expect(host.querySelector('[data-properties-row="width"] .type-value')?.textContent).toBe("[304px]");
+	expect(host.querySelector('[data-properties-row="width"] .type-value')?.textContent).toBe("76");
 	expect(sourceCalls("commit")).toHaveLength(0);
 	// every sample previews in the running layout through the common owner
 	expect(sourceCalls("preview").length).toBeGreaterThan(0);
@@ -654,7 +654,8 @@ function stubCanvasApis(): void {
 						generation: body.generation,
 						original: ORIGINAL,
 						source: STAMP,
-						role: "class-cell",
+						role: "literal-attribute",
+						field: "className",
 						value: "p-4",
 					} as unknown as SourceRead;
 					return Response.json({ ok: true, read: sourceRead });
@@ -669,7 +670,14 @@ function stubCanvasApis(): void {
 						if (field.property === "width") previewed = tokenPx(field.value.tokens?.[0] ?? "");
 					return Response.json({
 						ok: true,
-						preview: { generation: body.generation, revision: body.revision ?? 1, value: "", frames: [] },
+						preview: {
+							generation: body.generation,
+							revision: body.revision ?? 1,
+							value: (change.change?.value?.changes ?? [])
+								.flatMap((field) => field.value.tokens ?? [])
+								.join(" "),
+							frames: [],
+						},
 					});
 				}
 				if (body.action === "commit" || body.action === "inverse")
