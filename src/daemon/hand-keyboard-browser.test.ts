@@ -96,6 +96,36 @@ it("moves one keyed sibling past the next, keeping each item's own state", { tim
 	expect(await sibling.evaluate((element) => Reflect.get(window, "survivor") === element)).toBe(true);
 });
 
+it("moves the shared definition's own children, in every use of it", { timeout: 120_000 }, async () => {
+	const owner = "shared/list.tsx";
+	const list = `${COUNTER}export function List(){return <main style={{padding:40,display:'flex',gap:8}}>${A}${B}</main>}`;
+	const f = await originCanvas(
+		{ [owner]: list },
+		'import {List} from "shared/list";export default function Frame(){return <List/>}',
+		'[data-name="A"]',
+		true,
+	);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	await expect.poll(() => order(second)).toEqual(["A", "B"]);
+
+	await f.select();
+	const committed = reply(f, "commit");
+	await f.page.keyboard.press("ArrowRight");
+	await saved(committed);
+
+	// one definition, two uses: the move is disclosed and verified in each
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(list.replace(`${A}${B}`, `${B}${A}`));
+	await expect.poll(() => order(f.frame)).toEqual(["B", "A"]);
+	await expect.poll(() => order(second)).toEqual(["B", "A"]);
+	await f.settled();
+	const settled = (await outcomes(f)).at(-1);
+	expect(
+		settled?.uses?.map((use) => use.rendered),
+		JSON.stringify(settled),
+	).toEqual(["verified", "verified"]);
+	expect(f.writes).toEqual(["commit"]);
+});
+
 it("counts a held arrow as one move, one save and one step back", { timeout: 120_000 }, async () => {
 	const source = row(A, `${B}<Counter key="c" name="C"/>`);
 	const f = await originCanvas({}, source, '[data-name="A"]');
