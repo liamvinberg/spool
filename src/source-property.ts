@@ -58,7 +58,7 @@ export interface SourcePropertyReading {
 	 * `mixed` is a reading that cannot attribute them to one source; it claims no
 	 * value, and a write against it refuses with the reason before saving.
 	 */
-	source: "class" | "style" | "mixed";
+	source: "class" | "style" | "declaration" | "mixed";
 	/** One compiler-proven custom declaration, preserving its authored unit. */
 	authored?: string;
 	binding:

@@ -144,3 +144,60 @@ export function planDeclarationLiteral(source: string, effect: SourcePropertyEff
 		throw new Error("this value is not one authored declaration value");
 	return [{ start: held.start, end: held.end, text }];
 }
+
+/** The layers the compiler declares for itself; a project's own layer is not one of them. */
+const COMPILER_LAYERS = ["theme", "base", "components", "utilities", "properties"];
+
+export type PropertySource =
+	| { kind: "class" }
+	| { kind: "style"; members: readonly string[] }
+	| { kind: "declaration"; effects: readonly SourcePropertyEffect[] };
+
+/**
+ * Which authored source declares the winning effect for every selected root.
+ *
+ * The order is the cascade this element actually runs under: an important
+ * utility, then an important project declaration, then the element's own
+ * member, then a project declaration, then an ordinary utility. Within one tier
+ * the compiler's own order decides, which is the order the effects arrive in.
+ *
+ * A competitor whose order this reader cannot establish — a project cascade
+ * layer, a container query, a scope — refuses rather than being stepped over.
+ */
+export function propertySourceOwner(
+	roots: ReadonlySet<string>,
+	classEffects: readonly SourcePropertyEffect[],
+	styleEffects: readonly SourcePropertyEffect[],
+	certificate: { effects: readonly SourcePropertyEffect[] },
+	environment: SourcePropertyEnvironment,
+): PropertySource {
+	const covers = (effect: SourcePropertyEffect, root: string) =>
+		propertyKeys(effect.property, environment).includes(root);
+	const winners = new Map<string, SourcePropertyEffect | undefined>();
+	for (const root of roots) {
+		for (const effect of certificate.effects) {
+			if (effect.owner !== null || !covers(effect, root) || admissible(effect)) continue;
+			const layers = effect.path.filter((part) => part.startsWith("@layer ")).map((part) => part.slice(7).trim());
+			if (layers.length && layers.every((name) => COMPILER_LAYERS.includes(name.split(".")[0]!))) continue;
+			throw new Error("this property has a declaration whose cascade order is not established");
+		}
+		const authored = certificate.effects.filter((effect) => admissible(effect) && covers(effect, root));
+		const tiers = [
+			classEffects.filter((effect) => effect.important && covers(effect, root)),
+			authored.filter((effect) => effect.important),
+			styleEffects.filter((effect) => covers(effect, root)),
+			authored.filter((effect) => !effect.important),
+			classEffects.filter((effect) => !effect.important && covers(effect, root)),
+		];
+		winners.set(root, tiers.find((tier) => tier.length > 0)?.at(-1));
+	}
+	const held = [...winners.values()];
+	const inline = held.filter((effect) => effect && styleEffects.includes(effect));
+	const declared = held.filter((effect) => effect && effect.owner === null);
+	if (inline.length === 0 && declared.length === 0) return { kind: "class" };
+	if (inline.length + declared.length !== held.length || (inline.length > 0 && declared.length > 0))
+		throw new Error("this property's declarations are owned by different sources");
+	return inline.length
+		? { kind: "style", members: [...new Set(inline.map((effect) => effect!.owner!))] }
+		: { kind: "declaration", effects: [...new Set(declared as SourcePropertyEffect[])] };
+}

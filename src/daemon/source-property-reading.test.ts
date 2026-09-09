@@ -156,3 +156,33 @@ it("reports the scope's own written value apart from what the viewport is applyi
 	});
 	expect(at("")).toMatchObject({ tokens: ["opacity-75"], native: "0.75" });
 });
+
+async function authoredReading(literal: string, css: string, property: string, value: string) {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", `@theme {}\n${css}`);
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const certificate = await compilePropertySource(root, new Map([[file, readInput(file)]]), literal);
+	return propertyReading(
+		certificate,
+		{ kind: "property", property, scope: "" },
+		{ direction: "ltr", writingMode: "horizontal-tb" },
+		{ property, value },
+	);
+}
+
+it("reads the project's own declaration as the source, over the utility it outranks", async () => {
+	expect(await authoredReading("p-6", ".card { padding: 12px }", "padding", "12px")).toEqual({
+		tokens: [],
+		source: "declaration",
+		binding: { kind: "custom" },
+		authored: "12px",
+		native: "12px",
+	});
+});
+
+it("leaves the property to the utility when an important utility outranks the declaration", async () => {
+	expect(await authoredReading("p-6!", ".card { padding: 12px }", "padding", "24px")).toMatchObject({
+		source: "class",
+		tokens: ["p-6!"],
+	});
+});

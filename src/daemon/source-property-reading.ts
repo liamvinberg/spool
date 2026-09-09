@@ -1,8 +1,9 @@
 import type { SourceOperation } from "../source-edit";
 import type { SourcePropertyEnvironment, SourcePropertyNative, SourcePropertyReading } from "../source-property";
 import type { PropertyCertificate } from "./source-property-compile";
+import { type PropertySource, propertySourceOwner } from "./source-property-declaration";
 import { propertyInputs, propertyKeys, readPropertyEffects } from "./source-property-effects";
-import { type StyleMember, styleMemberEffects, stylePropertyOwner } from "./source-property-style";
+import { type StyleMember, styleMemberEffects } from "./source-property-style";
 
 /** Binding identity comes from the captured compiler, never equality with native pixels. */
 export function propertyReading(
@@ -22,17 +23,27 @@ export function propertyReading(
 	// A scope is a condition on a rule, and an inline member carries none, so a
 	// scoped row reads its class literal even where a member also declares it.
 	const inline = style && operation.scope === "" ? styleMemberEffects(style) : [];
-	let owner: "class" | "style" | "mixed" = "class";
-	if (inline.length)
+	let held: PropertySource | undefined;
+	if (operation.scope === "")
 		try {
-			owner = stylePropertyOwner(roots, effects, inline, environment).kind;
+			held = propertySourceOwner(roots, effects, inline, certificate, environment);
 		} catch {
-			// Two sources over one control: the reading says so rather than showing
+			// Sources this reading cannot tell apart: it says so rather than showing
 			// either one's value. The write against it refuses with the reason.
-			owner = "mixed";
+			return { tokens: [], source: "mixed", binding: { kind: "mixed" }, ...shown };
 		}
-	if (owner === "mixed") return { tokens: [], source: "mixed", binding: { kind: "mixed" }, ...shown };
-	if (owner === "style") {
+	if (held?.kind === "declaration") {
+		const values = [...new Set(held.effects.map((effect) => effect.value))];
+		const authored = values.length === 1 && !/\s/.test(values[0]!) ? values[0] : undefined;
+		return {
+			tokens: [],
+			source: "declaration",
+			binding: authored === undefined ? { kind: "mixed" } : { kind: "custom" },
+			...(authored === undefined ? {} : { authored }),
+			...shown,
+		};
+	}
+	if (held?.kind === "style") {
 		const values = [
 			...new Set(
 				[...roots].map((root) => {

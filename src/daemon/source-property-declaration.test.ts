@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { SourcePropertyEffect } from "../source-property";
-import { authoredCandidates, locateDeclaration, planDeclarationLiteral } from "./source-property-declaration";
+import {
+	authoredCandidates,
+	locateDeclaration,
+	planDeclarationLiteral,
+	propertySourceOwner,
+} from "./source-property-declaration";
 
 const css = `/* project rules */
 .card {
@@ -76,5 +81,72 @@ describe("writing one authored declaration", () => {
 		let text = css;
 		for (const patch of patches) text = text.slice(0, patch.start) + patch.text + text.slice(patch.end);
 		expect(text).toBe(css.replace("padding: 12px", "padding: 20px"));
+	});
+});
+
+describe("which source owns the winning effect", () => {
+	const ltr = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const utility = (property: string, value: string, important = false): SourcePropertyEffect => ({
+		owner: important ? "p-6!" : "p-6",
+		path: ["@layer utilities", "$"],
+		property,
+		value,
+		important,
+	});
+	const member: SourcePropertyEffect = {
+		owner: "padding",
+		path: [],
+		property: "padding",
+		value: "40px",
+		important: false,
+	};
+	const authored = effect([".card"], "padding", "12px");
+	const roots = new Set(["padding-left"]);
+
+	it("gives an unlayered project declaration the property an ordinary utility also sets", () => {
+		expect(
+			propertySourceOwner(
+				roots,
+				[utility("padding", "1.5rem")],
+				[],
+				{ effects: [utility("padding", "1.5rem"), authored] },
+				ltr,
+			),
+		).toEqual({ kind: "declaration", effects: [authored] });
+	});
+
+	it("leaves the element's own member above an ordinary project declaration", () => {
+		expect(propertySourceOwner(roots, [], [member], { effects: [authored] }, ltr)).toEqual({
+			kind: "style",
+			members: ["padding"],
+		});
+	});
+
+	it("leaves an important project declaration above the element's own member", () => {
+		const strong = effect([".card"], "padding", "12px", true);
+		expect(propertySourceOwner(roots, [], [member], { effects: [strong] }, ltr)).toEqual({
+			kind: "declaration",
+			effects: [strong],
+		});
+	});
+
+	it("leaves an important utility above an important project declaration", () => {
+		const strong = effect([".card"], "padding", "12px", true);
+		expect(propertySourceOwner(roots, [utility("padding", "1.5rem", true)], [], { effects: [strong] }, ltr)).toEqual({
+			kind: "class",
+		});
+	});
+
+	it("ignores the compiler's own layers, which an unlayered rule already outranks", () => {
+		const preflight = effect(["@layer base", "*"], "padding", "0");
+		expect(propertySourceOwner(roots, [], [], { effects: [preflight] }, ltr)).toEqual({ kind: "class" });
+	});
+
+	it.each([
+		["a project cascade layer", effect(["@layer project", ".card"], "padding", "12px")],
+		["a container query", effect(["@container (min-width: 20rem)", ".card"], "padding", "12px")],
+		["a nested selector chain", effect([".page", ".card"], "padding", "12px")],
+	])("refuses %s it cannot order", (_name, held) => {
+		expect(() => propertySourceOwner(roots, [], [], { effects: [held] }, ltr)).toThrow();
 	});
 });
