@@ -535,6 +535,9 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 			};
 		}, sentBeforeWalk),
 	).toEqual({ go: 1, copy: 0 });
+	// Reading the clipboard needs the document focused, which a page sharing a
+	// browser with the shard beside it does not keep on its own.
+	await page.bringToFront();
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("self walk baseline");
 
 	await expect

@@ -234,3 +234,22 @@ it.each([true, false])("keeps an enclosing inverse across a paired interior edit
 	if (paired) expect(journal.transform(file, original, inverse)).toEqual(inverse);
 	else expect(() => journal.transform(file, original, inverse)).toThrow("touched these words");
 });
+
+// Stat identity is the filesystem's answer, and it is coarser on some of them:
+// two writes inside one timestamp tick that restore the same bytes can look like
+// no write at all. What happened is the journal's own record, so it decides.
+it("refuses an enclosing inverse across a recorded edit whose bytes are back where they started", () => {
+	const file = join(makeTempDir(), "source.ts");
+	const span = 'className="opacity-25"';
+	const source = `x ${span} y`;
+	writeFileSync(file, source);
+	const journal = createSourceJournal();
+	const original = journal.observe(file);
+	const start = source.indexOf("25");
+	// The same input on both sides: the bytes and their identity are untouched,
+	// which is what a coarse filesystem reports for a round trip.
+	journal.record(file, original, original, [{ start, end: start + 2, before: "25", text: "100" }]);
+	expect(() => journal.transform(file, original, [{ start: 2, end: 2 + span.length, text: "" }])).toThrow(
+		"touched these words",
+	);
+});

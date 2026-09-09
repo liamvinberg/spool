@@ -39,10 +39,15 @@ export function createSourceJournal() {
 	}
 	function path(file: string, original: SourceInput): Step[] {
 		const current = observe(file);
-		if (sameInput(original, current)) return [];
 		const steps = files.get(file)?.steps ?? [];
 		const at = steps.findIndex((step) => sameInput(step.before, original));
-		if (at < 0) throw new Error("the original source record was lost; read the file again");
+		// What was written is this record, not what the filesystem's stat happens to
+		// say: a coarse mtime and a reused inode can make a round trip look like an
+		// untouched file, and the edits in between still happened.
+		if (at < 0) {
+			if (sameInput(original, current)) return [];
+			throw new Error("the original source record was lost; read the file again");
+		}
 		const route = steps.slice(at);
 		if (route.some((step) => step.edits === null)) throw new Error("an opaque source replacement retired this edit");
 		return route;
