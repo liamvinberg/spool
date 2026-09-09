@@ -119,6 +119,11 @@ it("edits shared padding and a gap axis through the approved fields, and cancels
 		settled?.uses?.map((use) => use.installation),
 		JSON.stringify(settled),
 	).toEqual(["installed", "installed"]);
+	// every use is measured, not merely delivered: the frame really laid the padding out
+	expect(
+		settled?.uses?.map((use) => use.rendered),
+		JSON.stringify(settled),
+	).toEqual(["verified", "verified"]);
 	await everyUse(frames, "padding-left", "32px");
 	// the uses reflowed where they stood: no reload, so every count is still there
 	for (const frame of frames) expect(await counted(frame)).toEqual(["A:1", "B:1"]);
@@ -202,7 +207,7 @@ it("hides an element through display and shows it again from the selection it ke
 	await expect.poll(() => computed(f.frame, "display")).toEqual(["none", "none"]);
 	expect(f.writes).toEqual(["commit", "commit", "inverse"]);
 	const latest = (await outcomes(f)).at(-1);
-	expect.soft(latest, JSON.stringify(latest)).toBeDefined();
+	expect(latest, JSON.stringify(latest)).toMatchObject({ rendered: "verified" });
 });
 
 it("reads project spacing and measures a fixed width at reduced canvas zoom", { timeout: 120_000 }, async () => {
