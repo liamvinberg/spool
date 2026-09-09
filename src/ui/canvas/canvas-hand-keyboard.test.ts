@@ -121,6 +121,30 @@ it("reads a reversed row backwards, so forward on screen is earlier in the sourc
 	expect(sourceCalls("read").at(-1)).toMatchObject({ operation: { kind: "reorder", steps: -1 } });
 });
 
+it("gives the reply that arrives late to the gesture that asked for it", async () => {
+	sizing = FREE_SIZING;
+	const { canvas, frame, holdSizing, releaseSizing } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	// the second arrow ends the first gesture before the document has answered
+	// it; the answer it was waiting for belongs to nothing now
+	holdSizing();
+	await keyDown("ArrowRight");
+	await keyDown("ArrowDown");
+	await releaseSizing();
+	await settle();
+	await keyUp("ArrowDown");
+	await settle();
+
+	expect(sourceCalls("commit")).toHaveLength(1);
+	expect(sourceCalls("commit").at(-1)).toMatchObject({
+		change: {
+			kind: "properties",
+			value: { kind: "fields", changes: [{ property: "top", value: { kind: "binding", tokens: ["top-[25px]"] } }] },
+		},
+	});
+});
+
 it("saves nothing when Escape retires the held key", async () => {
 	const { canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
@@ -279,7 +303,13 @@ async function holdTheElement(canvas: HTMLElement, frame: FramePlayer): Promise<
 	await settle();
 }
 
-async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElement; frame: FramePlayer }> {
+async function readyCanvas(): Promise<{
+	host: HTMLDivElement;
+	canvas: HTMLElement;
+	frame: FramePlayer;
+	holdSizing: () => void;
+	releaseSizing: () => Promise<void>;
+}> {
 	sourceRead = undefined;
 	stubCanvasApis();
 	const host = document.createElement("div");
@@ -304,6 +334,7 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 	await clickAt(canvas, 20, 20);
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 
+	let held: (() => void)[] | null = null;
 	const spies = new Map<Window, { mock: { calls: unknown[][] } }>();
 	const live = (): Window | null => {
 		const contentWindow = host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.contentWindow ?? null;
@@ -316,7 +347,9 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 							window.dispatchEvent(new MessageEvent("message", { source: contentWindow, data })),
 						);
 					if (message?.spool === "sizing") {
-						answer({ spool: "sized", frame: "home", id: message.id, sizing });
+						const reply = () => answer({ spool: "sized", frame: "home", id: message.id, sizing });
+						if (held === null) reply();
+						else held.push(reply);
 						return;
 					}
 					if (message?.spool !== "source-request") return;
@@ -343,6 +376,17 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 	return {
 		host,
 		canvas,
+		/** Keep the document's answers back, so a second press can beat the first reply. */
+		holdSizing: () => {
+			held = [];
+		},
+		releaseSizing: async () => {
+			const waiting = held ?? [];
+			held = null;
+			await act(async () => {
+				for (const reply of waiting) reply();
+			});
+		},
 		frame: {
 			answer: async (chain) => {
 				live();

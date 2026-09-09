@@ -3244,9 +3244,13 @@ export function ProjectCanvas({
 	/** What the document says this element is, which decides what an arrow does to it. */
 	const openKeyMove = useCallback(
 		(pick: PickedSelection, horizontal: boolean) => {
+			// the gesture this answer belongs to, not whichever one is current when
+			// it lands: a second arrow pressed while the document is still thinking
+			// opens its own gesture, and the older answer is about the older one
+			const opened = keyMove.current;
 			askSizing(pick.frame, pick.selector, (sizing) => {
 				const held = keyMove.current;
-				if (held === null || held.kind !== "asking" || held.pick.selector !== pick.selector) return;
+				if (held === null || held !== opened || held.kind !== "asking") return;
 				const refuse = (code: Refusal["code"], says: string) => {
 					held.kind = "refused";
 					showRefusal(pick.frame, pick.selector, { code, says });
