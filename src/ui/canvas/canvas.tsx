@@ -528,7 +528,7 @@ export function ProjectCanvas({
 	const [gapMenu, setGapMenu] = useState<{
 		pick: PickedSelection;
 		axis: GapAxis;
-		authored: string | null;
+		authored: string;
 		measured: number;
 		at: GapAnchor;
 	} | null>(null);

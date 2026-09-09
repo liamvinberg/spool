@@ -1,6 +1,6 @@
 import { describe as describeLength, parseTyped, stepLength } from "../../properties/families";
 import { cn } from "../cn";
-import { type GapAxis, gapOnScale, gapSteppable, steppedGap } from "./hand-gap";
+import { type GapAxis, gapOnScale, steppedGap } from "./hand-gap";
 import { FAINT, LABEL, NumField } from "./properties-fields";
 
 /**
@@ -29,7 +29,7 @@ export function GapMenu({
 }: {
 	axis: GapAxis;
 	/** what the class cell authors on this axis, which is the declaration in use */
-	authored: string | null;
+	authored: string;
 	/** what the gap measures in the running layout */
 	measured: number;
 	step: number;
@@ -37,8 +37,7 @@ export function GapMenu({
 	onWrite: (value: string) => void;
 	onClose: () => void;
 }) {
-	const value = authored ?? "";
-	const readout = describeLength("spacing", value === "" ? null : value, false, step);
+	const readout = describeLength("spacing", authored === "" ? null : authored, false, step);
 	return (
 		<div
 			data-gap-popover=""
@@ -58,7 +57,7 @@ export function GapMenu({
 			</div>
 			<NumField
 				label="Gap"
-				value={value}
+				value={authored}
 				readout={readout}
 				ok
 				placeholder="0"
@@ -67,12 +66,9 @@ export function GapMenu({
 					if (next !== null && !next.negative) onWrite(next.value);
 					onClose();
 				}}
-				stepDraft={(from, units) => {
-					if (!gapSteppable(from === "" ? null : from)) return undefined;
-					return steppedGap(from === "" ? null : from, measured, units);
-				}}
+				stepDraft={(from, units) => steppedGap(from, measured, units)}
 			/>
-			{gapOnScale(value) ? (
+			{gapOnScale(authored) ? (
 				<button
 					type="button"
 					data-gap-custom=""

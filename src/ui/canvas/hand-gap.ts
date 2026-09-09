@@ -263,7 +263,7 @@ export interface GapDrag {
 	sign: 1 | -1;
 	from: { x: number; y: number };
 	/** what the class cell owned on this axis when the read opened */
-	authored: string | null;
+	authored: string;
 	/** what the gap measured then */
 	measured: number;
 	/** how many of the value's own units the pointer has moved it */
@@ -271,9 +271,6 @@ export interface GapDrag {
 	/** the value the last sample made, or nothing where none has moved it */
 	live: string | null;
 }
-
-/** How far a pointer must travel before a press counts as a drag rather than a click. */
-const GAP_DRAG_THRESHOLD_PX = 3;
 
 /**
  * What one sample of a live drag comes to, or nothing where it moves it nowhere.
@@ -284,6 +281,9 @@ const GAP_DRAG_THRESHOLD_PX = 3;
  * still a click, and a sample that lands on the value already showing is not a
  * sample at all.
  */
+/** How far a pointer must travel before a press counts as a drag rather than a click. */
+const GAP_DRAG_THRESHOLD_PX = 3;
+
 export function gapSample(
 	drag: GapDrag,
 	at: { x: number; y: number },
@@ -337,15 +337,17 @@ export function gapOnScale(value: string): boolean {
 /**
  * Whether a drag can move this value without renaming what it is.
  *
- * A scale reference steps along the scale, a custom length steps in its own
- * unit, and a gap nothing sets is authored fresh from what it measures. A
- * variable or any other expression has no step at all: moving it would mean
- * replacing the reference with a pixel count, which says the author wrote
+ * A scale reference steps along the scale and a custom length steps in its own
+ * unit. A variable or any other expression has no step at all: moving it would
+ * mean replacing the reference with a pixel count, which says the author wrote
  * something they did not. Those stay the rail's, where the value is read for
  * what it is.
+ *
+ * A gap the cell authors nothing for is not asked about here at all. `ownedGap`
+ * has already refused it, because a value nobody wrote is a value no drag may
+ * invent.
  */
-export function gapSteppable(authored: string | null): boolean {
-	if (authored === null) return true;
+export function gapSteppable(authored: string): boolean {
 	const written = writtenLength(authored);
 	if (written === null) return false;
 	return written.scale || written.value === "px" || written.custom !== null;
@@ -359,8 +361,8 @@ export function gapSteppable(authored: string | null): boolean {
  * coarse modifier quantises to tens without going faster, so a held ⇧ lands on
  * round numbers rather than racing past them.
  */
-export function gapDragUnits(authored: string | null, delta: number, step: number, coarse: boolean): number {
-	const unit = authored !== null && gapOnScale(authored) ? Math.max(step, 1) : 1;
+export function gapDragUnits(authored: string, delta: number, step: number, coarse: boolean): number {
+	const unit = gapOnScale(authored) ? Math.max(step, 1) : 1;
 	const grain = coarse ? 10 : 1;
 	return Math.round(delta / unit / grain) * grain;
 }
@@ -372,21 +374,12 @@ export function gapDragUnits(authored: string | null, delta: number, step: numbe
  * the same string. A gap has no negative spelling, so a drag past zero stops
  * at zero rather than writing a class the compiler would refuse.
  */
-export function steppedGap(authored: string | null, measured: number, units: number): string | undefined {
-	if (!gapSteppable(authored)) return undefined;
-	const written = authored === null ? null : writtenLength(authored);
+export function steppedGap(authored: string, measured: number, units: number): string | undefined {
+	const written = gapSteppable(authored) ? writtenLength(authored) : null;
+	if (written === null) return undefined;
 	const next = stepLength(
 		"spacing",
-		written === null
-			? null
-			: {
-					family: "gap",
-					kind: "spacing",
-					value: written.value,
-					negative: written.negative,
-					important: false,
-					token: "",
-				},
+		{ family: "gap", kind: "spacing", value: written.value, negative: written.negative, important: false, token: "" },
 		measured,
 		units,
 	);

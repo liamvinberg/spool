@@ -196,8 +196,7 @@ describe("what the element authors on that axis", () => {
 });
 
 describe("what a drag may move", () => {
-	it("moves a scale reference, a custom length and an unset gap", () => {
-		expect(gapSteppable(null)).toBe(true);
+	it("moves a scale reference and a custom length", () => {
 		expect(gapSteppable("4")).toBe(true);
 		expect(gapSteppable("[13px]")).toBe(true);
 		expect(gapSteppable("[50%]")).toBe(true);
@@ -219,7 +218,7 @@ describe("what a pointer's pixels come to", () => {
 
 	it("counts a custom length in document pixels", () => {
 		expect(gapDragUnits("[13px]", 16, 4, false)).toBe(16);
-		expect(gapDragUnits(null, 7, 4, false)).toBe(7);
+		expect(gapDragUnits("[13px]", 7, 4, false)).toBe(7);
 	});
 
 	it("moves in tens while the coarse modifier is held", () => {
@@ -238,10 +237,6 @@ describe("the value a drag settles on", () => {
 		expect(steppedGap("[13px]", 13, 2)).toBe("[15px]");
 		expect(steppedGap("[50%]", 0, 1)).toBe("[51%]");
 		expect(steppedGap("[13.5px]", 13.5, 1)).toBe("[14.5px]");
-	});
-
-	it("writes what an unset gap measures, in pixels", () => {
-		expect(steppedGap(null, 20, 4)).toBe("[24px]");
 	});
 
 	it("stops at nothing rather than stepping through zero", () => {
