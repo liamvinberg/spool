@@ -81,6 +81,8 @@ it("drags a corner through the running layout, saves once and takes one step bac
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["160px", "160px"]);
 	for (const frame of [f.frame, second]) await count(frame);
+	for (const frame of [f.frame, second])
+		await expect.poll(() => frame.locator("[data-subject] button").allTextContents()).toEqual(["A:1", "B:1"]);
 
 	// the other frame is pushed off the far edge: a use nobody can see still has
 	// to move when the source does
@@ -99,9 +101,11 @@ it("drags a corner through the running layout, saves once and takes one step bac
 	await saved(f, committed);
 
 	// 160 + 40 is a whole step and 96 + 24 is another, so both land as the bare
-	// classes this project's author would have written
-	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card.replace("w-40 h-24", "w-50 h-30"));
-	await f.settled();
+	// classes this project's author would have written. The writer replaces the
+	// exact characters each token occupied and leaves every other byte alone, so
+	// the space the two tokens were separated by is still there in front of them
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card.replace("w-40 h-24", " w-50 h-30"));
+	await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count(), { timeout: 30_000 }).toBe(0);
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["200px", "200px"]);
 	await expect.poll(() => computed(second, "width")).toEqual(["200px", "200px"]);
 	await expect.poll(() => computed(f.frame, "height")).toEqual(["120px", "120px"]);
