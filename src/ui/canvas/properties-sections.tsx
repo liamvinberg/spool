@@ -218,8 +218,19 @@ function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string 
 	const box = boxRefusal(row, view.element, view.scoped);
 	if (box !== undefined) return { ok: false, reason: box };
 	if (view.described?.reason !== undefined) return { ok: false, reason: view.described.reason };
+	// A row standing for several declarations at once can only be written where
+	// they share a source. Where they do not, it says so in the source's own
+	// words instead of offering a write the source would refuse.
+	const held = view.described?.readings?.[row.property];
+	if (held?.source === "mixed")
+		return { ok: false, reason: held.reason ?? "this property has no single source to write" };
 	const answered = view.described?.readings !== undefined;
-	return { ok: view.property !== null && (answered || !readsFromSource(row)), reason: undefined };
+	const ok = view.property !== null && (answered || !readsFromSource(row));
+	// A project rule written under a condition is part of what this row is, even
+	// where the condition is not the one holding now: the row says so beside
+	// whatever it may write, and the value shown stays the one that is running.
+	if (held?.written?.length) return { ok, reason: `also written under ${held.written.join(" and ")}` };
+	return { ok, reason: undefined };
 }
 
 /**
@@ -604,6 +615,14 @@ const DESCRIBED_PROPERTIES: readonly string[] = [
 	"border-top-right-radius",
 	"border-bottom-right-radius",
 	"border-bottom-left-radius",
+	// The boxes ask for every side of their own, because which source owns a side
+	// is what decides whether the box can be one row at all (#304).
+	...["padding", "margin", "inset"].flatMap((box) => [
+		box,
+		...(box === "inset"
+			? ["top", "right", "bottom", "left"]
+			: ["inline", "block", "top", "right", "bottom", "left"].map((side) => `${box}-${side}`)),
+	]),
 ];
 
 function ColourRow({
@@ -1050,7 +1069,15 @@ function Folded<P extends string>({
 	const own = read(view.scoped);
 	const inherited = view.scope.length > 0 ? read(view.base) : own;
 	const even = Object.values(own).every((value) => value === null) ? inherited : own;
-	const natural = levelOf(even, max);
+	// Sides written in different sources are as much a reason to open the box as
+	// sides with different values: one row cannot write two sources at once.
+	const sides = fold.levels[max] ?? [];
+	const sourceOf = (side: Side): string | null => {
+		const entry = sides.find((row) => row.sides.includes(side));
+		return (entry ? view.described?.readings?.[entry.property]?.source : undefined) ?? null;
+	};
+	const owners: Sides = { t: sourceOf("t"), r: sourceOf("r"), b: sourceOf("b"), l: sourceOf("l") };
+	const natural = Math.max(levelOf(even, max), levelOf(owners, max));
 	const level = Math.min(max, Math.max(want, natural));
 	const rows = fold.levels[level] ?? [];
 	const ok = fold.levels[0]?.[0] === undefined ? false : okOf(view, modelRow(fold.levels[0][0].property));

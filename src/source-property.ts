@@ -23,6 +23,12 @@ export interface SourcePropertyExpectation {
 	kind: "property";
 	property: string;
 	scope: string;
+	/**
+	 * The authored source whose winning effect this expectation is about.
+	 * A declaration is matched against the element by its own selector; the
+	 * element's own member has no selector and no condition at all.
+	 */
+	source?: "class" | "style" | "declaration";
 	className: string;
 	absent: boolean;
 	/** Selected compiler paths, including conditions retained from removed declarations. */
@@ -37,6 +43,12 @@ export interface SourcePropertyPreview {
 	revision: number;
 	value: string;
 	frames: readonly { publication: string; css: string; bundledCss: string }[];
+	/**
+	 * The element's own proposed declarations, where an inline member owns the
+	 * write. An empty value is the removal of that declaration. A class-owned
+	 * write carries none of these: its preview is the compiled sheet.
+	 */
+	inline?: readonly { property: string; value: string }[];
 }
 
 /** Read-only original native presentation; it does not confer source authority. */
@@ -47,8 +59,18 @@ export interface SourcePropertyNative {
 
 export interface SourcePropertyReading {
 	tokens: readonly string[];
+	/**
+	 * Which authored source declares this property's winning effects here.
+	 * `mixed` is a reading that cannot attribute them to one source; it claims no
+	 * value, and a write against it refuses with the reason before saving.
+	 */
+	source: "class" | "style" | "declaration" | "mixed";
 	/** One compiler-proven custom declaration, preserving its authored unit. */
 	authored?: string;
+	/** Why no single source can be named for this property, where none can. */
+	reason?: string;
+	/** The condition an authored declaration is written under, where it has one. */
+	written?: readonly string[];
 	binding:
 		| { kind: "page" }
 		| { kind: "custom" }

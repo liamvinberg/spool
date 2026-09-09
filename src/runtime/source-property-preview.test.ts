@@ -54,3 +54,61 @@ it.each(["before", "during"])("preserves outside CSSOM edits made %s preview", (
 	restorePropertyStyles(4);
 	expect([...f.compiled.sheet.cssRules].some((rule) => rule.cssText.includes(".outside"))).toBe(true);
 });
+
+function element(style: string) {
+	document.body.innerHTML = `<b id="subject" style="${style}"></b>`;
+	return document.getElementById("subject") as HTMLElement;
+}
+
+it("previews an inline member on the element and gives its own value back", () => {
+	const f = fixture(5);
+	const subject = element("padding: 40px; opacity: 0.75");
+	const plan = (revision: number, opacity: string) => ({
+		...f.plan(revision, "original"),
+		inline: [
+			{ property: "padding", value: "40px" },
+			{ property: "opacity", value: opacity },
+		],
+	});
+	expect(previewPropertyStyles(plan(1, "0.5"), packet, [subject])).toBe(true);
+	expect(subject.style.opacity).toBe("0.5");
+	expect(previewPropertyStyles(plan(2, "0.25"), packet, [subject])).toBe(true);
+	expect(subject.style.opacity).toBe("0.25");
+	restorePropertyStyles(5);
+	expect([subject.style.padding, subject.style.opacity]).toEqual(["40px", "0.75"]);
+});
+
+it("removes the declaration a removed member carried, and puts it back", () => {
+	const f = fixture(6);
+	const subject = element("padding: 40px; opacity: 0.75");
+	expect(
+		previewPropertyStyles(
+			{
+				...f.plan(1, "original"),
+				inline: [
+					{ property: "padding", value: "40px" },
+					{ property: "opacity", value: "" },
+				],
+			},
+			packet,
+			[subject],
+		),
+	).toBe(true);
+	expect(subject.style.opacity).toBe("");
+	restorePropertyStyles(6);
+	expect(subject.style.opacity).toBe("0.75");
+});
+
+it("keeps an outside change to the same declaration and refuses to preview over it", () => {
+	const f = fixture(7);
+	const subject = element("opacity: 0.75");
+	const plan = (revision: number, opacity: string) => ({
+		...f.plan(revision, "original"),
+		inline: [{ property: "opacity", value: opacity }],
+	});
+	expect(previewPropertyStyles(plan(1, "0.5"), packet, [subject])).toBe(true);
+	subject.style.opacity = "0.9";
+	expect(previewPropertyStyles(plan(2, "0.25"), packet, [subject])).toBe(false);
+	restorePropertyStyles(7);
+	expect(subject.style.opacity).toBe("0.9");
+});

@@ -23,6 +23,7 @@ async function mount(custom = false) {
 				property: "color",
 				reading: {
 					tokens: ["text-brand"],
+					source: "class" as const,
 					binding: custom ? { kind: "custom" } : { kind: "reference", name: "--color-brand", value: "#123456" },
 					native: "rgb(18, 52, 86)",
 				},
