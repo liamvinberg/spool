@@ -4,17 +4,19 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
+import type { SourceRead } from "../../source-edit";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
 /**
- * Resize by handle (#259), out on the canvas.
+ * Resize by handle (#305), out on the canvas.
  *
- * The ring wears Figma's set on a held element: a cube on each corner, bare
- * grab strips on the edges, and a rotate zone diagonally outside each corner.
- * A handle is drawn only for an axis the file leaves live, so every drag on
- * the ring is one the lane will take. Nothing is written until the pointer
- * comes up, and what it writes is one patch and one press of undo.
+ * The ring wears the approved outline's set on a held element: a cube on each
+ * corner, a grab strip on each side long enough to hold one, and a rotate zone
+ * diagonally outside each corner. Nothing is written while the pointer is
+ * down — every sample is a preview in the running layout — and letting go is
+ * one source operation and one press of undo. Every way a drag can be
+ * interrupted retires the samples and saves nothing.
  */
 
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
@@ -23,12 +25,24 @@ const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480 }];
 
 const STAMP = "frames/home/frame.tsx:7:4";
 
-const CHAIN: PickedHit[] = [
+const ORIGINAL = {
+	publication: "publication",
+	cell: "className",
+	occurrence: "occurrence",
+	invocation: "invocation",
+	context: "context",
+	value: "p-4",
+};
+
+/** The box the frame answers with for the held rung, which each case may state. */
+let held = { x: 10, y: 10, w: 200, h: 120 };
+
+const chain = (): PickedHit[] => [
 	{
 		selector: "screen",
 		tag: "div",
 		outerHtml: "<div />",
-		rect: { x: 0, y: 0, w: 200, h: 120 },
+		rect: { x: 0, y: 0, w: 400, h: 300 },
 		radius: 0,
 		source: "frames/home/frame.tsx:5:3",
 		generated: false,
@@ -37,7 +51,7 @@ const CHAIN: PickedHit[] = [
 		selector: "screen > article",
 		tag: "article",
 		outerHtml: "<article />",
-		rect: { x: 10, y: 10, w: 120, h: 40 },
+		rect: held,
 		radius: 0,
 		source: STAMP,
 		generated: false,
@@ -45,9 +59,13 @@ const CHAIN: PickedHit[] = [
 ];
 
 /** Where the south-east cube sits: the ring is the element's box, 2px out. */
-const SE = { x: 132, y: 52 };
+const SE = { x: 212, y: 132 };
+/** The east strip, half way down the ring. */
+const EAST = { x: 212, y: 70 };
 
-it("drags the corner and writes both axes as one patch", async () => {
+const binding = (token: string) => ({ kind: "binding", tokens: [token] });
+
+it("drags the corner and saves both axes as one source operation", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
 
@@ -56,70 +74,110 @@ it("drags the corner and writes both axes as one patch", async () => {
 
 	await pointerDown(corner, SE.x, SE.y);
 	await pointerMove(canvas, SE.x + 104, SE.y + 44);
-	// the readout rides beside the ring while the pointer is down, and the file
-	// is left exactly as it was
-	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("224 × 84");
-	// and the matching field in the rail ticks with it, in the token about to land
-	expect(host.querySelector<HTMLInputElement>('[data-properties-row="width"] input')?.value).toBe("[224px]");
-	expect(writes()).toHaveLength(0);
+	await settle();
+
+	// the readout rides beside the ring, the matching rail field ticks in the
+	// size the drag is making, and the source is left exactly as it was
+	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("304 × 164");
+	expect(host.querySelector('[data-properties-row="width"] .type-value')?.textContent).toBe("[304px]");
+	expect(sourceCalls("commit")).toHaveLength(0);
+	// every sample previews in the running layout through the common owner
+	expect(sourceCalls("preview").length).toBeGreaterThan(0);
 
 	await pointerUp(canvas);
 	await settle();
 
 	// a whole step is the bare class, anything else stays absolute pixels
-	expect(gateAsks().at(-1)).toEqual({
-		frame: "home",
-		ops: [
-			{ kind: "set-class", source: STAMP, token: "w-56", scope: "" },
-			{ kind: "set-class", source: STAMP, token: "h-21", scope: "" },
-		],
+	expect(sourceCalls("commit").at(-1)).toMatchObject({
+		original: ORIGINAL,
+		change: {
+			kind: "properties",
+			value: {
+				kind: "fields",
+				changes: [
+					{ property: "width", scope: "", value: binding("w-76") },
+					{ property: "height", scope: "", value: binding("h-41") },
+				],
+			},
+		},
 	});
-	expect(writes().at(-1)).toMatchObject({ frame: "home", fingerprint: "abc" });
 
-	// one gesture is one press of undo, even though it wrote two tokens
-	await press("z", { metaKey: true, ctrlKey: true });
+	// one gesture is one press of undo, even though it wrote two properties
+	await press("z", ACCEL);
 	await settle();
-	expect(reverts()).toHaveLength(1);
+	expect(sourceCalls("inverse")).toHaveLength(1);
 });
 
 it("drags one edge and writes that axis alone", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
 
-	const edge = host.querySelector<HTMLElement>('[data-element-handle="e"]');
-	await pointerDown(edge, 132, 30);
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y);
 	// a width off a whole step stays absolute: the drag meant pixels
-	await pointerMove(canvas, 132 + 21, 300);
+	await pointerMove(canvas, EAST.x + 21, EAST.y + 300);
 	await pointerUp(canvas);
 	await settle();
 
-	expect(gateAsks().at(-1)).toEqual({
-		frame: "home",
-		ops: [{ kind: "set-class", source: STAMP, token: "w-[141px]", scope: "" }],
+	expect(sourceCalls("commit").at(-1)).toMatchObject({
+		change: {
+			kind: "properties",
+			value: { kind: "fields", changes: [{ property: "width", value: binding("w-[221px]") }] },
+		},
 	});
 });
 
-it("turns from the zone outside a corner, and snaps to 15° under shift", async () => {
+it("keeps the proportions the box started with while shift is held", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
 
-	const zone = host.querySelector<HTMLElement>('[data-element-rotate="ne"]');
-	expect(zone).not.toBeNull();
-
-	// the element's centre is (70, 30): a grab due east, dragged to due south
-	await pointerDown(zone, 170, 30);
-	await pointerMove(canvas, 70, 130);
-	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("90°");
-	await pointerMove(canvas, 100, 130, { shiftKey: true });
-	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("75°");
+	// shift decides what the gesture may write, so it is read where the read is
+	// opened: a proportional edge drag is about both axes from the start
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y, { shiftKey: true });
+	await pointerMove(canvas, EAST.x + 100, EAST.y, { shiftKey: true });
 	await pointerUp(canvas);
 	await settle();
 
-	expect(gateAsks().at(-1)).toEqual({
-		frame: "home",
-		ops: [{ kind: "set-class", source: STAMP, token: "rotate-75", scope: "" }],
+	expect(sourceCalls("commit").at(-1)).toMatchObject({
+		change: {
+			kind: "properties",
+			value: {
+				kind: "fields",
+				changes: [
+					{ property: "width", value: binding("w-75") },
+					{ property: "height", value: binding("h-45") },
+				],
+			},
+		},
 	});
 });
+
+it("draws the approved set on a box with room for all of it", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	expect(new Set(handleNames(host))).toEqual(new Set(["nw", "n", "ne", "e", "se", "s", "sw", "w"]));
+});
+
+it("drops a strip the side has no room for, and keeps the corners", async () => {
+	// 64px tall: the approved outline gives a side under 72px no strip of its
+	// own, because a strip that short is a corner with worse aim
+	held = { x: 10, y: 10, w: 200, h: 64 };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	expect(new Set(handleNames(host))).toEqual(new Set(["nw", "n", "ne", "se", "s", "sw"]));
+});
+
+it("draws nothing on a target under 24px on its smaller dimension", async () => {
+	held = { x: 10, y: 10, w: 200, h: 20 };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	expect(handleNames(host)).toEqual([]);
+});
+
+const handleNames = (host: HTMLElement): (string | undefined)[] =>
+	[...host.querySelectorAll("[data-element-handle]")].map((node) => (node as HTMLElement).dataset.elementHandle);
 
 it("draws no handle for an axis a breakpoint pins, and keeps the other", async () => {
 	rung = { source: STAMP, name: "article", className: "md:w-96", path: "design/frames/home/frame.tsx", line: 7 };
@@ -149,32 +207,31 @@ it("draws no handle at all on a literal no hand may write", async () => {
 	expect(host.querySelector("[data-element-rotate]")).toBeNull();
 });
 
-it("puts a size back when the box the document came back with is not the one written", async () => {
+it("turns from the zone outside a corner, and writes the rotation it settled on", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
 
-	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="se"]'), SE.x, SE.y);
-	await pointerMove(canvas, SE.x + 104, SE.y + 44);
+	const zone = host.querySelector<HTMLElement>('[data-element-rotate="ne"]');
+	expect(zone).not.toBeNull();
+
+	// the element's centre is (110, 70): a grab due east, dragged to due south
+	await pointerDown(zone, 310, 70);
+	await pointerMove(canvas, 110, 270);
+	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("90°");
+	await pointerMove(canvas, 140, 270, { shiftKey: true });
+	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("75°");
 	await pointerUp(canvas);
 	await settle();
-	expect(reverts()).toHaveLength(0);
 
-	// the document reloads and reports a box a flex-basis clamped: the class
-	// landed and the size did not, so the patch is run back and it says so
-	await frame.boot();
-	await frame.answer([CHAIN[0] as PickedHit, { ...(CHAIN[1] as PickedHit), rect: { x: 10, y: 10, w: 96, h: 84 } }]);
-	await settle();
-
-	expect(reverts()).toHaveLength(1);
-	expect(host.querySelector('[data-hand-notice="clamped"]')).not.toBeNull();
-
-	// the entry it pushed is withdrawn: there is nothing left to undo
-	await press("z", { metaKey: true, ctrlKey: true });
-	await settle();
-	expect(reverts()).toHaveLength(1);
+	expect(sourceCalls("commit").at(-1)).toMatchObject({
+		change: {
+			kind: "properties",
+			value: { kind: "fields", changes: [{ property: "rotate", value: binding("rotate-75") }] },
+		},
+	});
 });
 
-it("keeps the file as it was when a drag ends where it began", async () => {
+it("keeps the source as it was when a drag ends where it began", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
 
@@ -183,8 +240,74 @@ it("keeps the file as it was when a drag ends where it began", async () => {
 	await pointerUp(canvas);
 	await settle();
 
-	expect(gateAsks().filter((ask) => JSON.stringify(ask).includes("set-class"))).toHaveLength(0);
-	expect(writes()).toHaveLength(0);
+	expect(sourceCalls("commit")).toHaveLength(0);
+});
+
+/**
+ * Every way a drag ends without a save (#305). Each retires the samples, puts
+ * the previews the gesture owned back, and leaves the source untouched — and a
+ * release that arrives afterwards cannot revive the generation it cancelled.
+ */
+const INTERRUPTIONS = [
+	{
+		name: "Escape",
+		interrupt: async () => {
+			await press("Escape");
+		},
+	},
+	{
+		name: "pointer cancellation",
+		interrupt: async (canvas: HTMLElement) => {
+			await act(async () => {
+				canvas.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 5 }));
+			});
+		},
+	},
+	{
+		name: "lost capture",
+		interrupt: async (canvas: HTMLElement) => {
+			await act(async () => {
+				canvas.dispatchEvent(new PointerEvent("lostpointercapture", { bubbles: true, pointerId: 5 }));
+			});
+		},
+	},
+	{
+		name: "window blur",
+		interrupt: async () => {
+			await act(async () => {
+				window.dispatchEvent(new Event("blur"));
+			});
+		},
+	},
+	{
+		name: "a scrolled or zoomed canvas",
+		interrupt: async (canvas: HTMLElement) => {
+			await act(async () => {
+				canvas.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 }));
+			});
+		},
+	},
+];
+
+it.each(INTERRUPTIONS)("saves nothing when $name interrupts the drag", async ({ interrupt }) => {
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="se"]'), SE.x, SE.y);
+	await pointerMove(canvas, SE.x + 104, SE.y + 44);
+	await settle();
+	await interrupt(canvas);
+	await settle();
+
+	expect(host.querySelector("[data-element-readout]")).toBeNull();
+	expect(sourceCalls("commit")).toHaveLength(0);
+	// the read the gesture opened is given back rather than left held
+	expect(sourceCalls("cancel").length).toBeGreaterThan(0);
+
+	// the release the pointer still owes cannot bring the cancelled drag back
+	await pointerUp(canvas);
+	await settle();
+	expect(sourceCalls("commit")).toHaveLength(0);
 });
 
 // --- the harness -------------------------------------------------------------
@@ -213,6 +336,15 @@ const THEME = {
 	step: 4,
 };
 
+/** What the document says about the element a drag has grabbed. */
+const SIZING = {
+	box: { w: 200, h: 120 },
+	extra: { w: 0, h: 0 },
+	free: false,
+	offset: { left: null, top: null },
+	limits: { minW: 0, maxW: Number.MAX_SAFE_INTEGER, minH: 0, maxH: Number.MAX_SAFE_INTEGER },
+};
+
 let rung: RungRead = {
 	source: STAMP,
 	name: "article",
@@ -220,6 +352,8 @@ let rung: RungRead = {
 	path: "design/frames/home/frame.tsx",
 	line: 7,
 };
+
+let sourceRead: SourceRead | undefined;
 
 interface FramePlayer {
 	answer: (chain: readonly PickedHit[]) => Promise<void>;
@@ -230,11 +364,12 @@ interface FramePlayer {
 async function holdTheElement(canvas: HTMLElement, frame: FramePlayer): Promise<void> {
 	await clickAt(canvas, 20, 20);
 	await deepClickAt(canvas, 20, 20);
-	await frame.answer(CHAIN.slice(0, 2));
+	await frame.answer(chain());
 	await settle();
 }
 
 async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElement; frame: FramePlayer }> {
+	sourceRead = undefined;
 	stubCanvasApis();
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -245,6 +380,7 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 		rung = { source: STAMP, name: "article", className: "p-4", path: "design/frames/home/frame.tsx", line: 7 };
+		held = { x: 10, y: 10, w: 200, h: 120 };
 	});
 
 	await act(async () => {
@@ -261,7 +397,31 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 	const live = (): Window | null => {
 		const contentWindow = host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.contentWindow ?? null;
 		if (contentWindow !== null && !spies.has(contentWindow)) {
-			spies.set(contentWindow, vi.spyOn(contentWindow, "postMessage"));
+			spies.set(
+				contentWindow,
+				vi.spyOn(contentWindow, "postMessage").mockImplementation((message) => {
+					const answer = (data: Record<string, unknown>) =>
+						queueMicrotask(() =>
+							window.dispatchEvent(new MessageEvent("message", { source: contentWindow, data })),
+						);
+					if (message?.spool === "sizing") {
+						answer({ spool: "sized", frame: "home", id: message.id, sizing: SIZING });
+						return;
+					}
+					if (message?.spool !== "source-request") return;
+					const result =
+						message.action === "read" || message.action === "inspect" || message.action === "complete"
+							? ORIGINAL
+							: message.action === "inventory"
+								? {
+										publication: ORIGINAL.publication,
+										uses: [{ original: ORIGINAL, visible: true }],
+										unknown: 0,
+									}
+								: true;
+					answer({ spool: "source-reply", id: message.id, result });
+				}),
+			);
 		}
 		return contentWindow;
 	};
@@ -309,17 +469,28 @@ function posted(suffix: string): Record<string, unknown>[] {
 		.map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
 }
 
-const gateAsks = () => posted("/patch/gate");
-const reverts = () => posted("/patch/revert");
-const writes = () => posted("/patch");
+const sourceCalls = (action: string) => posted("/source").filter((body) => body.action === action);
 
-async function pointerDown(target: HTMLElement | null, x: number, y: number): Promise<void> {
+async function pointerDown(
+	target: HTMLElement | null,
+	x: number,
+	y: number,
+	modifiers: Record<string, boolean> = {},
+): Promise<void> {
 	if (target === null) throw new Error("no handle to grab");
 	await act(async () => {
 		target.dispatchEvent(
-			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 5 }),
+			new PointerEvent("pointerdown", {
+				bubbles: true,
+				button: 0,
+				clientX: x,
+				clientY: y,
+				pointerId: 5,
+				...modifiers,
+			}),
 		);
 	});
+	await settle();
 }
 
 async function pointerMove(
@@ -410,6 +581,37 @@ function stubCanvasApis(): void {
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
 			}
+			if (url.pathname.endsWith("/source")) {
+				const body = JSON.parse(String(init?.body)) as { action: string; generation: number; revision?: number };
+				if (body.action === "read") {
+					sourceRead = {
+						operation: { kind: "properties", target: { kind: "fields", fields: [] } },
+						handle: "read",
+						owner: "owner",
+						generation: body.generation,
+						original: ORIGINAL,
+						source: STAMP,
+						role: "class-cell",
+						value: "p-4",
+					} as unknown as SourceRead;
+					return Response.json({ ok: true, read: sourceRead });
+				}
+				if (body.action === "reach")
+					return Response.json(sourceRead ? { ok: true, read: sourceRead } : { ok: false, reason: "no read" });
+				if (body.action === "preview")
+					return Response.json({
+						ok: true,
+						preview: { generation: body.generation, revision: body.revision ?? 1, value: "", frames: [] },
+					});
+				if (body.action === "commit" || body.action === "inverse")
+					return Response.json({
+						ok: true,
+						source: "saved",
+						publication: null,
+						receipt: { owner: "owner", handle: "receipt", operation: { kind: "properties" } },
+					});
+				return Response.json({ ok: true });
+			}
 			if (url.pathname.endsWith("/rungs")) {
 				// one read per stamp asked about, in order: the rail asks for the whole
 				// ancestry and the ring for the held rung alone
@@ -423,26 +625,6 @@ function stubCanvasApis(): void {
 			}
 			if (url.pathname.endsWith("/theme")) return Response.json({ theme: THEME });
 			if (url.pathname.endsWith("/theme/classes")) return Response.json({ compiled: [] });
-			if (url.pathname.endsWith("/patch/gate")) {
-				return Response.json({ ok: true, path: "design/frames/home/frame.tsx", fingerprint: "abc", mapped: false });
-			}
-			if (url.pathname.endsWith("/patch/revert")) {
-				return Response.json({
-					ok: true,
-					path: "design/frames/home/frame.tsx",
-					fingerprint: "def",
-					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 4, text: "w-56", fingerprint: "def" },
-				});
-			}
-			if (url.pathname.endsWith("/patch")) {
-				return Response.json({
-					ok: true,
-					path: "design/frames/home/frame.tsx",
-					fingerprint: "def",
-					mapped: false,
-					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 3, text: "p-4", fingerprint: "def" },
-				});
-			}
 			return Response.json({});
 		}),
 	);

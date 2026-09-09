@@ -348,7 +348,7 @@ export function SelectionOverlay({
 					if (box === undefined) return null;
 					// the ring the outline draws: 2px out, which is where a handle sits
 					const ring = { x: box.x - 2, y: box.y - 2, w: box.w + 4, h: box.h + 4 };
-					return <ElementHandleSet ring={ring} handles={handles} />;
+					return <ElementHandleSet box={box} ring={ring} handles={handles} />;
 				})()}
 
 			{previewShown !== null &&
@@ -427,14 +427,15 @@ export function SelectionOverlay({
  * canvas, one knob — and the two rings sit side by side often enough that a
  * second size would read as a second kind of object.
  */
-function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandles }) {
+function ElementHandleSet({ box, ring, handles }: { box: Box; ring: Box; handles: ElementHandles }) {
 	const { live } = handles;
 	if (!live.w && !live.h && !live.rotate) return null;
 	const at = (sx: Sign, sy: Sign) => ({
 		x: sx === -1 ? ring.x : ring.x + ring.w,
 		y: sy === -1 ? ring.y : ring.y + ring.h,
 	});
-	const drawn = new Set(drawnHandles({ w: ring.w, h: ring.h }, live, handles.active));
+	// the element's own box on screen decides which targets fit, not the ring
+	const drawn = new Set(drawnHandles({ w: box.w, h: box.h }, live, handles.active));
 	return (
 		<>
 			{live.rotate
