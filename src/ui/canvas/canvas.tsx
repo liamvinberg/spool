@@ -135,6 +135,7 @@ import {
 	type Way,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
+import { useKeyMove } from "./key-move";
 import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import { decompose, measuredTarget } from "./measure-spacing";
@@ -3162,195 +3163,21 @@ export function ProjectCanvas({
 		[finishRailSource],
 	);
 
-	/**
-	 * Moving the held element with the arrow keys (#308).
-	 *
-	 * One press means one of two different things, and only the document knows
-	 * which: an element the file already places freely moves by a pixel, and an
-	 * element the parent lays out moves one place along the row it is in. Both
-	 * are one gesture for as long as the key is down, which is one save and one
-	 * press of undo however many times the key repeated.
-	 *
-	 * A move never invents a placement. A normal-flow element is not given
-	 * offsets, an axis the parent layout decides refuses by name, and siblings
-	 * without stable identities refuse before anything is written, because two
-	 * of them changing places would take each other's running state with them.
-	 */
-	const keyMove = useRef<{
-		key: string;
-		pick: PickedSelection;
-		/** where this gesture is: waiting on the document, or what it turned out to be */
-		kind: "asking" | "reorder" | "nudge" | "refused";
-		/** presses so far, one place each, forward positive */
-		presses: number;
-		/** what those presses asked for in pixels: one each, ten with shift */
-		pixels: number;
-		horizontal: boolean;
-		/** a reversed flex row or column draws the authored order backwards */
-		reversed: boolean;
-		/** the release that arrived before the document answered */
-		ended: boolean | null;
-		offset: { left: number; top: number };
-		properties: ResizeProperty[];
-		writes: Partial<Record<ResizeProperty, SizeWrite>>;
-	} | null>(null);
-
-	/** One sample of a held arrow, in the element's own authored placement. */
-	const sampleKeyMove = useCallback(() => {
-		const held = keyMove.current;
-		if (held === null || held.kind !== "nudge") return;
-		sampleRingWrite({
-			kind: "fields",
-			changes: resizeFields(
-				held.properties,
-				{ w: 0, h: 0 },
-				{ x: held.horizontal ? held.pixels : 0, y: held.horizontal ? 0 : held.pixels },
-				held.offset,
-				ringRef.current.step,
-				held.writes as Record<ResizeProperty, SizeWrite>,
-			).map((change) => ({ ...change, scope: "" })),
-		});
-	}, [sampleRingWrite]);
-
-	/** Where a held arrow ends: one save for the whole of it, or nothing at all. */
-	const finishKeyMove = useCallback(
-		(commit: boolean) => {
-			const held = keyMove.current;
-			if (held === null) return;
-			// a release that beats the document's answer is remembered, not lost
-			if (held.kind === "asking") {
-				held.ended = commit;
-				return;
-			}
-			keyMove.current = null;
-			if (held.kind === "nudge") {
-				closeRingWrite(commit && held.pixels !== 0);
-				return;
-			}
-			if (held.kind !== "reorder" || !commit || held.presses === 0) return;
-			const steps = held.reversed ? -held.presses : held.presses;
-			if (writing.current || pendingSource.current.size > 0) return;
-			commitStructural(
-				held.pick,
-				{ kind: "reorder", steps },
-				`move this element ${steps > 0 ? "after" : "before"} ${Math.abs(steps) === 1 ? "its neighbour" : `${Math.abs(steps)} of its siblings`}`,
-			);
-		},
-		[closeRingWrite, commitStructural],
-	);
-	const finishKeyMoveRef = useRef(finishKeyMove);
-	finishKeyMoveRef.current = finishKeyMove;
-
-	/** What the document says this element is, which decides what an arrow does to it. */
-	const openKeyMove = useCallback(
-		(pick: PickedSelection, horizontal: boolean) => {
-			// the gesture this answer belongs to, not whichever one is current when
-			// it lands: a second arrow pressed while the document is still thinking
-			// opens its own gesture, and the older answer is about the older one
-			const opened = keyMove.current;
-			askSizing(pick.frame, pick.selector, (sizing) => {
-				const held = keyMove.current;
-				if (held === null || held !== opened || held.kind !== "asking") return;
-				const refuse = (code: Refusal["code"], says: string) => {
-					held.kind = "refused";
-					showRefusal(pick.frame, pick.selector, { code, says });
-				};
-				if (sizing === null) {
-					keyMove.current = null;
-					return;
-				}
-				if (sizing.free) {
-					const property: ResizeProperty = horizontal ? "left" : "top";
-					const placed = horizontal ? sizing.offset.left : sizing.offset.top;
-					if (placed === null)
-						refuse("authored-unit", `this element has no ${property} of its own for a key to move`);
-					else {
-						const spelling = authoredSpelling(
-							ringRef.current.className,
-							RESIZE_PROPERTIES[property].family,
-							sizing.units,
-						);
-						if (spelling.kind === "refused") refuse("authored-unit", spelling.says);
-						else {
-							held.kind = "nudge";
-							held.properties = [property];
-							held.offset = { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 };
-							held.writes = { [property]: spelling.kind === "pixels" ? { unit: "px", per: 1 } : spelling };
-							openRingWrite(pick, [{ property, scope: "" }]);
-							sampleKeyMove();
-						}
-					}
-				} else if (sizing.flow.axis !== (horizontal ? "row" : "column"))
-					refuse("source", "the parent layout decides this position; use its alignment or spacing");
-				else {
-					held.kind = "reorder";
-					held.reversed = sizing.flow.reversed;
-				}
-				if (held.ended !== null) finishKeyMoveRef.current(held.ended);
-			});
-		},
-		[askSizing, openRingWrite, sampleKeyMove, showRefusal],
-	);
-
-	/**
-	 * One arrow press on the held element. A different key ends the gesture the
-	 * last one opened, so each key is its own save.
-	 */
-	const moveElement = useCallback(
-		(event: KeyboardEvent): boolean => {
-			if (enteredRef.current !== null || editingRef.current !== null) return false;
-			const pick = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
-			if (pick === undefined || pick.generated) return false;
-			const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
-			const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
-			if (keyMove.current !== null && keyMove.current.key !== event.key) finishKeyMove(true);
-			const step = (forward ? 1 : -1) * (event.shiftKey ? 10 : 1);
-			const held = keyMove.current;
-			if (held !== null && held.key === event.key) {
-				if (held.kind === "refused") return true;
-				held.presses += forward ? 1 : -1;
-				held.pixels += step;
-				sampleKeyMove();
-				return true;
-			}
-			if (writing.current || pendingSource.current.size > 0) return true;
-			keyMove.current = {
-				key: event.key,
-				pick,
-				kind: "asking",
-				presses: forward ? 1 : -1,
-				pixels: step,
-				horizontal,
-				reversed: false,
-				ended: null,
-				offset: { left: 0, top: 0 },
-				properties: [],
-				writes: {},
-			};
-			setRefused(null);
-			openKeyMove(pick, horizontal);
-			return true;
-		},
-		[finishKeyMove, openKeyMove, sampleKeyMove],
-	);
-
-	/**
-	 * The release that ends one. Every arrow answers here, including the one a
-	 * different key already completed, and a window that loses focus mid-hold
-	 * cancels rather than saving a move nobody finished asking for.
-	 */
-	useEffect(() => {
-		const up = (event: KeyboardEvent) => {
-			if (keyMove.current?.key === event.key) finishKeyMoveRef.current(true);
-		};
-		const cancel = () => finishKeyMoveRef.current(false);
-		window.addEventListener("keyup", up);
-		window.addEventListener("blur", cancel);
-		return () => {
-			window.removeEventListener("keyup", up);
-			window.removeEventListener("blur", cancel);
-		};
-	}, []);
+	const { moveElement, finishKeyMove } = useKeyMove({
+		held: () =>
+			pickedRef.current.length === 1 && enteredRef.current === null && editingRef.current === null
+				? pickedRef.current[0]
+				: undefined,
+		busy: () => writing.current || pendingSource.current.size > 0,
+		askSizing,
+		openRingWrite,
+		sampleRingWrite,
+		closeRingWrite,
+		showRefusal,
+		clearRefusal: () => setRefused(null),
+		move: (pick, steps, action) => commitStructural(pick, { kind: "reorder", steps }, action),
+		ring: ringRef,
+	});
 
 	const verifyReloadedIntent = useCallback(
 		async (frame: string) => {
@@ -5363,7 +5190,7 @@ export function ProjectCanvas({
 			if (event === undefined) return;
 			// a held element is what the arrows move first: the element's own
 			// placement or its place among its siblings, never the frame behind it
-			if (moveElement(event)) {
+			if (moveElement(event, step)) {
 				event.preventDefault();
 				return;
 			}
