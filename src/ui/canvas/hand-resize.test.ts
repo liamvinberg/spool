@@ -220,6 +220,11 @@ describe("the unit the file already says a size is in", () => {
 		expect(authoredSpelling("w-[347px]", "w", units)).toEqual({ kind: "pixels" });
 	});
 
+	it("takes pixels for the one-pixel length, which is a length like any other", () => {
+		expect(authoredSpelling("w-px", "w", units)).toEqual({ kind: "pixels" });
+		expect(authoredSpelling("h-px", "h", units)).toEqual({ kind: "pixels" });
+	});
+
 	it("keeps a relative unit, measured on the element itself", () => {
 		expect(authoredSpelling("w-[20rem]", "w", units)).toEqual({ kind: "unit", unit: "rem", per: 16 });
 		expect(authoredSpelling("h-[2em]", "h", units)).toEqual({ kind: "unit", unit: "em", per: 20 });
@@ -237,9 +242,11 @@ describe("the unit the file already says a size is in", () => {
 		});
 	});
 
-	it("refuses a unit it cannot measure on this element", () => {
+	it("refuses a unit it cannot measure on this element, and a value it cannot read", () => {
 		expect(authoredSpelling("w-[50%]", "w", units)).toMatchObject({ kind: "refused" });
 		expect(authoredSpelling("w-[10vw]", "w", units)).toMatchObject({ kind: "refused" });
+		// a width the project's own variable decides is not a number this drag has
+		expect(authoredSpelling("w-(--card)", "w", units)).toMatchObject({ kind: "refused" });
 	});
 
 	it("reads the family it was asked about and no other", () => {

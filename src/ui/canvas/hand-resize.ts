@@ -360,7 +360,8 @@ export function authoredSpelling(
 	const refused = (says: string): SizeSpelling => ({ kind: "refused", says });
 	const bracket = /^\[(.+)\]$/.exec(worn.value);
 	if (bracket === null) {
-		if (/^\d+(?:\.\d+)?$/.test(worn.value)) return { kind: "pixels" };
+		// a bare step, and `px`, which is Tailwind's own name for one pixel
+		if (worn.value === "px" || /^\d+(?:\.\d+)?$/.test(worn.value)) return { kind: "pixels" };
 		return refused(`${family}-${worn.value} is what the layout decides, not a length a drag can move`);
 	}
 	const unit = /^-?[\d.]+([a-z%]+)$/i.exec(bracket[1] ?? "")?.[1];
