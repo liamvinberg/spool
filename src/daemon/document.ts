@@ -1132,6 +1132,151 @@ const canvasShimJs = `(() => {
 		};
 	}
 
+	// What a resize may align with (#311): the element's own box, the stops its
+	// siblings and its parent's content box offer, and how far the dragged edge
+	// moves per pixel of written size. All of it is the running layout's, and a
+	// trial is worn and taken off inside this one task, so nothing is painted in
+	// a size the drag did not settle on.
+	const snapIds = new WeakMap();
+	let snapNext = 0;
+	// identity is the node's own: two siblings wearing one authored id are two
+	// targets, and a replacement wearing the id of the one it replaced is a third
+	function snapIdentity(el) {
+		let id = snapIds.get(el);
+		if (id === undefined) { id = ++snapNext; snapIds.set(el, id); }
+		return id;
+	}
+	function snapBox(el) {
+		const r = el.getBoundingClientRect();
+		return { x: r.x, y: r.y, w: r.width, h: r.height };
+	}
+	// Positive axis-aligned 2D scale and translation, and horizontal writing.
+	// A rotated, skewed, reflected or 3D box is not the box it is drawn as, and
+	// the separate transform longhands compose on their own terms, so each of
+	// them refuses the geometry rather than guessing an inverse for it.
+	function snapScale(el) {
+		let w = 1, h = 1;
+		for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+			const style = getComputedStyle(node);
+			if (style.writingMode !== "horizontal-tb") return null;
+			if (style.perspective !== "none" || style.rotate !== "none" || style.scale !== "none" || style.translate !== "none") return null;
+			const zoom = parseFloat(style.zoom);
+			if (Number.isFinite(zoom) && zoom > 0) { w *= zoom; h *= zoom; }
+			if (style.transform !== "none") {
+				const matrix = new DOMMatrixReadOnly(style.transform);
+				if (!matrix.is2D || matrix.b !== 0 || matrix.c !== 0 || matrix.a <= 0 || matrix.d <= 0) return null;
+				w *= matrix.a;
+				h *= matrix.d;
+			}
+		}
+		return { w: w, h: h };
+	}
+	// What the parent is, in numbers, so the arithmetic that makes a content box
+	// out of them can live where a test can reach it (ui/canvas/element-snap.ts).
+	// The same split the measurement overlay uses: this reads and says nothing
+	// more, because the document is the worst place to work out what it means.
+	function parentReading(parent) {
+		const scale = snapScale(parent);
+		if (!scale || parent.getClientRects().length !== 1) return null;
+		const style = getComputedStyle(parent);
+		const px = (name) => parseFloat(style.getPropertyValue(name)) || 0;
+		return {
+			box: snapBox(parent),
+			scale: scale,
+			border: {
+				left: px("border-left-width"),
+				right: px("border-right-width"),
+				top: px("border-top-width"),
+				bottom: px("border-bottom-width"),
+			},
+			padding: {
+				left: px("padding-left"),
+				right: px("padding-right"),
+				top: px("padding-top"),
+				bottom: px("padding-bottom"),
+			},
+			// what the engine resolved the box to, which keeps its fraction
+			size: { w: parseFloat(style.width), h: parseFloat(style.height) },
+			borderBox: style.boxSizing === "border-box",
+			overflow: { x: style.overflowX, y: style.overflowY },
+			// rounded, and only ever used to measure a reservation with
+			outer: { w: parent.offsetWidth, h: parent.offsetHeight },
+			inner: { w: parent.clientWidth, h: parent.clientHeight },
+			edge: { left: parent.clientLeft, top: parent.clientTop },
+			scroll: { left: parent.scrollLeft, top: parent.scrollTop },
+		};
+	}
+
+	// The immediate rendered siblings, in the document the element is in.
+	// Descendants, unrelated branches, other frames, and hidden, fragmented,
+	// fixed or unsupported-transform siblings are not alignments a resize can
+	// honestly make. The parent rides beside them as a reading of its own.
+	function snapTargets(el) {
+		const parent = el.parentElement;
+		if (!parent || parent.nodeType !== 1) return null;
+		const targets = [];
+		const kin = parent.children;
+		for (let i = 0; i < kin.length; i++) {
+			const sibling = kin[i];
+			if (sibling === el || !(sibling instanceof HTMLElement) || sibling.getClientRects().length !== 1) continue;
+			const style = getComputedStyle(sibling);
+			if (style.visibility !== "visible" || style.position === "fixed" || !snapScale(sibling)) continue;
+			const box = snapBox(sibling);
+			if (box.w > 0 && box.h > 0) targets.push({ id: snapIdentity(sibling), box: box });
+		}
+		return targets;
+	}
+	function snapEdgeOf(box, axis, sign) {
+		return axis === "x" ? box.x + (sign > 0 ? box.w : 0) : box.y + (sign > 0 ? box.h : 0);
+	}
+	function elementSnapping(selector, trial) {
+		const el = elementFor(selector);
+		if (!el || el.getClientRects().length !== 1 || !snapScale(el)) return null;
+		const parent = el.parentElement;
+		if (!parent || parent.nodeType !== 1) return null;
+		const held = () => {
+			const reading = parentReading(parent);
+			return reading === null ? null : { id: snapIdentity(parent), reading: reading };
+		};
+		if (!trial) {
+			const targets = snapTargets(el);
+			return targets === null
+				? null
+				: { box: snapBox(el), sensitivity: { w: 0, h: 0 }, targets: targets, parent: held() };
+		}
+		const worn = el.getAttribute("style");
+		const wear = (values) => {
+			const say = (name, value) => { if (value !== null && value !== undefined) el.style.setProperty(name, value + "px"); };
+			say("width", values.w);
+			say("height", values.h);
+			say("left", values.left);
+			say("top", values.top);
+		};
+		let answer = null;
+		try {
+			wear(trial.wear);
+			const box = snapBox(el);
+			const targets = snapTargets(el);
+			const parentHeld = held();
+			wear(trial.probe);
+			const shifted = snapBox(el);
+			if (targets !== null) {
+				answer = {
+					box: box,
+					sensitivity: {
+						w: trial.sx === 0 ? 0 : snapEdgeOf(shifted, "x", trial.sx) - snapEdgeOf(box, "x", trial.sx),
+						h: trial.sy === 0 ? 0 : snapEdgeOf(shifted, "y", trial.sy) - snapEdgeOf(box, "y", trial.sy),
+					},
+					targets: targets,
+					parent: parentHeld,
+				};
+			}
+		} finally {
+			if (worn === null) el.removeAttribute("style"); else el.setAttribute("style", worn);
+		}
+		return answer;
+	}
+
 	// What a gap gesture may draw on (#306): the container's own layout words,
 	// the two gaps it resolves to, and every child's box. The two facts that make
 	// a distance untrustworthy ride on each child, and the ones about the
@@ -1628,6 +1773,13 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			let sizing = null;
 			try { sizing = elementSizing(m.selector); } catch {}
 			parent.postMessage({ spool: "sized", frame, id: m.id, sizing }, "*");
+			return;
+		}
+		if (m.spool === "snapping") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let snapping = null;
+			try { snapping = elementSnapping(m.selector, m.trial || null); } catch {}
+			parent.postMessage({ spool: "snapped", frame, id: m.id, snapping }, "*");
 			return;
 		}
 		if (m.spool === "gaps") {

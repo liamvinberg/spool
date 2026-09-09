@@ -81,6 +81,7 @@ import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice, NoticeStrip } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
+import { type ElementSnap, poolOf, type SnapRequest, type SnapTarget, snapResize, truthful } from "./element-snap";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -121,16 +122,19 @@ import {
 	type Edge,
 	edgeSigns,
 	NO_HANDLES,
+	placementShift,
 	previewTokens,
+	quantizerFor,
 	RESIZE_PROPERTIES,
+	type ResizeMeasurement,
 	type ResizeModifiers,
 	type ResizeProperty,
 	resizedBox,
 	resizeFields,
 	rotateTokens,
 	type Size,
-	type SizeLimits,
 	type SizeWrite,
+	snapTrial,
 	turnValue,
 	useRing,
 } from "./hand-resize";
@@ -158,6 +162,7 @@ import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import { decompose, measuredTarget } from "./measure-spacing";
 import {
+	type ElementGuides,
 	type ElementHandles,
 	type ElementPreview,
 	type FrameHover,
@@ -181,6 +186,7 @@ import {
 	clipboardCopyAllowed,
 	dropTargetMessage,
 	type ElementSizing,
+	type ElementSnapping,
 	editMessage,
 	endEditMessage,
 	gapsMessage,
@@ -193,11 +199,13 @@ import {
 	pickMessage,
 	type SessionRecord,
 	type SiteAnchor,
+	type SnapTrial,
 	type SpacingReading,
 	sessionReply,
 	sharedStateMessage,
 	sitesMessage,
 	sizingMessage,
+	snappingMessage,
 	walkRejectionReason,
 } from "./protocol";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
@@ -292,34 +300,16 @@ type Gesture =
 			anchor: GapAnchor;
 	  } & GapDrag);
 
-/**
- * What the document said about the element a drag grabbed, and where the drag
- * has taken it since.
- *
- * One shape rather than eight fields, because none of them is knowable before
- * the reply and all of them are knowable after it. The properties are the ones
- * this gesture's source read was opened for, in write order.
- */
-interface ResizeMeasurement {
-	modifiers: ResizeModifiers;
-	properties: readonly ResizeProperty[];
-	/** the unit each of them is written in, taken from what the file already says */
-	writes: Record<ResizeProperty, SizeWrite>;
-	start: Size;
-	/** what a `content-box` element adds on top of the width that is written */
-	extra: Size;
-	offset: { left: number; top: number };
-	limits: SizeLimits;
-	live: Size;
-	shift: { x: number; y: number };
-}
-
 /** Every drag the ring owns, which share one source read and every way of being interrupted. */
 function isRingGesture(
 	active: Gesture,
 ): active is Extract<Gesture, { kind: "element-size" | "element-turn" | "element-gap" }> {
 	return active.kind === "element-size" || active.kind === "element-turn" || active.kind === "element-gap";
 }
+
+/** Two lists of guide coordinates saying the same thing. */
+const same = (a: readonly number[], b: readonly number[]): boolean =>
+	a.length === b.length && a.every((value, at) => value === b[at]);
 
 /** One size a resize drag worked out, and the guides that belong to it. */
 interface ResizePaint {
@@ -512,6 +502,12 @@ export function ProjectCanvas({
 		tokens: readonly string[];
 		box: Size;
 	} | null>(null);
+	/**
+	 * The alignments a snapped resize is a true statement about (#311), in the
+	 * frame document's own coordinates. Drawn only after the layout the
+	 * correction made has been measured and still says so.
+	 */
+	const [elementGuides, setElementGuides] = useState<ElementGuides | null>(null);
 	/**
 	 * What the held container's own document says about its gaps (#306), and
 	 * what a drag over one of them is doing.
@@ -754,6 +750,9 @@ export function ProjectCanvas({
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
 	const sizingWaiters = useRef(new Map<number, (sizing: ElementSizing | null) => void>());
+	const snapWaiters = useRef(new Map<number, (snapping: ElementSnapping | null) => void>());
+	/** which sample owns the outstanding snap: an older answer is not applied */
+	const snapSample = useRef(0);
 	/** the gap gesture's own replies (#306), on the same id sequence */
 	const gapWaiters = useRef(new Map<number, (gaps: GapReading | null) => void>());
 	const pickSeq = useRef(0);
@@ -2375,6 +2374,28 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * A snapping sample's ask (#311): what this element may align with, and how
+	 * far its dragged edge moves per pixel of written size.
+	 *
+	 * A trial states the size the sample is about, worn and taken off inside the
+	 * document's own task; a trial-less ask reads what the layout made of the
+	 * size the sample actually wrote.
+	 */
+	const askSnapping = useCallback(
+		(frame: string, selector: string, trial: SnapTrial | null): Promise<ElementSnapping | null> =>
+			new Promise((resolve) => {
+				askFrame(
+					frame,
+					snapWaiters.current,
+					(id) => snappingMessage(selector, trial, id),
+					resolve,
+					() => resolve(null),
+				);
+			}),
+		[askFrame],
+	);
+
+	/**
 	 * A gap gesture's own ask (#306): the container's layout words and every
 	 * child's box, from the one place that knows where the flow put them.
 	 */
@@ -3215,14 +3236,19 @@ export function ProjectCanvas({
 		[beginRailText],
 	);
 
-	/** One sample of a live gesture, previewed in every use through the common owner. */
+	/**
+	 * One sample of a live gesture, previewed in every use through the common
+	 * owner. The promise is done when this sample is on the running layout, or
+	 * when a later sample has taken its place, which is what lets a snap
+	 * measure what its correction actually made (#311).
+	 */
 	const sampleRingWrite = useCallback(
-		(value: SourcePropertyGroupValue) => {
+		(value: SourcePropertyGroupValue): Promise<void> => {
 			const held = ringWrite.current;
-			if (held === null || held.done) return;
+			if (held === null || held.done) return Promise.resolve();
 			held.value = value;
 			const revision = ++held.revision;
-			void held.read.then(async (read) => {
+			return held.read.then(async (read) => {
 				if (!read || held.done || ringWrite.current !== held || held.revision !== revision) return;
 				const plan = await previewPropertySource(project, read, revision, value);
 				if (held.done || ringWrite.current !== held || held.revision !== revision) return;
@@ -3946,6 +3972,12 @@ export function ProjectCanvas({
 					waiter?.(message.chain);
 					return;
 				}
+				case "snapped": {
+					const waiter = snapWaiters.current.get(message.id);
+					snapWaiters.current.delete(message.id);
+					waiter?.(message.snapping);
+					break;
+				}
 				case "gapped": {
 					const waiter = gapWaiters.current.get(message.id);
 					gapWaiters.current.delete(message.id);
@@ -4446,6 +4478,7 @@ export function ProjectCanvas({
 		setResizeCursor(null);
 		setResizingFrame(null);
 		setElementDrag(null);
+		setElementGuides(null);
 		setGapDrag(null);
 		setPanning(false);
 		if (active.kind === "move") {
@@ -4800,22 +4833,24 @@ export function ProjectCanvas({
 				held.modifiers,
 				held.limits,
 			);
+			const raw = { w: dragged.w, h: dragged.h };
 			const measured: ResizeMeasurement = {
 				...held,
-				live: { w: dragged.w, h: dragged.h },
+				raw,
+				live: raw,
 				shift: { x: dragged.shiftX, y: dragged.shiftY },
 			};
-			if (
-				measured.live.w === held.live.w &&
-				measured.live.h === held.live.h &&
-				measured.shift.x === held.shift.x &&
-				measured.shift.y === held.shift.y
-			)
-				return;
+			// the pointer intent, not the corrected size, is what a sample repeats:
+			// a snap that compared itself would stick to the stop it just made
+			if (raw.w === held.raw.w && raw.h === held.raw.h) return;
 			const next: Gesture = { ...active, measured };
 			gesture.current = next;
 			showElementDrag(next);
-			sampleElementResize(measured);
+			// the pointer's own size goes to the running layout at once, and the
+			// alignment refines it after: a release that beats the correction saves
+			// what the pointer asked for rather than an older sample's answer
+			void sampleElementResize(measured);
+			void alignElementResize(next, accelPressed(event), cam.k);
 			return;
 		}
 
@@ -5036,6 +5071,7 @@ export function ProjectCanvas({
 				writes: writes as Record<ResizeProperty, SizeWrite>,
 				start: sizing.box,
 				extra: sizing.extra,
+				raw: sizing.box,
 				offset: { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 },
 				limits: sizing.limits,
 				live: sizing.box,
@@ -5048,6 +5084,102 @@ export function ProjectCanvas({
 				properties.map((property) => ({ property, scope: "" })),
 			);
 		});
+	};
+
+	/**
+	 * The size one sample settles on, and the alignments it may claim (#311).
+	 *
+	 * Every sample begins from the raw pointer intent, asks the document what
+	 * that size would align with, tries one correction and then asks what the
+	 * layout actually made of it. A stop CSS rounded away, refused, or moved
+	 * while answering leaves the pointer's own size and draws nothing: a guide
+	 * is a statement about the box that is there, never about the one that was
+	 * asked for. There is no second attempt: this chases nothing.
+	 */
+	const alignElementResize = async (
+		active: Extract<Gesture, { kind: "element-size" }>,
+		bypass: boolean,
+		zoom: number,
+	): Promise<void> => {
+		const held = active.measured;
+		if (held === null) return;
+		const sample = ++snapSample.current;
+		const { pick, edge } = active;
+		const { sx, sy } = edgeSigns(edge);
+		/** the gesture this sample belongs to, or nothing where it was superseded */
+		const current = (): Extract<Gesture, { kind: "element-size" }> | null => {
+			const now = gesture.current;
+			return snapSample.current === sample &&
+				now.kind === "element-size" &&
+				now.pick.selector === pick.selector &&
+				now.measured !== null
+				? now
+				: null;
+		};
+		/** Undefined leaves what is drawn alone; null takes it down. */
+		const showGuides = (guides: { v: number[]; h: number[] } | null | undefined) => {
+			if (guides === undefined) return;
+			setElementGuides((current) =>
+				guides === null
+					? null
+					: current !== null &&
+							current.frame === pick.frame &&
+							same(current.v, guides.v) &&
+							same(current.h, guides.h)
+						? current
+						: { frame: pick.frame, ...guides },
+			);
+		};
+		const settle = async (size: Size, guides: { v: number[]; h: number[] } | null | undefined): Promise<boolean> => {
+			const now = current();
+			if (now === null || now.measured === null) return false;
+			showGuides(guides);
+			// the size already on the layout is not written again: the pointer's own
+			// sample put it there, and only a correction is news
+			if (now.measured.live.w === size.w && now.measured.live.h === size.h) return true;
+			const measured: ResizeMeasurement = {
+				...now.measured,
+				live: size,
+				shift: placementShift(held.start, edge, held.modifiers, size),
+			};
+			const next: Gesture = { ...now, measured };
+			gesture.current = next;
+			showElementDrag(next);
+			await sampleElementResize(measured);
+			return true;
+		};
+		if (bypass || (sx === 0 && sy === 0)) {
+			await settle(held.raw, null);
+			return;
+		}
+		const before = await askSnapping(pick.frame, pick.selector, snapTrial(held, edge, sx, sy));
+		if (current() === null) return;
+		const pool: SnapTarget[] = before === null ? [] : poolOf(before);
+
+		const request: SnapRequest = {
+			sx,
+			sy,
+			zoom,
+			// ⇧ holds the proportions the border box started at
+			ratio: held.modifiers.proportional && held.start.h > 0 ? held.start.w / held.start.h : null,
+			sensitivity: before?.sensitivity ?? { w: 0, h: 0 },
+			limits: held.limits,
+			quantize: quantizerFor(held),
+		};
+		const snap: ElementSnap | null = before === null ? null : snapResize(before.box, held.raw, pool, request);
+		if (before === null || snap === null || (snap.v.length === 0 && snap.h.length === 0)) {
+			await settle(held.raw, null);
+			return;
+		}
+		// the correction goes on with the guides the last sample earned still up:
+		// they come down when this sample's own answer replaces them, so a held
+		// snap reads as one steady line rather than one that blinks per sample
+		if (!(await settle(snap.size, undefined))) return;
+		const after = await askSnapping(pick.frame, pick.selector, null);
+		if (current() === null) return;
+		if (after !== null && truthful(snap, after.box, poolOf(after), request, pool))
+			showGuides({ v: snap.v, h: snap.h });
+		else await settle(held.raw, null);
 	};
 
 	/** The class cell the ring read, as the base scope's own tokens. */
@@ -5132,7 +5264,7 @@ export function ProjectCanvas({
 
 	/** One sample of a live size drag, in the element's own authored dimensions. */
 	const sampleElementResize = (measured: ResizeMeasurement) => {
-		sampleRingWrite({
+		return sampleRingWrite({
 			kind: "fields",
 			changes: resizeFields(
 				measured.properties,
@@ -5193,6 +5325,7 @@ export function ProjectCanvas({
 		setResizeCursor(null);
 		setResizingFrame(null);
 		setElementDrag(null);
+		setElementGuides(null);
 		setGapDrag(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
@@ -6063,6 +6196,7 @@ export function ProjectCanvas({
 							refused={refused}
 							handles={elementHandles}
 							marks={marks}
+							elementGuides={elementGuides}
 							marquee={marquee}
 							shellRadius={shellRadius}
 						/>
