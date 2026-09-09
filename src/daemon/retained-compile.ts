@@ -545,14 +545,24 @@ export function lowerLiterals(
 	// so the executable shape is about the object being there, not what is in it.
 	const styleLiterals = new Set<Node>();
 	walk(ast, (node, ancestors) => {
+		// A style object is written either as a JSX attribute or as a factory
+		// config's own field; both are the same literal to the element that runs.
+		let object: Node | undefined;
 		if (
-			node.type !== "JSXAttribute" ||
-			node.name.type !== "JSXIdentifier" ||
-			node.name.name !== "style" ||
-			node.value?.type !== "JSXExpressionContainer"
+			node.type === "JSXAttribute" &&
+			node.name.type === "JSXIdentifier" &&
+			node.name.name === "style" &&
+			node.value?.type === "JSXExpressionContainer"
 		)
-			return;
-		const object = node.value.expression;
+			object = node.value.expression;
+		else if (
+			node.type === "ObjectProperty" &&
+			!node.computed &&
+			((node.key.type === "Identifier" && node.key.name === "style") ||
+				(node.key.type === "StringLiteral" && node.key.value === "style"))
+		)
+			object = node.value;
+		if (!object) return;
 		try {
 			literalStyleMembers(object);
 		} catch {

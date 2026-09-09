@@ -63,3 +63,15 @@ it.each([
 	const source = `export default function Frame(){return <h1 style={${value}} className="text-red-500">Words</h1>}`;
 	expect(lowerLiterals("frames/home/frame.tsx", source).code).not.toMatch(/Style\(/);
 });
+
+it("retains a factory config's style members the same way a JSX attribute's are", () => {
+	const source =
+		'import {createElement} from "react"; export default function Frame(){return createElement("h1",{style:{padding:4},className:"text-red-500"},"Words")}';
+	const before = lowerLiterals("frames/home/frame.tsx", source);
+	const members = Object.entries(before.cells).filter(([, cell]) => cell.field?.startsWith("style:"));
+	expect(members.map(([, cell]) => [cell.field, cell.value])).toEqual([["style:padding", "4"]]);
+	for (const [key] of members) expect(before.code).toContain(`StyleValue(${JSON.stringify(key)},`);
+	// a member's value reaches the running use through the packet here too, so
+	// the executable shape does not follow it
+	expect(lowerLiterals("frames/home/frame.tsx", source.replace("padding:4", "padding:6")).shape).toBe(before.shape);
+});

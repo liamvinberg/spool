@@ -3234,9 +3234,28 @@ it("says inactive for a conditional project rule the viewport does not satisfy, 
 	expect(await f.inspect(expectation)).toEqual([{ rendered: "verified", observed: "0.5" }]);
 });
 
-it("keeps a member the frame did not take as a mismatch rather than reapplying it", async () => {
-	// the retained shorthand-removal counterexample: source carries the member,
-	// the element's own declaration no longer does
-	const f = await fixture('<section data-subject style="opacity: 0.9"></section>');
-	expect(await f.inspect(inlineExpectation("0.5"))).toEqual([{ rendered: "mismatching", observed: "0.9" }]);
+it("reports a shorthand whose removal the frame did not take, rather than reapplying it", async () => {
+	// the retained counterexample: source has gone back to the shorthand alone,
+	// and the element still carries the longhand the removed member left behind
+	const f = await fixture('<section data-subject style="padding: 40px; padding-left: 12px"></section>');
+	expect(
+		await f.inspect({
+			...inlineExpectation("40px"),
+			property: "padding",
+			effects: [{ owner: null, path: [], property: "padding", value: "40px", important: false }],
+		}),
+	).toEqual([{ rendered: "mismatching", observed: "40px 40px 40px 12px" }]);
+});
+
+it("reports a member the frame has no declaration for at all, which is what a new one is", async () => {
+	// a member added by a save changes the module's own code, which delivery does
+	// not carry: the source has it and the running use does not
+	const f = await fixture('<section data-subject style="padding: 40px"></section>');
+	expect(
+		await f.inspect({
+			...inlineExpectation("12px"),
+			property: "padding-left",
+			effects: [{ owner: null, path: [], property: "padding-left", value: "12px", important: false }],
+		}),
+	).toEqual([{ rendered: "mismatching", observed: "40px" }]);
 });
