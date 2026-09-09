@@ -60,11 +60,19 @@ async function dragHandle(
 	await f.page.mouse.down();
 	await f.page.mouse.move(from.x + dx / 2, from.y + dy / 2);
 	await f.page.mouse.move(from.x + dx, from.y + dy);
-	if (options.release !== false) await f.page.mouse.up();
-	for (const key of options.modifiers ?? []) await f.page.keyboard.up(key);
+	// a drag the caller keeps hold of keeps its modifiers too, and lets them go
+	// itself: the bypass is read off each move, so releasing it here would be a
+	// different gesture from the one the case means
+	if (options.release !== false) {
+		await f.page.mouse.up();
+		for (const key of options.modifiers ?? []) await f.page.keyboard.up(key);
+	}
 }
 
 const guides = (f: Canvas) => f.page.locator("[data-element-guide]").count();
+
+/** The key the bypass is held with, which is the platform's own. */
+const ACCEL = process.platform === "darwin" ? "Meta" : "Control";
 
 it("pulls the dragged edge onto a sibling's and saves the size it drew", { timeout: 120_000 }, async () => {
 	// the card is 160 wide beside a 208 sibling, so a drag of 45 asks for 205:
@@ -104,13 +112,13 @@ it("keeps the size the pointer asked for while the bypass is held", { timeout: 1
 	await f.select();
 
 	// ⌘/Ctrl drops the whole pool: a dense layout has to let a size be anything
-	await dragHandle(f, "e", 45, 0, { release: false, modifiers: ["ControlOrMeta"] });
+	await dragHandle(f, "e", 45, 0, { release: false, modifiers: [ACCEL] });
 	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["205px"]);
 	expect(await guides(f)).toBe(0);
 
 	const committed = reply(f, "commit");
 	await f.page.mouse.up();
-	await f.page.keyboard.up("ControlOrMeta");
+	await f.page.keyboard.up(ACCEL);
 	await saved(f, committed);
 	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card.replace("w-40", "w-[205px]"));
 });
