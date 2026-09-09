@@ -1144,3 +1144,62 @@ it("sends a flex direction and a wrap chip as their own single requests", async 
 	]);
 	expect(rail.groups).toEqual([]);
 });
+
+/**
+ * A box whose sides are written in different sources (#304).
+ *
+ * One padding row can only stand for the sides that share an owner. Where an
+ * important rule decides one side and the element's own member decides the
+ * rest, the group has to open onto its sides so each one is edited where it is
+ * actually written, and a row that cannot be attributed says so instead of
+ * offering a write it would refuse.
+ */
+function sourced(readings: Record<string, Partial<SourcePropertyReading>>): PropertyControls["describe"] {
+	return async (properties) => ({
+		readings: Object.fromEntries(
+			properties.map((property) => [
+				property,
+				{ tokens: [], source: "class", binding: { kind: "page" }, ...readings[property] } as SourcePropertyReading,
+			]),
+		),
+	});
+}
+
+it("opens a box onto its sides when they are written in different sources", async () => {
+	// every side the class spells is the same, so only the sources open this box
+	const rail = await mount(
+		"p-6",
+		BASE,
+		undefined,
+		sourced({
+			padding: { source: "mixed", binding: { kind: "mixed" }, reason: "different sources" },
+			"padding-top": { source: "declaration", binding: { kind: "custom" }, authored: "2rem" },
+			"padding-right": { source: "style", binding: { kind: "custom" }, authored: "40px" },
+			"padding-bottom": { source: "style", binding: { kind: "custom" }, authored: "40px" },
+			"padding-left": { source: "style", binding: { kind: "custom" }, authored: "40px" },
+		}),
+	);
+	const field = (property: string) =>
+		rail.host.querySelector<HTMLInputElement>(`[data-properties-row="${property}"] input`);
+	await vi.waitFor(() => expect(field("padding-left")).not.toBe(null));
+	// every side is editable where it is written, including the one an important
+	// rule decides
+	expect(field("padding-left")?.disabled).toBe(false);
+	expect(field("padding-top")?.disabled).toBe(false);
+	expect(field("padding-right")?.disabled).toBe(false);
+	expect(field("padding")).toBe(null);
+});
+
+it("says why a box nobody owns cannot be written, instead of offering the write", async () => {
+	const rail = await mount(
+		"p-6",
+		BASE,
+		undefined,
+		sourced({ padding: { source: "mixed", binding: { kind: "mixed" }, reason: "two sources own this" } }),
+	);
+	const row = () => rail.host.querySelector('[data-properties-row="padding"]');
+	const said = () => row()?.querySelector("span[title]")?.getAttribute("title");
+	await vi.waitFor(() => expect(said()).toBe("two sources own this"));
+	const input = row()?.querySelector<HTMLInputElement>("input");
+	expect(input === null || input === undefined || input.disabled).toBe(true);
+});

@@ -67,6 +67,8 @@ export interface SourcePropertyReading {
 	source: "class" | "style" | "declaration" | "mixed";
 	/** One compiler-proven custom declaration, preserving its authored unit. */
 	authored?: string;
+	/** Why no single source can be named for this property, where none can. */
+	reason?: string;
 	binding:
 		| { kind: "page" }
 		| { kind: "custom" }
