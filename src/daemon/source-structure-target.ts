@@ -1,26 +1,51 @@
 import { relative } from "node:path";
 import { parse } from "@babel/parser";
 import type { SourceDescription, SourceOccurrence, SourceOperation } from "../source-edit";
-import type { SourceStructuralExpectation } from "../source-structure";
+import type { SourceStructuralChild, SourceStructuralExpectation } from "../source-structure";
 import { realDesignDir } from "./design-path";
+import type { SpanPatch } from "./hand-write";
 import { lowerLiterals, type RetainedCompilation } from "./retained-compile";
 import { type Selection, Sources } from "./source-origins";
+import { applySourcePatches } from "./source-patches";
 import { deriveSourceDelete } from "./source-structure";
 import { planStructureCompilation } from "./source-structure-compile";
 
-/** A delete unit comes only from the original committed chain and frozen compiler inputs. */
-export function resolveSourceDelete(
+/** What a structural verb hands the resolver: the bytes it would write, and the unit it owns. */
+export interface StructuralPlan {
+	file: string;
+	text: string;
+	selected: { start: number; end: number };
+	parent: { start: number; end: number };
+	/** what replaces the selected span where the verb writes one span; a move writes several */
+	replacement: string;
+	patches?: readonly SpanPatch[];
+	parentCall?: string | undefined;
+	parentShape?: { source: string; children: readonly SourceStructuralChild[] } | undefined;
+	fallback?: { source: string; value: string } | undefined;
+}
+
+/**
+ * One structural unit resolved against the frozen compiler inputs, for whichever
+ * verb derived it.
+ *
+ * Removal and movement differ only in what they write: the committed
+ * provenance, the captured source, the retained membership group and the
+ * canonical before/after states are one path, and keeping it one path is what
+ * makes a move impossible to admit where a removal would be refused.
+ */
+export function resolveStructuralPlan<Plan extends StructuralPlan>(
 	root: string,
 	compilation: RetainedCompilation,
 	original: SourceOccurrence,
 	generation: number,
+	derive: (sources: Sources, pick: Selection) => Plan,
 ) {
 	if (!original.provenance || !original.structure) throw new Error("the original structural observation is missing");
 	const sources = new Sources(root, compilation);
 	for (const file of compilation.inputs.keys())
 		if (/\.[cm]?[jt]sx?$/.test(file)) sources.read(relative(realDesignDir(root), file));
 	const selection = JSON.parse(original.provenance) as Selection;
-	const plan = deriveSourceDelete(sources, { ...selection, generation: String(generation) });
+	const plan = derive(sources, { ...selection, generation: String(generation) });
 	for (const unit of sources.revisions.values())
 		if (!compilation.inputs.has(unit.file))
 			throw new Error("the structural origin is outside captured compiler inputs");
@@ -29,18 +54,23 @@ export function resolveSourceDelete(
 		parse(plan.text, { sourceType: "module", plugins: ["jsx", "typescript"] }).program,
 		file,
 	);
+	const list = (group: { kind: string; node: { start?: number | null; end?: number | null } }) =>
+		group.kind === "list" && group.node.start === plan.parent.start && group.node.end === plan.parent.end;
 	const group = structural.groups.find((group) =>
-		plan.replacement === "null"
+		!plan.patches && plan.replacement === "null"
 			? group.kind === "optional" && group.node.start === plan.selected.start && group.node.end === plan.selected.end
-			: group.kind === "list" && group.node.start === plan.parent.start && group.node.end === plan.parent.end,
+			: list(group),
 	);
 	if (!group) throw new Error("the original structural unit has no retained membership proof");
-	const next = plan.text.slice(0, plan.selected.start) + plan.replacement + plan.text.slice(plan.selected.end);
+	const next = plan.patches
+		? applySourcePatches(plan.text, plan.patches).text
+		: plan.text.slice(0, plan.selected.start) + plan.replacement + plan.text.slice(plan.selected.end);
 	const before = lowerLiterals(file, plan.text),
 		after = lowerLiterals(file, next);
-	if (before.shape !== after.shape) throw new Error("this removal changes the original executable context");
+	if (before.shape !== after.shape)
+		throw new Error("this structural operation changes its original executable context");
 	const fallbackSite = plan.fallback
-		? Object.entries(compilation.packet.locations ?? {}).find(([, source]) => source === plan.fallback!.source)?.[0]
+		? Object.entries(compilation.packet.locations ?? {}).find(([, source]) => source === plan.fallback?.source)?.[0]
 		: undefined;
 	const observedParent = original.structure.source;
 	const ownerCall =
@@ -73,6 +103,16 @@ export function resolveSourceDelete(
 		...(plan.fallback && fallbackSite ? { fallback: { source: fallbackSite, value: plan.fallback.value } } : {}),
 	};
 	return { ...plan, site: group.id, expected, before: before.structure, shape: before.shape };
+}
+
+/** A delete unit comes only from the original committed chain and frozen compiler inputs. */
+export function resolveSourceDelete(
+	root: string,
+	compilation: RetainedCompilation,
+	original: SourceOccurrence,
+	generation: number,
+) {
+	return resolveStructuralPlan(root, compilation, original, generation, deriveSourceDelete);
 }
 export type SourceDeleteTarget = ReturnType<typeof resolveSourceDelete>;
 

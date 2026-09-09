@@ -1,15 +1,10 @@
-import { relative } from "node:path";
-import { parse } from "@babel/parser";
 import type { SourceOccurrence } from "../source-edit";
-import type { SourceStructuralExpectation } from "../source-structure";
-import { realDesignDir } from "./design-path";
 import type { SpanPatch } from "./hand-write";
-import { lowerLiterals, type RetainedCompilation } from "./retained-compile";
-import { type Selection, Sources } from "./source-origins";
-import { applySourcePatches } from "./source-patches";
+import type { RetainedCompilation } from "./retained-compile";
+import type { Selection, Sources } from "./source-origins";
 import { deriveSourceDelete } from "./source-structure";
-import { planStructureCompilation } from "./source-structure-compile";
 import { StructuralIdentityRefusal } from "./source-structure-syntax";
+import { resolveStructuralPlan } from "./source-structure-target";
 
 /** One authored sibling's own bytes, in the captured source. */
 export interface StructuralSlot {
@@ -103,40 +98,8 @@ export function resolveSourceReorder(
 	generation: number,
 	steps: number,
 ) {
-	if (!original.provenance || !original.structure) throw new Error("the original structural observation is missing");
-	const sources = new Sources(root, compilation);
-	for (const file of compilation.inputs.keys())
-		if (/\.[cm]?[jt]sx?$/.test(file)) sources.read(relative(realDesignDir(root), file));
-	const selection = JSON.parse(original.provenance) as Selection;
-	const plan = deriveSourceReorder(sources, { ...selection, generation: String(generation) }, steps);
-	for (const unit of sources.revisions.values())
-		if (!compilation.inputs.has(unit.file))
-			throw new Error("the structural origin is outside captured compiler inputs");
-	const file = relative(realDesignDir(root), plan.file);
-	const structural = planStructureCompilation(
-		parse(plan.text, { sourceType: "module", plugins: ["jsx", "typescript"] }).program,
-		file,
+	return resolveStructuralPlan(root, compilation, original, generation, (sources, pick) =>
+		deriveSourceReorder(sources, pick, steps),
 	);
-	const group = structural.groups.find(
-		(group) => group.kind === "list" && group.node.start === plan.parent.start && group.node.end === plan.parent.end,
-	);
-	if (!group) throw new Error("the original structural unit has no retained membership proof");
-	const next = applySourcePatches(plan.text, plan.patches).text;
-	const before = lowerLiterals(file, plan.text),
-		after = lowerLiterals(file, next);
-	if (before.shape !== after.shape) throw new Error("this move changes the original executable context");
-	const observedParent = original.structure.source;
-	const parent =
-		observedParent &&
-		[observedParent.site, ...observedParent.chain].every((site) => compilation.packet.locations?.[site])
-			? { site: observedParent.site, chain: [] }
-			: undefined;
-	const expected: SourceStructuralExpectation = {
-		kind: "structure",
-		site: group.id,
-		...(parent ? { parent } : {}),
-		state: after.structure,
-	};
-	return { ...plan, site: group.id, expected, before: before.structure, shape: before.shape };
 }
 export type SourceReorderTarget = ReturnType<typeof resolveSourceReorder>;
