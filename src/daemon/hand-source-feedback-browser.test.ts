@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
+import { GESTURE_FEEDBACK_MS } from "../runtime/jsx-dev-runtime";
 import { originCanvas } from "./hand-origin-browser-helpers";
 
 const file = "shared/feedback.tsx";
@@ -142,9 +143,24 @@ it.each(["Escape", "selection change"])(
 	{ timeout: 120000 },
 	async (action) => {
 		const f = await preview(async (page) => {
-			await page.addInitScript(() => {
+			await page.addInitScript((gesture: number) => {
 				const clears: boolean[] = [];
 				Reflect.set(window, "feedbackClears", clears);
+				// The gesture's own timer is held inside the frame documents for the
+				// length of this case, so what it asks is which message reached the
+				// runtime first rather than how fast the runner is. The product keeps
+				// its interval; a frame is an iframe, so the canvas's own timers of
+				// the same length are left alone.
+				const held: (() => void)[] = [];
+				Reflect.set(window, "heldGestureTimers", held);
+				const schedule = window.setTimeout.bind(window);
+				Reflect.set(window, "setTimeout", (handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
+					if (window.parent !== window && delay === gesture && typeof handler === "function") {
+						held.push(handler as () => void);
+						return 0;
+					}
+					return schedule(handler, delay, ...(rest as []));
+				});
 				addEventListener(
 					"message",
 					(event) => {
@@ -153,17 +169,9 @@ it.each(["Escape", "selection change"])(
 					},
 					{ capture: true },
 				);
-			});
+			}, GESTURE_FEEDBACK_MS);
 		});
 		await f.second.locator("#label").evaluate(() => Reflect.get(window, "feedbackClears").splice(0));
-		// A slow delivery acknowledgement must not make the test miss the real
-		// 450ms gesture. Hold that response until the actual highlight clears.
-		await f.page.route("**/source", async (route) => {
-			if (route.request().postDataJSON()?.action !== "delivered") return route.continue();
-			const response = await route.fetch();
-			await expect.poll(() => f.second.locator("#label").getAttribute("data-spool-shared-use")).toBeNull();
-			await route.fulfill({ response });
-		});
 		const delivered = f.page.waitForResponse(
 			(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "delivered",
 		);
@@ -173,6 +181,11 @@ it.each(["Escape", "selection change"])(
 				timeout: 4000,
 			});
 			expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBe("");
+			// the outline is on because the gesture is still running, and it is
+			// still running because its one timer is the one being held
+			expect(await f.second.locator("#label").evaluate(() => Reflect.get(window, "heldGestureTimers").length)).toBe(
+				1,
+			);
 			if (action === "Escape") await f.page.keyboard.press("Escape");
 			else {
 				const box = await f.frame.locator("#unrelated").boundingBox();
@@ -185,8 +198,8 @@ it.each(["Escape", "selection change"])(
 				() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
 			);
 			expect(await f.second.locator("#label").getAttribute("data-spool-shared-use")).toBeNull();
-			// The native action reached the runtime while the gesture was still on;
-			// its 450ms timeout cannot satisfy this immediate-clear assertion.
+			// The native action reached the runtime while the gesture was still on.
+			// Its own timeout is held, so nothing but this action can have cleared it.
 			expect(await f.second.locator("#label").evaluate(() => Reflect.get(window, "feedbackClears"))).toEqual([true]);
 		} finally {
 			await saving;

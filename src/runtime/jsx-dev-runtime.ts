@@ -537,6 +537,9 @@ function previewedUse(element: HTMLElement, original: SourceOccurrence): Preview
 		...(original.field === undefined ? {} : { restoreAttribute: captureAttribute(element, original.field) }),
 	};
 }
+/** How long a shared use keeps its gesture outline after an installation lands. */
+export const GESTURE_FEEDBACK_MS = 450;
+
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 const disclosureFeedback = new Set<HTMLElement>();
 const gestureFeedback = new Set<HTMLElement>();
@@ -1110,7 +1113,7 @@ async function installSource(publication: SourcePublication, undo = false): Prom
 	restorePropertyStyles(publication.generation);
 	if (held && ownsPreview(held)) restoreField(held.element, held.original, held.children, held.restoreAttribute);
 	cancelSourceUses(publication.generation, "install");
-	feedbackTimer = setTimeout(clearGestureFeedback, 450);
+	feedbackTimer = setTimeout(clearGestureFeedback, GESTURE_FEEDBACK_MS);
 	leases.delete(publication.generation);
 	const basis = publication.expected.kind === "structure" ? structuralBases.get(publication.generation) : undefined;
 	if (basis) refreshStructuralNative(basis);
