@@ -1113,3 +1113,33 @@ it("keeps a layout control while the source has not answered, and retires it whe
 	expect(fieldIn(refused, "padding")).toBeNull();
 	expect(rowOf(refused, "padding")?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
 });
+
+it("sends the alignment picker's two properties as one saved group", async () => {
+	const rail = await mount("flex items-start justify-start");
+	const dot = rail.host.querySelector<HTMLButtonElement>('button[title="items-center justify-end"]');
+	expect(dot).not.toBeNull();
+	await act(() => dot?.click());
+	expect(rail.groups).toEqual([
+		[
+			{ property: "align-items", value: { kind: "binding", tokens: ["items-center"] } },
+			{ property: "justify-content", value: { kind: "binding", tokens: ["justify-end"] } },
+		],
+	]);
+	// one gesture, one group: neither property is sent on its own as well
+	expect(rail.requests).toHaveLength(2);
+});
+
+it("sends a flex direction and a wrap chip as their own single requests", async () => {
+	const rail = await mount("flex");
+	const column = rail.host.querySelector<HTMLButtonElement>(
+		'[data-properties-row="flex-direction"] button:nth-child(2)',
+	);
+	await act(() => column?.click());
+	const wrap = chipIn(rail, "flex-direction", "wrap");
+	await act(() => wrap?.click());
+	expect(rail.requests).toEqual([
+		{ property: "flex-direction", value: { kind: "binding", tokens: ["flex-col"] } },
+		{ property: "flex-wrap", value: { kind: "binding", tokens: ["flex-wrap"] } },
+	]);
+	expect(rail.groups).toEqual([]);
+});
