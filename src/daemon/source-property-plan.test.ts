@@ -10,6 +10,9 @@ import { appearanceProperties } from "./fixtures/property-appearance";
 import { readInput } from "./retained-compile";
 import { planPropertyValue } from "./source-property-plan";
 
+/** The ordinary writing context these plans are read in. */
+const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+
 function fixture() {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", ":root{font-size:20px;--space:10px 20px}");
@@ -26,7 +29,7 @@ it.each(appearanceProperties)("plans retained $property from actual declaration 
 		before,
 		operation,
 		{ kind: "binding", tokens: row.after.split(" ") },
-		{ direction: "ltr", writingMode: "horizontal-tb" },
+		environment,
 	);
 	expect(new Set(plan.next.split(" ")), row.property).toEqual(
 		new Set([row.after, row.companion, "z-10"].filter(Boolean).join(" ").split(" ")),
@@ -38,20 +41,19 @@ it.each(appearanceProperties)("plans retained $property from actual declaration 
 		plan.next,
 		operation,
 		{ kind: "binding", tokens: row.before.split(" ") },
-		{ direction: "ltr", writingMode: "horizontal-tb" },
+		environment,
 	);
 	expect(new Set(inverse.next.split(" ")), row.property).toEqual(new Set(before.split(" ")));
 });
 it("keeps a size binding and independent filter inputs during focused component edits", async () => {
 	const f = fixture();
-	const env = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const leading = await planPropertyValue(
 		f.root,
 		f.inputs,
 		"text-sm leading-normal marker",
 		{ kind: "property", property: "line-height", scope: "" },
 		{ kind: "binding", tokens: ["leading-loose"] },
-		env,
+		environment,
 	);
 	expect(leading.before).toEqual(["leading-normal"]);
 	expect(leading.next).toContain("text-sm");
@@ -62,7 +64,7 @@ it("keeps a size binding and independent filter inputs during focused component 
 		"brightness-75 grayscale",
 		{ kind: "property", property: "filter", scope: "" },
 		{ kind: "binding", tokens: ["invert"] },
-		env,
+		environment,
 	);
 	expect(filters.before).toEqual(["grayscale"]);
 	expect(filters.next).toBe("brightness-75 invert");
@@ -86,7 +88,7 @@ it.each([
 		literal,
 		{ kind: "property", property, scope: "" },
 		{ kind: "binding", tokens: [token] },
-		{ direction: "ltr", writingMode: "horizontal-tb" },
+		environment,
 	);
 	expect(plan.before).toEqual([]);
 	expect(plan.after).toEqual([token]);
@@ -158,7 +160,6 @@ it("keeps native independent sides and axes when a component overrides its broad
 
 it("retains authored priority and the lower declaration revealed by removal", async () => {
 	const f = fixture();
-	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const operation = { kind: "property", property: "color", scope: "hover:" } as const;
 	const changed = await planPropertyValue(
 		f.root,
@@ -181,7 +182,6 @@ it("retains authored priority and the lower declaration revealed by removal", as
 // request rather than a class the compiler failed to emit.
 it("refuses a binding token that is a run of classes", async () => {
 	const f = fixture();
-	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const operation = { kind: "property", property: "background-image", scope: "" } as const;
 	const literal = "bg-linear-to-r from-red-500 to-blue-500";
 	await expect(
@@ -289,7 +289,6 @@ it.each(layoutProperties)(
 		// leaves the rest of the literal exactly where it was
 		const literal = [before, companion, "text-red-500"].filter(Boolean).join(" ");
 		const operation = { kind: "property", property, scope: "" } as const;
-		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 		const plan = await planPropertyValue(
 			f.root,
 			f.inputs,
@@ -325,7 +324,6 @@ it.each(layoutProperties)(
 	async (_index, property, _before, after, companion) => {
 		const f = fixture();
 		const operation = { kind: "property", property, scope: "" } as const;
-		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 		const bare = [companion, "text-red-500"].filter(Boolean).join(" ");
 		const created = await planPropertyValue(
 			f.root,
@@ -361,7 +359,6 @@ it.each(typedLayout)(
 	async (_index, property, before, _after, companion) => {
 		const f = fixture();
 		const operation = { kind: "property", property, scope: "" } as const;
-		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 		const literal = [before, companion, "text-red-500"].filter(Boolean).join(" ");
 		const custom = await planPropertyValue(
 			f.root,
@@ -401,7 +398,7 @@ it.each(spelledLayout)("refuses a typed value for the layout word %i %s", async 
 			[before, "text-red-500"].join(" "),
 			{ kind: "property", property, scope: "" },
 			{ kind: "custom", value: "12px" },
-			{ direction: "ltr", writingMode: "horizontal-tb" },
+			environment,
 		),
 	).rejects.toThrow("no utility");
 });
@@ -409,7 +406,6 @@ it.each(spelledLayout)("refuses a typed value for the layout word %i %s", async 
 it("plans a track list the compiler emits and refuses one it does not", async () => {
 	const f = fixture();
 	const operation = { kind: "property", property: "grid-template-columns", scope: "" } as const;
-	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const plan = await planPropertyValue(
 		f.root,
 		f.inputs,
@@ -464,7 +460,6 @@ it.each([
 	["width and height", "size-2", "size-4", "width"],
 ])("plans the %s control against the axis it actually declares", async (property, before, after, declared) => {
 	const f = fixture();
-	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const plan = await planPropertyValue(
 		f.root,
 		f.inputs,
@@ -480,7 +475,6 @@ it.each([
 
 it("refuses a negative padding the compiler cannot spell while a negative margin is authored", async () => {
 	const f = fixture();
-	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
 	const margin = await planPropertyValue(
 		f.root,
 		f.inputs,
