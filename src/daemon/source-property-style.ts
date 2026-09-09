@@ -1,9 +1,9 @@
 import { parse } from "@babel/parser";
 import type { CallExpression, JSXElement, Node, ObjectExpression } from "@babel/types";
-import type { SourcePropertyEffect, SourcePropertyEnvironment } from "../source-property";
+import type { SourcePropertyEffect } from "../source-property";
 import type { SpanPatch } from "./hand-write";
 import { walkNodes } from "./jsx-walk";
-import { propertyKeys } from "./source-property-effects";
+
 import { literalStyleMembers } from "./source-style-members";
 
 /**
@@ -12,8 +12,8 @@ import { literalStyleMembers } from "./source-style-members";
  * A `style={{...}}` literal is not a class literal: nothing compiles it, and
  * every member is its own declaration on the element itself. What it shares
  * with a class is the shape of an effect, so a member is read into the same
- * `SourcePropertyEffect` the compiler produces and every later reader — scope
- * paths, dependencies, native evaluation — keeps working unchanged.
+ * `SourcePropertyEffect` the compiler produces, and every later reader (scope
+ * paths, dependencies, native evaluation) keeps working unchanged.
  */
 export interface StyleMember {
 	key: string;
@@ -91,7 +91,7 @@ export function styleMemberProperty(key: string): string {
 }
 
 /** React's `dangerousStyleValue`: the number's unit, and the string as authored. */
-export function styleMemberValue(key: string, value: string | number): string {
+function styleMemberValue(key: string, value: string | number): string {
 	if (typeof value === "number") {
 		if (!Number.isFinite(value)) throw new Error("this inline style member has no finite native value");
 		return value === 0 || UNITLESS.has(key) || key.startsWith("--") ? String(value) : `${value}px`;
@@ -117,28 +117,6 @@ export function styleMemberEffects(members: readonly StyleMember[]): SourcePrope
 		effects.push({ owner: member.key, path: [], property: styleMemberProperty(member.key), value, important: false });
 	}
 	return effects;
-}
-
-/** Which source the selected roots' winning effects belong to, or an explicit refusal. */
-export function stylePropertyOwner(
-	roots: ReadonlySet<string>,
-	classEffects: readonly SourcePropertyEffect[],
-	styleEffects: readonly SourcePropertyEffect[],
-	environment: SourcePropertyEnvironment,
-): { kind: "class" } | { kind: "style"; members: readonly string[] } {
-	const winners = new Map<string, SourcePropertyEffect | undefined>();
-	for (const root of roots) {
-		const covers = (effect: SourcePropertyEffect) => propertyKeys(effect.property, environment).includes(root);
-		// An inline member outranks every ordinary declaration and loses to an
-		// important one, which is the cascade this element actually runs under.
-		const important = classEffects.filter((effect) => effect.important && covers(effect));
-		winners.set(root, important.at(-1) ?? styleEffects.filter(covers).at(-1));
-	}
-	const owners = [...winners.values()];
-	const inline = owners.filter((effect) => effect && styleEffects.includes(effect));
-	if (inline.length === 0) return { kind: "class" };
-	if (inline.length !== owners.length) throw new Error("this property's declarations are owned by different sources");
-	return { kind: "style", members: [...new Set(inline.map((effect) => effect!.owner!))] };
 }
 
 /** The member key a declaration is spelled with; a custom property keeps its name. */

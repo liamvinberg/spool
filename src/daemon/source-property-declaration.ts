@@ -3,14 +3,14 @@ import type { SourcePropertyEffect, SourcePropertyEnvironment } from "../source-
 import type { SpanPatch } from "./hand-write";
 import { propertyKeys } from "./source-property-effects";
 
-/**
+/*
  * The authored CSS declaration as a source role.
  *
  * A project stylesheet reaches the frame through the same compiler the classes
- * do, and its declarations arrive in the certificate with no class owner and
- * their own selector and condition chain. That chain is the whole identity: it
- * is what the browser matches the element against, and it is what finds the
- * declaration again in the file it was written in.
+ * do, and its declarations arrive in the certificate with their own selector and
+ * condition chain. That chain is the whole identity: it is what the browser
+ * matches the element against, and it is what finds the declaration again in the
+ * file it was written in.
  *
  * Support is bounded by what that chain can prove. A cascade layer, a container
  * query or a scope carries an order this reader cannot establish, so those
@@ -49,19 +49,8 @@ export function admissible(effect: SourcePropertyEffect): boolean {
 	return selectors.length === 1 && effect.path.every((part) => !part.startsWith("@") || conditional(part));
 }
 
-/** The project's own declarations for these roots, in the compiler's own order. */
-export function authoredCandidates(
-	certificate: { effects: readonly SourcePropertyEffect[] },
-	roots: ReadonlySet<string>,
-	environment: SourcePropertyEnvironment,
-	matched?: readonly MatchedRuleChain[],
-): SourcePropertyEffect[] {
-	return certificate.effects.filter(
-		(effect) =>
-			admissible(effect) &&
-			propertyKeys(effect.property, environment).some((key) => roots.has(key)) &&
-			(matched === undefined || applies(effect, matched) !== undefined),
-	);
+function collapse(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -96,10 +85,6 @@ export function declarationScope(effect: SourcePropertyEffect): readonly string[
 	const path = declarationPath(effect);
 	const selector = path.find((part) => !part.startsWith("@")) ?? "";
 	return [...path.filter((part) => part.startsWith("@")), ...(DYNAMIC.test(selector) ? [selector] : [])];
-}
-
-function collapse(value: string): string {
-	return value.replace(/\s+/g, " ").trim();
 }
 
 interface Declaration {

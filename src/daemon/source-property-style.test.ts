@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { ValueSnapshot } from "../runtime/source-values";
-import type { SourcePropertyEffect } from "../source-property";
 import { makeProject, makeTempDir, writeFrame } from "../test-helpers";
 import { createFrameCompiler } from "./compile";
 import { type Selection, Sources, sourceRead } from "./source-origins";
@@ -11,7 +10,6 @@ import {
 	styleMemberEffects,
 	styleMemberKey,
 	styleMemberProperty,
-	stylePropertyOwner,
 } from "./source-property-style";
 
 async function fixture() {
@@ -83,8 +81,6 @@ it.each(["value", "enumerability", "unobserved", "another owner"])(
 	},
 );
 
-const ltr = { direction: "ltr", writingMode: "horizontal-tb" } as const;
-
 describe("literal inline members as native effects", () => {
 	it("gives each member its own declaration, with React's own numeric meaning", () => {
 		expect(
@@ -121,42 +117,6 @@ describe("literal inline members as native effects", () => {
 		["a member React never enumerates", { key: "padding", value: 4, enumerable: false }],
 	])("refuses %s", (_name, member) => {
 		expect(() => styleMemberEffects([{ enumerable: true, ...member }])).toThrow();
-	});
-});
-
-describe("which source owns a property's winning effects", () => {
-	const style = styleMemberEffects([{ key: "padding", value: 4, enumerable: true }]);
-	const classEffect = (property: string, important: boolean): SourcePropertyEffect => ({
-		owner: important ? "pt-8!" : "pt-8",
-		path: [],
-		property,
-		value: "2rem",
-		important,
-	});
-
-	it("gives a side the inline member declares to the inline member", () => {
-		expect(stylePropertyOwner(new Set(["padding-left"]), [classEffect("padding-top", false)], style, ltr)).toEqual({
-			kind: "style",
-			members: ["padding"],
-		});
-	});
-
-	it("leaves an important declaration authoritative over the inline member", () => {
-		expect(stylePropertyOwner(new Set(["padding-top"]), [classEffect("padding-top", true)], style, ltr)).toEqual({
-			kind: "class",
-		});
-	});
-
-	it("refuses a control whose sides are owned by different sources", () => {
-		expect(() =>
-			stylePropertyOwner(new Set(["padding-top", "padding-left"]), [classEffect("padding-top", true)], style, ltr),
-		).toThrow(/different sources/);
-	});
-
-	it("leaves a property no inline member declares to the class literal", () => {
-		expect(stylePropertyOwner(new Set(["opacity"]), [classEffect("opacity", false)], style, ltr)).toEqual({
-			kind: "class",
-		});
 	});
 });
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SourcePropertyEffect } from "../source-property";
 import {
-	authoredCandidates,
 	declarationPath,
 	locateDeclaration,
 	planDeclarationLiteral,
@@ -55,24 +54,6 @@ describe("finding an authored declaration in its own file", () => {
 		["a priority the file does not carry", effect([".card"], "color", "red", true)],
 	])("refuses %s", (_name, held) => {
 		expect(() => locateDeclaration(css, held)).toThrow();
-	});
-});
-
-describe("which authored declarations can own a property here", () => {
-	const certificate = {
-		effects: [
-			effect(["@layer base", "*"], "padding", "0"),
-			effect([".card"], "padding", "12px"),
-			effect(["@container (min-width: 20rem)", ".card"], "padding", "8px"),
-			effect(["@media (min-width: 48rem)", ".card"], "padding", "16px"),
-			{ ...effect(["@layer utilities", "$"], "padding", "1.5rem"), owner: "p-6" },
-		],
-	};
-
-	it("takes the project's own unlayered rules and leaves the compiler's layers alone", () => {
-		expect(
-			authoredCandidates(certificate, new Set(["padding-left"]), { direction: "ltr", writingMode: "horizontal-tb" }),
-		).toEqual([certificate.effects[1], certificate.effects[3]]);
 	});
 });
 
