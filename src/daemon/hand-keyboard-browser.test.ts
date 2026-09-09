@@ -59,8 +59,9 @@ it("moves one keyed sibling past the next, keeping each item's own state", { tim
 		(element as HTMLElement).click();
 		Reflect.set(window, "survivor", element);
 	});
+	// two round trips, so the second click sees the count the first one made
+	await f.target.evaluate((element) => (element as HTMLElement).click());
 	await f.target.evaluate((element) => {
-		(element as HTMLElement).click();
 		(element as HTMLElement).click();
 		Reflect.set(window, "moved", element);
 	});
@@ -118,9 +119,10 @@ it("moves the shared definition's own children, in every use of it", { timeout: 
 	await expect.poll(() => order(f.frame)).toEqual(["B", "A"]);
 	await expect.poll(() => order(second)).toEqual(["B", "A"]);
 	await f.settled();
-	const settled = (await outcomes(f)).at(-1);
+	// one outcome per mounted use of the shared definition, each verified on its own
+	const settled = await outcomes(f);
 	expect(
-		settled?.uses?.map((use) => use.rendered),
+		settled.map((outcome) => outcome.rendered),
 		JSON.stringify(settled),
 	).toEqual(["verified", "verified"]);
 	expect(f.writes).toEqual(["commit"]);
