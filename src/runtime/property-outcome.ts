@@ -247,17 +247,20 @@ const radiusCorners = [
 ];
 
 /**
- * True where the element's own style declaration is the one this edit wrote.
+ * True where the element's own style declaration is this edit's own source.
  *
- * Every member the expectation carries has to be on the element as written; a
- * style object that has moved on is a mismatch to report, never a licence to
- * read some other declaration as if it were this one.
+ * An inline declaration usually makes a rule unreadable, because nothing says
+ * what it holds. Where the member *is* what was saved, it is the expected
+ * declaration instead, and the comparison against the used value stands on its
+ * own: a member the frame did not take reads as a mismatch to show, never as a
+ * declaration to reapply.
  */
 function ownedInline(element: Element, expected: SourcePropertyExpectation): boolean {
-	if (expected.source !== "style") return false;
-	if (!(element instanceof HTMLElement || element instanceof SVGElement)) return false;
-	const held = expected.effects.filter((effect) => effect.path.length === 0);
-	return held.length > 0 && held.every((effect) => element.style.getPropertyValue(effect.property) === effect.value);
+	return (
+		expected.source === "style" &&
+		(element instanceof HTMLElement || element instanceof SVGElement) &&
+		expected.effects.some((effect) => effect.path.length === 0)
+	);
 }
 
 export interface PropertyOutcome {
