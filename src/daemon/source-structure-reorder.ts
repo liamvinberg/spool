@@ -17,8 +17,8 @@ export interface StructuralSlot {
  * bytes that says.
  *
  * The units keep their own slots and swap what is written in them, so
- * everything between two siblings — indentation, a comment, an unrelated
- * expression — stays exactly where the author put it. Only the members between
+ * everything between two siblings, whether indentation, a comment or an
+ * unrelated expression, stays where the author put it. Only the members between
  * the position it left and the one it takes are rewritten; a move by one is a
  * swap of two spans.
  */
