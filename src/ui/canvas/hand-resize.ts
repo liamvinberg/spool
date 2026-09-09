@@ -54,7 +54,7 @@ export interface Size {
  * width nobody asked for. The rail's number boxes still reach both axes.
  */
 export function handlesFor(read: RungRead | undefined): LiveHandles {
-	if (read === undefined || read.name === undefined || blocks(read.refusal)) return NO_HANDLES;
+	if (read === undefined || read.name === undefined || ringBlocks(read.refusal)) return NO_HANDLES;
 	const literal = read.className === "" ? null : read.className;
 	// asked of the lane's own rule rather than re-derived here: a token of the
 	// family stands in for the write, so the ring greys for exactly the reason
@@ -73,7 +73,7 @@ export function handlesFor(read: RungRead | undefined): LiveHandles {
  * class cell several uses share is exactly what the source owner edits, so a
  * ring that greyed for it would refuse the ordinary case.
  */
-function blocks(refusal: RungRead["refusal"]): boolean {
+export function ringBlocks(refusal: RungRead["refusal"]): boolean {
 	return refusal !== undefined && refusal.code !== "shared-definition";
 }
 
@@ -143,7 +143,7 @@ export function useRing(
 	project: string,
 	held: { frame: string; source: string } | null,
 	revision: number,
-): { live: LiveHandles; step: number; rotation: number } {
+): { live: LiveHandles; step: number; rotation: number; read: RungRead | undefined; theme: CompiledTheme | null } {
 	const [read, setRead] = useState<RungRead | undefined>(undefined);
 	const [theme, setTheme] = useState<CompiledTheme | null>(null);
 	const asked = held === null ? "" : `${revision}\n${held.frame}\n${held.source}`;
@@ -175,6 +175,10 @@ export function useRing(
 		live: handlesFor(read),
 		step: stepOf(theme),
 		rotation: read === undefined ? 0 : rotationOf(read.className),
+		// the read itself and the theme behind it, which a second gesture on the
+		// same rung asks its own questions of (#306)
+		read,
+		theme,
 	};
 }
 

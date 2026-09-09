@@ -1,4 +1,9 @@
+import { screenConflict } from "../../daemon/class-write";
 import { gapOf, stepLength } from "../../properties/families";
+import { type At, editsFor, rowFor } from "../../properties/rows";
+import type { SourcePropertyValue } from "../../source-property";
+import type { RungRead } from "../api";
+import { ringBlocks } from "./hand-resize";
 import { BASE, scopedClass } from "./properties-scope";
 
 /**
@@ -223,4 +228,50 @@ export function steppedGap(authored: string | null, measured: number, units: num
 	);
 	if (next === null) return undefined;
 	return next.negative ? "0" : next.value;
+}
+
+/**
+ * Whether this rung's class cell leaves a gap a drag could write.
+ *
+ * The ring's own law, asked about the gap family: the lane's refusal is the
+ * whole answer, and a screen variant pinning the gap means a base class cannot
+ * honestly beat it. A band no write would take is not drawn, so there is no
+ * dead drag over a gap either.
+ */
+export function gapWritable(read: RungRead | undefined): boolean {
+	if (read === undefined || read.name === undefined || ringBlocks(read.refusal)) return false;
+	const literal = read.className === "" ? null : read.className;
+	return screenConflict(literal, { token: "gap-1", scope: "" }) === undefined;
+}
+
+/**
+ * What one gap gesture writes, as the source property path's own field.
+ *
+ * The rail's own compilation of the same request, so a dragged band and a
+ * scrubbed field land on the same token: `gap-4` folds into `gap-x-8` and the
+ * other axis keeps the value the shorthand lent it.
+ */
+export function gapField(axis: GapAxis, value: string, at: At): SourcePropertyValue {
+	const row = rowFor(axis);
+	if (row === undefined) return { kind: "remove" };
+	const tokens = editsFor(row, { kind: "value", value }, at)
+		.filter((edit) => !edit.remove)
+		.map((edit) => edit.token);
+	return tokens.length === 0 ? { kind: "remove" } : { kind: "binding", tokens };
+}
+
+/**
+ * What a written gap value is worth in pixels, or nothing where only the
+ * document could say.
+ *
+ * The band drawn mid-drag needs it — the space under the pointer has to be the
+ * space the value makes. A percentage or an expression has no answer here, and
+ * the band keeps the width it was grabbed at rather than inventing one.
+ */
+export function gapValuePixels(value: string, step: number): number | null {
+	if (/^\d+(?:\.\d+)?$/.test(value)) return Number(value) * step;
+	if (value === "px") return 1;
+	const custom = CUSTOM.exec(value);
+	if (custom?.[2] === "px" && custom[1] !== undefined) return Number(custom[1]);
+	return null;
 }

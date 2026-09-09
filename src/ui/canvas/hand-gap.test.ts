@@ -6,7 +6,10 @@ import {
 	gapAxisOf,
 	gapBands,
 	gapDragUnits,
+	gapField,
 	gapSteppable,
+	gapValuePixels,
+	gapWritable,
 	steppedGap,
 } from "./hand-gap";
 
@@ -225,5 +228,63 @@ describe("the value a drag settles on", () => {
 
 	it("moves nothing at all where it cannot move honestly", () => {
 		expect(steppedGap("[var(--pad)]", 12, 2)).toBe(undefined);
+	});
+});
+
+describe("what the file leaves a gap drag", () => {
+	const rung = (className: string, extra: Record<string, unknown> = {}) => ({
+		source: "frames/cart/frame.tsx:9:4",
+		name: "div",
+		className,
+		path: "design/frames/cart/frame.tsx",
+		line: 9,
+		...extra,
+	});
+
+	it("leaves nothing until the read lands", () => {
+		expect(gapWritable(undefined)).toBe(false);
+	});
+
+	it("leaves nothing on a literal no hand may write", () => {
+		expect(gapWritable(rung("", { refusal: { code: "computed-class", says: "className is an expression" } }))).toBe(
+			false,
+		);
+	});
+
+	it("writes a class cell several uses share, which is the ordinary case", () => {
+		expect(gapWritable(rung("flex gap-4", { refusal: { code: "shared-definition", says: "shared" } }))).toBe(true);
+	});
+
+	it("leaves nothing where a screen variant pins the gap", () => {
+		expect(gapWritable(rung("flex md:gap-8"))).toBe(false);
+	});
+});
+
+describe("what a written gap is worth on screen", () => {
+	it("reads a scale reference through the project's own step", () => {
+		expect(gapValuePixels("4", 4)).toBe(16);
+		expect(gapValuePixels("px", 4)).toBe(1);
+	});
+
+	it("reads a custom pixel length as itself", () => {
+		expect(gapValuePixels("[13px]", 4)).toBe(13);
+	});
+
+	it("reads nothing off a value only the document could resolve", () => {
+		expect(gapValuePixels("[50%]", 4)).toBe(null);
+		expect(gapValuePixels("[var(--pad)]", 4)).toBe(null);
+	});
+});
+
+describe("what one gap gesture writes", () => {
+	it("folds a shorthand into the axis it names, leaving the other alone", () => {
+		expect(gapField("column-gap", "8", { scoped: "flex gap-4", theme: null })).toEqual({
+			kind: "binding",
+			tokens: ["gap-x-8"],
+		});
+		expect(gapField("row-gap", "2", { scoped: "flex gap-4", theme: null })).toEqual({
+			kind: "binding",
+			tokens: ["gap-y-2"],
+		});
 	});
 });
