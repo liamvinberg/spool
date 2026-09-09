@@ -32,12 +32,11 @@ it("changes canonical membership order alone, with every surviving payload ident
 	const original = lowerLiterals("frame.tsx", source);
 	const site = Object.keys(original.structure.lists)[0]!;
 	const next = applySourcePatches(source, reorderPatches(source, siblings(), 0, 1)).text;
-	const certified = certifyStructuralChange(
-		{ source: "frame.tsx:1:1", site, shape: original.shape },
-		source,
-		next,
-		{ kind: "structure", site, state: original.structure },
-	);
+	const certified = certifyStructuralChange({ source: "frame.tsx:1:1", site, shape: original.shape }, source, next, {
+		kind: "structure",
+		site,
+		state: original.structure,
+	});
 	expect(certified.before.lists[site]).toEqual(["a", "b", "c"]);
 	expect(certified.after.lists[site]).toEqual(["b", "a", "c"]);
 	expect(certified.after.factories).toEqual(certified.before.factories);
