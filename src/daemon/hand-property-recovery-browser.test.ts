@@ -366,3 +366,43 @@ it.each([false, true])(
 		expect(readFileSync(f.file(owner), "utf8")).toBe(bytes);
 	},
 );
+
+// The spec's own example: a hand changes one side of the padding while the agent
+// changes the other. Each write is its own span, so both survive the save and each
+// undo takes back only what it wrote.
+it("keeps a hand's padding edit and the agent's opposite side independent through both inverses", {
+	timeout: 180000,
+}, async () => {
+	const padded = 'export function Label(){return <h1 id="label" className="pt-1 pr-[9px] pb-3 pl-4">Hello</h1>}';
+	const f = await fixture(padded);
+	const left = f.page.locator('[data-properties-row="padding-left"] input').first();
+	const padding = (side: string) =>
+		f.target.evaluate((element, name) => getComputedStyle(element).getPropertyValue(name), `padding-${side}`);
+	await f.select();
+	await expect.poll(() => left.inputValue()).toBe("4");
+	const committed = f.reply("commit");
+	await left.fill("8");
+	await left.press("Enter");
+	expect(await (await committed).json()).toMatchObject({ ok: true });
+	await expect.poll(() => readFileSync(f.file(owner), "utf8")).toBe(padded.replace("pl-4", "pl-8"));
+	await f.settled();
+	await f.agentEdit("pr-[9px]", "pr-[21px]");
+	await expect
+		.poll(() => readFileSync(f.file(owner), "utf8"))
+		.toBe(padded.replace("pl-4", "pl-8").replace("pr-[9px]", "pr-[21px]"));
+	await expect.poll(() => padding("right")).toBe("21px");
+	// The hand's undo is its own span: the agent's side is still what the agent wrote.
+	const undone = f.reply("inverse");
+	await f.history();
+	const inverseResult = await (await undone).json();
+	expect(inverseResult, JSON.stringify(inverseResult)).toMatchObject({ ok: true });
+	await expect.poll(() => readFileSync(f.file(owner), "utf8")).toBe(padded.replace("pr-[9px]", "pr-[21px]"));
+	await f.settled();
+	expect(await padding("left")).toBe("16px");
+	expect(await padding("right")).toBe("21px");
+	// And the agent taking its own edit back leaves the hand's restored side alone.
+	await f.agentEdit("pr-[21px]", "pr-[9px]");
+	await expect.poll(() => readFileSync(f.file(owner), "utf8")).toBe(padded);
+	await expect.poll(() => padding("right")).toBe("9px");
+	expect(await padding("left")).toBe("16px");
+});
