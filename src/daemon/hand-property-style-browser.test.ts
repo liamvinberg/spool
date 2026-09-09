@@ -131,3 +131,24 @@ it("edits the property an inline member owns, on every use, and steps back", { t
 	await expect.poll(() => f.bytes()[owner]).toBe(original);
 	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 });
+
+it("edits the side the member owns while an important rule keeps the other side", { timeout: 120_000 }, async () => {
+	const original = tile("{{padding: 40}}", "pt-8!");
+	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
+	await expect.poll(() => computed(f, "padding-top")).toEqual(["32px", "32px"]);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
+
+	await f.select();
+	await row(f, "padding-left").fill("12");
+	await complete(f, "padding-left", tile("{{padding: 40, paddingLeft: 12}}", "pt-8!"));
+	// the important declaration is still the one that decides the top
+	await expect.poll(() => computed(f, "padding-top")).toEqual(["32px", "32px"]);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
+	await expect.poll(() => computed(f, "padding-right")).toEqual(["40px", "40px"]);
+
+	const stepped = reply(f, "inverse");
+	await f.history(false);
+	expect((await (await stepped).json()).ok).toBe(true);
+	await expect.poll(() => f.bytes()[owner]).toBe(original);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
+});
