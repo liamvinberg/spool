@@ -435,3 +435,25 @@ it("plans a track list the compiler emits and refuses one it does not", async ()
 		),
 	).rejects.toThrow("no compiled effect for this property");
 });
+
+it("writes a logical spacing side in the writing context it is actually read in", async () => {
+	const f = fixture();
+	const operation = { kind: "property", property: "padding-inline-start", scope: "" } as const;
+	const sides = [];
+	for (const direction of ["ltr", "rtl"] as const) {
+		const plan = await planPropertyValue(
+			f.root,
+			f.inputs,
+			"ps-2 pr-4",
+			operation,
+			{ kind: "binding", tokens: ["ps-6"] },
+			{ direction, writingMode: "horizontal-tb" },
+		);
+		sides.push([...plan.roots]);
+		// the side it lands on is the one the document actually reads it as: in a
+		// left-to-right document the authored right padding is untouched, and in a
+		// right-to-left one it is the same side, so it is what this change replaces
+		expect(plan.next, direction).toBe(direction === "ltr" ? "pr-4 ps-6" : "ps-6");
+	}
+	expect(sides).toEqual([["padding-left"], ["padding-right"]]);
+});
