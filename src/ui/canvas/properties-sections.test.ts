@@ -78,6 +78,34 @@ it("keeps the approved four headers, with the border controls in their approved 
 	expect(rail.host.querySelectorAll('[data-properties-row="border-color"]')).toHaveLength(1);
 });
 
+it("offers the approved optional layout properties, and adds one through its source control", async () => {
+	const rail = await mount("flex");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+	await act(() => trigger?.click());
+	expect(optionNames(rail, "Add property")).toEqual([
+		"gap",
+		"min-height",
+		"max-width",
+		"margin-top",
+		"margin-right",
+		"margin-bottom",
+		"margin-left",
+		"letter-spacing",
+		"border-width",
+	]);
+	const option = document.querySelector<HTMLButtonElement>('[data-menu-option="gap"]');
+	await act(() => option?.click());
+	expect(rail.requests).toEqual([{ property: "gap", value: { kind: "custom", value: "0px" } }]);
+});
+
+it("leaves an optional property off the list once the element wears it", async () => {
+	const rail = await mount("flex gap-2 mt-4");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+	await act(() => trigger?.click());
+	expect(optionNames(rail, "Add property")).not.toContain("gap");
+	expect(optionNames(rail, "Add property")).not.toContain("margin-top");
+});
+
 it.each(["letter-spacing", "border-width"])(
 	"adds the optional %s through its typed source control",
 	async (property) => {

@@ -1934,13 +1934,32 @@ function TextSection({ view }: { view: View }) {
 	);
 }
 
+/**
+ * What the `+` offers, in the approved frame's own order.
+ *
+ * Every one of them is a supported row this element is not wearing: the four
+ * margins and the two constraints the approved Layout lists, its gap, and the
+ * two the typography and border rows already offered.
+ */
+const OPTIONAL_PROPERTIES: readonly string[] = [
+	"gap",
+	"min-height",
+	"max-width",
+	"margin-top",
+	"margin-right",
+	"margin-bottom",
+	"margin-left",
+	"letter-spacing",
+	"border-width",
+];
+
 function AddProperty({ view }: { view: View }) {
 	// An optional property is offered where its own source admits it, and the
 	// refusal it would have met is said here rather than after a failed save.
-	const optional = [
-		{ property: "letter-spacing", admission: rowAdmission(view, modelRow("letter-spacing")) },
-		{ property: "border-width", admission: rowAdmission(view, modelRow("border-width")) },
-	];
+	const optional = OPTIONAL_PROPERTIES.map((property) => ({
+		property,
+		admission: rowAdmission(view, modelRow(property)),
+	}));
 	const unset = optional.filter(({ property }) => readRow(modelRow(property), view.scoped, view.theme).token === null);
 	const options = unset.map(({ property }) => property);
 	const reason = unset.map(({ admission }) => admission.reason).find((said) => said !== undefined);
