@@ -91,7 +91,7 @@ it("drags a horizontal gap through the running layout, saves once and takes one 
 
 	// 16 document pixels on this project's four-pixel scale is four steps along
 	// it, and the shorthand folds into the one axis the row's gap actually is
-	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(rowSource.replace("gap-4", "gap-x-8"));
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(rowSource.replace("gap-4", "gap-4 gap-x-8"));
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["32px", "32px"]);
 	await expect.poll(() => computed(second, "column-gap")).toEqual(["32px", "32px"]);
@@ -130,7 +130,7 @@ it("drags a column's own axis and a right-to-left row's the way each one flows",
 	await dragBand(f, 0, 0, 16);
 	await saved(f, committed);
 	// a column changes its row gap, and the column gap is left as the shorthand set it
-	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(stacked.replace("gap-4", "gap-y-8"));
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(stacked.replace("gap-4", "gap-4 gap-y-8"));
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "row-gap")).toEqual(["32px", "32px"]);
 	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["16px", "16px"]);
@@ -147,7 +147,7 @@ it("makes a reversed right-to-left row's gap bigger by dragging along its flow",
 	await dragBand(f, 0, 16, 0);
 	await saved(f, committed);
 
-	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(turned.replace("gap-4", "gap-x-8"));
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(turned.replace("gap-4", "gap-4 gap-x-8"));
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["32px", "32px"]);
 	expect(f.writes).toEqual(["commit"]);
@@ -172,7 +172,9 @@ it("opens the band's own exact value and takes a fraction of a pixel", { timeout
 	await saved(f, committed);
 
 	// an exact fraction stays an exact fraction: no scale reference is invented
-	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(rowSource.replace("gap-4", "gap-x-[13.5px]"));
+	await expect
+		.poll(() => f.bytes()[owner], { timeout: 30_000 })
+		.toBe(rowSource.replace("gap-4", "gap-4 gap-x-[13.5px]"));
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "column-gap")).toEqual(["13.5px", "13.5px"]);
 	expect(f.writes).toEqual(["commit"]);
