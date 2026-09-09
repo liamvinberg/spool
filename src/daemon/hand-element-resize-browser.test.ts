@@ -190,14 +190,19 @@ it("turns an element from the ring's rotate zone and saves it the same way", { t
 	const zone = await f.page.locator('[data-element-rotate="ne"]').boundingBox();
 	if (!box || !zone) throw new Error("the ring drew no rotate zone");
 
-	// a quarter turn about the element's own centre, snapped to 15° under shift
+	// a quarter turn about the element's own centre, measured from wherever the
+	// zone actually sits, and snapped to 15° under shift
 	const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+	const grab = { x: zone.x + zone.width / 2, y: zone.y + zone.height / 2 };
+	const from = Math.atan2(grab.y - centre.y, grab.x - centre.x);
+	const turnTo = (angle: number) =>
+		f.page.mouse.move(centre.x + Math.cos(angle) * 140, centre.y + Math.sin(angle) * 140);
 	const committed = reply(f, "commit");
-	await f.page.mouse.move(zone.x + zone.width / 2, zone.y + zone.height / 2);
+	await f.page.mouse.move(grab.x, grab.y);
 	await f.page.mouse.down();
 	await f.page.keyboard.down("Shift");
-	await f.page.mouse.move(centre.x + 120, centre.y);
-	await f.page.mouse.move(centre.x, centre.y + 120);
+	await turnTo(from + Math.PI / 4);
+	await turnTo(from + Math.PI / 2);
 	await f.page.mouse.up();
 	await f.page.keyboard.up("Shift");
 	await saved(f, committed);
