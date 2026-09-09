@@ -290,6 +290,26 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 			return unverified("the selected property condition needs a native context proof");
 		return { rendered: "inactive", reason: "the selected compiled condition is inactive for this use" };
 	}
+	// A member cannot outrank an important rule. Where one is really applying, the
+	// rule is what decides this property and the member is constrained, not wrong.
+	if (expected.source === "style") {
+		const related = (name: string) =>
+			name === expected.property ||
+			name.startsWith(`${expected.property}-`) ||
+			expected.property.startsWith(`${name}-`);
+		const deciding = expected.effects.find(
+			(effect) =>
+				effect.important &&
+				effect.path.length > 0 &&
+				related(effect.property) &&
+				pathCondition(element, effect.path, effect.owner !== null) === "active",
+		);
+		if (deciding)
+			return {
+				rendered: "constrained",
+				reason: `an important ${deciding.property} declaration decides this property, not the element's own member`,
+			};
+	}
 	const family = propertyFamily(expected.property);
 	if (!family) return unverified("this property needs a native effect proof");
 	if (family.kind === "composed") return composedOutcome(element, expected, family.native);

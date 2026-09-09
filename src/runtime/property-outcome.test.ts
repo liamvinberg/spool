@@ -3177,7 +3177,7 @@ it("reads the element's own member as verified, and a stale one as mismatching",
 	]);
 });
 
-it("reports a member an important rule overrides as mismatching, not as its own value", async () => {
+it("reports a member an important rule overrides as constrained, naming the rule", async () => {
 	const f = await fixture(
 		'<style>.hard{opacity:0.25 !important}</style><section data-subject class="hard" style="opacity: 0.5"></section>',
 	);
@@ -3190,7 +3190,12 @@ it("reports a member an important rule overrides as mismatching, not as its own 
 				{ owner: null, path: [".hard"], property: "opacity", value: "0.25", important: true },
 			],
 		}),
-	).toEqual([{ rendered: "mismatching", observed: "0.25" }]);
+	).toEqual([
+		{
+			rendered: "constrained",
+			reason: "an important opacity declaration decides this property, not the element's own member",
+		},
+	]);
 });
 
 function declarationExpectation(path: readonly string[], value: string, css: string): SourcePropertyExpectation {
