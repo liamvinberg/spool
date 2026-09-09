@@ -107,28 +107,30 @@ async function complete(f: Canvas, property: string, expected: string) {
 it("edits the property an inline member owns, on every use, and steps back", { timeout: 120_000 }, async () => {
 	const original = tile("{{padding: 40, opacity: 0.75}}", "text-red-500");
 	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
-	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 
 	// a cancelled edit previews on both uses and writes nothing
 	await f.select();
-	await row(f, "opacity").fill("50");
-	await expect.poll(() => computed(f, "opacity")).toEqual(["0.5", "0.5"]);
-	await row(f, "opacity").press("Escape");
-	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
+	await row(f, "padding").fill("24");
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["24px", "24px"]);
+	await row(f, "padding").press("Escape");
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 	expect(f.bytes()[owner]).toBe(original);
 	expect(f.writes).toEqual([]);
 
-	// the same edit committed: the member itself changes, and the class does not
-	await row(f, "opacity").fill("50");
-	await complete(f, "opacity", tile("{{padding: 40, opacity: 0.5}}", "text-red-500"));
-	await expect.poll(() => computed(f, "opacity")).toEqual(["0.5", "0.5"]);
-	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
+	// the same edit committed: the member itself changes, in the form it was
+	// written in, and the class and the other member stay exactly as they are
+	await row(f, "padding").fill("24");
+	await complete(f, "padding", tile("{{padding: 24, opacity: 0.75}}", "text-red-500"));
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["24px", "24px"]);
+	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 
 	// one step back returns the authored member, and nothing else moves
 	const stepped = reply(f, "inverse");
 	await f.history(false);
 	expect((await (await stepped).json()).ok).toBe(true);
 	await expect.poll(() => f.bytes()[owner]).toBe(original);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 });
 
