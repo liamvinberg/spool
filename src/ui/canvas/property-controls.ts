@@ -17,11 +17,25 @@ export interface PropertyControls {
 	begin(property: string, preview?: SourcePropertyValue): void;
 	preview(property: string, value: SourcePropertyValue, sampleValue?: string): void;
 	apply(property: string, value: SourcePropertyValue): void;
+	/** Several properties one gesture decides together, saved as one operation. */
+	applyFields(changes: readonly { property: string; value: SourcePropertyValue }[]): void;
 	finish(commit: boolean): void;
 }
 
-export function appearanceProperty(row: Row): boolean {
-	return ["appearance", "fill", "stroke", "text"].includes(row.section);
+/** Every control writes through the source owner; a reading row writes nothing. */
+export function sourceProperty(row: Row): boolean {
+	return row.primitive !== "read";
+}
+
+/**
+ * The CSS property a row's request is about.
+ *
+ * A row is a control, and two controls can be about one property: the width
+ * field and the width mode menu both author the element's width, so a mode
+ * change is a width request rather than a request about a control's own name.
+ */
+export function sourcePropertyName(row: Row): string {
+	return row.rule.kind === "size-mode" ? (row.rule.axis === "w" ? "width" : "height") : row.property;
 }
 
 /** Candidate spelling carries the control's request; the source compiler proves ownership. */

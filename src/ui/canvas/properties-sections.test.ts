@@ -13,8 +13,7 @@ import { PropertySections, type View } from "./properties-sections";
 import type { PropertyControls, PropertyDescription } from "./property-controls";
 
 /** These surface tests verify displayed values and requested candidates.
- * Appearance changes carry typed source requests; planner/native tests prove their effects.
- * Layout rows retain their existing writer until their operation-specific migration.
+ * Every change carries a typed source request; planner/native tests prove their effects.
  */
 
 /** kaffe's theme: its own colours, sizes and radii, and one breakpoint of its own. */
@@ -95,7 +94,6 @@ it.each(["letter-spacing", "border-width"])(
 		expect(rail.requests).toEqual([
 			{ property, value: { kind: "custom", value: property === "border-width" ? "1px" : "0px" } },
 		]);
-		expect(rail.legacy).toEqual([]);
 	},
 );
 
@@ -177,11 +175,18 @@ it("reads the token in the box and what it measures beside it", async () => {
 it("steps by one scale unit on an arrow and by ten on shift", async () => {
 	const rail = await mount("p-4");
 
+	// Each arrow moves the draft and previews it; the gesture saves on Enter.
 	await step(rail, "padding", "ArrowUp", false);
-	expect(rail.wrote()).toEqual([{ token: "p-5" }]);
+	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["p-5"] } });
 
 	await step(rail, "padding", "ArrowDown", true);
-	expect(rail.wrote()).toEqual([{ token: "-p-6" }]);
+	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } });
+	expect(rail.requests).toEqual([]);
+
+	const field = fieldIn(rail, "padding");
+	if (!field) throw new Error("missing padding field");
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+	expect(rail.requests).toEqual([{ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } }]);
 });
 
 /* ---------- P7: the folds ---------- */
@@ -295,7 +300,6 @@ it("previews and completes an explicit custom color in the approved menu", async
 	expect(rail.previews).toEqual([{ property: "background-color", value: { kind: "custom", value: "#ff0044" } }]);
 	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
 	expect(rail.completions).toEqual([true]);
-	expect(rail.legacy).toEqual([]);
 	expect(shows(await mount("bg-[#ff0044]"), "background-color")).toBe("#ff0044");
 });
 
@@ -462,7 +466,6 @@ it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "backg
 		}));
 		expect(rowOf(rail, property)?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
 		expect(rail.requests).toEqual([]);
-		expect(rail.legacy).toEqual([]);
 	},
 );
 
@@ -515,7 +518,6 @@ it("takes no request from a control whose source refuses the element", async () 
 	expect(fieldIn(rail, "opacity")).toBeNull();
 	expect(rowOf(rail, "opacity")?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
 	expect(rail.requests).toEqual([]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it("says why an optional property would be refused before it is added", async () => {
@@ -535,7 +537,6 @@ it("sends appearance values to source operations without falling through to the 
 		{ property: "border-width", value: { kind: "binding", tokens: ["border-[3.5px]"] } },
 		{ property: "color", value: { kind: "binding", tokens: ["text-raised"] } },
 	]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it("accumulates scrub previews from the original number without saving before release", async () => {
@@ -563,7 +564,8 @@ it("accumulates scrub previews from the original number without saving before re
 interface Rail {
 	host: HTMLElement;
 	requests: { property: string; value: SourcePropertyValue }[];
-	legacy: RowEdit[][];
+	/** every several-property gesture, as one saved group */
+	groups: { property: string; value: SourcePropertyValue }[][];
 	previews: { property: string; value: SourcePropertyValue }[];
 	completions: boolean[];
 	/** every property list the rail asked one description for */
@@ -597,7 +599,17 @@ async function mount(
 	});
 	let wrote: RowEdit[] = [];
 	const requests: Rail["requests"] = [];
-	const legacy: RowEdit[][] = [];
+	const groups: Rail["groups"] = [];
+	/** The edits one request comes to, which is what the source owner plans from. */
+	const edited = (property: string, value: SourcePropertyValue): RowEdit[] => {
+		const row = rowFor(property);
+		if (!row) throw new Error("unknown property request");
+		return value.kind === "binding"
+			? value.tokens.map((token) => ({ token: token.slice(scopeKey(scope).length) }))
+			: value.kind === "remove"
+				? editsFor(row, null, { scoped: scopedClass(className, scope), theme: THEME })
+				: [];
+	};
 	const previews: Rail["previews"] = [];
 	const completions: boolean[] = [];
 	const asked: (readonly string[])[] = [];
@@ -645,14 +657,12 @@ async function mount(
 					},
 					apply: (property, value) => {
 						requests.push({ property, value });
-						const row = rowFor(property);
-						if (!row) throw new Error("unknown property request");
-						wrote =
-							value.kind === "binding"
-								? value.tokens.map((token) => ({ token: token.slice(scopeKey(scope).length) }))
-								: value.kind === "remove"
-									? editsFor(row, null, { scoped: scopedClass(className, scope), theme: THEME })
-									: [];
+						wrote = edited(property, value);
+					},
+					applyFields: (changes) => {
+						groups.push(changes.map((change) => ({ ...change })));
+						for (const change of changes) requests.push({ ...change });
+						wrote = changes.flatMap((change) => edited(change.property, change.value));
 					},
 				},
 		scope,
@@ -663,10 +673,6 @@ async function mount(
 		box: { w: 120, h: 40 },
 		compiler: stubCompiler(),
 		fresh: () => false,
-		put: (edits) => {
-			legacy.push([...edits]);
-			wrote = [...edits];
-		},
 	};
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
@@ -703,7 +709,7 @@ async function mount(
 		host,
 		reread,
 		requests,
-		legacy,
+		groups,
 		previews,
 		completions,
 		asked,
@@ -915,7 +921,6 @@ it("routes the numeric typography control through one exact custom source gestur
 	await type(rail, "font-size", "7.999px");
 	expect(rail.previews.at(-1)).toEqual({ property: "font-size", value: { kind: "custom", value: "7.999px" } });
 	expect(rail.completions).toEqual([true]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it.each(["opacity", "border-width"])("keeps repeated %s arrows as previews until completion", async (property) => {
@@ -988,7 +993,6 @@ it("offers the approved start alignment through the typography menu and original
 	).toEqual(["start", "left", "center", "right"]);
 	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="start"]')?.click());
 	expect(rail.requests).toEqual([{ property: "text-align", value: { kind: "binding", tokens: ["text-start"] } }]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it.each([false, true])("reads the authored start alignment in its selected scope (hover: %s)", async (hovered) => {
@@ -999,4 +1003,20 @@ it.each([false, true])("reads the authored start alignment in its selected scope
 	const option = document.querySelector('[data-menu-option="start"]');
 	expect(option?.getAttribute("aria-selected")).toBe("true");
 	expect(rail.requests).toEqual([]);
+});
+
+/* ---------- the layout rows, on the same source path (#303) ---------- */
+
+it("sends layout values to source operations without falling through to the legacy class writer", async () => {
+	const rail = await mount("flex p-4 gap-2 w-40");
+	await type(rail, "padding", "6");
+	await type(rail, "gap", "3");
+	await type(rail, "width", "347px");
+	await pick(rail, "display", "grid");
+	expect(rail.requests).toEqual([
+		{ property: "padding", value: { kind: "binding", tokens: ["p-6"] } },
+		{ property: "gap", value: { kind: "binding", tokens: ["gap-3"] } },
+		{ property: "width", value: { kind: "binding", tokens: ["w-[347px]"] } },
+		{ property: "display", value: { kind: "binding", tokens: ["grid"] } },
+	]);
 });

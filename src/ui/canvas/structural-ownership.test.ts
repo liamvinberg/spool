@@ -59,7 +59,6 @@ it("keeps the separately verified Text scope when Delete has a different owner",
 		onGeometry: vi.fn(),
 		onGeometryPreview: vi.fn(),
 		onGeometryCommit: vi.fn(),
-		onWrite: vi.fn(),
 		onSwap: vi.fn(),
 	};
 	const render = async (operation?: SourceOperation) => {
@@ -156,7 +155,6 @@ it("qualifies the affected count when a use is unknown or unverified", async () 
 			onGeometry: vi.fn(),
 			onGeometryPreview: vi.fn(),
 			onGeometryCommit: vi.fn(),
-			onWrite: vi.fn(),
 			onSwap: vi.fn(),
 		};
 		await act(async () =>

@@ -37,10 +37,8 @@ import {
 import {
 	type At,
 	displayOf,
-	editsFor,
 	type Row as ModelRow,
 	optionsFor,
-	type RowEdit,
 	type RowElement,
 	type RowValue,
 	type Rule,
@@ -75,17 +73,17 @@ import type { Scope } from "./properties-scope";
 import { scopeKey } from "./properties-scope";
 import { PropertyColorField } from "./property-color-field";
 import {
-	appearanceProperty,
 	type PropertyControls,
 	type PropertyDescription,
 	propertyControlValue,
 	propertyNumericSample,
+	sourceProperty,
+	sourcePropertyName,
 } from "./property-controls";
 import { type NumericTokenProperty, PropertyNumberField } from "./property-number-field";
 
 /** Rows read candidate spellings from the shared property inventory.
- * Appearance controls retain an original source operation through preview and completion.
- * Layout controls keep their existing writer until their operation-specific migration.
+ * Every control retains an original source operation through preview and completion.
  */
 
 /** What every row is handed: the element under one scope, and how to write under it. */
@@ -105,8 +103,6 @@ export interface View {
 	fresh: (token: string | null) => boolean;
 	/** What the source says this element's class cell wears, or why it cannot be written. */
 	described?: PropertyDescription | undefined;
-	/** Remaining layout edits under the live scope. */
-	put: (edits: readonly RowEdit[]) => void;
 }
 
 function atOf(view: View): At {
@@ -114,9 +110,18 @@ function atOf(view: View): At {
 }
 
 function writeValue(view: View, row: ModelRow, value: RowValue): void {
-	if (appearanceProperty(row)) {
-		view.property?.apply(row.property, propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
-	} else view.put(editsFor(row, value, atOf(view)));
+	if (!sourceProperty(row)) return;
+	view.property?.apply(sourcePropertyName(row), propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
+}
+
+/** Two properties one control decides together — an alignment is both of them. */
+function writeFields(view: View, changes: readonly { row: ModelRow; value: RowValue }[]): void {
+	view.property?.applyFields(
+		changes.map((change) => ({
+			property: sourcePropertyName(change.row),
+			value: propertyControlValue(change.row, change.value, atOf(view), scopeKey(view.scope)),
+		})),
+	);
 }
 
 /** Pointer moves preview one original number; only release completes that source operation. */
@@ -126,7 +131,7 @@ function usePropertyScrub(
 	value: string,
 	step: (from: string, units: number) => string | undefined,
 ) {
-	const control = appearanceProperty(row) ? view.property : null;
+	const control = sourceProperty(row) ? view.property : null;
 	const held = useRef<{ value: string; moved: boolean } | undefined>(undefined);
 	const [draft, setDraft] = useState<string>();
 	const scope = scopeKey(view.scope);
@@ -146,7 +151,7 @@ function usePropertyScrub(
 				value: draft ?? value,
 				start: () => {
 					held.current = { value, moved: false };
-					control.begin(row.property);
+					control.begin(sourcePropertyName(row));
 				},
 				move: (units: number) => {
 					const original = held.current;
@@ -157,7 +162,7 @@ function usePropertyScrub(
 					original.moved = true;
 					setDraft(next);
 					control.preview(
-						row.property,
+						sourcePropertyName(row),
 						propertyControlValue(row, { kind: "value", value: next }, atOf(view), scope),
 						propertyNumericSample(row, { kind: "value", value: next }),
 					);
@@ -191,8 +196,7 @@ function ruleRow<K extends Rule["kind"]>(property: string, kind: K): ModelRow & 
 
 /** Whether this row may be written here, and the reason it may not. */
 function okOf(view: View, row: ModelRow): boolean {
-	if (appearanceProperty(row)) return view.property !== null;
-	return verdictFor(row, view.element, view.scoped).ok;
+	return rowAdmission(view, row).ok;
 }
 
 /**
@@ -204,7 +208,10 @@ function okOf(view: View, row: ModelRow): boolean {
  * reading refuses before it is used rather than at the write.
  */
 function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
-	if (!appearanceProperty(row)) return { ok: verdictFor(row, view.element, view.scoped).ok, reason: undefined };
+	// The element's own refusals come first: an inline box has no padding to
+	// change whatever the source says about its class cell.
+	const verdict = verdictFor(row, view.element, view.scoped);
+	if (!verdict.ok) return { ok: false, reason: verdict.reason };
 	return { ok: view.property !== null && view.described?.readings !== undefined, reason: view.described?.reason };
 }
 
@@ -377,7 +384,7 @@ function ClassNumberRow({
 	aside?: ReactNode;
 }) {
 	const { ok, reason } = rowAdmission(view, row);
-	const control = appearanceProperty(row) ? view.property : null;
+	const control = sourceProperty(row) ? view.property : null;
 	const write = (next: RowValue) => writeValue(view, row, next);
 	const stepBy = (units: number) => {
 		const next = stepped(value, units);
@@ -402,13 +409,13 @@ function ClassNumberRow({
 				faint={faint}
 				changed={changed}
 				placeholder={placeholder}
-				onBegin={() => control?.begin(row.property)}
+				onBegin={() => control?.begin(sourcePropertyName(row))}
 				onCancel={() => control?.finish(false)}
 				onPreview={(typed) => {
 					const next = typedValue(typed);
 					if (next !== undefined)
 						control?.preview(
-							row.property,
+							sourcePropertyName(row),
 							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
 							propertyNumericSample(row, next),
 						);
@@ -1502,7 +1509,7 @@ function SizeSection({ view }: { view: View }) {
 									label={`${property} mode`}
 									onPick={(token) => {
 										const mode = SIZE_MODES.find((entry) => entry.mode === token)?.mode ?? "hug";
-										view.put(editsFor(modeRow, { kind: "mode", mode, measured }, atOf(view)));
+										writeValue(view, modeRow, { kind: "mode", mode, measured });
 									}}
 								/>
 							</span>
@@ -1584,16 +1591,14 @@ function LayoutSection({ view }: { view: View }) {
 								{ token: "flex-row", icon: <ArrowIcon /> },
 								{ token: "flex-col", icon: <ArrowIcon down /> },
 							]}
-							onPick={(token) => view.put(editsFor(directionRow, { kind: "value", value: token }, atOf(view)))}
+							onPick={(token) => writeValue(view, directionRow, { kind: "value", value: token })}
 						/>
 						<span className={cn("ml-auto shrink-0", FAINT)}>{column ? "column" : "row"}</span>
 						<Chip
 							label="wrap"
 							on={(own.wrap ?? base.wrap) === "flex-wrap"}
 							ok={okOf(view, wrapRow)}
-							onChange={(next) =>
-								view.put(editsFor(wrapRow, next ? { kind: "value", value: "flex-wrap" } : null, atOf(view)))
-							}
+							onChange={(next) => writeValue(view, wrapRow, next ? { kind: "value", value: "flex-wrap" } : null)}
 						/>
 					</Row>
 					<Row
@@ -1608,9 +1613,9 @@ function LayoutSection({ view }: { view: View }) {
 							column={column}
 							ok={okOf(view, alignRow)}
 							onPick={(align, justify) =>
-								view.put([
-									...editsFor(alignRow, { kind: "value", value: align }, atOf(view)),
-									...editsFor(justifyRow, { kind: "value", value: justify }, atOf(view)),
+								writeFields(view, [
+									{ row: alignRow, value: { kind: "value", value: align } },
+									{ row: justifyRow, value: { kind: "value", value: justify } },
 								])
 							}
 						/>
