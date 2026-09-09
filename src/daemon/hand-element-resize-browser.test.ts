@@ -55,6 +55,23 @@ async function count(frame: FrameLocator | Page): Promise<void> {
 	});
 }
 
+/**
+ * A mark on the document itself, which only a fresh one loses.
+ *
+ * A lost count says the application's state went; it does not say whether the
+ * document went with it. This separates the two, so a failure names the thing
+ * that actually happened.
+ */
+async function mark(frame: FrameLocator | Page): Promise<void> {
+	await frame.locator("body").evaluate(() => {
+		Reflect.set(window, "sameDocument", true);
+	});
+}
+
+async function stillTheSameDocument(frame: FrameLocator | Page): Promise<boolean> {
+	return frame.locator("body").evaluate(() => Reflect.get(window, "sameDocument") === true);
+}
+
 /** Grab one of the ring's approved targets and drag it, in the canvas's own space. */
 async function dragHandle(
 	f: Canvas,
@@ -82,7 +99,10 @@ it("drags a corner through the running layout, saves once and takes one step bac
 	const f = await originCanvas({ [owner]: card }, frameSource, '[data-subject="A"]', true);
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["160px", "160px"]);
-	for (const frame of [f.frame, second]) await count(frame);
+	for (const frame of [f.frame, second]) {
+		await count(frame);
+		await mark(frame);
+	}
 	for (const frame of [f.frame, second])
 		await expect.poll(() => frame.locator("[data-subject] button").allTextContents()).toEqual(["A:1", "B:1"]);
 
@@ -111,9 +131,17 @@ it("drags a corner through the running layout, saves once and takes one step bac
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["200px", "200px"]);
 	await expect.poll(() => computed(second, "width")).toEqual(["200px", "200px"]);
 	await expect.poll(() => computed(f.frame, "height")).toEqual(["120px", "120px"]);
-	// the uses reflowed where they stood: no reload, so every count is still there
-	for (const frame of [f.frame, second])
-		expect(await frame.locator("[data-subject] button").allTextContents()).toEqual(["A:1", "B:1"]);
+	// the use that stayed on screen reflowed where it stood: the same document,
+	// so both of its counts are still there. The mark is asserted first, because
+	// a lost count on a fresh document is a different fact from a lost count on
+	// this one.
+	//
+	// The frame wheeled off the far edge makes no such promise. The canvas keeps
+	// only so many documents live, and one nobody can see is a document it may
+	// let go of and build again from the source that was saved — which is why
+	// the assertion about that use is the reflow above, not its counters.
+	expect(await stillTheSameDocument(f.frame), "the frame the drag was made in reloaded").toBe(true);
+	expect(await f.frame.locator("[data-subject] button").allTextContents()).toEqual(["A:1", "B:1"]);
 	const settled = (await outcomes(f)).at(-1);
 	expect(
 		settled?.uses?.map((use) => use.rendered),

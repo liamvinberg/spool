@@ -4,10 +4,21 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
+
+/**
+ * The notices an edit left, which is not every notice on the strip.
+ *
+ * A project with `history: false` says once that nothing is catching hand
+ * edits (#253). That is a fact about the project rather than about this save,
+ * and it stays on the strip until it is dismissed, so it is not what these
+ * cases are counting.
+ */
+const editNotices = (page: Page) => page.locator('[data-hand-notice]:not([data-hand-notice="uncaught"])');
 
 async function served(source: string, client: BundledHostClient, directory: string, prepare?: (root: string) => void) {
 	const uiDir = await builtUi();
@@ -160,7 +171,7 @@ for (const order of ["agent first", "hand first"] as const) {
 			.poll(
 				async () => ({
 					source: readFileSync(f.file, "utf8"),
-					notice: await f.page.locator("[data-hand-notice]").allTextContents(),
+					notice: await editNotices(f.page).allTextContents(),
 					editing: await f.frame.locator("#label").getAttribute("contenteditable"),
 				}),
 				{ timeout: 20_000 },
@@ -175,7 +186,7 @@ for (const order of ["agent first", "hand first"] as const) {
 		await expect
 			.poll(async () => ({
 				text: await f.frame.locator("#label").textContent(),
-				notice: await f.page.locator("[data-hand-notice]").allTextContents(),
+				notice: await editNotices(f.page).allTextContents(),
 			}))
 			.toMatchObject({ text: "My words" });
 		await f.delivered(() => f.page.keyboard.press("ControlOrMeta+z"));
@@ -455,6 +466,6 @@ it("retains a secondary bundled edit through shared source save and inverse", { 
 		}
 		await expect.poll(() => second.locator("#body").textContent()).toBe("Agent body");
 		expect(readFileSync(file, "utf8")).toContain("Agent body");
-		await expect.poll(() => f.page.locator("[data-hand-notice]").count()).toBe(0);
+		await expect.poll(() => editNotices(f.page).count()).toBe(0);
 	}
 });

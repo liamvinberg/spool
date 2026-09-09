@@ -428,6 +428,7 @@ export function lowerLiterals(
 			for (const name of Object.keys(getBindingIdentifiers(node))) factories.delete(name);
 	});
 	let factory = 0;
+	const factoryConfigs = new Set<Node>();
 	walk(ast, (node, ancestors) => {
 		if (node.type !== "CallExpression" || node.optional || !node.loc) return;
 		const callee = node.callee;
@@ -448,6 +449,10 @@ export function lowerLiterals(
 		});
 		if (unsafe) return;
 		factory++;
+		// The config of an admitted element call is where a style object can be an
+		// element's own. Any other object with a `style` field is ordinary data.
+		if (api === "createElement" && node.arguments[1]?.type === "ObjectExpression")
+			factoryConfigs.add(node.arguments[1]);
 		const id = `${structural.paths.get(node)}#factory`;
 		sites.push({ node, id });
 		patches.push({
@@ -540,21 +545,37 @@ export function lowerLiterals(
 	});
 
 	let styleObjects = 0;
-	walk(ast, (node) => {
+	// A proven literal style object is source data the property path owns, the way
+	// a retained attribute is. Its members are guarded by their own original read,
+	// so the executable shape is about the object being there, not what is in it.
+	const styleLiterals = new Set<Node>();
+	walk(ast, (node, ancestors) => {
+		// A style object is written either as a JSX attribute or as a factory
+		// config's own field; both are the same literal to the element that runs.
+		let object: Node | undefined;
 		if (
-			node.type !== "JSXAttribute" ||
-			node.name.type !== "JSXIdentifier" ||
-			node.name.name !== "style" ||
-			node.value?.type !== "JSXExpressionContainer"
+			node.type === "JSXAttribute" &&
+			node.name.type === "JSXIdentifier" &&
+			node.name.name === "style" &&
+			node.value?.type === "JSXExpressionContainer"
 		)
-			return;
-		const object = node.value.expression;
+			object = node.value.expression;
+		else if (
+			node.type === "ObjectProperty" &&
+			!node.computed &&
+			((node.key.type === "Identifier" && node.key.name === "style") ||
+				(node.key.type === "StringLiteral" && node.key.value === "style")) &&
+			factoryConfigs.has(ancestors.at(-1) as Node)
+		)
+			object = node.value;
+		if (!object) return;
 		try {
 			literalStyleMembers(object);
 		} catch {
 			return;
 		}
 		styleObjects++;
+		styleLiterals.add(object);
 		patches.push({
 			start: position(object).start,
 			end: position(object).start,
@@ -562,6 +583,38 @@ export function lowerLiterals(
 			text: `${prefix}Style(`,
 		});
 		patches.push({ start: position(object).end, end: position(object).end, wrap: object, text: ")", order: 2 });
+		// Each member is retained the way a literal attribute is, so a saved value
+		// reaches every running use through the packet instead of a reload.
+		// A member is delivered by the component that renders it, so it is retained
+		// only where that component already has a retained value of its own.
+		const fn = ancestors.find((parent) => functions.has(parent));
+		const owner = fn ? functions.get(fn) : undefined;
+		if (object.type !== "ObjectExpression" || !object.loc || owner === undefined) return;
+		for (const property of object.properties) {
+			if (property.type !== "ObjectProperty" || !property.value.loc) continue;
+			const name =
+				property.key.type === "Identifier"
+					? property.key.name
+					: property.key.type === "StringLiteral"
+						? property.key.value
+						: undefined;
+			if (name === undefined) continue;
+			const key = `${file}:${object.loc.start.line}:${object.loc.start.column + 1}@style:${name}`;
+			const literal = literalStyleMembers(object).find((member) => member.key === name);
+			if (!literal) continue;
+			cells[key] = {
+				file,
+				source: `${file}:${property.value.loc.start.line}:${property.value.loc.start.column + 1}`,
+				value: JSON.stringify(literal.value),
+				owner,
+				field: `style:${name}`,
+				syntax: "jsx",
+			};
+			patches.push({
+				...position(property.value),
+				text: `${prefix}StyleValue(${JSON.stringify(key)},${JSON.stringify(literal.value)})`,
+			});
+		}
 	});
 
 	const structureOwners: Record<string, string> = {};
@@ -673,6 +726,8 @@ export function lowerLiterals(
 				if (key === "body" && Array.isArray(value)) return value.filter((node) => !retainedImports.has(node));
 				if (key === "attributes" && Array.isArray(value))
 					return value.filter((attribute) => !retainedAttributes.has(attribute));
+				if (typeof value === "object" && value !== null && styleLiterals.has(value as Node))
+					return { type: "RetainedStyle" };
 				if (typeof value === "object" && value !== null && attributes.has(value as Node))
 					return { type: "RetainedAttribute" };
 				if (typeof value === "object" && value !== null && eligible.has(value as Node))
@@ -684,7 +739,7 @@ export function lowerLiterals(
 	const structure = structural.state((node) => normalize(node, false));
 	const imports =
 		functions.size || factory > 0 || structural.groups.length > 0 || styleObjects > 0
-			? `\nimport {sourceStyle as ${prefix}Style,sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom,sourceOptional as ${prefix}Optional,sourceList as ${prefix}List} from "spool/jsx-dev-runtime";`
+			? `\nimport {sourceStyle as ${prefix}Style,sourceStyleValue as ${prefix}StyleValue,sourceValue as ${prefix}Value,sourceChildren as ${prefix}Children,observeSource as ${prefix}Observe,useSourceValues as ${prefix}Use,sourceComponent as ${prefix}Component,observeFactory as ${prefix}Factory,sourceTypeFrom as ${prefix}TypeFrom,sourceOptional as ${prefix}Optional,sourceList as ${prefix}List} from "spool/jsx-dev-runtime";`
 			: "";
 	const priorStamps = Object.values(stamps);
 	transformed = structural.render(

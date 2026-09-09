@@ -18,6 +18,7 @@ import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
+import { MATCHED_RULE_LIMIT } from "../source-edit";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
@@ -2274,6 +2275,18 @@ export function createDaemonApp({
 						propertyNative: z
 							.object({ property: z.string().max(200), value: z.string().max(100_000) })
 							.strict()
+							.optional(),
+						// The rule chains this element's own document matched. A chain is
+						// evidence, not authority: the compiler still has to carry it.
+						propertyRules: z
+							.array(
+								z
+									.object({ path: z.array(z.string().max(2000)).max(20).readonly(), active: z.boolean() })
+									.strict()
+									.readonly(),
+							)
+							.max(MATCHED_RULE_LIMIT)
+							.readonly()
 							.optional(),
 					})
 					.strict();
