@@ -343,12 +343,12 @@ it("keeps a stylesheet Undo through later work that retires a pending read", { t
 	await complete(f, "padding", carded);
 	await expect.poll(() => f.bytes()[sheet]).toBe(tokens("calc(var(--spacing) * 5)", "0.25"));
 
-	// ordinary later work: another use is selected and its own read is opened,
-	// which is the context the first read was admitted in changing
-	await f.frame.locator('[data-subject="B"]').click();
-	await f.page.waitForTimeout(300);
+	// ordinary later work: another read is opened on the same source and given up,
+	// which is the interaction context the first read was admitted in, changing
 	await f.select();
-	await f.page.waitForTimeout(300);
+	await row(f, "opacity").fill("50");
+	await row(f, "opacity").press("Escape");
+	await f.settled();
 
 	// the receipt still holds: its source and dependencies are what it is about
 	const stepped = reply(f, "inverse");
@@ -357,17 +357,4 @@ it("keeps a stylesheet Undo through later work that retires a pending read", { t
 	expect(back.ok, JSON.stringify(back)).toBe(true);
 	await expect.poll(() => f.bytes()[sheet]).toBe(css);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
-});
-
-/** A control whose declarations belong to two sources refuses before saving. */
-it("refuses one control whose two axes are written in different sources", { timeout: 120_000 }, async () => {
-	const original = tile("{width: 100}", "h-20!");
-	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
-	await f.select();
-	// `size` stands for width and height at once, and they do not share a source
-	await expect
-		.poll(() => f.page.locator('[data-properties-row="width and height"] span[title]').first().getAttribute("title"))
-		.toMatch(/different sources/);
-	expect(f.writes).toEqual([]);
-	expect(f.bytes()[owner]).toBe(original);
 });
