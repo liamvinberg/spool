@@ -62,18 +62,16 @@ it("keeps the approved four headers, with the border controls in their approved 
 	const rail = await mount("border-2 border-red-500 rounded-lg p-4 text-md");
 	const groups = [...rail.host.children];
 	const headed = (group: Element) => group.firstElementChild?.firstElementChild?.textContent ?? "";
-	expect(groups.map(headed).filter(Boolean)).toEqual([
-		"position",
-		"size",
-		"layout",
-		"Typography",
-		"Appearance",
-		"+ Add property",
-	]);
+	expect(groups.map(headed).filter(Boolean)).toEqual(["Layout", "Typography", "Appearance", "+ Add property"]);
+	// the approved Layout holds the sizing and position rows the rail used to
+	// head separately, and every one of them is still drawn
+	for (const property of ["display", "width", "height", "padding", "position"])
+		expect(groups[0]?.querySelector(`[data-properties-row="${property}"]`)).not.toBeNull();
+	expect(groups[0]?.querySelector('button[aria-label="width mode"]')).not.toBeNull();
 	const named = (name: string) => groups.find((group) => headed(group) === name);
 	// The approved frame draws an added border width with Layout's optional
 	// numbers, and gives its colour no slot of its own, so it reads under Appearance.
-	expect(named("layout")?.querySelector('[data-properties-row="border-width"]')).not.toBeNull();
+	expect(named("Layout")?.querySelector('[data-properties-row="border-width"]')).not.toBeNull();
 	expect(named("Appearance")?.querySelector('[data-properties-row="border-width"]')).toBeNull();
 	expect(named("Appearance")?.querySelector('[data-properties-row="border-color"]')).not.toBeNull();
 	expect(rail.host.querySelectorAll('[data-properties-row="border-width"]')).toHaveLength(1);
@@ -425,9 +423,11 @@ it("reads the base's value faint under a variant, and writes the variant's own",
 it("greys an inline element's size rows and says why, rather than hiding them", async () => {
 	const rail = await mount("", BASE, { tag: "span", className: "" });
 
-	expect(sectionReason(rail, "size")).toBe("inline, the text decides");
+	expect(sectionReason(rail, "Layout")).toBe("inline, the text decides");
 	expect(fieldIn(rail, "width")).toBeNull();
 	expect(rowNames(rail, "width")).toEqual(["width"]);
+	// the row keeps its own reason, so a refusal is read where the control is
+	expect(rowOf(rail, "width")?.firstElementChild?.getAttribute("title")).toBe("inline, the text decides");
 });
 
 it("greys every row on a literal no hand may write", async () => {

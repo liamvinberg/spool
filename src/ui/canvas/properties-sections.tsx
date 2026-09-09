@@ -1449,12 +1449,12 @@ const INSET_SIDES: readonly { side: Side; property: string }[] = [
 	{ side: "l", property: "left" },
 ];
 
-function PositionSection({ view }: { view: View }) {
+/** The rows that place an element, drawn only where its position is not static. */
+function PositionRows({ view }: { view: View }) {
 	const position = wordThrough(view, "position");
 	const placed = position !== null && PLACED.has(position);
-	const drawn = new Set(["position", "z-index", ...(placed ? INSET_SIDES.map((entry) => entry.property) : [])]);
 	return (
-		<Section name="position" reason={sectionReason(view, ["position"])}>
+		<>
 			<WordRow view={view} property="position" />
 			{placed
 				? INSET_SIDES.map((entry) => (
@@ -1469,16 +1469,21 @@ function PositionSection({ view }: { view: View }) {
 			{placed || lengthOf(view.scoped, "z") !== null ? (
 				<LengthRow view={view} property="z-index" placeholder="auto" fallback="auto" />
 			) : null}
-			<Rest view={view} section="position" drawn={drawn} />
-		</Section>
+		</>
 	);
 }
 
+/** Which position rows the section led with, so `Rest` does not draw them twice. */
+function positionDrawn(view: View): string[] {
+	const position = wordThrough(view, "position");
+	const placed = position !== null && PLACED.has(position);
+	return ["position", "z-index", ...(placed ? INSET_SIDES.map((entry) => entry.property) : [])];
+}
+
 /** width and height, each a length and a mode: hug is no token, fill is `w-full`. */
-function SizeSection({ view }: { view: View }) {
-	const drawn = new Set(["width", "height", "width mode", "height mode"]);
+function SizeRows({ view }: { view: View }) {
 	return (
-		<Section name="size" reason={sectionReason(view, ["width", "height"])}>
+		<>
 			{(["w", "h"] as const).map((axis) => {
 				const property = axis === "w" ? "width" : "height";
 				const modeRow = modelRow(axis === "w" ? "width mode" : "height mode");
@@ -1517,14 +1522,21 @@ function SizeSection({ view }: { view: View }) {
 					/>
 				);
 			})}
-			<Rest view={view} section="size" drawn={drawn} />
-		</Section>
+		</>
 	);
 }
 
 const FLEX_DISPLAYS = new Set(["flex", "inline-flex"]);
 const SCROLLS = new Set(["overflow-auto", "overflow-scroll"]);
 
+/**
+ * Layout, in the approved frame's own order.
+ *
+ * The approved editing interface heads one section for how an element lays
+ * out, how big it is and what surrounds it, so display, the flex rows, the two
+ * dimensions with their modes, the spacing folds and the position rows read
+ * under one name rather than three.
+ */
 function LayoutSection({ view }: { view: View }) {
 	const read = (className: string) => ({
 		display: wordOf(className, "display"),
@@ -1550,6 +1562,7 @@ function LayoutSection({ view }: { view: View }) {
 	const widths = borderWidthsOf(view.scoped);
 	const baseWidths = view.scope.length > 0 ? borderWidthsOf(view.base) : widths;
 	const bordered = [...Object.values(widths), ...Object.values(baseWidths)].some((width) => width !== null);
+	const gapped = flex || grid || gapOf(view.scoped).x !== null || gapOf(view.scoped).y !== null;
 	const drawn = new Set([
 		...(bordered ? BORDER_WIDTH_FOLD.levels.flat().map((entry) => entry.property) : []),
 		// `border-s` and `border-e` are the fold's left and right edges under
@@ -1559,6 +1572,10 @@ function LayoutSection({ view }: { view: View }) {
 		"border-inline-end-width",
 		"display",
 		"overflow",
+		"width",
+		"height",
+		"width mode",
+		"height mode",
 		"padding",
 		"padding-inline",
 		"padding-block",
@@ -1573,13 +1590,14 @@ function LayoutSection({ view }: { view: View }) {
 		"margin-right",
 		"margin-bottom",
 		"margin-left",
+		...positionDrawn(view),
 		...(flex ? ["flex-direction", "flex-wrap", "align-items", "justify-content"] : []),
 		...(grid ? ["grid-template-columns"] : []),
-		...(flex || grid ? ["gap", "column-gap", "row-gap"] : []),
+		...(gapped ? ["gap", "column-gap", "row-gap"] : []),
 		...(scrolls ? ["scroll-snap-type"] : []),
 	]);
 	return (
-		<Section name="layout" reason={sectionReason(view, ["display", "padding"])}>
+		<Section name="Layout" reason={sectionReason(view, ["display", "width", "padding"])}>
 			<WordRow view={view} property="display" />
 			{flex ? (
 				<>
@@ -1627,7 +1645,23 @@ function LayoutSection({ view }: { view: View }) {
 				</>
 			) : null}
 			{grid ? <LengthRow view={view} property="grid-template-columns" placeholder="none" /> : null}
-			{flex || grid ? (
+			<SizeRows view={view} />
+			<Folded
+				view={view}
+				fold={SPACING_FOLD("padding")}
+				read={(scoped) => sidesOf(scoped, "p")}
+				draw={(entry, caret, read) => (
+					<LengthRow
+						key={entry.property}
+						view={view}
+						property={entry.property}
+						placeholder="0"
+						read={read}
+						aside={caret}
+					/>
+				)}
+			/>
+			{gapped ? (
 				<Folded
 					view={view}
 					fold={GAP_FOLD}
@@ -1647,21 +1681,6 @@ function LayoutSection({ view }: { view: View }) {
 					)}
 				/>
 			) : null}
-			<Folded
-				view={view}
-				fold={SPACING_FOLD("padding")}
-				read={(scoped) => sidesOf(scoped, "p")}
-				draw={(entry, caret, read) => (
-					<LengthRow
-						key={entry.property}
-						view={view}
-						property={entry.property}
-						placeholder="0"
-						read={read}
-						aside={caret}
-					/>
-				)}
-			/>
 			<Folded
 				view={view}
 				fold={SPACING_FOLD("margin")}
@@ -1693,8 +1712,11 @@ function LayoutSection({ view }: { view: View }) {
 					)}
 				/>
 			) : null}
+			<PositionRows view={view} />
 			<WordRow view={view} property="overflow" />
 			{scrolls ? <ToggleRow view={view} property="scroll-snap-type" /> : null}
+			<Rest view={view} section="size" drawn={drawn} />
+			<Rest view={view} section="position" drawn={drawn} />
 			<Rest view={view} section="layout" drawn={drawn} />
 		</Section>
 	);
@@ -1950,8 +1972,6 @@ export function PropertySections({ view }: { view: View }) {
 	const held: View = { ...view, described: view.described ?? described };
 	return (
 		<>
-			<PositionSection view={held} />
-			<SizeSection view={held} />
 			<LayoutSection view={held} />
 			<TextSection view={held} />
 			<AppearanceSection view={held} />
