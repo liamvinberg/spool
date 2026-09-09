@@ -363,6 +363,29 @@ const SIZING = {
 	limits: { minW: 0, minH: 0, maxW: null, maxH: null },
 };
 
+/**
+ * What the document says a drag may align with (#311), and what the layout
+ * makes of the size it is given: `actual` is the box the element comes back as
+ * after the correction was written, where that is not the size that was asked
+ * for.
+ */
+let snapping: {
+	targets: { id: number; box: { x: number; y: number; w: number; h: number } }[];
+	sensitivity: { w: number; h: number };
+	actual: { w: number; h: number } | null;
+} = { targets: [], sensitivity: { w: 0, h: 0 }, actual: null };
+
+/** The width the last preview wrote, which is the box the document then has. */
+let previewed: number | null = null;
+
+/** A size token back to the pixels it names, on this project's own step. */
+function tokenPx(token: string): number | null {
+	const bracket = /^[a-z]+-\[(-?[\d.]+)px\]$/.exec(token);
+	if (bracket !== null) return Number(bracket[1]);
+	const step = /^[a-z]+-([\d.]+)$/.exec(token);
+	return step === null ? null : Number(step[1]) * THEME.step;
+}
+
 let rung: RungRead = {
 	source: STAMP,
 	name: "article",
@@ -399,6 +422,8 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 		vi.restoreAllMocks();
 		rung = { source: STAMP, name: "article", className: "p-4", path: "design/frames/home/frame.tsx", line: 7 };
 		held = { x: 10, y: 10, w: 200, h: 120 };
+		snapping = { targets: [], sensitivity: { w: 0, h: 0 }, actual: null };
+		previewed = null;
 	});
 
 	await act(async () => {
@@ -424,6 +449,24 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 						);
 					if (message?.spool === "sizing") {
 						answer({ spool: "sized", frame: "home", id: message.id, sizing: SIZING });
+						return;
+					}
+					if (message?.spool === "snapping") {
+						// a trial states the size it asks about; the check afterwards reads
+						// whatever the sample actually wrote, which is what the layout took
+						const trial = message.trial as { wear: { w: number | null; h: number | null } } | null;
+						const width = trial === null ? (snapping.actual?.w ?? previewed ?? held.w) : (trial.wear.w ?? held.w);
+						const height = trial === null ? (snapping.actual?.h ?? held.h) : (trial.wear.h ?? held.h);
+						answer({
+							spool: "snapped",
+							frame: "home",
+							id: message.id,
+							snapping: {
+								box: { x: held.x, y: held.y, w: width, h: height },
+								sensitivity: snapping.sensitivity,
+								targets: snapping.targets,
+							},
+						});
 						return;
 					}
 					if (message?.spool !== "source-request") return;
@@ -616,11 +659,17 @@ function stubCanvasApis(): void {
 				}
 				if (body.action === "reach")
 					return Response.json(sourceRead ? { ok: true, read: sourceRead } : { ok: false, reason: "no read" });
-				if (body.action === "preview")
+				if (body.action === "preview") {
+					const change = body as unknown as {
+						change?: { value?: { changes?: { property: string; value: { tokens?: string[] } }[] } };
+					};
+					for (const field of change.change?.value?.changes ?? [])
+						if (field.property === "width") previewed = tokenPx(field.value.tokens?.[0] ?? "");
 					return Response.json({
 						ok: true,
 						preview: { generation: body.generation, revision: body.revision ?? 1, value: "", frames: [] },
 					});
+				}
 				if (body.action === "commit" || body.action === "inverse")
 					return Response.json({
 						ok: true,
@@ -654,3 +703,81 @@ function stubCanvasApis(): void {
 		},
 	);
 }
+
+/* --- snapping the drag onto what the document offers (#311) ---------------- */
+
+it("pulls the dragged edge onto a stop the document offers and draws its guide", async () => {
+	// the sibling's right edge is at 234; the pointer asks for 221, which puts
+	// the dragged edge at 231 — three pixels short, and inside the six
+	snapping = { targets: [{ id: 1, box: { x: 74, y: 0, w: 160, h: 40 } }], sensitivity: { w: 1, h: 0 }, actual: null };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y);
+	await pointerMove(canvas, EAST.x + 21, EAST.y);
+	await settle();
+
+	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("224 × 120");
+	expect(host.querySelectorAll("[data-element-guide]")).toHaveLength(1);
+
+	await pointerUp(canvas);
+	await settle();
+	expect(sourceCalls("commit").at(-1)).toMatchObject({
+		change: {
+			kind: "properties",
+			value: { kind: "fields", changes: [{ property: "width", value: binding("w-56") }] },
+		},
+	});
+});
+
+it("keeps the size the pointer asked for when the layout did not take the correction", async () => {
+	// the correction was applied and the element came back the size it was: an
+	// alignment nobody got is no alignment, so the raw intent stands alone
+	snapping = {
+		targets: [{ id: 1, box: { x: 74, y: 0, w: 160, h: 40 } }],
+		sensitivity: { w: 1, h: 0 },
+		actual: { w: 221, h: 120 },
+	};
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y);
+	await pointerMove(canvas, EAST.x + 21, EAST.y);
+	await settle();
+
+	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("221 × 120");
+	expect(host.querySelectorAll("[data-element-guide]")).toHaveLength(0);
+});
+
+it("drops the whole pool while the bypass is held, and takes it back on release", async () => {
+	snapping = { targets: [{ id: 1, box: { x: 74, y: 0, w: 160, h: 40 } }], sensitivity: { w: 1, h: 0 }, actual: null };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y);
+	await pointerMove(canvas, EAST.x + 21, EAST.y, ACCEL);
+	await settle();
+	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("221 × 120");
+	expect(host.querySelectorAll("[data-element-guide]")).toHaveLength(0);
+
+	await pointerMove(canvas, EAST.x + 22, EAST.y);
+	await settle();
+	expect(host.querySelector("[data-element-readout]")?.textContent).toBe("224 × 120");
+	expect(host.querySelectorAll("[data-element-guide]")).toHaveLength(1);
+});
+
+it("takes the guide down when the drag is cancelled", async () => {
+	snapping = { targets: [{ id: 1, box: { x: 74, y: 0, w: 160, h: 40 } }], sensitivity: { w: 1, h: 0 }, actual: null };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y);
+	await pointerMove(canvas, EAST.x + 21, EAST.y);
+	await settle();
+	expect(host.querySelectorAll("[data-element-guide]")).toHaveLength(1);
+
+	await press("Escape");
+	await settle();
+	expect(host.querySelectorAll("[data-element-guide]")).toHaveLength(0);
+	expect(sourceCalls("commit")).toHaveLength(0);
+});

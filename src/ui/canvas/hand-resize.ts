@@ -293,19 +293,55 @@ export function resizedBox(
 	}
 	w = clamp(w, widthBounds.min, widthBounds.max);
 	h = clamp(h, heightBounds.min, heightBounds.max);
-	const shiftX =
-		modifiers.center || (modifiers.proportional && sx === 0)
-			? (originalWidth - w) / 2
-			: sx < 0
-				? originalWidth - w
-				: 0;
-	const shiftY =
-		modifiers.center || (modifiers.proportional && sy === 0)
-			? (originalHeight - h) / 2
-			: sy < 0
-				? originalHeight - h
-				: 0;
+	const { x: shiftX, y: shiftY } = placementShift({ w: originalWidth, h: originalHeight }, edge, modifiers, {
+		w,
+		h,
+	});
 	return { w, h, shiftX, shiftY };
+}
+
+/**
+ * Where the element's top left went, for a box of this size.
+ *
+ * Said once rather than twice: a size a snap corrected (#311) is the same box
+ * this drag would have made by hand, so it moves the placement by the same
+ * rule. A near-edge grab holds the far edge still, ⌥ holds the centre, and
+ * anything else leaves the corner where layout put it.
+ */
+export function placementShift(
+	start: Size,
+	edge: Edge,
+	modifiers: ResizeModifiers,
+	size: Size,
+): { x: number; y: number } {
+	const { sx, sy } = edgeSigns(edge);
+	return {
+		x:
+			modifiers.center || (modifiers.proportional && sx === 0)
+				? (start.w - size.w) / 2
+				: sx < 0
+					? start.w - size.w
+					: 0,
+		y:
+			modifiers.center || (modifiers.proportional && sy === 0)
+				? (start.h - size.h) / 2
+				: sy < 0
+					? start.h - size.h
+					: 0,
+	};
+}
+
+/**
+ * The size this drag can actually write, which is the only size it may snap to.
+ *
+ * A drag writing whole pixels writes whole pixels, and a relative unit is
+ * written to three places; a stop those cannot spell is a stop out of reach,
+ * and `snapResize` drops it rather than drawing a guide over a size nobody got.
+ */
+export function writableSize(value: number, extra: number, write: SizeWrite): number {
+	const authored = value - extra;
+	if (write.unit === "px") return Math.round(authored) + extra;
+	return Number((authored / write.per).toFixed(3)) * write.per + extra;
 }
 
 /** What a turn writes: the signed token it is at, or the family taken away at rest. */

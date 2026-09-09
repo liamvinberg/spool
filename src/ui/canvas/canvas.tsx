@@ -81,6 +81,7 @@ import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice, NoticeStrip } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
+import { type ElementSnap, type SnapRequest, snapResize, truthful } from "./element-snap";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -103,6 +104,7 @@ import {
 	edgeSigns,
 	type LiveHandles,
 	NO_HANDLES,
+	placementShift,
 	previewTokens,
 	RESIZE_PROPERTIES,
 	type ResizeModifiers,
@@ -110,11 +112,13 @@ import {
 	resizedBox,
 	resizeFields,
 	rotateTokens,
+	type Sign,
 	type Size,
 	type SizeLimits,
 	type SizeWrite,
 	turnValue,
 	useRing,
+	writableSize,
 } from "./hand-resize";
 import {
 	amend,
@@ -161,6 +165,7 @@ import {
 	clipboardCopyAllowed,
 	dropTargetMessage,
 	type ElementSizing,
+	type ElementSnapping,
 	editMessage,
 	endEditMessage,
 	type KinStep,
@@ -172,11 +177,14 @@ import {
 	pickMessage,
 	type SessionRecord,
 	type SiteAnchor,
+	type SnapTrial,
+	type SnapWear,
 	type SpacingReading,
 	sessionReply,
 	sharedStateMessage,
 	sitesMessage,
 	sizingMessage,
+	snappingMessage,
 	walkRejectionReason,
 } from "./protocol";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
@@ -281,6 +289,8 @@ interface ResizeMeasurement {
 	extra: Size;
 	offset: { left: number; top: number };
 	limits: SizeLimits;
+	/** the size the pointer asked for, which every sample's snap begins from */
+	raw: Size;
 	live: Size;
 	shift: { x: number; y: number };
 }
@@ -481,6 +491,12 @@ export function ProjectCanvas({
 		tokens: readonly string[];
 		box: Size;
 	} | null>(null);
+	/**
+	 * The alignments a snapped resize is a true statement about (#311), in the
+	 * frame document's own coordinates. Drawn only after the layout the
+	 * correction made has been measured and still says so.
+	 */
+	const [elementGuides, setElementGuides] = useState<{ frame: string; v: number[]; h: number[] } | null>(null);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
@@ -693,6 +709,9 @@ export function ProjectCanvas({
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
 	const sizingWaiters = useRef(new Map<number, (sizing: ElementSizing | null) => void>());
+	const snapWaiters = useRef(new Map<number, (snapping: ElementSnapping | null) => void>());
+	/** which sample owns the outstanding snap: an older answer is not applied */
+	const snapSample = useRef(0);
 	const pickSeq = useRef(0);
 	// picks apply only while their generation is current: a superseding intent
 	// (a fresh press, a drag, Esc) bumps it and voids them — while a click and
@@ -2300,6 +2319,28 @@ export function ProjectCanvas({
 		[askFrame],
 	);
 
+	/**
+	 * A snapping sample's ask (#311): what this element may align with, and how
+	 * far its dragged edge moves per pixel of written size.
+	 *
+	 * A trial states the size the sample is about, worn and taken off inside the
+	 * document's own task; a trial-less ask reads what the layout made of the
+	 * size the sample actually wrote.
+	 */
+	const askSnapping = useCallback(
+		(frame: string, selector: string, trial: SnapTrial | null): Promise<ElementSnapping | null> =>
+			new Promise((resolve) => {
+				askFrame(
+					frame,
+					snapWaiters.current,
+					(id) => snappingMessage(selector, trial, id),
+					resolve,
+					() => resolve(null),
+				);
+			}),
+		[askFrame],
+	);
+
 	const applyPick = useCallback(
 		(frame: string, chain: PickedHit[], hit: PickedHit | undefined) => {
 			if (hit === undefined) return; // frame background: the frame stays the selection
@@ -3113,14 +3154,19 @@ export function ProjectCanvas({
 		[beginRailText],
 	);
 
-	/** One sample of a live gesture, previewed in every use through the common owner. */
+	/**
+	 * One sample of a live gesture, previewed in every use through the common
+	 * owner. The promise is done when this sample is on the running layout, or
+	 * when a later sample has taken its place — which is what lets a snap
+	 * measure what its correction actually made (#311).
+	 */
 	const sampleRingWrite = useCallback(
-		(value: SourcePropertyGroupValue) => {
+		(value: SourcePropertyGroupValue): Promise<void> => {
 			const held = ringWrite.current;
-			if (held === null || held.done) return;
+			if (held === null || held.done) return Promise.resolve();
 			held.value = value;
 			const revision = ++held.revision;
-			void held.read.then(async (read) => {
+			return held.read.then(async (read) => {
 				if (!read || held.done || ringWrite.current !== held || held.revision !== revision) return;
 				const plan = await previewPropertySource(project, read, revision, value);
 				if (held.done || ringWrite.current !== held || held.revision !== revision) return;
@@ -3828,6 +3874,12 @@ export function ProjectCanvas({
 					waiter?.(message.chain);
 					return;
 				}
+				case "snapped": {
+					const waiter = snapWaiters.current.get(message.id);
+					snapWaiters.current.delete(message.id);
+					waiter?.(message.snapping);
+					break;
+				}
 				case "sized": {
 					const waiter = sizingWaiters.current.get(message.id);
 					sizingWaiters.current.delete(message.id);
@@ -4322,6 +4374,7 @@ export function ProjectCanvas({
 		setResizeCursor(null);
 		setResizingFrame(null);
 		setElementDrag(null);
+		setElementGuides(null);
 		setPanning(false);
 		if (active.kind === "move") {
 			setFrames((current) =>
@@ -4650,22 +4703,20 @@ export function ProjectCanvas({
 				held.modifiers,
 				held.limits,
 			);
+			const raw = { w: dragged.w, h: dragged.h };
 			const measured: ResizeMeasurement = {
 				...held,
-				live: { w: dragged.w, h: dragged.h },
+				raw,
+				live: raw,
 				shift: { x: dragged.shiftX, y: dragged.shiftY },
 			};
-			if (
-				measured.live.w === held.live.w &&
-				measured.live.h === held.live.h &&
-				measured.shift.x === held.shift.x &&
-				measured.shift.y === held.shift.y
-			)
-				return;
+			// the pointer intent, not the corrected size, is what a sample repeats:
+			// a snap that compared itself would stick to the stop it just made
+			if (raw.w === held.raw.w && raw.h === held.raw.h) return;
 			const next: Gesture = { ...active, measured };
 			gesture.current = next;
 			showElementDrag(next);
-			sampleElementResize(measured);
+			void alignElementResize(next, accelPressed(event), cam.k);
 			return;
 		}
 
@@ -4881,6 +4932,7 @@ export function ProjectCanvas({
 				writes: writes as Record<ResizeProperty, SizeWrite>,
 				start: sizing.box,
 				extra: sizing.extra,
+				raw: sizing.box,
 				offset: { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 },
 				limits: sizing.limits,
 				live: sizing.box,
@@ -4895,9 +4947,116 @@ export function ProjectCanvas({
 		});
 	};
 
+	/**
+	 * The values one sample would write, which is the box the document tries on
+	 * to answer for it (#311).
+	 */
+	const wearOf = (held: ResizeMeasurement, size: Size, edge: Edge): SnapWear => {
+		const shift = placementShift(held.start, edge, held.modifiers, size);
+		const has = (property: ResizeProperty) => held.properties.includes(property);
+		return {
+			w: has("width") ? size.w - held.extra.w : null,
+			h: has("height") ? size.h - held.extra.h : null,
+			left: has("left") ? held.offset.left + shift.x : null,
+			top: has("top") ? held.offset.top + shift.y : null,
+		};
+	};
+
+	/** The pointer's own size, and the same one written pixel further along. */
+	const trialOf = (held: ResizeMeasurement, edge: Edge, sx: Sign, sy: Sign): SnapTrial => ({
+		wear: wearOf(held, held.raw, edge),
+		probe: wearOf(held, { w: held.raw.w + (sx === 0 ? 0 : 1), h: held.raw.h + (sy === 0 ? 0 : 1) }, edge),
+		sx,
+		sy,
+	});
+
+	/** The sizes this drag can spell, which are the only ones it may snap to. */
+	const writableSizes = (held: ResizeMeasurement) => ({
+		w: (value: number) =>
+			held.properties.includes("width") ? writableSize(value, held.extra.w, held.writes.width) : value,
+		h: (value: number) =>
+			held.properties.includes("height") ? writableSize(value, held.extra.h, held.writes.height) : value,
+	});
+
+	/**
+	 * The size one sample settles on, and the alignments it may claim (#311).
+	 *
+	 * Every sample begins from the raw pointer intent, asks the document what
+	 * that size would align with, tries one correction and then asks what the
+	 * layout actually made of it. A stop CSS rounded away, refused, or moved
+	 * while answering leaves the pointer's own size and draws nothing: a guide
+	 * is a statement about the box that is there, never about the one that was
+	 * asked for. There is no second attempt — this chases nothing.
+	 */
+	const alignElementResize = async (
+		active: Extract<Gesture, { kind: "element-size" }>,
+		bypass: boolean,
+		zoom: number,
+	): Promise<void> => {
+		const held = active.measured;
+		if (held === null) return;
+		const sample = ++snapSample.current;
+		const { pick, edge } = active;
+		const { sx, sy } = edgeSigns(edge);
+		/** the gesture this sample belongs to, or nothing where it was superseded */
+		const current = (): Extract<Gesture, { kind: "element-size" }> | null => {
+			const now = gesture.current;
+			return snapSample.current === sample &&
+				now.kind === "element-size" &&
+				now.pick.selector === pick.selector &&
+				now.measured !== null
+				? now
+				: null;
+		};
+		const settle = async (size: Size, guides: { v: number[]; h: number[] } | null): Promise<boolean> => {
+			const now = current();
+			if (now === null || now.measured === null) return false;
+			const measured: ResizeMeasurement = {
+				...now.measured,
+				live: size,
+				shift: placementShift(held.start, edge, held.modifiers, size),
+			};
+			const next: Gesture = { ...now, measured };
+			gesture.current = next;
+			showElementDrag(next);
+			setElementGuides(guides === null ? null : { frame: pick.frame, ...guides });
+			await sampleElementResize(measured);
+			return true;
+		};
+		if (bypass || (sx === 0 && sy === 0)) {
+			await settle(held.raw, null);
+			return;
+		}
+		const before = await askSnapping(pick.frame, pick.selector, trialOf(held, edge, sx, sy));
+		if (current() === null) return;
+		const request: SnapRequest = {
+			sx,
+			sy,
+			zoom,
+			bypass: false,
+			// ⇧ holds the proportions the border box started at
+			ratio: held.modifiers.proportional && held.start.h > 0 ? held.start.w / held.start.h : null,
+			sensitivity: before?.sensitivity ?? { w: 0, h: 0 },
+			limits: held.limits,
+			quantize: writableSizes(held),
+		};
+		const snap: ElementSnap | null =
+			before === null ? null : snapResize(before.box, held.raw, before.targets, request);
+		if (before === null || snap === null || (snap.v.length === 0 && snap.h.length === 0)) {
+			await settle(held.raw, null);
+			return;
+		}
+		if (!(await settle(snap.size, null))) return;
+		const after = await askSnapping(pick.frame, pick.selector, null);
+		if (current() === null) return;
+		if (after !== null && truthful(snap, after.box, after.targets, request, before.targets))
+			setElementGuides({ frame: pick.frame, v: snap.v, h: snap.h });
+		else await settle(held.raw, null);
+	};
+
 	/** One sample of a live size drag, in the element's own authored dimensions. */
 	const sampleElementResize = (measured: ResizeMeasurement) => {
-		sampleRingWrite({
+		return sampleRingWrite({
 			kind: "fields",
 			changes: resizeFields(
 				measured.properties,
@@ -4958,6 +5117,7 @@ export function ProjectCanvas({
 		setResizeCursor(null);
 		setResizingFrame(null);
 		setElementDrag(null);
+		setElementGuides(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
@@ -5733,6 +5893,7 @@ export function ProjectCanvas({
 							refused={refused}
 							handles={elementHandles}
 							marks={marks}
+							elementGuides={elementGuides}
 							marquee={marquee}
 							shellRadius={shellRadius}
 						/>

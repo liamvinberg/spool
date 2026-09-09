@@ -65,6 +65,13 @@ export interface FrameHover {
 
 export const NO_MARKS: SnapMarks = { v: [], h: [], spans: [] };
 
+/** Where a snapped element resize landed, in its frame's own coordinates. */
+export interface ElementGuides {
+	frame: string;
+	v: number[];
+	h: number[];
+}
+
 /** Half the tick length at a span's ends, in screen pixels. */
 const SPAN_TICK_PX = 3;
 
@@ -136,6 +143,7 @@ export function SelectionOverlay({
 	refused = null,
 	handles = null,
 	marks,
+	elementGuides = null,
 	marquee,
 	shellRadius,
 }: {
@@ -171,6 +179,12 @@ export function SelectionOverlay({
 	 */
 	handles?: ElementHandles | null;
 	marks: SnapMarks;
+	/**
+	 * The alignments a snapped element resize is a true statement about (#311),
+	 * in the frame document's own coordinates. They belong to one frame and are
+	 * drawn inside it, because that is where the boxes they name are.
+	 */
+	elementGuides?: ElementGuides | null;
 	/** Normalized screen-space rect while a marquee drag is live. */
 	marquee: Box | null;
 	shellRadius: number;
@@ -213,6 +227,35 @@ export function SelectionOverlay({
 			{marks.h.map((y) => (
 				<div key={`h${y}`} className="absolute inset-x-0 h-px bg-thread" style={{ top: y * k + camera.y }} />
 			))}
+			{elementGuides !== null &&
+				(() => {
+					const frame = frames.find((f) => f.name === elementGuides.frame);
+					if (frame === undefined) return null;
+					const rect = screenRect(frame);
+					return (
+						<div
+							className="absolute overflow-hidden"
+							style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+						>
+							{elementGuides.v.map((x) => (
+								<div
+									key={`ev${x}`}
+									data-element-guide="v"
+									className="absolute inset-y-0 w-px bg-thread"
+									style={{ left: x * k }}
+								/>
+							))}
+							{elementGuides.h.map((y) => (
+								<div
+									key={`eh${y}`}
+									data-element-guide="h"
+									className="absolute inset-x-0 h-px bg-thread"
+									style={{ top: y * k }}
+								/>
+							))}
+						</div>
+					);
+				})()}
 			{marks.spans.map((span) => (
 				<SpanBar
 					key={`${span.axis}${span.from}-${span.to}-${span.at}`}
