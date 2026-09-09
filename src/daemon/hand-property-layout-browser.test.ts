@@ -294,15 +294,22 @@ it("reflows a use that is off screen and mounts a cold frame from the saved sour
 	await expect.poll(() => computed(second, "padding-left")).toEqual(["24px", "24px"]);
 	expect(await f.page.locator('iframe[title="cold"]').count()).toBe(0);
 
-	// the second frame is mounted and then pushed out of the viewport: it is a
+	// the second frame is mounted and then pushed off the far edge of the
+	// viewport, while the frame being edited stays where it can be held: it is a
 	// use nobody can see, and it still has to move when the source does
-	await f.select();
+	const viewport = f.page.viewportSize();
+	const away = await f.page.locator('iframe[title="second"]').boundingBox();
+	if (!viewport || !away) throw new Error("the canvas has no viewport");
 	await f.page.mouse.move(700, 400);
-	await f.page.mouse.wheel(1600, 0);
+	// exactly far enough to put the other frame past the near edge of the screen
+	await f.page.mouse.wheel(away.x - viewport.width - 16, 0);
 	await expect
 		.poll(async () => (await f.page.locator('iframe[title="second"]').boundingBox())?.x ?? 0)
-		.toBeLessThan(0);
+		.toBeGreaterThan(viewport.width);
+	const home = await f.page.locator('iframe[title="home"]').boundingBox();
+	expect(home && home.x >= 0 && home.x + home.width <= viewport.width, JSON.stringify(home)).toBe(true);
 
+	await f.select();
 	await field(f, "padding").fill("8");
 	const padded = card.replace("p-6", "p-8");
 	await complete(f, "padding", padded);
