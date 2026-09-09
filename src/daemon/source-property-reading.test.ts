@@ -124,3 +124,30 @@ it("leaves a scoped row to its class literal, which is the only source a scope h
 		),
 	).toMatchObject({ source: "class", tokens: ["hover:p-8"] });
 });
+
+it("reports the scope's own written value apart from what the viewport is applying", async () => {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "@theme {}");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const certificate = await compilePropertySource(
+		root,
+		new Map([[file, readInput(file)]]),
+		"opacity-75 md:opacity-25",
+	);
+	const at = (scope: string) =>
+		propertyReading(
+			certificate,
+			{ kind: "property", property: "opacity", scope },
+			{ direction: "ltr", writingMode: "horizontal-tb" },
+			// the frame is narrow, so the breakpoint rule is written but not applied
+			{ property: "opacity", value: "0.75" },
+		);
+	expect(at("md:")).toEqual({
+		tokens: ["md:opacity-25"],
+		source: "class",
+		binding: { kind: "custom" },
+		authored: "25%",
+		native: "0.75",
+	});
+	expect(at("")).toMatchObject({ tokens: ["opacity-75"], native: "0.75" });
+});

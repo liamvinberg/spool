@@ -54,7 +54,7 @@ import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
 import { externalPropertySignature, nativePropertyEffects } from "./source-property-dependencies";
-import { readPropertyEffects } from "./source-property-effects";
+import { propertyKeys, readPropertyEffects } from "./source-property-effects";
 import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
@@ -1328,6 +1328,18 @@ export function createSourceOwner(
 					environment,
 					held.compilation.packet.bundledCss,
 				);
+				// A grouped change writes classes. Where an inline member wins one of
+				// its selections, the class it wrote would never apply, so it refuses
+				// here rather than saving a declaration nothing uses.
+				if (target.style) {
+					const inline = styleMemberEffects(target.style.members);
+					const owned = plan.selections.some((selection) =>
+						[...selection.roots].some((root) =>
+							inline.some((effect) => propertyKeys(effect.property, environment).includes(root)),
+						),
+					);
+					if (owned) throw new Error("this grouped change includes a property an inline style member owns");
+				}
 				return { plan, selections: plan.selections };
 			}
 			throw new Error("this source read does not authorize that property request");
