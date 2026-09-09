@@ -65,13 +65,36 @@ import { type PropertyContext, propertyState } from "./source-property-state";
 import { resolvePropertySource } from "./source-property-target";
 import { retryPropertySource, retryTextSource } from "./source-retry";
 import { readStructuralAncestry } from "./source-structure";
+import { resolveSourceReorder, type SourceReorderTarget } from "./source-structure-reorder";
 import {
 	certifyStructuralChange,
-	describeDeleteTarget,
+	describeStructuralTarget,
 	potentialDeleteSource,
 	resolveSourceDelete,
 	type SourceDeleteTarget,
 } from "./source-structure-target";
+
+/** One structural unit's own bounded plan: a removal, or a move among its siblings. */
+type StructuralTarget = SourceDeleteTarget | SourceReorderTarget;
+
+/** The bytes a structural operation replaces, in its own captured source. */
+function structuralSpans(target: StructuralTarget): SpanPatch[] {
+	return "patches" in target ? target.patches : [{ ...target.selected, text: target.replacement }];
+}
+
+/** The plan an original structural read authorizes, for this operation and no other. */
+function resolveStructuralTarget(
+	root: string,
+	compilation: RetainedCompilation,
+	original: SourceOccurrence,
+	generation: number,
+	operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>,
+): StructuralTarget {
+	return operation.kind === "delete"
+		? resolveSourceDelete(root, compilation, original, generation)
+		: resolveSourceReorder(root, compilation, original, generation, operation.steps);
+}
+
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
 
@@ -92,7 +115,7 @@ interface OriginalRead {
 	image?: StagedImage;
 	structuralParents?: StructuralParent[];
 	retryFrom?: RetainedCompilation;
-	structure?: SourceDeleteTarget;
+	structure?: StructuralTarget;
 	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
@@ -111,7 +134,7 @@ interface Receipt {
 	structuralParents?: StructuralParent[];
 	purpose: SourceRead["operation"];
 	structuralRead?: SourceRead;
-	structure?: SourceDeleteTarget;
+	structure?: StructuralTarget;
 	expected: SourcePublication["expected"];
 	required: RetainedCompilation;
 	cell: string;
@@ -330,10 +353,10 @@ export function createSourceOwner(
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
-			if (operation.kind === "delete") {
-				const structure = resolveSourceDelete(root, compilation, original, generation);
+			if (operation.kind === "delete" || operation.kind === "reorder") {
+				const structure = resolveStructuralTarget(root, compilation, original, generation, operation);
 				const read: SourceRead = {
-					...describeDeleteTarget(original, structure),
+					...describeStructuralTarget(original, structure, operation),
 					handle: randomUUID(),
 					owner,
 					generation,
@@ -562,9 +585,14 @@ export function createSourceOwner(
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the source owner is no longer available");
 			valid(root, publication.compilation);
-			if (operation.kind === "delete") {
-				const structure = resolveSourceDelete(root, publication.compilation, original, 0);
-				const read: SourceRead = { ...describeDeleteTarget(original, structure), handle: "", owner, generation: 0 };
+			if (operation.kind === "delete" || operation.kind === "reorder") {
+				const structure = resolveStructuralTarget(root, publication.compilation, original, 0, operation);
+				const read: SourceRead = {
+					...describeStructuralTarget(original, structure, operation),
+					handle: "",
+					owner,
+					generation: 0,
+				};
 				const found = await discover(
 					root,
 					{
@@ -753,14 +781,15 @@ export function createSourceOwner(
 
 	function structuralUses(
 		root: string,
-		target: SourceDeleteTarget,
+		target: StructuralTarget,
+		operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>,
 		compilation: RetainedCompilation,
 		generation: number,
 		inventories: SourceInventory[],
 	) {
 		const input = compilation.inputs.get(target.file);
 		if (!input) throw new Error("the structural target is outside its original compiler input");
-		const [selected] = journal.transform(target.file, input, [{ ...target.selected, text: target.replacement }]);
+		const [selected] = journal.transform(target.file, input, [{ ...target.selected, text: "" }]);
 		if (!selected) throw new Error("the original structural span is missing");
 		const uses: SourceUse[] = [],
 			unverified: UseOutcome[] = [];
@@ -778,12 +807,18 @@ export function createSourceOwner(
 				try {
 					if (!current) throw new Error("the candidate belongs to another publication");
 					valid(root, publication.compilation);
-					const candidate = resolveSourceDelete(root, publication.compilation, use.original, generation);
+					const candidate = resolveStructuralTarget(
+						root,
+						publication.compilation,
+						use.original,
+						generation,
+						operation,
+					);
 					if (candidate.file !== target.file || candidate.site !== target.site) continue;
 					const candidateInput = publication.compilation.inputs.get(candidate.file);
 					if (!candidateInput) throw new Error("the structural use is outside its original compiler input");
 					const [candidateSpan] = journal.transform(candidate.file, candidateInput, [
-						{ ...candidate.selected, text: candidate.replacement },
+						{ ...candidate.selected, text: "" },
 					]);
 					if (candidateSpan?.start === selected.start && candidateSpan.end === selected.end)
 						uses.push({ frame: inventory.frame, ...use });
@@ -849,7 +884,14 @@ export function createSourceOwner(
 			valid(root, held.compilation);
 			const cell = held.read.cell ?? held.read.original.cell;
 			const { uses, unverified, unknown } = held.structure
-				? structuralUses(root, held.structure, held.compilation, held.read.generation, inventories)
+				? structuralUses(
+						root,
+						held.structure,
+						held.read.operation.kind === "reorder" ? held.read.operation : { kind: "delete" },
+						held.compilation,
+						held.read.generation,
+						inventories,
+					)
 				: observedUses(root, cell, held.read.generation, inventories, "read", held.read.operation);
 			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const dependent = await dependencyFrames(root, held.file);
@@ -1467,13 +1509,12 @@ export function createSourceOwner(
 					throw new Error("this source read does not authorize that operation");
 				authenticated = true;
 				if (held.structure) {
-					if (change.kind !== "delete") throw new Error("this structural read does not authorize that operation");
+					if (change.kind !== "delete" && change.kind !== "reorder")
+						throw new Error("this structural read does not authorize that operation");
 					const target = held.structure;
 					const input = held.compilation.inputs.get(held.file);
 					if (!input) throw new Error("the original structural source input is missing");
-					const transformed = journal.transform(held.file, input, [
-						{ ...target.selected, text: target.replacement },
-					]);
+					const transformed = journal.transform(held.file, input, structuralSpans(target));
 					return await publish(
 						held,
 						applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,

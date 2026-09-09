@@ -1,6 +1,6 @@
 import { relative } from "node:path";
 import { parse } from "@babel/parser";
-import type { SourceDescription, SourceOccurrence } from "../source-edit";
+import type { SourceDescription, SourceOccurrence, SourceOperation } from "../source-edit";
 import type { SourceStructuralExpectation } from "../source-structure";
 import { realDesignDir } from "./design-path";
 import { lowerLiterals, type RetainedCompilation } from "./retained-compile";
@@ -96,9 +96,13 @@ export function potentialDeleteSource(original: SourceOccurrence, source: string
 	}
 }
 
-export function describeDeleteTarget(original: SourceOccurrence, target: SourceDeleteTarget): SourceDescription {
+export function describeStructuralTarget(
+	original: SourceOccurrence,
+	target: Pick<SourceDeleteTarget, "site" | "expected" | "before" | "source" | "role">,
+	operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>,
+): SourceDescription {
 	return {
-		operation: { kind: "delete" },
+		operation,
 		structure: {
 			kind: "structure",
 			site: target.site,

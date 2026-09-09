@@ -317,7 +317,11 @@ export function useSourceDelivery(project: string, iframes: RefObject<Map<string
 		verifyReload: useCallback(
 			async (intent: SourceIntent) => {
 				const { frame, selector, field, operation, expected } = intent;
-				if (operation.kind === "delete" && expected?.kind === "structure" && intent.original) {
+				if (
+					(operation.kind === "delete" || operation.kind === "reorder") &&
+					expected?.kind === "structure" &&
+					intent.original
+				) {
 					const inventories = await inventory(undefined, operation);
 					const outcomes = await Promise.all(
 						(intent.recovery?.frames ?? [frame]).map(async (name): Promise<UseOutcome> => {

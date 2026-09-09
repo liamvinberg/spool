@@ -323,6 +323,10 @@ function sourceContext(element: Element, field?: string): string {
 	const native = getComputedStyle(element);
 	return JSON.stringify({ path, native: { direction: native.direction, writingMode: native.writingMode } });
 }
+/** Removal and movement observe the same authored unit and its original parent. */
+function structuralOperation(operation: SourceOperation): boolean {
+	return operation.kind === "delete" || operation.kind === "reorder";
+}
 function inspectSource(
 	element: HTMLElement,
 	field?: string,
@@ -346,7 +350,7 @@ function inspectSource(
 			!origin &&
 			sourcePacket &&
 			fiber &&
-			(operation.kind === "delete" ||
+			(structuralOperation(operation) ||
 				((field !== undefined || typeof value === "string") && (value === undefined || typeof value === "string")))
 		)
 			origin = {
@@ -355,7 +359,7 @@ function inspectSource(
 				invocation: JSON.stringify(
 					observed.chain.map((call) => [call.occurrence, call.invocation?.id, call.element]),
 				),
-				value: operation.kind === "delete" ? "" : String(value ?? ""),
+				value: structuralOperation(operation) ? "" : String(value ?? ""),
 			};
 	} catch {
 		return;
@@ -369,7 +373,7 @@ function inspectSource(
 	const nativeValue =
 		operation.kind === "property" ? getComputedStyle(element).getPropertyValue(operation.property) : "";
 	let structure: SourceOccurrence["structure"];
-	if (operation.kind === "delete") {
+	if (structuralOperation(operation)) {
 		const parent = element.parentElement;
 		if (!parent) return;
 		let parentId = nodes.get(parent);

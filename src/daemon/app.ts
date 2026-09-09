@@ -2242,11 +2242,13 @@ export function createDaemonApp({
 					z.object({ kind: z.literal("properties"), target: groupTarget }).strict(),
 					z.object({ kind: z.literal("image") }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
+					z.object({ kind: z.literal("reorder"), steps: z.number().int().min(-1000).max(1000) }).strict(),
 				]);
 				const change = z.discriminatedUnion("kind", [
 					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
 					z.object({ kind: z.literal("image"), path: z.string().max(10_000) }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
+					z.object({ kind: z.literal("reorder") }).strict(),
 					z.object({ kind: z.literal("property"), value: propertyValue }).strict(),
 					z.object({ kind: z.literal("properties"), value: groupValue }).strict(),
 				]);
