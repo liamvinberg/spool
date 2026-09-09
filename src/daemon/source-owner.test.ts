@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "@babel/parser";
 import { expect, it, onTestFinished } from "vitest";
@@ -813,8 +813,16 @@ it("recognizes a reloaded original publication after an acknowledged exact inver
 	f.owner.delivered(undone.publication.packet.id);
 	expect(readFileSync(f.file, "utf8")).toBe(SOURCE);
 	expect(f.owner.current(f.root, original)).toBe(true);
+	const restored = readInput(f.file);
 	const outside = `${f.file}.outside`;
 	writeFileSync(outside, SOURCE);
 	renameSync(outside, f.file);
+	// A renamed-in file can land on the freed inode inside one timestamp tick, and
+	// equal bytes with an identical stat are the outside write nothing can see
+	// (ADR 0005's limit). This case is about a replacement the filesystem does
+	// report, so it states one and proves the report before asserting.
+	const earlier = new Date(Date.now() - 2_000);
+	utimesSync(f.file, earlier, earlier);
+	expect(readInput(f.file).identity).not.toBe(restored.identity);
 	expect(f.owner.current(f.root, original)).toBe(false);
 });
