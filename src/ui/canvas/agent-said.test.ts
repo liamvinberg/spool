@@ -54,6 +54,23 @@ function structural(text: string): number {
 		// one `<hr>` and nothing inside it
 		if (chunk.kind === "rule") return total + 1;
 		if (chunk.kind === "item") return total + 3 + chunk.spans.length;
+		// the grid, then per row a lead and its spans, and per other cell a label with the
+		// header's spans and a value with its own
+		if (chunk.kind === "table")
+			return (
+				total +
+				1 +
+				chunk.rows.reduce(
+					(sum, row) =>
+						sum +
+						1 +
+						(row[0]?.length ?? 0) +
+						row
+							.slice(1)
+							.reduce((cells, cell, at) => cells + 2 + (chunk.head[at + 1]?.length ?? 0) + cell.length, 0),
+					0,
+				)
+			);
 		return total + 1 + chunk.spans.length;
 	}, 1);
 }

@@ -10,7 +10,7 @@ import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { longestStreamed, readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
 import { draftsFor } from "./agent-drafts";
-import { chunksOf } from "./agent-markdown";
+import { chunksOf, drawnText } from "./agent-markdown";
 import { type FrameJump, followTo, sameEntry, windStrength } from "./agent-rail";
 import type { AgentEntry } from "./agent-transcript";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
@@ -1030,7 +1030,7 @@ describe("a long message", () => {
 		for (const chunk of chunks) {
 			// a rule is structure with no words in it, so there is nothing of it to find here
 			if (chunk.kind === "rule") continue;
-			const own = chunk.kind === "fence" ? chunk.text : chunk.spans.map((span) => span.text).join("");
+			const own = chunk.kind === "fence" ? chunk.text : drawnText([chunk]);
 			expect(said.textContent).toContain(own);
 		}
 		// drawn rather than printed: the markers are gone and the structure is elements
