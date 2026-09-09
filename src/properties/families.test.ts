@@ -19,6 +19,7 @@ import {
 	themeOf,
 	toggledOf,
 	wordOf,
+	writtenLength,
 } from "./families";
 
 /**
@@ -47,6 +48,29 @@ const theme: CompiledTheme = {
 	screen: [],
 	step: 4,
 };
+
+describe("a written length taken back apart", () => {
+	it("splits the sign and the important mark off the value", () => {
+		expect(writtenLength("4")).toEqual({ value: "4", negative: false, scale: true, custom: null });
+		expect(writtenLength("-2!")).toEqual({ value: "2", negative: true, scale: true, custom: null });
+	});
+
+	it("says what a value is made of, so a caller knows what it may step", () => {
+		expect(writtenLength("[13.5px]")).toEqual({
+			value: "[13.5px]",
+			negative: false,
+			scale: false,
+			custom: { number: "13.5", unit: "px" },
+		});
+		expect(writtenLength("[50%]")?.custom).toEqual({ number: "50", unit: "%" });
+		expect(writtenLength("[var(--pad)]")?.custom).toBe(null);
+		expect(writtenLength("1/2")).toEqual({ value: "1/2", negative: false, scale: false, custom: null });
+	});
+
+	it("has nothing to take apart in an empty cell", () => {
+		expect(writtenLength("")).toBe(null);
+	});
+});
 
 describe("a number box takes a sign, a fraction and a unit", () => {
 	it("reads what was typed as what the class would say", () => {

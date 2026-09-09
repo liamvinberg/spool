@@ -254,6 +254,44 @@ function numericCandidate(kind: Kind, value: string, negative: boolean): { value
 	return { value: kind === "count" ? value.replace(/\.0+$/, "") : value, negative };
 }
 
+/** A bare number on the project's spacing scale: `4`, `2.5`. */
+const SCALE_VALUE = /^\d+(?:\.\d+)?$/;
+
+/** A bracketed number carrying its own unit: `[13px]`, `[50%]`, `[1.5e2px]`. */
+const CUSTOM_VALUE = /^\[([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)\]$/i;
+
+/** One written length, taken apart: what it says, and which shape it says it in. */
+export interface WrittenLength {
+	/** the value the family carries, sign and `!` taken off: `4`, `[13px]`, `1/2` */
+	value: string;
+	negative: boolean;
+	/** a bare number on this project's spacing scale */
+	scale: boolean;
+	/** a bracketed number and the unit it brought, where it is one */
+	custom: { number: string; unit: string } | null;
+}
+
+/**
+ * A written length read once, so everything that asks reads the same thing.
+ *
+ * The rail's rows, the ring's drags and the gap band all need to know whether
+ * a value is a scale reference, a custom length or something they must leave
+ * alone. Asking here rather than each writing the regex again is what keeps
+ * one answer to "what is this value" across all of them.
+ */
+export function writtenLength(signed: string): WrittenLength | null {
+	if (signed === "") return null;
+	const negative = signed.startsWith("-");
+	const value = (negative ? signed.slice(1) : signed).replace(/!$/, "");
+	const custom = CUSTOM_VALUE.exec(value);
+	return {
+		value,
+		negative,
+		scale: SCALE_VALUE.test(value),
+		custom: custom === null ? null : { number: custom[1] ?? "", unit: custom[2] ?? "" },
+	};
+}
+
 /**
  * Explicit units are custom values. Bare spacing numbers deliberately keep
  * their scale reference; equal pixels never choose that reference for a person.
@@ -319,7 +357,7 @@ export function stepLength(
 		const next = decimalStep(literal, current?.negative ?? false, units);
 		return next && numericCandidate(kind, next.value, next.negative);
 	}
-	const custom = /^\[([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)\]$/i.exec(literal);
+	const custom = CUSTOM_VALUE.exec(literal);
 	if (custom) {
 		if (kind === "count" && (custom[2] !== "" || hasFraction(custom[1]!))) return null;
 		const next = decimalStep(custom[1]!, current?.negative ?? false, units);

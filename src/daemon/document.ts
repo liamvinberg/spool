@@ -1109,6 +1109,59 @@ const canvasShimJs = `(() => {
 		};
 	}
 
+	// What a gap gesture may draw on (#306): the container's own layout words,
+	// the two gaps it resolves to, and every child's box. The two facts that make
+	// a distance untrustworthy ride on each child, and the ones about the
+	// container itself, whether an anonymous flex item made by loose text,
+	// generated content or a transformed ancestor, are one flag it answers with.
+	function elementGaps(selector) {
+		const el = elementFor(selector);
+		if (!el) return null;
+		const style = getComputedStyle(el);
+		let ambiguous = [...el.childNodes].some((node) => node.nodeType === 3 && (node.textContent || "").trim() !== "");
+		for (const pseudo of ["::before", "::after"]) {
+			const content = getComputedStyle(el, pseudo).content;
+			if (content !== "none" && content !== "normal") ambiguous = true;
+		}
+		for (let walk = el; walk && walk.nodeType === 1; walk = walk.parentElement) {
+			const worn = getComputedStyle(walk);
+			if (worn.transform !== "none" || worn.rotate !== "none" || worn.scale !== "none" || worn.translate !== "none")
+				ambiguous = true;
+		}
+		const children = [];
+		for (const child of el.children) {
+			const cs = getComputedStyle(child);
+			const box = child.getBoundingClientRect();
+			const flat = cs.display === "none" || cs.position === "absolute" || cs.position === "fixed";
+			children.push({
+				box: { x: box.x, y: box.y, w: box.width, h: box.height },
+				out: flat,
+				displaced:
+					cs.display === "contents" ||
+					cs.visibility !== "visible" ||
+					cs.transform !== "none" ||
+					cs.rotate !== "none" ||
+					cs.scale !== "none" ||
+					cs.translate !== "none" ||
+					[cs.marginLeft, cs.marginRight, cs.marginTop, cs.marginBottom].some((m) => parseFloat(m) !== 0),
+			});
+		}
+		return {
+			display: style.display,
+			direction: style.flexDirection,
+			wrap: style.flexWrap,
+			justify: style.justifyContent,
+			writing: style.writingMode,
+			rtl: style.direction === "rtl",
+			// the style attribute's own gap, which beats any class this cell writes
+			inline: ["gap", "column-gap", "row-gap"].some((name) => el.style.getPropertyValue(name) !== ""),
+			columnGap: style.columnGap,
+			rowGap: style.rowGap,
+			ambiguous,
+			children,
+		};
+	}
+
 	function spacingReading(selector, x, y) {
 		const anchor = elementFor(selector);
 		if (!anchor) return null;
@@ -1552,6 +1605,13 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			let sizing = null;
 			try { sizing = elementSizing(m.selector); } catch {}
 			parent.postMessage({ spool: "sized", frame, id: m.id, sizing }, "*");
+			return;
+		}
+		if (m.spool === "gaps") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let gaps = null;
+			try { gaps = elementGaps(m.selector); } catch {}
+			parent.postMessage({ spool: "gapped", frame, id: m.id, gaps }, "*");
 			return;
 		}
 		if (m.spool === "measure") {

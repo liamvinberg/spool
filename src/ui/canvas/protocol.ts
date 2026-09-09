@@ -4,6 +4,7 @@ import type { SessionRecord } from "../../runtime/frame-runtime";
 import type { AccelKeyName } from "../../runtime/platform-keys";
 import { isWalkId } from "../../runtime/walk-protocol";
 import type { Box } from "./camera";
+import type { GapReading } from "./hand-gap";
 
 /**
  * The postMessage bridge between canvas and frames. The frame side lives in
@@ -161,6 +162,7 @@ export type FrameMessage =
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "measured"; frame: string; id: number; reading: SpacingReading | null }
 	| { spool: "sized"; frame: string; id: number; sizing: ElementSizing | null }
+	| { spool: "gapped"; frame: string; id: number; gaps: GapReading | null }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; text: string }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
@@ -259,6 +261,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "sized":
 			return typeof m.id === "number" && (m.sizing === null || isElementSizing(m.sizing))
+				? (m as unknown as FrameMessage)
+				: undefined;
+		case "gapped":
+			return typeof m.id === "number" && (m.gaps === null || isGapReading(m.gaps))
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "edit-open":
@@ -370,9 +376,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * A spacing reading, checked the way every other reply is: the shape the
- * decomposition indexes into, and finite numbers where it does arithmetic.
+ * A gap reading, checked the way every other reply is: the container's own
+ * words as words, and a box of finite numbers under every child.
  */
+function isGapReading(value: unknown): value is GapReading {
+	if (!isRecord(value)) return false;
+	const words = ["display", "direction", "wrap", "justify", "writing", "columnGap", "rowGap"];
+	if (!words.every((name) => typeof value[name] === "string")) return false;
+	if (typeof value.ambiguous !== "boolean" || typeof value.rtl !== "boolean" || typeof value.inline !== "boolean")
+		return false;
+	if (!Array.isArray(value.children)) return false;
+	return value.children.every((child: unknown) => {
+		if (!isRecord(child) || typeof child.out !== "boolean" || typeof child.displaced !== "boolean") return false;
+		const box = child.box;
+		return isRecord(box) && finite(box.x) && finite(box.y) && finite(box.w) && finite(box.h);
+	});
+}
+
 function isSpacingReading(value: unknown): value is SpacingReading {
 	if (!isRecord(value)) return false;
 	return (
@@ -594,6 +614,17 @@ export interface ElementSizing {
 }
 
 export const sizingMessage = (selector: string, id: number) => ({ spool: "sizing", selector, id }) as const;
+
+/**
+ * What a gap gesture has to know before it may draw a handle (#306).
+ *
+ * The container's own layout words, the two gaps it resolves to, and every
+ * child's box in the frame's own pixels, with the two facts that make a
+ * distance untrustworthy marked on each. Only the document can answer any of
+ * it: the canvas holds a picture of one box and nothing about the flow that
+ * placed the rest.
+ */
+export const gapsMessage = (selector: string, id: number) => ({ spool: "gaps", selector, id }) as const;
 /**
  * The in-place text edit (#255): the element's own words become the field,
  * with the caret where the click landed. The frame answers `edit-open` at
