@@ -33,6 +33,7 @@ import {
 	WORDS,
 	type Word,
 	wordOf,
+	writtenLength,
 } from "../../properties/families";
 import {
 	type At,
@@ -279,14 +280,6 @@ function signedOf(length: Length | null): string | null {
 	return `${length.negative ? "-" : ""}${length.value}${length.important ? "!" : ""}`;
 }
 
-/** That string taken back apart, which is what the readout and the step need. */
-function takeApart(value: string): { value: string; negative: boolean } | null {
-	if (value === "") return null;
-	const negative = value.startsWith("-");
-	const rest = (negative ? value.slice(1) : value).replace(/!$/, "");
-	return { value: rest, negative };
-}
-
 function LengthRow({
 	view,
 	property,
@@ -332,7 +325,7 @@ function LengthRow({
 			changed={view.fresh(lengthOf(view.scoped, family)?.token ?? null)}
 			placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
 			readout={(shown) => {
-				const parsed = takeApart(shown);
+				const parsed = writtenLength(shown);
 				return parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
 			}}
 			typedValue={(typed) => {
@@ -342,7 +335,7 @@ function LengthRow({
 				return { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` };
 			}}
 			stepped={(from, units) => {
-				const parsed = takeApart(from);
+				const parsed = writtenLength(from);
 				const start: Length | null =
 					parsed === null
 						? null
@@ -480,7 +473,7 @@ function BorderWidthRow({
 				return next && !next.negative ? { kind: "value", value: next.value } : undefined;
 			}}
 			stepped={(from, units) => {
-				const parsed = takeApart(from);
+				const parsed = writtenLength(from);
 				const start: Length | null =
 					parsed === null
 						? null
