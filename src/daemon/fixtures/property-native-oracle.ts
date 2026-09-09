@@ -3,7 +3,7 @@ import type { SourcePropertyEnvironment } from "../../source-property";
 
 export async function mountPropertyNative(page: Page, placeholder = false) {
 	await page.setContent(
-		`<!doctype html><style id="compiled"></style><main style="display:flex;width:640px">${
+		`<!doctype html><style id="compiled"></style><main style="display:flex;align-items:flex-start;width:640px;height:480px">${
 			placeholder
 				? '<input id="subject" placeholder="Native placeholder">'
 				: '<div id="subject">Native text<span style="display:inline-block;width:40px">First</span><span style="display:inline-block;width:40px">Second</span></div>'

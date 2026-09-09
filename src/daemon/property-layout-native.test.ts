@@ -29,7 +29,7 @@ const planned = layoutProperties.filter((row) => !layoutPlannerPending.includes(
 
 it("retains every layout row and its custom or refusal contract", () => {
 	expect(layoutProperties).toHaveLength(64);
-	expect(planned).toHaveLength(61);
+	expect(planned).toHaveLength(64);
 	expect(layoutProperties.map((row) => row.index).sort((a, b) => a - b)).toEqual(
 		[...Object.keys(layoutCustom).map(Number), ...layoutCustomRefusals].sort((a, b) => a - b),
 	);
@@ -109,27 +109,5 @@ it.each(planned)(
 				await observePropertyNative(candidate, literal, (await compilePropertySource(root, inputs, literal)).css),
 			).toEqual(after);
 		}
-	},
-);
-
-it.each(layoutProperties.filter((row) => layoutPlannerPending.includes(row.index)))(
-	"reports $index $property as a compound identity the planner has no compiled component for",
-	{ timeout: 120_000 },
-	async (row) => {
-		const { root } = makeProject(makeTempDir());
-		writeDesignFile(root, "shared/tokens.css", ":root{font-size:20px}");
-		const file = realpathSync(join(root, "design/shared/tokens.css"));
-		const inputs = new Map([[file, readInput(file)]]);
-		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
-		await expect(
-			planPropertyValue(
-				root,
-				inputs,
-				"opacity-50",
-				{ kind: "property", property: row.property, scope: "" },
-				{ kind: "binding", tokens: row.before.split(" ") },
-				environment,
-			),
-		).rejects.toThrow("the chosen token has no compiled effect for this property");
 	},
 );

@@ -518,9 +518,7 @@ export const layoutProperties = [
 export const compoundLayout = layoutProperties.filter((row) => [39, 40, 43, 44, 47, 102, 117, 139].includes(row.index));
 
 /**
- * Rows whose control identity has no compiled declaration of its own name: the size shorthand
- * writes width and height, and a size mode writes whichever sizing utility the mode selects.
- * Until the planner maps those identities to their compiler components they cannot be planned,
- * so the matrix records the refusal rather than reporting them as covered.
+ * Every layout control identity now maps onto the compiler components it writes, so no row is
+ * held back from the matrix. The list stays as the one place a future pending row would go.
  */
-export const layoutPlannerPending = [12, 141, 142];
+export const layoutPlannerPending: readonly number[] = [];
