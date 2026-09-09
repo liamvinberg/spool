@@ -92,6 +92,11 @@ it("reports only supplied limit scope and reset data, without guessing a reset f
 		["You have hit your ChatGPT usage limit. Try again in ~20 min.", { kind: "limit", scope: "account" }],
 		["429 Rate limit reached for requests", { kind: "limit", scope: "unknown" }],
 		["Authentication failed for openai", { kind: "login", scope: "account" }],
+		[
+			'{"error":{"message":"{\\n "error": {\\n "code": 400,\\n "message": "API key not valid. Please pass a valid API key.",\\n "status": "INVALID_ARGUMENT",\\n "details": [{"reason": "API_KEY_INVALID"}]\\n }\\n}","code":400,"status":""}}',
+			{ kind: "login", scope: "account" },
+		],
+		['{"error":{"message":"{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}","code":429}}', { kind: "limit" }],
 		["Server unavailable", undefined],
 	];
 	for (const [message, expected] of examples) {
