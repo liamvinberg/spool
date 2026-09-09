@@ -219,15 +219,14 @@ it("turns an element from the ring's rotate zone and saves it the same way", { t
 	expect(f.writes).toEqual(["commit"]);
 });
 
-it("centers an already free element under option, and leaves a normal-flow one where the layout put it", {
+it("centers an already free element under option, and moves the placement with it", {
 	timeout: 120_000,
 }, async () => {
 	const placed =
 		'export function Card({label}){return <section data-subject={label} className="absolute left-8 top-8 w-40 h-24 bg-black/5">{label}</section>}';
-	const flowed = 'export function Flow(){return <p data-flow className="w-40 h-24 bg-black/10">B</p>}';
 	const source =
-		'import {Card} from "shared/card";import {Flow} from "shared/flow";export default function Frame(){return <main style={{position:"relative",padding:24,height:400}}><Card key="a" label="A"/><Flow/></main>}';
-	const f = await originCanvas({ [owner]: placed, "shared/flow.tsx": flowed }, source, '[data-subject="A"]');
+		'import {Card} from "shared/card";export default function Frame(){return <main style={{position:"relative",padding:24,height:400}}><Card key="a" label="A"/></main>}';
+	const f = await originCanvas({ [owner]: placed }, source, '[data-subject="A"]');
 	await expect.poll(() => computed(f.frame, "left")).toEqual(["32px"]);
 
 	// ⌥ on an element the file already places: the box grows from its centre,
@@ -240,17 +239,25 @@ it("centers an already free element under option, and leaves a normal-flow one w
 	expect(f.bytes()[owner]).toContain("left-3");
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["200px"]);
 	await expect.poll(() => computed(f.frame, "left")).toEqual(["12px"]);
+});
 
-	// the same modifier on an element the layout places writes its size alone:
-	// nothing here makes a near edge movable
-	const flow = f.page.frameLocator('iframe[title="home"]').locator("[data-flow]");
-	await flow.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
-	const second = reply(f, "commit");
+it("writes the size alone for an element the layout places, option or not", { timeout: 120_000 }, async () => {
+	// nothing here makes a near edge movable, so ⌥ neither doubles the drag nor
+	// finds a placement to move: the parent still puts this element where it is
+	const flowed = card.replace("data-subject={label}", "data-subject={label} data-flow");
+	const f = await originCanvas({ [owner]: flowed }, frameSource, '[data-subject="A"]');
+	const before = await f.target.boundingBox();
+	await f.select();
+
+	const committed = reply(f, "commit");
 	await dragHandle(f, "e", 20, 0, { modifiers: ["Alt"] });
-	await saved(f, second);
-	await expect.poll(() => f.bytes()["shared/flow.tsx"], { timeout: 30_000 }).toContain("w-45");
-	expect(f.bytes()["shared/flow.tsx"]).not.toContain("left-");
-	expect(f.bytes()["shared/flow.tsx"]).not.toContain("top-");
+	await saved(f, committed);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(flowed.replace("w-40", "w-45"));
+	expect(f.bytes()[owner]).not.toContain("left-");
+	expect(f.bytes()[owner]).not.toContain("top-");
+	await expect.poll(() => computed(f.frame, "width")).toEqual(["180px", "180px"]);
+	const after = await f.target.boundingBox();
+	expect(before && after && Math.round(after.x)).toBe(before && Math.round(before.x));
 });
 
 it("keeps the proportions the box started with while shift is held", { timeout: 120_000 }, async () => {
