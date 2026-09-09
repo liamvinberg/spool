@@ -156,6 +156,14 @@ it("saves nothing when Escape retires the held key", async () => {
 	await settle();
 
 	expect(sourceCalls("commit")).toHaveLength(0);
+	expect(sourceCalls("read")).toHaveLength(0);
+
+	// the same press without Escape does save, so the empty one above is Escape's
+	// doing rather than a gesture that never opened
+	await keyDown("ArrowRight");
+	await keyUp("ArrowRight");
+	await settle();
+	expect(sourceCalls("commit")).toHaveLength(1);
 });
 
 it("leaves the position to the parent layout when the arrow is across its axis", async () => {
