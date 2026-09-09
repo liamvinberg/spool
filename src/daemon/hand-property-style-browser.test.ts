@@ -70,6 +70,7 @@ const tile = (style: string, className: string) =>
 	`export function Tile({label}){return <section data-subject={label} style={${style}} className="${className}">{label}</section>}`;
 const tiles =
 	'import {Tile} from "shared/tile";export default function Frame(){return <main><Tile label="A"/><Tile label="B"/></main>}';
+const sheet = "shared/tokens.css";
 type Canvas = Awaited<ReturnType<typeof originCanvas>>;
 
 function reply(f: Canvas, action: string) {
@@ -134,28 +135,52 @@ it("edits the property an inline member owns, on every use, and steps back", { t
 	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 });
 
-it("refuses the control whose sides an important rule and a member own separately", {
+it("edits the side the member owns while an important rule keeps the other side", {
 	timeout: 120_000,
 }, async () => {
-	const original = tile("{padding: 40}", "pt-8! pb-6");
-	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
+	const original = tile("{padding: 40, paddingLeft: 40, opacity: 0.75}", "tile");
+	const css = "@theme {}\n.tile { padding-top: 32px !important }\n";
+	const f = await originCanvas({ [owner]: original, [sheet]: css }, tiles, '[data-subject="A"]');
 	// the important rule decides the top; the member decides every other side
 	await expect.poll(() => computed(f, "padding-top")).toEqual(["32px", "32px"]);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 
 	await f.select();
-	// one control cannot be told which of two sources to write, so it refuses
-	// before saving instead of picking one
-	const refused = reply(f, "commit");
-	await row(f, "padding").fill("6");
-	await row(f, "padding").press("Enter");
-	expect(await (await refused).json()).toMatchObject({
-		ok: false,
-		reason: expect.stringMatching(/different sources/),
-	});
-	expect(f.bytes()[owner]).toBe(original);
+	// the box opens onto its own sides, because one row cannot write two sources
+	await expect.poll(() => f.page.locator('[data-properties-row="padding-left"] input').count()).toBe(1);
+	await row(f, "padding-left").fill("3");
+	await complete(
+		f,
+		"padding-left",
+		tile('{padding: 40, paddingLeft: "calc(var(--spacing) * 3)", opacity: 0.75}', "tile"),
+	);
+	// every use took it, and the important rule is still what decides the top
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
 	await expect.poll(() => computed(f, "padding-top")).toEqual(["32px", "32px"]);
+	await expect.poll(() => computed(f, "padding-right")).toEqual(["40px", "40px"]);
+	expect(f.bytes()[sheet]).toBe(css);
+
+	// an unrelated member edited after it, and both survive their own step back
+	await f.select();
+	await row(f, "opacity").fill("50");
+	await complete(f, "opacity", tile('{padding: 40, paddingLeft: "calc(var(--spacing) * 3)", opacity: "50%"}', "tile"));
+	await expect.poll(() => computed(f, "opacity")).toEqual(["0.5", "0.5"]);
+
+	const opacity = reply(f, "inverse");
+	await f.history(false);
+	expect((await (await opacity).json()).ok).toBe(true);
+	await expect
+		.poll(() => f.bytes()[owner])
+		.toBe(tile('{padding: 40, paddingLeft: "calc(var(--spacing) * 3)", opacity: 0.75}', "tile"));
+	// the side edit is untouched by the step that took the opacity back
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
+
+	const side = reply(f, "inverse");
+	await f.history(false);
+	expect((await (await side).json()).ok).toBe(true);
+	await expect.poll(() => f.bytes()[owner]).toBe(original);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
+	await expect.poll(() => computed(f, "padding-top")).toEqual(["32px", "32px"]);
 });
 
 /** Scope acceptance (#304): the written scope, its activity, and its own rule. */
@@ -203,7 +228,6 @@ it("edits an inactive state rule, reports it inactive, and it applies when the s
 });
 
 /** Authored declaration acceptance (#304): the project's own stylesheet is the source. */
-const sheet = "shared/tokens.css";
 const tokens = (padding: string, opacity: string) =>
 	`@theme {}\n.tile { padding: ${padding} }\n@media (min-width: 5000px) { .tile { opacity: ${opacity} } }\n`;
 const carded =
