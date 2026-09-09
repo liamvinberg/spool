@@ -221,14 +221,16 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	return;
 }
 
-/** Every corner is its own native component; the row is verified only when all four are. */
-function radiusOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
-	const outcomes = [
-		"border-top-left-radius",
-		"border-top-right-radius",
-		"border-bottom-right-radius",
-		"border-bottom-left-radius",
-	].map((corner) => propertyOutcome(element, { ...expected, property: corner }));
+/**
+ * A row the compiler writes as several native components: each is read on its own, a refusal by
+ * any of them is the row's answer, and the row is verified only when every component is.
+ */
+function componentsOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	components: readonly string[],
+): PropertyOutcome {
+	const outcomes = components.map((property) => propertyOutcome(element, { ...expected, property }));
 	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
 	if (refused) return refused;
 	return {
@@ -237,20 +239,12 @@ function radiusOutcome(element: Element, expected: SourcePropertyExpectation): P
 	};
 }
 
-/** A two-axis row is two independent native readings; both must read the same way. */
-function axesOutcome(
-	element: Element,
-	expected: SourcePropertyExpectation,
-	axes: readonly [string, string],
-): PropertyOutcome {
-	const outcomes = axes.map((axis) => propertyOutcome(element, { ...expected, property: axis }));
-	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
-	if (refused) return refused;
-	return {
-		rendered: outcomes.every((outcome) => outcome.rendered === "verified") ? "verified" : "mismatching",
-		observed: outcomes.map((outcome) => outcome.observed ?? "").join(" "),
-	};
-}
+const radiusCorners = [
+	"border-top-left-radius",
+	"border-top-right-radius",
+	"border-bottom-right-radius",
+	"border-bottom-left-radius",
+];
 
 export interface PropertyOutcome {
 	rendered: "verified" | "mismatching" | "unverified" | "inactive" | "constrained";
@@ -282,8 +276,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (family.kind === "composed") return composedOutcome(element, expected, family.native);
 	if (family.kind === "border") return borderOutcome(element, expected);
 	if (family.kind === "border-color") return borderColorOutcome(element, expected);
-	if (family.kind === "radius") return radiusOutcome(element, expected);
-	if (family.kind === "axes") return axesOutcome(element, expected, family.axes);
+	if (family.kind === "radius") return componentsOutcome(element, expected, radiusCorners);
+	if (family.kind === "axes") return componentsOutcome(element, expected, family.axes);
 	if (family.kind === "box") return boxOutcome(element, expected, family.box);
 	if (family.kind === "declaration") return declarationOutcome(element, expected, family.row);
 	if (family.kind === "size") return sizeOutcome(element, expected, family.native);
@@ -1111,46 +1105,65 @@ function boxOutcome(
  * Retained rows whose whole value is one native declaration: the engine reports what it was
  * given, so each one names the longhands to compare and the box that has to exist first.
  */
+/**
+ * A retained row whose whole value is one native declaration the engine reports back: the
+ * longhands to compare, and the box that has to exist before any of it means anything. The box
+ * test is the row's own, so there is no switch on a kind somewhere else.
+ */
 type DeclarationRow = {
 	longhands: readonly string[];
-	context: "positioned" | "flex" | "grid" | "grid-container" | "column" | "scroll";
+	/** The refusal reason when this use's box does not apply the row, or undefined when it does. */
+	box: (element: Element, style: CSSStyleDeclaration, parent: string) => string | undefined;
 };
+
+const flexBoxes = ["flex", "inline-flex"];
+const gridBoxes = ["grid", "inline-grid"];
+
+const flexibleItem = (_element: Element, _style: CSSStyleDeclaration, parent: string) =>
+	flexBoxes.includes(parent) ? undefined : "this row needs a native flexible item";
+const gridItem = (_element: Element, _style: CSSStyleDeclaration, parent: string) =>
+	gridBoxes.includes(parent) ? undefined : "this row needs a native grid item";
 
 const declarationRows: Readonly<Record<string, DeclarationRow>> = {
-	"z-index": { longhands: ["z-index"], context: "positioned" },
-	order: { longhands: ["order"], context: "flex" },
-	flex: { longhands: ["flex-grow", "flex-shrink", "flex-basis"], context: "flex" },
-	"grid-column": { longhands: ["grid-column-start", "grid-column-end"], context: "grid" },
-	"grid-row": { longhands: ["grid-row-start", "grid-row-end"], context: "grid" },
-	"grid-column-start": { longhands: ["grid-column-start"], context: "grid" },
-	"grid-row-start": { longhands: ["grid-row-start"], context: "grid" },
-	columns: { longhands: ["column-count", "column-width"], context: "column" },
-	"scroll-snap-type": { longhands: ["scroll-snap-type"], context: "scroll" },
-	"grid-template-columns": { longhands: ["grid-template-columns"], context: "grid-container" },
-	"grid-template-rows": { longhands: ["grid-template-rows"], context: "grid-container" },
+	"z-index": {
+		longhands: ["z-index"],
+		// An unpositioned box reports the stacking order it was given while using none of it.
+		box: (_element, style, parent) =>
+			style.position !== "static" || [...flexBoxes, ...gridBoxes].includes(parent)
+				? undefined
+				: "this stacking order needs a positioned native box or a flexible or grid item",
+	},
+	order: { longhands: ["order"], box: flexibleItem },
+	flex: { longhands: ["flex-grow", "flex-shrink", "flex-basis"], box: flexibleItem },
+	"grid-column": { longhands: ["grid-column-start", "grid-column-end"], box: gridItem },
+	"grid-row": { longhands: ["grid-row-start", "grid-row-end"], box: gridItem },
+	"grid-column-start": { longhands: ["grid-column-start"], box: gridItem },
+	"grid-row-start": { longhands: ["grid-row-start"], box: gridItem },
+	columns: {
+		longhands: ["column-count", "column-width"],
+		box: (_element, style) =>
+			["block", "flow-root", "inline-block", "list-item"].includes(style.display)
+				? undefined
+				: "this column count needs a native block container",
+	},
+	"scroll-snap-type": {
+		longhands: ["scroll-snap-type"],
+		box: (_element, style) =>
+			[style.overflowX, style.overflowY].every((axis) => ["visible", "clip"].includes(axis))
+				? "this snap type needs a native scroll container"
+				: undefined,
+	},
+	"grid-template-columns": {
+		longhands: ["grid-template-columns"],
+		box: (_element, style) =>
+			gridBoxes.includes(style.display) ? undefined : "this track list needs a native grid container",
+	},
+	"grid-template-rows": {
+		longhands: ["grid-template-rows"],
+		box: (_element, style) =>
+			gridBoxes.includes(style.display) ? undefined : "this track list needs a native grid container",
+	},
 };
-
-function boxContainer(view: Window, element: Element, style: CSSStyleDeclaration, context: string): string | undefined {
-	const parent = element.parentElement;
-	const parentDisplay = parent ? view.getComputedStyle(parent).display : "";
-	if (context === "positioned") {
-		if (style.position === "static" && !["flex", "inline-flex", "grid", "inline-grid"].includes(parentDisplay))
-			return "this stacking order needs a positioned native box or a flexible or grid item";
-	} else if (context === "flex") {
-		if (!["flex", "inline-flex"].includes(parentDisplay)) return "this row needs a native flexible item";
-	} else if (context === "grid") {
-		if (!["grid", "inline-grid"].includes(parentDisplay)) return "this row needs a native grid item";
-	} else if (context === "grid-container") {
-		if (!["grid", "inline-grid"].includes(style.display)) return "this track list needs a native grid container";
-	} else if (context === "column") {
-		if (!["block", "flow-root", "inline-block", "list-item"].includes(style.display))
-			return "this column count needs a native block container";
-	} else if (context === "scroll") {
-		if ([style.overflowX, style.overflowY].every((axis) => ["visible", "clip"].includes(axis)))
-			return "this snap type needs a native scroll container";
-	}
-	return;
-}
 
 /** Compare one whole compiled declaration against what the engine reports for the same use. */
 function declarationOutcome(
@@ -1164,7 +1177,8 @@ function declarationOutcome(
 	if (!element.isConnected || element.getClientRects().length === 0)
 		return unverified("this declaration has no rendered native box");
 	const style = view.getComputedStyle(element);
-	const context = boxContainer(view, element, style, row.context);
+	const parent = element.parentElement;
+	const context = row.box(element, style, parent ? view.getComputedStyle(parent).display : "");
 	if (context) return unverified(context);
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
