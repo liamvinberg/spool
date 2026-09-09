@@ -2510,7 +2510,8 @@ async function planned(
 		...expected,
 		className: literal,
 		css: plan.original.css,
-		effects: propertyConsumers(plan.original, plan.roots, environment),
+		// The inverse is read exactly as the daemon sends it, carried variable inputs included.
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
 	};
 	return { plan, expected, inverse, style: `${plan.original.css}${plan.desired.css}` };
 }
@@ -3024,20 +3025,74 @@ it("verifies a compiled between-children color on every native child the row sep
 	]);
 });
 
+it.each([
+	{ property: "column-gap, between children", token: "space-x", side: "margin-inline-end" },
+	{ property: "row-gap, between children", token: "space-y", side: "margin-block-end" },
+])("verifies the compiled $property on the native children it separates", async (row) => {
+	const p = await planned(`${row.token}-2`, row.property, { kind: "binding", tokens: [`${row.token}-4`] });
+	const children = "<i>One</i><i>Two</i><i>Three</i>";
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">${children}</div><div data-subject class="${row.token}-2">${children}</div><div data-subject class="${p.plan.next}"><i>Only</i></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(outcomes[2]?.reason).toBe("this use has no native child this row separates");
+	// The row spaces every child but the last, and leaves the last one alone.
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate(
+				(element, side) => [...element.children].map((child) => getComputedStyle(child).getPropertyValue(side)),
+				row.side,
+			),
+	).toEqual(["16px", "16px", "0px"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"verified",
+		"unverified",
+	]);
+});
+
 it.each(["column-gap, between children", "row-gap, between children"])(
-	"refuses %s until its reverse companion is captured evidence",
+	"verifies a removed %s and a custom one against each native child",
 	async (property) => {
 		const token = property.startsWith("column") ? "space-x" : "space-y";
-		const p = await planned(`${token}-2`, property, { kind: "binding", tokens: [`${token}-4`] });
+		const side = property.startsWith("column") ? "margin-inline-end" : "margin-block-end";
+		const removed = await planned(`${token}-4`, property, { kind: "remove" });
+		const custom = await planned(`${token}-4`, property, { kind: "custom", value: "3.5px" });
+		const children = "<i>One</i><i>Two</i>";
 		const f = await fixture(
-			`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><i>One</i><i>Two</i></div>`,
+			`<!doctype html><style>${removed.style}${custom.plan.desired.css}</style><div data-subject class="${removed.plan.next || "space-none"}">${children}</div><div data-subject class="${custom.plan.next}">${children}</div>`,
 		);
-		// The compiled spacing multiplies by --tw-space-*-reverse, which the captured effects omit.
-		expect(await f.inspect(p.expected)).toEqual([
-			{ rendered: "unverified", reason: "this box spacing needs a variable context proof" },
+		expect((await f.inspect(removed.expected)).map((outcome) => outcome.rendered)).toEqual([
+			"verified",
+			"mismatching",
 		]);
+		expect((await f.inspect(custom.expected)).map((outcome) => outcome.rendered)).toEqual([
+			"mismatching",
+			"verified",
+		]);
+		expect(custom.plan.next).toBe(`${token}-[3.5px]`);
+		expect(
+			await f.page
+				.locator("[data-subject]")
+				.last()
+				.evaluate((element, name) => getComputedStyle(element.children[0]!).getPropertyValue(name), side),
+		).toBe("3.5px");
 	},
 );
+
+it("does not certify a between-children spacing one native child no longer carries", async () => {
+	const p = await planned("space-x-2", "column-gap, between children", { kind: "binding", tokens: ["space-x-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><i>One</i><i style="margin-inline-end:2px">Two</i><i>Three</i></div>`,
+	);
+	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
+});
 
 it("does not certify a between-children row one native child no longer carries", async () => {
 	const p = await planned("divide-red-500 divide-x-2", "border-color, between children", {

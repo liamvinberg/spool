@@ -1011,6 +1011,39 @@ function boxOutcome(
 	const sheet = new CSSStyleSheet();
 	sheet.replaceSync(expected.css);
 	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	// The compiler's own inputs to this declaration: owned here, resolved with it, never compared.
+	const companions = new Map<string, SourcePropertyEffect[]>();
+	for (const effect of expected.effects) {
+		if (!effect.property.startsWith("--")) continue;
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this box spacing needs a native conditional context proof");
+		companions.set(effect.property, [...(companions.get(effect.property) ?? []), effect]);
+	}
+	let unresolved = false;
+	const resolveSpacing = (value: string, seen = new Set<string>()): string => {
+		const substituted = substituteVariables(value, (name, fallback) => {
+			const owned = companions.get(name);
+			if (!owned) {
+				const resolved = fallback === undefined ? resolvedValue(element, sheet, `var(${name})`) : undefined;
+				if (resolved === undefined) unresolved = true;
+				return resolved ?? "";
+			}
+			if (seen.has(name)) {
+				unresolved = true;
+				return "";
+			}
+			const selected = winningEffect(sheet, owned);
+			if (selected.reason || !selected.winner) {
+				unresolved = true;
+				return "";
+			}
+			return resolveSpacing(selected.winner.value, new Set([...seen, name]));
+		});
+		if (substituted === undefined || /\b(?:var|env|attr)\(/i.test(substituted)) unresolved = true;
+		return substituted ?? "";
+	};
 	let matches = true;
 	const observed: string[] = [];
 	for (const side of sides as string[]) {
@@ -1019,6 +1052,8 @@ function boxOutcome(
 		const applicable: SourcePropertyEffect[] = [];
 		for (const effect of expected.effects) {
 			if (effect.owner !== null && !classes.has(effect.owner)) continue;
+			// A companion variable is an input to the declaration, resolved with it rather than compared.
+			if (effect.property.startsWith("--")) continue;
 			const parts = boxParts(effect.property);
 			if (!parts || parts.box !== box) return unverified("this box spacing has dependent effects requiring proof");
 			const declared = parts.group;
@@ -1034,8 +1069,9 @@ function boxOutcome(
 			const condition = pathCondition(element, effect.path, effect.owner !== null);
 			if (condition === "inactive") continue;
 			if (condition === "unverified") return unverified("this box spacing needs a native conditional context proof");
-			const value = resolvedValue(element, sheet, effect.value);
-			if (value === undefined) return unverified("this box spacing needs a variable context proof");
+			unresolved = false;
+			const value = resolveSpacing(effect.value);
+			if (unresolved) return unverified("this box spacing needs a variable context proof");
 			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
 			const rule = sheet.cssRules[index];
 			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
