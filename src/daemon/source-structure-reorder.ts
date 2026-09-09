@@ -60,8 +60,9 @@ export function reorderPatches(
  * exchanging position exchange their running state with it.
  *
  * `steps` is what the person asked for: negative moves the unit earlier among
- * its siblings, positive later. Asking past either end lands on the end, which
- * is a move that writes nothing rather than a refusal.
+ * its siblings, positive later. Asking past either end lands on the end; asking
+ * a unit already at that end to go further is a refusal, because there is no
+ * move to make and a save with nothing in it is not one.
  */
 export function deriveSourceReorder(sources: Sources, pick: Selection, steps: number) {
 	let plan: ReturnType<typeof deriveSourceDelete>;
@@ -80,6 +81,8 @@ export function deriveSourceReorder(sources: Sources, pick: Selection, steps: nu
 	const from = members.findIndex((member) => member.start === plan.selected.start);
 	if (from === -1) throw new Error("the selected unit is not one of its parent's authored members");
 	const to = Math.max(0, Math.min(members.length - 1, from + steps));
+	if (to === from)
+		throw new Error(`this element is already the ${steps > 0 ? "last" : "first"} of its authored siblings`);
 	return {
 		...plan,
 		kind: "reorder" as const,

@@ -33,7 +33,7 @@ function reply(f: Canvas, action: string) {
 	);
 }
 
-async function saved(f: Canvas, pending: ReturnType<typeof reply>): Promise<SourceResult> {
+async function saved(pending: ReturnType<typeof reply>): Promise<SourceResult> {
 	const result = (await (await pending).json()) as SourceResult;
 	expect(result.ok, JSON.stringify(result)).toBe(true);
 	return result;
@@ -70,7 +70,7 @@ it("moves one keyed sibling past the next, keeping each item's own state", { tim
 	await f.select();
 	const committed = reply(f, "commit");
 	await f.page.keyboard.press("ArrowRight");
-	await saved(f, committed);
+	await saved(committed);
 
 	// the source says the move and nothing else; the two units keep their bytes
 	await expect.poll(() => readFileSync(f.file(file), "utf8"), { timeout: 30_000 }).toBe(row(B, A));
@@ -89,7 +89,7 @@ it("moves one keyed sibling past the next, keeping each item's own state", { tim
 	// one press is one step back: the order returns and no state moves with it
 	const undone = reply(f, "inverse");
 	await f.history();
-	await saved(f, undone);
+	await saved(undone);
 	await expect.poll(() => readFileSync(f.file(file), "utf8"), { timeout: 30_000 }).toBe(source);
 	await expect.poll(() => order(f.frame)).toEqual(["A", "B"]);
 	expect(await f.frame.locator("main [data-name]").allTextContents()).toEqual(["A:2", "B:1"]);
@@ -107,7 +107,7 @@ it("counts a held arrow as one move, one save and one step back", { timeout: 120
 	await f.page.keyboard.down("ArrowRight");
 	await f.page.keyboard.down("ArrowRight");
 	await f.page.keyboard.up("ArrowRight");
-	await saved(f, committed);
+	await saved(committed);
 
 	await expect.poll(() => order(f.frame), { timeout: 30_000 }).toEqual(["B", "C", "A"]);
 	expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(row(B, `<Counter key="c" name="C"/>${A}`));
@@ -115,8 +115,17 @@ it("counts a held arrow as one move, one save and one step back", { timeout: 120
 
 	const undone = reply(f, "inverse");
 	await f.history();
-	await saved(f, undone);
+	await saved(undone);
 	await expect.poll(() => order(f.frame), { timeout: 30_000 }).toEqual(["A", "B", "C"]);
+	expect(f.writes).toEqual(["commit", "inverse"]);
+
+	// a unit already at the end has no move to make, and says so rather than
+	// saving a change with nothing in it
+	await f.select();
+	const refused = reply(f, "read");
+	await f.page.keyboard.press("ArrowLeft");
+	expect((await (await refused).json()).reason).toContain("already the first");
+	await expect.poll(() => f.page.locator('[data-hand-notice="blocked"]').count()).toBe(1);
 	expect(f.writes).toEqual(["commit", "inverse"]);
 });
 
@@ -168,7 +177,7 @@ it("nudges an already free element, one pixel a press and ten with shift", { tim
 	await f.page.keyboard.down("ArrowRight");
 	await f.page.keyboard.down("ArrowRight");
 	await f.page.keyboard.up("ArrowRight");
-	await saved(f, committed);
+	await saved(committed);
 
 	// two presses of one gesture: one save, in the element's own placement
 	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toContain("left-[34px]");
@@ -178,7 +187,7 @@ it("nudges an already free element, one pixel a press and ten with shift", { tim
 
 	const shifted = reply(f, "commit");
 	await f.page.keyboard.press("Shift+ArrowDown");
-	await saved(f, shifted);
+	await saved(shifted);
 	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toContain("top-[42px]");
 	await expect
 		.poll(() => f.frame.locator("[data-subject]").evaluate((element) => getComputedStyle(element).top))
@@ -186,7 +195,7 @@ it("nudges an already free element, one pixel a press and ten with shift", { tim
 
 	const undone = reply(f, "inverse");
 	await f.history();
-	await saved(f, undone);
+	await saved(undone);
 	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toContain("top-8");
 });
 
