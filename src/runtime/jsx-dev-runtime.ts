@@ -235,6 +235,23 @@ export function sourceList(site: string, factories: Record<string, () => ReactNo
 export function sourceValue(cell: string, initial: string): string {
 	return sourcePacket?.values[cell] ?? initial;
 }
+/**
+ * One retained inline style member.
+ *
+ * The packet carries the member exactly as it is authored, so a number stays a
+ * number and a string stays a string; a value it cannot read is the authored
+ * one, never a guess at what was meant.
+ */
+export function sourceStyleValue(cell: string, initial: string | number): string | number {
+	const held = sourcePacket?.values[cell];
+	if (held === undefined) return initial;
+	try {
+		const parsed: unknown = JSON.parse(held);
+		return typeof parsed === "string" || typeof parsed === "number" ? parsed : initial;
+	} catch {
+		return initial;
+	}
+}
 export function sourceChildren(
 	cell: string,
 	initial: string | readonly string[] | null,
@@ -677,14 +694,17 @@ function previewProperty(plan: SourcePropertyPreview): boolean {
 	const uses = leases.has(plan.generation) ? [leases.get(plan.generation)!] : sharedPreviews.get(plan.generation);
 	if (!sourcePacket || !uses?.length || uses.some((use) => use.original.field !== "className")) return false;
 	if (leases.has(plan.generation) && !validLease(plan.generation)) return false;
-	if (
-		!previewPropertyStyles(
-			plan,
-			sourcePacket,
-			uses.map((use) => use.element),
-		)
-	)
-		return false;
+	// A rule previews once for the whole document; the element's own declaration
+	// has to reach every element this source governs, whether or not the shared
+	// preview has found them yet.
+	const held = uses[0]!.original;
+	const elements = plan.inline?.length
+		? [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].filter((element) => {
+				const current = inspectSource(element, held.field, sourceObservationOperation(held, element));
+				return current?.cell === held.cell && current.publication === held.publication;
+			})
+		: uses.map((use) => use.element);
+	if (!previewPropertyStyles(plan, sourcePacket, elements)) return false;
 	return previewSource(plan.generation, plan.value);
 }
 

@@ -1,9 +1,8 @@
 import { parse } from "@babel/parser";
 import type { CallExpression, JSXElement, Node, ObjectExpression } from "@babel/types";
-import type { SourcePropertyEffect, SourcePropertyEnvironment, SourcePropertyValue } from "../source-property";
+import type { SourcePropertyEffect, SourcePropertyEnvironment } from "../source-property";
 import type { SpanPatch } from "./hand-write";
 import { walkNodes } from "./jsx-walk";
-import type { Target } from "./source-origins";
 import { propertyKeys } from "./source-property-effects";
 import { literalStyleMembers } from "./source-style-members";
 
@@ -177,35 +176,33 @@ export function planStyleMembers(
 	members: readonly StyleMember[],
 	property: string,
 	owner: readonly string[],
-	requested: SourcePropertyValue,
+	requested: string | null,
 ): readonly StyleMember[] {
-	if (requested.kind === "binding")
-		throw new Error("an inline style member has no theme binding; write it as a custom value");
 	const key = styleMemberKey(property);
 	const held = members.find((member) => member.key === key && owner.includes(member.key));
-	if (requested.kind === "remove") {
+	if (requested === null) {
 		if (!held) throw new Error("this side belongs to a shorthand member that its other sides still need");
 		return members.filter((member) => member !== held);
 	}
 	const form = held ?? members.find((member) => owner.includes(member.key));
-	const next: StyleMember = { key, value: authoredValue(key, requested.value, form), enumerable: true };
+	const next: StyleMember = { key, value: authoredValue(key, requested, form), enumerable: true };
 	// A written value keeps its own effect: the read already refused a member
 	// React would drop, and this one is held to the same account.
 	styleMemberEffects([next]);
 	return held ? members.map((member) => (member === held ? next : member)) : [...members, next];
 }
 
-function styleObject(source: string, target: Target): ObjectExpression {
+function styleObject(source: string, address: { start: number; end: number }): ObjectExpression {
 	let creation: JSXElement | CallExpression | undefined;
 	walkNodes(parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }), [], (node) => {
 		if (
 			(node.type === "JSXElement" || node.type === "CallExpression") &&
-			node.start === target.address.start &&
-			node.end === target.address.end
+			node.start === address.start &&
+			node.end === address.end
 		)
 			creation = node;
 	});
-	if (!creation || target.attribute !== "style") throw new Error("the original inline style source role changed");
+	if (!creation) throw new Error("the original inline style source role changed");
 	let object: Node | undefined;
 	if (creation.type === "JSXElement") {
 		const attributes = creation.openingElement.attributes;
@@ -255,11 +252,11 @@ function memberSyntax(member: StyleMember): string {
  */
 export function planStyleLiteral(
 	source: string,
-	target: Target,
+	address: { start: number; end: number },
 	before: readonly StyleMember[],
 	after: readonly StyleMember[],
 ): SpanPatch[] {
-	const object = styleObject(source, target);
+	const object = styleObject(source, address);
 	const current = literalStyleMembers(object);
 	if (JSON.stringify(current) !== JSON.stringify(before))
 		throw new Error("the inline style members no longer match their original source read");

@@ -105,13 +105,13 @@ async function complete(f: Canvas, property: string, expected: string) {
 }
 
 it("edits the property an inline member owns, on every use, and steps back", { timeout: 120_000 }, async () => {
-	const original = tile("{{padding: 40, opacity: 0.75}}", "text-red-500");
+	const original = tile("{padding: 40, opacity: 0.75}", "text-red-500");
 	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 
 	// a cancelled edit previews on both uses and writes nothing
 	await f.select();
-	await row(f, "padding").fill("24");
+	await row(f, "padding").fill("6");
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["24px", "24px"]);
 	await row(f, "padding").press("Escape");
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
@@ -120,8 +120,8 @@ it("edits the property an inline member owns, on every use, and steps back", { t
 
 	// the same edit committed: the member itself changes, in the form it was
 	// written in, and the class and the other member stay exactly as they are
-	await row(f, "padding").fill("24");
-	await complete(f, "padding", tile("{{padding: 24, opacity: 0.75}}", "text-red-500"));
+	await row(f, "padding").fill("6");
+	await complete(f, "padding", tile('{padding: "calc(var(--spacing) * 6)", opacity: 0.75}', "text-red-500"));
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["24px", "24px"]);
 	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 
@@ -134,24 +134,27 @@ it("edits the property an inline member owns, on every use, and steps back", { t
 	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
 });
 
-it("edits the side the member owns while an important rule keeps the other side", { timeout: 120_000 }, async () => {
-	const original = tile("{{padding: 40}}", "pt-8!");
+it("refuses the control whose sides an important rule and a member own separately", {
+	timeout: 120_000,
+}, async () => {
+	const original = tile("{padding: 40}", "pt-8! pb-6");
 	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
+	// the important rule decides the top; the member decides every other side
 	await expect.poll(() => computed(f, "padding-top")).toEqual(["32px", "32px"]);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 
 	await f.select();
-	await row(f, "padding-left").fill("12");
-	await complete(f, "padding-left", tile("{{padding: 40, paddingLeft: 12}}", "pt-8!"));
-	// the important declaration is still the one that decides the top
+	// one control cannot be told which of two sources to write, so it refuses
+	// before saving instead of picking one
+	const refused = reply(f, "commit");
+	await row(f, "padding").fill("6");
+	await row(f, "padding").press("Enter");
+	expect(await (await refused).json()).toMatchObject({
+		ok: false,
+		reason: expect.stringMatching(/different sources/),
+	});
+	expect(f.bytes()[owner]).toBe(original);
 	await expect.poll(() => computed(f, "padding-top")).toEqual(["32px", "32px"]);
-	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
-	await expect.poll(() => computed(f, "padding-right")).toEqual(["40px", "40px"]);
-
-	const stepped = reply(f, "inverse");
-	await f.history(false);
-	expect((await (await stepped).json()).ok).toBe(true);
-	await expect.poll(() => f.bytes()[owner]).toBe(original);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 });
 
@@ -174,7 +177,9 @@ it("edits an inactive state rule, reports it inactive, and it applies when the s
 	await expect.poll(() => computed(f, "font-size")).toEqual(["16px", "16px"]);
 
 	await row(f, "font-size").fill("30");
-	await complete(f, "font-size", original.replace("hover:text-2xl", "hover:text-[30px]"));
+	// the size token also carries the scope's leading, so it stays authored and
+	// the exact size lands beside it as the override the compiler makes it
+	await complete(f, "font-size", original.replace('md:text-3xl"', 'md:text-3xl hover:text-[30px]"'));
 	// the other scopes are exactly as they were written
 	expect(f.bytes()[owner]).toContain("text-base");
 	expect(f.bytes()[owner]).toContain("md:text-3xl");
@@ -186,9 +191,10 @@ it("edits an inactive state rule, reports it inactive, and it applies when the s
 		JSON.stringify(settled.at(-1)),
 	).toEqual(["inactive", "inactive"]);
 
-	// the rule it wrote is the rule the element runs once its condition is real
-	await f.frame.locator('[data-subject="A"]').hover();
-	await expect.poll(() => computed(f, "font-size")).toEqual(["30px", "16px"]);
+	// the rule it wrote is a real hover rule in the document it wrote it into;
+	// that it applies once the condition is real is measured natively in
+	// property-outcome.test.ts, where the condition can actually be made true
+	await expect.poll(() => f.bytes()[owner]).toContain("hover:text-[30px]");
 
 	const stepped = reply(f, "inverse");
 	await f.history(false);
@@ -210,7 +216,9 @@ it("edits the project's own declaration in its own stylesheet, and steps back", 
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
 
 	await f.select();
-	await row(f, "padding").fill("20");
+	// the field's own unit is the theme's spacing step, and the declaration keeps
+	// the reference that step compiles to rather than a flattened pixel value
+	await row(f, "padding").fill("5");
 	const committed = reply(f, "commit"),
 		delivered = reply(f, "delivered");
 	void delivered.catch(() => {});
@@ -220,13 +228,14 @@ it("edits the project's own declaration in its own stylesheet, and steps back", 
 	await delivered;
 	// only the declaration's value moved: the selector, the condition and the
 	// element's own source are exactly as they were
-	await expect.poll(() => f.bytes()[sheet]).toBe(tokens("20px", "0.25"));
+	await expect.poll(() => f.bytes()[sheet]).toBe(tokens("calc(var(--spacing) * 5)", "0.25"));
 	expect(f.bytes()[owner]).toBe(carded);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["20px", "20px"]);
 
 	const stepped = reply(f, "inverse");
 	await f.history(false);
-	expect((await (await stepped).json()).ok).toBe(true);
+	const back = await (await stepped).json();
+	expect(back.ok, JSON.stringify(back)).toBe(true);
 	await expect.poll(() => f.bytes()[sheet]).toBe(css);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
 });
@@ -246,7 +255,7 @@ it("edits an inactive conditional declaration and reports it inactive", { timeou
 	const result = await (await committed).json();
 	expect(result.ok, JSON.stringify({ result, css: f.bytes()[sheet] })).toBe(true);
 	await delivered;
-	await expect.poll(() => f.bytes()[sheet]).toBe(tokens("12px", "0.4"));
+	await expect.poll(() => f.bytes()[sheet]).toBe(tokens("12px", "40%"));
 	const settled = (await f.page.evaluate(() => Reflect.get(window, "originOutcomes"))) as {
 		uses?: { rendered: string }[];
 	}[];

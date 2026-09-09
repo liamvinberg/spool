@@ -180,14 +180,14 @@ describe("planning one member change", () => {
 	];
 
 	it("changes the member that already spells the property, keeping its numeric form", () => {
-		expect(planStyleMembers(members, "opacity", ["opacity"], { kind: "custom", value: "0.25" })).toEqual([
+		expect(planStyleMembers(members, "opacity", ["opacity"], "0.25")).toEqual([
 			{ key: "padding", value: 4, enumerable: true },
 			{ key: "opacity", value: 0.25, enumerable: true },
 		]);
 	});
 
 	it("overrides one side after the shorthand that owns it, in the shorthand's own form", () => {
-		expect(planStyleMembers(members, "padding-left", ["padding"], { kind: "custom", value: "12px" })).toEqual([
+		expect(planStyleMembers(members, "padding-left", ["padding"], "12px")).toEqual([
 			...members,
 			{ key: "paddingLeft", value: 12, enumerable: true },
 		]);
@@ -195,25 +195,16 @@ describe("planning one member change", () => {
 
 	it("keeps a quoted value quoted when the authored member is a string", () => {
 		expect(
-			planStyleMembers([{ key: "padding", value: "1rem", enumerable: true }], "padding", ["padding"], {
-				kind: "custom",
-				value: "2rem",
-			}),
+			planStyleMembers([{ key: "padding", value: "1rem", enumerable: true }], "padding", ["padding"], "2rem"),
 		).toEqual([{ key: "padding", value: "2rem", enumerable: true }]);
 	});
 
 	it("removes the member itself, and nothing else", () => {
-		expect(planStyleMembers(members, "opacity", ["opacity"], { kind: "remove" })).toEqual([members[0]]);
-	});
-
-	it("refuses a theme binding, which no inline member spells", () => {
-		expect(() =>
-			planStyleMembers(members, "opacity", ["opacity"], { kind: "binding", tokens: ["opacity-25"] }),
-		).toThrow(/binding/);
+		expect(planStyleMembers(members, "opacity", ["opacity"], null)).toEqual([members[0]]);
 	});
 
 	it("refuses removing a side the shorthand still declares", () => {
-		expect(() => planStyleMembers(members, "padding-left", ["padding"], { kind: "remove" })).toThrow(/shorthand/);
+		expect(() => planStyleMembers(members, "padding-left", ["padding"], null)).toThrow(/shorthand/);
 	});
 });
 
@@ -235,7 +226,9 @@ describe("writing the member back into its object literal", () => {
 	];
 	const written = (after: readonly StyleMember[]) => {
 		let text = source;
-		for (const patch of [...planStyleLiteral(source, target, before, after)].sort((a, b) => b.start - a.start))
+		for (const patch of [...planStyleLiteral(source, target.address, before, after)].sort(
+			(a, b) => b.start - a.start,
+		))
 			text = text.slice(0, patch.start) + patch.text + text.slice(patch.end);
 		return text;
 	};
@@ -257,7 +250,7 @@ describe("writing the member back into its object literal", () => {
 	});
 
 	it("refuses when the authored members no longer match the original read", () => {
-		expect(() => planStyleLiteral(source.replace("4", "6"), target, before, before)).toThrow();
+		expect(() => planStyleLiteral(source.replace("4", "6"), target.address, before, before)).toThrow();
 	});
 });
 
@@ -277,12 +270,14 @@ describe("writing the member back through a factory call", () => {
 	} as const;
 
 	it("replaces the member inside the call's own config", () => {
-		const patches = planStyleLiteral(source, target, before, [{ key: "padding", value: 12, enumerable: true }]);
+		const patches = planStyleLiteral(source, target.address, before, [
+			{ key: "padding", value: 12, enumerable: true },
+		]);
 		expect(patches).toEqual([{ start: source.indexOf("4"), end: source.indexOf("4") + 1, text: "12" }]);
 	});
 
 	it("refuses a style object that is not this call's own literal", () => {
 		const aliased = source.replace("{padding: 4}", "styles.box");
-		expect(() => planStyleLiteral(aliased, target, before, before)).toThrow();
+		expect(() => planStyleLiteral(aliased, target.address, before, before)).toThrow();
 	});
 });
