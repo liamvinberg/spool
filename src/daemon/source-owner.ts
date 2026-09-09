@@ -779,10 +779,6 @@ export function createSourceOwner(
 						);
 					continue;
 				}
-				// Recorded field origins rule out unrelated source before the expensive
-				// attribution pass. Re-parsing the whole project for every host can
-				// starve an initiating occurrence's observer challenge on a large frame.
-				if (!potentialTextSource(publication.compilation, use.original, cell)) continue;
 				try {
 					// Only a receipt-owned inverse may resolve a retained old rendered value
 					// against this exact cell. Ordinary reads retain literal equality checks.

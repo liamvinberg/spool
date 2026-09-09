@@ -1,14 +1,13 @@
 import { basename, extname, join, relative } from "node:path";
-import { parse } from "@babel/parser";
-import type { JSXElement, Node } from "@babel/types";
+import type { File, JSXElement, Node } from "@babel/types";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { fingerprintOf } from "./hand-write";
 import { walkNodes } from "./jsx-walk";
 
-export function elementAt(source: string, at: string): { node: JSXElement; ancestors: Node[] } {
+export function elementAt(program: File, at: string): { node: JSXElement; ancestors: Node[] } {
 	const [, line, column] = /:(\d+):(\d+)$/.exec(at) ?? [];
 	let found: { node: JSXElement; ancestors: Node[] } | undefined;
-	walkNodes(parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }), [], (node, ancestors) => {
+	walkNodes(program, [], (node, ancestors) => {
 		if (
 			node.type === "JSXElement" &&
 			node.loc?.start.line === Number(line) &&

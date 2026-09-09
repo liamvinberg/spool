@@ -580,6 +580,10 @@ export function literal(site: Site, name?: string): string | undefined {
 	return text;
 }
 
+// Parsing belongs to captured bytes, while each attribution keeps its own
+// bindings and dependency evidence. Weak keys retire trees with their inputs.
+const parsedSources = new WeakMap<Buffer, { text: string; ast: File }>();
+
 // Deliberately small module/binding reader. Every refusal remains observable;
 // matching export names or displayed text is never a binding proof.
 export class Sources {
@@ -632,9 +636,15 @@ export class Sources {
 		const revision = this.retain(path);
 		const held = this.units.get(revision.file);
 		if (held) return held;
-		const text = this.input(revision.file).toString("utf8");
+		const bytes = this.input(revision.file);
+		const text = bytes.toString("utf8");
 		if (fingerprintOf(text) !== revision.revision) throw new Error("source changed during parse");
-		const unit = { ...revision, text, ast: parse(text, { sourceType: "module", plugins: ["jsx", "typescript"] }) };
+		let parsed = parsedSources.get(bytes);
+		if (!parsed || parsed.text !== text) {
+			parsed = { text, ast: parse(text, { sourceType: "module", plugins: ["jsx", "typescript"] }) };
+			parsedSources.set(bytes, parsed);
+		}
+		const unit = { ...revision, ...parsed };
 		this.units.set(unit.file, unit);
 		return unit;
 	}
@@ -671,7 +681,7 @@ export class Sources {
 		if (!this.units.has(sourceTarget(this.root, path, this.compilation.inputs).file))
 			throw new Error("source stamp is outside the compiled module evidence");
 		const unit = this.read(path);
-		return { unit, ...elementAt(unit.text, source), source };
+		return { unit, ...elementAt(unit.ast, source), source };
 	}
 	creation(source: string): Creation {
 		const path = source.replace(/:\d+:\d+$/, "");

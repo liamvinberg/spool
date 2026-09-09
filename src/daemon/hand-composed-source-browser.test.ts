@@ -66,7 +66,7 @@ export function Stage() {const rail=<div><h1 id="subject" className="w-40 p-4 te
 	);
 	await field.fill("240px");
 	const reached = (await (await reaching).json()) as { ok: boolean; read: SourceRead };
-	expect(reached.read.reach?.unknown).toEqual([]);
+	expect(reached.read.reach?.unknown).toEqual(["home", "second"]);
 	expect(reached.read.reach?.uses).toHaveLength(2);
 	await expect.poll(() => width(f.frame)).toBe("240px");
 	await expect.poll(() => width(second)).toBe("240px");
