@@ -1,8 +1,6 @@
-import { join } from "node:path";
 import { type Browser, chromium, type Frame, type Page } from "playwright-core";
-import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { COVER_PNG, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, COVER_PNG, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 async function launchBrowser(): Promise<Browser | undefined> {
 	try {
@@ -196,15 +194,10 @@ it("copies from real canvas and player clicks over their trusted transports", { 
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
 
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "clipboard", clipboardFrame);
 	writeFrame(project.root, "other", "export default function Other() { return <main>other</main> }");
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 	const session = await fetch(`${project.url}/api/session`, {
 		method: "PUT",
 		headers: {
@@ -306,7 +299,7 @@ it("can copy after the canvas ignores an automatic walk from the same held frame
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
 
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "warm", warmNavigationClipboardFrame);
 	writeFrame(project.root, "other", "export default function Other() { return <main>other</main> }");
@@ -315,11 +308,6 @@ it("can copy after the canvas ignores an automatic walk from the same held frame
 	// frame fit on the canvas is now drawn big enough to run on its own (#223).
 	writeDesignFile(project.root, "frames/warm/frame.json", '{ "x": 0, "y": 0, "w": 360, "h": 360 }\n');
 	writeDesignFile(project.root, "frames/other/frame.json", '{ "x": 440, "y": 0, "w": 360, "h": 360 }\n');
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 	const session = await fetch(`${project.url}/api/session`, {
 		method: "PUT",
 		headers: {
@@ -438,17 +426,12 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
 
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "self", selfWalkClipboardFrame);
 	// as above: the frame has to be a picture until it is entered, and a frame
 	// fit on the canvas is live at its longer edge now (#223)
 	writeDesignFile(project.root, "frames/self/frame.json", '{ "x": 0, "y": 0, "w": 360, "h": 360 }\n');
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 	const session = await fetch(`${project.url}/api/session`, {
 		method: "PUT",
 		headers: {
@@ -571,15 +554,10 @@ it("rejects same-tick canvas and player copies when their walks have already beg
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
 
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "start", navigationClipboardFrame);
 	writeFrame(project.root, "other", 'export default function Other() { return <main id="other">other</main> }');
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 	const session = await fetch(`${project.url}/api/session`, {
 		method: "PUT",
 		headers: {

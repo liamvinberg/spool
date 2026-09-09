@@ -1,6 +1,6 @@
 import { build } from "esbuild";
-import { chromium } from "playwright-core";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
 
 it("focuses projects across the tab surface while keeping close and drag separate", async () => {
 	const bundle = await build({
@@ -37,8 +37,7 @@ it("focuses projects across the tab surface while keeping close and drag separat
 		jsx: "automatic",
 		define: { "process.env.NODE_ENV": '"production"' },
 	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage({ reducedMotion: "reduce" });
 	await page.setContent(`<style>
 		* { box-sizing: border-box; }

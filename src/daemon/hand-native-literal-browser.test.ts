@@ -1,10 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 const requested = "\" ' & < > { } \\ \n\r\t\u2028\u2029 😀";
 const cases = [
@@ -26,18 +25,12 @@ it.each(cases)(
 	{ timeout: 120000 },
 	async ({ kind, jsx }) => {
 		const source = `export default function Frame(){const label=${jsx.replace("<button", '<button id="label" style={{width:240,height:60}}')};globalThis.literalShape=JSON.stringify({owns:Object.hasOwn(label.props,'children'),children:label.props.children});return <main style={{padding:40}}>{label}<input id="draft" defaultValue="initial"/></main>}`;
-		const uiDir = join(makeTempDir(), "ui");
+		const uiDir = await builtUi();
 		const project = await serveProject({ uiDir });
 		writeFrame(project.root, "home", source);
 		writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":700,"h":500}');
 		writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
-		await buildUi({
-			configFile: join(process.cwd(), "vite.config.ts"),
-			logLevel: "silent",
-			build: { outDir: uiDir, emptyOutDir: true },
-		});
-		const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-		onTestFinished(() => browser.close());
+		const browser = await testBrowser();
 		const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 		await page.goto(`${project.url}/p/${project.name}`);
 		const frame = page.frameLocator('iframe[title="home"]');

@@ -1,15 +1,6 @@
-import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import {
-	fixtureAgentExecutor,
-	makeProject,
-	makeTempDir,
-	readModelsReply,
-	serveProject,
-	writeFrame,
-} from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, fixtureAgentExecutor, makeProject, readModelsReply, serveProject, writeFrame } from "../test-helpers";
 import { readThreads } from "./agent-threads";
 
 it("keeps working across projects and restores a reply completed while away", { timeout: 90_000 }, async () => {
@@ -38,18 +29,12 @@ it("keeps working across projects and restores a reply completed while away", { 
 			} else proc.emit(JSON.stringify({ type: "system", subtype: "status", status: "requesting" }));
 		}
 	});
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, agentExecutor: agent.executor, agentLook: () => true });
 	const other = makeProject(project.spoolDir);
 	writeFrame(project.root, "home", "export default () => <h1>Home</h1>");
 	writeFrame(other.root, "other", "export default () => <h1>Other project</h1>");
-	await build({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage();
 	const url = `${project.url}/p/${encodeURIComponent(project.name)}`;
 	await page.goto(url);

@@ -3,10 +3,9 @@ import { once } from "node:events";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { fixtureAgentExecutor, makeTempDir, readModelsReply, serveProject, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, fixtureAgentExecutor, makeTempDir, readModelsReply, serveProject, writeFrame } from "../test-helpers";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
@@ -39,16 +38,10 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	});
 	await client.request({ kind: "connect", provider: "openai", key: "old-secret" });
 	await client.request({ kind: "connect", provider: "anthropic", key: "other-secret" });
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, agentEngines: [createSpoolEngine(directory, client)] });
 	writeFrame(project.root, "home", "export default () => <h1>Original title</h1>");
-	await build({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	await page.addInitScript(() => localStorage.setItem("spool.rail.agent.width", "420"));
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
@@ -277,19 +270,13 @@ it("keeps Claude setup and login in its own thread through failed checks and exp
 		},
 	);
 	const directory = join(makeTempDir(), "bundled");
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({
 		uiDir,
 		agentEngines: [createClaudeEngine(fixture.executor, () => installed), createSpoolEngine(directory)],
 	});
 	writeFrame(project.root, "home", "export default () => <h1>Receipt</h1>");
-	await build({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	await page.addInitScript(() => localStorage.setItem("spool.rail.agent.width", "420"));
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);

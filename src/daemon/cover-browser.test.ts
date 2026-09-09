@@ -1,9 +1,7 @@
-import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { type Browser, chromium } from "playwright-core";
-import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 const FRAME_W = 390;
 const FRAME_H = 844;
@@ -60,7 +58,7 @@ it("draws one 2× portrait image below the live threshold", { timeout: 120_000 }
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
 
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "covered", "export default function Frame() { return <main>cover me</main>; }");
 	writeDesignFile(
@@ -68,11 +66,6 @@ it("draws one 2× portrait image below the live threshold", { timeout: 120_000 }
 		"frames/covered/frame.json",
 		`${JSON.stringify({ x: 0, y: 0, w: FRAME_W, h: FRAME_H })}\n`,
 	);
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	const control = { "content-type": "application/json", "X-Spool-Control": project.controlToken };
 	const body = new FormData();
@@ -191,7 +184,7 @@ it("holds a promoted frame's cover through its entrance, and lets go at the boun
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
 
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "slow", slowEntrance);
 	writeFrame(project.root, "busy", neverQuiet);
@@ -199,12 +192,6 @@ it("holds a promoted frame's cover through its entrance, and lets go at the boun
 	writeDesignFile(project.root, "frames/slow/frame.json", '{ "x": 0, "y": 0, "w": 500, "h": 500 }\n');
 	writeDesignFile(project.root, "frames/busy/frame.json", '{ "x": 560, "y": 0, "w": 500, "h": 500 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 40, y: 40, k: 1 } })}\n`);
-
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	// a real still to stand in front of each frame: the seam is a settled picture
 	// swapped for a booting document, not a placeholder swapped for one

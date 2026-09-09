@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
-import { type Browser, chromium, type Page } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
+import type { Browser, Page } from "playwright-core";
+import { expect, it } from "vitest";
 import type { SourceRead } from "../source-edit";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 const primitive = `import {useState,useEffect} from 'react';function Child({label}){const[n,set]=useState(0);useEffect(()=>set(0),[label]);return <section><span id="label">{label}</span><button onClick={()=>set(n+1)}>Count</button><output>{n}</output><input defaultValue="Native"/></section>}export function Button(){return <Child label="Before"/>}`;
 const slot = (reset: boolean) =>
@@ -47,7 +47,7 @@ const refusals: Record<string, string> = {
 };
 
 async function served(source: string, shared = false) {
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeDesignFile(project.root, "shared/flow.tsx", source);
 	const frameSource = `import {Button} from "shared/flow";export default function Frame(){return <main style={{padding:40}}><Button/><h2 id="unrelated">Before</h2><input id="draft" defaultValue="Independent"/></main>}`;
@@ -58,13 +58,7 @@ async function served(source: string, shared = false) {
 	}
 	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":700,"h":500}');
 	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	const writes: string[] = [];
 	page.on("request", (request) => {

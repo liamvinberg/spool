@@ -1,9 +1,9 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { chromium, type Frame, type Page } from "playwright-core";
-import { build as buildUi } from "vite";
+import type { Frame, Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 interface Probe {
 	rect: { width: number; height: number; x: number; y: number };
@@ -388,9 +388,8 @@ const cross = `export default function Cross() {
 `;
 
 it("keeps frame measurements native through canvas and player walks", { timeout: 180_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const uiDir = join(makeTempDir(), "ui");
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "same", same);
 	writeFrame(project.root, "same-next", sameNext);
@@ -398,11 +397,6 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	writeDesignFile(project.root, "frames/same/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
 	writeDesignFile(project.root, "frames/same-next/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
 	writeDesignFile(project.root, "frames/cross/frame.json", '{ "x": 0, "y": 0, "w": 720, "h": 480 }\n');
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => context.close());
@@ -667,8 +661,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 });
 
 it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -699,8 +692,7 @@ it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_00
 });
 
 it("plays a frame named __proto__", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -726,8 +718,7 @@ it("plays a frame named __proto__", { timeout: 60_000 }, async () => {
 });
 
 it("does not hand a private player port to foreign or replayed shell embeds", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "home", 'export default function Home() { return <main id="home">home</main>; }\n');
 
@@ -780,8 +771,7 @@ it("does not hand a private player port to foreign or replayed shell embeds", { 
 });
 
 it("recovers the player when the browser refetches the inner frame", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "home", 'export default function Home() { return <main id="home">home</main>; }\n');
 
@@ -812,8 +802,7 @@ it("recovers the player when the browser refetches the inner frame", { timeout: 
 });
 
 it("plays the healthy frames and errors only on the broken one", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -844,8 +833,7 @@ it("plays the healthy frames and errors only on the broken one", { timeout: 60_0
 });
 
 it("plays on when a browser extension's script throws inside the frame", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	// What MetaMask's inpage.js does to every page it is injected into. It runs in
 	// this document's realm, so its rejection lands on spool's listeners.
@@ -872,8 +860,7 @@ export default function Home() {
 });
 
 it("still blames the frame for a failure thrown by its own code", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -899,8 +886,7 @@ export default function Home() {
 });
 
 it("plays on when an injected wallet shim fails without a scheme in its stack", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	// The same MetaMask death as above, as it looks when the shim is injected
 	// inline: no chrome-extension:// anywhere, only bare inpage.js frames (#185).
@@ -927,8 +913,7 @@ export default function Home() {
 });
 
 it("names a mute player instead of hiding it and offers the bare player", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "home", 'export default function Home() { return <main id="home">home</main>; }\n');
 
@@ -968,8 +953,7 @@ it("names a mute player instead of hiding it and offers the bare player", { time
 });
 
 it("names a player that connects but is starved of animation frames", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "home", 'export default function Home() { return <main id="home">home</main>; }\n');
 
@@ -994,8 +978,7 @@ it("names a player that connects but is starved of animation frames", { timeout:
 });
 
 it("ignores an authored exact resize while real runtime navigation still works", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1086,8 +1069,7 @@ export default function Start() {
 });
 
 it("waits for current geometry when shell and runtime snapshots split", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1280,8 +1262,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 });
 
 it("reveals the last valid geometry while live geometry transport retries", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
 	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
@@ -1315,8 +1296,7 @@ it("reveals the last valid geometry while live geometry transport retries", { ti
 });
 
 it("reveals the preflight geometry while the first live geometry request hangs", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
 	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
@@ -1343,8 +1323,7 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 });
 
 it("replays geometry emitted before the shell runtime connects without SSE", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
 	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
@@ -1387,8 +1366,7 @@ it("replays geometry emitted before the shell runtime connects without SSE", { t
 });
 
 it("retains the latest geometry while authored modules delay boot", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1438,8 +1416,7 @@ export default function Start() {
 });
 
 it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1533,8 +1510,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 });
 
 it("replays a destination mount auto-walk after a cross-size cut settles", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1591,8 +1567,7 @@ export default function Target() {
 });
 
 it("ignores an older geometry response released during a cut", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1717,8 +1692,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 });
 
 it("classifies old-same new-cross walks from the shell's latest geometry", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1796,8 +1770,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 });
 
 it("classifies old-cross new-same walks from the shell's latest geometry", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1875,8 +1848,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 });
 
 it("does not publish same-size destination state before the transition commits", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1929,8 +1901,7 @@ export default function Start() {
 it("reclassifies a queued transition when newer geometry arrives before runtime delivery", {
 	timeout: 60_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -1983,8 +1954,7 @@ it("reclassifies a queued transition when newer geometry arrives before runtime 
 });
 
 it("mounts a target at newer geometry while its stale transition is held", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2049,8 +2019,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 });
 
 it("reclassifies newer geometry while a transition commit is held", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2129,8 +2098,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 });
 
 it("settles newer geometry before revealing a transition whose apply is held", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2220,8 +2188,7 @@ it("settles newer geometry before revealing a transition whose apply is held", {
  * watcher's (#113), so this is what an ordinary drag mid-walk looks like.
  */
 it("reveals a settling transition on geometry newer than the one it armed on", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2323,8 +2290,7 @@ it("reveals a settling transition on geometry newer than the one it armed on", {
 });
 
 it("runs a queued walk after a pending transition settles", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2393,8 +2359,7 @@ it("runs a queued walk after a pending transition settles", { timeout: 60_000 },
 it("waits for both navigation and its matching completion before draining controls", {
 	timeout: 60_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2475,8 +2440,7 @@ it("waits for both navigation and its matching completion before draining contro
 it("retains a controller command sent before an authored navigation reaches the shell", {
 	timeout: 60_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2562,8 +2526,7 @@ it("retains a controller command sent before an authored navigation reaches the 
 it("rejects controller requests outside the current or pending-source context", {
 	timeout: 60_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2646,8 +2609,7 @@ it("rejects controller requests outside the current or pending-source context", 
 });
 
 it("rejects extra private-port fields on every controller command", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
 	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
@@ -2707,8 +2669,7 @@ it("rejects extra private-port fields on every controller command", { timeout: 6
 it("ignores malformed, stale, and duplicate controller completions without reordering", {
 	timeout: 60_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
 	writeFrame(project.root, "next", 'export default function Next() { return <main id="next">next</main>; }\n');
@@ -2843,8 +2804,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 });
 
 it("cuts when the source viewport no longer matches same-size shell geometry", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2920,8 +2880,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 });
 
 it("reveals a same-size startup auto-walk", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2957,8 +2916,7 @@ export default function Start() {
 });
 
 it("retains a queued navigation decision after the pre-boot message cap", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -2988,8 +2946,7 @@ export default function Start() { return <main id="start">start</main>; }
 });
 
 it("reveals a cross-size startup auto-walk only after the target paints", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -3034,8 +2991,7 @@ export default function Start() {
 });
 
 it("shows a broken player frame instead of a hidden shell", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "broken", "export default function Broken() { return <main>broken</main>;\n");
 
@@ -3055,8 +3011,7 @@ it("shows a broken player frame instead of a hidden shell", { timeout: 60_000 },
 });
 
 it("shows a frame that breaks between the shell preflight and render load", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "raced", "export default function Raced() { return <main>ready</main>; }\n");
 
@@ -3091,8 +3046,7 @@ it("shows a frame that breaks between the shell preflight and render load", { ti
 });
 
 it("shows an explicit frame deleted between the shell preflight and render load", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "kept", "export default function Kept() { return <main>kept</main>; }\n");
 	writeFrame(project.root, "removed", "export default function Removed() { return <main>removed</main>; }\n");
@@ -3125,8 +3079,7 @@ it("shows an explicit frame deleted between the shell preflight and render load"
 });
 
 it("shows an authored top-level exception reported over the private runtime channel", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -3147,8 +3100,7 @@ export default function Explodes() { return <main>unreachable</main>; }
 });
 
 it("shows an authored render exception reported over the private runtime channel", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -3170,8 +3122,7 @@ it("shows an authored render exception reported over the private runtime channel
 });
 
 it("shows a destination render exception during a same-size View Transition", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -3245,8 +3196,7 @@ it("shows a destination render exception during a same-size View Transition", { 
 });
 
 it("shows a destination render exception during a cross-size hard cut", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -3281,8 +3231,7 @@ it("shows a destination render exception during a cross-size hard cut", { timeou
 });
 
 it("keeps a ready player visible after a late authored exception", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -3345,8 +3294,7 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 });
 
 it("does not register Spool fonts under an authored family name", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(
 		project.root,
@@ -3383,8 +3331,7 @@ it("does not register Spool fonts under an authored family name", { timeout: 60_
 });
 
 it("keeps existing player behavior through the control shell", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeDesignFile(project.root, "shared/scenarios/default.json", '{ "state": { "count": 2 } }\n');
 	writeFrame(
@@ -3520,8 +3467,7 @@ const swapCount = (live: Frame) =>
 	live.evaluate(() => (window as unknown as { __spoolSwapTypes: unknown[] }).__spoolSwapTypes.length);
 
 it("styles one direction and one data-transition apart in transitions.css", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await serveProject();
 	writeFrame(project.root, "typed-home", typedHome);
 	writeFrame(project.root, "typed-next", typedNext);

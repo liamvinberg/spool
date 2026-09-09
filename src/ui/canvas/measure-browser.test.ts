@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
-import { chromium } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { assembleFrameDocument } from "../../daemon/document";
 import { RENDER_HOST } from "../../daemon/security";
+import { testBrowser } from "../../test-browser";
 import { decompose } from "./measure-spacing";
 import type { SpacingReading } from "./protocol";
 
@@ -130,8 +130,7 @@ async function serveFrame(): Promise<Served> {
 }
 
 it("reads a distance off a real layout, and the decomposition names the class", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const served = await serveFrame();
 	onTestFinished(() => served.close());
 
