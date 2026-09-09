@@ -58,9 +58,13 @@ export async function originCanvas(
 	const select = async () => {
 		// A native edit closes before React releases the iframe's pointer.
 		// Canvas selection must start after that observable ownership transition.
+		// Both waits here are for a canvas that is still booting frames, which on a
+		// loaded runner takes longer than a poll's default second; what they wait
+		// for is exact either way.
 		await expect
-			.poll(() =>
-				page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents),
+			.poll(
+				() => page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents),
+				{ timeout: 15_000 },
 			)
 			.toBe("none");
 		const box = await target.boundingBox();
@@ -69,13 +73,16 @@ export async function originCanvas(
 		await page.mouse.click(box.x + 8, box.y + box.height / 2);
 		await page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
 		await expect
-			.poll(async () => {
-				const response = await fetch(`${project.url}/api/p/${project.name}/selection`, {
-					headers: { "X-Spool-Control": project.controlToken },
-				});
-				const body = (await response.json()) as { selection?: unknown[] };
-				return body.selection?.length;
-			})
+			.poll(
+				async () => {
+					const response = await fetch(`${project.url}/api/p/${project.name}/selection`, {
+						headers: { "X-Spool-Control": project.controlToken },
+					});
+					const body = (await response.json()) as { selection?: unknown[] };
+					return body.selection?.length;
+				},
+				{ timeout: 15_000 },
+			)
 			.toBe(1);
 		return box;
 	};
