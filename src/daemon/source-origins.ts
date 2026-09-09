@@ -56,6 +56,7 @@ export interface Call {
 	values?: ValueSnapshot | undefined;
 	renderedValues?: ValueSnapshot | undefined;
 	transportedFields?: string[];
+	transports?: { field: string; value: Pick<ValueSnapshot, "id" | "source" | "kind"> }[];
 	lazyResolved?: boolean;
 	lazyChoice?: LazyChoice;
 }
@@ -287,6 +288,143 @@ function immutableSlot(fn: Component, slot: string, unit: Unit): boolean {
 		return node.children.every(visit);
 	};
 	return visit(body) && count === 1;
+}
+
+/** Prove only the transported binding; unrelated application code remains ordinary React. */
+function compositionBinding(fn: Component, local: string, forward?: Site, declaration?: Node): boolean {
+	let safe = true;
+	let uses = 0;
+	for (const parameter of fn.params)
+		walkNodes(parameter, [], (node, ancestors) => {
+			// Other parameter defaults can run before the body and touch the slot.
+			if (
+				ancestors.some((ancestor) => ancestor.type === "AssignmentPattern") &&
+				((node.type === "Identifier" && node.name === local) ||
+					(node.type === "CallExpression" && node.callee.type === "Identifier" && node.callee.name === "eval"))
+			)
+				safe = false;
+		});
+	walkNodes(fn.body, [], (node, ancestors) => {
+		if (
+			node.type === "WithStatement" ||
+			(node.type === "CallExpression" && node.callee.type === "Identifier" && node.callee.name === "eval")
+		)
+			safe = false;
+		if (
+			(node.type === "VariableDeclarator" || /Function|Method/.test(node.type) || node.type === "CatchClause") &&
+			node !== declaration &&
+			getBindingIdentifiers(node)[local]
+		)
+			safe = false;
+		if (node.type !== "Identifier" || node.name !== local) return;
+		if (node === fn.body) {
+			uses++;
+			return;
+		}
+		const parent = ancestors.at(-1);
+		if (parent === declaration && parent?.type === "VariableDeclarator" && parent.id === node) return;
+		if (parent?.type === "ObjectProperty" && parent.key === node && !parent.computed && parent.value !== node) return;
+		if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) return;
+		// A nested closure can retain or mutate this value after the observed render.
+		if (ancestors.some((ancestor) => /Function|Method/.test(ancestor.type))) {
+			safe = false;
+			return;
+		}
+		let part: Node = node;
+		let index = ancestors.length - 1;
+		while (index >= 0) {
+			const above = ancestors[index]!;
+			if (
+				(above.type === "ConditionalExpression" && (above.consequent === part || above.alternate === part)) ||
+				(above.type === "LogicalExpression" && (above.left === part || above.right === part))
+			) {
+				part = above;
+				index--;
+				continue;
+			}
+			break;
+		}
+		const container = ancestors[index];
+		const holder = ancestors[index - 1];
+		if (
+			(container?.type === "ReturnStatement" && container.argument === part) ||
+			(container?.type === "JSXExpressionContainer" &&
+				(holder?.type === "JSXFragment" ||
+					(holder?.type === "JSXElement" &&
+						(holder === forward?.node ||
+							(holder.openingElement.name.type === "JSXIdentifier" &&
+								/^[a-z]/.test(holder.openingElement.name.name)))) ||
+					(holder?.type === "JSXAttribute" && forward?.node.openingElement.attributes.includes(holder))))
+		) {
+			uses++;
+			return;
+		}
+		// Testing whether an optional slot is present does not consume or change it.
+		if (parent?.type === "BinaryExpression" && ["===", "!==", "==", "!="].includes(parent.operator)) {
+			const other = parent.left === node ? parent.right : parent.left;
+			if (other.type === "NullLiteral" || (other.type === "Identifier" && other.name === "undefined")) return;
+		}
+		safe = false;
+	});
+	return safe && uses > 0;
+}
+function compositionParameter(fn: Component, slot: string): string | undefined {
+	if (fn.type === "ClassMethod" || fn.async || fn.generator || fn.params.length !== 1) return undefined;
+	const param = fn.params[0];
+	if (param?.type !== "ObjectPattern") return undefined;
+	const fields = param.properties.filter(
+		(p) => p.type === "ObjectProperty" && !p.computed && p.key.type === "Identifier" && p.key.name === slot,
+	);
+	const field = fields.length === 1 ? fields[0] : undefined;
+	return field?.type === "ObjectProperty" && field.value.type === "Identifier" ? field.value.name : undefined;
+}
+function slotExpression(site: Site, slot: string): Node | undefined {
+	if (slot === "children") {
+		const children = site.node.children.filter((node) => node.type !== "JSXText" || node.value.trim() !== "");
+		return children.length === 1 ? children[0] : undefined;
+	}
+	return attribute(site, slot)?.value ?? undefined;
+}
+function compositionContains(site: Site, target: Site, slot: string): boolean {
+	if (site.unit.file !== target.unit.file) return false;
+	const fn = owner(site);
+	const seen = new Set<Node>();
+	const matches = (node: Node | undefined): boolean => {
+		if (!node || seen.has(node)) return false;
+		seen.add(node);
+		if (node.start === target.node.start && node.end === target.node.end) return true;
+		if (node.type === "JSXExpressionContainer") return matches(node.expression);
+		if (node.type === "ConditionalExpression") return matches(node.consequent) || matches(node.alternate);
+		if (node.type === "LogicalExpression") return matches(node.left) || matches(node.right);
+		if (node.type === "JSXFragment" || node.type === "JSXElement") return node.children.some(matches);
+		if (node.type !== "Identifier" || fn.body.type !== "BlockStatement") return false;
+		const declarations = fn.body.body.flatMap((statement) =>
+			statement.type === "VariableDeclaration" && statement.kind === "const" ? statement.declarations : [],
+		);
+		const declaration = declarations.find((d) => d.id.type === "Identifier" && d.id.name === node.name);
+		return (
+			!!declaration && compositionBinding(fn, node.name, site, declaration) && matches(declaration.init ?? undefined)
+		);
+	};
+	return slot === "children" ? site.node.children.some(matches) : matches(slotExpression(site, slot));
+}
+function compositionForward(site: Site, slot: string): string | undefined {
+	const fn = owner(site);
+	let expression = slotExpression(site, slot);
+	if (expression?.type === "JSXExpressionContainer") expression = expression.expression;
+	const candidates: string[] = [];
+	walkNodes(expression ?? site.node, [], (node) => {
+		if (node.type === "Identifier") candidates.push(node.name);
+	});
+	const param = fn.params[0];
+	if (param?.type !== "ObjectPattern") return undefined;
+	for (const field of param.properties) {
+		if (field.type !== "ObjectProperty" || field.key.type !== "Identifier") continue;
+		const local = compositionParameter(fn, field.key.name);
+		if (!local || !candidates.includes(local) || !compositionBinding(fn, local, site)) continue;
+		return field.key.name;
+	}
+	return undefined;
 }
 /** A retained consumer can transport its exact committed child without consuming the newer input. */
 function retainsSelectedChild(call: Call, selection: Selection): boolean {
@@ -778,6 +916,76 @@ export class Sources {
 		return this.local(site.unit, name, new Set(), choice);
 	}
 	chain(selection: Selection): Site[] {
+		try {
+			return this.directChain(selection);
+		} catch (error) {
+			// The direct forms retain their more specific refusals (memo, cache,
+			// factories). Composition adds exact mounted host roots to that proof.
+			const composed = this.composedChain(selection);
+			if (composed) return composed;
+			throw error;
+		}
+	}
+	private composedChain(selection: Selection): Site[] | undefined {
+		if (selection.refusal) return undefined;
+		try {
+			const leaf = this.site(selection.source);
+			let current = leaf;
+			let transported = leaf;
+			let flow: { unit: Unit; fn: Component; slot: string; id: number } | undefined;
+			const sites = [leaf];
+			const sameOwner = (a: Site, b: Site) => a.unit.file === b.unit.file && owner(a).start === owner(b).start;
+			for (const call of [...selection.chain].reverse()) {
+				if (call.retainedProps || call.values?.kind !== "jsx") return undefined;
+				const site = this.site(call.source);
+				const actual = this.callee(site, call.lazyChoice);
+				if (actual.lazy && !call.lazyResolved) return undefined;
+				const isOwner = actual.unit.file === current.unit.file && actual.fn.start === owner(current).start;
+				if (!flow && isOwner) {
+					current = site;
+					transported = site;
+					sites.push(site);
+					continue;
+				}
+				const resumes = flow && actual.unit.file === flow.unit.file && actual.fn.start === flow.fn.start;
+				const candidates =
+					call.transports?.filter(({ field, value }) => {
+						if (value.kind !== "jsx") return false;
+						if (resumes) return field === flow?.slot && value.id === flow.id;
+						const root = this.site(value.source);
+						return (
+							sameOwner(root, transported) &&
+							root.node.start! <= transported.node.start! &&
+							root.node.end! >= transported.node.end!
+						);
+					}) ?? [];
+				if (candidates.length !== 1) return undefined;
+				const candidate = candidates[0]!;
+				const root = this.site(candidate.value.source);
+				if (!resumes) {
+					const local = compositionParameter(actual.fn, candidate.field);
+					if (!local || !compositionBinding(actual.fn, local)) return undefined;
+				}
+				if (compositionContains(site, root, candidate.field)) {
+					if (resumes) flow = undefined;
+				} else {
+					// A visual wrapper can sit between a consumer and the component
+					// forwarding its parameter. Keep that source requirement open.
+					if (flow && !resumes) return undefined;
+					const slot = compositionForward(site, candidate.field);
+					if (!slot) return undefined;
+					flow = { unit: site.unit, fn: owner(site), slot, id: candidate.value.id };
+				}
+				transported = site;
+			}
+			if (flow) return undefined;
+			this.assertEntry(current);
+			return sites;
+		} catch {
+			return undefined;
+		}
+	}
+	private directChain(selection: Selection): Site[] {
 		if (selection.refusal) throw new Error(selection.refusal);
 		const leaf = this.site(selection.source);
 		let current = leaf;

@@ -47,6 +47,8 @@ export interface Observation {
 		values?: ValueSnapshot | undefined;
 		renderedValues?: ValueSnapshot | undefined;
 		transportedFields?: string[];
+		/** Exact mounted roots supplied through this call, including host wrappers around the pick. */
+		transports?: { field: string; value: Pick<ValueSnapshot, "id" | "source" | "kind"> }[];
 	}[];
 	refusal?: string;
 }
@@ -231,12 +233,27 @@ export function installObserver(reconciled = true, lazyChoices = true): void {
 					continue;
 				}
 				const children = Reflect.get(value.element.props as object, "children") as unknown;
+				const transports: NonNullable<Observation["chain"][number]["transports"]> = [];
+				if (reconciled && globalThis.__SPOOL_VALUES__) {
+					for (const descendant of [...parents.slice(parents.indexOf(parent) + 1), fiber]) {
+						const element = bindings.get(descendant);
+						if (!element) continue;
+						const fields = globalThis.__SPOOL_VALUES__.transports(value.element, element, false);
+						if (!fields.length) continue;
+						const snapshot = globalThis.__SPOOL_VALUES__.snapshot(element);
+						if (snapshot) {
+							const { id, source, kind } = snapshot;
+							for (const field of fields) transports.push({ field, value: { id, source, kind } });
+						}
+					}
+				}
 				chain.push({
 					source: value.source,
 					invocation: invocations.get(parent.tag === 14 && parent.child ? parent.child : parent),
 					...lazyResolved(parent, value),
 					occurrence: identity(parent),
 					passedChild: children === child.element || (Array.isArray(children) && children.includes(child.element)),
+					transports,
 					...(reconciled
 						? {
 								element: value.id,

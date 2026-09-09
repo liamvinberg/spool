@@ -53,7 +53,7 @@ export interface ValueFlow {
 	): ValueElement;
 	snapshot(element: ValueElement | undefined): ValueSnapshot | undefined;
 	fromProps(props: unknown): ValueElement | undefined;
-	transports(parent: ValueElement, child: ValueElement): string[];
+	transports(parent: ValueElement, child: ValueElement, includeCopies?: boolean): string[];
 }
 declare global {
 	var __SPOOL_VALUES__: ValueFlow | undefined;
@@ -222,12 +222,14 @@ export function installValueFlow(mapping: Record<string, string>): void {
 			if (active) globalThis.__SPOOL_OBSERVER__?.register(element, active);
 			return element;
 		},
-		transports(parent, child) {
+		transports(parent, child, includeCopies = true) {
 			const matches = (input: unknown): boolean => {
 				const copies: ValueElement[] = [child];
 				const typeBase = records.get(child)?.typeInput;
-				if (typeBase) copies.push(typeBase);
-				for (let at = records.get(child)?.base; at; at = records.get(at)?.base) copies.push(at);
+				if (includeCopies) {
+					if (typeBase) copies.push(typeBase);
+					for (let at = records.get(child)?.base; at; at = records.get(at)?.base) copies.push(at);
+				}
 				if (copies.includes(input as ValueElement)) return true;
 				if (Array.isArray(input))
 					return Object.values(Object.getOwnPropertyDescriptors(input)).some(
