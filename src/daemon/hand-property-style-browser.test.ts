@@ -154,3 +154,111 @@ it("edits the side the member owns while an important rule keeps the other side"
 	await expect.poll(() => f.bytes()[owner]).toBe(original);
 	await expect.poll(() => computed(f, "padding-left")).toEqual(["40px", "40px"]);
 });
+
+/** Scope acceptance (#304): the written scope, its activity, and its own rule. */
+it("edits an inactive state rule, reports it inactive, and it applies when the state is real", {
+	timeout: 120_000,
+}, async () => {
+	const original =
+		'export function Tile({label}){return <section data-subject={label} className="text-base hover:text-2xl md:text-3xl">{label}</section>}';
+	const f = await originCanvas({ [owner]: original }, tiles, '[data-subject="A"]');
+	await expect.poll(() => computed(f, "font-size")).toEqual(["16px", "16px"]);
+
+	await f.select();
+	const chip = f.page.locator("[data-scope-chip]", { hasText: "hover:" }).first();
+	await chip.click();
+	// what the scope applies under is the chip's own line; what the viewport is
+	// doing to this element right now is still the base value
+	await expect.poll(() => chip.getAttribute("aria-pressed")).toBe("true");
+	expect(await chip.getAttribute("title")).toBe(":hover");
+	await expect.poll(() => computed(f, "font-size")).toEqual(["16px", "16px"]);
+
+	await row(f, "font-size").fill("30");
+	await complete(f, "font-size", original.replace("hover:text-2xl", "hover:text-[30px]"));
+	// the other scopes are exactly as they were written
+	expect(f.bytes()[owner]).toContain("text-base");
+	expect(f.bytes()[owner]).toContain("md:text-3xl");
+	const settled = (await f.page.evaluate(() => Reflect.get(window, "originOutcomes"))) as {
+		uses?: { rendered: string }[];
+	}[];
+	expect(
+		settled.at(-1)?.uses?.map((use) => use.rendered),
+		JSON.stringify(settled.at(-1)),
+	).toEqual(["inactive", "inactive"]);
+
+	// the rule it wrote is the rule the element runs once its condition is real
+	await f.frame.locator('[data-subject="A"]').hover();
+	await expect.poll(() => computed(f, "font-size")).toEqual(["30px", "16px"]);
+
+	const stepped = reply(f, "inverse");
+	await f.history(false);
+	expect((await (await stepped).json()).ok).toBe(true);
+	await expect.poll(() => f.bytes()[owner]).toBe(original);
+});
+
+/** Authored declaration acceptance (#304): the project's own stylesheet is the source. */
+const sheet = "shared/tokens.css";
+const tokens = (padding: string, opacity: string) =>
+	`@theme {}\n.tile { padding: ${padding} }\n@media (min-width: 5000px) { .tile { opacity: ${opacity} } }\n`;
+const carded =
+	'export function Tile({label}){return <section data-subject={label} className="tile p-6 opacity-75">{label}</section>}';
+
+it("edits the project's own declaration in its own stylesheet, and steps back", { timeout: 120_000 }, async () => {
+	const css = tokens("12px", "0.25");
+	const f = await originCanvas({ [owner]: carded, [sheet]: css }, tiles, '[data-subject="A"]');
+	// the unlayered project rule is what the element runs, not the utility
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
+
+	await f.select();
+	await row(f, "padding").fill("20");
+	const committed = reply(f, "commit"),
+		delivered = reply(f, "delivered");
+	void delivered.catch(() => {});
+	await row(f, "padding").press("Enter");
+	const result = await (await committed).json();
+	expect(result.ok, JSON.stringify({ result, css: f.bytes()[sheet] })).toBe(true);
+	await delivered;
+	// only the declaration's value moved: the selector, the condition and the
+	// element's own source are exactly as they were
+	await expect.poll(() => f.bytes()[sheet]).toBe(tokens("20px", "0.25"));
+	expect(f.bytes()[owner]).toBe(carded);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["20px", "20px"]);
+
+	const stepped = reply(f, "inverse");
+	await f.history(false);
+	expect((await (await stepped).json()).ok).toBe(true);
+	await expect.poll(() => f.bytes()[sheet]).toBe(css);
+	await expect.poll(() => computed(f, "padding-left")).toEqual(["12px", "12px"]);
+});
+
+it("edits an inactive conditional declaration and reports it inactive", { timeout: 120_000 }, async () => {
+	const css = tokens("12px", "0.25");
+	const f = await originCanvas({ [owner]: carded, [sheet]: css }, tiles, '[data-subject="A"]');
+	// the frame is narrower than the condition, so the utility is what it runs
+	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
+
+	await f.select();
+	await row(f, "opacity").fill("40");
+	const committed = reply(f, "commit"),
+		delivered = reply(f, "delivered");
+	void delivered.catch(() => {});
+	await row(f, "opacity").press("Enter");
+	const result = await (await committed).json();
+	expect(result.ok, JSON.stringify({ result, css: f.bytes()[sheet] })).toBe(true);
+	await delivered;
+	await expect.poll(() => f.bytes()[sheet]).toBe(tokens("12px", "0.4"));
+	const settled = (await f.page.evaluate(() => Reflect.get(window, "originOutcomes"))) as {
+		uses?: { rendered: string }[];
+	}[];
+	expect(
+		settled.at(-1)?.uses?.map((use) => use.rendered),
+		JSON.stringify(settled.at(-1)),
+	).toEqual(["inactive", "inactive"]);
+	// the viewport still applies the utility, which the edit did not touch
+	await expect.poll(() => computed(f, "opacity")).toEqual(["0.75", "0.75"]);
+
+	const stepped = reply(f, "inverse");
+	await f.history(false);
+	expect((await (await stepped).json()).ok).toBe(true);
+	await expect.poll(() => f.bytes()[sheet]).toBe(css);
+});
