@@ -368,6 +368,7 @@ function inspectSource(
 	}
 	const nativeValue =
 		operation.kind === "property" ? getComputedStyle(element).getPropertyValue(operation.property) : "";
+	const rules = operation.kind === "property" ? matchedRulePaths(element, operation.property) : [];
 	let structure: SourceOccurrence["structure"];
 	if (operation.kind === "delete") {
 		const parent = element.parentElement;
@@ -385,6 +386,7 @@ function inspectSource(
 		...(operation.kind === "property" && nativeValue
 			? { propertyNative: { property: operation.property, value: nativeValue } }
 			: {}),
+		...(rules.length ? { propertyRules: rules } : {}),
 		...(structure ? { structure } : {}),
 		// Retained props keep their original invocation/value even when React
 		// skips recreating them. This observation belongs to the installed packet.
@@ -395,6 +397,55 @@ function inspectSource(
 		...(provenance === undefined ? {} : { provenance }),
 	};
 }
+/** The dynamic state a rule may name and this element may not be in right now. */
+const DYNAMIC =
+	/:(?:hover|focus|focus-visible|focus-within|active|disabled|enabled|checked|indeterminate|valid|invalid|required|optional|read-only|read-write|placeholder-shown|target|visited|link|any-link)\b/g;
+
+/**
+ * Every rule chain in this document that declares this property and applies to
+ * this element, whether or not its state is the state the element is in.
+ *
+ * This is the evidence that a rule belongs to this element at all: a stylesheet
+ * is full of declarations for other subjects, and none of them is a source for
+ * this one. A selector this document's own parser will not take, or a grouping
+ * rule whose order is not the cascade's own, is left out rather than guessed at.
+ */
+function matchedRulePaths(element: Element, property: string): string[][] {
+	const found: string[][] = [];
+	const related = (name: string) =>
+		name === property || name.startsWith(`${property}-`) || property.startsWith(`${name}-`);
+	const applies = (selector: string): boolean => {
+		const resting = selector.replace(DYNAMIC, "");
+		if (!resting.trim()) return false;
+		try {
+			return element.matches(resting);
+		} catch {
+			return false;
+		}
+	};
+	const walk = (rules: CSSRuleList, path: readonly string[]): void => {
+		for (const rule of rules) {
+			if (rule instanceof CSSStyleRule) {
+				const next = [...path, rule.selectorText];
+				let declares = false;
+				for (const name of rule.style) if (related(name)) declares = true;
+				if (declares && applies(rule.selectorText)) found.push(next);
+				if (rule.cssRules.length) walk(rule.cssRules, next);
+			} else if (rule instanceof CSSMediaRule) walk(rule.cssRules, [...path, `@media ${rule.conditionText}`]);
+			else if (rule instanceof CSSSupportsRule) walk(rule.cssRules, [...path, `@supports ${rule.conditionText}`]);
+			else if (rule instanceof CSSLayerBlockRule) walk(rule.cssRules, [...path, `@layer ${rule.name}`]);
+		}
+	};
+	for (const sheet of element.ownerDocument.styleSheets) {
+		try {
+			walk(sheet.cssRules, []);
+		} catch {
+			// A stylesheet this document may not read is not evidence about it.
+		}
+	}
+	return found;
+}
+
 function renderedField(element: HTMLElement, field?: string): string {
 	return field === undefined ? textOf(element) : renderedAttribute(element, field);
 }

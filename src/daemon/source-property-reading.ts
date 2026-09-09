@@ -12,6 +12,7 @@ export function propertyReading(
 	environment: SourcePropertyEnvironment,
 	native?: SourcePropertyNative,
 	style?: readonly StyleMember[],
+	matched?: readonly (readonly string[])[],
 ): SourcePropertyReading {
 	const { roots, effects, owners } = readPropertyEffects(
 		certificate,
@@ -26,7 +27,7 @@ export function propertyReading(
 	let held: PropertySource | undefined;
 	if (operation.scope === "")
 		try {
-			held = propertySourceOwner(roots, effects, inline, certificate, environment);
+			held = propertySourceOwner(roots, effects, inline, certificate, environment, matched);
 		} catch {
 			// Sources this reading cannot tell apart: it says so rather than showing
 			// either one's value. The write against it refuses with the reason.

@@ -111,12 +111,13 @@ describe("which source owns the winning effect", () => {
 				[],
 				{ effects: [utility("padding", "1.5rem"), authored] },
 				ltr,
+				[[".card"]],
 			),
 		).toEqual({ kind: "declaration", effects: [authored] });
 	});
 
 	it("leaves the element's own member above an ordinary project declaration", () => {
-		expect(propertySourceOwner(roots, [], [member], { effects: [authored] }, ltr)).toEqual({
+		expect(propertySourceOwner(roots, [], [member], { effects: [authored] }, ltr, [[".card"]])).toEqual({
 			kind: "style",
 			members: ["padding"],
 		});
@@ -124,7 +125,7 @@ describe("which source owns the winning effect", () => {
 
 	it("leaves an important project declaration above the element's own member", () => {
 		const strong = effect([".card"], "padding", "12px", true);
-		expect(propertySourceOwner(roots, [], [member], { effects: [strong] }, ltr)).toEqual({
+		expect(propertySourceOwner(roots, [], [member], { effects: [strong] }, ltr, [[".card"]])).toEqual({
 			kind: "declaration",
 			effects: [strong],
 		});
@@ -139,7 +140,9 @@ describe("which source owns the winning effect", () => {
 
 	it("ignores the compiler's own layers, which an unlayered rule already outranks", () => {
 		const preflight = effect(["@layer base", "*"], "padding", "0");
-		expect(propertySourceOwner(roots, [], [], { effects: [preflight] }, ltr)).toEqual({ kind: "class" });
+		expect(propertySourceOwner(roots, [], [], { effects: [preflight] }, ltr, [["@layer base", "*"]])).toEqual({
+			kind: "class",
+		});
 	});
 
 	it.each([
@@ -147,6 +150,12 @@ describe("which source owns the winning effect", () => {
 		["a container query", effect(["@container (min-width: 20rem)", ".card"], "padding", "12px")],
 		["a nested selector chain", effect([".page", ".card"], "padding", "12px")],
 	])("refuses %s it cannot order", (_name, held) => {
-		expect(() => propertySourceOwner(roots, [], [], { effects: [held] }, ltr)).toThrow();
+		expect(() => propertySourceOwner(roots, [], [], { effects: [held] }, ltr, [held.path])).toThrow();
+	});
+
+	it("leaves a project rule that does not apply to this element out of the cascade", () => {
+		expect(propertySourceOwner(roots, [], [], { effects: [authored] }, ltr, [[".elsewhere"]])).toEqual({
+			kind: "class",
+		});
 	});
 });

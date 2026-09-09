@@ -398,6 +398,7 @@ export function createSourceOwner(
 					resolved.environment,
 					observed.propertyNative,
 					target?.style?.members,
+					observed.propertyRules,
 				);
 			}
 			const found = lookupFrame(root, frame);
@@ -615,7 +616,14 @@ export function createSourceOwner(
 					publication.compilation.packet.bundledCss,
 				);
 				const members = target?.style?.members;
-				property = propertyReading(certificate, operation, resolved.environment, original.propertyNative, members);
+				property = propertyReading(
+					certificate,
+					operation,
+					resolved.environment,
+					original.propertyNative,
+					members,
+					original.propertyRules,
+				);
 				if (readings.length)
 					properties = Object.fromEntries(
 						readings.map((name) => [
@@ -626,6 +634,7 @@ export function createSourceOwner(
 								resolved.environment,
 								original.propertyNative,
 								members,
+								original.propertyRules,
 							),
 						]),
 					);
@@ -1270,7 +1279,14 @@ export function createSourceOwner(
 				const members = operation.scope === "" ? (target.style?.members ?? []) : [];
 				const owner =
 					operation.scope === ""
-						? propertySourceOwner(read.roots, read.effects, styleMemberEffects(members), certificate, environment)
+						? propertySourceOwner(
+								read.roots,
+								read.effects,
+								styleMemberEffects(members),
+								certificate,
+								environment,
+								held.read.original.propertyRules,
+							)
 						: ({ kind: "class" } as const);
 				const kept = {
 					before: [] as readonly string[],
@@ -1362,6 +1378,7 @@ export function createSourceOwner(
 						inline,
 						grouped,
 						environment,
+						held.read.original.propertyRules,
 					);
 					if (owner.kind !== "class")
 						throw new Error("this grouped change includes a property another source owns");

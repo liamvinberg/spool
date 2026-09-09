@@ -47,6 +47,12 @@ export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boo
 export interface SourceOccurrence {
 	/** Original native presentation, not part of source identity or write authority. */
 	propertyNative?: SourcePropertyNative | undefined;
+	/**
+	 * The rule chains in this document that declare this property and match this
+	 * element, its dynamic state aside. A project declaration is only a source
+	 * for this element where its own chain is one of these.
+	 */
+	propertyRules?: readonly (readonly string[])[] | undefined;
 	structure?: { parent: string; source?: SourceStructuralParent | undefined } | undefined;
 	absent?: boolean | undefined;
 	field?: string | undefined;

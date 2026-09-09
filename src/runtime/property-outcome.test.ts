@@ -3193,11 +3193,7 @@ it("reports a member an important rule overrides as mismatching, not as its own 
 	).toEqual([{ rendered: "mismatching", observed: "0.25" }]);
 });
 
-function declarationExpectation(
-	path: readonly string[],
-	value: string,
-	css: string,
-): SourcePropertyExpectation {
+function declarationExpectation(path: readonly string[], value: string, css: string): SourcePropertyExpectation {
 	return {
 		kind: "property",
 		property: "opacity",
@@ -3213,7 +3209,9 @@ function declarationExpectation(
 
 it("reads a project rule against its own selector, and says inactive where it does not match", async () => {
 	const css = ".card{opacity:0.5}";
-	const f = await fixture(`<style>${css}</style><section data-subject class="card"></section><section data-subject></section>`);
+	const f = await fixture(
+		`<style>${css}</style><section data-subject class="card"></section><section data-subject></section>`,
+	);
 	expect(await f.inspect(declarationExpectation([".card"], "0.5", css))).toEqual([
 		{ rendered: "verified", observed: "0.5" },
 		{ rendered: "inactive", reason: "the selected compiled condition is inactive for this use" },

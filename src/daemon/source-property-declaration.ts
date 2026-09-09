@@ -35,9 +35,27 @@ export function authoredCandidates(
 	certificate: { effects: readonly SourcePropertyEffect[] },
 	roots: ReadonlySet<string>,
 	environment: SourcePropertyEnvironment,
+	matched?: readonly (readonly string[])[],
 ): SourcePropertyEffect[] {
 	return certificate.effects.filter(
-		(effect) => admissible(effect) && propertyKeys(effect.property, environment).some((key) => roots.has(key)),
+		(effect) =>
+			admissible(effect) &&
+			propertyKeys(effect.property, environment).some((key) => roots.has(key)) &&
+			(matched === undefined || applies(effect, matched)),
+	);
+}
+
+/**
+ * True where this element's own document reports the rule as one of its own.
+ *
+ * A stylesheet declares things about every subject in the project. Only the
+ * chains the element actually matched are evidence about this element, and the
+ * client cannot name a chain the document did not report.
+ */
+export function applies(effect: SourcePropertyEffect, matched: readonly (readonly string[])[]): boolean {
+	const path = effect.path.map(collapse);
+	return matched.some(
+		(chain) => chain.length === path.length && chain.every((part, index) => collapse(part) === path[index]),
 	);
 }
 
@@ -170,6 +188,7 @@ export function propertySourceOwner(
 	styleEffects: readonly SourcePropertyEffect[],
 	certificate: { effects: readonly SourcePropertyEffect[] },
 	environment: SourcePropertyEnvironment,
+	matched: readonly (readonly string[])[] = [],
 ): PropertySource {
 	const covers = (effect: SourcePropertyEffect, root: string) =>
 		propertyKeys(effect.property, environment).includes(root);
@@ -177,11 +196,14 @@ export function propertySourceOwner(
 	for (const root of roots) {
 		for (const effect of certificate.effects) {
 			if (effect.owner !== null || !covers(effect, root) || admissible(effect)) continue;
+			if (!applies(effect, matched)) continue;
 			const layers = effect.path.filter((part) => part.startsWith("@layer ")).map((part) => part.slice(7).trim());
 			if (layers.length && layers.every((name) => COMPILER_LAYERS.includes(name.split(".")[0]!))) continue;
 			throw new Error("this property has a declaration whose cascade order is not established");
 		}
-		const authored = certificate.effects.filter((effect) => admissible(effect) && covers(effect, root));
+		const authored = certificate.effects.filter(
+			(effect) => admissible(effect) && covers(effect, root) && applies(effect, matched),
+		);
 		const tiers = [
 			classEffects.filter((effect) => effect.important && covers(effect, root)),
 			authored.filter((effect) => effect.important),

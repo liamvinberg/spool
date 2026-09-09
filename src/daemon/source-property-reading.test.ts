@@ -157,7 +157,13 @@ it("reports the scope's own written value apart from what the viewport is applyi
 	expect(at("")).toMatchObject({ tokens: ["opacity-75"], native: "0.75" });
 });
 
-async function authoredReading(literal: string, css: string, property: string, value: string) {
+async function authoredReading(
+	literal: string,
+	css: string,
+	property: string,
+	value: string,
+	matched: readonly (readonly string[])[] = [[".card"]],
+) {
 	const { root } = makeProject(makeTempDir());
 	writeDesignFile(root, "shared/tokens.css", `@theme {}\n${css}`);
 	const file = realpathSync(join(root, "design/shared/tokens.css"));
@@ -167,6 +173,8 @@ async function authoredReading(literal: string, css: string, property: string, v
 		{ kind: "property", property, scope: "" },
 		{ direction: "ltr", writingMode: "horizontal-tb" },
 		{ property, value },
+		undefined,
+		matched,
 	);
 }
 
@@ -177,6 +185,13 @@ it("reads the project's own declaration as the source, over the utility it outra
 		binding: { kind: "custom" },
 		authored: "12px",
 		native: "12px",
+	});
+});
+
+it("leaves a project rule this element does not match out of its own reading", async () => {
+	expect(await authoredReading("p-6", ".card { padding: 12px }", "padding", "24px", [[".elsewhere"]])).toMatchObject({
+		source: "class",
+		tokens: ["p-6"],
 	});
 });
 
