@@ -338,7 +338,7 @@ describe("the refusals a write meets before it saves", () => {
 		});
 	});
 
-	it("refuses a removal, which an authored declaration has no operation for", async () => {
+	it("gives a removal no declaration, which is what the write refuses on", async () => {
 		await expect(requestedDeclaration("color", { kind: "remove" }, async () => ({ effects: [] }))).resolves.toBe(
 			null,
 		);

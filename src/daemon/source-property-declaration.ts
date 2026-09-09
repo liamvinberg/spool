@@ -219,6 +219,37 @@ export async function requestedDeclaration(
 	return values[0]!;
 }
 
+/**
+ * A grouped change writes classes, so every selection in it must be the class's.
+ *
+ * Where a member or a project rule wins one of them, the class it wrote would
+ * never apply, so the whole change refuses here rather than saving a declaration
+ * nothing uses.
+ */
+export function guardGroupedSources(
+	selections: readonly { roots: Iterable<string> }[],
+	certificate: { effects: readonly SourcePropertyEffect[] },
+	inline: readonly SourcePropertyEffect[],
+	environment: SourcePropertyEnvironment,
+	matched: readonly MatchedRuleChain[] = [],
+): void {
+	for (const selection of selections) {
+		const roots = new Set(selection.roots);
+		const owner = propertySourceOwner(
+			roots,
+			certificate.effects.filter(
+				(effect) =>
+					effect.owner !== null && propertyKeys(effect.property, environment).some((key) => roots.has(key)),
+			),
+			inline,
+			certificate,
+			environment,
+			matched,
+		);
+		if (owner.kind !== "class") throw new Error("this grouped change includes a property another source owns");
+	}
+}
+
 /** The one stylesheet that carries this declaration, or a refusal naming why not. */
 export function declarationFile(effect: SourcePropertyEffect, inputs: Iterable<[string, { bytes: Buffer }]>): string {
 	const files = [...inputs].filter(([file, input]) => {

@@ -60,12 +60,13 @@ import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
 import {
 	declarationFile,
+	guardGroupedSources,
 	planDeclarationLiteral,
 	propertySourceOwner,
 	requestedDeclaration,
 } from "./source-property-declaration";
 import { externalPropertySignature, nativePropertyEffects } from "./source-property-dependencies";
-import { propertyKeys, readPropertyEffects } from "./source-property-effects";
+import { readPropertyEffects } from "./source-property-effects";
 import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
@@ -1379,33 +1380,19 @@ export function createSourceOwner(
 					environment,
 					held.compilation.packet.bundledCss,
 				);
-				// A grouped change writes classes. Where an inline member wins one of
-				// its selections, the class it wrote would never apply, so it refuses
-				// here rather than saving a declaration nothing uses.
-				const inline = target.style ? styleMemberEffects(target.style.members) : [];
 				const grouped = await compilePropertySource(
 					held.root,
 					held.compilation.inputs,
 					held.read.value,
 					held.compilation.packet.bundledCss,
 				);
-				for (const selection of plan.selections) {
-					const roots = new Set(selection.roots);
-					const owner = propertySourceOwner(
-						roots,
-						grouped.effects.filter(
-							(effect) =>
-								effect.owner !== null &&
-								propertyKeys(effect.property, environment).some((key) => roots.has(key)),
-						),
-						inline,
-						grouped,
-						environment,
-						held.read.original.propertyRules,
-					);
-					if (owner.kind !== "class")
-						throw new Error("this grouped change includes a property another source owns");
-				}
+				guardGroupedSources(
+					plan.selections,
+					grouped,
+					target.style ? styleMemberEffects(target.style.members) : [],
+					environment,
+					held.read.original.propertyRules,
+				);
 				return { plan, selections: plan.selections };
 			}
 			throw new Error("this source read does not authorize that property request");
