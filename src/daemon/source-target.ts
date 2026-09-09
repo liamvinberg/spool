@@ -82,6 +82,9 @@ export function potentialTextSource(
 	if (!original.provenance) return false;
 	try {
 		const selection = JSON.parse(original.provenance) as Selection;
+		// A missing host attribute has no value edge yet. Its authored host still
+		// makes it a candidate; full attribution below decides whether it is writable.
+		if (cell.field && original.field === cell.field && selection.source === cell.source) return true;
 		return [selection.values, ...selection.chain.flatMap((call) => [call.values, call.renderedValues])].some(
 			(value) =>
 				value &&
