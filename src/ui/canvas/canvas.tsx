@@ -2751,38 +2751,6 @@ export function ProjectCanvas({
 	}, [project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult]);
 
 	/**
-	 * The rail's legacy gated patch path (#256).
-	 *
-	 * Gated first, so a refusal lands on the element it is about rather than in
-	 * a field, and written as one patch so however many tokens a press moved it
-	 * is one ⌘Z to put them back.
-	 */
-	const writeOps = useCallback(
-		(frame: string, selector: string, ops: readonly HandOp[]) => {
-			if (ops.length === 0 || writing.current) return;
-			setRefused(null);
-			writing.current = true;
-			repick.current = { frame, selector };
-			void gatePatch(project, frame, ops).then((asked) => {
-				if (asked === undefined) {
-					writing.current = false;
-					repick.current = null;
-					setSaid({ kind: "failed", frame });
-					return;
-				}
-				if (!asked.ok) {
-					writing.current = false;
-					repick.current = null;
-					showRefusal(frame, selector, asked.refusal);
-					return;
-				}
-				writePatch(frame, asked.fingerprint, ops);
-			});
-		},
-		[project, showRefusal, writePatch],
-	);
-
-	/**
 	 * The drop half of the asset swap (#260): the frame is armed, never open.
 	 *
 	 * A file dragged onto an image lands inside that frame's own document, so
@@ -3141,6 +3109,10 @@ export function ProjectCanvas({
 			}
 			const before = railIntents.current.get(read);
 			const intent: SourceIntent | undefined = before ? { ...before, change } : undefined;
+			// the reload this save causes keeps its rung: the selector is still the
+			// same element, and dropping it would empty the surface the edit was
+			// made from between one keystroke and the next (#258)
+			if (intent) repick.current = { frame, selector: intent.selector };
 			const text = change.kind === "literal" ? change.text : "";
 			const operation = sourceDelivery.complete(frame, read.generation).then(async (original) => {
 				if (!original || !sameSourceOccurrence(original, read.original)) {
@@ -5841,7 +5813,6 @@ export function ProjectCanvas({
 							onGeometry: setFrameGeometry,
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
-							onWrite: writeOps,
 							group: async (frame, selector, value, signal) => {
 								const change: SourceChange = { kind: "properties", value };
 								const read = await beginRailText(

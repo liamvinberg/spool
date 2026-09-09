@@ -13,8 +13,7 @@ import { PropertySections, type View } from "./properties-sections";
 import type { PropertyControls, PropertyDescription } from "./property-controls";
 
 /** These surface tests verify displayed values and requested candidates.
- * Appearance changes carry typed source requests; planner/native tests prove their effects.
- * Layout rows retain their existing writer until their operation-specific migration.
+ * Every change carries a typed source request; planner/native tests prove their effects.
  */
 
 /** kaffe's theme: its own colours, sizes and radii, and one breakpoint of its own. */
@@ -63,22 +62,56 @@ it("keeps the approved four headers, with the border controls in their approved 
 	const rail = await mount("border-2 border-red-500 rounded-lg p-4 text-md");
 	const groups = [...rail.host.children];
 	const headed = (group: Element) => group.firstElementChild?.firstElementChild?.textContent ?? "";
-	expect(groups.map(headed).filter(Boolean)).toEqual([
-		"position",
-		"size",
-		"layout",
-		"Typography",
-		"Appearance",
-		"+ Add property",
-	]);
+	expect(groups.map(headed).filter(Boolean)).toEqual(["Layout", "Typography", "Appearance", "+ Add property"]);
+	// the approved Layout holds the sizing and position rows the rail used to
+	// head separately, and every one of them is still drawn
+	for (const property of ["display", "width", "height", "padding", "position"])
+		expect(groups[0]?.querySelector(`[data-properties-row="${property}"]`)).not.toBeNull();
+	expect(groups[0]?.querySelector('button[aria-label="width mode"]')).not.toBeNull();
 	const named = (name: string) => groups.find((group) => headed(group) === name);
 	// The approved frame draws an added border width with Layout's optional
 	// numbers, and gives its colour no slot of its own, so it reads under Appearance.
-	expect(named("layout")?.querySelector('[data-properties-row="border-width"]')).not.toBeNull();
+	expect(named("Layout")?.querySelector('[data-properties-row="border-width"]')).not.toBeNull();
 	expect(named("Appearance")?.querySelector('[data-properties-row="border-width"]')).toBeNull();
 	expect(named("Appearance")?.querySelector('[data-properties-row="border-color"]')).not.toBeNull();
 	expect(rail.host.querySelectorAll('[data-properties-row="border-width"]')).toHaveLength(1);
 	expect(rail.host.querySelectorAll('[data-properties-row="border-color"]')).toHaveLength(1);
+});
+
+it("offers the approved optional layout properties, and adds one through its source control", async () => {
+	const rail = await mount("flex");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+	await act(() => trigger?.click());
+	expect(optionNames(rail, "Add property")).toEqual([
+		"gap",
+		"min-height",
+		"max-width",
+		"margin-top",
+		"margin-right",
+		"margin-bottom",
+		"margin-left",
+		"letter-spacing",
+		"border-width",
+	]);
+	const option = document.querySelector<HTMLButtonElement>('[data-menu-option="gap"]');
+	await act(() => option?.click());
+	expect(rail.requests).toEqual([{ property: "gap", value: { kind: "custom", value: "0px" } }]);
+});
+
+it("adds a constraint at the box it already has, so nothing moves until it is edited", async () => {
+	const rail = await mount("flex");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+	await act(() => trigger?.click());
+	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="max-width"]')?.click());
+	expect(rail.requests).toEqual([{ property: "max-width", value: { kind: "custom", value: "120px" } }]);
+});
+
+it("leaves an optional property off the list once the element wears it", async () => {
+	const rail = await mount("flex gap-2 mt-4");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+	await act(() => trigger?.click());
+	expect(optionNames(rail, "Add property")).not.toContain("gap");
+	expect(optionNames(rail, "Add property")).not.toContain("margin-top");
 });
 
 it.each(["letter-spacing", "border-width"])(
@@ -95,7 +128,6 @@ it.each(["letter-spacing", "border-width"])(
 		expect(rail.requests).toEqual([
 			{ property, value: { kind: "custom", value: property === "border-width" ? "1px" : "0px" } },
 		]);
-		expect(rail.legacy).toEqual([]);
 	},
 );
 
@@ -177,11 +209,18 @@ it("reads the token in the box and what it measures beside it", async () => {
 it("steps by one scale unit on an arrow and by ten on shift", async () => {
 	const rail = await mount("p-4");
 
+	// Each arrow moves the draft and previews it; the gesture saves on Enter.
 	await step(rail, "padding", "ArrowUp", false);
-	expect(rail.wrote()).toEqual([{ token: "p-5" }]);
+	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["p-5"] } });
 
 	await step(rail, "padding", "ArrowDown", true);
-	expect(rail.wrote()).toEqual([{ token: "-p-6" }]);
+	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } });
+	expect(rail.requests).toEqual([]);
+
+	const field = fieldIn(rail, "padding");
+	if (!field) throw new Error("missing padding field");
+	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+	expect(rail.requests).toEqual([{ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } }]);
 });
 
 /* ---------- P7: the folds ---------- */
@@ -295,7 +334,6 @@ it("previews and completes an explicit custom color in the approved menu", async
 	expect(rail.previews).toEqual([{ property: "background-color", value: { kind: "custom", value: "#ff0044" } }]);
 	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
 	expect(rail.completions).toEqual([true]);
-	expect(rail.legacy).toEqual([]);
 	expect(shows(await mount("bg-[#ff0044]"), "background-color")).toBe("#ff0044");
 });
 
@@ -421,9 +459,11 @@ it("reads the base's value faint under a variant, and writes the variant's own",
 it("greys an inline element's size rows and says why, rather than hiding them", async () => {
 	const rail = await mount("", BASE, { tag: "span", className: "" });
 
-	expect(sectionReason(rail, "size")).toBe("inline, the text decides");
+	expect(sectionReason(rail, "Layout")).toBe("inline, the text decides");
 	expect(fieldIn(rail, "width")).toBeNull();
 	expect(rowNames(rail, "width")).toEqual(["width"]);
+	// the row keeps its own reason, so a refusal is read where the control is
+	expect(rowOf(rail, "width")?.firstElementChild?.getAttribute("title")).toBe("inline, the text decides");
 });
 
 it("greys every row on a literal no hand may write", async () => {
@@ -462,7 +502,6 @@ it.each(["opacity", "border-width", "font-variant-numeric", "text-align", "backg
 		}));
 		expect(rowOf(rail, property)?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
 		expect(rail.requests).toEqual([]);
-		expect(rail.legacy).toEqual([]);
 	},
 );
 
@@ -515,7 +554,6 @@ it("takes no request from a control whose source refuses the element", async () 
 	expect(fieldIn(rail, "opacity")).toBeNull();
 	expect(rowOf(rail, "opacity")?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
 	expect(rail.requests).toEqual([]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it("says why an optional property would be refused before it is added", async () => {
@@ -535,7 +573,6 @@ it("sends appearance values to source operations without falling through to the 
 		{ property: "border-width", value: { kind: "binding", tokens: ["border-[3.5px]"] } },
 		{ property: "color", value: { kind: "binding", tokens: ["text-raised"] } },
 	]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it("accumulates scrub previews from the original number without saving before release", async () => {
@@ -563,7 +600,8 @@ it("accumulates scrub previews from the original number without saving before re
 interface Rail {
 	host: HTMLElement;
 	requests: { property: string; value: SourcePropertyValue }[];
-	legacy: RowEdit[][];
+	/** every several-property gesture, as one saved group */
+	groups: { property: string; value: SourcePropertyValue }[][];
 	previews: { property: string; value: SourcePropertyValue }[];
 	completions: boolean[];
 	/** every property list the rail asked one description for */
@@ -597,7 +635,17 @@ async function mount(
 	});
 	let wrote: RowEdit[] = [];
 	const requests: Rail["requests"] = [];
-	const legacy: RowEdit[][] = [];
+	const groups: Rail["groups"] = [];
+	/** The edits one request comes to, which is what the source owner plans from. */
+	const edited = (property: string, value: SourcePropertyValue): RowEdit[] => {
+		const row = rowFor(property);
+		if (!row) throw new Error("unknown property request");
+		return value.kind === "binding"
+			? value.tokens.map((token) => ({ token: token.slice(scopeKey(scope).length) }))
+			: value.kind === "remove"
+				? editsFor(row, null, { scoped: scopedClass(className, scope), theme: THEME })
+				: [];
+	};
 	const previews: Rail["previews"] = [];
 	const completions: boolean[] = [];
 	const asked: (readonly string[])[] = [];
@@ -645,14 +693,12 @@ async function mount(
 					},
 					apply: (property, value) => {
 						requests.push({ property, value });
-						const row = rowFor(property);
-						if (!row) throw new Error("unknown property request");
-						wrote =
-							value.kind === "binding"
-								? value.tokens.map((token) => ({ token: token.slice(scopeKey(scope).length) }))
-								: value.kind === "remove"
-									? editsFor(row, null, { scoped: scopedClass(className, scope), theme: THEME })
-									: [];
+						wrote = edited(property, value);
+					},
+					applyFields: (changes) => {
+						groups.push(changes.map((change) => ({ ...change })));
+						for (const change of changes) requests.push({ ...change });
+						wrote = changes.flatMap((change) => edited(change.property, change.value));
 					},
 				},
 		scope,
@@ -663,10 +709,6 @@ async function mount(
 		box: { w: 120, h: 40 },
 		compiler: stubCompiler(),
 		fresh: () => false,
-		put: (edits) => {
-			legacy.push([...edits]);
-			wrote = [...edits];
-		},
 	};
 	await act(async () => {
 		root.render(createElement(PropertySections, { view }));
@@ -703,7 +745,7 @@ async function mount(
 		host,
 		reread,
 		requests,
-		legacy,
+		groups,
 		previews,
 		completions,
 		asked,
@@ -915,7 +957,6 @@ it("routes the numeric typography control through one exact custom source gestur
 	await type(rail, "font-size", "7.999px");
 	expect(rail.previews.at(-1)).toEqual({ property: "font-size", value: { kind: "custom", value: "7.999px" } });
 	expect(rail.completions).toEqual([true]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it.each(["opacity", "border-width"])("keeps repeated %s arrows as previews until completion", async (property) => {
@@ -988,7 +1029,6 @@ it("offers the approved start alignment through the typography menu and original
 	).toEqual(["start", "left", "center", "right"]);
 	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="start"]')?.click());
 	expect(rail.requests).toEqual([{ property: "text-align", value: { kind: "binding", tokens: ["text-start"] } }]);
-	expect(rail.legacy).toEqual([]);
 });
 
 it.each([false, true])("reads the authored start alignment in its selected scope (hover: %s)", async (hovered) => {
@@ -998,5 +1038,51 @@ it.each([false, true])("reads the authored start alignment in its selected scope
 	await act(() => trigger?.click());
 	const option = document.querySelector('[data-menu-option="start"]');
 	expect(option?.getAttribute("aria-selected")).toBe("true");
+	expect(rail.requests).toEqual([]);
+});
+
+/* ---------- the layout rows, on the same source path (#303) ---------- */
+
+it("sends layout values to source operations without falling through to the legacy class writer", async () => {
+	const rail = await mount("flex p-4 gap-2 w-40");
+	await type(rail, "padding", "6");
+	await type(rail, "gap", "3");
+	await type(rail, "width", "347px");
+	await pick(rail, "display", "grid");
+	expect(rail.requests).toEqual([
+		{ property: "padding", value: { kind: "binding", tokens: ["p-6"] } },
+		{ property: "gap", value: { kind: "binding", tokens: ["gap-3"] } },
+		{ property: "width", value: { kind: "binding", tokens: ["w-[347px]"] } },
+		{ property: "display", value: { kind: "binding", tokens: ["grid"] } },
+	]);
+});
+
+it("scrubs a layout number as one held gesture, and writes nothing when it is cancelled", async () => {
+	const rail = await mount("p-4");
+	const label = rowOf(rail, "padding")?.firstElementChild;
+	if (!label) throw new Error("missing padding label");
+	await act(async () =>
+		label.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 3, button: 0, clientX: 100, bubbles: true })),
+	);
+	for (const clientX of [104, 108])
+		await act(async () =>
+			document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 3, clientX, bubbles: true })),
+		);
+	expect(rail.previews).toEqual([
+		{ property: "padding", value: { kind: "binding", tokens: ["p-5"] } },
+		{ property: "padding", value: { kind: "binding", tokens: ["p-6"] } },
+	]);
+	expect(rail.requests).toEqual([]);
+	await act(async () => document.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 3, bubbles: true })));
+	expect(rail.completions).toEqual([false]);
+	expect(rail.requests).toEqual([]);
+});
+
+it("takes no layout request from a field left on the value it was already showing", async () => {
+	const rail = await mount("p-4");
+	const field = fieldIn(rail, "padding");
+	if (!field) throw new Error("missing padding field");
+	await put(field, "4");
+	await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
 	expect(rail.requests).toEqual([]);
 });

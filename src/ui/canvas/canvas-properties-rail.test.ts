@@ -372,8 +372,12 @@ it("reads a token the hands wrote in thread colour, and the author's own quietly
 
 	await until(() => fieldFor(host, "width") !== null);
 	await typeInto(fieldFor(host, "width"), "60");
+	await until(() => sourceCalls("commit").length === 1);
 	payLiteral = `${RUNGS[2]?.className ?? ""} w-60`;
-	await changed("home");
+	// the save landed without a verified running result, and the reload it offers
+	// is what puts the saved literal back on screen
+	await until(() => reloadButton(host) !== null);
+	await press("click", {}, reloadButton(host));
 	await frame.loaded();
 	await frame.answer(chain);
 	await until(() => splicedTokens(host).length > 0);
@@ -549,6 +553,15 @@ function chips(host: HTMLElement): string[] {
 }
 
 /** the tokens on the source line drawn as the hands' own rather than the file's */
+/** the source notice's own reload, offered once a save could not be verified */
+function reloadButton(host: HTMLElement): HTMLButtonElement | null {
+	return (
+		[...host.querySelectorAll<HTMLButtonElement>("button")].find(
+			(button) => button.textContent === "Reload app (resets state)",
+		) ?? null
+	);
+}
+
 function splicedTokens(host: HTMLElement): string[] {
 	const line = rail(host)?.querySelector("[data-properties-source]");
 	return [...(line?.querySelectorAll(".text-thread-strong") ?? [])].map((token) => (token.textContent ?? "").trim());
