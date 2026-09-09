@@ -1,10 +1,10 @@
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { LENGTHS } from "../properties/families";
 import { rowFor } from "../properties/rows";
 import type { SourcePropertyEnvironment } from "../source-property";
+import { testBrowser } from "../test-browser";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { appearanceProperties } from "./fixtures/property-appearance";
 import { readInput } from "./retained-compile";
@@ -96,8 +96,7 @@ it.each([
 });
 
 it("keeps native independent sides and axes when a component overrides its broader binding", async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage();
 	const f = fixture();
 	for (const row of [

@@ -1,9 +1,7 @@
 import { createServer } from "node:http";
-import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { assembleFrameDocument } from "./document";
 import { RENDER_HOST } from "./security";
 
@@ -104,8 +102,7 @@ async function serveFrame(): Promise<Served> {
 }
 
 it("answers a point with an ancestry, and kinship with the rung next to it", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const served = await serveFrame();
 	onTestFinished(() => served.close());
 
@@ -174,20 +171,13 @@ const CART = `export default function Frame() {
 it("walks the ladder from the keyboard and goes inside on a double-click, out on a real canvas", {
 	timeout: 180_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const uiDir = join(makeTempDir(), "ui");
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 
 	writeFrame(project.root, "cart", CART);
 	writeDesignFile(project.root, "frames/cart/frame.json", '{ "x": 0, "y": 0, "w": 800, "h": 700 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
-
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);

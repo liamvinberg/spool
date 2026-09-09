@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { onTestFinished } from "vitest";
+import { inject, onTestFinished } from "vitest";
 import { createClaudeAdapter } from "./daemon/agent-claude";
 import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
 import type { AgentSpawn } from "./daemon/agent-spawn";
@@ -14,6 +14,13 @@ import { createSettingsStore } from "./daemon/settings";
 import { initProject } from "./init";
 import { lookupProjectByName } from "./registry";
 import { canvasJson } from "./templates";
+
+declare module "vitest" {
+	export interface ProvidedContext {
+		/** One scratch directory per vitest run, provided by test-global-setup.ts. */
+		spoolTestRunDir: string;
+	}
+}
 
 /** A real 1×1 PNG — the cover store only accepts bytes it can identify. */
 export const COVER_PNG = Uint8Array.from(
@@ -29,6 +36,44 @@ export const COVER_PNG = Uint8Array.from(
  * Vitest's default 10s. Errors still propagate; no close is retried. */
 export function closeAfterTest(resource: { close(): Promise<void> }): void {
 	onTestFinished(() => resource.close(), 35_000);
+}
+
+/**
+ * The canvas bundle every browser test serves, built once per vitest run.
+ *
+ * Each case used to build it into its own temp directory: the same source and
+ * the same vite config produce the same bytes, and the daemon only reads the
+ * directory, so one build per run is the identical bundle without the CPU each
+ * build cost beside a running Chromium. The first worker to need it builds
+ * under a lock; the rest wait for the ready marker.
+ */
+export async function builtUi(): Promise<string> {
+	const dir = join(inject("spoolTestRunDir"), "ui");
+	const ready = `${dir}.ready`;
+	if (existsSync(ready)) return dir;
+	let builder = false;
+	try {
+		mkdirSync(`${dir}.building`);
+		builder = true;
+	} catch {
+		// another worker got there first
+	}
+	if (builder) {
+		const { build } = await import("vite");
+		await build({
+			configFile: join(process.cwd(), "vite.config.ts"),
+			logLevel: "silent",
+			build: { outDir: dir, emptyOutDir: true },
+		});
+		writeFileSync(ready, "");
+		return dir;
+	}
+	const deadline = Date.now() + 120_000;
+	while (!existsSync(ready)) {
+		if (Date.now() > deadline) throw new Error("the shared ui build never became ready");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return dir;
 }
 
 export function makeTempDir(): string {

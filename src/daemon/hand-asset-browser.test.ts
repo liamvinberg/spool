@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
-import { chromium } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
+import { testBrowser } from "../test-browser";
 import { assembleFrameDocument } from "./document";
 import { RENDER_HOST } from "./security";
 
@@ -94,8 +94,7 @@ async function serveFrame(): Promise<Served> {
 }
 
 it("catches a drop only on the element the canvas armed", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const served = await serveFrame();
 	onTestFinished(() => served.close());
 

@@ -1,8 +1,7 @@
 import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { fixtureAgentExecutor, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, fixtureAgentExecutor, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * What the canvas draws while the agent works a frame, end to end (#214).
@@ -39,9 +38,8 @@ const OLD = '<p id="hours">open until six</p>';
 const NEW = '<p id="hours">closed sundays</p>';
 
 it("marks the block a write changed, on the frame showing it", { timeout: 180_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const uiDir = join(makeTempDir(), "ui");
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
 
 	let root = "";
 	const id = "toolu_hand_1";
@@ -121,12 +119,6 @@ it("marks the block a write changed, on the frame showing it", { timeout: 180_00
 	// photograph, and nothing located can be drawn on one
 	writeDesignFile(project.root, "frames/home/frame.json", '{ "x": 0, "y": 0, "w": 800, "h": 600 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
-
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
