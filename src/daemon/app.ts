@@ -18,6 +18,7 @@ import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
+import { MATCHED_RULE_LIMIT } from "../source-edit";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
@@ -2242,11 +2243,13 @@ export function createDaemonApp({
 					z.object({ kind: z.literal("properties"), target: groupTarget }).strict(),
 					z.object({ kind: z.literal("image") }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
+					z.object({ kind: z.literal("reorder"), steps: z.number().int().min(-1000).max(1000) }).strict(),
 				]);
 				const change = z.discriminatedUnion("kind", [
 					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
 					z.object({ kind: z.literal("image"), path: z.string().max(10_000) }).strict(),
 					z.object({ kind: z.literal("delete") }).strict(),
+					z.object({ kind: z.literal("reorder") }).strict(),
 					z.object({ kind: z.literal("property"), value: propertyValue }).strict(),
 					z.object({ kind: z.literal("properties"), value: groupValue }).strict(),
 				]);
@@ -2274,6 +2277,18 @@ export function createDaemonApp({
 						propertyNative: z
 							.object({ property: z.string().max(200), value: z.string().max(100_000) })
 							.strict()
+							.optional(),
+						// The rule chains this element's own document matched. A chain is
+						// evidence, not authority: the compiler still has to carry it.
+						propertyRules: z
+							.array(
+								z
+									.object({ path: z.array(z.string().max(2000)).max(20).readonly(), active: z.boolean() })
+									.strict()
+									.readonly(),
+							)
+							.max(MATCHED_RULE_LIMIT)
+							.readonly()
 							.optional(),
 					})
 					.strict();

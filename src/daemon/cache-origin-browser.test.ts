@@ -118,7 +118,6 @@ async function refuse(f: Fixture, expected = refusal) {
 			{ kind: "attribute", attribute: "title" },
 			{ kind: "property", property: "padding-top", scope: "" },
 			{ kind: "delete" },
-			{ kind: "reorder" },
 		] as const)
 			expect(() =>
 				sourceRead(new Sources(f.project.root, f.compilation), { ...observation, generation: "1" }, operation),

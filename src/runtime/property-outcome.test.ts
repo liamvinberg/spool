@@ -3151,3 +3151,111 @@ it("ignores a sibling declaration that shares a theme variable, and refuses a co
 		)[0],
 	).toEqual({ rendered: "unverified", reason: "this box spacing has a competing declaration requiring proof" });
 });
+
+/** The element's own member and the project's own rule, read as native outcomes (#304). */
+function inlineExpectation(value: string, css = ""): SourcePropertyExpectation {
+	return {
+		kind: "property",
+		property: "opacity",
+		scope: "",
+		source: "style",
+		className: "",
+		absent: false,
+		scopePaths: [[]],
+		effects: [{ owner: null, path: [], property: "opacity", value, important: false }],
+		css,
+	};
+}
+
+it("reads the element's own member as verified, and a stale one as mismatching", async () => {
+	const f = await fixture(
+		'<section data-subject style="opacity: 0.5"></section><section data-subject style="opacity: 0.75"></section>',
+	);
+	expect(await f.inspect(inlineExpectation("0.5"))).toEqual([
+		{ rendered: "verified", observed: "0.5" },
+		{ rendered: "mismatching", observed: "0.75" },
+	]);
+});
+
+it("reports a member an important rule overrides as constrained, naming the rule", async () => {
+	const f = await fixture(
+		'<style>.hard{opacity:0.25 !important}</style><section data-subject class="hard" style="opacity: 0.5"></section>',
+	);
+	expect(
+		await f.inspect({
+			...inlineExpectation("0.5", ".hard{opacity:0.25 !important}"),
+			className: "hard",
+			effects: [
+				{ owner: null, path: [], property: "opacity", value: "0.5", important: false },
+				{ owner: null, path: [".hard"], property: "opacity", value: "0.25", important: true },
+			],
+		}),
+	).toEqual([
+		{
+			rendered: "constrained",
+			reason: "an important opacity declaration decides this property, not the element's own member",
+		},
+	]);
+});
+
+function declarationExpectation(path: readonly string[], value: string, css: string): SourcePropertyExpectation {
+	return {
+		kind: "property",
+		property: "opacity",
+		scope: "",
+		source: "declaration",
+		className: "",
+		absent: false,
+		scopePaths: [path],
+		effects: [{ owner: null, path, property: "opacity", value, important: false }],
+		css,
+	};
+}
+
+it("reads a project rule against its own selector, and says inactive where it does not match", async () => {
+	const css = ".card{opacity:0.5}";
+	const f = await fixture(
+		`<style>${css}</style><section data-subject class="card"></section><section data-subject></section>`,
+	);
+	expect(await f.inspect(declarationExpectation([".card"], "0.5", css))).toEqual([
+		{ rendered: "verified", observed: "0.5" },
+		{ rendered: "inactive", reason: "the selected compiled condition is inactive for this use" },
+	]);
+});
+
+it("says inactive for a conditional project rule the viewport does not satisfy, and verifies it when it does", async () => {
+	const css = "@media (min-width: 5000px){.card{opacity:0.5}}";
+	const f = await fixture(`<style>${css}</style><section data-subject class="card"></section>`);
+	const expectation = declarationExpectation(["@media (min-width: 5000px)", ".card"], "0.5", css);
+	expect(await f.inspect(expectation)).toEqual([
+		{ rendered: "inactive", reason: "the selected compiled condition is inactive for this use" },
+	]);
+	await f.page.setViewportSize({ width: 5200, height: 800 });
+	expect(await f.inspect(expectation)).toEqual([{ rendered: "verified", observed: "0.5" }]);
+});
+
+it("reports a shorthand whose removal the frame did not take, rather than reapplying it", async () => {
+	// the retained counterexample: source has gone back to the shorthand alone,
+	// and the element still carries the longhand the removed member left behind
+	const f = await fixture('<section data-subject style="padding: 40px; padding-left: 12px"></section>');
+	expect(
+		await f.inspect({
+			...inlineExpectation("40px"),
+			property: "padding",
+			effects: [{ owner: null, path: [], property: "padding", value: "40px", important: false }],
+		}),
+	).toEqual([{ rendered: "mismatching", observed: "40px 40px 40px 12px" }]);
+});
+
+it("reports a member the frame has no declaration for at all, which is what a new one is", async () => {
+	// a member added by a save changes the module's own code, which delivery does
+	// not carry: the source has it and the running use does not
+	const f = await fixture('<section data-subject style="padding: 40px"></section>');
+	expect(
+		await f.inspect({
+			...inlineExpectation("12px"),
+			property: "padding-left",
+			effects: [{ owner: null, path: [], property: "padding-left", value: "12px", important: false }],
+		}),
+	).toEqual([{ rendered: "mismatching", observed: "40px" }]);
+});

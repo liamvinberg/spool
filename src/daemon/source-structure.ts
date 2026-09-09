@@ -2,7 +2,7 @@ import type { JSXElement, Node } from "@babel/types";
 import type { SourceStructuralChild } from "../source-structure";
 import { walkNodes } from "./jsx-walk";
 import { literal, type Selection, type Sources, StructuralShapeRefusal, sourceRead } from "./source-origins";
-import { significantStructuralChildren, structuralKey } from "./source-structure-syntax";
+import { StructuralIdentityRefusal, significantStructuralChildren, structuralKey } from "./source-structure-syntax";
 
 function range(node: Node) {
 	if (node.start == null || node.end == null) throw new Error("missing authored range");
@@ -15,7 +15,7 @@ function body(fn: ReturnType<Sources["valueCallee"]>["fn"]) {
 }
 function key(node: Node): string {
 	const result = structuralKey(node);
-	if (!result.ok) throw new Error(result.reason);
+	if (!result.ok) throw new StructuralIdentityRefusal(result.reason);
 	return result.key;
 }
 function retainedOwner(pick: Selection): void {
@@ -275,17 +275,22 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 	)
 		throw new Error("no complete authored structural parent");
 	// Removing an unkeyed member can transfer positional state just like a swap.
+	let members: { key: string; start: number; end: number }[] | undefined;
 	if (replacement === "" && (parent.type === "JSXElement" || parent.type === "JSXFragment")) {
 		const siblings = significantStructuralChildren(parent);
 		if (siblings.length > 1) {
 			const keys = siblings.map(key);
-			if (new Set(keys).size !== keys.length) throw new Error("duplicate sibling keys");
+			// two members sharing one key have no identity between them either
+			if (new Set(keys).size !== keys.length) throw new StructuralIdentityRefusal("duplicate sibling keys");
+			members = siblings.map((child, index) => ({ key: keys[index]!, ...range(child) }));
 		}
 	}
 	return {
+		kind: "delete" as const,
 		file: selected.unit.file,
 		source: selected.source,
 		role,
+		...(members ? { members } : {}),
 		...(fallbackEffect ? { fallback: fallbackEffect } : {}),
 		selected: range(node),
 		parent: range(parent),

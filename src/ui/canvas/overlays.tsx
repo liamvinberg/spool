@@ -1,7 +1,9 @@
 import type { Camera, ProjectedFrame } from "../api";
+import { cn } from "../cn";
 import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
+import type { GapAxis, GapHandles } from "./hand-gap";
 import { drawnHandles, type Edge, type LiveHandles, type Sign } from "./hand-resize";
 import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
@@ -107,6 +109,8 @@ export interface ElementHandles {
 	says: string | null;
 	/** the readout sits above the ring for a turn and below it for a size */
 	turning: boolean;
+	/** the gaps this container's layout identifies, in frame-local pixels (#306) */
+	gaps: GapHandles;
 }
 
 /** Figma's own rotate cursor, drawn rather than fetched: nothing loads over CSP. */
@@ -393,6 +397,25 @@ export function SelectionOverlay({
 					const ring = { x: box.x - 2, y: box.y - 2, w: box.w + 4, h: box.h + 4 };
 					return <ElementHandleSet box={box} ring={ring} handles={handles} />;
 				})()}
+
+			{handles !== null &&
+				handles.gaps.axis !== null &&
+				handles.gaps.bands.map((band, index) => {
+					const box = elementBox(handles.frame, band);
+					const axis = handles.gaps.axis;
+					if (box === undefined || axis === null) return null;
+					return (
+						<GapBandTarget
+							// biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity, naming one adjacent pair for the whole of one drag
+							key={`gap-${index}`}
+							index={index}
+							box={box}
+							axis={axis}
+							held={handles.gaps.held === index}
+							says={handles.gaps.held === index ? handles.gaps.says : null}
+						/>
+					);
+				})}
 
 			{previewShown !== null &&
 				(() => {
@@ -733,4 +756,64 @@ function ElementOutline({
 export function sourcePathOf(picked: PickedSelection, page: string): string {
 	const stamp = parseStampRef(picked.source);
 	return stamp === undefined ? frameSourcePath(picked.frame, page) : `design/${stamp.rel}`;
+}
+
+/**
+ * One gap, as something to grab (#306).
+ *
+ * A band over the space itself rather than a knob beside it: the thing you
+ * point at is the thing that moves. It is a button so the keyboard reaches it
+ * too, since Enter opens the same exact value a click does, and it carries its
+ * reading while a drag is live, the way the ring's readout does.
+ */
+function GapBandTarget({
+	index,
+	box,
+	axis,
+	held,
+	says,
+}: {
+	index: number;
+	box: Box;
+	axis: GapAxis;
+	held: boolean;
+	says: string | null;
+}) {
+	const across = axis === "column-gap";
+	return (
+		<button
+			type="button"
+			data-element-gap={index}
+			aria-label={`Edit ${across ? "horizontal" : "vertical"} gap`}
+			className={cn(
+				"group pointer-events-auto absolute touch-none outline-none",
+				"hover:bg-thread/10 focus-visible:bg-thread/10",
+				held && "bg-thread/10",
+			)}
+			style={{
+				left: box.x,
+				top: box.y,
+				width: Math.max(box.w, 1),
+				height: Math.max(box.h, 1),
+				cursor: across ? "ew-resize" : "ns-resize",
+			}}
+		>
+			<span
+				className={cn(
+					"-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute top-1/2 left-1/2 rounded-[2px] bg-thread opacity-0",
+					"group-hover:opacity-100 group-focus-visible:opacity-100",
+					across ? "h-[14px] w-[3px]" : "h-[3px] w-[14px]",
+					held && "opacity-100",
+				)}
+			/>
+			{says === null ? null : (
+				<span
+					data-element-gap-readout=""
+					className="-translate-x-1/2 -translate-y-1/2 pointer-events-none absolute top-1/2 left-1/2 whitespace-nowrap rounded-xs bg-thread-strong px-[5px] py-[3px] text-on-thread type-detail"
+				>
+					{says}
+				</span>
+			)}
+		</button>
+	);
 }

@@ -3,7 +3,7 @@ import type { SourceOperation } from "../source-edit";
 import type { SourcePropertyEnvironment, SourcePropertyValue } from "../source-property";
 import { anatomyOf, splitClass } from "./class-write";
 import type { SourceInput } from "./retained-compile";
-import { compilePropertySource } from "./source-property-compile";
+import { compilePropertySource, type PropertyCertificate } from "./source-property-compile";
 import {
 	changedPropertyKeys,
 	externalPropertySignature,
@@ -22,6 +22,7 @@ export async function planPropertyValue(
 	requested: SourcePropertyValue,
 	environment: SourcePropertyEnvironment,
 	bundledCss = "",
+	compiled?: PropertyCertificate,
 ) {
 	const row = rowFor(operation.property);
 	if (!row || row.primitive === "read") throw new Error("this property has no supported control");
@@ -43,7 +44,7 @@ export async function planPropertyValue(
 		if ((parts.variants.length ? `${parts.variants.join(":")}:` : "") !== operation.scope)
 			throw new Error("the chosen binding belongs to another scope");
 	}
-	const original = await compilePropertySource(root, inputs, literal, bundledCss);
+	const original = compiled ?? (await compilePropertySource(root, inputs, literal, bundledCss));
 	const read = readPropertyEffects(original, operation.property, operation.scope, environment);
 	const important = read.effects.some((effect) => effect.important);
 	const owners = read.owners.filter((owner) =>

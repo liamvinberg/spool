@@ -20,7 +20,9 @@ export type SourceOperation =
 	| { kind: "property"; property: string; scope: string }
 	| { kind: "properties"; target: SourcePropertyGroupTarget }
 	| { kind: "image" }
-	| { kind: "delete" };
+	| { kind: "delete" }
+	/** Move one authored sibling; negative steps move it earlier among its siblings. */
+	| { kind: "reorder"; steps: number };
 
 export function isPropertyOperation(
 	operation: SourceOperation,
@@ -34,19 +36,37 @@ export type SourceChange =
 	| { kind: "property"; value: SourcePropertyValue }
 	| { kind: "properties"; value: SourcePropertyGroupValue }
 	| { kind: "image"; path: string }
-	| { kind: "delete" };
+	| { kind: "delete" }
+	| { kind: "reorder" };
 
 export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boolean {
 	if (a.kind === "literal") return b.kind === "literal" && a.field === b.field;
 	if (a.kind === "property") return b.kind === "property" && a.property === b.property && a.scope === b.scope;
 	if (a.kind === "properties") return b.kind === "properties" && samePropertyGroupTarget(a.target, b.target);
+	if (a.kind === "reorder") return b.kind === "reorder" && a.steps === b.steps;
 	return a.kind === b.kind;
 }
+
+/** One rule chain a use matched, and whether its own condition holds right now. */
+export interface MatchedRuleChain {
+	path: readonly string[];
+	active: boolean;
+}
+
+/** The most matched chains one occurrence reports; a document with more reports none of the rest. */
+export const MATCHED_RULE_LIMIT = 200;
 
 /** Transient source authority shared by canvas input, frame delivery and history. */
 export interface SourceOccurrence {
 	/** Original native presentation, not part of source identity or write authority. */
 	propertyNative?: SourcePropertyNative | undefined;
+	/**
+	 * The rule chains in this document that declare something and match this
+	 * element, its dynamic state aside, each with whether it is applying right
+	 * now. A project declaration is only a source for this element where its own
+	 * chain is one of these, and only owns an unconditional row while it applies.
+	 */
+	propertyRules?: readonly MatchedRuleChain[] | undefined;
 	structure?: { parent: string; source?: SourceStructuralParent | undefined } | undefined;
 	absent?: boolean | undefined;
 	field?: string | undefined;

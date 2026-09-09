@@ -19,7 +19,12 @@ import {
 	type UseOutcome,
 } from "../source-edit";
 import type { SourceImagePut, SourceImageStaged } from "../source-image";
-import type { SourcePropertyEnvironment, SourcePropertyPreview, SourcePropertyReading } from "../source-property";
+import type {
+	SourcePropertyEffect,
+	SourcePropertyEnvironment,
+	SourcePropertyPreview,
+	SourcePropertyReading,
+} from "../source-property";
 import { propertySamplePlaceholder, type SourcePropertyValue } from "../source-property";
 import {
 	propertyGroupTarget,
@@ -54,6 +59,15 @@ import { createSourceJournal } from "./source-journal";
 import { type Selection, Sources, type Target } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
 import { compilePropertySource, inspectPropertyCss } from "./source-property-compile";
+import {
+	declarationFile,
+	guardGroupedSources,
+	planDeclarationLiteral,
+	propertySourceOwner,
+	requestedDeclaration,
+} from "./source-property-declaration";
+import { externalPropertySignature, nativePropertyEffects } from "./source-property-dependencies";
+import { readPropertyEffects } from "./source-property-effects";
 import { planPropertyGroup } from "./source-property-group";
 import { guardPropertyEffects, propertyReadKeys } from "./source-property-guard";
 import { planPropertyLiteral } from "./source-property-literal";
@@ -62,24 +76,72 @@ import { propertyPreviewDeclarations } from "./source-property-preview";
 import { propertyReading } from "./source-property-reading";
 import { propertyScopePaths } from "./source-property-scope";
 import { type PropertyContext, propertyState } from "./source-property-state";
+import {
+	planStyleLiteral,
+	planStyleMembers,
+	type StyleMember,
+	styleMemberEffects,
+	styleMemberKey,
+	styleMemberProperty,
+} from "./source-property-style";
 import { resolvePropertySource } from "./source-property-target";
 import { retryPropertySource, retryTextSource } from "./source-retry";
 import { readStructuralAncestry } from "./source-structure";
+import { resolveSourceReorder, type SourceReorderTarget } from "./source-structure-reorder";
 import {
 	certifyStructuralChange,
-	describeDeleteTarget,
+	describeStructuralTarget,
 	potentialDeleteSource,
 	resolveSourceDelete,
 	type SourceDeleteTarget,
 } from "./source-structure-target";
+
 import { sourceTarget } from "./source-syntax";
 import { potentialTextSource, resolveTextSource } from "./source-target";
+
+/** One structural unit's own bounded plan: a removal, or a move among its siblings. */
+type StructuralTarget = SourceDeleteTarget | SourceReorderTarget;
+
+/** The bytes a structural operation replaces, in its own captured source. */
+function structuralSpans(target: StructuralTarget): SpanPatch[] {
+	return target.kind === "reorder" ? target.patches : [{ ...target.selected, text: target.replacement }];
+}
+
+/** The plan an original structural read authorizes, for this operation and no other. */
+function resolveStructuralTarget(
+	root: string,
+	compilation: RetainedCompilation,
+	original: SourceOccurrence,
+	generation: number,
+	operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>,
+): StructuralTarget {
+	return operation.kind === "delete"
+		? resolveSourceDelete(root, compilation, original, generation)
+		: resolveSourceReorder(root, compilation, original, generation, operation.steps);
+}
+
+/** The operation a structural read was opened for, and no other. */
+function structuralOperation(read: SourceRead): Extract<SourceOperation, { kind: "delete" | "reorder" }> {
+	const operation = read.operation;
+	if (operation.kind !== "delete" && operation.kind !== "reorder")
+		throw new Error("this structural read does not authorize that operation");
+	return operation;
+}
 
 interface PropertyProof {
 	selections?: SourcePropertyGroupExpectation["selections"];
 	environment: SourcePropertyEnvironment;
 	roots: ReadonlySet<string>;
 	scopePaths: Extract<SourcePublication["expected"], { kind: "property" }>["scopePaths"];
+	/** The source this proof writes, and what it needs to write it. */
+	written?:
+		| {
+				kind: "style";
+				address: NonNullable<Target["style"]>["address"];
+				members: readonly StyleMember[];
+				after: readonly StyleMember[];
+		  }
+		| { kind: "declaration"; file: string; effect: SourcePropertyEffect; value: string };
 }
 interface StructuralParent {
 	frame: string;
@@ -92,7 +154,7 @@ interface OriginalRead {
 	image?: StagedImage;
 	structuralParents?: StructuralParent[];
 	retryFrom?: RetainedCompilation;
-	structure?: SourceDeleteTarget;
+	structure?: StructuralTarget;
 	sourceOnly?: boolean;
 	coverage: number;
 	observer: string;
@@ -103,6 +165,8 @@ interface OriginalRead {
 	read: SourceRead;
 	compilation: RetainedCompilation;
 	file: string;
+	/** The file this operation writes, where that is not the executable source. */
+	written?: string;
 }
 interface Receipt {
 	property?: PropertyProof;
@@ -111,7 +175,7 @@ interface Receipt {
 	structuralParents?: StructuralParent[];
 	purpose: SourceRead["operation"];
 	structuralRead?: SourceRead;
-	structure?: SourceDeleteTarget;
+	structure?: StructuralTarget;
 	expected: SourcePublication["expected"];
 	required: RetainedCompilation;
 	cell: string;
@@ -121,6 +185,8 @@ interface Receipt {
 	root: string;
 	frame: string;
 	file: string;
+	/** The file the operation wrote, where that is not the executable source. */
+	written?: string;
 	compilation: RetainedCompilation;
 	inverse: readonly SpanPatch[];
 	original: SourceOccurrence;
@@ -330,10 +396,10 @@ export function createSourceOwner(
 				throw new Error("source observation changed during the original read");
 			valid(root, compilation);
 
-			if (operation.kind === "delete") {
-				const structure = resolveSourceDelete(root, compilation, original, generation);
+			if (operation.kind === "delete" || operation.kind === "reorder") {
+				const structure = resolveStructuralTarget(root, compilation, original, generation, operation);
 				const read: SourceRead = {
-					...describeDeleteTarget(original, structure),
+					...describeStructuralTarget(original, structure, operation),
 					handle: randomUUID(),
 					owner,
 					generation,
@@ -386,7 +452,7 @@ export function createSourceOwner(
 					await compilePropertySource(root, compilation.inputs, cell.value, compilation.packet.bundledCss),
 					operation,
 					resolved.environment,
-					observed.propertyNative,
+					{ native: observed.propertyNative, style: target?.style?.members, matched: observed.propertyRules },
 				);
 			}
 			const found = lookupFrame(root, frame);
@@ -562,9 +628,14 @@ export function createSourceOwner(
 			if (!publication || publication.root !== root || publication.frame !== frame)
 				throw new Error("the source owner is no longer available");
 			valid(root, publication.compilation);
-			if (operation.kind === "delete") {
-				const structure = resolveSourceDelete(root, publication.compilation, original, 0);
-				const read: SourceRead = { ...describeDeleteTarget(original, structure), handle: "", owner, generation: 0 };
+			if (operation.kind === "delete" || operation.kind === "reorder") {
+				const structure = resolveStructuralTarget(root, publication.compilation, original, 0, operation);
+				const read: SourceRead = {
+					...describeStructuralTarget(original, structure, operation),
+					handle: "",
+					owner,
+					generation: 0,
+				};
 				const found = await discover(
 					root,
 					{
@@ -603,17 +674,18 @@ export function createSourceOwner(
 					cell.value,
 					publication.compilation.packet.bundledCss,
 				);
-				property = propertyReading(certificate, operation, resolved.environment, original.propertyNative);
+				const members = target?.style?.members;
+				const context = {
+					native: original.propertyNative,
+					style: members,
+					matched: original.propertyRules,
+				};
+				property = propertyReading(certificate, operation, resolved.environment, context);
 				if (readings.length)
 					properties = Object.fromEntries(
 						readings.map((name) => [
 							name,
-							propertyReading(
-								certificate,
-								{ ...operation, property: name },
-								resolved.environment,
-								original.propertyNative,
-							),
+							propertyReading(certificate, { ...operation, property: name }, resolved.environment, context),
 						]),
 					);
 			}
@@ -753,7 +825,8 @@ export function createSourceOwner(
 
 	function structuralUses(
 		root: string,
-		target: SourceDeleteTarget,
+		target: StructuralTarget,
+		operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>,
 		compilation: RetainedCompilation,
 		generation: number,
 		inventories: SourceInventory[],
@@ -778,7 +851,13 @@ export function createSourceOwner(
 				try {
 					if (!current) throw new Error("the candidate belongs to another publication");
 					valid(root, publication.compilation);
-					const candidate = resolveSourceDelete(root, publication.compilation, use.original, generation);
+					const candidate = resolveStructuralTarget(
+						root,
+						publication.compilation,
+						use.original,
+						generation,
+						operation,
+					);
 					if (candidate.file !== target.file || candidate.site !== target.site) continue;
 					const candidateInput = publication.compilation.inputs.get(candidate.file);
 					if (!candidateInput) throw new Error("the structural use is outside its original compiler input");
@@ -849,7 +928,14 @@ export function createSourceOwner(
 			valid(root, held.compilation);
 			const cell = held.read.cell ?? held.read.original.cell;
 			const { uses, unverified, unknown } = held.structure
-				? structuralUses(root, held.structure, held.compilation, held.read.generation, inventories)
+				? structuralUses(
+						root,
+						held.structure,
+						structuralOperation(held.read),
+						held.compilation,
+						held.read.generation,
+						inventories,
+					)
 				: observedUses(root, cell, held.read.generation, inventories, "read", held.read.operation);
 			const mounted = new Set(inventories.map((inventory) => inventory.frame));
 			const dependent = await dependencyFrames(root, held.file);
@@ -903,8 +989,11 @@ export function createSourceOwner(
 		}
 		if (held.coverage !== (coverage.get(held.root) ?? 0))
 			throw new Error("source observation was lost before saving");
-		const originalInput = held.compilation.inputs.get(held.file);
-		const input = originalInput ? journal.current(held.file, originalInput) : undefined;
+		// The file an operation writes is its executable source, except where an
+		// authored stylesheet is the source that owns the property.
+		const target = held.written ?? held.file;
+		const originalInput = held.compilation.inputs.get(target);
+		const input = originalInput ? journal.current(target, originalInput) : undefined;
 		if (!input) throw new Error("the original compiler input is missing");
 		const before = input.bytes.toString("utf8");
 		let imageSnapshot: RetainedCompilation | undefined;
@@ -917,13 +1006,13 @@ export function createSourceOwner(
 						held.root,
 						held.frame,
 						current,
-						held.file,
+						target,
 						next,
 						held.imageRestore,
 						held.sourceOnly,
 					)
 				: held.image
-					? await compileImageChange(compiler, held.root, held.frame, current, held.file, next, held.image)
+					? await compileImageChange(compiler, held.root, held.frame, current, target, next, held.image)
 					: undefined;
 			if (!imageSnapshot) throw new Error("the original image staging evidence is missing");
 			const key = held.read.cell ?? held.read.original.cell;
@@ -944,9 +1033,9 @@ export function createSourceOwner(
 				);
 				const current = { ...prior.compilation, inputs };
 				const prospective = held.imageRestore
-					? await compileImageInverse(compiler, held.root, use.frame, current, held.file, next, held.imageRestore)
+					? await compileImageInverse(compiler, held.root, use.frame, current, target, next, held.imageRestore)
 					: held.image
-						? await compileImageChange(compiler, held.root, use.frame, current, held.file, next, held.image)
+						? await compileImageChange(compiler, held.root, use.frame, current, target, next, held.image)
 						: undefined;
 				if (
 					!prospective ||
@@ -996,26 +1085,26 @@ export function createSourceOwner(
 		const frozen = new Map(
 			[...(imageSnapshot ?? held.compilation).inputs].map(([file, captured]) => [
 				file,
-				file === held.file ? input : journal.current(file, captured),
+				file === target ? input : journal.current(file, captured),
 			]),
 		);
 		// Source remains ordinary files. This final synchronous check and rename
 		// cannot exclude an uncoordinated process saving after the check.
 		const forward = applySourcePatches(before, executed ?? [spanBetween(next, before)]);
 		if (forward.text !== next) throw new Error("the source operation does not match its planned spans");
-		writeAtomic(held.file, next);
+		writeAtomic(target, next);
 		// the one line a project with history off has earned (#253): said on the
 		// first hand save it catches nothing of, and never again
 		const uncaught = uncaughtNotice(held.root) ? ({ uncaught: true } as const) : {};
-		const after = readInput(held.file);
+		const after = readInput(target);
 		const operation = journal.record(
-			held.file,
+			target,
 			input,
 			after,
 			forward.patches.map((patch) => ({ ...patch, before: before.slice(patch.start, patch.end) })),
 			inverseOf,
 		);
-		frozen.set(held.file, after);
+		frozen.set(target, after);
 		for (const [file, input] of frozen) continuity.set(file, input);
 		const receipt: SourceReceipt = {
 			operation: held.read.operation,
@@ -1029,7 +1118,7 @@ export function createSourceOwner(
 			purpose: held.read.operation,
 			...(held.property ? { property: held.property } : {}),
 			...(expected.kind === "image"
-				? { imageRestore: sourceHistoryCompilation(held.root, held.compilation, held.file) }
+				? { imageRestore: sourceHistoryCompilation(held.root, held.compilation, target) }
 				: {}),
 			...(held.structure
 				? {
@@ -1048,7 +1137,7 @@ export function createSourceOwner(
 					value: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.value ?? held.read.value,
 					absent: held.compilation.cells[held.read.cell ?? held.read.original.cell]?.absent === true,
 				},
-			required: sourceHistoryCompilation(held.root, saved, held.file),
+			required: sourceHistoryCompilation(held.root, saved, target),
 			cell: held.read.cell ?? held.read.original.cell,
 			...(held.read.reach ? { reach: held.read.reach } : {}),
 			operation,
@@ -1056,6 +1145,7 @@ export function createSourceOwner(
 			root: held.root,
 			frame: held.frame,
 			file: held.file,
+			...(held.written ? { written: held.written } : {}),
 			compilation: saved,
 			inverse: forward.inverse,
 			original: held.read.original,
@@ -1073,7 +1163,7 @@ export function createSourceOwner(
 							lowerLiterals(relative(realDesignDir(held.root), file), input.bytes.toString("utf8")).cells,
 						);
 			inverse.compilation = { ...saved, cells };
-			inverse.required = sourceHistoryCompilation(held.root, inverse.compilation, held.file);
+			inverse.required = sourceHistoryCompilation(held.root, inverse.compilation, target);
 			return {
 				ok: true,
 				source: "saved",
@@ -1097,7 +1187,7 @@ export function createSourceOwner(
 			if (retained.packet.shape !== held.compilation.packet.shape)
 				throw new Error("saved source has a different executable shape");
 			inverse.compilation = retained;
-			inverse.required = sourceHistoryCompilation(held.root, retained, held.file);
+			inverse.required = sourceHistoryCompilation(held.root, retained, target);
 			let release = () => {};
 			const done = new Promise<void>((resolve) => {
 				release = resolve;
@@ -1249,7 +1339,78 @@ export function createSourceOwner(
 				: undefined,
 		);
 		const planned = await (async () => {
-			if (operation.kind === "property" && change.kind === "property")
+			if (operation.kind === "property" && change.kind === "property") {
+				// One class compile answers who owns this property here, and the same
+				// certificate goes on to plan the class write when the class owns it.
+				const certificate = await compilePropertySource(
+					held.root,
+					held.compilation.inputs,
+					held.read.value,
+					held.compilation.packet.bundledCss,
+				);
+				const read = readPropertyEffects(certificate, operation.property, operation.scope, environment);
+				const members = operation.scope === "" ? (target.style?.members ?? []) : [];
+				const owner =
+					operation.scope === ""
+						? propertySourceOwner(
+								read.roots,
+								read.effects,
+								styleMemberEffects(members),
+								certificate,
+								environment,
+								held.read.original.propertyRules,
+							)
+						: ({ kind: "class" } as const);
+				const kept = {
+					before: [] as readonly string[],
+					after: [] as readonly string[],
+					original: certificate,
+					desired: certificate,
+					roots: read.roots,
+					consumers: nativePropertyEffects(certificate, read.roots, environment),
+					external: externalPropertySignature(certificate, read.roots, [], environment),
+					next: held.read.value,
+				};
+				const declared = (property: string) =>
+					requestedDeclaration(property, change.value, (tokens) =>
+						compilePropertySource(
+							held.root,
+							held.compilation.inputs,
+							tokens.join(" "),
+							held.compilation.packet.bundledCss,
+						),
+					);
+				if (owner.kind === "style" && target.style)
+					return {
+						plan: {
+							...kept,
+							written: {
+								kind: "style" as const,
+								address: target.style.address,
+								members,
+								after: planStyleMembers(
+									members,
+									operation.property,
+									owner.members,
+									await declared(styleMemberProperty(styleMemberKey(operation.property))),
+								),
+							},
+						},
+						selections: undefined,
+					};
+				if (owner.kind === "declaration") {
+					if (owner.effects.length !== 1)
+						throw new Error("this control's sides are declared separately in their own stylesheet");
+					const effect = owner.effects[0]!;
+					const value = await declared(effect.property);
+					if (value === null)
+						throw new Error("removing an authored declaration is not a supported property operation");
+					const file = declarationFile(effect, held.compilation.inputs);
+					return {
+						plan: { ...kept, written: { kind: "declaration" as const, file, effect, value } },
+						selections: undefined,
+					};
+				}
 				return {
 					plan: await planPropertyValue(
 						held.root,
@@ -1259,9 +1420,11 @@ export function createSourceOwner(
 						change.value,
 						environment,
 						held.compilation.packet.bundledCss,
+						certificate,
 					),
 					selections: undefined,
 				};
+			}
 			if (operation.kind === "properties" && change.kind === "properties") {
 				if (!samePropertyGroupTarget(operation.target, propertyGroupTarget(change.value)))
 					throw new Error("the grouped request differs from its original source purpose");
@@ -1273,6 +1436,19 @@ export function createSourceOwner(
 					environment,
 					held.compilation.packet.bundledCss,
 				);
+				const grouped = await compilePropertySource(
+					held.root,
+					held.compilation.inputs,
+					held.read.value,
+					held.compilation.packet.bundledCss,
+				);
+				guardGroupedSources(
+					plan.selections,
+					grouped,
+					target.style ? styleMemberEffects(target.style.members) : [],
+					environment,
+					held.read.original.propertyRules,
+				);
 				return { plan, selections: plan.selections };
 			}
 			throw new Error("this source read does not authorize that property request");
@@ -1281,14 +1457,22 @@ export function createSourceOwner(
 		const selections: SourcePropertyGroupExpectation["selections"] | undefined = planned.selections?.map(
 			({ consumers, roots, ...selection }) => ({ ...selection, roots: [...roots], effects: consumers }),
 		);
+		const written = "written" in plan ? plan.written : undefined;
 		const proof: PropertyProof = {
 			environment,
 			roots: propertyReadKeys(plan.original, plan.desired, plan.roots, environment),
+			// An inline member is one unconditional declaration on the element: it
+			// has no compiled condition, and an empty path is what that means.
 			scopePaths:
-				operation.kind === "property"
-					? propertyScopePaths(plan.original, plan.desired, operation, environment)
-					: (selections?.flatMap((selection) => selection.scopePaths) ?? []),
+				written?.kind === "declaration"
+					? [written.effect.path]
+					: written?.kind === "style"
+						? [[]]
+						: operation.kind === "property"
+							? propertyScopePaths(plan.original, plan.desired, operation, environment)
+							: (selections?.flatMap((selection) => selection.scopePaths) ?? []),
 			...(selections ? { selections } : {}),
+			...(written ? { written } : {}),
 		};
 		return { target, environment, plan, proof };
 	}
@@ -1309,6 +1493,8 @@ export function createSourceOwner(
 			roots: proof.roots,
 			scopePaths: proof.scopePaths,
 			selections: proof.selections,
+			...(proof.written?.kind === "style" ? { style: proof.written.members } : {}),
+			source: proof.written?.kind ?? "class",
 		};
 		const state = (source: string, snapshot: RetainedCompilation) =>
 			propertyState(context, { compilation: snapshot, source });
@@ -1372,14 +1558,20 @@ export function createSourceOwner(
 			valid(root, held.compilation);
 			const { target, plan, proof } = await planReadProperty(held, change);
 			const current = await checkPropertyChanges(held, proof, held.compilation);
-			const input = held.compilation.inputs.get(held.file);
+			const file = (proof.written?.kind === "declaration" ? proof.written.file : undefined) ?? held.file;
+			const input = held.compilation.inputs.get(file);
 			if (!input) throw new Error("the original property source input is missing");
+			const text = input.bytes.toString("utf8");
 			const patches = journal.transform(
-				held.file,
+				file,
 				input,
-				planPropertyLiteral(input.bytes.toString("utf8"), target, plan.before, plan.after),
+				proof.written?.kind === "declaration"
+					? planDeclarationLiteral(text, proof.written.effect, proof.written.value)
+					: proof.written?.kind === "style"
+						? planStyleLiteral(text, proof.written.address, proof.written.members, proof.written.after)
+						: planPropertyLiteral(text, target, plan.before, plan.after),
 			);
-			const now = current.inputs.get(held.file);
+			const now = current.inputs.get(file);
 			if (!now) throw new Error("the current property source input is missing");
 			const next = applySourcePatches(now.bytes.toString("utf8"), patches).text;
 			const frames: SourcePropertyPreview["frames"][number][] = [];
@@ -1395,7 +1587,7 @@ export function createSourceOwner(
 				const inputs = new Map(
 					[...publication.compilation.inputs].map(([file, input]) => [file, journal.current(file, input)]),
 				);
-				inputs.set(held.file, { ...now, bytes: Buffer.from(next) });
+				inputs.set(file, { ...now, bytes: Buffer.from(next) });
 				const snapshot = await compiler.compileSnapshot(
 					root,
 					use.frame,
@@ -1421,7 +1613,18 @@ export function createSourceOwner(
 			if (reads.get(handle) !== held) throw new Error("the property preview was cancelled");
 			valid(root, held.compilation);
 			if (value === undefined) throw new Error("no property preview frame was available");
-			return { ok: true, preview: { generation, revision, value, frames } };
+			// A member that leaves the list is the removal of its declaration, which
+			// an empty value is; every remaining member proposes its own value.
+			const member = proof.written?.kind === "style" ? proof.written : undefined;
+			const authored = member ? styleMemberEffects(member.members) : [];
+			const wanted = member ? styleMemberEffects(member.after) : [];
+			const inline = [
+				...wanted.map((effect) => ({ property: effect.property, value: effect.value })),
+				...authored
+					.filter((effect) => !wanted.some((next) => next.property === effect.property))
+					.map((effect) => ({ property: effect.property, value: "" })),
+			];
+			return { ok: true, preview: { generation, revision, value, frames, ...(inline.length ? { inline } : {}) } };
 		} catch (error) {
 			return { ok: false, reason: reason(error) };
 		}
@@ -1467,13 +1670,12 @@ export function createSourceOwner(
 					throw new Error("this source read does not authorize that operation");
 				authenticated = true;
 				if (held.structure) {
-					if (change.kind !== "delete") throw new Error("this structural read does not authorize that operation");
+					if (change.kind !== "delete" && change.kind !== "reorder")
+						throw new Error("this structural read does not authorize that operation");
 					const target = held.structure;
 					const input = held.compilation.inputs.get(held.file);
 					if (!input) throw new Error("the original structural source input is missing");
-					const transformed = journal.transform(held.file, input, [
-						{ ...target.selected, text: target.replacement },
-					]);
+					const transformed = journal.transform(held.file, input, structuralSpans(target));
 					return await publish(
 						held,
 						applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text,
@@ -1490,17 +1692,29 @@ export function createSourceOwner(
 				) {
 					const { target, environment, plan, proof } = await planReadProperty(held, change);
 					const current = await checkPropertyChanges(held, proof, held.compilation);
-					const input = held.compilation.inputs.get(held.file);
+					const file = (proof.written?.kind === "declaration" ? proof.written.file : undefined) ?? held.file;
+					const input = held.compilation.inputs.get(file);
 					if (!input) throw new Error("the original property source input is missing");
-					const patches = planPropertyLiteral(source, target, plan.before, plan.after);
-					const transformed = journal.transform(held.file, input, patches);
-					const currentSource = current.inputs.get(held.file)?.bytes.toString("utf8");
+					const authored = input.bytes.toString("utf8");
+					const patches =
+						proof.written?.kind === "declaration"
+							? planDeclarationLiteral(authored, proof.written.effect, proof.written.value)
+							: proof.written?.kind === "style"
+								? planStyleLiteral(source, proof.written.address, proof.written.members, proof.written.after)
+								: planPropertyLiteral(source, target, plan.before, plan.after);
+					const transformed = journal.transform(file, input, patches);
+					const currentSource = current.inputs.get(file)?.bytes.toString("utf8");
 					if (currentSource === undefined) throw new Error("the current property source input is missing");
 					const next = applySourcePatches(currentSource, transformed).text;
+					// A stylesheet write changes an input the class cell still reads
+					// from, so the expectation compiles against the file bytes while
+					// the executable source it belongs to stays where it was.
+					const inputs = new Map(current.inputs);
+					if (proof.written?.kind === "declaration") inputs.set(file, { ...input, bytes: Buffer.from(next) });
 					const after = await propertyState(
 						{
 							root,
-							inputs: current.inputs,
+							inputs,
 							file: held.file,
 							cellKey: held.read.cell ?? original.cell,
 							operation: held.read.operation,
@@ -1508,12 +1722,25 @@ export function createSourceOwner(
 							roots: proof.roots,
 							scopePaths: proof.scopePaths,
 							selections: proof.selections,
+							...(proof.written?.kind === "style" ? { style: proof.written.after } : {}),
+							source: proof.written?.kind ?? "class",
 						},
-						{ compilation: current.snapshot, source: next },
+						{
+							compilation: current.snapshot,
+							source:
+								proof.written?.kind === "declaration"
+									? (current.inputs.get(held.file)?.bytes.toString("utf8") ?? source)
+									: next,
+						},
 					);
 					held.property = proof;
 					held.inverseExpected = current.state.expected;
-					return await publish(held, next, after.expected, transformed);
+					return await publish(
+						proof.written?.kind === "declaration" ? { ...held, written: file } : held,
+						next,
+						after.expected,
+						transformed,
+					);
 				}
 				if (change.kind === "image") {
 					held.compilation = afterStaging(root, held.compilation);
@@ -1710,11 +1937,12 @@ export function createSourceOwner(
 					lookupFrame(root, frame).kind !== "found" || (inventories !== undefined && reach?.uses.length === 0);
 				if (sourceOnly) compilation = held.required;
 				held.retired = true;
-				const source = held.compilation.inputs.get(held.file)?.bytes.toString("utf8");
+				const written = held.written ?? held.file;
+				const source = held.compilation.inputs.get(written)?.bytes.toString("utf8");
 				if (source === undefined) throw new Error("the inverse source read is incomplete");
-				const input = held.compilation.inputs.get(held.file);
+				const input = held.compilation.inputs.get(written);
 				if (!input) throw new Error("the original input is missing");
-				const transformed = journal.transform(held.file, input, held.inverse);
+				const transformed = journal.transform(written, input, held.inverse);
 				if (transformed.length === 0) throw new Error("the inverse source span is missing");
 				const cell = held.compilation.cells[held.cell];
 				if (!cell && !held.structure) throw new Error("the original source role changed");
@@ -1734,6 +1962,7 @@ export function createSourceOwner(
 					root,
 					frame,
 					file: held.file,
+					...(held.written ? { written: held.written } : {}),
 					compilation,
 					history: held.required,
 					read:
@@ -1758,7 +1987,7 @@ export function createSourceOwner(
 									value: cell!.value,
 								},
 				};
-				const next = applySourcePatches(journal.current(held.file, input).bytes.toString("utf8"), transformed).text;
+				const next = applySourcePatches(journal.current(written, input).bytes.toString("utf8"), transformed).text;
 				let expected = held.expected;
 				if (held.property && isPropertyOperation(held.purpose)) {
 					const current = await checkPropertyChanges(
@@ -1766,10 +1995,12 @@ export function createSourceOwner(
 						held.property,
 						held.compilation,
 					);
+					const inputs = new Map(current.inputs);
+					if (held.written) inputs.set(held.written, { ...input, bytes: Buffer.from(next) });
 					const after = await propertyState(
 						{
 							root,
-							inputs: current.inputs,
+							inputs,
 							file: held.file,
 							cellKey: held.cell,
 							operation: held.purpose,
@@ -1777,8 +2008,13 @@ export function createSourceOwner(
 							roots: held.property.roots,
 							scopePaths: held.property.scopePaths,
 							selections: held.property.selections,
+							...(held.property.written?.kind === "style" ? { style: held.property.written.members } : {}),
+							source: held.property.written?.kind ?? "class",
 						},
-						{ compilation: current.snapshot, source: next },
+						{
+							compilation: current.snapshot,
+							source: held.written ? (current.inputs.get(held.file)?.bytes.toString("utf8") ?? "") : next,
+						},
 					);
 					inverseRead.property = held.property;
 					inverseRead.inverseExpected = current.state.expected;

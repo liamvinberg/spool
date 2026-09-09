@@ -155,7 +155,7 @@ it("chooses shared font weight through the retained menu without changing color 
 	await f.retained();
 });
 
-it("refuses the actual weight action pinned by inline style without disabling unrelated color", {
+it("writes the weight into the member that pins it, and leaves the colour alone", {
 	timeout: 120_000,
 }, async () => {
 	const original = source.replace('id="subject"', 'id="subject" style={{fontWeight:550}}');
@@ -164,21 +164,26 @@ it("refuses the actual weight action pinned by inline style without disabling un
 	await f.page.getByRole("button", { name: "font-weight", exact: true }).click();
 	const menu = f.page.getByRole("listbox");
 	await menu.getByPlaceholder("find").fill("font-bold");
-	const read = f.reply("read");
+	const committed = f.reply("commit");
 	await menu.locator('[data-menu-option="font-bold"]').click();
-	const refused = await (await read).json();
-	expect(refused).toMatchObject({ ok: false });
-	expect(refused.reason).toMatch(/inline|style/i);
-	const notice = f.page.locator('[data-hand-notice="blocked"]');
-	await expect.poll(() => notice.textContent()).toContain(refused.reason);
-	expect(f.writes).toEqual([]);
-	expect(f.bytes()[file]).toBe(original);
-	await f.native("rgb(18, 52, 86)", "550");
+	const saved = await (await committed).json();
+	expect(saved.ok, JSON.stringify({ saved, source: f.bytes()[file] })).toBe(true);
+	// the member is the source that decides this property, so the member changes
+	// and the class literal stays exactly as it was; the token's own reference
+	// goes into the member rather than the pixels it happens to resolve to
+	await expect
+		.poll(() => f.bytes()[file])
+		.toBe(original.replace("fontWeight:550", 'fontWeight:"var(--font-weight-bold)"'));
+	await f.native("rgb(18, 52, 86)", "700");
 	const color = f.page.getByRole("button", { name: "Choose color", exact: true });
 	await color.click();
 	expect(await f.page.getByRole("group", { name: "color options", exact: true }).count()).toBe(1);
 	await f.page.keyboard.press("Escape");
-	expect(f.writes).toEqual([]);
-	expect(f.bytes()[file]).toBe(original);
+
+	const inverse = f.reply("inverse");
+	await f.history(false);
+	expect(await (await inverse).json()).toMatchObject({ ok: true });
+	await expect.poll(() => f.bytes()[file]).toBe(original);
+	await f.native("rgb(18, 52, 86)", "550");
 	await f.retained();
 });
