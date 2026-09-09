@@ -1056,3 +1056,33 @@ it("sends layout values to source operations without falling through to the lega
 		{ property: "display", value: { kind: "binding", tokens: ["grid"] } },
 	]);
 });
+
+it("scrubs a layout number as one held gesture, and writes nothing when it is cancelled", async () => {
+	const rail = await mount("p-4");
+	const label = rowOf(rail, "padding")?.firstElementChild;
+	if (!label) throw new Error("missing padding label");
+	await act(async () =>
+		label.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 3, button: 0, clientX: 100, bubbles: true })),
+	);
+	for (const clientX of [104, 108])
+		await act(async () =>
+			document.dispatchEvent(new PointerEvent("pointermove", { pointerId: 3, clientX, bubbles: true })),
+		);
+	expect(rail.previews).toEqual([
+		{ property: "padding", value: { kind: "binding", tokens: ["p-5"] } },
+		{ property: "padding", value: { kind: "binding", tokens: ["p-6"] } },
+	]);
+	expect(rail.requests).toEqual([]);
+	await act(async () => document.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 3, bubbles: true })));
+	expect(rail.completions).toEqual([false]);
+	expect(rail.requests).toEqual([]);
+});
+
+it("takes no layout request from a field left on the value it was already showing", async () => {
+	const rail = await mount("p-4");
+	const field = fieldIn(rail, "padding");
+	if (!field) throw new Error("missing padding field");
+	await put(field, "4");
+	await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+	expect(rail.requests).toEqual([]);
+});
