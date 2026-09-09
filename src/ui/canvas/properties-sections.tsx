@@ -117,7 +117,7 @@ function writeValue(view: View, row: ModelRow, value: RowValue): void {
 	view.property?.apply(sourcePropertyName(row), propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
 }
 
-/** Two properties one control decides together — an alignment is both of them. */
+/** Two properties one control decides together: an alignment is both of them. */
 function writeFields(view: View, changes: readonly { row: ModelRow; value: RowValue }[]): void {
 	view.property?.applyFields(
 		changes.map((change) => ({
@@ -1437,11 +1437,25 @@ function AutoRow({ view, row }: { view: View; row: ModelRow }) {
  * wearing and has no row for is reached by the `+ class` at the foot, which is
  * what P5 is for.
  */
-function Rest({ view, section, drawn }: { view: View; section: SectionName; drawn: ReadonlySet<string> }) {
-	const worn = rowsIn(section).filter(
-		(row) =>
-			!drawn.has(row.property) && row.primitive !== "read" && readRow(row, view.scoped, view.theme).token !== null,
-	);
+function Rest({
+	view,
+	section,
+	drawn,
+}: {
+	view: View;
+	/** the sections this header covers, in the order it draws them */
+	section: SectionName | readonly SectionName[];
+	drawn: ReadonlySet<string>;
+}) {
+	const sections = typeof section === "string" ? [section] : section;
+	const worn = sections
+		.flatMap((name) => rowsIn(name))
+		.filter(
+			(row) =>
+				!drawn.has(row.property) &&
+				row.primitive !== "read" &&
+				readRow(row, view.scoped, view.theme).token !== null,
+		);
 	return (
 		<>
 			{worn.map((row) => (
@@ -1461,10 +1475,14 @@ const INSET_SIDES: readonly { side: Side; property: string }[] = [
 	{ side: "l", property: "left" },
 ];
 
-/** The rows that place an element, drawn only where its position is not static. */
-function PositionRows({ view }: { view: View }) {
+/** Whether this element is placed, which is what its offsets are drawn for. */
+function placedIn(view: View): boolean {
 	const position = wordThrough(view, "position");
-	const placed = position !== null && PLACED.has(position);
+	return position !== null && PLACED.has(position);
+}
+
+/** The rows that place an element, drawn only where its position is not static. */
+function PositionRows({ view, placed }: { view: View; placed: boolean }) {
 	return (
 		<>
 			<WordRow view={view} property="position" />
@@ -1486,9 +1504,7 @@ function PositionRows({ view }: { view: View }) {
 }
 
 /** Which position rows the section led with, so `Rest` does not draw them twice. */
-function positionDrawn(view: View): string[] {
-	const position = wordThrough(view, "position");
-	const placed = position !== null && PLACED.has(position);
+function positionDrawn(placed: boolean): string[] {
 	return ["position", "z-index", ...(placed ? INSET_SIDES.map((entry) => entry.property) : [])];
 }
 
@@ -1565,6 +1581,7 @@ function LayoutSection({ view }: { view: View }) {
 	const column = (own.direction ?? base.direction) === "flex-col";
 	const overflow = wordThrough(view, "overflow");
 	const scrolls = overflow !== null && SCROLLS.has(overflow);
+	const placed = placedIn(view);
 	const directionRow = modelRow("flex-direction");
 	const wrapRow = modelRow("flex-wrap");
 	const alignRow = modelRow("align-items");
@@ -1602,7 +1619,7 @@ function LayoutSection({ view }: { view: View }) {
 		"margin-right",
 		"margin-bottom",
 		"margin-left",
-		...positionDrawn(view),
+		...positionDrawn(placed),
 		...(flex ? ["flex-direction", "flex-wrap", "align-items", "justify-content"] : []),
 		...(grid ? ["grid-template-columns"] : []),
 		...(gapped ? ["gap", "column-gap", "row-gap"] : []),
@@ -1724,12 +1741,10 @@ function LayoutSection({ view }: { view: View }) {
 					)}
 				/>
 			) : null}
-			<PositionRows view={view} />
+			<PositionRows view={view} placed={placed} />
 			<WordRow view={view} property="overflow" />
 			{scrolls ? <ToggleRow view={view} property="scroll-snap-type" /> : null}
-			<Rest view={view} section="size" drawn={drawn} />
-			<Rest view={view} section="position" drawn={drawn} />
-			<Rest view={view} section="layout" drawn={drawn} />
+			<Rest view={view} section={["size", "position", "layout"]} drawn={drawn} />
 		</Section>
 	);
 }
