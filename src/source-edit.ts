@@ -186,6 +186,8 @@ export type SourceResult =
 			source: "saved" | "unchanged";
 			publication: SourcePublication | null;
 			receipt?: SourceReceipt;
+			/** the first hand save in a project whose history catches nothing, said once */
+			uncaught?: true;
 			reason?: string;
 	  }
 	| { ok: false; reason: string; current?: SourceChange };

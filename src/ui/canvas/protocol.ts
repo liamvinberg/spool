@@ -160,6 +160,7 @@ export type FrameMessage =
 	| FrameScrollMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "measured"; frame: string; id: number; reading: SpacingReading | null }
+	| { spool: "sized"; frame: string; id: number; sizing: ElementSizing | null }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; text: string }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
@@ -254,6 +255,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
 		case "measured":
 			return typeof m.id === "number" && (m.reading === null || isSpacingReading(m.reading))
+				? (m as unknown as FrameMessage)
+				: undefined;
+		case "sized":
+			return typeof m.id === "number" && (m.sizing === null || isElementSizing(m.sizing))
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "edit-open":
@@ -380,6 +385,31 @@ function isSpacingReading(value: unknown): value is SpacingReading {
 		isMeasuredBox(value.first) &&
 		isMeasuredBox(value.second) &&
 		isMeasuredParent(value.parent)
+	);
+}
+
+/** A sizing reply, checked the way every other one is: the shape, and finite numbers. */
+function isElementSizing(value: unknown): value is ElementSizing {
+	if (!isRecord(value)) return false;
+	const { box, extra, offset, limits, units } = value;
+	return (
+		typeof value.free === "boolean" &&
+		isRecord(units) &&
+		Object.values(units).every(finite) &&
+		isRecord(box) &&
+		finite(box.w) &&
+		finite(box.h) &&
+		isRecord(extra) &&
+		finite(extra.w) &&
+		finite(extra.h) &&
+		isRecord(offset) &&
+		(offset.left === null || finite(offset.left)) &&
+		(offset.top === null || finite(offset.top)) &&
+		isRecord(limits) &&
+		finite(limits.minW) &&
+		finite(limits.minH) &&
+		(limits.maxW === null || finite(limits.maxW)) &&
+		(limits.maxH === null || finite(limits.maxH))
 	);
 }
 
@@ -539,6 +569,31 @@ export interface SpacingReading {
  */
 export const measureMessage = (selector: string, x: number, y: number, id: number) =>
 	({ spool: "measure", selector, x, y, id }) as const;
+
+/**
+ * What a resize gesture has to know before it may write anything (#305).
+ *
+ * The element's own border box, the limits the engine will hold it to, the
+ * padding and border a content box would add back, and whether it is already
+ * free-positioned, with the offsets it is placed by where it has any. Only
+ * the document can answer any of it: the canvas holds a picture of the box and
+ * nothing about the rules that made it.
+ */
+export interface ElementSizing {
+	/** what one of each relative unit measures on this element, in document pixels */
+	units: Readonly<Record<string, number>>;
+	box: { w: number; h: number };
+	/** what a `content-box` element adds on top of the width that is written */
+	extra: { w: number; h: number };
+	/** `absolute` or `fixed`: the only placements a resize may move */
+	free: boolean;
+	/** the offsets it is actually placed by, or null where that side is auto */
+	offset: { left: number | null; top: number | null };
+	/** a maximum the engine does not set is `null`, which is not a number */
+	limits: { minW: number; maxW: number | null; minH: number; maxH: number | null };
+}
+
+export const sizingMessage = (selector: string, id: number) => ({ spool: "sizing", selector, id }) as const;
 /**
  * The in-place text edit (#255): the element's own words become the field,
  * with the caret where the click landed. The frame answers `edit-open` at

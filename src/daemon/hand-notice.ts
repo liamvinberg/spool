@@ -9,9 +9,9 @@ import { historyEnabled } from "./history";
  *
  * Hand edits are ordinary working-tree changes, and in a project that keeps
  * history the daemon's own commits are what catch them. A project with
- * `history: false` has nothing catching them, which is worth saying — once.
- * Not a toast and not once a session: once per project, so the mark lives on
- * disk beside the rest of the app-owned state.
+ * `history: false` has nothing catching them, which is worth saying once and
+ * only once. Not a toast and not once a session: once per project, so the mark
+ * lives on disk beside the rest of the app-owned state.
  */
 
 function noticeFile(root: string): string {
