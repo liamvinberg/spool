@@ -166,3 +166,17 @@ it("keeps the offered order when two stops are equally near", () => {
 	expect(snapResize(box(0, 0, 203, 100), { w: 203, h: 100 }, [sibling, parent], ask()).v).toEqual([200]);
 	expect(snapResize(box(0, 0, 203, 100), { w: 203, h: 100 }, [parent, sibling], ask()).v).toEqual([206]);
 });
+
+it("lets the other axis round to what it can be written as", () => {
+	// 5:3 held by ⇧: 208 wide is 124.8 tall, and a whole-pixel height of 125 is
+	// the same shape as far as the box that comes back can tell
+	const whole = { w: (value: number) => Math.round(value), h: (value: number) => Math.round(value) };
+	const ratio = snapResize(
+		box(0, 0, 205, 123),
+		{ w: 205, h: 123 },
+		[target(1, 40, 0, 168, 40)],
+		ask({ sx: 1, sy: 0, ratio: 160 / 96, quantize: whole }),
+	);
+	expect(ratio.size).toEqual({ w: 208, h: 125 });
+	expect(ratio.v).toEqual([208]);
+});

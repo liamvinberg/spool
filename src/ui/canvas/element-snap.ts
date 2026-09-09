@@ -151,12 +151,21 @@ function nearest(axes: readonly AxisSnap[]): AxisSnap[] {
 		: [offered.reduce((best, axis) => (Math.abs(axis.delta) < Math.abs(best.delta) ? axis : best))];
 }
 
-/** The box that keeps the proportions, or nothing where the other axis cannot. */
+/**
+ * The box that keeps the proportions, or nothing where the other axis cannot.
+ *
+ * The other axis is not the one being aligned, so the pixel its own spelling
+ * rounds it by is no reason to drop the alignment — the shape is checked
+ * against the box that comes back instead. A limit is a different matter: a
+ * height the element refuses is a shape it never has.
+ */
 function proportional(request: SnapRequest, axis: Axis, settled: number, ratio: number): Size | null {
-	const other = axis === "x" ? settled / ratio : settled * ratio;
-	const kept = reachable(request, axis === "x" ? "y" : "x", other, 1);
-	if (kept === null) return null;
-	return axis === "x" ? { w: settled, h: kept } : { w: kept, h: settled };
+	const other = axis === "x" ? "y" : "x";
+	const wanted = axis === "x" ? settled / ratio : settled * ratio;
+	const quantized = request.quantize?.[along(other)](wanted) ?? wanted;
+	const { min, max } = boundsOf(request, other);
+	if (Math.abs(clamp(quantized, min, max) - quantized) > LANDED) return null;
+	return axis === "x" ? { w: settled, h: quantized } : { w: quantized, h: settled };
 }
 
 /** The three stops a target offers on one axis, in the order it offers them. */
