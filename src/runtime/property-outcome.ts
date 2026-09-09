@@ -150,7 +150,7 @@ type PropertyFamily =
 	| { kind: "border-color" }
 	| { kind: "radius" }
 	| { kind: "axes"; axes: readonly [string, string] }
-	| { kind: "box"; box: "padding" | "margin" }
+	| { kind: "box"; box: "padding" | "margin" | "inset" }
 	| { kind: "selected"; select: SelectedFamily };
 
 const filterProperties = ["filter", "brightness", "contrast", "saturate", "hue-rotate"];
@@ -170,6 +170,15 @@ const metricRows: Readonly<Record<string, { companion: string; measure: "weight"
 	"letter-spacing": { companion: "--tw-tracking", measure: "spacing" },
 };
 const boxRow = /^(padding|margin)(?:-(top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end)))?$/;
+const insetRow = /^(?:(inset)(?:-(inline|block|(?:inline|block)-(?:start|end)))?|(top|right|bottom|left))$/;
+
+/** One box row's spelling: which native box it writes and which side of it this row is. */
+function boxParts(property: string): { box: "padding" | "margin" | "inset"; group: string } | undefined {
+	const box = boxRow.exec(property);
+	if (box) return { box: box[1] as "padding" | "margin", group: box[2] ?? "" };
+	const inset = insetRow.exec(property);
+	return inset ? { box: "inset", group: inset[3] ?? inset[2] ?? "" } : undefined;
+}
 const borderWidthRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?width$/;
 
 /** Every retained property is read by exactly one family; an unlisted one has no native proof. */
@@ -186,8 +195,8 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	if (property === "border-radius") return { kind: "radius" };
 	if (property === "overflow") return { kind: "axes", axes: ["overflow-x", "overflow-y"] };
 	if (property === "gap") return { kind: "axes", axes: ["row-gap", "column-gap"] };
-	const box = boxRow.exec(property);
-	if (box) return { kind: "box", box: box[1] as "padding" | "margin" };
+	const box = boxParts(property);
+	if (box) return { kind: "box", box: box.box };
 	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
 	if (Object.hasOwn(lengthRows, property))
 		return { kind: "selected", select: { kind: "length", row: lengthRows[property]! } };
@@ -950,7 +959,13 @@ function borderOutcome(element: Element, expected: SourcePropertyExpectation): P
 }
 
 /** Nine source roles over four native sides of one box, read in this use's own writing context. */
-function boxOutcome(element: Element, expected: SourcePropertyExpectation, box: "padding" | "margin"): PropertyOutcome {
+function boxOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	box: "padding" | "margin" | "inset",
+): PropertyOutcome {
+	const offset = box === "inset";
+	const longhand = (side: string) => (offset ? side : `${box}-${side}`);
 	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
 	const view = element.ownerDocument.defaultView;
 	if (!view) return unverified("this box spacing has no native document context");
@@ -958,12 +973,17 @@ function boxOutcome(element: Element, expected: SourcePropertyExpectation, box: 
 		return unverified("this box spacing has no rendered native box");
 	const style = view.getComputedStyle(element);
 	// A box with no principal box of its own, or one the table algorithm owns, honours neither.
-	if (["contents", "table-row", "table-row-group", "table-header-group", "table-footer-group"].includes(style.display))
+	if (
+		!offset &&
+		["contents", "table-row", "table-row-group", "table-header-group", "table-footer-group"].includes(style.display)
+	)
 		return unverified("this display has no native box for its own spacing");
+	// A static box ignores every offset while still reporting the declaration it was given.
+	if (offset && style.position === "static") return unverified("this offset needs a positioned native box");
 	const physical = physicalSides(style);
 	if (!physical) return unverified("this box spacing needs a known native writing mode context");
 	const logical = new Map([...physical].map(([role, side]) => [side, role]));
-	const group = boxRow.exec(expected.property)?.[2] ?? "";
+	const group = boxParts(expected.property)?.group ?? "";
 	const sides =
 		group === ""
 			? ["top", "right", "bottom", "left"]
@@ -980,13 +1000,13 @@ function boxOutcome(element: Element, expected: SourcePropertyExpectation, box: 
 	const observed: string[] = [];
 	for (const side of sides as string[]) {
 		const role = logical.get(side);
-		const property = `${box}-${side}`;
+		const property = longhand(side);
 		const applicable: SourcePropertyEffect[] = [];
 		for (const effect of expected.effects) {
 			if (effect.owner !== null && !classes.has(effect.owner)) continue;
-			const parts = boxRow.exec(effect.property);
-			if (!parts || parts[1] !== box) return unverified("this box spacing has dependent effects requiring proof");
-			const declared = parts[2] ?? "";
+			const parts = boxParts(effect.property);
+			if (!parts || parts.box !== box) return unverified("this box spacing has dependent effects requiring proof");
+			const declared = parts.group;
 			// Each declaration is read back through its own family; only the side is mapped.
 			const target =
 				declared === "" || declared === side
@@ -1013,6 +1033,15 @@ function boxOutcome(element: Element, expected: SourcePropertyExpectation, box: 
 			return unverified("this box spacing has an independent inline context requiring proof");
 		const selection = winningEffect(sheet, applicable);
 		if (selection.reason) return unverified(selection.reason);
+		// A relative or absolute box reports the offset it used, never the automatic keyword it stands at.
+		const declared = selection.winner?.value.trim().toLowerCase();
+		if (offset && (declared === undefined || declared === "auto")) {
+			if (style.position !== "sticky") return unverified("this offset has no automatic native reading");
+			const actual = style.getPropertyValue(property);
+			matches &&= actual.trim().toLowerCase() === "auto";
+			observed.push(actual);
+			continue;
+		}
 		if (!selection.winner) return unverified("this box spacing has no independent initial declaration");
 		const wanted = nativeLength(element, sheet, property, selection.winner.value);
 		// An automatic margin resolves to the free space this evaluator does not compute.

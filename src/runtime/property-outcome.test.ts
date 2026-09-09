@@ -2767,3 +2767,81 @@ it("mismatches the whole gap row when only one native axis carries the change", 
 	);
 	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
 });
+
+it.each([
+	{ property: "top", before: "top-2", after: "top-4", sides: ["16px", "8px", "8px", "8px"] },
+	{ property: "right", before: "right-2", after: "right-4", sides: ["8px", "16px", "8px", "8px"] },
+	{ property: "bottom", before: "bottom-2", after: "bottom-4", sides: ["8px", "8px", "16px", "8px"] },
+	{ property: "left", before: "left-2", after: "left-4", sides: ["8px", "8px", "8px", "16px"] },
+	{ property: "inset", before: "inset-2", after: "inset-4", sides: ["16px", "16px", "16px", "16px"] },
+	{ property: "inset-inline", before: "inset-x-2", after: "inset-x-4", sides: ["8px", "16px", "8px", "16px"] },
+	{ property: "inset-block", before: "inset-y-2", after: "inset-y-4", sides: ["16px", "8px", "16px", "8px"] },
+	{ property: "inset-inline-start", before: "start-2", after: "start-4", sides: ["8px", "8px", "8px", "16px"] },
+	{ property: "inset-inline-end", before: "end-2", after: "end-4", sides: ["8px", "16px", "8px", "8px"] },
+])("verifies the compiled $property offset of a positioned native box", async (row) => {
+	const start = row.before === "inset-2" ? "absolute inset-2" : `absolute inset-2 ${row.before}`;
+	const p = await planned(start, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="position:relative;width:300px;height:200px"><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${start}">Retained</div><div data-subject class="${p.plan.next.replace("absolute", "static")}">Static</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => {
+				const style = getComputedStyle(element);
+				return [style.top, style.right, style.bottom, style.left];
+			}),
+	).toEqual(row.sides);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"verified",
+		"unverified",
+	]);
+});
+
+it.each([
+	{ mode: "horizontal-tb", direction: "rtl", side: "right" },
+	{ mode: "vertical-rl", direction: "ltr", side: "top" },
+])("reads a logical offset in the $mode $direction context this use actually resolves", async (row) => {
+	const p = await planned(
+		"absolute inset-2",
+		"inset-inline-start",
+		{ kind: "binding", tokens: ["start-4"] },
+		{
+			direction: row.direction as "ltr" | "rtl",
+			writingMode: row.mode,
+		},
+	);
+	const style = `writing-mode:${row.mode};direction:${row.direction}`;
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="position:relative;width:300px;height:200px"><div data-subject class="${p.plan.next}" style="${style}">Logical</div><div data-subject class="absolute inset-2" style="${style}">Retained</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, side) => getComputedStyle(element).getPropertyValue(side), row.side),
+	).toBe("16px");
+});
+
+it("verifies a removed offset only where a native box still reports it as automatic", async () => {
+	const p = await planned("sticky top-4", "top", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="height:200px;overflow:auto"><div data-subject class="${p.plan.next}">Sticky</div><div data-subject class="sticky top-4">Retained</div><div data-subject class="${p.plan.next.replace("sticky", "relative")}">Relative</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"unverified",
+	]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("auto");
+});
