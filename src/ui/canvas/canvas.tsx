@@ -4442,6 +4442,8 @@ export function ProjectCanvas({
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
 		setMenu(null);
+		// a press anywhere but inside it puts the gap's exact value away (#306)
+		setGapMenu(null);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
@@ -5016,16 +5018,16 @@ export function ProjectCanvas({
 	/** What the band draws while a gap drag is live: the space the pointer is making. */
 	const showGapDrag = (active: Extract<Gesture, { kind: "element-gap" }>): void => {
 		const px = active.live === null ? null : gapValuePixels(active.live, ringRef.current.step);
-		const grown = px === null ? active.band : px - active.measured;
+		// the band is the space itself, so it has to be the size the value makes;
+		// a value only the document could resolve leaves it where it was grabbed
+		const grown = px === null ? 0 : px - active.measured;
 		setGapDrag({
 			selector: active.pick.selector,
 			index: active.index,
 			band:
-				typeof grown === "number"
-					? active.axis === "column-gap"
-						? { ...active.band, w: Math.max(active.band.w + grown, 0) }
-						: { ...active.band, h: Math.max(active.band.h + grown, 0) }
-					: active.band,
+				active.axis === "column-gap"
+					? { ...active.band, w: Math.max(active.band.w + grown, 0) }
+					: { ...active.band, h: Math.max(active.band.h + grown, 0) },
 			says: px === null ? (active.live ?? "") : `${Number(px.toFixed(2))}px`,
 		});
 	};
@@ -5148,6 +5150,9 @@ export function ProjectCanvas({
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
 		if (toolRef.current === "hand") return;
+		// a second click on a band is the band's own: it opens the same value the
+		// first one did rather than stepping down the ladder underneath it (#306)
+		if (datasetHit(event.target, "element-gap") !== null) return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
 		const label = datasetHit(event.target, "frame-label");
