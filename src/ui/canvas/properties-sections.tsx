@@ -208,9 +208,12 @@ function okOf(view: View, row: ModelRow): boolean {
  * reading refuses before it is used rather than at the write.
  */
 function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
-	// The element's own refusals come first: an inline box has no padding to
-	// change whatever the source says about its class cell.
-	const verdict = verdictFor(row, view.element, view.scoped);
+	// What the element itself cannot wear comes first: an inline box has no
+	// padding to change whatever the source says about its class cell. The write
+	// lane's own refusal is not asked about — a class cell shared by several uses
+	// is what the source owner edits, and its description is the answer here.
+	const { refusal: _lane, ...element } = view.element;
+	const verdict = verdictFor(row, element, view.scoped);
 	if (!verdict.ok) return { ok: false, reason: verdict.reason };
 	return { ok: view.property !== null && view.described?.readings !== undefined, reason: view.described?.reason };
 }
