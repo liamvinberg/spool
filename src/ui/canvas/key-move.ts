@@ -42,12 +42,8 @@ interface Pressed {
 
 type KeyMove =
 	| (Pressed & { kind: "asking" })
-	| (Pressed & {
-			kind: "nudge";
-			properties: readonly ResizeProperty[];
-			offset: Offset;
-			writes: Record<ResizeProperty, SizeWrite>;
-	  })
+	/** one property, in the one spelling the file already writes it in */
+	| (Pressed & { kind: "nudge"; property: ResizeProperty; write: SizeWrite; offset: Offset })
 	/** a reversed flex row or column draws the authored order backwards */
 	| (Pressed & { kind: "reorder"; reversed: boolean })
 	| (Pressed & { kind: "refused" });
@@ -80,15 +76,18 @@ export function useKeyMove(canvas: KeyMoveCanvas): {
 	const sample = useCallback(() => {
 		const held = gesture.current;
 		if (held === null || held.kind !== "nudge") return;
+		// every family takes the same spelling here because the gesture asks for
+		// exactly one of them, which is the property it opened its read about
+		const write = held.write;
 		at.current.sampleRingWrite({
 			kind: "fields",
 			changes: resizeFields(
-				held.properties,
+				[held.property],
 				{ w: 0, h: 0 },
 				{ x: held.horizontal ? held.pixels : 0, y: held.horizontal ? 0 : held.pixels },
 				held.offset,
 				at.current.ring.current.step,
-				held.writes,
+				{ width: write, height: write, left: write, top: write },
 			).map((change) => ({ ...change, scope: "" })),
 		});
 	}, []);
@@ -154,11 +153,9 @@ export function useKeyMove(canvas: KeyMoveCanvas): {
 							gesture.current = {
 								...opened,
 								kind: "nudge",
-								properties: [property],
+								property,
+								write: spelling.kind === "pixels" ? { unit: "px", per: 1 } : spelling,
 								offset: { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 },
-								writes: {
-									[property]: spelling.kind === "pixels" ? { unit: "px", per: 1 } : spelling,
-								} as Record<ResizeProperty, SizeWrite>,
 							};
 							at.current.openRingWrite(pick, [{ property, scope: "" }]);
 							sample();
