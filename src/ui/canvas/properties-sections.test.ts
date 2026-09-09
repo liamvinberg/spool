@@ -98,6 +98,14 @@ it("offers the approved optional layout properties, and adds one through its sou
 	expect(rail.requests).toEqual([{ property: "gap", value: { kind: "custom", value: "0px" } }]);
 });
 
+it("adds a constraint at the box it already has, so nothing moves until it is edited", async () => {
+	const rail = await mount("flex");
+	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');
+	await act(() => trigger?.click());
+	await act(() => document.querySelector<HTMLButtonElement>('[data-menu-option="max-width"]')?.click());
+	expect(rail.requests).toEqual([{ property: "max-width", value: { kind: "custom", value: "120px" } }]);
+});
+
 it("leaves an optional property off the list once the element wears it", async () => {
 	const rail = await mount("flex gap-2 mt-4");
 	const trigger = rail.host.querySelector<HTMLButtonElement>('button[aria-label="Add property"]');

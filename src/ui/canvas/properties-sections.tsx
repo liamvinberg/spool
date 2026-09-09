@@ -1953,6 +1953,21 @@ const OPTIONAL_PROPERTIES: readonly string[] = [
 	"border-width",
 ];
 
+/**
+ * What an optional property starts at.
+ *
+ * A constraint the element already meets changes nothing until it is edited, so
+ * a `max-width` opens at the box this element already has rather than at zero,
+ * which would collapse it the moment it was added. A border with no width
+ * paints nothing, so it opens at one.
+ */
+function openingValue(view: View, property: string): string {
+	if (property === "border-width") return "1px";
+	if (property === "min-width" || property === "max-width") return `${Math.round(view.box.w)}px`;
+	if (property === "min-height" || property === "max-height") return `${Math.round(view.box.h)}px`;
+	return "0px";
+}
+
 function AddProperty({ view }: { view: View }) {
 	// An optional property is offered where its own source admits it, and the
 	// refusal it would have met is said here rather than after a failed save.
@@ -1972,11 +1987,7 @@ function AddProperty({ view }: { view: View }) {
 				filter
 				ok={view.property !== null && options.length > 0}
 				onPick={(property) => {
-					if (property)
-						view.property?.apply(property, {
-							kind: "custom",
-							value: property === "border-width" ? "1px" : "0px",
-						});
+					if (property) view.property?.apply(property, { kind: "custom", value: openingValue(view, property) });
 				}}
 			/>
 		</div>
