@@ -34,13 +34,22 @@ it("retains absent native classes without admitting expressions, duplicate attri
 	expect(Object.values(after.cells).filter((cell) => cell.field === "className" && !cell.absent)).toHaveLength(1);
 });
 
-it("observes direct literal style descriptors without lowering their members into source cells", () => {
+it("retains each direct literal style member as its own source cell", () => {
 	const source =
 		'export default function Frame(){return <h1 style={{fontWeight:550,padding:4}} className="text-red-500">Words</h1>}';
 	const before = lowerLiterals("frames/home/frame.tsx", source);
-	expect(before.code).toContain("Style({fontWeight:550,padding:4})");
-	expect(Object.values(before.cells).some((cell) => cell.field === "style")).toBe(false);
-	expect(lowerLiterals("frames/home/frame.tsx", source.replace("550", "551")).shape).not.toBe(before.shape);
+	const members = Object.entries(before.cells).filter(([, cell]) => cell.field?.startsWith("style:"));
+	expect(members.map(([, cell]) => [cell.field, cell.value])).toEqual([
+		["style:fontWeight", "550"],
+		["style:padding", "4"],
+	]);
+	// the member's value reaches a running use through the packet, the way a
+	// class literal does, so its executable shape does not depend on the value
+	for (const [key] of members) expect(before.code).toContain(`StyleValue(${JSON.stringify(key)},`);
+	expect(lowerLiterals("frames/home/frame.tsx", source.replace("550", "551")).shape).toBe(before.shape);
+	expect(lowerLiterals("frames/home/frame.tsx", source.replace("550", "551")).cells[members[0]![0]]?.value).toBe(
+		"551",
+	);
 });
 
 it.each([
