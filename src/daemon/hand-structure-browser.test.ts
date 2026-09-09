@@ -2,25 +2,13 @@ import { readFileSync, rmSync } from "node:fs";
 import { relative } from "node:path";
 import { expect, it } from "vitest";
 import { createFrameCompiler } from "./compile";
-import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
+import { originCanvas, originOracle, watchResponses } from "./hand-origin-browser-helpers";
 import { Sources } from "./source-origins";
 import { deriveSourceDelete } from "./source-structure";
 
 function sourceReplies(page: Awaited<ReturnType<typeof originCanvas>>["page"]) {
-	const replies: unknown[] = [];
-	page.on("response", async (response) => {
-		if (!response.url().endsWith("/source")) return;
-		const result = await response.json().catch(() => undefined);
-		if (result)
-			replies.push({
-				action: response.request().postDataJSON()?.action,
-				ok: result.ok,
-				reason: result.reason,
-				source: result.source,
-				publication: !!result.publication,
-			});
-	});
-	return replies;
+	const watched = watchResponses(page, (response) => response.url().endsWith("/source"));
+	return watched.bodies;
 }
 
 async function trackStructuralRetention(page: Awaited<ReturnType<typeof originCanvas>>["page"]) {
@@ -191,13 +179,9 @@ const carriers = [
 it.each(carriers)("retains source-owned Delete and inverse through $name", { timeout: 120000 }, async (carrier) => {
 	const source = `import {cloneElement,createElement,Children,memo} from 'react';${COMPONENTS}${carrier.definition}export default function Frame(){const [,tick]=useState(0);window.advance=()=>tick(n=>n+1);return <main style={{padding:40}}>${carrier.a}${carrier.b}</main>}`;
 	const f = await originCanvas({}, source, '[data-name="A"]');
-	const sourceResponses: unknown[] = [];
-	f.page.on("response", async (response) => {
-		if (response.url().endsWith("/source")) {
-			const body = await response.json().catch(() => undefined);
-			if (body?.ok === false) sourceResponses.push(body);
-		}
-	});
+	const answers = watchResponses(f.page, (response) => response.url().endsWith("/source"));
+	/** the ones worth naming if the save never arrives */
+	const sourceResponses = () => answers.bodies.filter((body) => (body as { ok?: boolean })?.ok === false);
 	const sibling = f.frame.locator('[data-name="B"]');
 	await sibling.evaluate((element) => {
 		(element as HTMLElement).click();
@@ -245,7 +229,7 @@ it.each(carriers)("retains source-owned Delete and inverse through $name", { tim
 	const commit = delivered();
 	await f.page.keyboard.press("Backspace");
 	await commit.catch(() => {
-		throw new Error(JSON.stringify(sourceResponses));
+		throw new Error(JSON.stringify(sourceResponses()));
 	});
 	expect(readFileSync(f.file("frames/home/frame.tsx"), "utf8")).toBe(source.replace(carrier.a, carrier.removed));
 	await expect.poll(() => f.target.count()).toBe(0);

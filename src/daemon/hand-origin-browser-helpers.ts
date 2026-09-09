@@ -1,11 +1,49 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { build } from "esbuild";
-import type { Page } from "playwright-core";
-import { expect } from "vitest";
+import type { Page, Response } from "playwright-core";
+import { expect, onTestFinished } from "vitest";
 import type { SourceRead } from "../source-edit";
 import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+
+/**
+ * The bodies of the responses a case wants, without leaving a read behind it.
+ *
+ * Playwright never awaits a `page.on("response")` handler, so a body read
+ * started inside one outlives the case that started it. When the page closes
+ * first the read rejects with "Target page, context or browser has been
+ * closed", and vitest fails a run whose every test passed. This keeps every
+ * read it starts, drops the listener and settles them when the case ends, and
+ * treats a page that closed mid-read as having nothing to report.
+ *
+ * Registered after the browser it watches, so it drains before that closes.
+ */
+export function watchResponses(
+	page: Page,
+	wanted: (response: Response) => boolean,
+): { bodies: unknown[]; settled(): Promise<void> } {
+	const bodies: unknown[] = [];
+	const pending: Promise<void>[] = [];
+	const listener = (response: Response) => {
+		if (!wanted(response)) return;
+		pending.push(
+			response.json().then(
+				(body: unknown) => {
+					bodies.push(body);
+				},
+				() => {},
+			),
+		);
+	};
+	page.on("response", listener);
+	const settled = async () => {
+		page.off("response", listener);
+		await Promise.all(pending);
+	};
+	onTestFinished(settled);
+	return { bodies, settled };
+}
 
 export async function originCanvas(
 	files: Record<string, string>,
