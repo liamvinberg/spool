@@ -372,8 +372,18 @@ it("reads a token the hands wrote in thread colour, and the author's own quietly
 
 	await until(() => fieldFor(host, "width") !== null);
 	await typeInto(fieldFor(host, "width"), "60");
+	await until(() => sourceCalls("commit").length === 1);
 	payLiteral = `${RUNGS[2]?.className ?? ""} w-60`;
+
+	// This save could not be delivered to the running document, so the canvas
+	// holds the document it has rather than resetting the app behind the person
+	// who wrote it: the file's own change is not a reload, and the notice offers
+	// one. A delivered save reflows every use in place instead, which is what
+	// `hand-property-layout-browser` accepts against a real frame.
 	await changed("home");
+	expect(splicedTokens(host)).toEqual([]);
+	await until(() => reloadButton(host) !== null);
+	await press("click", {}, reloadButton(host));
 	await frame.loaded();
 	await frame.answer(chain);
 	await until(() => splicedTokens(host).length > 0);
@@ -549,6 +559,15 @@ function chips(host: HTMLElement): string[] {
 }
 
 /** the tokens on the source line drawn as the hands' own rather than the file's */
+/** the source notice's own reload, offered once a save could not be verified */
+function reloadButton(host: HTMLElement): HTMLButtonElement | null {
+	return (
+		[...host.querySelectorAll<HTMLButtonElement>("button")].find(
+			(button) => button.textContent === "Reload app (resets state)",
+		) ?? null
+	);
+}
+
 function splicedTokens(host: HTMLElement): string[] {
 	const line = rail(host)?.querySelector("[data-properties-source]");
 	return [...(line?.querySelectorAll(".text-thread-strong") ?? [])].map((token) => (token.textContent ?? "").trim());

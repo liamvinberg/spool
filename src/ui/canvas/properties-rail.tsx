@@ -1,10 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
-import type { RowEdit, RowElement } from "../../properties/rows";
+import type { RowElement } from "../../properties/rows";
 import type { SourceDescription, SourceOperation, SourceRead } from "../../source-edit";
 import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
 import type { SourcePropertyGroupValue } from "../../source-property-group";
-import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
+import type { CompiledTheme, Geometry, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
 import { ContentText, LiteralField, type TextActions } from "./content-text";
@@ -136,8 +136,6 @@ export interface PropertiesActs {
 	onGeometryPreview: (name: string, patch: Partial<Geometry>) => void;
 	/** the scrub let go: one write and one undo slot for the whole gesture */
 	onGeometryCommit: (name: string, before: Geometry) => void;
-	/** the write lane: gated, spliced, and recorded on the canvas's one undo stack */
-	onWrite: (frame: string, selector: string, ops: readonly HandOp[]) => void;
 	/** Image source reads and receipts belong to the common source owner. */
 	onSwap: (frame: string, selector: string, put: { file: File } | { asset: string }) => void;
 }
@@ -394,23 +392,6 @@ function Body({
 		[propertySession, propertyScope],
 	);
 
-	const write = (ops: readonly HandOp[]) => {
-		if (element === null || ops.length === 0) return;
-		acts.onWrite(element.frame, element.selector, ops);
-	};
-	/** one row's edits as one patch, under whichever scope the bar is lit on */
-	const put = (edits: readonly RowEdit[]) =>
-		write(
-			edits.map(
-				(edit): HandOp => ({
-					kind: "set-class",
-					source: read?.source ?? "",
-					token: edit.token,
-					scope: scopeKey(live),
-					...(edit.remove === true ? { remove: true } : {}),
-				}),
-			),
-		);
 	const rowElement: RowElement = {
 		tag: element === null ? "div" : (element.chain[rung]?.tag ?? "div"),
 		className: literal,
@@ -443,6 +424,12 @@ function Body({
 					apply: (property, value) => {
 						void propertySession.apply(property, propertyScope, value);
 					},
+					applyFields: (changes) => {
+						void applyGroup({
+							kind: "fields",
+							changes: changes.map((change) => ({ ...change, scope: propertyScope })),
+						});
+					},
 					finish: (commit) => {
 						void propertySession.finish(commit);
 					},
@@ -468,7 +455,6 @@ function Body({
 			token !== null &&
 			splitClass(scopedClass(literal, live)).includes(token) &&
 			!original.has(`${scopeKey(live)}${token}`),
-		put,
 	};
 
 	return (

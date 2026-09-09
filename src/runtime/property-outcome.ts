@@ -9,7 +9,8 @@ import { nativeShadow } from "./property-shadows";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
 import { type NativeTransitionProperty, nativeTransition } from "./property-transitions";
 
-const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited: boolean }> = {
+/** A keyword with no `value` has no initial declaration this evaluator can prove for every host. */
+const keywordDefaults: Record<NativeKeywordProperty, { value?: string; inherited: boolean }> = {
 	"text-align": { value: "start", inherited: true },
 	"text-transform": { value: "none", inherited: true },
 	"text-decoration-line": { value: "none", inherited: false },
@@ -17,10 +18,59 @@ const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited:
 	"white-space": { value: "normal", inherited: true },
 	"object-fit": { value: "fill", inherited: false },
 	"text-overflow": { value: "clip", inherited: false },
+	// Every host's own native display comes from the engine's stylesheet, not from one initial value.
+	display: { inherited: false },
+	"flex-direction": { value: "row", inherited: false },
+	"flex-wrap": { value: "nowrap", inherited: false },
+	"align-items": { value: "normal", inherited: false },
+	"justify-content": { value: "normal", inherited: false },
+	"align-self": { value: "auto", inherited: false },
+	position: { value: "static", inherited: false },
+	"overflow-x": { value: "visible", inherited: false },
+	"overflow-y": { value: "visible", inherited: false },
 };
+
+/** Hosts the engine's own stylesheet declares layout keywords on, where no initial value is proof. */
+const declaringHosts = [
+	"IMG",
+	"VIDEO",
+	"CANVAS",
+	"IFRAME",
+	"OBJECT",
+	"EMBED",
+	"INPUT",
+	"SELECT",
+	"TEXTAREA",
+	"BUTTON",
+	"DIALOG",
+	"DETAILS",
+	"SUMMARY",
+	"MARQUEE",
+];
 function keywordProperty(property: string): property is NativeKeywordProperty {
 	return Object.hasOwn(keywordDefaults, property);
 }
+
+/** Box keywords, whose initial value competes with this host's own engine stylesheet. */
+function layoutKeyword(property: NativeKeywordProperty): boolean {
+	return ![
+		"text-align",
+		"text-transform",
+		"text-decoration-line",
+		"font-style",
+		"white-space",
+		"object-fit",
+		"text-overflow",
+	].includes(property);
+}
+
+/** Two-axis shorthands the compiler emits whole, which each axis row reads its own half of. */
+const axisShorthands: Readonly<Record<string, string>> = {
+	"overflow-x": "overflow",
+	"overflow-y": "overflow",
+	"column-gap": "gap",
+	"row-gap": "gap",
+};
 
 // Companions whose effect the native applicability guard reads directly from this use.
 const outlineGuards = ["outline-style", "--tw-outline-style", "outline-color"];
@@ -31,6 +81,14 @@ type LengthRow = { initial?: string; inherited: boolean; keywords: readonly stri
 
 const lengthRows: Readonly<Record<string, LengthRow>> = {
 	// The initial outline width is a keyword with no native length, so a cleared use stays unverified.
+	"flex-basis": {
+		initial: "auto",
+		inherited: false,
+		keywords: ["auto", "content", "min-content", "max-content", "fit-content"],
+		guarded: [],
+	},
+	"column-gap": { initial: "normal", inherited: false, keywords: ["normal"], guarded: [] },
+	"row-gap": { initial: "normal", inherited: false, keywords: ["normal"], guarded: [] },
 	"outline-width": { inherited: false, keywords: [], guarded: outlineGuards },
 	"outline-offset": { initial: "0px", inherited: false, keywords: [], guarded: outlineGuards },
 	"stroke-width": { inherited: true, keywords: [], guarded: ["stroke", "stroke-opacity"] },
@@ -97,6 +155,10 @@ type PropertyFamily =
 	| { kind: "border" }
 	| { kind: "border-color" }
 	| { kind: "radius" }
+	| { kind: "axes"; axes: readonly [string, string] }
+	| { kind: "box"; box: "padding" | "margin" | "inset" }
+	| { kind: "declaration"; row: DeclarationRow }
+	| { kind: "size"; native: string }
 	| { kind: "selected"; select: SelectedFamily };
 
 const filterProperties = ["filter", "brightness", "contrast", "saturate", "hue-rotate"];
@@ -115,6 +177,16 @@ const metricRows: Readonly<Record<string, { companion: string; measure: "weight"
 	"line-height": { companion: "--tw-leading", measure: "leading" },
 	"letter-spacing": { companion: "--tw-tracking", measure: "spacing" },
 };
+const boxRow = /^(padding|margin)(?:-(top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end)))?$/;
+const insetRow = /^(?:(inset)(?:-(inline|block|(?:inline|block)-(?:start|end)))?|(top|right|bottom|left))$/;
+
+/** One box row's spelling: which native box it writes and which side of it this row is. */
+function boxParts(property: string): { box: "padding" | "margin" | "inset"; group: string } | undefined {
+	const box = boxRow.exec(property);
+	if (box) return { box: box[1] as "padding" | "margin", group: box[2] ?? "" };
+	const inset = insetRow.exec(property);
+	return inset ? { box: "inset", group: inset[3] ?? inset[2] ?? "" } : undefined;
+}
 const borderWidthRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?width$/;
 
 /** Every retained property is read by exactly one family; an unlisted one has no native proof. */
@@ -129,6 +201,13 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	if (borderWidthRow.test(property)) return { kind: "border" };
 	if (borderColorRow.test(property)) return { kind: "border-color" };
 	if (property === "border-radius") return { kind: "radius" };
+	if (property === "overflow") return { kind: "axes", axes: ["overflow-x", "overflow-y"] };
+	if (property === "gap") return { kind: "axes", axes: ["row-gap", "column-gap"] };
+	const box = boxParts(property);
+	if (box) return { kind: "box", box: box.box };
+	if (Object.hasOwn(declarationRows, property)) return { kind: "declaration", row: declarationRows[property]! };
+	if (property === "width and height") return { kind: "axes", axes: ["width", "height"] };
+	if (Object.hasOwn(sizeRows, property)) return { kind: "size", native: sizeRows[property]! };
 	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
 	if (Object.hasOwn(lengthRows, property))
 		return { kind: "selected", select: { kind: "length", row: lengthRows[property]! } };
@@ -142,14 +221,16 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	return;
 }
 
-/** Every corner is its own native component; the row is verified only when all four are. */
-function radiusOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
-	const outcomes = [
-		"border-top-left-radius",
-		"border-top-right-radius",
-		"border-bottom-right-radius",
-		"border-bottom-left-radius",
-	].map((corner) => propertyOutcome(element, { ...expected, property: corner }));
+/**
+ * A row the compiler writes as several native components: each is read on its own, a refusal by
+ * any of them is the row's answer, and the row is verified only when every component is.
+ */
+function componentsOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	components: readonly string[],
+): PropertyOutcome {
+	const outcomes = components.map((property) => propertyOutcome(element, { ...expected, property }));
 	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
 	if (refused) return refused;
 	return {
@@ -158,8 +239,15 @@ function radiusOutcome(element: Element, expected: SourcePropertyExpectation): P
 	};
 }
 
+const radiusCorners = [
+	"border-top-left-radius",
+	"border-top-right-radius",
+	"border-bottom-right-radius",
+	"border-bottom-left-radius",
+];
+
 export interface PropertyOutcome {
-	rendered: "verified" | "mismatching" | "unverified" | "inactive";
+	rendered: "verified" | "mismatching" | "unverified" | "inactive" | "constrained";
 	observed?: string;
 	reason?: string;
 }
@@ -170,6 +258,8 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	const view = element.ownerDocument.defaultView;
 	if (!view) return unverified("this use has no native document context");
 	if (expected.property === "placeholder color") return propertyOutcome(element, { ...expected, property: "color" });
+	if (Object.hasOwn(childRows, expected.property))
+		return childrenOutcome(element, expected, childRows[expected.property]!);
 	const pseudo = selectedPseudo(expected.scopePaths);
 	if (pseudo === undefined) return unverified("this property has no single native pseudo-element context");
 	if (pseudo !== "" && !supportedPseudos.includes(pseudo))
@@ -186,7 +276,11 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (family.kind === "composed") return composedOutcome(element, expected, family.native);
 	if (family.kind === "border") return borderOutcome(element, expected);
 	if (family.kind === "border-color") return borderColorOutcome(element, expected);
-	if (family.kind === "radius") return radiusOutcome(element, expected);
+	if (family.kind === "radius") return componentsOutcome(element, expected, radiusCorners);
+	if (family.kind === "axes") return componentsOutcome(element, expected, family.axes);
+	if (family.kind === "box") return boxOutcome(element, expected, family.box);
+	if (family.kind === "declaration") return declarationOutcome(element, expected, family.row);
+	if (family.kind === "size") return sizeOutcome(element, expected, family.native);
 	return selectedOutcome(element, view, expected, family.select, pseudo);
 }
 
@@ -202,6 +296,7 @@ function selectedOutcome(
 	if (pseudo !== "" && select.kind !== "color")
 		return unverified("this property has no native pseudo-element reading");
 	const corner = select.kind === "corner";
+	const shorthand = axisShorthands[expected.property];
 	const length = select.kind === "length" ? select.row : undefined;
 	const companion = select.kind === "metric" ? select.companion : undefined;
 	const sheet = new CSSStyleSheet();
@@ -219,7 +314,17 @@ function selectedOutcome(
 			return unverified("this property effect needs a native selector or conditional context proof");
 		if (companion && effect.property === companion) companions.push(effect);
 		else if (effect.property === expected.property) applicable.push(effect);
-		else if (corner && effect.property === "border-radius") {
+		else if (shorthand && effect.property === shorthand) {
+			const value = resolvedValue(element, sheet, effect.value);
+			if (value === undefined) return unverified("this native axis needs a variable context proof");
+			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+			const rule = sheet.cssRules[index];
+			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+			rule.style.setProperty(shorthand, value);
+			const component = rule.style.getPropertyValue(expected.property);
+			if (!component) return unverified("this native axis has no shorthand component proof");
+			applicable.push({ ...effect, property: expected.property, value: component });
+		} else if (corner && effect.property === "border-radius") {
 			const value = resolvedValue(element, sheet, effect.value);
 			if (value === undefined) return unverified("this corner needs a variable context proof");
 			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
@@ -251,7 +356,11 @@ function selectedOutcome(
 				const parent = element.parentElement;
 				if (!parent) return unverified("this keyword needs a native inherited context proof");
 				value = view.getComputedStyle(parent).getPropertyValue(keyword);
-			} else value = fallback.value;
+			} else if (fallback.value === undefined)
+				return unverified(`this ${keyword} has no independent native default declaration`);
+			else if (layoutKeyword(keyword) && declaringHosts.includes(element.tagName))
+				return unverified("this host's own native stylesheet declares this keyword");
+			else value = fallback.value;
 		}
 		if (value === undefined) return unverified("this keyword has no independent expected declaration");
 		const result = nativeKeyword(element, keyword, value);
@@ -858,6 +967,531 @@ function borderOutcome(element: Element, expected: SourcePropertyExpectation): P
 	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
 }
 
+/**
+ * A dependent declaration only competes when the engine expands it onto one of the longhands this
+ * row reads. Sharing a theme variable is not competition, so the engine decides, not the spelling.
+ */
+function expandsOnto(
+	sheet: CSSStyleSheet,
+	property: string,
+	value: string,
+	targets: readonly string[],
+): boolean | undefined {
+	const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+	const rule = sheet.cssRules[index];
+	if (!(rule instanceof CSSStyleRule)) return;
+	rule.style.setProperty(property, value);
+	return targets.some((target) => rule.style.getPropertyValue(target) !== "");
+}
+
+/** Nine source roles over four native sides of one box, read in this use's own writing context. */
+function boxOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	box: "padding" | "margin" | "inset",
+): PropertyOutcome {
+	const offset = box === "inset";
+	const longhand = (side: string) => (offset ? side : `${box}-${side}`);
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this box spacing has no native document context");
+	if (!element.isConnected || element.getClientRects().length === 0)
+		return unverified("this box spacing has no rendered native box");
+	const style = view.getComputedStyle(element);
+	// A box with no principal box of its own, or one the table algorithm owns, honours neither.
+	if (
+		!offset &&
+		["contents", "table-row", "table-row-group", "table-header-group", "table-footer-group"].includes(style.display)
+	)
+		return unverified("this display has no native box for its own spacing");
+	// A static box ignores every offset while still reporting the declaration it was given.
+	if (offset && style.position === "static") return unverified("this offset needs a positioned native box");
+	const physical = physicalSides(style);
+	if (!physical) return unverified("this box spacing needs a known native writing mode context");
+	const logical = new Map([...physical].map(([role, side]) => [side, role]));
+	const group = boxParts(expected.property)?.group ?? "";
+	const sides =
+		group === ""
+			? ["top", "right", "bottom", "left"]
+			: group === "inline" || group === "block"
+				? [physical.get(`${group}-start`), physical.get(`${group}-end`)]
+				: physical.has(group)
+					? [physical.get(group)]
+					: [group];
+	if (sides.some((side) => side === undefined)) return unverified("this box spacing has no known native side");
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	// The compiler's own inputs to this declaration: owned here, resolved with it, never compared.
+	const companions = new Map<string, SourcePropertyEffect[]>();
+	for (const effect of expected.effects) {
+		if (!effect.property.startsWith("--")) continue;
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this box spacing needs a native conditional context proof");
+		companions.set(effect.property, [...(companions.get(effect.property) ?? []), effect]);
+	}
+	let unresolved = false;
+	const resolveSpacing = (value: string, seen = new Set<string>()): string => {
+		const substituted = substituteVariables(value, (name, fallback) => {
+			const owned = companions.get(name);
+			if (!owned) {
+				const resolved = fallback === undefined ? resolvedValue(element, sheet, `var(${name})`) : undefined;
+				if (resolved === undefined) unresolved = true;
+				return resolved ?? "";
+			}
+			if (seen.has(name)) {
+				unresolved = true;
+				return "";
+			}
+			const selected = winningEffect(sheet, owned);
+			if (selected.reason || !selected.winner) {
+				unresolved = true;
+				return "";
+			}
+			return resolveSpacing(selected.winner.value, new Set([...seen, name]));
+		});
+		if (substituted === undefined || /\b(?:var|env|attr)\(/i.test(substituted)) unresolved = true;
+		return substituted ?? "";
+	};
+	let matches = true;
+	const observed: string[] = [];
+	for (const side of sides as string[]) {
+		const role = logical.get(side);
+		const property = longhand(side);
+		const applicable: SourcePropertyEffect[] = [];
+		for (const effect of expected.effects) {
+			if (effect.owner !== null && !classes.has(effect.owner)) continue;
+			// A companion variable is an input to the declaration, resolved with it rather than compared.
+			if (effect.property.startsWith("--")) continue;
+			const parts = boxParts(effect.property);
+			if (!parts || parts.box !== box) {
+				const competing = expandsOnto(sheet, effect.property, effect.value, [
+					property,
+					...(role ? [longhand(role)] : []),
+				]);
+				if (competing === undefined) return unverified("the native declaration parser is unavailable");
+				if (competing) return unverified("this box spacing has a competing declaration requiring proof");
+				continue;
+			}
+			const declared = parts.group;
+			// Each declaration is read back through its own family; only the side is mapped.
+			const target =
+				declared === "" || declared === side
+					? property
+					: declared === role ||
+							((declared === "inline" || declared === "block") && role?.startsWith(`${declared}-`))
+						? `${box}-${role}`
+						: undefined;
+			if (target === undefined) continue;
+			const condition = pathCondition(element, effect.path, effect.owner !== null);
+			if (condition === "inactive") continue;
+			if (condition === "unverified") return unverified("this box spacing needs a native conditional context proof");
+			unresolved = false;
+			const value = resolveSpacing(effect.value);
+			if (unresolved) return unverified("this box spacing needs a variable context proof");
+			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+			const rule = sheet.cssRules[index];
+			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+			rule.style.setProperty(effect.property, value);
+			const expanded = rule.style.getPropertyValue(target);
+			if (!expanded) return unverified("this box spacing has no native shorthand component proof");
+			applicable.push({ ...effect, property, value: expanded });
+		}
+		if ((element instanceof HTMLElement || element instanceof SVGElement) && element.style.getPropertyValue(property))
+			return unverified("this box spacing has an independent inline context requiring proof");
+		const selection = winningEffect(sheet, applicable);
+		if (selection.reason) return unverified(selection.reason);
+		// A relative or absolute box reports the offset it used, never the automatic keyword it stands at.
+		const declared = selection.winner?.value.trim().toLowerCase();
+		if (offset && (declared === undefined || declared === "auto")) {
+			if (style.position !== "sticky") return unverified("this offset has no automatic native reading");
+			const actual = style.getPropertyValue(property);
+			matches &&= actual.trim().toLowerCase() === "auto";
+			observed.push(actual);
+			continue;
+		}
+		if (!selection.winner) return unverified("this box spacing has no independent initial declaration");
+		const wanted = nativeLength(element, sheet, property, selection.winner.value);
+		// An automatic margin resolves to the free space this evaluator does not compute.
+		if (wanted === undefined) return unverified("this box spacing has no independent native length");
+		const actual = style.getPropertyValue(property);
+		// The engine stores a used length as a whole number of 1/64 pixels; anything else is truncated.
+		if (!actual.endsWith("px") || !Number.isInteger(wanted * 64))
+			return unverified("this box spacing needs a native length context proof");
+		matches &&= Number.parseFloat(actual) === wanted;
+		observed.push(actual);
+	}
+	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
+}
+
+/**
+ * Retained rows whose whole value is one native declaration: the engine reports what it was
+ * given, so each one names the longhands to compare and the box that has to exist first.
+ */
+/**
+ * A retained row whose whole value is one native declaration the engine reports back: the
+ * longhands to compare, and the box that has to exist before any of it means anything. The box
+ * test is the row's own, so there is no switch on a kind somewhere else.
+ */
+type DeclarationRow = {
+	longhands: readonly string[];
+	/** The refusal reason when this use's box does not apply the row, or undefined when it does. */
+	box: (element: Element, style: CSSStyleDeclaration, parent: string) => string | undefined;
+};
+
+const flexBoxes = ["flex", "inline-flex"];
+const gridBoxes = ["grid", "inline-grid"];
+
+const flexibleItem = (_element: Element, _style: CSSStyleDeclaration, parent: string) =>
+	flexBoxes.includes(parent) ? undefined : "this row needs a native flexible item";
+const gridItem = (_element: Element, _style: CSSStyleDeclaration, parent: string) =>
+	gridBoxes.includes(parent) ? undefined : "this row needs a native grid item";
+
+const declarationRows: Readonly<Record<string, DeclarationRow>> = {
+	"z-index": {
+		longhands: ["z-index"],
+		// An unpositioned box reports the stacking order it was given while using none of it.
+		box: (_element, style, parent) =>
+			style.position !== "static" || [...flexBoxes, ...gridBoxes].includes(parent)
+				? undefined
+				: "this stacking order needs a positioned native box or a flexible or grid item",
+	},
+	order: { longhands: ["order"], box: flexibleItem },
+	flex: { longhands: ["flex-grow", "flex-shrink", "flex-basis"], box: flexibleItem },
+	"grid-column": { longhands: ["grid-column-start", "grid-column-end"], box: gridItem },
+	"grid-row": { longhands: ["grid-row-start", "grid-row-end"], box: gridItem },
+	"grid-column-start": { longhands: ["grid-column-start"], box: gridItem },
+	"grid-row-start": { longhands: ["grid-row-start"], box: gridItem },
+	columns: {
+		longhands: ["column-count", "column-width"],
+		box: (_element, style) =>
+			["block", "flow-root", "inline-block", "list-item"].includes(style.display)
+				? undefined
+				: "this column count needs a native block container",
+	},
+	"scroll-snap-type": {
+		longhands: ["scroll-snap-type"],
+		box: (_element, style) =>
+			[style.overflowX, style.overflowY].every((axis) => ["visible", "clip"].includes(axis))
+				? "this snap type needs a native scroll container"
+				: undefined,
+	},
+	"grid-template-columns": {
+		longhands: ["grid-template-columns"],
+		box: (_element, style) =>
+			gridBoxes.includes(style.display) ? undefined : "this track list needs a native grid container",
+	},
+	"grid-template-rows": {
+		longhands: ["grid-template-rows"],
+		box: (_element, style) =>
+			gridBoxes.includes(style.display) ? undefined : "this track list needs a native grid container",
+	},
+};
+
+/** Compare one whole compiled declaration against what the engine reports for the same use. */
+function declarationOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	row: DeclarationRow,
+): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this declaration has no native document context");
+	if (!element.isConnected || element.getClientRects().length === 0)
+		return unverified("this declaration has no rendered native box");
+	const style = view.getComputedStyle(element);
+	const parent = element.parentElement;
+	const context = row.box(element, style, parent ? view.getComputedStyle(parent).display : "");
+	if (context) return unverified(context);
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const applicable: SourcePropertyEffect[] = [];
+	for (const effect of expected.effects) {
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		// A companion variable is an input to the declaration, resolved with it rather than compared.
+		if (effect.property.startsWith("--")) continue;
+		if (effect.property !== expected.property) {
+			const competing = expandsOnto(sheet, effect.property, effect.value, row.longhands);
+			if (competing === undefined) return unverified("the native declaration parser is unavailable");
+			if (competing) return unverified("this declaration has a competing declaration requiring native proof");
+			continue;
+		}
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this declaration needs a native condition proof");
+		applicable.push(effect);
+	}
+	if (
+		(element instanceof HTMLElement || element instanceof SVGElement) &&
+		element.style.getPropertyValue(expected.property)
+	)
+		return unverified("this declaration has an independent inline context requiring proof");
+	const selection = winningEffect(sheet, applicable);
+	if (selection.reason) return unverified(selection.reason);
+	const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+	const rule = sheet.cssRules[index];
+	if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+	if (selection.winner) {
+		const value = resolvedValue(element, sheet, selection.winner.value);
+		if (value === undefined) return unverified("this declaration needs a resolved variable context");
+		rule.style.setProperty(expected.property, value);
+		if (!rule.style.getPropertyValue(expected.property))
+			return unverified("this declaration is not a native declaration of its own row");
+	}
+	let matches = true;
+	const observed: string[] = [];
+	for (const longhand of row.longhands) {
+		const wanted = selection.winner ? rule.style.getPropertyValue(longhand) : initialDeclarations[longhand];
+		const actual = style.getPropertyValue(longhand);
+		if (wanted === undefined || wanted === "" || actual === "")
+			return unverified("this declaration has no independent native reading");
+		observed.push(actual);
+		const repeat = /^repeat\(\s*(\d+)\s*,/.exec(wanted.trim());
+		if (repeat) {
+			// A grid container reports the tracks it used, so the proof is the track count it made.
+			const tracks = actual.trim().split(/\s+/);
+			if (!tracks.every((track) => /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)px$/i.test(track)))
+				return unverified("this track list needs a native used-track proof");
+			matches &&= tracks.length === Number(repeat[1]);
+			continue;
+		}
+		rule.style.removeProperty(longhand);
+		rule.style.setProperty(longhand, actual);
+		const normalized = rule.style.getPropertyValue(longhand);
+		if (!normalized) return unverified("this declaration has no supported native serialization");
+		rule.style.removeProperty(longhand);
+		rule.style.setProperty(longhand, wanted);
+		matches &&= rule.style.getPropertyValue(longhand) === normalized;
+	}
+	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
+}
+
+/** The initial declaration each retained row stands at when nothing declares it. */
+const initialDeclarations: Readonly<Record<string, string>> = {
+	"z-index": "auto",
+	order: "0",
+	"flex-grow": "0",
+	"flex-shrink": "1",
+	"flex-basis": "auto",
+	"grid-column-start": "auto",
+	"grid-column-end": "auto",
+	"grid-row-start": "auto",
+	"grid-row-end": "auto",
+	"column-count": "auto",
+	"column-width": "auto",
+	"scroll-snap-type": "none",
+	"grid-template-columns": "none",
+	"grid-template-rows": "none",
+};
+
+/** Source rows over the native sizing declarations, including the two size-mode controls. */
+const sizeRows: Readonly<Record<string, string>> = {
+	width: "width",
+	height: "height",
+	"width mode": "width",
+	"height mode": "height",
+	"min-width": "min-width",
+	"max-width": "max-width",
+	"min-height": "min-height",
+	"max-height": "max-height",
+};
+
+/** The containing block a percentage size of this use resolves against, in native pixels. */
+function containingSize(view: Window, element: Element, style: CSSStyleDeclaration): number | undefined {
+	if (style.writingMode !== "horizontal-tb") return;
+	if (!["static", "relative", "sticky"].includes(style.position)) return;
+	const parent = element.parentElement;
+	if (!parent) return;
+	const outer = view.getComputedStyle(parent);
+	if (outer.display.startsWith("table") || outer.writingMode !== "horizontal-tb") return;
+	const width = Number.parseFloat(outer.width);
+	if (!outer.width.endsWith("px") || !Number.isFinite(width)) return;
+	if (outer.boxSizing !== "border-box") return width;
+	const edges = ["padding-left", "padding-right", "border-left-width", "border-right-width"].map((name) =>
+		Number.parseFloat(outer.getPropertyValue(name)),
+	);
+	if (edges.some((edge) => !Number.isFinite(edge))) return;
+	return width - edges.reduce((total, edge) => total + edge, 0);
+}
+
+/**
+ * The authored size and the box the engine used are different readings. This compares them and,
+ * where they differ for a constraint it can name, reports the constraint rather than a mismatch.
+ */
+function sizeOutcome(element: Element, expected: SourcePropertyExpectation, native: string): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const view = element.ownerDocument.defaultView;
+	if (!view) return unverified("this size has no native document context");
+	if (!element.isConnected || element.getClientRects().length === 0)
+		return unverified("this size has no rendered native box");
+	const style = view.getComputedStyle(element);
+	if (["inline", "contents", "table-row", "table-row-group", "table-column-group"].includes(style.display))
+		return unverified("this display has no native box a size applies to");
+	const sheet = new CSSStyleSheet();
+	sheet.replaceSync(expected.css);
+	const classes = new Set(expected.className.split(/\s+/).filter(Boolean));
+	const applicable: SourcePropertyEffect[] = [];
+	for (const effect of expected.effects) {
+		if (effect.owner !== null && !classes.has(effect.owner)) continue;
+		// A companion variable is an input to the declaration, resolved with it rather than compared.
+		if (effect.property.startsWith("--")) continue;
+		if (effect.property !== native) {
+			const competing = expandsOnto(sheet, effect.property, effect.value, [native]);
+			if (competing === undefined) return unverified("the native declaration parser is unavailable");
+			if (competing) return unverified("this size has a competing declaration requiring native proof");
+			continue;
+		}
+		const condition = pathCondition(element, effect.path, effect.owner !== null);
+		if (condition === "inactive") continue;
+		if (condition === "unverified") return unverified("this size needs a native condition proof");
+		applicable.push(effect);
+	}
+	if ((element instanceof HTMLElement || element instanceof SVGElement) && element.style.getPropertyValue(native))
+		return unverified("this size has an independent inline context requiring proof");
+	const selection = winningEffect(sheet, applicable);
+	if (selection.reason) return unverified(selection.reason);
+	const declared = selection.winner ? resolvedValue(element, sheet, selection.winner.value) : initialSizes[native];
+	if (declared === undefined) return unverified("this size needs a resolved variable context");
+	const axis = native.endsWith("width") ? "width" : "height";
+	const observed = style.getPropertyValue(native);
+	// A minimum or maximum is reported as it was computed, so it is compared as an authored value.
+	if (native !== "width" && native !== "height") {
+		const wanted = sizeValue(element, view, sheet, style, native, declared, axis);
+		if (typeof wanted === "string") return unverified(wanted);
+		if (wanted === undefined) {
+			const same = declared.trim().toLowerCase() === observed.trim().toLowerCase();
+			return { rendered: same ? "verified" : "mismatching", observed };
+		}
+		const actual = Number.parseFloat(observed);
+		if (!observed.endsWith("px") || !Number.isFinite(actual))
+			return unverified("this constraint has no resolved native length");
+		return { rendered: actual === wanted ? "verified" : "mismatching", observed };
+	}
+	const wanted = sizeValue(element, view, sheet, style, native, declared, axis);
+	if (typeof wanted === "string") return unverified(wanted);
+	if (wanted === undefined) return unverified("this sizing mode has no native used-box proof");
+	const used = Number.parseFloat(observed);
+	if (!observed.endsWith("px") || !Number.isFinite(used)) return unverified("this size has no resolved native box");
+	const constraint = sizeConstraint(view, element, style, axis, wanted, used);
+	if (constraint) return { rendered: "constrained", observed, reason: constraint };
+	if (!Number.isInteger(wanted * 64)) return unverified("this size needs an exact native pixel proof");
+	return { rendered: used === wanted ? "verified" : "mismatching", observed };
+}
+
+/** A declared size as native pixels, a refusal reason, or undefined when it is a keyword. */
+function sizeValue(
+	element: Element,
+	view: Window,
+	sheet: CSSStyleSheet,
+	style: CSSStyleDeclaration,
+	native: string,
+	declared: string,
+	axis: "width" | "height",
+): number | string | undefined {
+	const value = declared.trim();
+	const percentage = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))%$/.exec(value);
+	if (percentage) {
+		if (axis !== "width") return "this percentage size needs a definite native containing block";
+		const outer = containingSize(view, element, style);
+		if (outer === undefined) return "this percentage size needs a definite native containing block";
+		return (outer * Number(percentage[1])) / 100;
+	}
+	if (/^[a-z-]+$/i.test(value)) return;
+	const length = nativeLength(element, sheet, native, value);
+	return length === undefined ? "this size has no independent native length" : length;
+}
+
+/** Name the definite native constraint that decided this used box, if one did. */
+function sizeConstraint(
+	view: Window,
+	element: Element,
+	style: CSSStyleDeclaration,
+	axis: "width" | "height",
+	wanted: number,
+	used: number,
+): string | undefined {
+	const parent = element.parentElement;
+	const outer = parent ? view.getComputedStyle(parent) : undefined;
+	const flexible = outer !== undefined && ["flex", "inline-flex"].includes(outer.display);
+	const main = flexible && (outer.flexDirection.startsWith("row") ? axis === "width" : axis === "height");
+	// A flex basis, not this row, decides the main size of a flexible item that declares one.
+	if (main && style.flexBasis.trim().toLowerCase() !== "auto") return "this main size comes from a native flex basis";
+	if (used === wanted) return;
+	for (const bound of [`min-${axis}`, `max-${axis}`]) {
+		const limit = style.getPropertyValue(bound);
+		if (!limit.endsWith("px")) continue;
+		const number = Number.parseFloat(limit);
+		if (!Number.isFinite(number) || used !== number) continue;
+		if (bound.startsWith("min") ? wanted < number : wanted > number)
+			return `this used box is held by a definite native ${bound}`;
+	}
+	if (main) return "this used size is under a native flexible box constraint";
+	if (style.getPropertyValue(`min-${axis}`).trim().toLowerCase() === "auto" && flexible && used > wanted)
+		return "this used size is held by the native automatic minimum of a flexible item";
+	return;
+}
+
+const initialSizes: Readonly<Record<string, string>> = {
+	width: "auto",
+	height: "auto",
+	"min-width": "auto",
+	"max-width": "none",
+	"min-height": "auto",
+	"max-height": "none",
+};
+
+/** Rows the compiler writes onto the children a use separates, not onto the use itself. */
+const childRows: Readonly<Record<string, string>> = {
+	"column-gap, between children": "margin-inline",
+	"row-gap, between children": "margin-block",
+	"border-color, between children": "border-color",
+};
+
+/**
+ * A between-children row renders on the children the compiled scope selects. Each of them is read
+ * independently through the family that owns the native declaration, and all of them must agree.
+ */
+function childrenOutcome(element: Element, expected: SourcePropertyExpectation, native: string): PropertyOutcome {
+	const unverified = (reason: string): PropertyOutcome => ({ rendered: "unverified", reason });
+	const filters = new Set<string>();
+	for (const path of expected.scopePaths) {
+		const selectors = path.filter((part) => !part.startsWith("@"));
+		const scope = selectors.length === 1 ? /^:where\(\$ > (.+)\)$/.exec(selectors[0]!) : null;
+		if (!scope) return unverified("this row has no single native child scope");
+		filters.add(scope[1]!);
+	}
+	if (filters.size !== 1) return unverified("this row has more than one native child scope");
+	const filter = [...filters][0]!;
+	const subject = `:where($ > ${filter})`;
+	let targets: Element[];
+	try {
+		targets = [...element.children].filter((child) => child.matches(filter));
+	} catch {
+		return unverified("this child scope is not a native selector");
+	}
+	if (targets.length === 0) return unverified("this use has no native child this row separates");
+	// The child was selected by the compiled scope itself, so only the child's own states remain.
+	const carried: SourcePropertyExpectation = {
+		...expected,
+		property: native,
+		scopePaths: expected.scopePaths.map((path) => path.map((part) => (part === subject ? "$" : part))),
+		effects: expected.effects.map((effect) => ({
+			...effect,
+			path: effect.path.map((part) => (effect.owner !== null && part === subject ? "$" : part)),
+		})),
+	};
+	const outcomes = targets.map((target) => propertyOutcome(target, carried));
+	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
+	if (refused) return refused;
+	return {
+		rendered: outcomes.every((outcome) => outcome.rendered === "verified") ? "verified" : "mismatching",
+		observed: outcomes.map((outcome) => outcome.observed ?? "").join(", "),
+	};
+}
+
 const borderColorRow = /^border-(?:(?:top|right|bottom|left|inline|block|(?:inline|block)-(?:start|end))-)?color$/;
 
 /** Nine source roles over four native sides. Only the side is mapped; the comparator owns paint. */
@@ -1229,7 +1863,17 @@ function lengthContext(element: Element, property: string): string | undefined {
 	const text = () =>
 		element instanceof HTMLElement &&
 		Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
-	if (property === "outline-width" || property === "outline-offset") {
+	if (property === "flex-basis") {
+		const parent = element.parentElement;
+		if (!parent || !["flex", "inline-flex"].includes(view.getComputedStyle(parent).display))
+			return "this flex basis needs a native flexible item";
+	} else if (property === "column-gap" || property === "row-gap") {
+		const multicol = native.columnCount !== "auto" || native.columnWidth !== "auto";
+		if (!["flex", "inline-flex", "grid", "inline-grid"].includes(native.display) && !multicol)
+			return "this gap needs a native flexible, grid or multi-column container";
+		if (property === "row-gap" && !["flex", "inline-flex", "grid", "inline-grid"].includes(native.display))
+			return "this row gap needs a native flexible or grid container";
+	} else if (property === "outline-width" || property === "outline-offset") {
 		if (["none", "hidden", "auto"].includes(native.outlineStyle))
 			return "this outline length needs an explicit visible outline";
 	} else if (property === "stroke-width") {

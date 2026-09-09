@@ -10,7 +10,7 @@ import { nativePropertyEffects, propertyConsumers } from "../daemon/source-prope
 import { planPropertyValue } from "../daemon/source-property-plan";
 import { propertyScopePaths } from "../daemon/source-property-scope";
 import { FILTER_SET } from "../properties/families";
-import type { SourcePropertyExpectation } from "../source-property";
+import type { SourcePropertyEnvironment, SourcePropertyExpectation, SourcePropertyValue } from "../source-property";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import type { PropertyOutcome } from "./property-outcome";
 
@@ -2475,4 +2475,679 @@ it("compares a compiled gradient whose own branch carries no interpolation space
 			element.style.visibility = "hidden";
 		});
 	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+/** Plan one retained row from the real compiler, then read it back as this use's expectation. */
+async function planned(
+	literal: string,
+	property: string,
+	value: SourcePropertyValue,
+	environment: SourcePropertyEnvironment = { direction: "ltr", writingMode: "horizontal-tb" },
+) {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property, scope: "" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		literal,
+		operation,
+		value,
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: literal,
+		css: plan.original.css,
+		// The inverse is read exactly as the daemon sends it, carried variable inputs included.
+		effects: nativePropertyEffects(plan.original, plan.roots, environment),
+	};
+	return { plan, expected, inverse, style: `${plan.original.css}${plan.desired.css}` };
+}
+
+it.each([
+	{ property: "flex-direction", before: "flex flex-row", after: "flex-col", host: "" },
+	{ property: "flex-wrap", before: "flex flex-wrap", after: "flex-nowrap", host: "" },
+	{ property: "align-items", before: "flex items-start", after: "items-center", host: "" },
+	{ property: "justify-content", before: "flex justify-start", after: "justify-center", host: "" },
+	{ property: "align-self", before: "self-auto", after: "self-start", host: "display:flex" },
+	{ property: "position", before: "static", after: "relative", host: "" },
+	{ property: "overflow-x", before: "overflow-x-visible", after: "overflow-x-hidden", host: "" },
+	{ property: "overflow-y", before: "overflow-y-visible", after: "overflow-y-hidden", host: "" },
+	{ property: "display", before: "flex", after: "grid", host: "" },
+])("verifies each compiled $property use against its own native keyword", async (row) => {
+	const p = await planned(row.before, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="${row.host}"><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${row.before}">Retained</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a hidden display against a use the engine never rendered", async () => {
+	const p = await planned("flex", "display", { kind: "binding", tokens: ["hidden"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Hidden</div><div data-subject class="flex">Shown</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("none");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("refuses a removed display rather than guessing this host's native default", async () => {
+	const p = await planned("flex", "display", { kind: "remove" });
+	const f = await fixture(`<!doctype html><style>${p.style}</style><div data-subject>Default</div>`);
+	expect(await f.inspect(p.expected)).toEqual([
+		{ rendered: "unverified", reason: "this display has no independent native default declaration" },
+	]);
+});
+
+it("verifies removed layout keywords from their initial value and refuses declaring hosts", async () => {
+	const p = await planned("flex justify-center", "justify-content", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Cleared</div><div data-subject class="flex justify-center">Retained</div><select data-subject class="${p.plan.next}"><option>One</option></select>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"unverified",
+	]);
+});
+
+it("needs a native flexible or grid box before reading its alignment", async () => {
+	const p = await planned("flex items-start", "align-items", { kind: "binding", tokens: ["items-center"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="items-center">Block</div><div data-subject class="${p.plan.next}">Flex</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "verified"]);
+});
+
+it("verifies both native overflow axes for the whole compiled row", async () => {
+	const p = await planned("overflow-visible", "overflow", { kind: "binding", tokens: ["overflow-hidden"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Both</div><div data-subject class="overflow-visible">Retained</div><div data-subject class="${p.plan.next}" style="overflow-y:scroll">One axis</div>`,
+	);
+	// The third use really scrolls on one axis, so the whole row is a mismatch, not a refusal.
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"mismatching",
+	]);
+});
+
+it("refuses a visible overflow the other native axis has already coupled", async () => {
+	const p = await planned("overflow-x-hidden", "overflow-y", { kind: "binding", tokens: ["overflow-y-visible"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Coupled</div>`,
+	);
+	expect(await f.inspect(p.expected)).toEqual([
+		{ rendered: "unverified", reason: "this visible overflow is coupled to the other native axis" },
+	]);
+});
+
+it.each([
+	{ property: "padding", before: "p-2", after: "p-4", sides: ["16px", "16px", "16px", "16px"] },
+	{ property: "padding-inline", before: "px-2", after: "px-4", sides: ["8px", "16px", "8px", "16px"] },
+	{ property: "padding-block", before: "py-2", after: "py-4", sides: ["16px", "8px", "16px", "8px"] },
+	{ property: "padding-top", before: "pt-2", after: "pt-4", sides: ["16px", "8px", "8px", "8px"] },
+	{ property: "padding-inline-start", before: "ps-2", after: "ps-4", sides: ["8px", "8px", "8px", "16px"] },
+	{ property: "margin", before: "m-2", after: "m-4", sides: ["16px", "16px", "16px", "16px"] },
+	{ property: "margin-inline", before: "mx-2", after: "mx-4", sides: ["8px", "16px", "8px", "16px"] },
+	{ property: "margin-bottom", before: "mb-2", after: "mb-4", sides: ["8px", "8px", "16px", "8px"] },
+	{ property: "margin-inline-end", before: "me-2", after: "me-4", sides: ["8px", "16px", "8px", "8px"] },
+])("verifies the compiled $property side independently of the retained ones", async (row) => {
+	// Every use starts from all four sides, so a change must move exactly the row's own sides.
+	const whole = row.before.startsWith("p") ? "p-2" : "m-2";
+	const start = row.before === whole ? whole : `${whole} ${row.before}`;
+	const p = await planned(start, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${start}">Retained</div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	const box = row.before.startsWith("p") ? "padding" : "margin";
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate(
+				(element, name) =>
+					["top", "right", "bottom", "left"].map((side) =>
+						getComputedStyle(element).getPropertyValue(`${name}-${side}`),
+					),
+				box,
+			),
+	).toEqual(row.sides);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it.each([
+	{ mode: "horizontal-tb", direction: "rtl", side: "padding-right" },
+	{ mode: "vertical-rl", direction: "ltr", side: "padding-top" },
+	{ mode: "vertical-lr", direction: "rtl", side: "padding-bottom" },
+])("reads a logical spacing in the $mode $direction context this use actually resolves", async (row) => {
+	const p = await planned(
+		"p-2",
+		"padding-inline-start",
+		{ kind: "binding", tokens: ["ps-4"] },
+		{
+			direction: row.direction as "ltr" | "rtl",
+			writingMode: row.mode,
+		},
+	);
+	const style = `writing-mode:${row.mode};direction:${row.direction}`;
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="${style}">Logical</div><div data-subject class="p-2" style="${style}">Retained</div><div data-subject class="${p.plan.next}" style="writing-mode:sideways-rl">Unknown mode</div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, side) => getComputedStyle(element).getPropertyValue(side), row.side),
+	).toBe("16px");
+});
+
+it("verifies removed spacing against the compiler's own zero declaration", async () => {
+	const p = await planned("p-4 m-4", "padding", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Cleared</div><div data-subject class="p-4 m-4">Retained</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect(p.plan.next).toContain("m-4");
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => [getComputedStyle(element).paddingTop, getComputedStyle(element).marginTop]),
+	).toEqual(["0px", "16px"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a negative compiled margin and an authored zero", async () => {
+	const p = await planned("mt-4", "margin-top", { kind: "binding", tokens: ["-mt-4"] });
+	const zero = await planned("mt-4", "margin-top", { kind: "binding", tokens: ["mt-0"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}${zero.plan.desired.css}</style><div data-subject class="${p.plan.next}">Negative</div><div data-subject class="${zero.plan.next}">Zero</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("-16px");
+	expect((await f.inspect(zero.expected)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("refuses an automatic margin and a percentage this use resolves against its own box", async () => {
+	const auto = await planned("mx-4", "margin-inline", { kind: "binding", tokens: ["mx-auto"] });
+	const percent = await planned("p-4", "padding", { kind: "custom", value: "10%" });
+	const f = await fixture(
+		`<!doctype html><style>${auto.style}${percent.plan.desired.css}</style><div data-subject class="${auto.plan.next} ${percent.plan.next}">Both</div>`,
+	);
+	expect(await f.inspect(auto.expected)).toEqual([
+		{ rendered: "unverified", reason: "this box spacing has no independent native length" },
+	]);
+	expect(await f.inspect(percent.expected)).toEqual([
+		{ rendered: "unverified", reason: "this box spacing has no independent native length" },
+	]);
+});
+
+it("needs a rendered native box before reading its spacing", async () => {
+	const p = await planned("p-2", "padding", { kind: "binding", tokens: ["p-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="display:none">Hidden</div><div data-subject class="${p.plan.next}" style="display:contents">Contents</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "unverified"]);
+});
+
+it.each([
+	{ property: "gap", before: "gap-2", after: "gap-4", axes: ["16px", "16px"] },
+	{ property: "column-gap", before: "gap-x-2", after: "gap-x-4", axes: ["8px", "16px"] },
+	{ property: "row-gap", before: "gap-y-2", after: "gap-y-4", axes: ["16px", "8px"] },
+])("verifies the compiled $property axis of a native gap container", async (row) => {
+	const start = row.before === "gap-2" ? "flex gap-2" : `flex gap-2 ${row.before}`;
+	const p = await planned(start, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><span>One</span><span>Two</span></div><div data-subject class="${start}"><span>One</span><span>Two</span></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => [getComputedStyle(element).rowGap, getComputedStyle(element).columnGap]),
+	).toEqual(row.axes);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a removed gap against the native normal spacing of its own container", async () => {
+	const p = await planned("flex gap-4", "gap", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><span>One</span></div><div data-subject class="flex gap-4"><span>One</span></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("normal normal");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("needs a native gap container, and reads a multi-column gap on its own axis", async () => {
+	const p = await planned("gap-2", "column-gap", { kind: "binding", tokens: ["gap-x-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Block</div><div data-subject class="${p.plan.next}" style="columns:2">Columns</div><div data-subject class="${p.plan.next}" style="display:grid">Grid</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"unverified",
+		"verified",
+		"verified",
+	]);
+});
+
+it("mismatches the whole gap row when only one native axis carries the change", async () => {
+	const p = await planned("flex gap-2", "gap", { kind: "binding", tokens: ["gap-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="row-gap:8px"><span>One</span></div>`,
+	);
+	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
+});
+
+it.each([
+	{ property: "top", before: "top-2", after: "top-4", sides: ["16px", "8px", "8px", "8px"] },
+	{ property: "right", before: "right-2", after: "right-4", sides: ["8px", "16px", "8px", "8px"] },
+	{ property: "bottom", before: "bottom-2", after: "bottom-4", sides: ["8px", "8px", "16px", "8px"] },
+	{ property: "left", before: "left-2", after: "left-4", sides: ["8px", "8px", "8px", "16px"] },
+	{ property: "inset", before: "inset-2", after: "inset-4", sides: ["16px", "16px", "16px", "16px"] },
+	{ property: "inset-inline", before: "inset-x-2", after: "inset-x-4", sides: ["8px", "16px", "8px", "16px"] },
+	{ property: "inset-block", before: "inset-y-2", after: "inset-y-4", sides: ["16px", "8px", "16px", "8px"] },
+	{ property: "inset-inline-start", before: "start-2", after: "start-4", sides: ["8px", "8px", "8px", "16px"] },
+	{ property: "inset-inline-end", before: "end-2", after: "end-4", sides: ["8px", "16px", "8px", "8px"] },
+])("verifies the compiled $property offset of a positioned native box", async (row) => {
+	const start = row.before === "inset-2" ? "absolute inset-2" : `absolute inset-2 ${row.before}`;
+	const p = await planned(start, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="position:relative;width:300px;height:200px"><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${start}">Retained</div><div data-subject class="${p.plan.next.replace("absolute", "static")}">Static</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => {
+				const style = getComputedStyle(element);
+				return [style.top, style.right, style.bottom, style.left];
+			}),
+	).toEqual(row.sides);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"verified",
+		"unverified",
+	]);
+});
+
+it.each([
+	{ mode: "horizontal-tb", direction: "rtl", side: "right" },
+	{ mode: "vertical-rl", direction: "ltr", side: "top" },
+])("reads a logical offset in the $mode $direction context this use actually resolves", async (row) => {
+	const p = await planned(
+		"absolute inset-2",
+		"inset-inline-start",
+		{ kind: "binding", tokens: ["start-4"] },
+		{
+			direction: row.direction as "ltr" | "rtl",
+			writingMode: row.mode,
+		},
+	);
+	const style = `writing-mode:${row.mode};direction:${row.direction}`;
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="position:relative;width:300px;height:200px"><div data-subject class="${p.plan.next}" style="${style}">Logical</div><div data-subject class="absolute inset-2" style="${style}">Retained</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element, side) => getComputedStyle(element).getPropertyValue(side), row.side),
+	).toBe("16px");
+});
+
+it("verifies a removed offset only where a native box still reports it as automatic", async () => {
+	const p = await planned("sticky top-4", "top", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="height:200px;overflow:auto"><div data-subject class="${p.plan.next}">Sticky</div><div data-subject class="sticky top-4">Retained</div><div data-subject class="${p.plan.next.replace("sticky", "relative")}">Relative</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"unverified",
+	]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("auto");
+});
+
+it.each([
+	{ property: "z-index", before: "relative z-2", after: "z-4", host: "", observed: "4" },
+	{ property: "order", before: "order-2", after: "order-4", host: "display:flex", observed: "4" },
+	{ property: "flex", before: "flex-1", after: "flex-auto", host: "display:flex", observed: "1 1 auto" },
+	{
+		property: "grid-column",
+		before: "col-span-2",
+		after: "col-span-4",
+		host: "display:grid",
+		observed: "span 4 span 4",
+	},
+	{ property: "grid-row", before: "row-span-2", after: "row-span-4", host: "display:grid", observed: "span 4 span 4" },
+	{ property: "grid-column-start", before: "col-start-2", after: "col-start-4", host: "display:grid", observed: "4" },
+	{ property: "grid-row-start", before: "row-start-2", after: "row-start-4", host: "display:grid", observed: "4" },
+	{ property: "columns", before: "columns-2", after: "columns-4", host: "", observed: "4 auto" },
+	{ property: "scroll-snap-type", before: "snap-none", after: "snap-x", host: "", observed: "x" },
+])("verifies the whole compiled $property declaration against its own native box", async (row) => {
+	const p = await planned(row.before, row.property, { kind: "binding", tokens: [row.after] });
+	const scroll = row.property === "scroll-snap-type" ? "overflow:auto;" : "";
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="${row.host}"><div data-subject class="${p.plan.next}" style="${scroll}">Changed</div><div data-subject class="${row.before}" style="${scroll}">Retained</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe(row.observed);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it.each(["z-index", "order", "grid-column-start", "columns", "scroll-snap-type"])(
+	"refuses a %s the native box it sits in never applies",
+	async (property) => {
+		const rows: Record<string, { before: string; after: string }> = {
+			"z-index": { before: "relative z-2", after: "z-4" },
+			order: { before: "order-2", after: "order-4" },
+			"grid-column-start": { before: "col-start-2", after: "col-start-4" },
+			columns: { before: "columns-2", after: "columns-4" },
+			"scroll-snap-type": { before: "snap-none", after: "snap-x" },
+		};
+		const row = rows[property]!;
+		const p = await planned(row.before, property, { kind: "binding", tokens: [row.after] });
+		// Each case puts the row on a native box that never applies it: an unpositioned box, a
+		// block parent for an item row, a flexible box for a column count, an unscrollable box.
+		const style = property === "z-index" ? "position:static" : property === "columns" ? "display:flex" : "";
+		const f = await fixture(
+			`<!doctype html><style>${p.style}</style><div><div data-subject class="${p.plan.next.replace("relative", "")}" style="${style}">Outside</div></div>`,
+		);
+		expect((await f.inspect(p.expected))[0]?.rendered).toBe("unverified");
+	},
+);
+
+it("verifies a compiled track list by the number of tracks the grid actually made", async () => {
+	const p = await planned("grid grid-cols-2", "grid-template-columns", { kind: "binding", tokens: ["grid-cols-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="width:400px"><i>a</i></div><div data-subject class="grid grid-cols-2" style="width:400px"><i>a</i></div><div data-subject class="${p.plan.next.replace("grid ", "")}" style="width:400px"><i>a</i></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"unverified",
+	]);
+});
+
+it("verifies removed declarations against the initial value each row stands at", async () => {
+	const p = await planned("flex-1", "flex", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="display:flex"><div data-subject class="${p.plan.next}">Cleared</div><div data-subject class="flex-1">Retained</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("0 1 auto");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it.each([
+	{ property: "width", before: "w-2", after: "w-4", host: "", observed: "16px" },
+	{ property: "height", before: "h-2", after: "h-4", host: "", observed: "16px" },
+	{ property: "min-width", before: "min-w-2", after: "min-w-4", host: "", observed: "16px" },
+	{ property: "max-width", before: "max-w-2", after: "max-w-4", host: "", observed: "16px" },
+	{ property: "min-height", before: "min-h-2", after: "min-h-4", host: "", observed: "16px" },
+	{ property: "max-height", before: "max-h-2", after: "max-h-4", host: "", observed: "16px" },
+	{ property: "flex-basis", before: "basis-2", after: "basis-4", host: "display:flex", observed: "16px" },
+])("verifies the compiled $property against the box this use actually has", async (row) => {
+	const p = await planned(row.before, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px;${row.host}"><div data-subject class="${p.plan.next}">A</div><div data-subject class="${row.before}">B</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe(row.observed);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a compiled percentage width against its own native containing block", async () => {
+	const p = await planned("w-2", "width", { kind: "binding", tokens: ["w-full"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px;padding:0 20px"><div data-subject class="${p.plan.next}">Full</div><div data-subject class="w-2">Retained</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("260px");
+});
+
+it("refuses an automatic sizing mode rather than reading a box it did not compute", async () => {
+	const p = await planned("w-4", "width", { kind: "binding", tokens: ["w-auto"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Auto</div></div>`,
+	);
+	expect(await f.inspect(p.expected)).toEqual([
+		{ rendered: "unverified", reason: "this sizing mode has no native used-box proof" },
+	]);
+});
+
+it("reports a definite constraint on the used box separately from a mismatch", async () => {
+	const p = await planned("w-2", "width", { kind: "binding", tokens: ["w-96"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}" style="max-width:100px">Clamped</div><div data-subject class="${p.plan.next}" style="min-width:600px">Floored</div><div data-subject class="${p.plan.next}">Free</div></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(outcomes.map((outcome) => outcome.rendered)).toEqual(["constrained", "constrained", "verified"]);
+	expect(outcomes[0]?.reason).toBe("this used box is held by a definite native max-width");
+	expect(outcomes[1]?.reason).toBe("this used box is held by a definite native min-width");
+	expect(outcomes[0]?.observed).toBe("100px");
+});
+
+it("names the flexible box that decided a main size instead of reporting a mismatch", async () => {
+	const p = await planned("w-2", "width", { kind: "binding", tokens: ["w-24"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px;display:flex"><div data-subject class="${p.plan.next}" style="flex-grow:1">Grown</div><div data-subject class="${p.plan.next}" style="flex-basis:50px">Based</div></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(outcomes.map((outcome) => outcome.rendered)).toEqual(["constrained", "constrained"]);
+	expect(outcomes[0]?.reason).toBe("this used size is under a native flexible box constraint");
+	expect(outcomes[1]?.reason).toBe("this main size comes from a native flex basis");
+});
+
+it("changes only the width of a use, leaving its padding and height rules alone", async () => {
+	const p = await planned("w-2 h-8 p-2 min-w-1", "width", { kind: "binding", tokens: ["w-24"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Wide</div></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => {
+				const style = getComputedStyle(element);
+				return [style.width, style.height, style.paddingLeft, style.minWidth];
+			}),
+	).toEqual(["96px", "32px", "8px", "4px"]);
+});
+
+it("verifies a compiled between-children color on every native child the row separates", async () => {
+	const p = await planned("divide-red-500 divide-x-2", "border-color, between children", {
+		kind: "binding",
+		tokens: ["divide-blue-500"],
+	});
+	// The row paints all four sides through the child's own border box; only the color is the row's.
+	const cell = 'style="display:block;width:40px;height:20px;border-style:solid;border-width:2px"';
+	const children = `<i ${cell}>One</i><i ${cell}>Two</i><i ${cell}>Three</i>`;
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">${children}</div><div data-subject class="divide-red-500 divide-x-2">${children}</div><div data-subject class="${p.plan.next}"><i ${cell}>Only</i></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(outcomes[2]?.reason).toBe("this use has no native child this row separates");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"verified",
+		"unverified",
+	]);
+});
+
+it.each([
+	{ property: "column-gap, between children", token: "space-x", side: "margin-inline-end" },
+	{ property: "row-gap, between children", token: "space-y", side: "margin-block-end" },
+])("verifies the compiled $property on the native children it separates", async (row) => {
+	const p = await planned(`${row.token}-2`, row.property, { kind: "binding", tokens: [`${row.token}-4`] });
+	const children = "<i>One</i><i>Two</i><i>Three</i>";
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">${children}</div><div data-subject class="${row.token}-2">${children}</div><div data-subject class="${p.plan.next}"><i>Only</i></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", "mismatching", "unverified"]);
+	expect(outcomes[2]?.reason).toBe("this use has no native child this row separates");
+	// The row spaces every child but the last, and leaves the last one alone.
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate(
+				(element, side) => [...element.children].map((child) => getComputedStyle(child).getPropertyValue(side)),
+				row.side,
+			),
+	).toEqual(["16px", "16px", "0px"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual([
+		"mismatching",
+		"verified",
+		"unverified",
+	]);
+});
+
+it.each(["column-gap, between children", "row-gap, between children"])(
+	"verifies a removed %s and a custom one against each native child",
+	async (property) => {
+		const token = property.startsWith("column") ? "space-x" : "space-y";
+		const side = property.startsWith("column") ? "margin-inline-end" : "margin-block-end";
+		const removed = await planned(`${token}-4`, property, { kind: "remove" });
+		const custom = await planned(`${token}-4`, property, { kind: "custom", value: "3.5px" });
+		const children = "<i>One</i><i>Two</i>";
+		const f = await fixture(
+			`<!doctype html><style>${removed.style}${custom.plan.desired.css}</style><div data-subject class="${removed.plan.next || "space-none"}">${children}</div><div data-subject class="${custom.plan.next}">${children}</div>`,
+		);
+		expect((await f.inspect(removed.expected)).map((outcome) => outcome.rendered)).toEqual([
+			"verified",
+			"mismatching",
+		]);
+		expect((await f.inspect(custom.expected)).map((outcome) => outcome.rendered)).toEqual([
+			"mismatching",
+			"verified",
+		]);
+		expect(custom.plan.next).toBe(`${token}-[3.5px]`);
+		expect(
+			await f.page
+				.locator("[data-subject]")
+				.last()
+				.evaluate((element, name) => getComputedStyle(element.children[0]!).getPropertyValue(name), side),
+		).toBe("3.5px");
+	},
+);
+
+it("does not certify a between-children spacing one native child no longer carries", async () => {
+	const p = await planned("space-x-2", "column-gap, between children", { kind: "binding", tokens: ["space-x-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><i>One</i><i style="margin-inline-end:2px">Two</i><i>Three</i></div>`,
+	);
+	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
+});
+
+it("does not certify a between-children row one native child no longer carries", async () => {
+	const p = await planned("divide-red-500 divide-x-2", "border-color, between children", {
+		kind: "binding",
+		tokens: ["divide-blue-500"],
+	});
+	const cell = 'style="display:block;width:40px;height:20px;border-style:solid;border-width:2px"';
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><i ${cell}>One</i><i ${cell} data-outside>Two</i><i ${cell}>Three</i></div>`,
+	);
+	await f.page.locator("[data-outside]").evaluate((element) => {
+		if (element instanceof HTMLElement) element.style.borderColor = "#ff0000";
+	});
+	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
+});
+
+it.each([
+	{ property: "padding", literal: "flex items-center p-2", token: "p-4" },
+	{ property: "width", literal: "flex items-center w-2", token: "w-24" },
+	{ property: "padding", literal: "flex gap-2 p-6 w-40", token: "p-8" },
+	{ property: "width", literal: "flex gap-2 p-6 w-40", token: "w-48" },
+])("verifies a compiled $property on a use wearing other layout utilities: $literal", async (row) => {
+	const p = await planned(row.literal, row.property, { kind: "binding", tokens: [row.token] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${row.literal}">Retained</div></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("ignores a sibling declaration that shares a theme variable, and refuses a competing one", async () => {
+	const p = await planned("flex gap-2 p-6 w-40", "padding", { kind: "binding", tokens: ["p-8"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Padded</div></div>`,
+	);
+	const sibling = { owner: "w-40", path: ["@layer utilities", "$"], important: false };
+	// `w-40` reaches the padding row's effects because both utilities read --spacing. It writes no
+	// padding longhand, so it is context for this row, not competition for it.
+	expect(
+		await f.inspect({
+			...p.expected,
+			effects: [...p.expected.effects, { ...sibling, property: "width", value: "calc(var(--spacing) * 40)" }],
+		}),
+	).toEqual([{ rendered: "verified", observed: "32px 32px 32px 32px" }]);
+	// A legacy alias for the same longhand does compete, and is refused rather than ignored.
+	expect(
+		(
+			await f.inspect({
+				...p.expected,
+				effects: [...p.expected.effects, { ...sibling, property: "-webkit-padding-start", value: "3px" }],
+			})
+		)[0],
+	).toEqual({ rendered: "unverified", reason: "this box spacing has a competing declaration requiring proof" });
 });
