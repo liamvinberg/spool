@@ -109,7 +109,10 @@ it("drags a corner through the running layout, saves once and takes one step bac
 	for (const frame of [f.frame, second])
 		expect(await frame.locator("[data-subject] button").allTextContents()).toEqual(["A:1", "B:1"]);
 	const settled = (await outcomes(f)).at(-1);
-	expect(settled?.uses?.map((use) => use.rendered), JSON.stringify(settled)).toEqual(["verified", "verified"]);
+	expect(
+		settled?.uses?.map((use) => use.rendered),
+		JSON.stringify(settled),
+	).toEqual(["verified", "verified"]);
 
 	// one drag is one save and one step back, though it wrote two properties
 	const undone = reply(f, "inverse");
@@ -146,11 +149,10 @@ it("aligns the initiating use to 200px while the shared uses stay constrained to
 	// the source says 200px; two uses cannot be that wide, and each one says which
 	await expect.poll(() => computed(f.frame, "width")).toEqual(["200px", "120px", "120px"]);
 	const settled = (await outcomes(f)).at(-1);
-	expect(settled?.uses?.map((use) => use.rendered), JSON.stringify(settled)).toEqual([
-		"verified",
-		"constrained",
-		"constrained",
-	]);
+	expect(
+		settled?.uses?.map((use) => use.rendered),
+		JSON.stringify(settled),
+	).toEqual(["verified", "constrained", "constrained"]);
 	await expect.poll(() => f.page.locator('[data-hand-notice="constrained"]').count()).toBe(1);
 	expect(f.writes).toEqual(["commit"]);
 });
@@ -178,4 +180,30 @@ it("previews every use while the pointer is down and saves nothing when Escape c
 	await f.page.waitForTimeout(500);
 	expect(f.bytes()[owner]).toBe(card);
 	expect(f.writes).toEqual([]);
+});
+
+it("turns an element from the ring's rotate zone and saves it the same way", { timeout: 120_000 }, async () => {
+	const f = await originCanvas({ [owner]: card }, frameSource, '[data-subject="A"]');
+	await f.select();
+	await expect.poll(() => f.page.locator('[data-element-rotate="ne"]').count(), { timeout: 30_000 }).toBe(1);
+	const box = await f.target.boundingBox();
+	const zone = await f.page.locator('[data-element-rotate="ne"]').boundingBox();
+	if (!box || !zone) throw new Error("the ring drew no rotate zone");
+
+	// a quarter turn about the element's own centre, snapped to 15° under shift
+	const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+	const committed = reply(f, "commit");
+	await f.page.mouse.move(zone.x + zone.width / 2, zone.y + zone.height / 2);
+	await f.page.mouse.down();
+	await f.page.keyboard.down("Shift");
+	await f.page.mouse.move(centre.x + 120, centre.y);
+	await f.page.mouse.move(centre.x, centre.y + 120);
+	await f.page.mouse.up();
+	await f.page.keyboard.up("Shift");
+	await saved(f, committed);
+
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toContain("rotate-90");
+	await f.settled();
+	await expect.poll(() => computed(f.frame, "rotate")).toEqual(["90deg", "90deg"]);
+	expect(f.writes).toEqual(["commit"]);
 });
