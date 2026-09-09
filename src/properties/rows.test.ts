@@ -18,7 +18,7 @@ import {
 /**
  * The property model (#257): every family resolves to a primitive and a rule,
  * and every row can be created, edited, removed and unlinked to an arbitrary
- * value — or it refuses with a reason that traces back to here.
+ * value, or it refuses with a reason that traces back to here.
  *
  * The theme below is kaffe's, which is the point of most of these: a type
  * scale it named itself, a colour Tailwind has never heard of, and a radius

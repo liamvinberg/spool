@@ -66,7 +66,7 @@ export type Rule =
  * An arbitrary value is available wherever the compiler accepts one:
  * `bg-[#ff0044]`, `text-[15px]`, `rounded-[13px]`, `leading-[19px]`,
  * `border-[1.5px]`. A word from an enum and a chip in a toggle set have no
- * such spelling — there is no bracket form of `items-center` — so those refuse
+ * such spelling (there is no bracket form of `items-center`), so those refuse
  * with `no utility`, which is the same sentence the compiler gate gives.
  */
 export type Arbitrary = { ok: true; spell: (typed: string) => string | null } | { ok: false; reason: string };
@@ -437,7 +437,7 @@ export interface Reading {
  *
  * `scoped` is the literal's tokens under one variant chain with the prefixes
  * taken off, which is the same thing the write lane reads when it plans a
- * write — so what a row shows and what a write starts from are one reading.
+ * write, so what a row shows and what a write starts from are one reading.
  */
 export function readRow(row: Row, scoped: string, theme: CompiledTheme | null): Reading {
 	const step = stepOf(theme);
@@ -600,7 +600,7 @@ export interface At {
  * Always tokens, never a rewritten literal: the lane folds `pt-4` back into
  * `p-4 pt-2` where that is the shortest true spelling, drops a base zero and
  * writes a scoped one, and keeps the logical sides a file was written with. A
- * row that means several tokens at once — a gradient, an exclusive chip —
+ * row that means several tokens at once, a gradient or an exclusive chip,
  * hands over several, and they are applied in order against one literal.
  */
 export function editsFor(row: Row, value: RowValue, at: At): RowEdit[] {
@@ -668,7 +668,7 @@ export function editsFor(row: Row, value: RowValue, at: At): RowEdit[] {
  *
  * `remove` takes away whatever the family sets under the scope, and it needs
  * one token to know which family that is. Anything of the family will do, so
- * this is the cheapest true one — a zero, a keyword, or whatever the row is
+ * this is the cheapest true one: a zero, a keyword, or whatever the row is
  * already wearing.
  */
 export function removalToken(row: Row, at: At): string {
@@ -756,7 +756,7 @@ const INLINE_TAGS = new Set([
  * tag's own default when it does not.
  *
  * It is a reading rather than a measurement on purpose. The refusals that turn
- * on it — a size on an inline element, padding on one — are about what the
+ * on it, a size on an inline element or padding on one, are about what the
  * file says, which is the only thing the rail edits.
  */
 export function displayOf(element: RowElement, scoped: string): string {
