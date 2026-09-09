@@ -213,14 +213,27 @@ it("steps by one scale unit on an arrow and by ten on shift", async () => {
 	await step(rail, "padding", "ArrowUp", false);
 	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["p-5"] } });
 
+	// there is no negative padding to step into, so the step stops at nothing
 	await step(rail, "padding", "ArrowDown", true);
-	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } });
+	expect(rail.previews.at(-1)).toEqual({ property: "padding", value: { kind: "binding", tokens: ["p-0"] } });
 	expect(rail.requests).toEqual([]);
 
 	const field = fieldIn(rail, "padding");
 	if (!field) throw new Error("missing padding field");
 	await act(() => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-	expect(rail.requests).toEqual([{ property: "padding", value: { kind: "binding", tokens: ["-p-5"] } }]);
+	expect(rail.requests).toEqual([{ property: "padding", value: { kind: "binding", tokens: ["p-0"] } }]);
+});
+
+it("keeps a margin signed and refuses a padding nobody can spell", async () => {
+	const rail = await mount("p-4 m-4");
+	// a margin the compiler spells with a leading `-` is authored as typed
+	await type(rail, "margin", "-6");
+	expect(rail.requests).toEqual([{ property: "margin", value: { kind: "binding", tokens: ["-m-6"] } }]);
+
+	// a padding has no such spelling, so the field saves nothing at all
+	await type(rail, "padding", "-6");
+	expect(rail.requests).toHaveLength(1);
+	expect(rail.completions).toEqual([false]);
 });
 
 /* ---------- P7: the folds ---------- */

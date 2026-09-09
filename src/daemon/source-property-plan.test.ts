@@ -477,3 +477,27 @@ it.each([
 	expect(plan.next).toBe(`text-red-500 ${after}`);
 	expect([...plan.roots]).toContain(declared);
 });
+
+it("refuses a negative padding the compiler cannot spell while a negative margin is authored", async () => {
+	const f = fixture();
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const margin = await planPropertyValue(
+		f.root,
+		f.inputs,
+		"p-4 m-4",
+		{ kind: "property", property: "margin", scope: "" },
+		{ kind: "binding", tokens: ["-m-5"] },
+		environment,
+	);
+	expect(margin.next).toBe("p-4 -m-5");
+	await expect(
+		planPropertyValue(
+			f.root,
+			f.inputs,
+			"p-4 m-4",
+			{ kind: "property", property: "padding", scope: "" },
+			{ kind: "binding", tokens: ["-p-5"] },
+			environment,
+		),
+	).rejects.toThrow("no compiled effect for this property");
+});

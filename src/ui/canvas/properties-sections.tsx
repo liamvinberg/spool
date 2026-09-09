@@ -47,6 +47,7 @@ import {
 	rowFor,
 	rowsIn,
 	type Section as SectionName,
+	signedRow,
 	unlinkTo,
 	verdictFor,
 } from "../../properties/rows";
@@ -337,7 +338,8 @@ function LengthRow({
 			typedValue={(typed) => {
 				if (typed.trim() === "") return null;
 				const next = parseTyped(kind, typed);
-				return next ? { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` } : undefined;
+				if (!next || (next.negative && !signedRow(row))) return undefined;
+				return { kind: "value", value: `${next.negative ? "-" : ""}${next.value}` };
 			}}
 			stepped={(from, units) => {
 				const parsed = takeApart(from);
@@ -346,7 +348,11 @@ function LengthRow({
 						? null
 						: { family, kind, value: parsed.value, negative: parsed.negative, important: false, token: "" };
 				const next = stepLength(kind, start, measured, units);
-				return next === null ? undefined : `${next.negative ? "-" : ""}${next.value}`;
+				if (next === null) return undefined;
+				// a family with no negative spelling stops at nothing rather than
+				// stepping into a value the compiler cannot write
+				if (next.negative && !signedRow(row)) return "0";
+				return `${next.negative ? "-" : ""}${next.value}`;
 			}}
 			{...(aside === undefined ? {} : { aside })}
 		/>

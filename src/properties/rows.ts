@@ -808,6 +808,53 @@ export function boxRefusal(row: Row, element: RowElement, scoped: string): strin
 }
 
 const SIZE_FAMILIES = new Set(["w", "h", "size", "min-w", "max-w", "min-h", "max-h"]);
+
+/**
+ * The numeric families the compiler spells with a leading `-`.
+ *
+ * A margin pulls, an offset moves and a transform goes either way, so each of
+ * those has a negative utility. A padding, a gap and a width have none: there
+ * is no `-p-4` to write, and a field that offered one would be offering a save
+ * the compiler refuses.
+ */
+const SIGNED_FAMILIES = new Set([
+	"m",
+	"mx",
+	"my",
+	"mt",
+	"mr",
+	"mb",
+	"ml",
+	"ms",
+	"me",
+	"top",
+	"right",
+	"bottom",
+	"left",
+	"inset",
+	"inset-x",
+	"inset-y",
+	"start",
+	"end",
+	"z",
+	"order",
+	"translate",
+	"translate-x",
+	"translate-y",
+	"rotate",
+	"rotate-x",
+	"rotate-y",
+	"skew",
+	"skew-x",
+	"skew-y",
+	"indent",
+	"tracking",
+]);
+
+/** Whether this row has a negative spelling at all. */
+export function signedRow(row: Row): boolean {
+	return row.rule.kind === "length" && SIGNED_FAMILIES.has(row.rule.family);
+}
 const SPACING_FAMILIES = new Set(["p", "px", "py", "pt", "pr", "pb", "pl", "ps", "pe"]);
 
 /* ---------- the folds a row group reads together ---------- */
