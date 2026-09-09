@@ -5110,6 +5110,10 @@ export function ProjectCanvas({
 
 	/** One value the popover picked, written through the same read the drag uses. */
 	const writeGapValue = (pick: PickedSelection, axis: GapAxis, value: string): void => {
+		// the popover outliving its selection would be a bug; a write against one
+		// that is gone would be a wrong file, so this is checked rather than trusted
+		const held = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
+		if (held === undefined || held.frame !== pick.frame || held.selector !== pick.selector) return;
 		openRingWrite(pick, [{ property: axis, scope: "" }]);
 		sampleRingWrite({
 			kind: "fields",
@@ -5568,6 +5572,7 @@ export function ProjectCanvas({
 			"canvas.escape": () => {
 				cancelPicks();
 				setPreview(null);
+				setGapMenu(null); // the gap's exact value leaves with every other open thing (#306)
 				// an edit still waiting on the gate has no frame to press Esc in yet
 				if (editingRef.current !== null) {
 					endEdit(false);
@@ -5807,6 +5812,11 @@ export function ProjectCanvas({
 			live = false;
 		};
 	}, [askGaps, gapFrame, gapSelector, gapNonce, gapSettled, sourceRevision]);
+	// the value belongs to the element it was opened on: a selection that moves
+	// on takes it with it, so nothing is ever written to a pick nobody holds
+	useEffect(() => {
+		setGapMenu(null);
+	}, [gapFrame, gapSelector]);
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");

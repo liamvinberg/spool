@@ -171,6 +171,41 @@ it("opens the exact value on a click that never became a drag", async () => {
 	});
 });
 
+it("puts the value away when the canvas takes Escape", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector('[data-element-gap="0"]'), BAND.x, BAND.y);
+	await pointerUp(canvas);
+	await settle();
+	expect(host.querySelector("[data-gap-popover]")).not.toBeNull();
+
+	await press("Escape");
+	await settle();
+	expect(host.querySelector("[data-gap-popover]")).toBeNull();
+});
+
+it("puts the value away when the selection moves on", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector('[data-element-gap="0"]'), BAND.x, BAND.y);
+	await pointerUp(canvas);
+	await settle();
+	expect(host.querySelector("[data-gap-popover]")).not.toBeNull();
+
+	// another element becomes the held one: the value belonged to the one that
+	// left, and it goes with it rather than staying open over a new selection
+	await deepClickAt(canvas, 40, 40);
+	await frame.answer([
+		{ ...chain()[0]!, selector: "screen" },
+		{ ...chain()[1]!, selector: "screen > aside", source: "frames/home/frame.tsx:11:4" },
+	]);
+	await settle();
+	expect(host.querySelector("[data-gap-popover]")).toBeNull();
+	expect(sourceCalls("commit")).toHaveLength(0);
+});
+
 it("draws no band where the geometry does not identify a gap", async () => {
 	reading = { ...ROW, wrap: "wrap" };
 	const { host, canvas, frame } = await readyCanvas();
