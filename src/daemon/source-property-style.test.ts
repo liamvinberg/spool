@@ -59,17 +59,16 @@ async function fixture() {
 	return { sources, selection, members };
 }
 
-it("uses proven literal style members only as independent color and opacity context", async () => {
+it("carries the proven literal members beside the class the element also has", async () => {
 	const f = await fixture();
-	for (const property of ["color", "background-color", "opacity"])
+	const proven = f.members.map((member) => ({ ...member, enumerable: true }));
+	for (const property of ["color", "background-color", "opacity", "font-weight"])
 		expect(sourceRead(f.sources, f.selection, { kind: "property", property, scope: "" })).toMatchObject({
 			slot: "class",
 			expected: "text-red-500",
+			style: { members: proven },
 		});
-	expect(() => sourceRead(f.sources, f.selection, { kind: "property", property: "font-weight", scope: "" })).toThrow(
-		/inline style/,
-	);
-	expect(() => sourceRead(f.sources, f.selection, { kind: "properties" })).toThrow(/inline style/);
+	expect(sourceRead(f.sources, f.selection, { kind: "properties" })).toMatchObject({ style: { members: proven } });
 });
 
 it.each(["value", "enumerability", "unobserved", "another owner"])(
