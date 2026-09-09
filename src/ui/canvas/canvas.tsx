@@ -5686,8 +5686,10 @@ export function ProjectCanvas({
 			: null;
 	const gapAxis = gapReading === null || !gapWritable(ring.read) ? null : gapAxisOf(gapReading);
 	const heldGap = gapDrag !== null && gapDrag.selector === ringPick?.selector ? gapDrag : null;
+	// a size or turn drag moves the boxes the bands were measured between, so the
+	// bands stand down until the reading that comes after it lands
 	const gapTargets =
-		gapReading === null || gapAxis === null
+		gapReading === null || gapAxis === null || ringDrag !== null
 			? []
 			: gapBands(gapReading, camera?.k ?? 1).map((band, index) =>
 					heldGap !== null && heldGap.index === index ? heldGap.band : band,
