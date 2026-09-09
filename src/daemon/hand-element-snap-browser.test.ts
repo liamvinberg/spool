@@ -179,8 +179,9 @@ function shortOfContent(f: Canvas) {
 	return f.frame.locator("[data-parent]").evaluate((parent) => {
 		const style = getComputedStyle(parent);
 		const held = parent.querySelector("[data-subject]");
-		// this browser draws overlay scrollbars, so nothing is reserved beside the
-		// padding; the edge is the border box less its own border and padding
+		// this browser hides its scrollbars, so nothing is reserved beside the
+		// padding; the edge is the border box less its own border and padding.
+		// What a real reservation does to the content is element-snap.test.ts's
 		const edge =
 			parent.getBoundingClientRect().right -
 			Number.parseFloat(style.borderRightWidth) -
@@ -342,6 +343,65 @@ it("keeps no guide over a target the correction itself moved", { timeout: 120_00
 	await dragHandle(f, "e", 45, 0, { release: false });
 	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["205px"]);
 	expect(await guides(f)).toBe(0);
+	await f.page.keyboard.press("Escape");
+	await f.page.mouse.up();
+	expect(f.writes).toEqual([]);
+});
+
+/**
+ * A card and one sibling whose right edge sits on the same stop, in a block
+ * parent so an inline sibling can be an inline box.
+ */
+const alongside = (sibling: string) =>
+	`import {Card} from "shared/card";export default function Frame(){return <main style={{padding:24,position:"relative"}}><Card key="a" label="A"/>${sibling}</main>}`;
+
+/** Siblings the pool must not offer, each one parked on the stop it would give. */
+const EXCLUDED = [
+	{
+		name: "a sibling nobody can see",
+		sibling: '<div data-sibling style={{width:208,height:40,visibility:"hidden"}}/>',
+	},
+	{
+		name: "a sibling pinned to the window",
+		sibling: '<div data-sibling style={{position:"fixed",left:24,top:300,width:208,height:40}}/>',
+	},
+	{
+		name: "a sibling broken across two lines",
+		sibling:
+			'<span data-sibling><i style={{display:"inline-block",width:208,height:20}}/><br/><i style={{display:"inline-block",width:208,height:20}}/></span>',
+	},
+];
+
+it.each(EXCLUDED)("takes no alignment from $name", { timeout: 120_000 }, async ({ sibling }) => {
+	const f = await originCanvas({ [owner]: card }, alongside(sibling), '[data-subject="A"]');
+	await f.select();
+
+	// the stop is exactly where the sibling's right edge is, and this pool does
+	// not offer it: the size the pointer asked for stands, with nothing drawn
+	await dragHandle(f, "e", 45, 0, { release: false });
+	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["205px"]);
+	expect(await guides(f)).toBe(0);
+	await f.page.keyboard.press("Escape");
+	await f.page.mouse.up();
+	expect(f.writes).toEqual([]);
+});
+
+it("takes no boundary from a node that was replaced while answering", { timeout: 120_000 }, async () => {
+	// every size this drag writes puts a fresh node in the sibling's place,
+	// wearing the same id in the same box. The boundary is still there and it is
+	// not the one the correction was chosen against, so the guide is refused
+	const swapping =
+		'import {useEffect} from "react";import {Card} from "shared/card";export default function Frame(){useEffect(()=>{const held=document.querySelector(\'[data-subject="A"]\');if(!held)return;const watch=new MutationObserver(()=>{const stop=document.getElementById("stop");if(stop)stop.replaceWith(stop.cloneNode(true))});watch.observe(held,{attributes:true,attributeFilter:["class"]});return()=>watch.disconnect()},[]);return <main style={{padding:24,display:"flex",flexDirection:"column",alignItems:"flex-start",gap:16}}><Card key="a" label="A"/><div id="stop" data-sibling style={{width:208,height:40}}/></main>}';
+	const f = await originCanvas({ [owner]: card }, swapping, '[data-subject="A"]');
+	await f.select();
+
+	await dragHandle(f, "e", 45, 0, { release: false });
+	await expect.poll(() => widths(f.frame), { timeout: 30_000 }).toEqual(["205px"]);
+	expect(await guides(f)).toBe(0);
+	// the stop really is still there: it is the node offering it that changed
+	const stop = await edgesOf(f, "[data-sibling]");
+	const held = await edgesOf(f, '[data-subject="A"]');
+	expect(Math.round(stop.right - held.right)).toBe(3);
 	await f.page.keyboard.press("Escape");
 	await f.page.mouse.up();
 	expect(f.writes).toEqual([]);
