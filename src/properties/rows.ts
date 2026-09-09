@@ -775,27 +775,36 @@ export function displayOf(element: RowElement, scoped: string): string {
  */
 export function verdictFor(row: Row, element: RowElement, scoped: string): Verdict {
 	if (element.refusal !== undefined) return { ok: false, reason: element.refusal.says };
-	if (row.rule.kind === "read") return { ok: true };
+	const box = boxRefusal(row, element, scoped);
+	if (box !== undefined) return { ok: false, reason: box };
+	// one literal, every rendered row: the write lands, and the row says so
+	return element.mapped === true ? { ok: true, scope: "one row of many" } : { ok: true };
+}
+
+/**
+ * Why this row has nothing to change on this element's own box, if it has.
+ *
+ * These are the element's refusals rather than the write lane's: they are about
+ * what the file says this element lays out as, so they hold whoever is writing
+ * it and whatever the source says about its class cell.
+ */
+export function boxRefusal(row: Row, element: RowElement, scoped: string): string | undefined {
+	if (row.rule.kind === "read") return undefined;
 	const display = displayOf(element, scoped);
 	const inline = display === "inline";
 	// a width on an inline element is the text's to decide, but `flex-1` and
 	// `flex-basis` are the parent's layout blockifying it, so those still write
 	const length = row.rule.kind === "length" ? row.rule.family : null;
-	if (inline && (row.rule.kind === "size-mode" || (length !== null && SIZE_FAMILIES.has(length)))) {
-		return { ok: false, reason: "inline, the text decides" };
-	}
-	if (inline && length !== null && SPACING_FAMILIES.has(length)) {
-		return { ok: false, reason: "inline, padding has no box" };
-	}
+	if (inline && (row.rule.kind === "size-mode" || (length !== null && SIZE_FAMILIES.has(length))))
+		return "inline, the text decides";
+	if (inline && length !== null && SPACING_FAMILIES.has(length)) return "inline, padding has no box";
 	if (
 		row.rule.kind === "length" &&
 		(row.rule.family === "h" || row.rule.family === "min-h" || row.rule.family === "max-h") &&
 		wordOf(scoped, "flex") === "flex-1"
-	) {
-		return { ok: false, reason: "flex-1, layout decides" };
-	}
-	// one literal, every rendered row: the write lands, and the row says so
-	return element.mapped === true ? { ok: true, scope: "one row of many" } : { ok: true };
+	)
+		return "flex-1, layout decides";
+	return undefined;
 }
 
 const SIZE_FAMILIES = new Set(["w", "h", "size", "min-w", "max-w", "min-h", "max-h"]);

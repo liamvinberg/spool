@@ -36,6 +36,7 @@ import {
 } from "../../properties/families";
 import {
 	type At,
+	boxRefusal,
 	displayOf,
 	type Row as ModelRow,
 	optionsFor,
@@ -77,6 +78,7 @@ import {
 	type PropertyDescription,
 	propertyControlValue,
 	propertyNumericSample,
+	readsFromSource,
 	sourceProperty,
 	sourcePropertyName,
 } from "./property-controls";
@@ -200,22 +202,23 @@ function okOf(view: View, row: ModelRow): boolean {
 }
 
 /**
- * What an appearance control is allowed to write, in the source's own words.
+ * What a control is allowed to write, in the source's own words.
  *
  * An open session is somewhere to send a request, never evidence that the source
  * will take one: the element's own description says whether its class cell can
- * be written and what each property is wearing, and a row that has no such
- * reading refuses before it is used rather than at the write.
+ * be written, and a control that draws the source's own reading has nothing to
+ * offer until it has one. A control that reads the class keeps its field while
+ * the source is still answering, and loses it when the source refuses.
  */
 function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
-	// What the element itself cannot wear comes first: an inline box has no
-	// padding to change whatever the source says about its class cell. The write
-	// lane's own refusal is not asked about — a class cell shared by several uses
-	// is what the source owner edits, and its description is the answer here.
-	const { refusal: _lane, ...element } = view.element;
-	const verdict = verdictFor(row, element, view.scoped);
-	if (!verdict.ok) return { ok: false, reason: verdict.reason };
-	return { ok: view.property !== null && view.described?.readings !== undefined, reason: view.described?.reason };
+	// What the element itself cannot wear comes first. The write lane's own
+	// refusal is not asked about: a class cell shared by several uses is what
+	// the source owner edits, and its description is the answer here.
+	const box = boxRefusal(row, view.element, view.scoped);
+	if (box !== undefined) return { ok: false, reason: box };
+	if (view.described?.reason !== undefined) return { ok: false, reason: view.described.reason };
+	const answered = view.described?.readings !== undefined;
+	return { ok: view.property !== null && (answered || !readsFromSource(row)), reason: undefined };
 }
 
 /**

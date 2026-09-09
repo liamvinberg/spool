@@ -1086,3 +1086,16 @@ it("takes no layout request from a field left on the value it was already showin
 	await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
 	expect(rail.requests).toEqual([]);
 });
+
+it("keeps a layout control while the source has not answered, and retires it when the source refuses", async () => {
+	// the class is a reading of its own, so a number the rail can already see
+	// keeps its field until something actually says the cell cannot be written
+	const pending = await mount("p-4", BASE, undefined, () => new Promise(() => {}));
+	expect(fieldIn(pending, "padding")).not.toBeNull();
+	expect(fieldIn(pending, "opacity")).toBeNull();
+
+	const refused = await mount("p-4", BASE, undefined, async () => ({ reason: "className is an expression" }));
+	await act(async () => {});
+	expect(fieldIn(refused, "padding")).toBeNull();
+	expect(rowOf(refused, "padding")?.firstElementChild?.getAttribute("title")).toBe("className is an expression");
+});
