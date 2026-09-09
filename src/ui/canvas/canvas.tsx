@@ -5018,7 +5018,7 @@ export function ProjectCanvas({
 	 *
 	 * The same shape the size drag has: one source read opened when the pointer
 	 * goes down, about exactly the one property this drag may write. A value no
-	 * step can move without renaming it never opens one — the rail keeps it,
+	 * step can move without renaming it never opens one: the rail keeps it,
 	 * where it is read for what it is.
 	 */
 	const beginElementGap = (

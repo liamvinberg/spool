@@ -619,7 +619,7 @@ export const sizingMessage = (selector: string, id: number) => ({ spool: "sizing
  * What a gap gesture has to know before it may draw a handle (#306).
  *
  * The container's own layout words, the two gaps it resolves to, and every
- * child's box in the frame's own pixels — with the two facts that make a
+ * child's box in the frame's own pixels, with the two facts that make a
  * distance untrustworthy marked on each. Only the document can answer any of
  * it: the canvas holds a picture of one box and nothing about the flow that
  * placed the rest.

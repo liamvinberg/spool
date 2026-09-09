@@ -1114,8 +1114,8 @@ const canvasShimJs = `(() => {
 	// What a gap gesture may draw on (#306): the container's own layout words,
 	// the two gaps it resolves to, and every child's box. The two facts that make
 	// a distance untrustworthy ride on each child, and the ones about the
-	// container itself — an anonymous flex item made by loose text, generated
-	// content, a transformed ancestor — are one flag it answers with.
+	// container itself, whether an anonymous flex item made by loose text,
+	// generated content or a transformed ancestor, are one flag it answers with.
 	function elementGaps(selector) {
 		const el = elementFor(selector);
 		if (!el) return null;

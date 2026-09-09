@@ -720,7 +720,7 @@ export function sourcePathOf(picked: PickedSelection, page: string): string {
  *
  * A band over the space itself rather than a knob beside it: the thing you
  * point at is the thing that moves. It is a button so the keyboard reaches it
- * too — Enter opens the same exact value a click does — and it carries its
+ * too, since Enter opens the same exact value a click does, and it carries its
  * reading while a drag is live, the way the ring's readout does.
  */
 function GapBandTarget({

@@ -13,8 +13,8 @@ import { BASE, scopedClass } from "./properties-scope";
  * you can point at, so it is the one worth a handle. The rules here are about
  * honesty rather than convenience: a band is drawn only where the distance it
  * covers is that gap and nothing else, so grabbing it moves what it looks
- * like it moves. Everywhere else — a wrapped line, distributed space, a
- * margin, a transform, a gap too thin to hit — the rail keeps the property and
+ * like it moves. Everywhere else, whether a wrapped line, distributed space, a
+ * margin, a transform or a gap too thin to hit, the rail keeps the property and
  * the canvas offers nothing.
  *
  * The frame answers with the boxes and the container's own words; every
@@ -49,7 +49,7 @@ export interface GapReading {
 	/**
 	 * A text node, generated content or a transformed ancestor.
 	 *
-	 * Any of them means the boxes are not the whole story — an anonymous flex
+	 * Any of them means the boxes are not the whole story: an anonymous flex
 	 * item sits between two children with no element to measure, and a scaled
 	 * ancestor makes every distance a picture of one. The container answers
 	 * with the fact rather than the canvas guessing at it.
@@ -104,8 +104,8 @@ const GAP_TOLERANCE_PX = 0.5;
  * Which gap a drag on this container would write.
  *
  * A row is separated by its column gap and a column by its row gap, whichever
- * end each starts from. Anything but flex has no single answer — a grid's
- * tracks are two gaps at once — and a container written down the page reads
+ * end each starts from. Anything but flex has no single answer, since a grid's
+ * tracks are two gaps at once, and a container written down the page reads
  * its own axes the other way round, which this geometry does not yet prove.
  */
 export function gapAxisOf(reading: GapReading): GapAxis | null {
@@ -130,9 +130,9 @@ function gapPixels(reading: GapReading, axis: GapAxis): number | null {
  * Where this container's gaps are, as bands a pointer can grab.
  *
  * A band stands between two children only where the distance between them is
- * the gap and nothing else. One thing that is not true of the pair — a margin,
- * a transform, a child skipped over, a distributed layout, a wrapped line —
- * takes the whole container's handles away rather than leaving one band
+ * the gap and nothing else. One thing that is not true of the pair, whether a
+ * margin, a transform, a child skipped over, a distributed layout or a wrapped
+ * line, takes the whole container's handles away rather than leaving one band
  * standing for a space it does not name.
  *
  * Zoom is here because a target is hit on screen: a 4px gap is real, and under
@@ -177,7 +177,7 @@ export function gapBands(reading: GapReading, zoom: number): GapBand[] {
  * Which way the pointer has to move to make this gap bigger.
  *
  * A gap grows along the flow, and the flow runs backwards in a reversed row
- * and in a right-to-left one — and forwards again when it is both. Following
+ * and in a right-to-left one, and forwards again when it is both. Following
  * the flow rather than the screen is what makes the drag do what it looks
  * like it does wherever the layout reads from.
  */
@@ -190,8 +190,8 @@ export function gapDragSign(reading: GapReading): 1 | -1 {
 /**
  * What this element's own class cell authors on that axis, base scope only.
  *
- * The rail's own reading — `gap-4` is both axes and `gap-x-6` is one of them —
- * so the field and the band always say the same thing. A screen variant is
+ * The rail's own reading, where `gap-4` is both axes and `gap-x-6` is one of
+ * them, so the field and the band always say the same thing. A screen variant is
  * another scope's value and is not what an unqualified drag would write.
  */
 export function authoredGap(className: string, axis: GapAxis): string | null {
@@ -428,7 +428,7 @@ export function gapField(axis: GapAxis, value: string, at: At): SourcePropertyVa
  * What a written gap value is worth in pixels, or nothing where only the
  * document could say.
  *
- * The band drawn mid-drag needs it — the space under the pointer has to be the
+ * The band drawn mid-drag needs it: the space under the pointer has to be the
  * space the value makes. A percentage or an expression has no answer here, and
  * the band keeps the width it was grabbed at rather than inventing one.
  */
