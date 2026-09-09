@@ -26,6 +26,7 @@ export default defineConfig({
 	test: {
 		include: ["src/**/*.test.ts", ".github/scripts/*.test.ts", ".agents/skills/*/scripts/*.test.ts"],
 		setupFiles: ["./src/test-setup.ts"],
+		globalSetup: ["./src/test-global-setup.ts"],
 		// The checked-out revision owns this selection, including release recovery.
 		...(process.env.SPOOL_TEST_DARWIN === "1" ? { testNamePattern: "macOS only" } : {}),
 		// Keep one CI retry for process/browser scheduling noise; local failures remain visible.
