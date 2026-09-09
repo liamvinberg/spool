@@ -1,9 +1,7 @@
 import { createServer } from "node:http";
-import { join } from "node:path";
 import { type Browser, type BrowserContext, chromium, type Frame, type Page } from "playwright-core";
-import { build as buildUi } from "vite";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, makeProject, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 interface HostileResult {
 	surface: "canvas" | "player" | "direct";
@@ -263,7 +261,7 @@ describe("hostile project browser boundary", () => {
 		const remote = await serveRemoteProbe();
 		onTestFinished(() => remote.close());
 
-		const uiDir = join(makeTempDir(), "ui");
+		const uiDir = await builtUi();
 		const project = await serveProject({ uiDir });
 		const foreign = makeProject(project.spoolDir);
 		writeDesignFile(
@@ -285,11 +283,6 @@ describe("hostile project browser boundary", () => {
 				remoteOrigin: remote.origin,
 			}),
 		);
-		await buildUi({
-			configFile: join(process.cwd(), "vite.config.ts"),
-			logLevel: "silent",
-			build: { outDir: uiDir, emptyOutDir: true },
-		});
 		const session = await fetch(`${project.url}/api/session`, {
 			method: "PUT",
 			headers: {

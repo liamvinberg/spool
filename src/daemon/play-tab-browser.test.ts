@@ -1,8 +1,6 @@
-import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { build as buildUi } from "vite";
-import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * Play in a real tab (#227). Three things only a real browser can show: that
@@ -29,24 +27,18 @@ const plain = (label: string) => `export default function Frame() {
 
 /** A canvas with two frames of different widths, served and built, ready to be played. */
 async function canvasWithFrames() {
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "one", tall);
 	writeDesignFile(project.root, "frames/one/frame.json", '{ "x": 0, "y": 0, "w": 800, "h": 700 }\n');
 	writeFrame(project.root, "two", plain("two"));
 	writeDesignFile(project.root, "frames/two/frame.json", '{ "x": 900, "y": 0, "w": 390, "h": 844 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
 	return project;
 }
 
 it("opens a tab whose page is a real document, and walks the URL with it", { timeout: 180_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await canvasWithFrames();
 	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 	const canvas = await context.newPage();
@@ -106,8 +98,7 @@ it("opens a tab whose page is a real document, and walks the URL with it", { tim
 it("wears the bar, puts it away on the eye, and peeks it back on a rest against the top edge", {
 	timeout: 180_000,
 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const project = await canvasWithFrames();
 	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 	const played = await context.newPage();

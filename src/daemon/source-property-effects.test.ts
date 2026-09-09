@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "playwright-core";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { appearanceProperties } from "./fixtures/property-appearance";
 import { readInput } from "./retained-compile";
@@ -28,8 +28,7 @@ it("finds actual compiled effect owners for all 79 appearance controls", async (
 
 it("checks every emitted appearance declaration's affected keys against the native CSSOM", async () => {
 	const f = fixture();
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage();
 	const declarations = [];
 	for (const row of appearanceProperties) {

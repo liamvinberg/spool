@@ -3,10 +3,9 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
-import { build } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 
 const BEFORE = `export default function Home() {
@@ -43,7 +42,7 @@ it("runs file tools through the real host and served canvas, maps every changed 
 		);
 	});
 	await client.request({ kind: "connect", provider: "openai", key: "fixture-key" });
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, agentEngines: [createSpoolEngine(directory, client)] });
 	writeFrame(project.root, "home", BEFORE);
 	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":600,"h":400}');
@@ -53,13 +52,7 @@ it("runs file tools through the real host and served canvas, maps every changed 
 	writeFileSync(control, "private-control-fixture");
 	rmSync(join(project.root, "design/AGENTS.md"));
 	symlinkSync(control, join(project.root, "design/AGENTS.md"));
-	await build({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
+	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	const shots = process.env.SPOOL_TEST_SHOTS;
 	const shot = async (name: string) => {

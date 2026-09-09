@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { build } from "esbuild";
-import { chromium, type Page } from "playwright-core";
-import { build as buildUi } from "vite";
+import type { Page } from "playwright-core";
 import { expect } from "vitest";
 import type { SourceRead } from "../source-edit";
-import { closeAfterTest, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 export async function originCanvas(
 	files: Record<string, string>,
@@ -23,7 +23,7 @@ export async function originCanvas(
 	 */
 	camera: { x: number; y: number; k: number } = { x: 60, y: 60, k: 1 },
 ) {
-	const uiDir = join(makeTempDir(), "ui");
+	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, ...(agentEngines ? { agentEngines } : {}) });
 	for (const [path, source] of Object.entries(files)) writeDesignFile(project.root, path, source);
 	writeFrame(project.root, "home", frameSource);
@@ -33,13 +33,7 @@ export async function originCanvas(
 		writeDesignFile(project.root, "frames/second/frame.json", '{"x":700,"y":0,"w":450,"h":500}');
 	}
 	writeDesignFile(project.root, ".spool/state.json", JSON.stringify({ camera }));
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	closeAfterTest(browser);
+	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	const writes: string[] = [];
 	page.on("request", (request) => {
