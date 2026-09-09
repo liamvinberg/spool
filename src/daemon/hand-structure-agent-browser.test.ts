@@ -162,6 +162,9 @@ it.each([
 	const committed = f.page.waitForResponse(
 		(response) => response.url().endsWith("/source") && response.request().postDataJSON()?.action === "commit",
 	);
+	// This wait outlives the page when anything below it fails first, and a wait
+	// nobody is left to read must not reject into the run after teardown.
+	void committed.catch(() => {});
 	await f.page.keyboard.press("Backspace");
 	await held.wait();
 	await f.edit(edits);

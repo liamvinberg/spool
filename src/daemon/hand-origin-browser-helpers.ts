@@ -14,6 +14,14 @@ export async function originCanvas(
 	shared = false,
 	beforeLoad?: (page: Page) => Promise<void>,
 	agentEngines?: NonNullable<Parameters<typeof serveProject>[0]>["agentEngines"],
+	/**
+	 * Where the camera stands when this canvas opens.
+	 *
+	 * A frame under `LIVE_MIN_CSS_PX` on screen is a picture rather than a running
+	 * document, and the keyboard's zoom halves: a case that wants a reduced camera
+	 * and a live frame states the scale it means instead of stepping down to one.
+	 */
+	camera: { x: number; y: number; k: number } = { x: 60, y: 60, k: 1 },
 ) {
 	const uiDir = join(makeTempDir(), "ui");
 	const project = await serveProject({ uiDir, ...(agentEngines ? { agentEngines } : {}) });
@@ -24,7 +32,7 @@ export async function originCanvas(
 		writeFrame(project.root, "second", frameSource);
 		writeDesignFile(project.root, "frames/second/frame.json", '{"x":700,"y":0,"w":450,"h":500}');
 	}
-	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
+	writeDesignFile(project.root, ".spool/state.json", JSON.stringify({ camera }));
 	await buildUi({
 		configFile: join(process.cwd(), "vite.config.ts"),
 		logLevel: "silent",
@@ -69,9 +77,16 @@ export async function originCanvas(
 			.toBe("none");
 		const box = await target.boundingBox();
 		if (!box) throw new Error("target has no box");
-		await page.keyboard.down(process.platform === "darwin" ? "Meta" : "Control");
-		await page.mouse.click(box.x + 8, box.y + box.height / 2);
-		await page.keyboard.up(process.platform === "darwin" ? "Meta" : "Control");
+		// Click the element rather than a page coordinate: under a reduced camera
+		// the box can sit part-way outside the viewport, where a raw mouse click
+		// lands on nothing at all and the selection silently never happens.
+		const viewport = page.viewportSize();
+		expect(
+			viewport === null ||
+				(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height),
+			`the target is outside the viewport: ${JSON.stringify({ box, viewport })}`,
+		).toBe(true);
+		await target.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
 		await expect
 			.poll(
 				async () => {
