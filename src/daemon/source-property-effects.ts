@@ -109,6 +109,10 @@ export function readPropertyEffects(
 		if (!effect.owner) return false;
 		const variants = anatomyOf(effect.owner).variants;
 		if ((variants.length ? `${variants.join(":")}:` : "") !== scope) return false;
+		// A token with no variant of its own carries no viewport condition either.
+		// One in its path came from a project rule that happens to be named after
+		// this class, and that rule belongs to its own condition, not to this row.
+		if (!variants.length && effect.path.some((part) => part.startsWith("@media "))) return false;
 		const siblings = certificate.effects.filter((other) => other.owner === effect.owner);
 		// A size token's paired leading remains attached to that size binding.
 		if (property === "line-height" && siblings.some((other) => other.property === "font-size")) return false;

@@ -9,6 +9,7 @@ import { PropertyNumberField } from "./property-number-field";
 async function mount(
 	reading: SourcePropertyReading = {
 		tokens: ["text-body"],
+		source: "class",
 		binding: { kind: "reference", name: "--text-body", value: "17.25px" },
 		native: "17.25px",
 	},
@@ -68,6 +69,7 @@ it("previews exact fractional typography and cancels without completing a source
 it("scrubs fractional typography by displayed units and completes only on release", async () => {
 	const { host, field, begin, preview, apply, finish } = await mount({
 		tokens: ["text-[17.25px]"],
+		source: "class",
 		binding: { kind: "custom" },
 		authored: "17.25px",
 		native: "17.25px",
@@ -94,6 +96,7 @@ it("scrubs fractional typography by displayed units and completes only on releas
 it("keeps a custom fractional rem unit through Shift stepping and completes once on Enter", async () => {
 	const { field, preview, finish } = await mount({
 		tokens: ["text-[.333rem]"],
+		source: "class",
 		binding: { kind: "custom" },
 		authored: ".333rem",
 		native: "5.328px",
@@ -116,6 +119,7 @@ it("keeps a custom fractional rem unit through Shift stepping and completes once
 it.each([true, false])("marks only the authored typography reference in its token menu: %s", async (linked) => {
 	const { host, apply } = await mount({
 		tokens: linked ? ["text-body"] : ["text-[17.25px]"],
+		source: "class",
 		binding: linked ? { kind: "reference", name: "--text-body", value: "17.25px" } : { kind: "custom" },
 		native: "17.25px",
 	});
@@ -161,6 +165,7 @@ it("does not detach a reference through untouched keyboard or scrub stepping", a
 it("presents an authored exponent length as its own number and unit", async () => {
 	const { host, field, preview } = await mount({
 		tokens: ["text-[1e2px]"],
+		source: "class",
 		binding: { kind: "custom" },
 		authored: "1e2px",
 		native: "100px",
@@ -175,7 +180,10 @@ it("presents an authored exponent length as its own number and unit", async () =
 });
 
 it("reads a known keyword value instead of blanking the field under an invented unit", async () => {
-	const { host, field } = await mount({ tokens: [], binding: { kind: "custom" }, native: "normal" }, "line-height");
+	const { host, field } = await mount(
+		{ tokens: [], source: "class", binding: { kind: "custom" }, native: "normal" },
+		"line-height",
+	);
 	expect(field.value).toBe("");
 	expect(field.placeholder).toBe("normal");
 	expect(host.querySelector('[data-properties-row="line-height"]')?.textContent).not.toContain("px");

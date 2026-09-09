@@ -4,6 +4,7 @@ import type { SourcePropertyPreview } from "../source-property";
 interface Styles {
 	revision: number;
 	entries: { element: HTMLStyleElement; original: string; preview: string; rules: string }[];
+	inline: { element: HTMLElement; property: string; original: string; preview: string }[];
 }
 const previews = new Map<number, Styles>();
 function sheetRules(sheet: CSSStyleSheet): string {
@@ -19,6 +20,7 @@ function canonicalRules(css: string): string {
 export function previewPropertyStyles(
 	plan: SourcePropertyPreview,
 	packet: Pick<RetainedValues, "id" | "css" | "bundledCss">,
+	elements: readonly HTMLElement[] = [],
 ): boolean {
 	const frame = plan.frames.find((frame) => frame.publication === packet.id);
 	if (!frame) return false;
@@ -41,17 +43,32 @@ export function previewPropertyStyles(
 		if (sheetRules(element.sheet) !== (held?.rules ?? canonicalRules(original))) return false;
 		entries.push({ element, original: held?.original ?? element.textContent ?? "", preview: value, rules: "" });
 	}
+	// An inline member has no compiled rule to swap, so its preview is the
+	// element's own declaration. What was there is kept, so nothing outside this
+	// edit is overwritten and nothing outside it is restored either.
+	const inline: Styles["inline"] = [];
+	for (const element of elements)
+		for (const { property, value } of plan.inline ?? []) {
+			const current = element.style.getPropertyValue(property);
+			const held = previous?.inline.find((entry) => entry.element === element && entry.property === property);
+			if (previous ? !held || current !== held.preview : false) return false;
+			inline.push({ element, property, original: held?.original ?? current, preview: value });
+		}
 	for (const entry of entries) {
 		entry.element.textContent = entry.preview;
 		entry.rules = sheetRules(entry.element.sheet!);
 	}
-	previews.set(plan.generation, { revision: plan.revision, entries });
+	for (const entry of inline) entry.element.style.setProperty(entry.property, entry.preview);
+	previews.set(plan.generation, { revision: plan.revision, entries, inline });
 	return true;
 }
 
 export function restorePropertyStyles(generation: number): void {
 	const held = previews.get(generation);
 	previews.delete(generation);
+	for (const entry of held?.inline ?? [])
+		if (entry.element.isConnected && entry.element.style.getPropertyValue(entry.property) === entry.preview)
+			entry.element.style.setProperty(entry.property, entry.original);
 	for (const entry of held?.entries ?? [])
 		if (
 			entry.element.isConnected &&

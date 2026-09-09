@@ -66,3 +66,25 @@ it("keeps regular text color, placeholder color, and scoped color as distinct co
 	]);
 	expect(readPropertyEffects(certificate, "color", "hover:", environment).owners).toEqual(["hover:text-green-500"]);
 });
+
+it("leaves a project rule's own viewport condition out of the unconditional row", () => {
+	const conditional = {
+		owner: "tile",
+		path: ["@media (min-width: 5000px)", "$"],
+		property: "padding",
+		value: "40px",
+		important: false,
+	};
+	const utility = {
+		owner: "p-6",
+		path: ["@layer utilities", "$"],
+		property: "padding",
+		value: "24px",
+		important: false,
+	};
+	const read = readPropertyEffects({ effects: [conditional, utility] } as never, "padding", "", {
+		direction: "ltr",
+		writingMode: "horizontal-tb",
+	});
+	expect(read.owners).toEqual(["p-6"]);
+});

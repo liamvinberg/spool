@@ -89,6 +89,8 @@ import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import {
 	combineUseOutcomes,
+	MATCHED_RULE_LIMIT,
+	type MatchedRuleChain,
 	type RetainedValues,
 	type SourceInventory,
 	type SourceOccurrence,
@@ -235,6 +237,23 @@ export function sourceList(site: string, factories: Record<string, () => ReactNo
 export function sourceValue(cell: string, initial: string): string {
 	return sourcePacket?.values[cell] ?? initial;
 }
+/**
+ * One retained inline style member.
+ *
+ * The packet carries the member exactly as it is authored, so a number stays a
+ * number and a string stays a string; a value it cannot read is the authored
+ * one, never a guess at what was meant.
+ */
+export function sourceStyleValue(cell: string, initial: string | number): string | number {
+	const held = sourcePacket?.values[cell];
+	if (held === undefined) return initial;
+	try {
+		const parsed: unknown = JSON.parse(held);
+		return typeof parsed === "string" || typeof parsed === "number" ? parsed : initial;
+	} catch {
+		return initial;
+	}
+}
 export function sourceChildren(
 	cell: string,
 	initial: string | readonly string[] | null,
@@ -372,6 +391,9 @@ function inspectSource(
 	}
 	const nativeValue =
 		operation.kind === "property" ? getComputedStyle(element).getPropertyValue(operation.property) : "";
+	// One read answers several properties, so the chains are the element's own
+	// rather than one property's; the compiler still decides what any of them own.
+	const rules = operation.kind === "property" ? matchedRulePaths(element).slice(0, MATCHED_RULE_LIMIT) : [];
 	let structure: SourceOccurrence["structure"];
 	if (structuralOperation(operation)) {
 		const parent = element.parentElement;
@@ -389,6 +411,7 @@ function inspectSource(
 		...(operation.kind === "property" && nativeValue
 			? { propertyNative: { property: operation.property, value: nativeValue } }
 			: {}),
+		...(rules.length ? { propertyRules: rules } : {}),
 		...(structure ? { structure } : {}),
 		// Retained props keep their original invocation/value even when React
 		// skips recreating them. This observation belongs to the installed packet.
@@ -399,6 +422,86 @@ function inspectSource(
 		...(provenance === undefined ? {} : { provenance }),
 	};
 }
+/** The dynamic state a rule may name and this element may not be in right now. */
+const DYNAMIC =
+	/:(?:hover|focus|focus-visible|focus-within|active|disabled|enabled|checked|indeterminate|valid|invalid|required|optional|read-only|read-write|placeholder-shown|target|visited|link|any-link)\b/g;
+
+/**
+ * Every rule chain in this document that declares something and applies to this
+ * element, whether or not its state is the state the element is in.
+ *
+ * This is the evidence that a rule belongs to this element at all: a stylesheet
+ * is full of declarations for other subjects, and none of them is a source for
+ * this one. A selector this document's own parser will not take, or a grouping
+ * rule whose order is not the cascade's own, is left out rather than guessed at.
+ */
+function matchedRulePaths(element: Element): MatchedRuleChain[] {
+	const found: MatchedRuleChain[] = [];
+	const seen = new Set<string>();
+	const view = element.ownerDocument.defaultView;
+	const matches = (selector: string, resting: boolean): boolean => {
+		const text = resting ? selector.replace(DYNAMIC, "") : selector;
+		if (!text.trim()) return false;
+		try {
+			return element.matches(text);
+		} catch {
+			return false;
+		}
+	};
+	const walk = (rules: CSSRuleList, path: readonly string[], live: boolean): void => {
+		for (const rule of rules) {
+			if (rule instanceof CSSStyleRule) {
+				const next = [...path, rule.selectorText];
+				const key = JSON.stringify(next);
+				if (rule.style.length > 0 && !seen.has(key) && matches(rule.selectorText, true)) {
+					seen.add(key);
+					// Written and applying are different facts. A rule the element
+					// matches only with its state stripped, or under a condition this
+					// document does not satisfy, is written for it and inactive now.
+					found.push({ path: next, active: live && matches(rule.selectorText, false) });
+				}
+				if (rule.cssRules.length) walk(rule.cssRules, next, live);
+			} else if (rule instanceof CSSMediaRule)
+				walk(
+					rule.cssRules,
+					[...path, `@media ${rule.conditionText}`],
+					live && matchesMedia(view, rule.conditionText),
+				);
+			else if (rule instanceof CSSSupportsRule)
+				walk(
+					rule.cssRules,
+					[...path, `@supports ${rule.conditionText}`],
+					live && supportsCondition(rule.conditionText),
+				);
+			else if (rule instanceof CSSLayerBlockRule) walk(rule.cssRules, [...path, `@layer ${rule.name}`], live);
+		}
+	};
+	for (const sheet of element.ownerDocument.styleSheets) {
+		try {
+			walk(sheet.cssRules, [], true);
+		} catch {
+			// A stylesheet this document may not read is not evidence about it.
+		}
+	}
+	return found;
+}
+
+function matchesMedia(view: Window | null, condition: string): boolean {
+	try {
+		return view?.matchMedia(condition).matches === true;
+	} catch {
+		return false;
+	}
+}
+
+function supportsCondition(condition: string): boolean {
+	try {
+		return CSS.supports(condition);
+	} catch {
+		return false;
+	}
+}
+
 function renderedField(element: HTMLElement, field?: string): string {
 	return field === undefined ? textOf(element) : renderedAttribute(element, field);
 }
@@ -630,7 +733,17 @@ function previewProperty(plan: SourcePropertyPreview): boolean {
 	const uses = leases.has(plan.generation) ? [leases.get(plan.generation)!] : sharedPreviews.get(plan.generation);
 	if (!sourcePacket || !uses?.length || uses.some((use) => use.original.field !== "className")) return false;
 	if (leases.has(plan.generation) && !validLease(plan.generation)) return false;
-	if (!previewPropertyStyles(plan, sourcePacket)) return false;
+	// A rule previews once for the whole document; the element's own declaration
+	// has to reach every element this source governs, whether or not the shared
+	// preview has found them yet.
+	const held = uses[0]!.original;
+	const elements = plan.inline?.length
+		? [...document.querySelectorAll<HTMLElement>("[data-spool-source]")].filter((element) => {
+				const current = inspectSource(element, held.field, sourceObservationOperation(held, element));
+				return current?.cell === held.cell && current.publication === held.publication;
+			})
+		: uses.map((use) => use.element);
+	if (!previewPropertyStyles(plan, sourcePacket, elements)) return false;
 	return previewSource(plan.generation, plan.value);
 }
 

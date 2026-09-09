@@ -18,6 +18,7 @@ import { fingerprintOf } from "./hand-write";
 import { walkNodes } from "./jsx-walk";
 import type { RetainedCompilation } from "./retained-compile";
 import { type Binding, ModuleBindings } from "./source-module-bindings";
+import { type StyleMember, styleMemberEffects } from "./source-property-style";
 import { literalStyleMembers } from "./source-style-members";
 import { elementAt, sourceTarget } from "./source-syntax";
 
@@ -80,6 +81,8 @@ export interface Target {
 	expected: string | null;
 	scope: string;
 	repeated: boolean;
+	/** The element's own proven literal inline members, an independent source role. */
+	style?: { address: Address; members: readonly StyleMember[] };
 	syntax?: "react-call";
 	asset?: Revision & { identifier: string; specifier: string };
 }
@@ -1202,13 +1205,21 @@ function factoryLiteral(site: Creation, field: string, kind: "clone" | "create")
 	return value?.type === "ObjectProperty" && value.value.type === "StringLiteral" ? value.value.value : undefined;
 }
 
-/** Read-only context: these literal members cannot author color or opacity. */
-function independentPropertyStyle(sources: Sources, selection: Selection, operation: Operation): void {
-	if (operation.kind !== "property" || !["color", "background-color", "opacity"].includes(operation.property))
-		throw new Error("inline styles prevent proving ownership of this class property");
+/**
+ * The element's own literal members, proven as a source role rather than refused.
+ *
+ * Every member is read through the same authored-origin and native descriptor
+ * check the style attribute already has, so a getter, a mutation or a member
+ * React never enumerates refuses here instead of becoming an edit target.
+ * Nothing on this path evaluates a style expression.
+ */
+function propertyStyleMembers(
+	sources: Sources,
+	selection: Selection,
+	operation: Operation,
+): Target["style"] | undefined {
+	if (operation.kind !== "property" && operation.kind !== "properties") return undefined;
 	if (!selection.values?.fields.style) throw new Error("inline style has no original literal member descriptors");
-	// Reuse the full authored-origin and native descriptor check. This never
-	// admits a style member as an edit target or evaluates a style expression.
 	const proof = factoryRead(sources, selection, { kind: "attribute", attribute: "style" });
 	const members: unknown = JSON.parse(proof.expected ?? "null");
 	if (
@@ -1218,21 +1229,29 @@ function independentPropertyStyle(sources: Sources, selection: Selection, operat
 				typeof member === "object" &&
 				member !== null &&
 				"key" in member &&
+				"value" in member &&
 				typeof member.key === "string" &&
-				(member.key === "fontWeight" ||
-					/^padding(?:Top|Right|Bottom|Left|Block|Inline|BlockStart|BlockEnd|InlineStart|InlineEnd)?$/.test(
-						member.key,
-					)),
+				(typeof member.value === "string" || typeof member.value === "number"),
 		)
 	)
-		throw new Error("inline style members may affect this property; their independence is unproved");
+		throw new Error("an inline style member has no literal value descriptor");
+	const proven = (members as { key: string; value: string | number }[]).map((member) => ({
+		...member,
+		enumerable: true,
+	}));
+	// Refuse an unwritable member before it can own anything: an important
+	// marker React drops, a spelling with no declaration, a value it discards.
+	styleMemberEffects(proven);
+	return { address: proof.address, members: proven };
 }
 
 function factoryRead(sources: Sources, selection: Selection, operation: Operation, history?: OwnedLiteral): Target {
 	if (selection.refusal) throw new Error(selection.refusal);
 	const leaf = selection.values!;
-	if ((operation.kind === "property" || operation.kind === "properties") && leaf.fields.style)
-		independentPropertyStyle(sources, selection, operation);
+	const styleRole =
+		(operation.kind === "property" || operation.kind === "properties") && leaf.fields.style
+			? propertyStyleMembers(sources, selection, operation)
+			: undefined;
 	const calls = [...selection.chain].reverse();
 	verifyFactoryInput(sources, leaf, calls[0]);
 	calls.forEach((call, index) => {
@@ -1396,6 +1415,7 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 		expected,
 		scope: operation.kind === "property" ? operation.scope : "",
 		repeated: [origin, current, ...calls.map((c) => sources.creation(c.source))].some((s) => mapped(s.ancestors)),
+		...(styleRole ? { style: styleRole } : {}),
 		...(origin.node.type === "CallExpression" ? { syntax: "react-call" as const } : {}),
 	};
 }
@@ -1424,6 +1444,7 @@ export function sourceRead(
 	let name: string | undefined;
 	let expected: string | null;
 	let asset: Target["asset"];
+	let style: Target["style"];
 	if (operation.kind === "text") {
 		let value = literal(site);
 		for (let i = 1; value === undefined && i < sites.length; i++) {
@@ -1450,7 +1471,7 @@ export function sourceRead(
 		const attr = attribute(site, "className");
 		expected = attr === undefined ? null : (literal(site, "className") ?? null);
 		if (attr !== undefined && expected === null) throw new Error("class expression is preserved");
-		if (attribute(site, "style")) independentPropertyStyle(sources, selection, operation);
+		if (attribute(site, "style")) style = propertyStyleMembers(sources, selection, operation);
 		slot = "class";
 	} else if (operation.kind === "attribute") {
 		name = operation.attribute;
@@ -1523,6 +1544,7 @@ export function sourceRead(
 		repeated: [...sites, ...selection.chain.map((call) => sources.site(call.source))].some((s) =>
 			mapped(s.ancestors),
 		),
+		...(style ? { style } : {}),
 		...(asset ? { asset } : {}),
 	};
 }
