@@ -1,7 +1,10 @@
 import { expect, it } from "vitest";
+import { makeProject, makeTempDir, writeFrame } from "../test-helpers";
+import { createFrameCompiler } from "./compile";
 import { lowerLiterals } from "./retained-compile";
+import { type Selection, Sources } from "./source-origins";
 import { applySourcePatches } from "./source-patches";
-import { reorderPatches } from "./source-structure-reorder";
+import { deriveSourceReorder, reorderPatches } from "./source-structure-reorder";
 import { certifyStructuralChange } from "./source-structure-target";
 
 const A = '<Button key="a" onClick={first}>A</Button>',
@@ -40,4 +43,82 @@ it("changes canonical membership order alone, with every surviving payload ident
 	expect(certified.before.lists[site]).toEqual(["a", "b", "c"]);
 	expect(certified.after.lists[site]).toEqual(["b", "a", "c"]);
 	expect(certified.after.factories).toEqual(certified.before.factories);
+});
+
+/** One committed observation of an authored child, built the way the frame's own observer would. */
+function selectionAt(child: string): Selection {
+	const origin = (field: string, slot: "prop" | "type" | "key") => ({
+		kind: "jsx" as const,
+		source: child,
+		field,
+		slot,
+		element: 10,
+		via: [{ kind: "jsx" as const, source: child, element: 10, replaced: false }],
+	});
+	return {
+		generation: "1",
+		occurrence: "child",
+		source: child,
+		values: {
+			id: 10,
+			source: child,
+			kind: "jsx",
+			type: { value: "section", origin: origin("type", "type") },
+			key: { value: null, origin: origin("key", "key") },
+			fields: {},
+		},
+		chain: [],
+	};
+}
+
+async function derived(frameSource: string, at: string, steps: number) {
+	const { root } = makeProject(makeTempDir());
+	writeFrame(root, "home", frameSource);
+	const compiler = createFrameCompiler("reorder-test");
+	const document = await compiler.getDocument(root, "home", {
+		projectCapability: "test",
+		controlOrigin: "http://localhost",
+	});
+	if (document.kind !== "ok") throw new Error(document.message);
+	const id = /configureSource\(\{"id":"([^"]+)"/.exec(document.document)?.[1];
+	const compilation = id ? compiler.publication(id)?.compilation : undefined;
+	if (!compilation) throw new Error("missing compiled publication");
+	const sources = new Sources(root, compilation);
+	sources.read("frames/home/frame.tsx");
+	const child = `frames/home/frame.tsx:1:${frameSource.indexOf(at) + 1}`;
+	return () => deriveSourceReorder(sources, selectionAt(child), steps);
+}
+
+it("refuses a supplied value, which is a slot rather than one of a list", async () => {
+	const move = await derived(
+		"export default function Frame({show}){return <main>{show ? <section data-a/> : null}</main>}",
+		"<section",
+		1,
+	);
+	expect(move).toThrow(/supplied value rather than one of a list/);
+});
+
+it("refuses an only child, which has no sibling to move past", async () => {
+	const move = await derived("export default function Frame(){return <main><section data-a/></main>}", "<section", 1);
+	expect(move).toThrow(/no authored sibling to move past/);
+});
+
+it("explains stable keys, and the state two unkeyed siblings would exchange", async () => {
+	const move = await derived(
+		"export default function Frame(){return <main><section data-a/><section data-b/></main>}",
+		"<section data-a",
+		1,
+	);
+	expect(move).toThrow(/stable authored keys required/);
+	expect(move).toThrow(/give each item a stable key of its own/);
+});
+
+it("explains the same for two siblings that share one key", async () => {
+	const move = await derived(
+		'export default function Frame(){return <main><section key="x" data-a/><section key="x" data-b/></main>}',
+		"<section key",
+		1,
+	);
+	expect(move).toThrow(/duplicate sibling keys/);
+	expect(move).toThrow(/give each item a stable key of its own/);
 });

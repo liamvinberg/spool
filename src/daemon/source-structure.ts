@@ -280,7 +280,8 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 		const siblings = significantStructuralChildren(parent);
 		if (siblings.length > 1) {
 			const keys = siblings.map(key);
-			if (new Set(keys).size !== keys.length) throw new Error("duplicate sibling keys");
+			// two members sharing one key have no identity between them either
+			if (new Set(keys).size !== keys.length) throw new StructuralIdentityRefusal("duplicate sibling keys");
 			members = siblings.map((child, index) => ({ key: keys[index]!, ...range(child) }));
 		}
 	}
