@@ -290,7 +290,6 @@ it("drops every token under a scope in one write, and falls back to the base", a
 		kind: "properties",
 		value: { kind: "remove-scope", scope: "hover:" },
 	});
-	expect(await gatedOps()).toBeUndefined();
 	expect(chips(host).filter((chip) => chip === "hover:")).toHaveLength(1);
 });
 
@@ -338,7 +337,6 @@ it("writes a row's change to the lane as one op under the live scope", async () 
 		kind: "property",
 		value: { kind: "binding", tokens: ["hover:opacity-60"] },
 	});
-	expect(await gatedOps()).toBeUndefined();
 });
 
 it("keeps the rung when a layout write reloads the frame", async () => {
@@ -412,9 +410,7 @@ it("gates the `+` on the compiler, and lands what it accepts under the live scop
 	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "shrink-0");
 	expect(candidate(host, "shrink-0")?.textContent).toContain("…");
 	expect(candidate(host, "shrink-0")?.disabled).toBe(true);
-	const before = await gates();
 	await press("click", {}, candidate(host, "shrink-0"));
-	expect(await gates()).toBe(before);
 
 	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "md:hidden");
 	await press("click", {}, candidate(host, "md:hidden"));
@@ -423,7 +419,6 @@ it("gates the `+` on the compiler, and lands what it accepts under the live scop
 		kind: "properties",
 		value: { kind: "tokens", add: ["md:hidden"], remove: [] },
 	});
-	expect(await gatedOps()).toBeUndefined();
 });
 
 it("removes a token from the source line, which is the only way back out for a `+`", async () => {
@@ -437,7 +432,6 @@ it("removes a token from the source line, which is the only way back out for a `
 		kind: "properties",
 		value: { kind: "tokens", add: [], remove: ["hover:bg-thread"] },
 	});
-	expect(await gatedOps()).toBeUndefined();
 });
 
 // Literal attributes retain the original field read through the shared source lane.
@@ -462,7 +456,6 @@ it("draws a field for every string the element carries and writes one back", asy
 			change: { kind: "literal", text: "pay later" },
 		},
 	]);
-	expect(await gates()).toBe(0);
 	await press("z", ACCEL);
 	await until(() => sourceCalls("inverse").length === 1);
 	expect(sourceCalls("inverse")[0]).toMatchObject({ receipt: { owner: "owner", handle: "attribute-receipt" } });
@@ -659,13 +652,6 @@ async function geometryPut(): Promise<Record<string, unknown> | undefined> {
 		: (JSON.parse(String(last[1]?.body)) as { frames: Record<string, unknown> }).frames;
 }
 
-/** how many times the write lane has been asked anything */
-async function gates(): Promise<number> {
-	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
-	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
-	return calls.filter(([input]) => String(input).endsWith("/patch/gate")).length;
-}
-
 /** The image control uses the same held source operation as the actual canvas. */
 async function lastSwap(): Promise<Record<string, unknown> | undefined> {
 	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
@@ -681,14 +667,6 @@ async function lastSwap(): Promise<Record<string, unknown> | undefined> {
 /** one row of the attributes section, whichever control it holds */
 function attributeRow(host: HTMLElement, name: string): HTMLElement | null {
 	return rail(host)?.querySelector<HTMLElement>(`[data-properties-row="${name}"]`) ?? null;
-}
-
-/** the ops the last gate was asked about */
-async function gatedOps(): Promise<unknown> {
-	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
-	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
-	const last = calls.filter(([input]) => String(input).endsWith("/patch/gate")).at(-1);
-	return last === undefined ? undefined : (JSON.parse(String(last[1]?.body)) as { ops: unknown }).ops;
 }
 
 function sourceCalls(action: string): Record<string, unknown>[] {
@@ -1075,18 +1053,6 @@ function stubCanvasApis(refused = false): void {
 						{ path: "frames/home/hero.png", bytes: 2048 },
 						{ path: "shared/assets/logo.svg", bytes: 512 },
 					],
-				});
-			}
-			if (url.pathname.endsWith("/patch/gate")) {
-				return Response.json({ ok: true, path: "design/frames/home/frame.tsx", fingerprint: "f", mapped: false });
-			}
-			if (url.pathname.endsWith("/patch")) {
-				return Response.json({
-					ok: true,
-					path: "design/frames/home/frame.tsx",
-					fingerprint: "g",
-					mapped: false,
-					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 0, text: "", fingerprint: "g" },
 				});
 			}
 			return Response.json({});
