@@ -70,7 +70,16 @@ async function choose(f: Canvas, label: string, option: string): Promise<SourceR
 }
 
 /** Enter on a field: one commit, one saved file, one settled canvas. */
-async function complete(f: Canvas, property: string, expected: string) {
+/**
+ * Enter on a field: one commit, one saved file, one settled canvas.
+ *
+ * `mounted` is how many uses can answer with an installation. It is every use
+ * by default, and fewer only where the case has deliberately taken a frame off
+ * screen: the canvas keeps a bounded number of documents live, so a use nobody
+ * can see may have no document at all to install into, and waiting for its
+ * reply is waiting for something that is not coming.
+ */
+async function complete(f: Canvas, property: string, expected: string, mounted = true) {
 	const committed = reply(f, "commit"),
 		delivered = reply(f, "delivered");
 	void delivered.catch(() => {});
@@ -78,7 +87,8 @@ async function complete(f: Canvas, property: string, expected: string) {
 	await saved(f, committed);
 	await delivered;
 	await expect.poll(() => f.bytes()[owner]).toBe(expected);
-	await f.settled();
+	if (mounted) await f.settled();
+	else await expect.poll(() => f.page.locator('[data-hand-notice="saving"]').count(), { timeout: 15_000 }).toBe(0);
 }
 
 async function inverse(f: Canvas, redo: boolean) {
@@ -312,8 +322,11 @@ it("reflows a use that is off screen and mounts a cold frame from the saved sour
 	await f.select();
 	await field(f, "padding").fill("8");
 	const padded = card.replace("p-6", "p-8");
-	await complete(f, "padding", padded);
-	await expect.poll(() => computed(second, "padding-left")).toEqual(["32px", "32px"]);
+	// the frame off the far edge may have no live document to install into, so
+	// its installation reply is not a signal to wait on. What it has to prove is
+	// the line below: asked for again, the use it holds is on the saved source
+	await complete(f, "padding", padded, false);
+	await expect.poll(() => computed(second, "padding-left"), { timeout: 30_000 }).toEqual(["32px", "32px"]);
 	await expect.poll(() => computed(f.frame, "padding-left")).toEqual(["32px", "32px"]);
 
 	// the cold frame was never mounted while the edit was made; it opens on the
