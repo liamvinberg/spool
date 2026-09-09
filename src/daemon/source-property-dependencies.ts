@@ -156,20 +156,11 @@ export function nativePropertyEffects(
 			}
 		return added;
 	};
-	for (const effect of effects)
-		if (
-			[
-				"transform",
-				"translate",
-				"rotate",
-				"scale",
-				"filter",
-				"backdrop-filter",
-				"box-shadow",
-				"background-image",
-			].includes(effect.property)
-		)
-			carried(effect);
+	// A native value is read from the declaration that states it, and whatever
+	// that declaration reads is part of the reading: a transform reads its
+	// components, a gradient its stop list, a between-children margin the
+	// reverse flag that decides which side it lands on.
+	for (const effect of effects) carried(effect);
 	let growing = true;
 	while (growing) {
 		growing = false;

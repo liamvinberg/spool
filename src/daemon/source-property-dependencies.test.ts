@@ -148,3 +148,19 @@ it.each([
 	expect(externalPropertySignature(certificate, roots, [], environment)).toBe(signature);
 	expect([...roots]).toEqual(["--tw-gradient-from"]);
 });
+
+it.each([
+	["space-x-4", "--tw-space-x-reverse", "margin-left"],
+	["space-y-4", "--tw-space-y-reverse", "margin-top"],
+])("captures the reverse companion a between-children margin reads: %s", async (literal, property, root) => {
+	const certificate = await fixture()(literal);
+	const roots = new Set([root]);
+	const originalConsumers = propertyConsumers(certificate, roots, environment);
+	const signature = externalPropertySignature(certificate, roots, [], environment);
+	expect(nativePropertyEffects(certificate, roots, environment)).toContainEqual(expect.objectContaining({ property }));
+	// carrying the variable is native evidence, never source ownership of it
+	expect(propertyConsumers(certificate, roots, environment)).toEqual(originalConsumers);
+	expect(propertyDependencies(certificate, roots, environment).has(property)).toBe(false);
+	expect(externalPropertySignature(certificate, roots, [], environment)).toBe(signature);
+	expect([...roots]).toEqual([root]);
+});
