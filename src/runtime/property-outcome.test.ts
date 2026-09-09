@@ -2701,3 +2701,56 @@ it("needs a rendered native box before reading its spacing", async () => {
 	);
 	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "unverified"]);
 });
+
+it.each([
+	{ property: "gap", before: "gap-2", after: "gap-4", axes: ["16px", "16px"] },
+	{ property: "column-gap", before: "gap-x-2", after: "gap-x-4", axes: ["8px", "16px"] },
+	{ property: "row-gap", before: "gap-y-2", after: "gap-y-4", axes: ["16px", "8px"] },
+])("verifies the compiled $property axis of a native gap container", async (row) => {
+	const start = row.before === "gap-2" ? "flex gap-2" : `flex gap-2 ${row.before}`;
+	const p = await planned(start, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><span>One</span><span>Two</span></div><div data-subject class="${start}"><span>One</span><span>Two</span></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect(
+		await f.page
+			.locator("[data-subject]")
+			.first()
+			.evaluate((element) => [getComputedStyle(element).rowGap, getComputedStyle(element).columnGap]),
+	).toEqual(row.axes);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a removed gap against the native normal spacing of its own container", async () => {
+	const p = await planned("flex gap-4", "gap", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}"><span>One</span></div><div data-subject class="flex gap-4"><span>One</span></div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("normal normal");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("needs a native gap container, and reads a multi-column gap on its own axis", async () => {
+	const p = await planned("gap-2", "column-gap", { kind: "binding", tokens: ["gap-x-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Block</div><div data-subject class="${p.plan.next}" style="columns:2">Columns</div><div data-subject class="${p.plan.next}" style="display:grid">Grid</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"unverified",
+		"verified",
+		"verified",
+	]);
+});
+
+it("mismatches the whole gap row when only one native axis carries the change", async () => {
+	const p = await planned("flex gap-2", "gap", { kind: "binding", tokens: ["gap-4"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}" style="row-gap:8px"><span>One</span></div>`,
+	);
+	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
+});

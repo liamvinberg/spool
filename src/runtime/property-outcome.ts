@@ -64,6 +64,14 @@ function layoutKeyword(property: NativeKeywordProperty): boolean {
 	].includes(property);
 }
 
+/** Two-axis shorthands the compiler emits whole, which each axis row reads its own half of. */
+const axisShorthands: Readonly<Record<string, string>> = {
+	"overflow-x": "overflow",
+	"overflow-y": "overflow",
+	"column-gap": "gap",
+	"row-gap": "gap",
+};
+
 // Companions whose effect the native applicability guard reads directly from this use.
 const outlineGuards = ["outline-style", "--tw-outline-style", "outline-color"];
 const decorationGuards = ["text-decoration-line", "text-decoration-style", "text-decoration-color"];
@@ -73,6 +81,8 @@ type LengthRow = { initial?: string; inherited: boolean; keywords: readonly stri
 
 const lengthRows: Readonly<Record<string, LengthRow>> = {
 	// The initial outline width is a keyword with no native length, so a cleared use stays unverified.
+	"column-gap": { initial: "normal", inherited: false, keywords: ["normal"], guarded: [] },
+	"row-gap": { initial: "normal", inherited: false, keywords: ["normal"], guarded: [] },
 	"outline-width": { inherited: false, keywords: [], guarded: outlineGuards },
 	"outline-offset": { initial: "0px", inherited: false, keywords: [], guarded: outlineGuards },
 	"stroke-width": { inherited: true, keywords: [], guarded: ["stroke", "stroke-opacity"] },
@@ -139,7 +149,7 @@ type PropertyFamily =
 	| { kind: "border" }
 	| { kind: "border-color" }
 	| { kind: "radius" }
-	| { kind: "axes" }
+	| { kind: "axes"; axes: readonly [string, string] }
 	| { kind: "box"; box: "padding" | "margin" }
 	| { kind: "selected"; select: SelectedFamily };
 
@@ -174,7 +184,8 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	if (borderWidthRow.test(property)) return { kind: "border" };
 	if (borderColorRow.test(property)) return { kind: "border-color" };
 	if (property === "border-radius") return { kind: "radius" };
-	if (property === "overflow") return { kind: "axes" };
+	if (property === "overflow") return { kind: "axes", axes: ["overflow-x", "overflow-y"] };
+	if (property === "gap") return { kind: "axes", axes: ["row-gap", "column-gap"] };
 	const box = boxRow.exec(property);
 	if (box) return { kind: "box", box: box[1] as "padding" | "margin" };
 	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
@@ -206,11 +217,13 @@ function radiusOutcome(element: Element, expected: SourcePropertyExpectation): P
 	};
 }
 
-/** The whole-box overflow row is two independent native axes; both must read the same way. */
-function axesOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
-	const outcomes = ["overflow-x", "overflow-y"].map((axis) =>
-		propertyOutcome(element, { ...expected, property: axis }),
-	);
+/** A two-axis row is two independent native readings; both must read the same way. */
+function axesOutcome(
+	element: Element,
+	expected: SourcePropertyExpectation,
+	axes: readonly [string, string],
+): PropertyOutcome {
+	const outcomes = axes.map((axis) => propertyOutcome(element, { ...expected, property: axis }));
 	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
 	if (refused) return refused;
 	return {
@@ -248,7 +261,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (family.kind === "border") return borderOutcome(element, expected);
 	if (family.kind === "border-color") return borderColorOutcome(element, expected);
 	if (family.kind === "radius") return radiusOutcome(element, expected);
-	if (family.kind === "axes") return axesOutcome(element, expected);
+	if (family.kind === "axes") return axesOutcome(element, expected, family.axes);
 	if (family.kind === "box") return boxOutcome(element, expected, family.box);
 	return selectedOutcome(element, view, expected, family.select, pseudo);
 }
@@ -265,7 +278,7 @@ function selectedOutcome(
 	if (pseudo !== "" && select.kind !== "color")
 		return unverified("this property has no native pseudo-element reading");
 	const corner = select.kind === "corner";
-	const axis = expected.property === "overflow-x" || expected.property === "overflow-y";
+	const shorthand = axisShorthands[expected.property];
 	const length = select.kind === "length" ? select.row : undefined;
 	const companion = select.kind === "metric" ? select.companion : undefined;
 	const sheet = new CSSStyleSheet();
@@ -283,15 +296,15 @@ function selectedOutcome(
 			return unverified("this property effect needs a native selector or conditional context proof");
 		if (companion && effect.property === companion) companions.push(effect);
 		else if (effect.property === expected.property) applicable.push(effect);
-		else if (axis && effect.property === "overflow") {
+		else if (shorthand && effect.property === shorthand) {
 			const value = resolvedValue(element, sheet, effect.value);
-			if (value === undefined) return unverified("this overflow axis needs a variable context proof");
+			if (value === undefined) return unverified("this native axis needs a variable context proof");
 			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
 			const rule = sheet.cssRules[index];
 			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
-			rule.style.overflow = value;
+			rule.style.setProperty(shorthand, value);
 			const component = rule.style.getPropertyValue(expected.property);
-			if (!component) return unverified("this overflow axis has no native shorthand component proof");
+			if (!component) return unverified("this native axis has no shorthand component proof");
 			applicable.push({ ...effect, property: expected.property, value: component });
 		} else if (corner && effect.property === "border-radius") {
 			const value = resolvedValue(element, sheet, effect.value);
@@ -1385,7 +1398,13 @@ function lengthContext(element: Element, property: string): string | undefined {
 	const text = () =>
 		element instanceof HTMLElement &&
 		Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
-	if (property === "outline-width" || property === "outline-offset") {
+	if (property === "column-gap" || property === "row-gap") {
+		const multicol = native.columnCount !== "auto" || native.columnWidth !== "auto";
+		if (!["flex", "inline-flex", "grid", "inline-grid"].includes(native.display) && !multicol)
+			return "this gap needs a native flexible, grid or multi-column container";
+		if (property === "row-gap" && !["flex", "inline-flex", "grid", "inline-grid"].includes(native.display))
+			return "this row gap needs a native flexible or grid container";
+	} else if (property === "outline-width" || property === "outline-offset") {
 		if (["none", "hidden", "auto"].includes(native.outlineStyle))
 			return "this outline length needs an explicit visible outline";
 	} else if (property === "stroke-width") {
