@@ -74,12 +74,15 @@ import {
 	type SourceDeleteTarget,
 } from "./source-structure-target";
 
+import { sourceTarget } from "./source-syntax";
+import { potentialTextSource, resolveTextSource } from "./source-target";
+
 /** One structural unit's own bounded plan: a removal, or a move among its siblings. */
 type StructuralTarget = SourceDeleteTarget | SourceReorderTarget;
 
 /** The bytes a structural operation replaces, in its own captured source. */
 function structuralSpans(target: StructuralTarget): SpanPatch[] {
-	return "patches" in target ? target.patches : [{ ...target.selected, text: target.replacement }];
+	return target.kind === "reorder" ? target.patches : [{ ...target.selected, text: target.replacement }];
 }
 
 /** The plan an original structural read authorizes, for this operation and no other. */
@@ -95,8 +98,13 @@ function resolveStructuralTarget(
 		: resolveSourceReorder(root, compilation, original, generation, operation.steps);
 }
 
-import { sourceTarget } from "./source-syntax";
-import { potentialTextSource, resolveTextSource } from "./source-target";
+/** The operation a structural read was opened for, and no other. */
+function structuralOperation(read: SourceRead): Extract<SourceOperation, { kind: "delete" | "reorder" }> {
+	const operation = read.operation;
+	if (operation.kind !== "delete" && operation.kind !== "reorder")
+		throw new Error("this structural read does not authorize that operation");
+	return operation;
+}
 
 interface PropertyProof {
 	selections?: SourcePropertyGroupExpectation["selections"];
@@ -789,7 +797,7 @@ export function createSourceOwner(
 	) {
 		const input = compilation.inputs.get(target.file);
 		if (!input) throw new Error("the structural target is outside its original compiler input");
-		const [selected] = journal.transform(target.file, input, [{ ...target.selected, text: "" }]);
+		const [selected] = journal.transform(target.file, input, [{ ...target.selected, text: target.replacement }]);
 		if (!selected) throw new Error("the original structural span is missing");
 		const uses: SourceUse[] = [],
 			unverified: UseOutcome[] = [];
@@ -818,7 +826,7 @@ export function createSourceOwner(
 					const candidateInput = publication.compilation.inputs.get(candidate.file);
 					if (!candidateInput) throw new Error("the structural use is outside its original compiler input");
 					const [candidateSpan] = journal.transform(candidate.file, candidateInput, [
-						{ ...candidate.selected, text: "" },
+						{ ...candidate.selected, text: candidate.replacement },
 					]);
 					if (candidateSpan?.start === selected.start && candidateSpan.end === selected.end)
 						uses.push({ frame: inventory.frame, ...use });
@@ -887,7 +895,7 @@ export function createSourceOwner(
 				? structuralUses(
 						root,
 						held.structure,
-						held.read.operation.kind === "reorder" ? held.read.operation : { kind: "delete" },
+						structuralOperation(held.read),
 						held.compilation,
 						held.read.generation,
 						inventories,

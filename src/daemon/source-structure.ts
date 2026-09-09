@@ -286,6 +286,7 @@ export function deriveSourceDelete(sources: Sources, pick: Selection) {
 		}
 	}
 	return {
+		kind: "delete" as const,
 		file: selected.unit.file,
 		source: selected.source,
 		role,
