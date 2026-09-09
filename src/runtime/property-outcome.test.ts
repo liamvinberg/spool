@@ -10,7 +10,7 @@ import { nativePropertyEffects, propertyConsumers } from "../daemon/source-prope
 import { planPropertyValue } from "../daemon/source-property-plan";
 import { propertyScopePaths } from "../daemon/source-property-scope";
 import { FILTER_SET } from "../properties/families";
-import type { SourcePropertyExpectation } from "../source-property";
+import type { SourcePropertyExpectation, SourcePropertyValue } from "../source-property";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import type { PropertyOutcome } from "./property-outcome";
 
@@ -2462,4 +2462,121 @@ it("compares a compiled gradient whose own branch carries no interpolation space
 			element.style.visibility = "hidden";
 		});
 	expect((await f.inspect(expected))[0]?.rendered).toBe("unverified");
+});
+
+/** Plan one retained row from the real compiler, then read it back as this use's expectation. */
+async function planned(literal: string, property: string, value: SourcePropertyValue) {
+	const { root } = makeProject(makeTempDir());
+	writeDesignFile(root, "shared/tokens.css", "");
+	const file = realpathSync(join(root, "design/shared/tokens.css"));
+	const operation = { kind: "property", property, scope: "" } as const;
+	const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
+	const plan = await planPropertyValue(
+		root,
+		new Map([[file, readInput(file)]]),
+		literal,
+		operation,
+		value,
+		environment,
+	);
+	const expected: SourcePropertyExpectation = {
+		kind: "property",
+		property,
+		scope: "",
+		className: plan.next,
+		absent: false,
+		scopePaths: propertyScopePaths(plan.original, plan.desired, operation, environment),
+		effects: plan.consumers,
+		css: plan.desired.css,
+	};
+	const inverse: SourcePropertyExpectation = {
+		...expected,
+		className: literal,
+		css: plan.original.css,
+		effects: propertyConsumers(plan.original, plan.roots, environment),
+	};
+	return { plan, expected, inverse, style: `${plan.original.css}${plan.desired.css}` };
+}
+
+it.each([
+	{ property: "flex-direction", before: "flex flex-row", after: "flex-col", host: "" },
+	{ property: "flex-wrap", before: "flex flex-wrap", after: "flex-nowrap", host: "" },
+	{ property: "align-items", before: "flex items-start", after: "items-center", host: "" },
+	{ property: "justify-content", before: "flex justify-start", after: "justify-center", host: "" },
+	{ property: "align-self", before: "self-auto", after: "self-start", host: "display:flex" },
+	{ property: "position", before: "static", after: "relative", host: "" },
+	{ property: "overflow-x", before: "overflow-x-visible", after: "overflow-x-hidden", host: "" },
+	{ property: "overflow-y", before: "overflow-y-visible", after: "overflow-y-hidden", host: "" },
+	{ property: "display", before: "flex", after: "grid", host: "" },
+])("verifies each compiled $property use against its own native keyword", async (row) => {
+	const p = await planned(row.before, row.property, { kind: "binding", tokens: [row.after] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="${row.host}"><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${row.before}">Retained</div></div>`,
+	);
+	expect(
+		(await f.inspect(p.expected)).map((outcome) => outcome.rendered),
+		JSON.stringify(p.expected),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("verifies a hidden display against a use the engine never rendered", async () => {
+	const p = await planned("flex", "display", { kind: "binding", tokens: ["hidden"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Hidden</div><div data-subject class="flex">Shown</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.expected))[0]?.observed).toBe("none");
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("refuses a removed display rather than guessing this host's native default", async () => {
+	const p = await planned("flex", "display", { kind: "remove" });
+	const f = await fixture(`<!doctype html><style>${p.style}</style><div data-subject>Default</div>`);
+	expect(await f.inspect(p.expected)).toEqual([
+		{ rendered: "unverified", reason: "this display has no independent native default declaration" },
+	]);
+});
+
+it("verifies removed layout keywords from their initial value and refuses declaring hosts", async () => {
+	const p = await planned("flex justify-center", "justify-content", { kind: "remove" });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Cleared</div><div data-subject class="flex justify-center">Retained</div><select data-subject class="${p.plan.next}"><option>One</option></select>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"unverified",
+	]);
+});
+
+it("needs a native flexible or grid box before reading its alignment", async () => {
+	const p = await planned("flex items-start", "align-items", { kind: "binding", tokens: ["items-center"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="items-center">Block</div><div data-subject class="${p.plan.next}">Flex</div>`,
+	);
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual(["unverified", "verified"]);
+});
+
+it("verifies both native overflow axes for the whole compiled row", async () => {
+	const p = await planned("overflow-visible", "overflow", { kind: "binding", tokens: ["overflow-hidden"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Both</div><div data-subject class="overflow-visible">Retained</div><div data-subject class="${p.plan.next}" style="overflow-y:scroll">One axis</div>`,
+	);
+	// The third use really scrolls on one axis, so the whole row is a mismatch, not a refusal.
+	expect((await f.inspect(p.expected)).map((outcome) => outcome.rendered)).toEqual([
+		"verified",
+		"mismatching",
+		"mismatching",
+	]);
+});
+
+it("refuses a visible overflow the other native axis has already coupled", async () => {
+	const p = await planned("overflow-x-hidden", "overflow-y", { kind: "binding", tokens: ["overflow-y-visible"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div data-subject class="${p.plan.next}">Coupled</div>`,
+	);
+	expect(await f.inspect(p.expected)).toEqual([
+		{ rendered: "unverified", reason: "this visible overflow is coupled to the other native axis" },
+	]);
 });

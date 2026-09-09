@@ -9,7 +9,8 @@ import { nativeShadow } from "./property-shadows";
 import { type NativeTransformProperty, nativeTransform } from "./property-transforms";
 import { type NativeTransitionProperty, nativeTransition } from "./property-transitions";
 
-const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited: boolean }> = {
+/** A keyword with no `value` has no initial declaration this evaluator can prove for every host. */
+const keywordDefaults: Record<NativeKeywordProperty, { value?: string; inherited: boolean }> = {
 	"text-align": { value: "start", inherited: true },
 	"text-transform": { value: "none", inherited: true },
 	"text-decoration-line": { value: "none", inherited: false },
@@ -17,9 +18,50 @@ const keywordDefaults: Record<NativeKeywordProperty, { value: string; inherited:
 	"white-space": { value: "normal", inherited: true },
 	"object-fit": { value: "fill", inherited: false },
 	"text-overflow": { value: "clip", inherited: false },
+	// Every host's own native display comes from the engine's stylesheet, not from one initial value.
+	display: { inherited: false },
+	"flex-direction": { value: "row", inherited: false },
+	"flex-wrap": { value: "nowrap", inherited: false },
+	"align-items": { value: "normal", inherited: false },
+	"justify-content": { value: "normal", inherited: false },
+	"align-self": { value: "auto", inherited: false },
+	position: { value: "static", inherited: false },
+	"overflow-x": { value: "visible", inherited: false },
+	"overflow-y": { value: "visible", inherited: false },
 };
+
+/** Hosts the engine's own stylesheet declares layout keywords on, where no initial value is proof. */
+const declaringHosts = [
+	"IMG",
+	"VIDEO",
+	"CANVAS",
+	"IFRAME",
+	"OBJECT",
+	"EMBED",
+	"INPUT",
+	"SELECT",
+	"TEXTAREA",
+	"BUTTON",
+	"DIALOG",
+	"DETAILS",
+	"SUMMARY",
+	"MARQUEE",
+];
 function keywordProperty(property: string): property is NativeKeywordProperty {
 	return Object.hasOwn(keywordDefaults, property);
+}
+
+/** Box keywords, whose initial value competes with this host's own engine stylesheet. */
+function layoutKeyword(property: NativeKeywordProperty): boolean {
+	return ![
+		"text-align",
+		"text-transform",
+		"text-decoration-line",
+		"font-style",
+		"white-space",
+		"object-fit",
+		"text-overflow",
+	].includes(property);
 }
 
 // Companions whose effect the native applicability guard reads directly from this use.
@@ -97,6 +139,7 @@ type PropertyFamily =
 	| { kind: "border" }
 	| { kind: "border-color" }
 	| { kind: "radius" }
+	| { kind: "axes" }
 	| { kind: "selected"; select: SelectedFamily };
 
 const filterProperties = ["filter", "brightness", "contrast", "saturate", "hue-rotate"];
@@ -129,6 +172,7 @@ function propertyFamily(property: string): PropertyFamily | undefined {
 	if (borderWidthRow.test(property)) return { kind: "border" };
 	if (borderColorRow.test(property)) return { kind: "border-color" };
 	if (property === "border-radius") return { kind: "radius" };
+	if (property === "overflow") return { kind: "axes" };
 	if (keywordProperty(property)) return { kind: "selected", select: { kind: "keyword", keyword: property } };
 	if (Object.hasOwn(lengthRows, property))
 		return { kind: "selected", select: { kind: "length", row: lengthRows[property]! } };
@@ -150,6 +194,19 @@ function radiusOutcome(element: Element, expected: SourcePropertyExpectation): P
 		"border-bottom-right-radius",
 		"border-bottom-left-radius",
 	].map((corner) => propertyOutcome(element, { ...expected, property: corner }));
+	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
+	if (refused) return refused;
+	return {
+		rendered: outcomes.every((outcome) => outcome.rendered === "verified") ? "verified" : "mismatching",
+		observed: outcomes.map((outcome) => outcome.observed ?? "").join(" "),
+	};
+}
+
+/** The whole-box overflow row is two independent native axes; both must read the same way. */
+function axesOutcome(element: Element, expected: SourcePropertyExpectation): PropertyOutcome {
+	const outcomes = ["overflow-x", "overflow-y"].map((axis) =>
+		propertyOutcome(element, { ...expected, property: axis }),
+	);
 	const refused = outcomes.find((outcome) => outcome.rendered !== "verified" && outcome.rendered !== "mismatching");
 	if (refused) return refused;
 	return {
@@ -187,6 +244,7 @@ export function propertyOutcome(element: Element, expected: SourcePropertyExpect
 	if (family.kind === "border") return borderOutcome(element, expected);
 	if (family.kind === "border-color") return borderColorOutcome(element, expected);
 	if (family.kind === "radius") return radiusOutcome(element, expected);
+	if (family.kind === "axes") return axesOutcome(element, expected);
 	return selectedOutcome(element, view, expected, family.select, pseudo);
 }
 
@@ -202,6 +260,7 @@ function selectedOutcome(
 	if (pseudo !== "" && select.kind !== "color")
 		return unverified("this property has no native pseudo-element reading");
 	const corner = select.kind === "corner";
+	const axis = expected.property === "overflow-x" || expected.property === "overflow-y";
 	const length = select.kind === "length" ? select.row : undefined;
 	const companion = select.kind === "metric" ? select.companion : undefined;
 	const sheet = new CSSStyleSheet();
@@ -219,7 +278,17 @@ function selectedOutcome(
 			return unverified("this property effect needs a native selector or conditional context proof");
 		if (companion && effect.property === companion) companions.push(effect);
 		else if (effect.property === expected.property) applicable.push(effect);
-		else if (corner && effect.property === "border-radius") {
+		else if (axis && effect.property === "overflow") {
+			const value = resolvedValue(element, sheet, effect.value);
+			if (value === undefined) return unverified("this overflow axis needs a variable context proof");
+			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+			const rule = sheet.cssRules[index];
+			if (!(rule instanceof CSSStyleRule)) return unverified("the native declaration parser is unavailable");
+			rule.style.overflow = value;
+			const component = rule.style.getPropertyValue(expected.property);
+			if (!component) return unverified("this overflow axis has no native shorthand component proof");
+			applicable.push({ ...effect, property: expected.property, value: component });
+		} else if (corner && effect.property === "border-radius") {
 			const value = resolvedValue(element, sheet, effect.value);
 			if (value === undefined) return unverified("this corner needs a variable context proof");
 			const index = sheet.insertRule(":root {}", sheet.cssRules.length);
@@ -251,7 +320,11 @@ function selectedOutcome(
 				const parent = element.parentElement;
 				if (!parent) return unverified("this keyword needs a native inherited context proof");
 				value = view.getComputedStyle(parent).getPropertyValue(keyword);
-			} else value = fallback.value;
+			} else if (fallback.value === undefined)
+				return unverified(`this ${keyword} has no independent native default declaration`);
+			else if (layoutKeyword(keyword) && declaringHosts.includes(element.tagName))
+				return unverified("this host's own native stylesheet declares this keyword");
+			else value = fallback.value;
 		}
 		if (value === undefined) return unverified("this keyword has no independent expected declaration");
 		const result = nativeKeyword(element, keyword, value);
