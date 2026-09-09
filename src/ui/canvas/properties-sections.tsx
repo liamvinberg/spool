@@ -224,12 +224,13 @@ function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string 
 	const held = view.described?.readings?.[row.property];
 	if (held?.source === "mixed")
 		return { ok: false, reason: held.reason ?? "this property has no single source to write" };
-	// A project rule written under a condition is part of what this row is, even
-	// where the condition is not the one holding now: the row says so, and the
-	// value beside it stays the one the element is actually running.
-	if (held?.written?.length) return { ok: true, reason: `also written under ${held.written.join(" and ")}` };
 	const answered = view.described?.readings !== undefined;
-	return { ok: view.property !== null && (answered || !readsFromSource(row)), reason: undefined };
+	const ok = view.property !== null && (answered || !readsFromSource(row));
+	// A project rule written under a condition is part of what this row is, even
+	// where the condition is not the one holding now: the row says so beside
+	// whatever it may write, and the value shown stays the one that is running.
+	if (held?.written?.length) return { ok, reason: `also written under ${held.written.join(" and ")}` };
+	return { ok, reason: undefined };
 }
 
 /**

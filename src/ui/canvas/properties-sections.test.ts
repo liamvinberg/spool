@@ -637,6 +637,8 @@ async function mount(
 	scope: Scope = BASE,
 	element?: RowElement,
 	describe?: PropertyControls["describe"],
+	/** A description already in hand, for a view whose session has gone. */
+	described?: PropertyDescription,
 ): Promise<Rail> {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	const host = document.createElement("div");
@@ -721,6 +723,7 @@ async function mount(
 		base: scopedClass(className, BASE),
 		theme: THEME,
 		element: element ?? { tag: "div", className },
+		...(described ? { described } : {}),
 		box: { w: 120, h: 40 },
 		compiler: stubCompiler(),
 		fresh: () => false,
@@ -1200,6 +1203,29 @@ it("says why a box nobody owns cannot be written, instead of offering the write"
 	const row = () => rail.host.querySelector('[data-properties-row="padding"]');
 	const said = () => row()?.querySelector("span[title]")?.getAttribute("title");
 	await vi.waitFor(() => expect(said()).toBe("two sources own this"));
+	const input = row()?.querySelector<HTMLInputElement>("input");
+	expect(input === null || input === undefined || input.disabled).toBe(true);
+});
+
+it("keeps a row with no session to write through disabled, whatever else is written for it", async () => {
+	const rail = await mount(
+		"p-6",
+		BASE,
+		{ tag: "div", className: "p-6", refusal: { code: "computed-class", says: "className is an expression" } },
+		undefined,
+		{
+			readings: {
+				padding: {
+					tokens: ["p-6"],
+					source: "class",
+					binding: { kind: "page" },
+					written: ["@media (min-width: 48rem)"],
+				},
+			},
+		},
+	);
+	const row = () => rail.host.querySelector('[data-properties-row="padding"]');
+	await vi.waitFor(() => expect(row()).not.toBe(null));
 	const input = row()?.querySelector<HTMLInputElement>("input");
 	expect(input === null || input === undefined || input.disabled).toBe(true);
 });
