@@ -4,6 +4,7 @@ import {
 	declarationFile,
 	declarationPath,
 	declarationScope,
+	guardGroupedSources,
 	locateDeclaration,
 	planDeclarationLiteral,
 	propertySourceOwner,
@@ -322,9 +323,9 @@ describe("the refusals a write meets before it saves", () => {
 		).toBe("b.css");
 	});
 
-	it("names another source for a grouped selection, which is what makes the group refuse", () => {
+	it("refuses a grouped change one of whose selections another source owns", () => {
 		// a grouped change writes classes; where any selection is owned elsewhere
-		// the class it wrote would never apply, so the group refuses on this answer
+		// the class it wrote would never apply, so the whole change refuses here
 		const member: SourcePropertyEffect = {
 			owner: "backgroundImage",
 			path: [],
@@ -332,10 +333,22 @@ describe("the refusals a write meets before it saves", () => {
 			value: "linear-gradient(red, blue)",
 			important: false,
 		};
-		expect(propertySourceOwner(new Set(["background-image"]), [], [member], { effects: [] }, ltr, [])).toEqual({
-			kind: "style",
-			members: ["backgroundImage"],
-		});
+		expect(() => guardGroupedSources([{ roots: ["background-image"] }], { effects: [] }, [member], ltr)).toThrow(
+			/another source owns/,
+		);
+	});
+
+	it("lets a grouped change whose selections are all the class's own through", () => {
+		const utility: SourcePropertyEffect = {
+			owner: "bg-linear-to-br",
+			path: ["@layer utilities", "$"],
+			property: "background-image",
+			value: "linear-gradient(red, blue)",
+			important: false,
+		};
+		expect(() =>
+			guardGroupedSources([{ roots: ["background-image"] }], { effects: [utility] }, [], ltr),
+		).not.toThrow();
 	});
 
 	it("gives a removal no declaration, which is what the write refuses on", async () => {
