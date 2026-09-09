@@ -260,3 +260,29 @@ describe("writing the member back into its object literal", () => {
 		expect(() => planStyleLiteral(source.replace("4", "6"), target, before, before)).toThrow();
 	});
 });
+
+describe("writing the member back through a factory call", () => {
+	const source = 'import {createElement as h} from "react";const e = h("b", {style: {padding: 4}, className: "p-2"});';
+	const before: StyleMember[] = [{ key: "padding", value: 4, enumerable: true }];
+	const target = {
+		address: { file: "f.tsx", start: source.indexOf('h("b"'), end: source.length - 1 },
+		source: "f.tsx:1:1",
+		role: "definition",
+		slot: "attribute",
+		attribute: "style",
+		expected: "",
+		scope: "",
+		repeated: false,
+		syntax: "react-call",
+	} as const;
+
+	it("replaces the member inside the call's own config", () => {
+		const patches = planStyleLiteral(source, target, before, [{ key: "padding", value: 12, enumerable: true }]);
+		expect(patches).toEqual([{ start: source.indexOf("4"), end: source.indexOf("4") + 1, text: "12" }]);
+	});
+
+	it("refuses a style object that is not this call's own literal", () => {
+		const aliased = source.replace("{padding: 4}", "styles.box");
+		expect(() => planStyleLiteral(aliased, target, before, before)).toThrow();
+	});
+});
