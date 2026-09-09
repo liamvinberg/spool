@@ -322,7 +322,7 @@ it.each(layoutProperties)(
 
 it.each(layoutProperties)(
 	"creates and removes retained layout %i %s against its own declaration",
-	async (_index, property, before, after, companion) => {
+	async (_index, property, _before, after, companion) => {
 		const f = fixture();
 		const operation = { kind: "property", property, scope: "" } as const;
 		const environment = { direction: "ltr", writingMode: "horizontal-tb" } as const;
