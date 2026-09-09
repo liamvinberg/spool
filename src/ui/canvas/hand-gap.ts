@@ -38,9 +38,9 @@ export interface GapReading {
 	 * The element's own `style` attribute holds a gap.
 	 *
 	 * An inline declaration beats every class this cell could write, so a band
-	 * over it would offer a drag the page would ignore. Only the document can
-	 * see it, and only #304's inline members can edit it, so until then the
-	 * rail keeps that gap and the canvas draws nothing.
+	 * over it would offer a drag the page would ignore. The rail's inline
+	 * members are the way to edit it, so an inline gap is the rail's and the
+	 * canvas draws no band.
 	 */
 	inline: boolean;
 	/** the resolved `column-gap`, as the document computes it: `16px`, `normal` */
