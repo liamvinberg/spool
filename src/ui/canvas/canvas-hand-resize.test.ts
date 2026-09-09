@@ -465,6 +465,7 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 								box: { x: held.x, y: held.y, w: width, h: height },
 								sensitivity: snapping.sensitivity,
 								targets: snapping.targets,
+								parent: null,
 							},
 						});
 						return;
@@ -708,7 +709,7 @@ function stubCanvasApis(): void {
 
 it("pulls the dragged edge onto a stop the document offers and draws its guide", async () => {
 	// the sibling's right edge is at 234; the pointer asks for 221, which puts
-	// the dragged edge at 231 — three pixels short, and inside the six
+	// the dragged edge at 231, three pixels short and inside the six
 	snapping = { targets: [{ id: 1, box: { x: 74, y: 0, w: 160, h: 40 } }], sensitivity: { w: 1, h: 0 }, actual: null };
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);

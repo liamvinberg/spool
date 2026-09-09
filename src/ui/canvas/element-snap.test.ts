@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { type SnapRequest, type SnapTarget, snapResize, truthful } from "./element-snap";
+import { contentBoxOf, type SnapRequest, type SnapTarget, snapResize, truthful } from "./element-snap";
+import type { ParentReading } from "./protocol";
 
 /**
  * Element resize snapping (#311), as decisions over data.
@@ -168,4 +169,61 @@ it("lets the other axis round to what it can be written as", () => {
 	);
 	expect(ratio.size).toEqual({ w: 208, h: 125 });
 	expect(ratio.v).toEqual([208]);
+});
+
+/** A box 300 wide and 180 tall at (100, 50), with 1px borders and 12px padding. */
+const reading = (over: Partial<ParentReading> = {}): ParentReading => ({
+	box: { x: 100, y: 50, w: 300, h: 180 },
+	scale: { w: 1, h: 1 },
+	border: { left: 1, right: 1, top: 1, bottom: 1 },
+	padding: { left: 12, right: 12, top: 10, bottom: 10 },
+	size: { w: 300, h: 180 },
+	borderBox: true,
+	overflow: { x: "visible", y: "visible" },
+	outer: { w: 300, h: 180 },
+	inner: { w: 298, h: 178 },
+	edge: { left: 1, top: 1 },
+	scroll: { left: 0, top: 0 },
+	...over,
+});
+
+it("takes the content box out of what the document said the parent is", () => {
+	// 300 wide less two 1px borders and two 12px paddings
+	expect(contentBoxOf(reading())).toEqual({ x: 113, y: 61, w: 274, h: 158 });
+});
+
+it("takes the space a scrollbar was given out of the content it measures", () => {
+	// the box scrolls and 12 pixels of it are the scrollbar's: a reading that
+	// spent them on content would put its right edge twelve pixels too far out
+	const scrolling = reading({
+		overflow: { x: "visible", y: "scroll" },
+		inner: { w: 286, h: 178 },
+	});
+	expect(contentBoxOf(scrolling)).toEqual({ x: 113, y: 61, w: 262, h: 158 });
+});
+
+it("keeps the fraction the engine resolved the box to", () => {
+	const fractional = reading({ box: { x: 100, y: 50, w: 300.5, h: 180 }, size: { w: 300.5, h: 180 } });
+	expect(contentBoxOf(fractional)?.w).toBe(274.5);
+});
+
+it("moves the content box with the scroll its children are under", () => {
+	const scrolled = reading({ scroll: { left: 30, top: 24 } });
+	expect(contentBoxOf(scrolled)).toEqual({ x: 83, y: 37, w: 274, h: 158 });
+});
+
+it("proves nothing about a parent whose own numbers disagree", () => {
+	// the resolved size and the box it is drawn as cannot both be right
+	expect(contentBoxOf(reading({ size: { w: 260, h: 180 } }))).toBeNull();
+	// a reservation measured against a fractional border cannot be trusted
+	expect(
+		contentBoxOf(
+			reading({
+				overflow: { x: "visible", y: "scroll" },
+				border: { left: 1.5, right: 1.5, top: 1, bottom: 1 },
+				inner: { w: 285, h: 178 },
+				box: { x: 100, y: 50, w: 300, h: 180 },
+			}),
+		),
+	).toBeNull();
 });

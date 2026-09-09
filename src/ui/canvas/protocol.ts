@@ -422,13 +422,44 @@ function isElementSizing(value: unknown): value is ElementSizing {
 function isElementSnapping(value: unknown): value is ElementSnapping {
 	if (!isRecord(value)) return false;
 	const { box, sensitivity, targets } = value;
+	const parent = value.parent;
 	return (
 		isSnapBox(box) &&
 		isRecord(sensitivity) &&
 		finite(sensitivity.w) &&
 		finite(sensitivity.h) &&
 		Array.isArray(targets) &&
-		targets.every((target: unknown) => isRecord(target) && Number.isSafeInteger(target.id) && isSnapBox(target.box))
+		targets.every(
+			(target: unknown) => isRecord(target) && Number.isSafeInteger(target.id) && isSnapBox(target.box),
+		) &&
+		(parent === null || (isRecord(parent) && Number.isSafeInteger(parent.id) && isParentReading(parent.reading)))
+	);
+}
+
+/** A parent reading, checked the way every other reply is: shape and numbers. */
+function isParentReading(value: unknown): value is ParentReading {
+	if (!isRecord(value)) return false;
+	const sides = (side: unknown) =>
+		isRecord(side) && finite(side.left) && finite(side.right) && finite(side.top) && finite(side.bottom);
+	const pair = (both: unknown) => isRecord(both) && finite(both.w) && finite(both.h);
+	return (
+		isSnapBox(value.box) &&
+		pair(value.scale) &&
+		sides(value.border) &&
+		sides(value.padding) &&
+		pair(value.size) &&
+		typeof value.borderBox === "boolean" &&
+		isRecord(value.overflow) &&
+		typeof value.overflow.x === "string" &&
+		typeof value.overflow.y === "string" &&
+		pair(value.outer) &&
+		pair(value.inner) &&
+		isRecord(value.edge) &&
+		finite(value.edge.left) &&
+		finite(value.edge.top) &&
+		isRecord(value.scroll) &&
+		finite(value.scroll.left) &&
+		finite(value.scroll.top)
 	);
 }
 
@@ -625,7 +656,7 @@ export const sizingMessage = (selector: string, id: number) => ({ spool: "sizing
  * they are one layout rather than two. A trial states the size the sample is
  * about: the document wears it, reads the layout it makes and takes it off
  * again inside the one task, so nothing is ever painted in a size the drag did
- * not settle on. Sensitivity is the extra pixel that trial asks for — how far
+ * not settle on. Sensitivity is the extra pixel that trial asks for: how far
  * the dragged edge moves per pixel of written size, which only the running
  * layout can say.
  *
@@ -655,8 +686,36 @@ export interface ElementSnapping {
 	box: { x: number; y: number; w: number; h: number };
 	/** how far the dragged edge moved per written pixel; zero where it cannot move */
 	sensitivity: { w: number; h: number };
-	/** every stop this element may align with, siblings first and the parent last */
+	/** the rendered siblings this element may align with, in document order */
 	targets: { id: number; box: { x: number; y: number; w: number; h: number } }[];
+	/**
+	 * The box it sits in, as numbers rather than as an answer.
+	 *
+	 * What those numbers make of a content box is arithmetic, and the document
+	 * is the worst place to do arithmetic, so `contentBoxOf` does it where a
+	 * test can reach it. Null where the parent proves nothing, which leaves the
+	 * siblings perfectly good targets.
+	 */
+	parent: { id: number; reading: ParentReading } | null;
+}
+
+/** What the document can say about the box an element sits in, and no more. */
+export interface ParentReading {
+	/** its border box, in the same coordinates every other box here is in */
+	box: { x: number; y: number; w: number; h: number };
+	/** the proved positive axis-aligned scale it is drawn under */
+	scale: { w: number; h: number };
+	border: { left: number; right: number; top: number; bottom: number };
+	padding: { left: number; right: number; top: number; bottom: number };
+	/** what the engine resolved its size to, which keeps its fraction */
+	size: { w: number; h: number };
+	borderBox: boolean;
+	overflow: { x: string; y: string };
+	/** rounded, and only ever used to measure a reservation with */
+	outer: { w: number; h: number };
+	inner: { w: number; h: number };
+	edge: { left: number; top: number };
+	scroll: { left: number; top: number };
 }
 
 export const snappingMessage = (selector: string, trial: SnapTrial | null, id: number) =>

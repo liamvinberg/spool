@@ -1148,50 +1148,46 @@ const canvasShimJs = `(() => {
 		}
 		return { w: w, h: h };
 	}
-	// The parent's content box, in the coordinates the boxes above are in.
-	// Rounded offset/client dimensions are only ever used to measure an integral
-	// border and scrollbar reservation; the content size itself stays the
-	// fractional one the engine resolved, and must reconcile with the border box
-	// it was read beside. A parent that cannot prove any of that is left out
-	// while its children stay perfectly good targets.
-	function snapContent(parent) {
+	// What the parent is, in numbers, so the arithmetic that makes a content box
+	// out of them can live where a test can reach it (ui/canvas/element-snap.ts).
+	// The same split the measurement overlay uses: this reads and says nothing
+	// more, because the document is the worst place to work out what it means.
+	function parentReading(parent) {
 		const scale = snapScale(parent);
 		if (!scale || parent.getClientRects().length !== 1) return null;
 		const style = getComputedStyle(parent);
-		const box = snapBox(parent);
 		const px = (name) => parseFloat(style.getPropertyValue(name)) || 0;
-		const bl = px("border-left-width"), br = px("border-right-width");
-		const bt = px("border-top-width"), bb = px("border-bottom-width");
-		const pl = px("padding-left"), pr = px("padding-right");
-		const pt = px("padding-top"), pb = px("padding-bottom");
-		const gutter = (overflow, borders, outer, inner) => {
-			if (overflow === "visible" || overflow === "clip") return 0;
-			if (!Number.isInteger(borders)) return undefined;
-			return Math.max(0, outer - inner - borders);
-		};
-		const gx = gutter(style.overflowY, bl + br, parent.offsetWidth, parent.clientWidth);
-		const gy = gutter(style.overflowX, bt + bb, parent.offsetHeight, parent.clientHeight);
-		if (gx === undefined || gy === undefined) return null;
-		const border = style.boxSizing === "border-box";
-		const width = parseFloat(style.width) - (border ? bl + br + pl + pr + gx : 0);
-		const height = parseFloat(style.height) - (border ? bt + bb + pt + pb + gy : 0);
-		if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
-		if (Math.abs(width + bl + br + pl + pr + gx - box.w / scale.w) > 0.02) return null;
-		if (Math.abs(height + bt + bb + pt + pb + gy - box.h / scale.h) > 0.02) return null;
-		if ((gx > 0 && !Number.isInteger(bl)) || (gy > 0 && !Number.isInteger(bt))) return null;
-		const left = bl + pl + (gx > 0 ? parent.clientLeft - bl : 0);
-		const top = bt + pt + (gy > 0 ? parent.clientTop - bt : 0);
 		return {
-			x: box.x + (left - parent.scrollLeft) * scale.w,
-			y: box.y + (top - parent.scrollTop) * scale.h,
-			w: width * scale.w,
-			h: height * scale.h,
+			box: snapBox(parent),
+			scale: scale,
+			border: {
+				left: px("border-left-width"),
+				right: px("border-right-width"),
+				top: px("border-top-width"),
+				bottom: px("border-bottom-width"),
+			},
+			padding: {
+				left: px("padding-left"),
+				right: px("padding-right"),
+				top: px("padding-top"),
+				bottom: px("padding-bottom"),
+			},
+			// what the engine resolved the box to, which keeps its fraction
+			size: { w: parseFloat(style.width), h: parseFloat(style.height) },
+			borderBox: style.boxSizing === "border-box",
+			overflow: { x: style.overflowX, y: style.overflowY },
+			// rounded, and only ever used to measure a reservation with
+			outer: { w: parent.offsetWidth, h: parent.offsetHeight },
+			inner: { w: parent.clientWidth, h: parent.clientHeight },
+			edge: { left: parent.clientLeft, top: parent.clientTop },
+			scroll: { left: parent.scrollLeft, top: parent.scrollTop },
 		};
 	}
-	// Immediate rendered siblings and the immediate parent's content box, in the
-	// document the element is in. Descendants, unrelated branches, other frames,
-	// and hidden, fragmented, fixed or unsupported-transform siblings are not
-	// alignments a resize can honestly make.
+
+	// The immediate rendered siblings, in the document the element is in.
+	// Descendants, unrelated branches, other frames, and hidden, fragmented,
+	// fixed or unsupported-transform siblings are not alignments a resize can
+	// honestly make. The parent rides beside them as a reading of its own.
 	function snapTargets(el) {
 		const parent = el.parentElement;
 		if (!parent || parent.nodeType !== 1) return null;
@@ -1205,8 +1201,6 @@ const canvasShimJs = `(() => {
 			const box = snapBox(sibling);
 			if (box.w > 0 && box.h > 0) targets.push({ id: snapIdentity(sibling), box: box });
 		}
-		const content = snapContent(parent);
-		if (content) targets.push({ id: snapIdentity(parent), box: content });
 		return targets;
 	}
 	function snapEdgeOf(box, axis, sign) {
@@ -1215,9 +1209,17 @@ const canvasShimJs = `(() => {
 	function elementSnapping(selector, trial) {
 		const el = elementFor(selector);
 		if (!el || el.getClientRects().length !== 1 || !snapScale(el)) return null;
+		const parent = el.parentElement;
+		if (!parent || parent.nodeType !== 1) return null;
+		const held = () => {
+			const reading = parentReading(parent);
+			return reading === null ? null : { id: snapIdentity(parent), reading: reading };
+		};
 		if (!trial) {
 			const targets = snapTargets(el);
-			return targets === null ? null : { box: snapBox(el), sensitivity: { w: 0, h: 0 }, targets: targets };
+			return targets === null
+				? null
+				: { box: snapBox(el), sensitivity: { w: 0, h: 0 }, targets: targets, parent: held() };
 		}
 		const worn = el.getAttribute("style");
 		const wear = (values) => {
@@ -1232,6 +1234,7 @@ const canvasShimJs = `(() => {
 			wear(trial.wear);
 			const box = snapBox(el);
 			const targets = snapTargets(el);
+			const parentHeld = held();
 			wear(trial.probe);
 			const shifted = snapBox(el);
 			if (targets !== null) {
@@ -1242,6 +1245,7 @@ const canvasShimJs = `(() => {
 						h: trial.sy === 0 ? 0 : snapEdgeOf(shifted, "y", trial.sy) - snapEdgeOf(box, "y", trial.sy),
 					},
 					targets: targets,
+					parent: parentHeld,
 				};
 			}
 		} finally {

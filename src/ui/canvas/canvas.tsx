@@ -81,7 +81,7 @@ import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice, NoticeStrip } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
-import { type ElementSnap, type SnapRequest, snapResize, truthful } from "./element-snap";
+import { type ElementSnap, poolOf, type SnapRequest, type SnapTarget, snapResize, truthful } from "./element-snap";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -3137,7 +3137,7 @@ export function ProjectCanvas({
 	/**
 	 * One sample of a live gesture, previewed in every use through the common
 	 * owner. The promise is done when this sample is on the running layout, or
-	 * when a later sample has taken its place — which is what lets a snap
+	 * when a later sample has taken its place, which is what lets a snap
 	 * measure what its correction actually made (#311).
 	 */
 	const sampleRingWrite = useCallback(
@@ -4939,7 +4939,7 @@ export function ProjectCanvas({
 	 * layout actually made of it. A stop CSS rounded away, refused, or moved
 	 * while answering leaves the pointer's own size and draws nothing: a guide
 	 * is a statement about the box that is there, never about the one that was
-	 * asked for. There is no second attempt — this chases nothing.
+	 * asked for. There is no second attempt: this chases nothing.
 	 */
 	const alignElementResize = async (
 		active: Extract<Gesture, { kind: "element-size" }>,
@@ -4999,6 +4999,8 @@ export function ProjectCanvas({
 		}
 		const before = await askSnapping(pick.frame, pick.selector, snapTrial(held, edge, sx, sy));
 		if (current() === null) return;
+		const pool: SnapTarget[] = before === null ? [] : poolOf(before);
+
 		const request: SnapRequest = {
 			sx,
 			sy,
@@ -5009,8 +5011,7 @@ export function ProjectCanvas({
 			limits: held.limits,
 			quantize: quantizerFor(held),
 		};
-		const snap: ElementSnap | null =
-			before === null ? null : snapResize(before.box, held.raw, before.targets, request);
+		const snap: ElementSnap | null = before === null ? null : snapResize(before.box, held.raw, pool, request);
 		if (before === null || snap === null || (snap.v.length === 0 && snap.h.length === 0)) {
 			await settle(held.raw, null);
 			return;
@@ -5021,7 +5022,7 @@ export function ProjectCanvas({
 		if (!(await settle(snap.size, undefined))) return;
 		const after = await askSnapping(pick.frame, pick.selector, null);
 		if (current() === null) return;
-		if (after !== null && truthful(snap, after.box, after.targets, request, before.targets))
+		if (after !== null && truthful(snap, after.box, poolOf(after), request, pool))
 			showGuides({ v: snap.v, h: snap.h });
 		else await settle(held.raw, null);
 	};

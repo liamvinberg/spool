@@ -1,5 +1,6 @@
 import type { Box } from "./camera";
 import type { Sign, Size, SizeLimits } from "./hand-resize";
+import type { ElementSnapping, ParentReading } from "./protocol";
 import { snapEdge } from "./snap";
 
 /**
@@ -7,9 +8,9 @@ import { snapEdge } from "./snap";
  *
  * The frame snapping this reuses is the same calculation: `snapEdge` pulls one
  * dragged edge onto the nearest edge or centre in range and says which stops it
- * landed on. What differs is what the stops are made of — a sibling's box and
+ * landed on. What differs is what the stops are made of, a sibling's box and
  * the parent's content box, measured by the document rather than owned by the
- * canvas — and that a size is not a position: an element cannot be moved onto a
+ * canvas, and that a size is not a position: an element cannot be moved onto a
  * stop, so the correction is a size, and how far the dragged edge travels per
  * pixel of that size is a fact only the running layout can state.
  *
@@ -35,7 +36,7 @@ const KEPT_RATIO = 0.02;
 
 /** One thing a dragged edge may land on, identified by the node it was read off. */
 export interface SnapTarget {
-	/** the document's own per-node identity — never an authored id, which repeats */
+	/** the document's own per-node identity, never an authored id, which repeats */
 	id: number;
 	box: Box;
 }
@@ -164,7 +165,7 @@ function nearest(axes: readonly AxisSnap[]): AxisSnap[] {
  * The box that keeps the proportions, or nothing where the other axis cannot.
  *
  * The other axis is not the one being aligned, so the pixel its own spelling
- * rounds it by is no reason to drop the alignment — the shape is checked
+ * rounds it by is no reason to drop the alignment: the shape is checked
  * against the box that comes back instead. A limit is a different matter: a
  * height the element refuses is a shape it never has.
  */
@@ -186,7 +187,7 @@ const stopsOf = (box: Box, axis: Axis): number[] =>
  *
  * A correction is a proposal: CSS may round it away, refuse it, or move the
  * target itself while answering it. So the drawn guide is checked against the
- * measurement taken afterwards — the dragged edge really is on the line, and
+ * measurement taken afterwards. The dragged edge really is on the line, and
  * the line really is a boundary the same node still keeps, the same one it was
  * chosen for. A node replaced by another wearing the same authored id fails
  * that, because identity here is the node's own.
@@ -216,4 +217,65 @@ export function truthful(
 				),
 		);
 	return holds("x", result.v, request.sx) && holds("y", result.h, request.sy);
+}
+
+/** Space a scrollbar took, or nothing where the reading cannot prove it. */
+function reserved(overflow: string, borders: number, outer: number, inner: number): number | undefined {
+	if (overflow === "visible" || overflow === "clip") return 0;
+	// offset and client dimensions are both rounded, so their difference is only
+	// trustworthy as a whole reservation measured against whole borders
+	if (!Number.isInteger(borders)) return undefined;
+	return Math.max(0, outer - inner - borders);
+}
+
+/**
+ * The content box of the element a resize sits in, out of what the document
+ * said about it, or nothing where those numbers prove nothing.
+ *
+ * The document reads and this decides, the same split the measurement overlay
+ * keeps. What is delicate here is which numbers may be spent on what: the
+ * resolved size keeps its fraction and is the only source of the content
+ * dimension, while the rounded offset and client dimensions are spent only on
+ * measuring a whole scrollbar reservation. Where the two do not reconcile with
+ * the box the parent is actually drawn as, this says nothing at all rather than
+ * offering a stop nobody can land on, and the siblings stay perfectly good
+ * targets.
+ */
+export function contentBoxOf(parent: ParentReading): Box | null {
+	const { border, padding, box, scale, size } = parent;
+	const sides = { x: border.left + border.right, y: border.top + border.bottom };
+	const gutterX = reserved(parent.overflow.y, sides.x, parent.outer.w, parent.inner.w);
+	const gutterY = reserved(parent.overflow.x, sides.y, parent.outer.h, parent.inner.h);
+	if (gutterX === undefined || gutterY === undefined) return null;
+	const spentX = sides.x + padding.left + padding.right + gutterX;
+	const spentY = sides.y + padding.top + padding.bottom + gutterY;
+	const width = size.w - (parent.borderBox ? spentX : 0);
+	const height = size.h - (parent.borderBox ? spentY : 0);
+	if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+	if (Math.abs(width + spentX - box.w / scale.w) > LANDED) return null;
+	if (Math.abs(height + spentY - box.h / scale.h) > LANDED) return null;
+	// a reservation sits inside the border, so the border it was measured
+	// against has to be a whole number for the inside edge to be one too
+	if ((gutterX > 0 && !Number.isInteger(border.left)) || (gutterY > 0 && !Number.isInteger(border.top))) return null;
+	const left = border.left + padding.left + (gutterX > 0 ? parent.edge.left - border.left : 0);
+	const top = border.top + padding.top + (gutterY > 0 ? parent.edge.top - border.top : 0);
+	return {
+		x: box.x + (left - parent.scroll.left) * scale.w,
+		y: box.y + (top - parent.scroll.top) * scale.h,
+		w: width * scale.w,
+		h: height * scale.h,
+	};
+}
+
+/**
+ * Everything one sample may align with, siblings before the box they sit in.
+ *
+ * The order is the tie-break: two stops the same distance away keep the order
+ * they were offered in, and a sibling is the more useful answer.
+ */
+export function poolOf(snapping: ElementSnapping): SnapTarget[] {
+	const content = snapping.parent === null ? null : contentBoxOf(snapping.parent.reading);
+	return content === null || snapping.parent === null
+		? snapping.targets
+		: [...snapping.targets, { id: snapping.parent.id, box: content }];
 }
