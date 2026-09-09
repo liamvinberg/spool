@@ -1776,11 +1776,24 @@ it.each([
 		effects: nativePropertyEffects(plan.original, plan.roots, environment),
 	};
 	const original = await f.inspect(inverse);
-	// The retained sans list needs the comparator's platform alias proof, so it stays unverified.
+	// The retained sans list names a platform alias. Engines differ on whether they keep that
+	// name through serialization, so read which this one did instead of assuming either.
+	let aliasSurvives = true;
+	if (row.property === "font-family") {
+		const observed = await f.page
+			.locator("[data-subject]")
+			.nth(1)
+			.evaluate((element) => getComputedStyle(element).fontFamily);
+		expect(observed.startsWith("-apple-system"), observed).toBe(true);
+		// The replacement name may come back quoted, so read the entry rather than a bare token.
+		expect(/(?:^|[\s,])"?(?:BlinkMacSystemFont|system-ui)"?(?:[\s,]|$)/.test(observed), observed).toBe(true);
+		// Kept, and the lists compare; collapsed to another name, and the comparator has no proof.
+		aliasSurvives = observed.includes("BlinkMacSystemFont");
+	}
 	expect(
 		original.map((outcome) => outcome.rendered),
 		JSON.stringify(original),
-	).toEqual(["mismatching", row.property === "font-family" ? "unverified" : "verified"]);
+	).toEqual(["mismatching", aliasSurvives ? "verified" : "unverified"]);
 	// Removing the authored value must read against the compiled initial or inherited context.
 	const removal = await planPropertyValue(
 		root,

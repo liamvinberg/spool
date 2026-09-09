@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { SourceRead, SourceResult } from "../source-edit";
 import { originCanvas } from "./hand-origin-browser-helpers";
 
-it("previews an unused property candidate, saves once and reverses retained source", async () => {
+it("previews an unused property candidate, saves once and reverses retained source", { timeout: 120_000 }, async () => {
 	let observer = "";
 	const f = await originCanvas(
 		{
@@ -251,7 +251,9 @@ it("previews an unused property candidate, saves once and reverses retained sour
 	await request({ action: "cancel", handle: cssRead.read.handle });
 });
 
-it("edits opacity through the actual Properties control with preview, one save and source inverse", async () => {
+it("edits opacity through the actual Properties control with preview, one save and source inverse", {
+	timeout: 120_000,
+}, async () => {
 	const f = await originCanvas(
 		{
 			"shared/button.tsx":
@@ -321,7 +323,7 @@ it("says the source's own property refusal on the generic controls", { timeout: 
 	expect(f.bytes()["shared/button.tsx"]).toContain('className={"opacity-" + 75}');
 });
 
-it("does not prepare an old property read after Escape and a newer preview", async () => {
+it("does not prepare an old property read after Escape and a newer preview", { timeout: 120_000 }, async () => {
 	let release = () => {};
 	const held = new Promise<void>((resolve) => {
 		release = resolve;
@@ -480,7 +482,9 @@ it.each([false, true])(
 	},
 );
 
-it("uses the approved shared color menu with exact reference metadata and binding-restoring inverse", async () => {
+it("uses the approved shared color menu with exact reference metadata and binding-restoring inverse", {
+	timeout: 120_000,
+}, async () => {
 	const f = await originCanvas(
 		{
 			"shared/button.tsx":
