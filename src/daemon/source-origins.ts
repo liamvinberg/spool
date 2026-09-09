@@ -69,7 +69,7 @@ export interface Selection {
 	refusal?: string;
 }
 export type Operation =
-	| { kind: "text" | "delete" | "reorder" | "asset" | "properties" }
+	| { kind: "text" | "delete" | "asset" | "properties" }
 	| { kind: "attribute"; attribute: string }
 	| { kind: "property"; property: string; scope: string };
 export interface Target {
@@ -1301,9 +1301,9 @@ function factoryRead(sources: Sources, selection: Selection, operation: Operatio
 		if (value.kind === "clone" || value.kind === "create" || value.kind === "key") verifyFactory(current, value.kind);
 	}
 	sources.assertEntry(current);
-	if (operation.kind === "delete" || operation.kind === "reorder")
+	if (operation.kind === "delete")
 		throw new StructuralShapeRefusal(
-			"factory structure needs an authored removal/reorder proof; removing a clone input can throw",
+			"factory structure needs an authored removal proof; removing a clone input can throw",
 		);
 	if (operation.kind === "asset") throw new Error("factory assets need an imported-value source proof");
 	let field =
@@ -1530,11 +1530,6 @@ export function sourceRead(
 		const parent = site.ancestors.at(-1);
 		if (parent?.type !== "JSXElement" && parent?.type !== "JSXFragment")
 			throw new StructuralShapeRefusal("not a complete authored JSX child; generated rows are refused");
-		if (operation.kind === "reorder") {
-			const children = parent.children.filter((n) => n.type !== "JSXText" || n.value.trim() !== "");
-			if (children.length < 2 || children.some((n) => n.type !== "JSXElement"))
-				throw new StructuralShapeRefusal("only complete authored siblings can reorder");
-		}
 		expected = site.unit.text.slice(site.node.start!, site.node.end!);
 		slot = "child";
 	}

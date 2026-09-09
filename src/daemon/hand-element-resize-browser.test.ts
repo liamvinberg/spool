@@ -138,7 +138,7 @@ it("drags a corner through the running layout, saves once and takes one step bac
 	//
 	// The frame wheeled off the far edge makes no such promise. The canvas keeps
 	// only so many documents live, and one nobody can see is a document it may
-	// let go of and build again from the source that was saved — which is why
+	// let go of and build again from the source that was saved, which is why
 	// the assertion about that use is the reflow above, not its counters.
 	expect(await stillTheSameDocument(f.frame), "the frame the drag was made in reloaded").toBe(true);
 	expect(await f.frame.locator("[data-subject] button").allTextContents()).toEqual(["A:1", "B:1"]);

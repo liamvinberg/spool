@@ -359,6 +359,7 @@ const SIZING = {
 	box: { w: 200, h: 120 },
 	extra: { w: 0, h: 0 },
 	free: false,
+	flow: { axis: "column" as const, reversed: false },
 	offset: { left: null, top: null },
 	limits: { minW: 0, minH: 0, maxW: null, maxH: null },
 };

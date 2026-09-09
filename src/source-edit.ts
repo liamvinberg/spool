@@ -20,7 +20,9 @@ export type SourceOperation =
 	| { kind: "property"; property: string; scope: string }
 	| { kind: "properties"; target: SourcePropertyGroupTarget }
 	| { kind: "image" }
-	| { kind: "delete" };
+	| { kind: "delete" }
+	/** Move one authored sibling; negative steps move it earlier among its siblings. */
+	| { kind: "reorder"; steps: number };
 
 export function isPropertyOperation(
 	operation: SourceOperation,
@@ -34,12 +36,14 @@ export type SourceChange =
 	| { kind: "property"; value: SourcePropertyValue }
 	| { kind: "properties"; value: SourcePropertyGroupValue }
 	| { kind: "image"; path: string }
-	| { kind: "delete" };
+	| { kind: "delete" }
+	| { kind: "reorder" };
 
 export function sameSourceOperation(a: SourceOperation, b: SourceOperation): boolean {
 	if (a.kind === "literal") return b.kind === "literal" && a.field === b.field;
 	if (a.kind === "property") return b.kind === "property" && a.property === b.property && a.scope === b.scope;
 	if (a.kind === "properties") return b.kind === "properties" && samePropertyGroupTarget(a.target, b.target);
+	if (a.kind === "reorder") return b.kind === "reorder" && a.steps === b.steps;
 	return a.kind === b.kind;
 }
 

@@ -1,5 +1,8 @@
 import type { JSXElement, Node } from "@babel/types";
 
+/** The unit has no authored identity a move or removal could keep it by. */
+export class StructuralIdentityRefusal extends Error {}
+
 type StructuralKey = { ok: true; key: string } | { ok: false; reason: string };
 
 export function significantStructuralChildren(node: JSXElement | Extract<Node, { type: "JSXFragment" }>) {

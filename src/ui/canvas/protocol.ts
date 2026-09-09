@@ -411,9 +411,12 @@ function isSpacingReading(value: unknown): value is SpacingReading {
 /** A sizing reply, checked the way every other one is: the shape, and finite numbers. */
 function isElementSizing(value: unknown): value is ElementSizing {
 	if (!isRecord(value)) return false;
-	const { box, extra, offset, limits, units } = value;
+	const { box, extra, offset, limits, units, flow } = value;
 	return (
 		typeof value.free === "boolean" &&
+		isRecord(flow) &&
+		(flow.axis === null || flow.axis === "row" || flow.axis === "column") &&
+		typeof flow.reversed === "boolean" &&
 		isRecord(units) &&
 		Object.values(units).every(finite) &&
 		isRecord(box) &&
@@ -607,6 +610,15 @@ export interface ElementSizing {
 	extra: { w: number; h: number };
 	/** `absolute` or `fixed`: the only placements a resize may move */
 	free: boolean;
+	/**
+	 * How the parent lays this element's row of siblings out (#308).
+	 *
+	 * `axis` is the one direction a keyboard move may take a normal-flow child
+	 * in; `null` where the parent's own layout decides the position and no
+	 * arrow may. `reversed` is a flex direction, or an RTL row, that draws the
+	 * authored order backwards.
+	 */
+	flow: { axis: "row" | "column" | null; reversed: boolean };
 	/** the offsets it is actually placed by, or null where that side is auto */
 	offset: { left: number | null; top: number | null };
 	/** a maximum the engine does not set is `null`, which is not a number */

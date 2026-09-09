@@ -1091,6 +1091,28 @@ const canvasShimJs = `(() => {
 			return Number.isFinite(value) ? value : null;
 		};
 		const free = style.position === "absolute" || style.position === "fixed";
+		// which way a keyboard move may take a normal-flow child, from the parent
+		// that decides it. A grid, or an authored order property, places children
+		// itself and answers with no axis at all; a flex parent lays out on one; and
+		// ordinary block flow stacks its children down the page. An inline context,
+		// a table or a multi-column flow draws a row nothing here can name an
+		// authored axis for, so it answers with none rather than guessing one.
+		const parent = el.parentElement;
+		const layout = parent ? getComputedStyle(parent) : null;
+		const flex = layout ? ["flex", "inline-flex"].includes(layout.display) : false;
+		const row = flex && layout.flexDirection.startsWith("row");
+		const children = parent ? [...parent.children] : [];
+		const ordered = children.some((child) => getComputedStyle(child).order !== "0");
+		const stacked =
+			!!layout &&
+			["block", "flow-root", "list-item"].includes(layout.display) &&
+			children.every((child) => !getComputedStyle(child).display.startsWith("inline"));
+		let axis = null;
+		if (layout && !ordered && !layout.display.includes("grid")) {
+			if (flex) axis = row ? "row" : "column";
+			else if (stacked) axis = "column";
+		}
+		const reversed = flex && layout.flexDirection.endsWith("reverse") !== (row && layout.direction === "rtl");
 		// what one of each relative unit is worth on this element, so a size
 		// authored in one can be written back in it rather than in pixels
 		const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
@@ -1099,6 +1121,7 @@ const canvasShimJs = `(() => {
 			box: { w: box.width, h: box.height },
 			extra: { w: extraW, h: extraH },
 			free,
+			flow: { axis, reversed },
 			offset: { left: free ? offset("left") : null, top: free ? offset("top") : null },
 			limits: {
 				minW: limit("min-width", extraW, extraW),
@@ -1628,7 +1651,7 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			const reply = (result) => parent.postMessage({ spool: "source-reply", frame: config.frame, id: m.id, result }, "*");
 			if (!source) { reply(undefined); return; }
 			try {
-				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "properties", "delete", "image"].includes(m.operation?.kind)) { reply(undefined); return; }
+				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "properties", "delete", "reorder", "image"].includes(m.operation?.kind)) { reply(undefined); return; }
 				if (m.action === "inventory") reply(source.inventory(m.field,m.operation));
 else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses,m.structure));
 else if(m.action === "highlight") {source.highlight(m.uses);reply(true);}

@@ -153,6 +153,7 @@ import {
 	type Way,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
+import { useKeyMove } from "./key-move";
 import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import { decompose, measuredTarget } from "./measure-spacing";
@@ -2740,89 +2741,100 @@ export function ProjectCanvas({
 		[project, setEdit, showRefusal, sourceDelivery, pointing.entries],
 	);
 
+	/**
+	 * One structural operation on one original authored unit, through the source
+	 * owner and its inverse receipt: a removal, or a move among its siblings.
+	 *
+	 * Both are the same errand. The unit is read through the frame's own
+	 * committed observation, the owner derives what the operation may touch from
+	 * that read alone, and the save it makes is one entry on the one history.
+	 * Nothing about either is decided from where the element sits on screen.
+	 */
+	const commitStructural = useCallback(
+		(pick: PickedSelection, operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>, action: string) => {
+			const change: SourceChange = operation.kind === "delete" ? { kind: "delete" } : { kind: "reorder" };
+			const initial: SourceIntent = { ...sourceIntent(pick, pointing.entries), operation, change, action };
+			writing.current = true;
+			setRefused(null);
+			const generation = ++pickSeq.current;
+			const completion = (async () => {
+				let intent = initial;
+				const original = await sourceDelivery.read(pick.frame, pick.selector, generation, undefined, operation);
+				if (!original) {
+					showRefusal(
+						pick.frame,
+						pick.selector,
+						{ code: "source", says: "this element has no committed structural source observation" },
+						intent,
+					);
+					return;
+				}
+				intent = { ...intent, original };
+				const result = await readSource(
+					project,
+					pick.frame,
+					original,
+					generation,
+					sourceDelivery.observer,
+					operation,
+				);
+				if (!result?.ok) {
+					await sourceDelivery.cancel(pick.frame, generation);
+					showRefusal(
+						pick.frame,
+						pick.selector,
+						{ code: "source", says: result?.reason ?? "the original structural read did not arrive" },
+						intent,
+					);
+					return;
+				}
+				const read = await sourceDelivery.prepare(pick.frame, result.read);
+				intent = attributedIntent(intent, read);
+				retainedPublications.current.set(pick.frame, original.publication);
+				setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
+				const saved = await commitSource(project, read, change);
+				if (saved?.ok && saved.receipt)
+					recordEntry({
+						kind: "source",
+						frame: pick.frame,
+						receipt: saved.receipt,
+						intent,
+						structuralGeneration: generation,
+					});
+				if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
+				await showSourceResult(pick.frame, saved, "", false, intent);
+			})();
+			pendingSource.current.set(pick.frame, completion);
+			void completion.finally(() => {
+				writing.current = false;
+				pendingSource.current.delete(pick.frame);
+			});
+		},
+		[project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult],
+	);
+
 	/** Delete one original authored unit through the source owner and its inverse receipt. */
 	const deleteElements = useCallback((): boolean => {
 		const pick = pickedRef.current[0];
 		if (!pick) return false;
-		const initial: SourceIntent = {
-			...sourceIntent(pick, pointing.entries),
-			operation: { kind: "delete" },
-			change: { kind: "delete" },
-			action: "delete this element",
-		};
 		if (pickedRef.current.length !== 1) {
 			showRefusal(
 				pick.frame,
 				pick.selector,
 				{ code: "source", says: "Delete requires one identifiable authored source unit" },
-				initial,
+				{
+					...sourceIntent(pick, pointing.entries),
+					operation: { kind: "delete" },
+					change: { kind: "delete" },
+					action: "delete this element",
+				},
 			);
 			return true;
 		}
 		if (writing.current || pendingSource.current.size > 0) return true;
-		writing.current = true;
-		setRefused(null);
-		const generation = ++pickSeq.current;
-		const completion = (async () => {
-			let intent = initial;
-			const original = await sourceDelivery.read(
-				pick.frame,
-				pick.selector,
-				generation,
-				undefined,
-				initial.operation,
-			);
-			if (!original) {
-				showRefusal(
-					pick.frame,
-					pick.selector,
-					{ code: "source", says: "this element has no committed structural source observation" },
-					intent,
-				);
-				return;
-			}
-			intent = { ...intent, original };
-			const result = await readSource(
-				project,
-				pick.frame,
-				original,
-				generation,
-				sourceDelivery.observer,
-				initial.operation,
-			);
-			if (!result?.ok) {
-				await sourceDelivery.cancel(pick.frame, generation);
-				showRefusal(
-					pick.frame,
-					pick.selector,
-					{ code: "source", says: result?.reason ?? "the original structural read did not arrive" },
-					intent,
-				);
-				return;
-			}
-			const read = await sourceDelivery.prepare(pick.frame, result.read);
-			intent = attributedIntent(intent, read);
-			retainedPublications.current.set(pick.frame, original.publication);
-			setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
-			const saved = await commitSource(project, read, { kind: "delete" });
-			if (saved?.ok && saved.receipt)
-				recordEntry({
-					kind: "source",
-					frame: pick.frame,
-					receipt: saved.receipt,
-					intent,
-					structuralGeneration: generation,
-				});
-			if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
-			await showSourceResult(pick.frame, saved, "", false, intent);
-		})();
-		pendingSource.current.set(pick.frame, completion);
-		void completion.finally(() => {
-			writing.current = false;
-			pendingSource.current.delete(pick.frame);
-		});
+		commitStructural(pick, { kind: "delete" }, "delete this element");
 		return true;
-	}, [project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult]);
+	}, [pointing.entries, showRefusal, commitStructural]);
 
 	/**
 	 * The drop half of the asset swap (#260): the frame is armed, never open.
@@ -3240,6 +3252,22 @@ export function ProjectCanvas({
 		},
 		[finishRailSource],
 	);
+
+	const { moveElement, finishKeyMove } = useKeyMove({
+		held: () =>
+			pickedRef.current.length === 1 && enteredRef.current === null && editingRef.current === null
+				? pickedRef.current[0]
+				: undefined,
+		busy: () => writing.current || pendingSource.current.size > 0,
+		askSizing,
+		openRingWrite,
+		sampleRingWrite,
+		closeRingWrite,
+		showRefusal,
+		clearRefusal: () => setRefused(null),
+		move: (pick, steps, action) => commitStructural(pick, { kind: "reorder", steps }, action),
+		ring: ringRef,
+	});
 
 	const verifyReloadedIntent = useCallback(
 		async (frame: string) => {
@@ -5383,6 +5411,12 @@ export function ProjectCanvas({
 		};
 		const nudgeArrow = (event: KeyboardEvent | undefined, step: number) => {
 			if (event === undefined) return;
+			// a held element is what the arrows move first: the element's own
+			// placement or its place among its siblings, never the frame behind it
+			if (moveElement(event, step)) {
+				event.preventDefault();
+				return;
+			}
 			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
 			event.preventDefault();
 			const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
@@ -5550,6 +5584,8 @@ export function ProjectCanvas({
 				if (walkSibling(event?.shiftKey === true ? "previous" : "next")) event?.preventDefault();
 			},
 			"canvas.escape": () => {
+				// a held arrow is retired before anything else it might have opened
+				finishKeyMove(false);
 				cancelPicks();
 				setPreview(null);
 				setGapMenu(null); // the gap's exact value leaves with every other open thing (#306)
@@ -5646,6 +5682,8 @@ export function ProjectCanvas({
 		climbRung,
 		walkSibling,
 		deleteElements,
+		moveElement,
+		finishKeyMove,
 		endEdit,
 	]);
 
