@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { SourcePublication, SourceResult, UseOutcome } from "../source-edit";
-import { originCanvas, originOracle } from "./hand-origin-browser-helpers";
+import { originCanvas, originOracle, watchResponses } from "./hand-origin-browser-helpers";
 
 const frameSource = 'import Group from "shared/outcomes";export default function Frame(){return <Group/>}';
 const state = "const[n,setN]=useState(0);globalThis.bump=()=>setN(n+1);";
@@ -67,14 +67,13 @@ async function observed(
 	});
 	const second = f.page.frameLocator('iframe[title="second"]');
 	await expect.poll(() => second.locator("#good span").count()).toBe(1);
-	const sourceResults: SourceResult[] = [];
-	f.page.on("response", async (response) => {
-		if (
+	const saves = watchResponses(
+		f.page,
+		(response) =>
 			response.url().endsWith("/source") &&
-			["commit", "inverse"].includes(response.request().postDataJSON()?.action)
-		)
-			sourceResults.push((await response.json()) as SourceResult);
-	});
+			["commit", "inverse"].includes(response.request().postDataJSON()?.action),
+	);
+	const sourceResults = saves.bodies as SourceResult[];
 	const initial = async () => {
 		await expect
 			.poll(

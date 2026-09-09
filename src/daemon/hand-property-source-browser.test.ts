@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { SourceRead, SourceResult } from "../source-edit";
-import { originCanvas } from "./hand-origin-browser-helpers";
+import { originCanvas, watchResponses } from "./hand-origin-browser-helpers";
 
 it("previews an unused property candidate, saves once and reverses retained source", { timeout: 120_000 }, async () => {
 	let observer = "";
@@ -284,7 +284,7 @@ it("edits opacity through the actual Properties control with preview, one save a
 // A control the file cannot take says the source's own words for it, and the
 // optional additions it offers are named by that same description.
 it("says the source's own property refusal on the generic controls", { timeout: 120_000 }, async () => {
-	let refusal = "";
+	let described: ReturnType<typeof watchResponses> | undefined;
 	const reads: unknown[] = [];
 	const f = await originCanvas(
 		{
@@ -299,18 +299,22 @@ it("says the source's own property refusal on the generic controls", { timeout: 
 				if (request.url().endsWith("/source") && request.postDataJSON()?.action === "read")
 					reads.push(request.postDataJSON());
 			});
-			page.on("response", (response) => {
-				if (!response.url().endsWith("/source")) return;
+			described = watchResponses(page, (response) => {
+				if (!response.url().endsWith("/source")) return false;
 				const body = response.request().postDataJSON();
-				if (body?.action !== "describe" || body.operation?.kind !== "property") return;
-				void response.json().then((result) => {
-					if (!result.ok && typeof result.reason === "string") refusal = result.reason;
-				});
+				return body?.action === "describe" && body.operation?.kind === "property";
 			});
 		},
 	);
+	const refused = () => {
+		const said = (described?.bodies ?? [])
+			.map((body) => body as { ok?: boolean; reason?: unknown })
+			.find((body) => body.ok === false && typeof body.reason === "string");
+		return typeof said?.reason === "string" ? said.reason : "";
+	};
 	await f.select();
-	await expect.poll(() => refusal).not.toBe("");
+	await expect.poll(refused).not.toBe("");
+	const refusal = refused();
 	await expect
 		.poll(() => f.page.locator('[data-properties-row="opacity"] > span').first().getAttribute("title"))
 		.toBe(refusal);
