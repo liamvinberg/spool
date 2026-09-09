@@ -535,9 +535,13 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 			};
 		}, sentBeforeWalk),
 	).toEqual({ go: 1, copy: 0 });
-	// Reading the clipboard needs the document focused, which a page sharing a
-	// browser with the shard beside it does not keep on its own.
+	// The last real input went into a frame the walk then replaced, so this page
+	// holds no focused document and the clipboard refuses to be read. Every read
+	// in this file that works follows a click on the page itself: do that, and
+	// say so, rather than hoping the runner leaves the page focused.
 	await page.bringToFront();
+	await page.mouse.click(4, 4);
+	expect(await page.evaluate(() => document.hasFocus())).toBe(true);
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("self walk baseline");
 
 	await expect
