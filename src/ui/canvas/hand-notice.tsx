@@ -5,16 +5,20 @@ import type { Refusal } from "./hand-edit";
 import type { SourceIntent } from "./source-intent";
 
 /**
- * The two things a hand edit says out loud (#253, #255).
+ * The three things a hand edit says out loud (#253, #255).
  *
  * Refusals are quiet and belong on the element they were about. These are the
- * others: how a source save actually ended in each running use, and a write
- * that went out and never landed, which is a failure rather than an answer.
- * Both sit in the canvas's own notice strip, in the same plain language the
- * collision notice uses, and go when they are clicked.
+ * others: how a source save actually ended in each running use; a write that
+ * went out and never landed, which is a failure rather than an answer; and the
+ * one line a project with `history: false` has earned, which it hears on its
+ * first hand save and never again. They sit in the canvas's own notice strip,
+ * in the same plain language the collision notice uses, and go when they are
+ * clicked.
  */
 
 export type HandSaid =
+	/** the project keeps no history, said once per project by the daemon */
+	| { kind: "uncaught" }
 	| {
 			kind: "source";
 			intent?: SourceIntent;
@@ -137,8 +141,17 @@ export function HandNotice({
 			onClick={onDismiss}
 			className={`pointer-events-auto text-left ${NOTICE_PILL}`}
 		>
-			<span className="text-thread-strong">the edit did not land</span>
-			<span className="text-muted">: {said.says ?? `${said.frame} is unchanged`}</span>
+			{said.kind === "uncaught" ? (
+				<>
+					<span className="text-thread-strong">no history here</span>
+					<span className="text-muted">: nothing is catching hand edits</span>
+				</>
+			) : (
+				<>
+					<span className="text-thread-strong">the edit did not land</span>
+					<span className="text-muted">: {said.says ?? `${said.frame} is unchanged`}</span>
+				</>
+			)}
 		</button>
 	);
 }

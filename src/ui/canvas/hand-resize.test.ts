@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RungRead } from "../api";
 import {
+	authoredSpelling,
 	draggedAngle,
 	draggedRect,
 	drawnHandles,
@@ -159,7 +160,7 @@ describe("which of the eight targets the ring draws", () => {
 });
 
 describe("the box a handle drags to", () => {
-	const free = { minW: 0, maxW: Number.POSITIVE_INFINITY, minH: 0, maxH: Number.POSITIVE_INFINITY };
+	const free = { minW: 0, minH: 0, maxW: null, maxH: null };
 	const still = { center: false, proportional: false };
 
 	it("moves the grabbed axes and leaves the rest of the box alone", () => {
@@ -202,32 +203,89 @@ describe("the box a handle drags to", () => {
 	});
 
 	it("clamps to the measured minimum and maximum, and the minimum wins a contradiction", () => {
-		const bounded = { minW: 120, maxW: 260, minH: 0, maxH: Number.POSITIVE_INFINITY };
+		const bounded = { minW: 120, maxW: 260, minH: 0, maxH: null };
 		expect(resizedBox({ w: 200, h: 120 }, "e", 400, 0, still, bounded).w).toBe(260);
 		expect(resizedBox({ w: 200, h: 120 }, "e", -400, 0, still, bounded).w).toBe(120);
-		const contradictory = { minW: 300, maxW: 100, minH: 0, maxH: Number.POSITIVE_INFINITY };
+		const contradictory = { minW: 300, maxW: 100, minH: 0, maxH: null };
 		expect(resizedBox({ w: 200, h: 120 }, "e", 0, 0, still, contradictory).w).toBe(300);
+	});
+});
+
+describe("the unit the file already says a size is in", () => {
+	const units = { rem: 16, em: 20 };
+
+	it("takes pixels where nothing is authored, and where pixels are", () => {
+		expect(authoredSpelling("p-4", "w", units)).toEqual({ kind: "pixels" });
+		expect(authoredSpelling("w-40", "w", units)).toEqual({ kind: "pixels" });
+		expect(authoredSpelling("w-[347px]", "w", units)).toEqual({ kind: "pixels" });
+	});
+
+	it("takes pixels for the one-pixel length, which is a length like any other", () => {
+		expect(authoredSpelling("w-px", "w", units)).toEqual({ kind: "pixels" });
+		expect(authoredSpelling("h-px", "h", units)).toEqual({ kind: "pixels" });
+	});
+
+	it("keeps a relative unit, measured on the element itself", () => {
+		expect(authoredSpelling("w-[20rem]", "w", units)).toEqual({ kind: "unit", unit: "rem", per: 16 });
+		expect(authoredSpelling("h-[2em]", "h", units)).toEqual({ kind: "unit", unit: "em", per: 20 });
+	});
+
+	it("refuses a size the layout decides rather than rewriting it in pixels", () => {
+		// `w-full` and `w-1/2` are answers about the containing block, and the
+		// drag has no honest way to say either as a length
+		for (const worn of ["w-full", "w-1/2", "w-auto", "w-screen", "w-fit"]) {
+			expect(authoredSpelling(worn, "w", units)).toMatchObject({ kind: "refused" });
+		}
+		expect(authoredSpelling("w-full", "w", units)).toEqual({
+			kind: "refused",
+			says: "w-full is what the layout decides, not a length a drag can move",
+		});
+	});
+
+	it("refuses a unit it cannot measure on this element, and a value it cannot read", () => {
+		expect(authoredSpelling("w-[50%]", "w", units)).toMatchObject({ kind: "refused" });
+		expect(authoredSpelling("w-[10vw]", "w", units)).toMatchObject({ kind: "refused" });
+		// a width the project's own variable decides is not a number this drag has
+		expect(authoredSpelling("w-(--card)", "w", units)).toMatchObject({ kind: "refused" });
+	});
+
+	it("reads the family it was asked about and no other", () => {
+		expect(authoredSpelling("w-full h-[20rem]", "h", units)).toEqual({ kind: "unit", unit: "rem", per: 16 });
+		expect(authoredSpelling("md:w-full", "w", units)).toEqual({ kind: "pixels" });
 	});
 });
 
 describe("what one resize gesture writes", () => {
 	const at = { left: 24, top: 16 };
+	const px = { unit: "px", per: 1 };
+	const pixels = { width: px, height: px, left: px, top: px };
 
 	it("writes the grabbed axis alone, on the project's own scale", () => {
-		expect(resizeFields(["width"], { w: 224, h: 84 }, { x: 0, y: 0 }, at, 4)).toEqual([
+		expect(resizeFields(["width"], { w: 224, h: 84 }, { x: 0, y: 0 }, at, 4, pixels)).toEqual([
 			{ property: "width", value: { kind: "binding", tokens: ["w-56"] } },
 		]);
 	});
 
 	it("writes both axes of a corner as one gesture's fields", () => {
-		expect(resizeFields(["width", "height"], { w: 224, h: 347 }, { x: 0, y: 0 }, at, 4)).toEqual([
+		expect(resizeFields(["width", "height"], { w: 224, h: 347 }, { x: 0, y: 0 }, at, 4, pixels)).toEqual([
 			{ property: "width", value: { kind: "binding", tokens: ["w-56"] } },
 			{ property: "height", value: { kind: "binding", tokens: ["h-[347px]"] } },
 		]);
 	});
 
+	it("writes a size authored in a relative unit back in that unit", () => {
+		// 344px on a 16px root is 21.5rem, and saying 344px instead would be a
+		// different promise about what this width follows
+		expect(
+			resizeFields(["width"], { w: 344, h: 84 }, { x: 0, y: 0 }, at, 4, {
+				...pixels,
+				width: { unit: "rem", per: 16 },
+			}),
+		).toEqual([{ property: "width", value: { kind: "binding", tokens: ["w-[21.5rem]"] } }]);
+	});
+
 	it("moves an already free element's own offsets, signed", () => {
-		expect(resizeFields(["width", "left", "top"], { w: 224, h: 84 }, { x: -40, y: -20 }, at, 4)).toEqual([
+		expect(resizeFields(["width", "left", "top"], { w: 224, h: 84 }, { x: -40, y: -20 }, at, 4, pixels)).toEqual([
 			{ property: "width", value: { kind: "binding", tokens: ["w-56"] } },
 			{ property: "left", value: { kind: "binding", tokens: ["-left-4"] } },
 			{ property: "top", value: { kind: "binding", tokens: ["-top-1"] } },

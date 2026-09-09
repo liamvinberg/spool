@@ -376,32 +376,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * A spacing reading, checked the way every other reply is: the shape the
- * decomposition indexes into, and finite numbers where it does arithmetic.
- */
-function isElementSizing(value: unknown): value is ElementSizing {
-	if (!isRecord(value)) return false;
-	const { box, extra, offset, limits } = value;
-	return (
-		typeof value.free === "boolean" &&
-		isRecord(box) &&
-		finite(box.w) &&
-		finite(box.h) &&
-		isRecord(extra) &&
-		finite(extra.w) &&
-		finite(extra.h) &&
-		isRecord(offset) &&
-		(offset.left === null || finite(offset.left)) &&
-		(offset.top === null || finite(offset.top)) &&
-		isRecord(limits) &&
-		finite(limits.minW) &&
-		finite(limits.minH) &&
-		(limits.maxW === null || typeof limits.maxW === "number") &&
-		(limits.maxH === null || typeof limits.maxH === "number")
-	);
-}
-
-/**
  * A gap reading, checked the way every other reply is: the container's own
  * words as words, and a box of finite numbers under every child.
  */
@@ -430,6 +404,31 @@ function isSpacingReading(value: unknown): value is SpacingReading {
 		isMeasuredBox(value.first) &&
 		isMeasuredBox(value.second) &&
 		isMeasuredParent(value.parent)
+	);
+}
+
+/** A sizing reply, checked the way every other one is: the shape, and finite numbers. */
+function isElementSizing(value: unknown): value is ElementSizing {
+	if (!isRecord(value)) return false;
+	const { box, extra, offset, limits, units } = value;
+	return (
+		typeof value.free === "boolean" &&
+		isRecord(units) &&
+		Object.values(units).every(finite) &&
+		isRecord(box) &&
+		finite(box.w) &&
+		finite(box.h) &&
+		isRecord(extra) &&
+		finite(extra.w) &&
+		finite(extra.h) &&
+		isRecord(offset) &&
+		(offset.left === null || finite(offset.left)) &&
+		(offset.top === null || finite(offset.top)) &&
+		isRecord(limits) &&
+		finite(limits.minW) &&
+		finite(limits.minH) &&
+		(limits.maxW === null || finite(limits.maxW)) &&
+		(limits.maxH === null || finite(limits.maxH))
 	);
 }
 
@@ -595,11 +594,13 @@ export const measureMessage = (selector: string, x: number, y: number, id: numbe
  *
  * The element's own border box, the limits the engine will hold it to, the
  * padding and border a content box would add back, and whether it is already
- * free-positioned — with the offsets it is placed by, where it has any. Only
+ * free-positioned, with the offsets it is placed by where it has any. Only
  * the document can answer any of it: the canvas holds a picture of the box and
  * nothing about the rules that made it.
  */
 export interface ElementSizing {
+	/** what one of each relative unit measures on this element, in document pixels */
+	units: Readonly<Record<string, number>>;
 	box: { w: number; h: number };
 	/** what a `content-box` element adds on top of the width that is written */
 	extra: { w: number; h: number };
@@ -607,7 +608,8 @@ export interface ElementSizing {
 	free: boolean;
 	/** the offsets it is actually placed by, or null where that side is auto */
 	offset: { left: number | null; top: number | null };
-	limits: { minW: number; maxW: number; minH: number; maxH: number };
+	/** a maximum the engine does not set is `null`, which is not a number */
+	limits: { minW: number; maxW: number | null; minH: number; maxH: number | null };
 }
 
 export const sizingMessage = (selector: string, id: number) => ({ spool: "sizing", selector, id }) as const;

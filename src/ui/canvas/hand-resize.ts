@@ -68,8 +68,8 @@ export function handlesFor(read: RungRead | undefined): LiveHandles {
  * Whether this rung's refusal is one the ring must respect.
  *
  * All but one of them are: an expression, an inline style, spread props with
- * no literal, a stamp that hits nothing — none leaves an axis a write could
- * take. `shared-definition` is the exception, and the reason is #303's: a
+ * no literal, a stamp that hits nothing: none of them leaves an axis a write
+ * could take. `shared-definition` is the exception, and the reason is #303's: a
  * class cell several uses share is exactly what the source owner edits, so a
  * ring that greyed for it would refuse the ordinary case.
  */
@@ -143,7 +143,14 @@ export function useRing(
 	project: string,
 	held: { frame: string; source: string } | null,
 	revision: number,
-): { live: LiveHandles; step: number; rotation: number; read: RungRead | undefined; theme: CompiledTheme | null } {
+): {
+	live: LiveHandles;
+	step: number;
+	rotation: number;
+	className: string;
+	read: RungRead | undefined;
+	theme: CompiledTheme | null;
+} {
 	const [read, setRead] = useState<RungRead | undefined>(undefined);
 	const [theme, setTheme] = useState<CompiledTheme | null>(null);
 	const asked = held === null ? "" : `${revision}\n${held.frame}\n${held.source}`;
@@ -175,6 +182,8 @@ export function useRing(
 		live: handlesFor(read),
 		step: stepOf(theme),
 		rotation: read === undefined ? 0 : rotationOf(read.className),
+		/** the literal a drag reads its authored units out of */
+		className: read?.className ?? "",
 		// the read itself and the theme behind it, which a second gesture on the
 		// same rung asks its own questions of (#306)
 		read,
@@ -229,18 +238,11 @@ export function drawnHandles(ring: Size, live: LiveHandles, active: Edge | null)
 /** What the drag is measured against: the element's own limits, in its own pixels. */
 export interface SizeLimits {
 	minW: number;
-	maxW: number;
 	minH: number;
-	maxH: number;
+	/** no maximum is `null`: the engine set none, which is not a number */
+	maxW: number | null;
+	maxH: number | null;
 }
-
-/** What an unmeasured box is held to: nothing, until the document says otherwise. */
-export const NO_LIMITS: SizeLimits = {
-	minW: 0,
-	maxW: Number.POSITIVE_INFINITY,
-	minH: 0,
-	maxH: Number.POSITIVE_INFINITY,
-};
 
 /** The modifiers a resize gesture opens with, which fix what it may write. */
 export interface ResizeModifiers {
@@ -255,16 +257,16 @@ const MAX_SIZE = Number.MAX_SAFE_INTEGER;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const finite = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
 
-function bounds(min: number, max: number): { min: number; max: number } {
+function bounds(min: number, max: number | null): { min: number; max: number } {
 	const lower = clamp(finite(min, MIN_SIZE), MIN_SIZE, MAX_SIZE);
 	// CSS gives the minimum precedence when a minimum and a maximum contradict
-	const upper = Math.max(lower, clamp(Number.isNaN(max) ? MAX_SIZE : max, MIN_SIZE, MAX_SIZE));
+	const upper = Math.max(lower, max === null ? MAX_SIZE : clamp(finite(max, MAX_SIZE), MIN_SIZE, MAX_SIZE));
 	return { min: lower, max: upper };
 }
 
 /**
  * The box a handle has dragged to, and how far the element's near edges moved
- * with it — the approved playground's own geometry, unchanged.
+ * with it, which is the approved playground's own geometry, unchanged.
  *
  * Everything is relative to the gesture's original border box in the
  * document's own pixels, so the canvas divides the pointer by its zoom before
@@ -323,13 +325,103 @@ export function turnValue(deg: number): SourcePropertyValue {
 	return token === undefined ? { kind: "remove" } : { kind: "binding", tokens: [token] };
 }
 
-/** The token family each property a resize may write is spelled in. */
-const RESIZE_FAMILIES: Readonly<Record<string, string>> = { width: "w", height: "h", left: "left", top: "top" };
+/** Everything one resize gesture may write, and nothing else. */
+export type ResizeProperty = "width" | "height" | "left" | "top";
 
-/** A signed length on the project's own scale: a whole step is the bare class. */
-function scaledToken(family: string, px: number, step: number): string {
-	const rounded = Math.round(px);
-	return `${rounded < 0 ? "-" : ""}${family}-${scaleValue(Math.abs(rounded), step)}`;
+/**
+ * How a drag may spell one of them, given what the file already says.
+ *
+ * A size is an authored value in an authored unit, and the box it happens to
+ * be is a different question (#305). So a drag writes in the family the author
+ * used: pixels where the file says pixels or says nothing, the same relative
+ * unit where it says one, and nothing at all where the authored form is not a
+ * length a pointer can move. `w-full` and `w-1/2` are the layout's answer
+ * rather than a number, and rewriting either as pixels would throw away what
+ * the file meant.
+ */
+export type SizeSpelling =
+	| { kind: "pixels" }
+	/** `per` is what one of that unit measures on this element, in document pixels */
+	| { kind: "unit"; unit: string; per: number }
+	| { kind: "refused"; says: string };
+
+/** What one property's value is written in, once the spelling is settled. */
+export interface SizeWrite {
+	unit: string;
+	per: number;
+}
+
+const RELATIVE_UNITS = ["rem", "em"];
+
+/**
+ * The spelling this element's own literal leaves open for one family.
+ *
+ * Nothing authored is pixels: there is no unit to keep, and the drag means the
+ * box it is making. A bare step or an authored `px` is pixels too. A `rem` or
+ * `em` is kept, measured against what that unit is worth on this element. Every
+ * other authored form refuses by name.
+ */
+export function authoredSpelling(
+	className: string,
+	family: string,
+	units: Readonly<Record<string, number>>,
+): SizeSpelling {
+	const worn = lengthOf(scopedClass(className, BASE), family);
+	if (worn === null) return { kind: "pixels" };
+	const refused = (says: string): SizeSpelling => ({ kind: "refused", says });
+	const bracket = /^\[(.+)\]$/.exec(worn.value);
+	if (bracket === null) {
+		// a bare step, and `px`, which is Tailwind's own name for one pixel
+		if (worn.value === "px" || /^\d+(?:\.\d+)?$/.test(worn.value)) return { kind: "pixels" };
+		return refused(`${family}-${worn.value} is what the layout decides, not a length a drag can move`);
+	}
+	const unit = /^-?[\d.]+([a-z%]+)$/i.exec(bracket[1] ?? "")?.[1];
+	if (unit === undefined) return refused(`${worn.token} is not a length a drag can move`);
+	if (unit === "px") return { kind: "pixels" };
+	const per = units[unit];
+	if (!RELATIVE_UNITS.includes(unit) || per === undefined || per <= 0) {
+		return refused(`${worn.token} is written in ${unit}, which this drag cannot measure`);
+	}
+	return { kind: "unit", unit, per };
+}
+
+/**
+ * What each of them is spelled in, and which number it takes.
+ *
+ * One table rather than a lookup and a ternary that have to agree: the family
+ * a token wears and the pixel it is measured from are the same fact about the
+ * property, said once.
+ */
+export const RESIZE_PROPERTIES: Readonly<
+	Record<ResizeProperty, { family: string; px(box: Size, shift: { x: number; y: number }, offset: Offset): number }>
+> = {
+	width: { family: "w", px: (box) => box.w },
+	height: { family: "h", px: (box) => box.h },
+	left: { family: "left", px: (_box, shift, offset) => offset.left + shift.x },
+	top: { family: "top", px: (_box, shift, offset) => offset.top + shift.y },
+};
+
+/** Where an already free-positioned element is placed, in the document's own pixels. */
+export interface Offset {
+	left: number;
+	top: number;
+}
+
+/**
+ * One length as a token, in the unit the author used.
+ *
+ * Pixels fold onto the project's scale where they sit on a whole step, because
+ * that is byte-identical to what the frame's author would have written; a
+ * relative unit stays itself, to three places, because rewriting it as pixels
+ * would be a different promise about what the size follows.
+ */
+function scaledToken(family: string, px: number, step: number, write: SizeWrite): string {
+	if (write.unit === "px") {
+		const rounded = Math.round(px);
+		return `${rounded < 0 ? "-" : ""}${family}-${scaleValue(Math.abs(rounded), step)}`;
+	}
+	const value = Number((px / write.per).toFixed(3));
+	return `${value < 0 ? "-" : ""}${family}-[${Math.abs(value)}${write.unit}]`;
 }
 
 /**
@@ -338,27 +430,20 @@ function scaledToken(family: string, px: number, step: number): string {
  * The properties are fixed when the gesture opens, because the source read it
  * opens is about exactly those fields; the values are whatever the pointer
  * last made. A size lands on the scale where it sits on a whole step and stays
- * absolute pixels where it does not — the drag meant pixels, and a bare class
+ * absolute pixels where it does not, because the drag meant pixels and a bare class
  * silently rescales if `--spacing` moves.
  */
 export function resizeFields(
-	properties: readonly string[],
+	properties: readonly ResizeProperty[],
 	live: Size,
 	shift: { x: number; y: number },
-	offset: { left: number; top: number },
+	offset: Offset,
 	step: number,
-): { property: string; value: SourcePropertyValue }[] {
-	return properties.flatMap((property) => {
-		const family = RESIZE_FAMILIES[property];
-		if (family === undefined) return [];
-		const px =
-			property === "width"
-				? live.w
-				: property === "height"
-					? live.h
-					: property === "left"
-						? offset.left + shift.x
-						: offset.top + shift.y;
-		return [{ property, value: { kind: "binding" as const, tokens: [scaledToken(family, px, step)] } }];
+	writes: Readonly<Record<ResizeProperty, SizeWrite>>,
+): { property: ResizeProperty; value: SourcePropertyValue }[] {
+	return properties.map((property) => {
+		const { family, px } = RESIZE_PROPERTIES[property];
+		const token = scaledToken(family, px(live, shift, offset), step, writes[property]);
+		return { property, value: { kind: "binding", tokens: [token] } };
 	});
 }

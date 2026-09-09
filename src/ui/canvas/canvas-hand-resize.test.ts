@@ -14,8 +14,8 @@ import type { PickedHit } from "./protocol";
  * The ring wears the approved outline's set on a held element: a cube on each
  * corner, a grab strip on each side long enough to hold one, and a rotate zone
  * diagonally outside each corner. Nothing is written while the pointer is
- * down — every sample is a preview in the running layout — and letting go is
- * one source operation and one press of undo. Every way a drag can be
+ * down, because every sample is a preview in the running layout, and letting
+ * go is one source operation and one press of undo. Every way a drag can be
  * interrupted retires the samples and saves nothing.
  */
 
@@ -231,6 +231,23 @@ it("turns from the zone outside a corner, and writes the rotation it settled on"
 	});
 });
 
+it("refuses a size the layout decides rather than rewriting it in pixels", async () => {
+	rung = { source: STAMP, name: "article", className: "w-full", path: "design/frames/home/frame.tsx", line: 7 };
+	const { host, canvas, frame } = await readyCanvas();
+	await holdTheElement(canvas, frame);
+
+	await pointerDown(host.querySelector<HTMLElement>('[data-element-handle="e"]'), EAST.x, EAST.y);
+	await pointerMove(canvas, EAST.x + 40, EAST.y);
+	await settle();
+
+	expect(host.querySelector('[data-hand-refusal="authored-unit"]')?.textContent).toBe(
+		"w-full is what the layout decides, not a length a drag can move",
+	);
+	await pointerUp(canvas);
+	await settle();
+	expect(sourceCalls("commit")).toHaveLength(0);
+});
+
 it("keeps the source as it was when a drag ends where it began", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await holdTheElement(canvas, frame);
@@ -245,7 +262,7 @@ it("keeps the source as it was when a drag ends where it began", async () => {
 
 /**
  * Every way a drag ends without a save (#305). Each retires the samples, puts
- * the previews the gesture owned back, and leaves the source untouched — and a
+ * the previews the gesture owned back, and leaves the source untouched. A
  * release that arrives afterwards cannot revive the generation it cancelled.
  */
 const INTERRUPTIONS = [
@@ -338,11 +355,12 @@ const THEME = {
 
 /** What the document says about the element a drag has grabbed. */
 const SIZING = {
+	units: { rem: 16, em: 16 },
 	box: { w: 200, h: 120 },
 	extra: { w: 0, h: 0 },
 	free: false,
 	offset: { left: null, top: null },
-	limits: { minW: 0, maxW: Number.MAX_SAFE_INTEGER, minH: 0, maxH: Number.MAX_SAFE_INTEGER },
+	limits: { minW: 0, minH: 0, maxW: null, maxH: null },
 };
 
 let rung: RungRead = {

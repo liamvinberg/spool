@@ -1081,6 +1081,7 @@ const canvasShimJs = `(() => {
 		const border = style.boxSizing === "border-box";
 		const extraW = border ? 0 : px("padding-left") + px("padding-right") + px("border-left-width") + px("border-right-width");
 		const extraH = border ? 0 : px("padding-top") + px("padding-bottom") + px("border-top-width") + px("border-bottom-width");
+		// a maximum the engine does not set is no number at all, and says so
 		const limit = (name, extra, fallback) => {
 			const value = style.getPropertyValue(name);
 			return value.endsWith("px") ? parseFloat(value) + extra : fallback;
@@ -1090,7 +1091,11 @@ const canvasShimJs = `(() => {
 			return Number.isFinite(value) ? value : null;
 		};
 		const free = style.position === "absolute" || style.position === "fixed";
+		// what one of each relative unit is worth on this element, so a size
+		// authored in one can be written back in it rather than in pixels
+		const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 		return {
+			units: { rem: root, em: parseFloat(style.fontSize) || root },
 			box: { w: box.width, h: box.height },
 			extra: { w: extraW, h: extraH },
 			free,
@@ -1098,8 +1103,8 @@ const canvasShimJs = `(() => {
 			limits: {
 				minW: limit("min-width", extraW, extraW),
 				minH: limit("min-height", extraH, extraH),
-				maxW: limit("max-width", extraW, Infinity),
-				maxH: limit("max-height", extraH, Infinity),
+				maxW: limit("max-width", extraW, null),
+				maxH: limit("max-height", extraH, null),
 			},
 		};
 	}

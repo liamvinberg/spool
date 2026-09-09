@@ -7,14 +7,15 @@ import { isLayoutOnly, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
 
 /**
- * The write lane (#253): a typed op in, the exact characters out.
+ * Planning one class or literal edit (#253): a typed op in, the exact
+ * characters out.
  *
- * Everything a hand changes about frame source comes through here. An op names
- * the stamp it acted on; this parses the file fresh — never a mirror of it —
- * finds the element that stamp points at, and either answers with a span patch
- * or refuses with a reason the surface can show. A refusal means the gesture
- * does not apply and nothing else happens: nothing is forwarded to an agent,
- * and the element stays what it was.
+ * The source owner is what a hand actually writes through; this is the parse
+ * and the plan it asks for. An op names the stamp it acted on; this parses the
+ * file fresh, never a mirror of it, finds the element that stamp points at,
+ * and either answers with a span patch or refuses with a reason the surface
+ * can show. A refusal means the gesture does not apply and nothing else
+ * happens: nothing is forwarded to an agent, and the element stays what it was.
  *
  * The splice replaces the touched characters and nothing else, so the file
  * comes back byte-identical outside them — the other attributes on the same
@@ -82,17 +83,7 @@ export interface SpanPatch {
 	text: string;
 }
 
-/**
- * The patch a canvas holds on to: the span, the file it lands in, and the hash
- * that file must still have. It is what an undo, a redo and a rollback after a
- * measurement all run, and running it answers with the next one.
- */
-export interface HeldPatch extends SpanPatch {
-	path: string;
-	fingerprint: string;
-}
-
-/** The one attribute this lane never writes: its value is a walk target (#260). */
+/** The one attribute no hand edit writes: its value is a walk target (#260). */
 export const WALK_TARGET = "data-go";
 
 const STAMP = /^[^\s:]+:\d+:\d+$/;

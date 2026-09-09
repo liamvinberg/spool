@@ -16,7 +16,7 @@ import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { ProjectAsset } from "../daemon/hand-asset";
 import type { RungRead } from "../daemon/hand-lane";
-import type { AttributeRead, HandOp, PatchRefusal } from "../daemon/hand-write";
+import type { AttributeRead, PatchRefusal } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
@@ -65,7 +65,6 @@ export type {
 	FsListing,
 	FsSearch,
 	Geometry,
-	HandOp,
 	LocatedRange,
 	PatchRefusal,
 	Place,
@@ -1516,8 +1515,8 @@ export async function sourceReach(
  * One read-only sample of a property edit, in the running frames.
  *
  * A single control asks about its own property; a gesture that decides several
- * fields together — the resize ring's width, height and placement — asks about
- * the group its read was opened for. The two value kinds are disjoint, so the
+ * fields together, such as the resize ring's width, height and placement, asks
+ * about the group its read was opened for. The two value kinds are disjoint, so the
  * change the owner is sent follows from the value itself.
  */
 export async function previewPropertySource(

@@ -1,3 +1,5 @@
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import type { FrameLocator, Page } from "playwright-core";
 import { expect, it } from "vitest";
 import type { SourceResult, UseOutcome } from "../source-edit";
@@ -215,4 +217,179 @@ it("turns an element from the ring's rotate zone and saves it the same way", { t
 	await f.settled();
 	await expect.poll(() => computed(f.frame, "rotate")).toEqual(["90deg", "90deg"]);
 	expect(f.writes).toEqual(["commit"]);
+});
+
+it("centers an already free element under option, and moves the placement with it", {
+	timeout: 120_000,
+}, async () => {
+	const placed =
+		'export function Card({label}){return <section data-subject={label} className="absolute left-8 top-8 w-40 h-24 bg-black/5">{label}</section>}';
+	const source =
+		'import {Card} from "shared/card";export default function Frame(){return <main style={{position:"relative",padding:24,height:400}}><Card key="a" label="A"/></main>}';
+	const f = await originCanvas({ [owner]: placed }, source, '[data-subject="A"]');
+	await expect.poll(() => computed(f.frame, "left")).toEqual(["32px"]);
+
+	// ⌥ on an element the file already places: the box grows from its centre,
+	// and the placement it already had moves with it
+	await f.select();
+	const committed = reply(f, "commit");
+	await dragHandle(f, "e", 20, 0, { modifiers: ["Alt"] });
+	await saved(f, committed);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toContain("w-50");
+	expect(f.bytes()[owner]).toContain("left-3");
+	await expect.poll(() => computed(f.frame, "width")).toEqual(["200px"]);
+	await expect.poll(() => computed(f.frame, "left")).toEqual(["12px"]);
+});
+
+it("writes the size alone for an element the layout places, option or not", { timeout: 120_000 }, async () => {
+	// nothing here makes a near edge movable, so ⌥ neither doubles the drag nor
+	// finds a placement to move: the parent still puts this element where it is
+	const flowed = card.replace("data-subject={label}", "data-subject={label} data-flow");
+	const f = await originCanvas({ [owner]: flowed }, frameSource, '[data-subject="A"]');
+	const before = await f.target.boundingBox();
+	await f.select();
+
+	const committed = reply(f, "commit");
+	await dragHandle(f, "e", 20, 0, { modifiers: ["Alt"] });
+	await saved(f, committed);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(flowed.replace("w-40", "w-45"));
+	expect(f.bytes()[owner]).not.toContain("left-");
+	expect(f.bytes()[owner]).not.toContain("top-");
+	await expect.poll(() => computed(f.frame, "width")).toEqual(["180px", "180px"]);
+	const after = await f.target.boundingBox();
+	expect(before && after && Math.round(after.x)).toBe(before && Math.round(before.x));
+});
+
+it("keeps the proportions the box started with while shift is held", { timeout: 120_000 }, async () => {
+	const f = await originCanvas({ [owner]: card }, frameSource, '[data-subject="A"]');
+	await f.select();
+
+	// one edge, both axes: 160 to 200 is a fifth wider, so 96 becomes 120
+	const committed = reply(f, "commit");
+	await dragHandle(f, "e", 40, 0, { modifiers: ["Shift"] });
+	await saved(f, committed);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card.replace("w-40 h-24", " w-50 h-30"));
+	await expect.poll(() => computed(f.frame, "width")).toEqual(["200px", "200px"]);
+	await expect.poll(() => computed(f.frame, "height")).toEqual(["120px", "120px"]);
+});
+
+it("refuses a size the layout decides, and keeps one authored in rem in rem", { timeout: 120_000 }, async () => {
+	const filled = card.replace("w-40 h-24", "w-full h-24");
+	const f = await originCanvas({ [owner]: filled }, frameSource, '[data-subject="A"]');
+	await f.select();
+
+	// `w-full` is an answer about the containing block; a drag has no honest way
+	// to say it as a length, so it says so instead of writing pixels
+	await dragHandle(f, "e", 40, 0);
+	await expect.poll(() => f.page.locator('[data-hand-refusal="authored-unit"]').count(), { timeout: 30_000 }).toBe(1);
+	expect(await f.page.locator('[data-hand-refusal="authored-unit"]').textContent()).toBe(
+		"w-full is what the layout decides, not a length a drag can move",
+	);
+	expect(f.bytes()[owner]).toBe(filled);
+	expect(f.writes).toEqual([]);
+});
+
+it("writes a width authored in rem back in rem", { timeout: 120_000 }, async () => {
+	const inRem = card.replace("w-40", "w-[10rem]");
+	const f = await originCanvas({ [owner]: inRem }, frameSource, '[data-subject="A"]');
+	await expect.poll(() => computed(f.frame, "width")).toEqual(["160px", "160px"]);
+	await f.select();
+
+	const committed = reply(f, "commit");
+	await dragHandle(f, "e", 40, 0);
+	await saved(f, committed);
+	// 200px on a 16px root is 12.5rem, and pixels would be a different promise
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(inRem.replace("w-[10rem]", "w-[12.5rem]"));
+	await expect.poll(() => computed(f.frame, "width")).toEqual(["200px", "200px"]);
+});
+
+/** Every way a drag ends without a save, on the served canvas. */
+const INTERRUPTIONS = [
+	{
+		name: "pointer cancellation",
+		interrupt: (f: Canvas) => f.page.locator('[role="application"]').dispatchEvent("pointercancel"),
+	},
+	{
+		name: "lost capture",
+		interrupt: (f: Canvas) => f.page.locator('[role="application"]').dispatchEvent("lostpointercapture"),
+	},
+	{
+		name: "a window that loses focus",
+		interrupt: (f: Canvas) => f.page.evaluate(() => window.dispatchEvent(new Event("blur"))),
+	},
+	{ name: "a scrolled canvas", interrupt: (f: Canvas) => f.page.mouse.wheel(0, 120) },
+];
+
+it.each(INTERRUPTIONS)(
+	"puts every preview back when $name interrupts the drag",
+	{
+		timeout: 120_000,
+	},
+	async ({ interrupt }) => {
+		const f = await originCanvas({ [owner]: card }, frameSource, '[data-subject="A"]', true);
+		const second = f.page.frameLocator('iframe[title="second"]');
+		await f.select();
+
+		await dragHandle(f, "e", 60, 0, { release: false });
+		await expect.poll(() => computed(f.frame, "width"), { timeout: 30_000 }).toEqual(["220px", "220px"]);
+		await expect.poll(() => computed(second, "width"), { timeout: 30_000 }).toEqual(["220px", "220px"]);
+
+		await interrupt(f);
+		// every use the gesture previewed is back where the source still says
+		await expect.poll(() => computed(f.frame, "width"), { timeout: 30_000 }).toEqual(["160px", "160px"]);
+		await expect.poll(() => computed(second, "width"), { timeout: 30_000 }).toEqual(["160px", "160px"]);
+		await f.page.mouse.up();
+		await f.page.waitForTimeout(500);
+		expect(f.bytes()[owner]).toBe(card);
+		expect(f.writes).toEqual([]);
+	},
+);
+
+it("takes a shared edit back after the frame that made it is gone", { timeout: 120_000 }, async () => {
+	const f = await originCanvas({ [owner]: card }, frameSource, '[data-subject="A"]', true);
+	const second = f.page.frameLocator('iframe[title="second"]');
+	await f.select();
+	const committed = reply(f, "commit");
+	await dragHandle(f, "e", 40, 0);
+	await saved(f, committed);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card.replace("w-40", "w-50"));
+	await expect.poll(() => computed(second, "width"), { timeout: 30_000 }).toEqual(["200px", "200px"]);
+
+	// the frame the drag was made in is deleted; the receipt belongs to the
+	// source, so the other use can still take the edit back
+	rmSync(join(f.project.root, "design", "frames", "home"), { recursive: true, force: true });
+	await expect.poll(() => f.page.locator('iframe[title="home"]').count(), { timeout: 30_000 }).toBe(0);
+
+	const undone = reply(f, "inverse");
+	await f.history(false);
+	await saved(f, undone);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(card);
+	await expect.poll(() => computed(second, "width"), { timeout: 30_000 }).toEqual(["160px", "160px"]);
+});
+
+it("resizes a rung the keyboard reached, on the project's own scale", { timeout: 120_000 }, async () => {
+	// one step is 8px here, so what a drag lands is this project's own class
+	const nested =
+		'import "shared/tokens.css";export function Card({label}){return <section data-subject={label} className="p-6"><div data-inner className="w-40 h-24 bg-black/10">{label}</div></section>}';
+	const f = await originCanvas(
+		{ [owner]: nested, "shared/tokens.css": "@theme { --spacing: 8px; }" },
+		frameSource,
+		'[data-subject="A"]',
+	);
+	const inner = f.page.frameLocator('iframe[title="home"]').locator("[data-inner]").first();
+	// `w-40` on an 8px step is 320px, which is the whole point of asking the theme
+	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("320px");
+
+	// down the ladder by kinship rather than by pointer (#254), then resize it
+	await f.select();
+	await f.page.keyboard.press("ControlOrMeta+Enter");
+	await expect.poll(() => f.page.locator('[data-element-handle="e"]').count(), { timeout: 30_000 }).toBe(1);
+
+	const committed = reply(f, "commit");
+	await dragHandle(f, "e", 40, 0);
+	await saved(f, committed);
+	await expect.poll(() => f.bytes()[owner], { timeout: 30_000 }).toBe(nested.replace("w-40", "w-45"));
+	await expect.poll(() => inner.evaluate((element) => getComputedStyle(element).width)).toBe("360px");
+	// the padding the section wears is nobody else's to change
+	expect(f.bytes()[owner]).toContain("p-6");
 });
