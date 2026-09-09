@@ -3108,3 +3108,46 @@ it("does not certify a between-children row one native child no longer carries",
 	});
 	expect((await f.inspect(p.expected))[0]?.rendered).toBe("mismatching");
 });
+
+it.each([
+	{ property: "padding", literal: "flex items-center p-2", token: "p-4" },
+	{ property: "width", literal: "flex items-center w-2", token: "w-24" },
+	{ property: "padding", literal: "flex gap-2 p-6 w-40", token: "p-8" },
+	{ property: "width", literal: "flex gap-2 p-6 w-40", token: "w-48" },
+])("verifies a compiled $property on a use wearing other layout utilities: $literal", async (row) => {
+	const p = await planned(row.literal, row.property, { kind: "binding", tokens: [row.token] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Changed</div><div data-subject class="${row.literal}">Retained</div></div>`,
+	);
+	const outcomes = await f.inspect(p.expected);
+	expect(
+		outcomes.map((outcome) => outcome.rendered),
+		JSON.stringify(outcomes),
+	).toEqual(["verified", "mismatching"]);
+	expect((await f.inspect(p.inverse)).map((outcome) => outcome.rendered)).toEqual(["mismatching", "verified"]);
+});
+
+it("ignores a sibling declaration that shares a theme variable, and refuses a competing one", async () => {
+	const p = await planned("flex gap-2 p-6 w-40", "padding", { kind: "binding", tokens: ["p-8"] });
+	const f = await fixture(
+		`<!doctype html><style>${p.style}</style><div style="width:300px"><div data-subject class="${p.plan.next}">Padded</div></div>`,
+	);
+	const sibling = { owner: "w-40", path: ["@layer utilities", "$"], important: false };
+	// `w-40` reaches the padding row's effects because both utilities read --spacing. It writes no
+	// padding longhand, so it is context for this row, not competition for it.
+	expect(
+		await f.inspect({
+			...p.expected,
+			effects: [...p.expected.effects, { ...sibling, property: "width", value: "calc(var(--spacing) * 40)" }],
+		}),
+	).toEqual([{ rendered: "verified", observed: "32px 32px 32px 32px" }]);
+	// A legacy alias for the same longhand does compete, and is refused rather than ignored.
+	expect(
+		(
+			await f.inspect({
+				...p.expected,
+				effects: [...p.expected.effects, { ...sibling, property: "-webkit-padding-start", value: "3px" }],
+			})
+		)[0],
+	).toEqual({ rendered: "unverified", reason: "this box spacing has a competing declaration requiring proof" });
+});

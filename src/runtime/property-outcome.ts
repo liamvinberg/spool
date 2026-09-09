@@ -967,6 +967,23 @@ function borderOutcome(element: Element, expected: SourcePropertyExpectation): P
 	return { rendered: matches ? "verified" : "mismatching", observed: observed.join(" ") };
 }
 
+/**
+ * A dependent declaration only competes when the engine expands it onto one of the longhands this
+ * row reads. Sharing a theme variable is not competition, so the engine decides, not the spelling.
+ */
+function expandsOnto(
+	sheet: CSSStyleSheet,
+	property: string,
+	value: string,
+	targets: readonly string[],
+): boolean | undefined {
+	const index = sheet.insertRule(":root {}", sheet.cssRules.length);
+	const rule = sheet.cssRules[index];
+	if (!(rule instanceof CSSStyleRule)) return;
+	rule.style.setProperty(property, value);
+	return targets.some((target) => rule.style.getPropertyValue(target) !== "");
+}
+
 /** Nine source roles over four native sides of one box, read in this use's own writing context. */
 function boxOutcome(
 	element: Element,
@@ -1049,7 +1066,15 @@ function boxOutcome(
 			// A companion variable is an input to the declaration, resolved with it rather than compared.
 			if (effect.property.startsWith("--")) continue;
 			const parts = boxParts(effect.property);
-			if (!parts || parts.box !== box) return unverified("this box spacing has dependent effects requiring proof");
+			if (!parts || parts.box !== box) {
+				const competing = expandsOnto(sheet, effect.property, effect.value, [
+					property,
+					...(role ? [longhand(role)] : []),
+				]);
+				if (competing === undefined) return unverified("the native declaration parser is unavailable");
+				if (competing) return unverified("this box spacing has a competing declaration requiring proof");
+				continue;
+			}
 			const declared = parts.group;
 			// Each declaration is read back through its own family; only the side is mapped.
 			const target =
@@ -1188,8 +1213,12 @@ function declarationOutcome(
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
 		// A companion variable is an input to the declaration, resolved with it rather than compared.
 		if (effect.property.startsWith("--")) continue;
-		if (effect.property !== expected.property)
-			return unverified("this declaration has dependent effects requiring native proof");
+		if (effect.property !== expected.property) {
+			const competing = expandsOnto(sheet, effect.property, effect.value, row.longhands);
+			if (competing === undefined) return unverified("the native declaration parser is unavailable");
+			if (competing) return unverified("this declaration has a competing declaration requiring native proof");
+			continue;
+		}
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
 		if (condition === "inactive") continue;
 		if (condition === "unverified") return unverified("this declaration needs a native condition proof");
@@ -1307,9 +1336,14 @@ function sizeOutcome(element: Element, expected: SourcePropertyExpectation, nati
 	const applicable: SourcePropertyEffect[] = [];
 	for (const effect of expected.effects) {
 		if (effect.owner !== null && !classes.has(effect.owner)) continue;
-		if (!Object.values(sizeRows).includes(effect.property))
-			return unverified("this size has dependent effects requiring native proof");
-		if (effect.property !== native) continue;
+		// A companion variable is an input to the declaration, resolved with it rather than compared.
+		if (effect.property.startsWith("--")) continue;
+		if (effect.property !== native) {
+			const competing = expandsOnto(sheet, effect.property, effect.value, [native]);
+			if (competing === undefined) return unverified("the native declaration parser is unavailable");
+			if (competing) return unverified("this size has a competing declaration requiring native proof");
+			continue;
+		}
 		const condition = pathCondition(element, effect.path, effect.owner !== null);
 		if (condition === "inactive") continue;
 		if (condition === "unverified") return unverified("this size needs a native condition proof");
