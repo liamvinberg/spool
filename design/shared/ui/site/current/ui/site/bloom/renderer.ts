@@ -52,6 +52,7 @@ function createPipeline(gl: WebGLRenderingContext) {
 				total: uniform("u_total"),
 				compare: uniform("u_compare"),
 				start: uniform("u_start"),
+				reveal: uniform("u_reveal"),
 				quiet: uniform("u_quiet[0]"),
 			},
 		};
@@ -62,7 +63,7 @@ function createPipeline(gl: WebGLRenderingContext) {
 }
 
 /** Owns this canvas's GPU resources, document measurements and animation loop. */
-export function createBloomRenderer(canvas: HTMLCanvasElement) {
+export function createBloomRenderer(canvas: HTMLCanvasElement, entrance: "none" | "grow" | "quiet" = "none") {
 	const holder = canvas.parentElement;
 	const page = canvas.closest(".bl-page")?.querySelector<HTMLElement>(".sg-page");
 	if (!holder || !page) return null;
@@ -88,6 +89,7 @@ export function createBloomRenderer(canvas: HTMLCanvasElement) {
 	let last: number | null = null;
 	let accumulated = 0;
 	let drawnScroll = Number.NaN;
+	let revealed = entrance !== "grow";
 	let paused = false,
 		disposed = false;
 	const running = () => !!pipeline && !paused && !preference.matches && !document.hidden && !disposed;
@@ -111,6 +113,9 @@ export function createBloomRenderer(canvas: HTMLCanvasElement) {
 		}
 		gl.uniform2f(uniforms.size, width, height);
 		gl.uniform1f(uniforms.time, preference.matches ? 0 : elapsed);
+		const reveal = preference.matches || paused ? 1 : Math.min(elapsed / 1.15, 1);
+		if (reveal === 1) revealed = true;
+		gl.uniform1f(uniforms.reveal, revealed ? 1 : reveal);
 		gl.uniform1f(uniforms.scroll, scroll);
 		gl.drawArrays(gl.TRIANGLES, 0, 3);
 	};

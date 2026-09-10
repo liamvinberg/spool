@@ -19,6 +19,7 @@ import "shared/ui/site/current/ui/site/demo-apps/landing.css";
 import "shared/ui/site/editorial/editorial.css";
 import "shared/ui/site/editorial-details/details.css";
 import "./sections.css";
+import "./entrance.css";
 
 export type SectionName = "try" | "flow" | "agent" | "files" | "start" | "footer";
 export type SectionTake = "spread" | "stage" | "paper";
@@ -279,22 +280,30 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 		</section>
 	);
 }
-function Bloom({ children, hero }: { children: ReactNode; hero?: "inline" | "tray" }) {
+function Bloom({
+	children,
+	hero,
+	entrance = "none",
+}: {
+	children: ReactNode;
+	hero?: "inline" | "tray";
+	entrance?: "none" | "grow" | "quiet";
+}) {
 	const canvas = useRef<HTMLCanvasElement>(null),
 		renderer = useRef<ReturnType<typeof createBloomRenderer>>(null);
 	const [paused, setPaused] = useState(false);
 	useEffect(() => {
 		if (!canvas.current) return;
-		const bloom = createBloomRenderer(canvas.current);
+		const bloom = createBloomRenderer(canvas.current, entrance);
 		renderer.current = bloom;
 		return () => {
 			bloom?.dispose();
 			renderer.current = null;
 		};
-	}, []);
+	}, [entrance]);
 	useEffect(() => renderer.current?.setPaused(paused), [paused]);
 	return (
-		<div className="bl-page es-page" data-bloom="returns-end">
+		<div className="bl-page es-page" data-bloom="returns-end" data-entrance={entrance}>
 			<div className="bl-field" aria-hidden="true" data-backend="fallback">
 				<canvas ref={canvas} className="bl-canvas" />
 			</div>
@@ -333,9 +342,17 @@ export function EndingStudy({ take }: { take: EndingTake }) {
 		</Bloom>
 	);
 }
-export function AssembledLanding({ hero, ending }: { hero: "inline" | "tray"; ending?: EndingTake }) {
+export function AssembledLanding({
+	hero,
+	ending,
+	entrance = "none",
+}: {
+	hero: "inline" | "tray";
+	ending?: EndingTake;
+	entrance?: "none" | "grow" | "quiet";
+}) {
 	return (
-		<Bloom hero={hero}>
+		<Bloom hero={hero} entrance={entrance}>
 			<EditorialOpening take={hero} />
 			<main>
 				<SectionPart section="try" take="spread" />

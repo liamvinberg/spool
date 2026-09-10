@@ -2,6 +2,7 @@ precision highp float;
 varying vec2 v_uv;
 uniform vec2 u_size;
 uniform float u_time;
+uniform float u_reveal;
 uniform float u_scroll;
 uniform float u_total;
 uniform vec4 u_compare;
@@ -72,6 +73,12 @@ void main() {
  vec3 ink=mix(vec3(.28,.034,.017),RED,smoothstep(.28,.73,value));
  ink=mix(ink,vec3(.72,.115,.045),warm*.75);
  float opacity=clamp(amount*(.67+grain*.44),0.,1.);
+ // A soft, irregular edge spreads from the hero's pigment pool on entry.
+ float growth=1.-pow(1.-u_reveal,3.);
+ float edge=length((px-vec2(u_size.x*.79,310.))/vec2(scale,440.));
+ float reach=growth*3.1-.35;
+ float reveal=(1.-smoothstep(reach-.24,reach+.24,edge+(value-.5)*.48))*smoothstep(0.,.12,u_reveal);
+ opacity*=mix(reveal,1.,smoothstep(.85,1.,u_reveal));
  vec3 color=mix(BG,ink,opacity);
  gl_FragColor=vec4(color,1.);
 }
