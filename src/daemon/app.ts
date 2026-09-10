@@ -2387,7 +2387,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const { frame, ...ask } = c.req.valid("json");
-			const site = await textSite(project.root, frame, ask);
+			const site = textSite(project.root, frame, ask);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			return c.json(written(project.root, site));
@@ -2401,7 +2401,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const { frame, ...ask } = c.req.valid("json");
-			const site = await elementSite(project.root, frame, ask);
+			const site = elementSite(project.root, frame, ask);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			return c.json(written(project.root, site));
@@ -2421,7 +2421,7 @@ export function createDaemonApp({
 				file === undefined
 					? { kind: "held", path: asset ?? "" }
 					: { kind: "new", name: file.name, bytes: Buffer.from(file.data, "base64") };
-			const site = await assetSite(project.root, frame, source, put, fingerprint);
+			const site = assetSite(project.root, frame, source, put, fingerprint);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			if (site.asset.bytes !== undefined) writeAtomic(site.asset.file, site.asset.bytes);
@@ -2440,7 +2440,7 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const { frame, ...ask } = c.req.valid("json");
 			const theme = await classThemeFor(project.root);
-			const site = await classSite(project.root, frame, ask, theme);
+			const site = classSite(project.root, frame, ask, theme);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			const landed = written(project.root, site);

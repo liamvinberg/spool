@@ -209,20 +209,10 @@ export type WriteSite =
  * mirrored. A shared definition's own words are written in the shared file
  * (#318).
  */
-export async function textSite(root: string, frame: string, ask: TextAsk): Promise<WriteSite> {
-	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const stamp = stampIn(root, ask.source);
-	if ("message" in stamp) return { kind: "error", ...stamp };
-	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	const at = stamp.stamp;
-	let source: string;
-	try {
-		source = readFileSync(at.file, "utf8");
-	} catch {
-		return { kind: "refusal", refusal: STALE_STAMP };
-	}
-	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+export function textSite(root: string, frame: string, ask: TextAsk): WriteSite {
+	const place = siteAt(root, frame, ask.source, ask.fingerprint);
+	if ("kind" in place) return place;
+	const { at, source } = place;
 	const owner = textOwner(source, at.line, at.column);
 	if (owner === undefined) return { kind: "refusal", refusal: STALE_STAMP };
 	if (owner.kind === "own") return planned(at, source, [{ kind: "set-text", source: ask.source, nodes: ask.nodes }]);
@@ -277,25 +267,10 @@ export type ClassSite =
  * it, and the answer is the literal as it was and as it is, so the frame can
  * set the attribute and drop the preview without a reload.
  */
-export async function classSite(
-	root: string,
-	frame: string,
-	ask: ClassAsk,
-	theme: ClassTheme | undefined,
-): Promise<ClassSite> {
-	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const stamp = stampIn(root, ask.source);
-	if ("message" in stamp) return { kind: "error", ...stamp };
-	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	const at = stamp.stamp;
-	let source: string;
-	try {
-		source = readFileSync(at.file, "utf8");
-	} catch {
-		return { kind: "refusal", refusal: STALE_STAMP };
-	}
-	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+export function classSite(root: string, frame: string, ask: ClassAsk, theme: ClassTheme | undefined): ClassSite {
+	const place = siteAt(root, frame, ask.source, ask.fingerprint);
+	if ("kind" in place) return place;
+	const { at, source } = place;
 	const [before] = readElements(source, [{ line: at.line, column: at.column }], at.rel);
 	if (before === undefined) return { kind: "refusal", refusal: STALE_STAMP };
 	if (before.refusal !== undefined) return { kind: "refusal", refusal: before.refusal };
@@ -335,20 +310,10 @@ export interface ElementAsk {
  * one the person makes, on the call's own stamp and against the call's own
  * file, rather than one this quietly makes for them.
  */
-export async function elementSite(root: string, frame: string, ask: ElementAsk): Promise<WriteSite> {
-	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const stamp = stampIn(root, ask.source);
-	if ("message" in stamp) return { kind: "error", ...stamp };
-	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	const at = stamp.stamp;
-	let source: string;
-	try {
-		source = readFileSync(at.file, "utf8");
-	} catch {
-		return { kind: "refusal", refusal: STALE_STAMP };
-	}
-	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+export function elementSite(root: string, frame: string, ask: ElementAsk): WriteSite {
+	const place = siteAt(root, frame, ask.source, ask.fingerprint);
+	if ("kind" in place) return place;
+	const { at, source } = place;
 	if (ask.act === "delete") {
 		const here = planOps(source, [{ kind: "delete", source: ask.source }]);
 		if (!here.ok) return { kind: "refusal", refusal: here.refusal };
@@ -419,26 +384,18 @@ export type AssetSite =
  * yet. A shared definition's picture is swapped where it is defined (#318);
  * the file itself still lands beside the frame the hand was in.
  */
-export async function assetSite(
+export function assetSite(
 	root: string,
 	frame: string,
 	stampedAt: string,
 	put: AssetPut,
 	fingerprint: string,
-): Promise<AssetSite> {
+): AssetSite {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const stamp = stampIn(root, stampedAt);
-	if ("message" in stamp) return { kind: "error", ...stamp };
-	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	const at = stamp.stamp;
-	let source: string;
-	try {
-		source = readFileSync(at.file, "utf8");
-	} catch {
-		return { kind: "refusal", refusal: STALE_STAMP };
-	}
-	if (fingerprintOf(source) !== fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+	const place = siteAt(root, frame, stampedAt, fingerprint);
+	if ("kind" in place) return place;
+	const { at, source } = place;
 
 	const asset = resolveAsset(root, found.dir, put);
 	if ("refusal" in asset) return { kind: "refusal", refusal: asset.refusal };
@@ -481,6 +438,35 @@ function resolveAsset(root: string, frameDir: string, put: AssetPut): ResolvedAs
 		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
 		throw error;
 	}
+}
+
+/**
+ * Where a write is about to land, or why it is not landing (#314–#318).
+ *
+ * Every op in the lane opens the same way: the frame has to exist, the stamp
+ * has to resolve inside design/, the file has to be there, and it has to be
+ * the file the surface read the rung out of. Four gestures asked those four
+ * questions in four places, and a gate written four times is four gates.
+ */
+type Site =
+	| { at: Stamp; source: string }
+	| { kind: "refusal"; refusal: PatchRefusal }
+	| { kind: "error"; status: 400 | 404; message: string };
+
+function siteAt(root: string, frame: string, stamped: string, fingerprint: string): Site {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
+	const stamp = stampIn(root, stamped);
+	if ("message" in stamp) return { kind: "error", ...stamp };
+	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	let source: string;
+	try {
+		source = readFileSync(stamp.stamp.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	if (fingerprintOf(source) !== fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+	return { at: stamp.stamp, source };
 }
 
 /** A stamp resolved through design/'s boundary: the place, nothing, or the boundary's own no. */
