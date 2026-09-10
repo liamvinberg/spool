@@ -2881,10 +2881,12 @@ export function ProjectCanvas({
 					...(ok === undefined
 						? {}
 						: {
-								classes: {
-									selector: pick.selector,
-									from: ok.className.now,
-									to: ok.className.was,
+								entry: {
+									classes: {
+										selector: pick.selector,
+										from: ok.className.now,
+										to: ok.className.was,
+									},
 								},
 							}),
 					nothing: lift,
