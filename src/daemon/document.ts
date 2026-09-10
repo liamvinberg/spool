@@ -955,11 +955,21 @@ const canvasShimJs = `(() => {
 		const rect = el.getBoundingClientRect();
 		let radius = 0;
 		try { radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch {}
+		// an inline element that wraps is drawn as one box per line, and the box
+		// around all of them is a shape it has nowhere on screen (#321)
+		const lines = [];
+		try {
+			const drawn = el.getClientRects();
+			for (let i = 0; i < drawn.length && i < 60; i++) {
+				lines.push({ x: drawn[i].x, y: drawn[i].y, w: drawn[i].width, h: drawn[i].height });
+			}
+		} catch {}
 		return {
 			selector: cssPath(el),
 			tag: el.tagName.toLowerCase(),
 			outerHtml: el.outerHTML.slice(0, 240),
 			rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+			...(lines.length > 1 ? { rects: lines } : {}),
 			radius,
 			source,
 			generated: stamped !== el,

@@ -4161,7 +4161,15 @@ export function ProjectCanvas({
 						: undefined;
 				const under = deepest || !editing ? undefined : oneDown(chain, scope, box);
 				const ring = (hit: PickedHit | undefined): ElementPreview | null =>
-					hit === undefined ? null : { frame, selector: hit.selector, rect: hit.rect, radius: hit.radius };
+					hit === undefined
+						? null
+						: {
+								frame,
+								selector: hit.selector,
+								rect: hit.rect,
+								...(hit.rects === undefined ? {} : { rects: hit.rects }),
+								radius: hit.radius,
+							};
 				const click = ring(target);
 				const beneath = under?.selector === target?.selector ? null : ring(under);
 				setPreview(click === null && beneath === null ? null : { click, under: beneath });

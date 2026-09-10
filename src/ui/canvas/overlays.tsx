@@ -4,7 +4,7 @@ import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
 import type { GapAxis, GapHandles } from "./hand-gap";
-import { bigEnough, drawnHandles, type Edge, type LiveHandles, type Sign } from "./hand-resize";
+import { bigEnough, drawnHandles, type Edge, type LiveHandles, lineBoxes, type Sign } from "./hand-resize";
 import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
 import { FileLink } from "./properties-fields";
@@ -30,6 +30,8 @@ export interface ElementPreview {
 	frame: string;
 	selector: string;
 	rect: { x: number; y: number; w: number; h: number };
+	/** the line boxes an inline element is drawn as, when it is drawn as several (#321) */
+	rects?: readonly { x: number; y: number; w: number; h: number }[];
 	radius: number;
 }
 
@@ -376,24 +378,28 @@ export function SelectionOverlay({
 					);
 				})()}
 
-			{picked.map((pick) => {
+			{picked.flatMap((pick) => {
 				// the ring follows the pointer while a drag is live: the file is
-				// written once, when it is let go
-				const held =
+				// written once, when it is let go. A drag draws the one box it is
+				// dragging; at rest the ring is the element's own lines (#321)
+				const dragged =
 					handles !== null && handles.frame === pick.frame && handles.selector === pick.selector
 						? handles.rect
-						: pick.rect;
-				const box = elementBox(pick.frame, held);
-				if (box === undefined) return null;
+						: null;
 				const key = pickKey(pick.frame, pick.selector);
-				return (
-					<ElementOutline
-						key={key}
-						box={box}
-						radius={pick.radius * k}
-						lit={lit === key || lit === WHOLE_SELECTION}
-					/>
-				);
+				return (dragged === null ? lineBoxes(pick) : [dragged]).map((rect) => {
+					const box = elementBox(pick.frame, rect);
+					if (box === undefined) return null;
+					return (
+						<ElementOutline
+							key={`${key}\u0000${rect.y}\u0000${rect.x}`}
+							mark
+							box={box}
+							radius={pick.radius * k}
+							lit={lit === key || lit === WHOLE_SELECTION}
+						/>
+					);
+				});
 			})}
 
 			{handles !== null &&
@@ -425,18 +431,33 @@ export function SelectionOverlay({
 				})}
 
 			{previewShown !== null &&
-				(() => {
-					const box = elementBox(previewShown.frame, previewShown.rect);
+				lineBoxes(previewShown).map((rect) => {
+					const box = elementBox(previewShown.frame, rect);
 					if (box === undefined) return null;
-					return <ElementOutline box={box} radius={previewShown.radius * k} faded />;
-				})()}
+					return (
+						<ElementOutline
+							key={`preview-${rect.y}-${rect.x}`}
+							box={box}
+							radius={previewShown.radius * k}
+							faded
+						/>
+					);
+				})}
 
 			{deeperShown !== null &&
-				(() => {
-					const box = elementBox(deeperShown.frame, deeperShown.rect);
+				lineBoxes(deeperShown).map((rect) => {
+					const box = elementBox(deeperShown.frame, rect);
 					if (box === undefined) return null;
-					return <ElementOutline box={box} radius={deeperShown.radius * k} faded dashed />;
-				})()}
+					return (
+						<ElementOutline
+							key={`deeper-${rect.y}-${rect.x}`}
+							box={box}
+							radius={deeperShown.radius * k}
+							faded
+							dashed
+						/>
+					);
+				})}
 
 			{preview?.spacing === undefined
 				? null
@@ -767,15 +788,19 @@ function ElementOutline({
 	faded,
 	dashed,
 	lit,
+	mark,
 }: {
 	box: Box;
 	radius: number;
 	faded?: boolean;
 	dashed?: boolean;
 	lit?: boolean;
+	/** the ring round the selection itself, which a test can find and measure */
+	mark?: boolean;
 }) {
 	return (
 		<div
+			{...(mark === true ? { "data-element-ring": "" } : {})}
 			className={`absolute border border-thread ${dashed === true ? "border-dashed opacity-30" : faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
 			style={{
 				left: box.x - 2,

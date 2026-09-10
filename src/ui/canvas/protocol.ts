@@ -25,6 +25,15 @@ export interface PickedHit {
 	outerHtml: string;
 	/** Frame-local geometry of the picked element, for the outline overlay. */
 	rect: { x: number; y: number; w: number; h: number };
+	/**
+	 * The element's line boxes, when it is drawn as more than one (#321).
+	 *
+	 * An inline element that wraps has a box per line; `rect` is the box around
+	 * all of them at once, which is not a shape the element has anywhere on
+	 * screen. Absent for everything drawn as a single box, which is nearly
+	 * everything, so a chain carries no more than it has to.
+	 */
+	rects?: readonly { x: number; y: number; w: number; h: number }[];
 	radius: number;
 	/** Nearest data-spool-source stamp, "frames/…/frame.tsx:line:col". */
 	source: string | null;
