@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { apiRequests, handCanvas } from "./hand-browser-helpers";
+import { apiRequests, handCanvas, VEIL_FILES, VEIL_PAGE } from "./hand-browser-helpers";
 
 /**
  * Rail properties, DOM first, on a real landing page (#315).
@@ -12,74 +12,8 @@ import { apiRequests, handCanvas } from "./hand-browser-helpers";
  * what they see is the frame and what the file says is the file.
  */
 
-const UTILS = `export function cn(...inputs: (string | false | null | undefined)[]) {
-  return inputs.filter(Boolean).join(" ");
-}
-`;
-
-const PAGES_CSS = `.landing { font-family: system-ui, sans-serif; color: #1a1a1a; background: #f5f2ee; padding: 24px; }
-.nav { display: flex; gap: 16px; align-items: center; font-size: 14px; }
-.nav nav { display: flex; gap: 14px; margin-left: auto; }
-.nav a { color: inherit; text-decoration: none; }
-h1 { line-height: 1.05; margin: 28px 0 12px; font-weight: 500; }
-h2 { font-size: 28px; line-height: 1.1; margin: 20px 0 8px; font-weight: 500; }
-p { font-size: 15px; line-height: 1.4; margin: 0 0 10px; }
-.serif { font-family: Georgia, serif; }
-.veil-art { height: 90px; background: #c96a3c; margin: 12px 0; }
-.action { display: inline-flex; gap: 6px; align-items: center; }
-.action svg { width: 14px; height: 14px; }
-.page-footer { display: flex; gap: 20px; font-size: 13px; margin-top: 18px; }
-`;
-
-const PAGE_PARTS = `import type { ReactNode } from 'react';
-import { cn } from '../lib/utils';
-import './pages.css';
-
-export function Arrow({ diagonal = false }: { diagonal?: boolean }) {
-  return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d={diagonal ? 'M6 18 18 6M6 6h12v12' : 'M4 12h16m-6-6 6 6-6 6'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-}
-
-export function Link({ children, href = '#details', className, arrow = true }: { children: ReactNode; href?: string; className?: string; arrow?: boolean }) {
-  return <a className={cn('action', className)} href={href}>{children}{arrow && <Arrow />}</a>;
-}
-
-export function Footer({ name, note }: { name: string; note: string }) {
-  return <footer className="page-footer"><a href="#top">{name}</a><span>{note}</span><a href="#top">Back to top ↑</a></footer>;
-}
-`;
-
-/**
- * The veil page: the h1 wears its size as a class, the art block the width a
- * drag wrote, the action its colour and radius; the voice block and the mono
- * span are design/'s own.
- */
-const VEIL = `import { cn } from '../../shared/lib/utils';
-import { Arrow, Footer, Link } from '../../shared/ui/page-parts';
-
-const MONO = "font-mono text-xs";
-const tone = "right";
-
-export default function Veil() {
-  return <main className="landing veil" id="top">
-    <header className="nav"><a className="brand" href="#top">veil®</a><nav aria-label="Main"><a className="optional" href="#details">Our approach</a><Link className="bordered" href="#work">Explore the studio</Link></nav></header>
-    <section className="veil-intro"><h1 className="text-[40px]">Make something<br/><span className="serif"><i>worth feeling.</i></span></h1><p>Independent design and digital experiences.<br/>Made with instinct.<br/>Built with intention.</p></section>
-    <div className="veil-art w-[990px]"></div>
-    <div id="voice" className={cn("flex flex-col gap-3 px-5 py-4", tone === "right" && "border-border border-l")}>Voice</div>
-    <span id="mono" className={MONO}>canvas-chrome.tsx</span>
-    <a id="cta" className="rounded-md bg-[#c96a3c] p-3 text-white" href="#work">Explore</a>
-    <Footer name="veil®" note="Independent by nature. Curious by default."/>
-  </main>;
-}
-`;
-
-const FILES = {
-	"shared/lib/utils.ts": UTILS,
-	"shared/ui/pages.css": PAGES_CSS,
-	"shared/ui/page-parts.tsx": PAGE_PARTS,
-};
-
 it("previews a rail value in the frame and saves one class change", { timeout: 240_000 }, async () => {
-	const f = await handCanvas(FILES, VEIL, { w: 1100, h: 700 });
+	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 700 });
 	const { page, frame } = f;
 	const requests = apiRequests(page, f.project.name);
 	const row = (name: string) => page.locator(`[data-properties-row="${name}"]`);
