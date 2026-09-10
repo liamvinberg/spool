@@ -494,9 +494,10 @@ export function createDaemonApp({
 	const trashingProjects = new Set<string>();
 
 	/**
-	 * What the write lane needs of the project: who renders a shared file, which
-	 * is the blast radius a refusal names. The graph is built rather than
-	 * guessed at, because it is only asked for on the refusal path.
+	 * What the write lane needs of the project: who renders a shared file,
+	 * which is how far the rail says an edit reaches and whose paint the
+	 * canvas holds once it lands (#318). The graph is built rather than
+	 * guessed at, because it is only asked for on the shared path.
 	 */
 	const framesUsingIn = (root: string) => ({
 		framesUsing: async (path: string) => {
@@ -2381,7 +2382,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const { frame, ...ask } = c.req.valid("json");
-			const site = await textSite(project.root, frame, ask, framesUsingIn(project.root));
+			const site = await textSite(project.root, frame, ask);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			return c.json(written(project.root, site));
@@ -2395,7 +2396,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const { frame, ...ask } = c.req.valid("json");
-			const site = await elementSite(project.root, frame, ask, framesUsingIn(project.root));
+			const site = await elementSite(project.root, frame, ask);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			return c.json(written(project.root, site));
@@ -2415,7 +2416,7 @@ export function createDaemonApp({
 				file === undefined
 					? { kind: "held", path: asset ?? "" }
 					: { kind: "new", name: file.name, bytes: Buffer.from(file.data, "base64") };
-			const site = await assetSite(project.root, frame, source, put, framesUsingIn(project.root), fingerprint);
+			const site = await assetSite(project.root, frame, source, put, fingerprint);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			if (site.asset.bytes !== undefined) writeAtomic(site.asset.file, site.asset.bytes);
@@ -2434,7 +2435,7 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const { frame, ...ask } = c.req.valid("json");
 			const theme = await classThemeFor(project.root);
-			const site = await classSite(project.root, frame, ask, framesUsingIn(project.root), theme);
+			const site = await classSite(project.root, frame, ask, theme);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			const landed = written(project.root, site);

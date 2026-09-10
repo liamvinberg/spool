@@ -87,8 +87,8 @@ describe("an import off an image", () => {
 });
 
 describe("the refusals that reach a string field", () => {
-	it("greys every field where the element is not this frame's to write", () => {
-		const refusal = { code: "shared-definition" as const, says: "defined in shared/ui/card.tsx:9" };
+	it("greys every field where the stamp hits nothing to write", () => {
+		const refusal = { code: "stale-stamp" as const, says: "the stamp hits nothing" };
 		expect(
 			fieldsFor("img", [{ name: "alt", value: "a" }], refusal).every((field) => field.reason !== undefined),
 		).toBe(true);

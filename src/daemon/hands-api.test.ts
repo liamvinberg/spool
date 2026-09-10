@@ -425,6 +425,7 @@ describe("the rungs read", () => {
 		refusal?: { code: string; says: string; expression?: string };
 		attributes?: { name: string; value?: string; expression?: string; asset?: string }[];
 		fingerprint?: string;
+		shared?: { frames?: string[] };
 	}
 
 	/**
@@ -532,7 +533,7 @@ describe("the rungs read", () => {
 		expect(mapped).toMatchObject({ className: "px-2", mapped: true });
 	});
 
-	it("reads an element a shared file defines, and says how far an edit would reach", async () => {
+	it("reads an element a shared file defines as a shared definition, and says how far an edit reaches", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeDesignFile(
@@ -541,9 +542,12 @@ describe("the rungs read", () => {
 			'export function Card() {\n\treturn <div className="p-2">card</div>;\n}\n',
 		);
 		writeFrame(root, "cart", 'import { Card } from "../../shared/ui/card";\n\nexport default () => <Card />;\n');
+		writeFrame(root, "bag", 'import { Card } from "../../shared/ui/card";\n\nexport default () => <Card />;\n');
+		writeFrame(root, "about", "export default () => <p>about</p>;\n");
 		const app = makeApp(spoolDir);
 
-		// the crumbs still have to name it, so the rung reads whole and adjusts nowhere
+		// it reads whole and writes as the frame's own do (#318); the readers
+		// are the frames whose import graph reaches the file, not the frame asking
 		expect(await rungs(app, name, ["shared/ui/card.tsx:2:9"])).toEqual([
 			{
 				source: "shared/ui/card.tsx:2:9",
@@ -551,9 +555,11 @@ describe("the rungs read", () => {
 				className: "p-2",
 				path: "design/shared/ui/card.tsx",
 				line: 2,
-				refusal: { code: "shared-definition", says: "defined in shared/ui/card.tsx:2, rendered by 1 frame" },
+				shared: { frames: ["bag", "cart"] },
 			},
 		]);
+		// the frame's own file is never a shared definition, wherever the frame is
+		expect((await rungs(app, name, [stampFor(cartTsx, "<main")]))[0]?.shared).toBeUndefined();
 	});
 
 	it("answers a stamp that hits nothing with the stale-stamp refusal, not an error", async () => {
@@ -720,5 +726,134 @@ export default function Frame({ open }: { open: boolean }) {
 		expect(((await stale.json()) as { refusal: { code: string } }).refusal.code).toBe("stale-file");
 		expect(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8")).toBe(voiceTsx);
 		expect((await app.request(`/api/p/${name}/class`, jsonPost({ frame: "voice", edits: [] }))).status).toBe(400);
+	});
+});
+
+describe("the shared definition", () => {
+	const card = `import { cn } from "../lib/utils";
+
+export function Card({ children, className }: { children: string; className?: string }) {
+	return (
+		<div className={cn("rounded-md p-2", className)}>
+			<span>{children}</span>
+			<em>Rendered live</em>
+		</div>
+	);
+}
+`;
+	const utils = `export function cn(...inputs: (string | false | null | undefined)[]) { return inputs.filter(Boolean).join(" "); }\n`;
+	const cart = `import { Card } from "../../shared/ui/card";
+
+export default () => <Card className="cart">Pay now</Card>;
+`;
+	const bag = `import { Card } from "../../shared/ui/card";
+
+export default () => <Card>Keep going</Card>;
+`;
+
+	function stampIn(rel: string, source: string, snippet: string): string {
+		const at = source.indexOf(snippet);
+		const before = source.slice(0, at);
+		return `${rel}:${before.split("\n").length}:${at - (before.lastIndexOf("\n") + 1) + 1}`;
+	}
+
+	function project() {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/lib/utils.ts", utils);
+		writeDesignFile(root, "shared/ui/card.tsx", card);
+		writeFrame(root, "cart", cart);
+		writeFrame(root, "bag", bag);
+		writeFrame(root, "about", "export default () => <p>about</p>;\n");
+		const app = makeApp(spoolDir);
+		const read = (rel: string) => readFileSync(join(root, "design", rel), "utf8");
+		return { root, name, app, read };
+	}
+
+	it("writes a class change to the shared file once, and puts it back", async () => {
+		const { name, app, read } = project();
+		const res = await app.request(
+			`/api/p/${name}/class`,
+			jsonPost({
+				frame: "cart",
+				source: stampIn("shared/ui/card.tsx", card, "<div"),
+				edits: [{ token: "rounded-[12px]", scope: "" }],
+				fingerprint: fingerprintOf(card),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			path: string;
+			className: { was: string; now: string };
+			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
+		};
+		expect(body.path).toBe("design/shared/ui/card.tsx");
+		expect(body.className).toEqual({ was: "rounded-md p-2", now: "p-2 rounded-[12px]" });
+		expect(read("shared/ui/card.tsx")).toContain('cn("p-2 rounded-[12px]", className)');
+		expect(read("frames/cart/frame.tsx")).toBe(cart);
+		expect(read("frames/bag/frame.tsx")).toBe(bag);
+
+		// undo puts the shared file back
+		const back = await app.request(`/api/p/${name}/revert`, jsonPost({ ...body.undo, frame: "cart" }));
+		expect(back.status).toBe(200);
+		expect(read("shared/ui/card.tsx")).toBe(card);
+	});
+
+	it("writes the definition's own words to the shared file, and supplied words at the call", async () => {
+		const { name, app, read } = project();
+		// the definition's own literal: every frame rendering it says so now
+		const own = await app.request(
+			`/api/p/${name}/text`,
+			jsonPost({
+				frame: "cart",
+				source: stampIn("shared/ui/card.tsx", card, "<em"),
+				nodes: [{ text: "Rendered later" }],
+				fingerprint: fingerprintOf(card),
+			}),
+		);
+		expect(own.status).toBe(200);
+		expect(((await own.json()) as { path: string }).path).toBe("design/shared/ui/card.tsx");
+		expect(read("shared/ui/card.tsx")).toContain("<em>Rendered later</em>");
+		expect(read("frames/cart/frame.tsx")).toBe(cart);
+
+		// words a call site supplies are that call's alone: the frame's own
+		// file, the definition untouched
+		const shared = read("shared/ui/card.tsx");
+		const supplied = await app.request(
+			`/api/p/${name}/text`,
+			jsonPost({
+				frame: "cart",
+				source: stampIn("shared/ui/card.tsx", shared, "<span"),
+				owner: stampIn("frames/cart/frame.tsx", cart, "<Card"),
+				nodes: [{ text: "Pay later" }],
+				fingerprint: fingerprintOf(shared),
+			}),
+		);
+		expect(supplied.status).toBe(200);
+		expect(((await supplied.json()) as { path: string }).path).toBe("design/frames/cart/frame.tsx");
+		expect(read("frames/cart/frame.tsx")).toContain('<Card className="cart">Pay later</Card>');
+		expect(read("frames/bag/frame.tsx")).toBe(bag);
+		expect(read("shared/ui/card.tsx")).toBe(shared);
+	});
+
+	it("keeps the fingerprint guard on a shared file, and the revert scope to source", async () => {
+		const { name, app, read } = project();
+		const stale = await app.request(
+			`/api/p/${name}/class`,
+			jsonPost({
+				frame: "cart",
+				source: stampIn("shared/ui/card.tsx", card, "<div"),
+				edits: [{ token: "p-4", scope: "" }],
+				fingerprint: "0".repeat(64),
+			}),
+		);
+		expect(stale.status).toBe(409);
+		expect(((await stale.json()) as { refusal: { code: string } }).refusal.code).toBe("stale-file");
+		expect(read("shared/ui/card.tsx")).toBe(card);
+		const outside = await app.request(
+			`/api/p/${name}/revert`,
+			jsonPost({ path: "design/canvas.json", start: 0, end: 0, text: "", fingerprint: "0".repeat(64) }),
+		);
+		expect(outside.status).toBe(400);
 	});
 });

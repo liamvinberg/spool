@@ -65,10 +65,8 @@ export type RefusalCode =
 	| "image-budget"
 	| "unparsable"
 	| "overlapping-ops"
-	// the two the caller answers, because only it can: the element is defined
-	// somewhere this project's other frames render too, and the file moved
-	// under the read the op was formed against
-	| "shared-definition"
+	// the one the caller answers, because only it can: the file moved under
+	// the read the op was formed against
 	| "stale-file";
 
 export interface PatchRefusal {

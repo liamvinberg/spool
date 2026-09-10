@@ -271,7 +271,7 @@ describe("what the file leaves a gap drag", () => {
 	});
 
 	it("writes a class cell several uses share, which is the ordinary case", () => {
-		expect(gapWritable(rung("flex gap-4", { refusal: { code: "shared-definition", says: "shared" } }))).toBe(true);
+		expect(gapWritable(rung("flex gap-4", { shared: { frames: ["cart", "bag", "about"] } }))).toBe(true);
 	});
 
 	it("leaves nothing where a screen variant pins the gap", () => {

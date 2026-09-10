@@ -21,9 +21,10 @@ import { frameFolder, lookupFrame } from "./projection";
 import { parseStamp, type Stamp } from "./selection";
 
 /**
- * What the rail's read needs from the project (#256): the frames whose source
- * graph reaches one design-relative file. Awaited, because the count is the
- * blast radius a shared-file refusal is mostly about.
+ * What the rail's read needs from the project (#256, #318): the frames whose
+ * source graph reaches one design-relative file. Awaited, because they are
+ * how far an edit to a shared file reaches, and whose paint the canvas holds
+ * when one lands.
  */
 export interface LaneDeps {
 	framesUsing(path: string): Promise<readonly string[] | undefined>;
@@ -36,9 +37,9 @@ export interface LaneDeps {
  * The properties rail draws before anything is touched, so it needs the read
  * half of the lane's answer: the crumbs are authored names, the scope bar is
  * the variant chains the literal carries, and the source line is the literal.
- * A rung whose stamp points outside the frame's own folder is still read —
- * the crumbs have to name it — and carries the shared refusal the write would
- * have given, so nothing about it looks adjustable.
+ * A rung whose stamp points outside the frame's own folder is a shared
+ * definition (#318): it reads and writes exactly as the frame's own do, and
+ * says how many frames render it, because that is how far an edit reaches.
  */
 export interface RungRead {
 	/** the stamp asked about, which is what pairs a reply with its rung */
@@ -53,6 +54,13 @@ export interface RungRead {
 	refusal?: PatchRefusal;
 	/** the element sits inside a `map`: one literal, every rendered row */
 	mapped?: true;
+	/**
+	 * The stamp's file is outside the frame's own folder (#318), and the frames
+	 * the import graph reaches it from: how far an edit reaches, and who has to
+	 * reload for it. Absent when the graph has never seen the file, which is
+	 * not the same as nobody rendering it.
+	 */
+	shared?: { frames?: string[] };
 	/** every other attribute the tag carries, as the file writes it (#260) */
 	attributes?: AttributeRead[];
 	/**
@@ -126,17 +134,15 @@ export async function readRungs(
 			rungs.push({ source, className: "", path: `design/${stamp.rel}`, line: stamp.line, refusal: STALE_STAMP });
 			continue;
 		}
-		// v1 writes the frame's own file and nothing else, so an element defined
-		// anywhere else reads whole and adjusts nowhere
-		const refusal = stamp.rel.startsWith(folder) ? read.refusal : await definedElsewhere(deps, stamp.rel, stamp.line);
 		rungs.push({
 			source,
 			name: read.name,
 			className: read.className,
 			path: `design/${stamp.rel}`,
 			line: stamp.line,
-			...(refusal === undefined ? {} : { refusal }),
+			...(read.refusal === undefined ? {} : { refusal: read.refusal }),
 			...(read.mapped ? { mapped: true as const } : {}),
+			...(stamp.rel.startsWith(folder) ? {} : { shared: await sharedUse(deps, stamp.rel) }),
 			...(read.attributes.length === 0 ? {} : { attributes: read.attributes }),
 			...(held?.fingerprint === undefined ? {} : { fingerprint: held.fingerprint }),
 		});
@@ -144,13 +150,10 @@ export async function readRungs(
 	return { kind: "ok", rungs };
 }
 
-async function definedElsewhere(deps: LaneDeps, rel: string, line: number): Promise<PatchRefusal> {
+/** How far an edit to a shared file reaches, said whenever the graph can say it. */
+async function sharedUse(deps: LaneDeps, rel: string): Promise<{ frames?: string[] }> {
 	const readers = await deps.framesUsing(rel);
-	// the count is the point of the sentence — how much would move if this edit
-	// landed — so it is said whenever the graph can say it
-	const rendered =
-		readers === undefined ? "" : `, rendered by ${readers.length} frame${readers.length === 1 ? "" : "s"}`;
-	return { code: "shared-definition", says: `defined in ${rel}:${line}${rendered}` };
+	return readers === undefined ? {} : { frames: [...readers] };
 }
 
 /** The file moved under the read the op was formed against. */
@@ -192,11 +195,11 @@ export type WriteSite =
  * element file's — the file the rung was read out of, and the one the DOM
  * the hand edited was rendered from — and a mismatch refuses rather than
  * landing somewhere wrong. Both files are read again here, never mirrored.
+ * A shared definition's own words are written in the shared file (#318).
  */
-export async function textSite(root: string, frame: string, ask: TextAsk, deps: LaneDeps): Promise<WriteSite> {
+export async function textSite(root: string, frame: string, ask: TextAsk): Promise<WriteSite> {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const folder = `${frameFolder(frame, found.page)}/`;
 	const stamp = stampIn(root, ask.source);
 	if ("message" in stamp) return { kind: "error", ...stamp };
 	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
@@ -210,14 +213,7 @@ export async function textSite(root: string, frame: string, ask: TextAsk, deps: 
 	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
 	const owner = textOwner(source, at.line, at.column);
 	if (owner === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	if (owner.kind === "own") {
-		// this ticket writes the frame's own file: an element defined anywhere
-		// else reads whole and adjusts nowhere yet
-		if (!at.rel.startsWith(folder)) {
-			return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
-		}
-		return planned(at, source, [{ kind: "set-text", source: ask.source, nodes: ask.nodes }]);
-	}
+	if (owner.kind === "own") return planned(at, source, [{ kind: "set-text", source: ask.source, nodes: ask.nodes }]);
 	// supplied words: the literal lives at the call site the runtime named
 	const expression = {
 		code: "expression-text" as const,
@@ -228,9 +224,6 @@ export async function textSite(root: string, frame: string, ask: TextAsk, deps: 
 	const call = stampIn(root, ask.owner);
 	if ("message" in call) return { kind: "error", ...call };
 	if (call.stamp === undefined) return { kind: "refusal", refusal: expression };
-	if (!call.stamp.rel.startsWith(folder)) {
-		return { kind: "refusal", refusal: await definedElsewhere(deps, call.stamp.rel, call.stamp.line) };
-	}
 	let callSource: string;
 	try {
 		callSource = readFileSync(call.stamp.file, "utf8");
@@ -262,22 +255,21 @@ export type ClassSite =
 	| Exclude<WriteSite, { kind: "ok" }>;
 
 /**
- * Where a class write lands (#315): the element's own file, at its stamp,
- * through the Tailwind class planner. The frame already shows the change as
- * an inline style; this is the one write behind it, and the answer is the
- * literal as it was and as it is, so the frame can set the attribute and
- * drop the preview without a reload.
+ * Where a class write lands (#315): the element's file, at its stamp, through
+ * the Tailwind class planner — the frame's own or a shared definition's
+ * (#318), which is the same write with more frames behind it. The frame
+ * already shows the change as an inline style; this is the one write behind
+ * it, and the answer is the literal as it was and as it is, so the frame can
+ * set the attribute and drop the preview without a reload.
  */
 export async function classSite(
 	root: string,
 	frame: string,
 	ask: ClassAsk,
-	deps: LaneDeps,
 	theme: ClassTheme | undefined,
 ): Promise<ClassSite> {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const folder = `${frameFolder(frame, found.page)}/`;
 	const stamp = stampIn(root, ask.source);
 	if ("message" in stamp) return { kind: "error", ...stamp };
 	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
@@ -289,9 +281,6 @@ export async function classSite(
 		return { kind: "refusal", refusal: STALE_STAMP };
 	}
 	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
-	// this ticket writes the frame's own file: an element defined anywhere
-	// else reads whole and adjusts nowhere yet
-	if (!at.rel.startsWith(folder)) return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
 	const [before] = readElements(source, [{ line: at.line, column: at.column }], at.rel);
 	if (before === undefined) return { kind: "refusal", refusal: STALE_STAMP };
 	if (before.refusal !== undefined) return { kind: "refusal", refusal: before.refusal };
@@ -330,16 +319,15 @@ export interface ElementAsk {
  * Where a delete, a hide, a show or an attribute lands (#317).
  *
  * The same promise every other write in the lane makes: the file is parsed
- * fresh at the stamp, measured against the fingerprint the surface read it
- * out of, and spliced or refused. An element written somewhere this frame does
- * not own reads whole and adjusts nowhere — with one door through it, which is
- * a delete of something that is all of a shared component: the component keeps
- * its body and the call that renders it goes instead.
+ * fresh at the stamp, measured against the fingerprint the surface read it out
+ * of, and spliced or refused. A shared definition is written where it is
+ * defined, exactly as the frame's own is (#318) — with one door beside it,
+ * which is a delete of something that is all of a component: no body can lose
+ * its whole return, so the call that renders it goes instead.
  */
-export async function elementSite(root: string, frame: string, ask: ElementAsk, deps: LaneDeps): Promise<WriteSite> {
+export async function elementSite(root: string, frame: string, ask: ElementAsk): Promise<WriteSite> {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const folder = `${frameFolder(frame, found.page)}/`;
 	const stamp = stampIn(root, ask.source);
 	if ("message" in stamp) return { kind: "error", ...stamp };
 	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
@@ -351,8 +339,7 @@ export async function elementSite(root: string, frame: string, ask: ElementAsk, 
 		return { kind: "refusal", refusal: STALE_STAMP };
 	}
 	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
-	const own = at.rel.startsWith(folder);
-	const site = await callSite(root, ask, folder);
+	const site = callSite(root, ask);
 	if (ask.act === "delete") {
 		const here = planOps(source, [{ kind: "delete", source: ask.source }]);
 		// the element is all of a component: the call that renders it is what a
@@ -362,11 +349,9 @@ export async function elementSite(root: string, frame: string, ask: ElementAsk, 
 			if ("refusal" in site) return { kind: "refusal", refusal: site.refusal };
 			return planned(site.stamp, site.source, [{ kind: "delete", source: site.at }]);
 		}
-		if (!own) return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
 		if (!here.ok) return { kind: "refusal", refusal: here.refusal };
 		return spliced(at, source, here);
 	}
-	if (!own) return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
 	if (ask.act === "attribute") {
 		const { name, value } = ask;
 		if (name === undefined || value === undefined) {
@@ -377,16 +362,14 @@ export async function elementSite(root: string, frame: string, ask: ElementAsk, 
 	return planned(at, source, [{ kind: "set-hidden", source: ask.source, hidden: ask.act === "hide" }]);
 }
 
-/** The call one owner up, when the frame named one and this frame owns the file it is in. */
-async function callSite(
+/** The call one owner up, wherever it is written, when the frame named one. */
+function callSite(
 	root: string,
 	ask: ElementAsk,
-	folder: string,
-): Promise<{ stamp: Stamp; at: string; source: string } | { refusal: PatchRefusal } | undefined> {
+): { stamp: Stamp; at: string; source: string } | { refusal: PatchRefusal } | undefined {
 	if (ask.owner === undefined) return undefined;
 	const call = stampIn(root, ask.owner);
 	if ("message" in call || call.stamp === undefined) return undefined;
-	if (!call.stamp.rel.startsWith(folder)) return undefined;
 	try {
 		return { stamp: call.stamp, at: ask.owner, source: readFileSync(call.stamp.file, "utf8") };
 	} catch {
@@ -394,6 +377,7 @@ async function callSite(
 	}
 }
 
+/** The ops planned against one file, the frame's own or a shared definition's alike (#318). */
 function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1], theme?: ClassTheme): WriteSite {
 	const plan = planOps(source, ops, theme);
 
@@ -445,26 +429,22 @@ export type AssetSite =
  * file as the swap would leave it and the bytes still owed to disk, so the
  * caller writes the picture first and the source second — a document that
  * reloads between them must never find an import of a file that is not there
- * yet.
+ * yet. A shared definition's picture is swapped where it is defined (#318);
+ * the file itself still lands beside the frame the hand was in.
  */
 export async function assetSite(
 	root: string,
 	frame: string,
 	stampedAt: string,
 	put: AssetPut,
-	deps: LaneDeps,
 	fingerprint: string,
 ): Promise<AssetSite> {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const folder = `${frameFolder(frame, found.page)}/`;
 	const stamp = stampIn(root, stampedAt);
 	if ("message" in stamp) return { kind: "error", ...stamp };
 	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
 	const at = stamp.stamp;
-	if (!at.rel.startsWith(folder)) {
-		return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
-	}
 	let source: string;
 	try {
 		source = readFileSync(at.file, "utf8");
@@ -532,12 +512,15 @@ function stampIn(root: string, source: string): { stamp: Stamp | undefined } | {
  * The file a revert names, or why it is not one.
  *
  * A revert carries a path rather than a stamp, so it is the one call where the
- * lane's scope has to be checked against the path itself: frame source, inside
- * design/, and never an app-owned file — `canvas.json` and `.spool/` are
- * spool's, and no patch has any business in them.
+ * lane's scope has to be checked against the path itself: source under
+ * `frames/` or `shared/` (#318), inside design/, and never an app-owned file
+ * — `canvas.json` and `.spool/` are spool's, and no patch has any business in
+ * them.
  */
 export function revertTarget(root: string, path: string): { file: string } | { status: 400 | 404; message: string } {
-	if (!path.startsWith("design/frames/")) return { status: 400, message: "a revert puts back frame source" };
+	if (!path.startsWith("design/frames/") && !path.startsWith("design/shared/")) {
+		return { status: 400, message: "a revert puts back frame source" };
+	}
 	const rel = path.slice("design/".length);
 	if (rel.split("/").includes(".spool")) return { status: 400, message: "a revert puts back frame source" };
 	try {

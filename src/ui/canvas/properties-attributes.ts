@@ -42,12 +42,11 @@ export { WALK_TARGET };
  *
  * A className that is an expression and an inline style both pin what a class
  * would say and neither one has any bearing on an `alt`, so the rail would be
- * greying live fields if it read the rung's refusal as one answer. These three
- * are the ones that are about the element rather than about its classes: it is
- * defined somewhere this frame does not own, the stamp hits nothing, or the
- * file will not parse.
+ * greying live fields if it read the rung's refusal as one answer. These two
+ * are the ones that are about the element rather than about its classes: the
+ * stamp hits nothing, or the file will not parse.
  */
-const BLOCKS: ReadonlySet<string> = new Set(["shared-definition", "stale-stamp", "unparsable"]);
+const BLOCKS: ReadonlySet<string> = new Set(["stale-stamp", "unparsable"]);
 
 export function blocksFields(refusal: PatchRefusal | undefined): string | undefined {
 	return refusal !== undefined && BLOCKS.has(refusal.code) ? refusal.says : undefined;

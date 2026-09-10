@@ -339,11 +339,11 @@ describe("the refusals, per element rather than per property", () => {
 		};
 		expect(verdictFor(row, computed, "")).toEqual({ ok: false, reason: "className is an expression" });
 
-		const shared: RowElement = {
+		const pinned: RowElement = {
 			...element,
-			refusal: { code: "shared-definition", says: "defined in shared/ui/icon-button.tsx:9, rendered by 4 frames" },
+			refusal: { code: "inline-style", says: "inline style pins it" },
 		};
-		expect(verdictFor(row, shared, "")).toMatchObject({ ok: false });
+		expect(verdictFor(row, pinned, "")).toMatchObject({ ok: false });
 	});
 
 	it("refuses a size and a padding on an inline element, each in its own words", () => {

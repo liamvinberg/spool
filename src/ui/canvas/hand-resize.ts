@@ -68,14 +68,13 @@ export function handlesFor(read: RungRead | undefined): LiveHandles {
 /**
  * Whether this rung's refusal is one the ring must respect.
  *
- * All but one of them are: an expression, an inline style, spread props with
- * no literal, a stamp that hits nothing: none of them leaves an axis a write
- * could take. `shared-definition` is the exception, and the reason is #303's: a
- * class cell several uses share is exactly what a hand edits, so a ring that
- * greyed for it would refuse the ordinary case.
+ * Every one of them is: an expression, an inline style, spread props with no
+ * literal, a stamp that hits nothing: none of them leaves an axis a write
+ * could take. A shared definition is no refusal at all (#318): a class cell
+ * several uses share is exactly what a hand edits.
  */
 export function ringBlocks(refusal: RungRead["refusal"]): boolean {
-	return refusal !== undefined && refusal.code !== "shared-definition";
+	return refusal !== undefined;
 }
 
 /** The degrees the base scope already carries, which a rotate drag starts from. */
