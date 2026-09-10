@@ -457,8 +457,8 @@ describe("class entries", () => {
 		selector: "div.veil-art",
 		patch: { path: "design/frames/home/frame.tsx", start: 300, end: 305, text: "990", fingerprint: "a" },
 		readAt: "frames/home/frame.tsx:8:5",
-		was: "veil-art w-[990px]",
-		now: "veil-art w-[700px]",
+		from: "veil-art w-[700px]",
+		to: "veil-art w-[990px]",
 	};
 
 	it("runs while the frame is there, and is amended with the inverse and the literals the other way round", () => {
@@ -468,8 +468,8 @@ describe("class entries", () => {
 		const back = {
 			...changed,
 			patch: { ...changed.patch, text: "700", fingerprint: "b" },
-			was: changed.now,
-			now: changed.was,
+			from: changed.to,
+			to: changed.from,
 		};
 		const amended = amend(undone?.history ?? history, "undo", back);
 		expect(takeRedo(amended, alive("home"))?.entry).toEqual(back);

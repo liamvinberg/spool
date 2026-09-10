@@ -106,17 +106,18 @@ export type HistoryEntry =
 			readonly readAt: string;
 	  }
 	// one class change on an element (#315): the same patch and inverse a text
-	// edit holds, and the literal the frame swaps between — `was` to `now` in
-	// the direction this entry currently runs, flipped with the patch when it is
-	// amended, since the element is swapped by hand rather than reloaded
+	// edit holds, and the literal the frame swaps between — from the one the
+	// element wears to the one running this entry leaves it wearing, flipped
+	// with the patch when it is amended, since the element is swapped by hand
+	// rather than reloaded
 	| {
 			readonly kind: "class";
 			readonly frame: string;
 			readonly selector: string;
 			readonly patch: HeldPatch;
 			readonly readAt: string;
-			readonly was: string;
-			readonly now: string;
+			readonly from: string;
+			readonly to: string;
 	  }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {

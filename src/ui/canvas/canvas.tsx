@@ -2042,12 +2042,12 @@ export function ProjectCanvas({
 					return;
 				}
 				updateHistory(
-					amend(history.current, way, { ...entry, patch: reverted.undo, was: entry.now, now: entry.was }),
+					amend(history.current, way, { ...entry, patch: reverted.undo, from: entry.to, to: entry.from }),
 				);
 				if (!landed(entry.frame, entry.readAt, reverted)) return;
 				const change = {
-					was: entry.was,
-					now: entry.now,
+					was: entry.from,
+					now: entry.to,
 					...(reverted.css === undefined ? {} : { css: reverted.css }),
 				};
 				swapClass(entry.frame, entry.selector, change, (ok) => {
@@ -2755,8 +2755,8 @@ export function ProjectCanvas({
 					selector: pick.selector,
 					patch: written.undo,
 					readAt: stamp,
-					was: written.className.was,
-					now: written.className.now,
+					from: written.className.now,
+					to: written.className.was,
 				});
 				if (kept) {
 					const change = { ...written.className, ...(written.css === undefined ? {} : { css: written.css }) };
