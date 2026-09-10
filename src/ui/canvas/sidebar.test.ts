@@ -1175,8 +1175,7 @@ function railEntry(entry: HistoryEntry | undefined): RailEntry {
 		entry.kind === "geometry" ||
 		entry.kind === "place" ||
 		entry.kind === "mint" ||
-		entry.kind === "text" ||
-		entry.kind === "class"
+		entry.kind === "hand"
 	) {
 		throw new Error(`not an entry this rail runs: ${entry?.kind ?? "nothing recorded"}`);
 	}

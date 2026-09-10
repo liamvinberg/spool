@@ -1,18 +1,20 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { splitClass } from "../../daemon/class-write";
 import type { RowElement } from "../../properties/rows";
-import type { CompiledTheme, Geometry, RungRead } from "../api";
-import { fetchTheme, readRungs } from "../api";
+import type { CompiledTheme, Geometry, ProjectAsset, RungRead } from "../api";
+import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
 import { MenuItem } from "./context-menu";
-import { fieldsFor } from "./properties-attributes";
+import { type AttributeField, blocksFields, fieldsFor } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
 import {
+	BOX,
 	FAINT,
 	FileLink,
 	LABEL,
 	Menu,
 	NumField,
+	type Option,
 	popoverAt,
 	Row,
 	Section,
@@ -112,6 +114,32 @@ export interface PropertiesActs {
 	onGeometryPreview: (name: string, patch: Partial<Geometry>) => void;
 	/** the scrub let go: one write and one undo slot for the whole gesture */
 	onGeometryCommit: (name: string, before: Geometry) => void;
+	/**
+	 * A structural write (#317): hide, show, or one attribute.
+	 *
+	 * It carries the fingerprint this rung was read out of, because that is the
+	 * file the row drew — the same promise every other op in the lane keeps.
+	 */
+	onElement: (
+		frame: string,
+		selector: string,
+		at: { source: string; fingerprint: string },
+		act: "hide" | "show" | "attribute",
+		attribute?: { name: string; value: string },
+	) => void;
+	/**
+	 * The asset swap (#260): the one hand edit that writes a file.
+	 *
+	 * The picture and the splice land together, so it carries the fingerprint
+	 * rather than being asked about first — a gate would answer about a file the
+	 * swap is about to rewrite anyway.
+	 */
+	onSwap: (
+		frame: string,
+		selector: string,
+		at: { source: string; fingerprint: string },
+		put: { file: File } | { asset: string },
+	) => void;
 }
 
 export function PropertiesRail({
@@ -300,6 +328,9 @@ function Body({
 		...(read?.mapped === true ? { mapped: true } : {}),
 	};
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
+	// the imports the swap may choose from, asked for only where a rung has a
+	// picture on it at all
+	const assets = useAssets(project, element?.frame ?? null, rowElement.tag === "img", revision);
 	const spelling = { scope: live, scoped: scopedClass(literal, live), theme };
 	// the rows write through the canvas's lane once the file has been read
 	// (#315): a write is measured against that read, so there is no gesture
@@ -362,6 +393,22 @@ function Body({
 						key={`${identity} attributes`}
 						read={read}
 						tag={rowElement.tag}
+						assets={assets}
+						hidden={splitClass(scopedClass(literal, BASE)).includes("hidden")}
+						write={(act, attribute) => {
+							if (read.fingerprint === undefined) return;
+							const at = { source: read.source, fingerprint: read.fingerprint };
+							acts.onElement(element.frame, element.selector, at, act, attribute);
+						}}
+						onSwap={(put) => {
+							if (read.fingerprint === undefined) return;
+							acts.onSwap(
+								element.frame,
+								element.selector,
+								{ source: read.source, fingerprint: read.fingerprint },
+								put,
+							);
+						}}
 					/>
 				)}
 				{element === null ? null : <SourceLine read={read} scope={live} original={original} view={view} />}
@@ -892,7 +939,24 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
  * literally shows the expression named rather than disappearing. `src` on an
  * image is the import it is written as, never a URL.
  */
-function Attributes({ html, read, tag }: { html: string; read: RungRead; tag: string }) {
+function Attributes({
+	html,
+	read,
+	tag,
+	assets,
+	hidden,
+	write,
+	onSwap,
+}: {
+	html: string;
+	read: RungRead;
+	tag: string;
+	assets: readonly ProjectAsset[];
+	/** what the file says about this element being shown, which is the token itself */
+	hidden: boolean;
+	write: (act: "hide" | "show" | "attribute", attribute?: { name: string; value: string }) => void;
+	onSwap: (put: { file: File } | { asset: string }) => void;
+}) {
 	const fields = useMemo(() => {
 		const node = new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
 		const attributes = [...(read.attributes ?? [])];
@@ -905,16 +969,30 @@ function Attributes({ html, read, tag }: { html: string; read: RungRead; tag: st
 				attributes.push({ name: attribute.name, value: attribute.value });
 		return fieldsFor(tag, attributes, read.refusal);
 	}, [tag, read.attributes, read.refusal, html]);
-	if (fields.length === 0) return null;
+	// the element's own refusals — it is defined somewhere this frame does not
+	// own, the stamp hits nothing, the file will not parse — are the ones that
+	// stop a hide as well as a field
+	const blocked = blocksFields(read.refusal);
 	return (
 		<Section name="attributes" {...(read.mapped === true ? { reason: "all rows" } : {})}>
+			<Row name="hidden" ok={blocked === undefined}>
+				<HiddenField hidden={hidden} ok={blocked === undefined} onToggle={() => write(hidden ? "show" : "hide")} />
+				{blocked === undefined ? null : (
+					<span className={cn("ml-auto min-w-0 shrink truncate pl-1", FAINT)}>{blocked}</span>
+				)}
+			</Row>
 			{fields.map((field) => (
 				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
-					<TextField
-						value={field.asset === true ? (field.specifier ?? "") : (field.expression ?? field.value)}
-						ok={false}
-						placeholder="none"
-					/>
+					{field.asset === true ? (
+						<AssetField field={field} assets={assets} onSwap={onSwap} />
+					) : (
+						<TextField
+							value={field.expression ?? field.value}
+							ok={field.reason === undefined}
+							placeholder="none"
+							onCommit={(typed) => write("attribute", { name: field.name, value: typed })}
+						/>
+					)}
 					{field.reason === undefined ? null : (
 						<span className={cn("ml-auto min-w-0 shrink truncate pl-1", FAINT)}>{field.reason}</span>
 					)}
@@ -922,6 +1000,122 @@ function Attributes({ html, read, tag }: { html: string; read: RungRead; tag: st
 			))}
 		</Section>
 	);
+}
+
+/**
+ * Hide and show, as one word you press (#317).
+ *
+ * Not a checkbox: the row says what the element is right now, and pressing it
+ * makes it the other thing. What lands in the file is the `hidden` token, and
+ * what happens in the frame happens before the write leaves.
+ */
+function HiddenField({ hidden, ok, onToggle }: { hidden: boolean; ok: boolean; onToggle: () => void }) {
+	if (!ok) {
+		return (
+			<span className={cn("flex min-w-0 flex-1 items-center px-1 text-muted", VALUE)}>
+				{hidden ? "hidden" : "shown"}
+			</span>
+		);
+	}
+	return (
+		<button
+			type="button"
+			data-hidden-toggle={hidden ? "hidden" : "shown"}
+			onClick={onToggle}
+			className={cn("flex min-w-0 flex-1 items-center px-1 text-left hover:text-text", BOX, VALUE)}
+		>
+			{hidden ? "hidden" : "shown"}
+		</button>
+	);
+}
+
+/** The one option that is not a picture: the OS file dialog, as a row in the menu. */
+const CHOOSE = " choose";
+
+/** The picture, chosen — never typed, because the op has to write an import. */
+function AssetField({
+	field,
+	assets,
+	onSwap,
+}: {
+	field: AttributeField;
+	assets: readonly ProjectAsset[];
+	onSwap: (put: { file: File } | { asset: string }) => void;
+}) {
+	const picker = useRef<HTMLInputElement | null>(null);
+	const held = field.specifier ?? "";
+	const options: Option[] = [
+		{ token: CHOOSE, name: "choose a file…" },
+		...assets.map((asset) => ({
+			token: asset.path,
+			name: asset.path.split("/").at(-1) ?? asset.path,
+			value: `${Math.ceil(asset.bytes / 1024)} KB`,
+			group: asset.path.startsWith("shared/") ? "shared" : "beside the frame",
+		})),
+	];
+	return (
+		<>
+			<Menu
+				current={{
+					token: held === "" ? null : held,
+					name: held === "" ? "none" : (held.split("/").at(-1) ?? held),
+				}}
+				options={options}
+				ok={field.reason === undefined}
+				label="image"
+				filter={assets.length > 8}
+				onPick={(token) => {
+					if (token === null) return;
+					if (token === CHOOSE) {
+						picker.current?.click();
+						return;
+					}
+					onSwap({ asset: token });
+				}}
+			/>
+			{/* the OS dialog, which is the other half of choose-an-import: a browser
+			    never reveals a dropped or chosen file's path, so the bytes are what
+			    travels and the daemon decides where they land */}
+			<input
+				ref={picker}
+				type="file"
+				accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+				className="hidden"
+				onChange={(event) => {
+					const file = event.target.files?.[0];
+					event.target.value = "";
+					if (file !== undefined) onSwap({ file });
+				}}
+			/>
+		</>
+	);
+}
+
+/**
+ * The imports this frame may choose from, read once per frame.
+ *
+ * Asked for only where a rung actually has a picture on it, because most
+ * elements do not and a menu nobody opens should cost no round trip. Re-read
+ * on a reload, since a swap of its own puts a new file in the folder the menu
+ * lists.
+ */
+function useAssets(project: string, frame: string | null, wanted: boolean, revision: number): ProjectAsset[] {
+	const [assets, setAssets] = useState<ProjectAsset[]>([]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a swap of its own puts a new file in the folder this lists
+	useEffect(() => {
+		if (frame === null || !wanted) {
+			setAssets([]);
+			return;
+		}
+		let live = true;
+		void listAssets(project, frame).then((read) => {
+			if (live) setAssets(read ?? []);
+		});
+		return () => {
+			live = false;
+		};
+	}, [project, frame, wanted, revision]);
+	return assets;
 }
 
 /* ---------- the source line ---------- */

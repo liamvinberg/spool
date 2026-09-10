@@ -118,7 +118,7 @@ describe("geometry entries", () => {
 
 describe("text entries", () => {
 	const typed: HistoryEntry = {
-		kind: "text",
+		kind: "hand",
 		frame: "home",
 		edit: 3,
 		patch: { path: "design/frames/home/frame.tsx", start: 40, end: 52, text: "Make something", fingerprint: "a" },
@@ -452,24 +452,23 @@ describe("entries about a nested page", () => {
 
 describe("class entries", () => {
 	const changed: HistoryEntry = {
-		kind: "class",
+		kind: "hand",
 		frame: "home",
-		selector: "div.veil-art",
+		edit: 9,
 		patch: { path: "design/frames/home/frame.tsx", start: 300, end: 305, text: "990", fingerprint: "a" },
 		readAt: "frames/home/frame.tsx:8:5",
-		from: "veil-art w-[700px]",
-		to: "veil-art w-[990px]",
+		classes: { selector: "div.veil-art", from: "veil-art w-[700px]", to: "veil-art w-[990px]" },
 	};
 
 	it("runs while the frame is there, and is amended with the inverse and the literals the other way round", () => {
 		const history = record(emptyHistory(), changed);
 		const undone = takeUndo(history, alive("home"));
 		expect(undone?.entry).toEqual(changed);
+		if (changed.kind !== "hand" || changed.classes === undefined) throw new Error("not a class entry");
 		const back = {
 			...changed,
 			patch: { ...changed.patch, text: "700", fingerprint: "b" },
-			from: changed.to,
-			to: changed.from,
+			classes: { ...changed.classes, from: changed.classes.to, to: changed.classes.from },
 		};
 		const amended = amend(undone?.history ?? history, "undo", back);
 		expect(takeRedo(amended, alive("home"))?.entry).toEqual(back);

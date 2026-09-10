@@ -27,6 +27,7 @@ import {
 	fetchEnginePreference,
 	fetchFlows,
 	fetchProjection,
+	fileAsAsset,
 	postCaptureFailure,
 	postSeen,
 	postTrash,
@@ -41,7 +42,9 @@ import {
 	resolveFlows,
 	revertPatch,
 	subscribeSse,
+	swapAsset,
 	writeClass,
+	writeElement,
 	writeText,
 } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
@@ -87,6 +90,7 @@ import {
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import {
+	alterAsk,
 	askText,
 	GONE,
 	type HandEdit,
@@ -174,8 +178,10 @@ import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCame
 import { type Held, PropertiesRail } from "./properties-rail";
 import { classEditsOf, type PropertyControls, type PropertyValue } from "./property-controls";
 import {
+	alterMessage,
 	classMessage,
 	clipboardCopyAllowed,
+	dropTargetMessage,
 	type EditedNode,
 	type ElementSizing,
 	type ElementSnapping,
@@ -697,6 +703,8 @@ export function ProjectCanvas({
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/** the frame's answer to putting one edit's words back (#314) */
 	const restoreWaiters = useRef(new Map<number, (ok: boolean) => void>());
+	/** the frame's answer to a delete, a hide, a show or an attribute (#317) */
+	const alterWaiters = useRef(new Map<number, (answer: { ok: boolean; owner: string | null }) => void>());
 	// the open edit as the handlers read it, a paint earlier than the render
 	const editingRef = useRef<HandEdit | null>(null);
 	const endEditRef = useRef<(commit: boolean) => void>(() => {});
@@ -1985,15 +1993,20 @@ export function ProjectCanvas({
 	);
 
 	/**
-	 * One text entry, run either way (#314). The patch goes back over the wire,
-	 * the daemon re-checks the fingerprint, and what comes back is the inverse
-	 * this entry carries from here on. A refusal means the file moved since —
-	 * the step is dropped, and said so. The frame puts the words back on its
-	 * own nodes; one that no longer holds them reloads behind its hold.
+	 * One hand entry, run either way (#314, #315). The patch goes back over the
+	 * wire, the daemon re-checks the fingerprint, and what comes back is the
+	 * inverse this entry carries from here on. A refusal means the file moved
+	 * since — the step is dropped, and said so. The DOM half is the frame's own:
+	 * it puts the words back on its nodes, or swaps the class literal the entry
+	 * carries between the two it holds; one that no longer holds them reloads
+	 * behind its hold.
 	 */
-	const walkText = useCallback(
-		(entry: Extract<HistoryEntry, { kind: "text" }>, way: Way, taking: History) => {
-			void revertPatch(project, entry.patch).then((reverted) => {
+	const walkHand = useCallback(
+		(entry: Extract<HistoryEntry, { kind: "hand" }>, way: Way, taking: History) => {
+			const classes = entry.classes;
+			// a class change is swapped on the element rather than reloaded, so the
+			// answer has to carry the sheet the frame now compiles to
+			void revertPatch(project, entry.patch, classes === undefined ? undefined : entry.frame).then((reverted) => {
 				// a press that landed after this one owns the stacks now
 				if (history.current !== taking) return;
 				if (reverted === undefined || !reverted.ok) {
@@ -2007,58 +2020,34 @@ export function ProjectCanvas({
 					});
 					return;
 				}
-				updateHistory(amend(history.current, way, { ...entry, patch: reverted.undo }));
-				landed(entry.frame, entry.readAt, reverted);
-				restoreWords(entry.frame, entry.edit, way === "undo" ? "before" : "after", (ok) => {
+				updateHistory(
+					amend(history.current, way, {
+						...entry,
+						patch: reverted.undo,
+						...(classes === undefined ? {} : { classes: { ...classes, from: classes.to, to: classes.from } }),
+					}),
+				);
+				const kept = landed(entry.frame, entry.readAt, reverted);
+				const held = (ok: boolean) => {
 					if (ok || !saved.current.has(entry.frame)) return;
 					saved.current.delete(entry.frame);
 					holdNext.current.add(entry.frame);
 					reloadFrameDocument(entry.frame);
-				});
-			});
-		},
-		[landed, project, reloadFrameDocument, restoreWords, updateHistory],
-	);
-
-	/**
-	 * One class entry, run either way (#315): the same wire as a text entry,
-	 * with the frame named so the answer carries the sheet, and the element
-	 * swapped between the two literals by hand rather than reloaded. The entry
-	 * is amended with the inverse patch and the literals the other way round.
-	 */
-	const walkClass = useCallback(
-		(entry: Extract<HistoryEntry, { kind: "class" }>, way: Way, taking: History) => {
-			void revertPatch(project, entry.patch, entry.frame).then((reverted) => {
-				if (history.current !== taking) return;
-				if (reverted === undefined || !reverted.ok) {
-					updateHistory(drop(history.current, way));
-					setNotice({
-						kind: "error",
-						message:
-							reverted === undefined
-								? "The step could not be put back"
-								: "The file changed since; this step is dropped",
-					});
+				};
+				if (classes === undefined) {
+					restoreWords(entry.frame, entry.edit, way === "undo" ? "before" : "after", held);
 					return;
 				}
-				updateHistory(
-					amend(history.current, way, { ...entry, patch: reverted.undo, from: entry.to, to: entry.from }),
-				);
-				if (!landed(entry.frame, entry.readAt, reverted)) return;
+				if (!kept) return;
 				const change = {
-					was: entry.from,
-					now: entry.to,
+					was: classes.from,
+					now: classes.to,
 					...(reverted.css === undefined ? {} : { css: reverted.css }),
 				};
-				swapClass(entry.frame, entry.selector, change, (ok) => {
-					if (ok || !saved.current.has(entry.frame)) return;
-					saved.current.delete(entry.frame);
-					holdNext.current.add(entry.frame);
-					reloadFrameDocument(entry.frame);
-				});
+				swapClass(entry.frame, classes.selector, change, held);
 			});
 		},
-		[landed, project, reloadFrameDocument, swapClass, updateHistory],
+		[landed, project, reloadFrameDocument, restoreWords, swapClass, updateHistory],
 	);
 
 	/**
@@ -2096,12 +2085,8 @@ export function ProjectCanvas({
 				else undoTrash();
 				return;
 			}
-			if (entry.kind === "text") {
-				walkText(entry, way, taken.history);
-				return;
-			}
-			if (entry.kind === "class") {
-				walkClass(entry, way, taken.history);
+			if (entry.kind === "hand") {
+				walkHand(entry, way, taken.history);
 				return;
 			}
 			// a gather is a page the rail made and the frames it gathered into it, and
@@ -2122,18 +2107,7 @@ export function ProjectCanvas({
 				void refetchFrames();
 			});
 		},
-		[
-			applyPlaces,
-			applyRects,
-			flushNudge,
-			liveness,
-			refetchFrames,
-			stageEntry,
-			undoTrash,
-			updateHistory,
-			walkClass,
-			walkText,
-		],
+		[applyPlaces, applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash, updateHistory, walkHand],
 	);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens
@@ -2650,7 +2624,7 @@ export function ProjectCanvas({
 				const readAt = written.path === `design/${held.source.replace(/:\d+:\d+$/, "")}` ? held.source : owner;
 				landed(held.frame, readAt ?? held.source, written);
 				recordEntry({
-					kind: "text",
+					kind: "hand",
 					frame: held.frame,
 					edit: held.id,
 					patch: written.undo,
@@ -2704,7 +2678,7 @@ export function ProjectCanvas({
 						selector: pick.selector,
 						refusal,
 						attempted,
-						about: "classes",
+						asked: `Change the classes of the ${pick.tag}: ${attempted}`,
 						...(file === undefined ? {} : { file }),
 					});
 				} else setNotice({ kind: "error", message: refusal.says });
@@ -2750,13 +2724,12 @@ export function ProjectCanvas({
 				}
 				const kept = landed(pick.frame, stamp, written);
 				recordEntry({
-					kind: "class",
+					kind: "hand",
 					frame: pick.frame,
-					selector: pick.selector,
+					edit: ++pickSeq.current,
 					patch: written.undo,
 					readAt: stamp,
-					from: written.className.now,
-					to: written.className.was,
+					classes: { selector: pick.selector, from: written.className.now, to: written.className.was },
 				});
 				if (kept) {
 					const change = { ...written.className, ...(written.css === undefined ? {} : { css: written.css }) };
@@ -2816,6 +2789,214 @@ export function ProjectCanvas({
 			},
 		};
 	}, [commitClass, picked, previewStyle]);
+	// --- delete, hide, show, attributes and pictures (#317) ----------------------
+
+	/**
+	 * What the hand holds once an element is gone: the rung above it, or the
+	 * frame when it had none. Never nothing — a frame the hand is still in is
+	 * what keeps its own save from reloading it out from under the gesture.
+	 */
+	const holdParent = useCallback(
+		(pick: PickedSelection) => {
+			const chain = pickedChain.current;
+			const rung = chain?.frame === pick.frame ? chain.chain.findIndex((hit) => hit.selector === pick.selector) : -1;
+			const parent = chain !== null && rung > 0 ? chain.chain[rung - 1] : undefined;
+			if (chain !== null && parent !== undefined) {
+				holdChain({ frame: pick.frame, chain: chain.chain.slice(0, rung) });
+				setPicked([{ frame: pick.frame, ...parent }]);
+				return;
+			}
+			holdChain(null);
+			setPicked([]);
+			setSelected([pick.frame]);
+		},
+		[holdChain],
+	);
+
+	/**
+	 * One structural gesture, in the frame and then in the file.
+	 *
+	 * The frame changes first and answers with whether it could and with the
+	 * call one owner up — the only place that knows it, and what a delete of
+	 * something that is all of a shared component lands on. Then one write in
+	 * the background, addressed by the stamp and measured against the file the
+	 * rung was read out of. A refusal puts the document back exactly as it was
+	 * and sits under the element with the reason and the door to the agent.
+	 */
+	const alterElement = useCallback(
+		(
+			pick: PickedSelection,
+			act: "delete" | "hide" | "show" | "attribute",
+			at: { source: string; fingerprint: string },
+			attribute?: { name: string; value: string },
+		) => {
+			const target = iframes.current.get(pick.frame)?.contentWindow;
+			if (target == null) return;
+			const id = ++pickSeq.current;
+			setRefused(null);
+			const asked = alterAsk(act, pick.tag, attribute);
+			const refuse = (refusal: Refusal) => {
+				restoreWords(pick.frame, id, "before", () => {});
+				setRefused({ frame: pick.frame, selector: pick.selector, refusal, attempted: asked, asked });
+			};
+			alterWaiters.current.set(id, ({ ok, owner }) => {
+				if (!ok) {
+					showRefusal(pick.frame, pick.selector, GONE);
+					return;
+				}
+				// the element is gone: the rung above it is what the hand is holding
+				// now, which is also what keeps the frame from reloading under the save
+				if (act === "delete") holdParent(pick);
+				void writeElement(project, pick.frame, {
+					act,
+					source: at.source,
+					fingerprint: at.fingerprint,
+					...(owner === null ? {} : { owner }),
+					...(attribute ?? {}),
+				}).then((written) => {
+					if (written === undefined) {
+						refuse({ code: "failed", says: "the change did not reach the file" });
+						return;
+					}
+					if (!written.ok) {
+						refuse(written.refusal);
+						if (written.refusal.code === "stale-file") {
+							setSaves((current) => ({ ...current, [pick.frame]: (current[pick.frame] ?? 0) + 1 }));
+						}
+						return;
+					}
+					// a gesture that said what the file already said is no step at all
+					if (written.undo.start === written.undo.end && written.undo.text === "") return;
+					const readAt = written.path === `design/${at.source.replace(/:\d+:\d+$/, "")}` ? at.source : null;
+					landed(pick.frame, readAt ?? at.source, written);
+					recordEntry({
+						kind: "hand",
+						frame: pick.frame,
+						edit: id,
+						patch: written.undo,
+						readAt: readAt ?? at.source,
+					});
+					if (written.uncaught === true) {
+						setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
+					}
+				});
+			});
+			target.postMessage(alterMessage(id, pick.selector, act, attribute?.name, attribute?.value), "*");
+			setTimeout(() => {
+				if (alterWaiters.current.delete(id)) showRefusal(pick.frame, pick.selector, GONE);
+			}, PICK_REPLY_MS);
+		},
+		[holdParent, landed, project, recordEntry, restoreWords, showRefusal],
+	);
+
+	/**
+	 * ⌫ on a held element (#317): it goes, here and in the file.
+	 *
+	 * The fingerprint is the one the ring's read holds for this very rung, which
+	 * is the file the document on screen was rendered from. Without it there is
+	 * nothing to measure the write against, and the honest answer is to say so
+	 * rather than to write against whatever the file says now.
+	 */
+	const deleteElement = useCallback(
+		(pick: PickedSelection) => {
+			const stamp = stampOf(pick);
+			if (typeof stamp !== "string") {
+				showRefusal(pick.frame, pick.selector, stamp);
+				return;
+			}
+			const read = ringRef.current.read;
+			const fingerprint = read?.source === stamp ? read.fingerprint : undefined;
+			if (fingerprint === undefined) {
+				showRefusal(pick.frame, pick.selector, {
+					code: "unread",
+					says: "the file was never read; select the element again",
+				});
+				return;
+			}
+			alterElement(pick, "delete", { source: stamp, fingerprint });
+		},
+		[alterElement, showRefusal],
+	);
+
+	/** The rail's own structural writes (#317): hide, show, and one attribute. */
+	const railAlter = useCallback(
+		(
+			frame: string,
+			selector: string,
+			at: { source: string; fingerprint: string },
+			act: "hide" | "show" | "attribute",
+			attribute?: { name: string; value: string },
+		) => {
+			const pick = pickedRef.current.find((held) => held.frame === frame && held.selector === selector);
+			if (pick === undefined) return;
+			alterElement(pick, act, at, attribute);
+		},
+		[alterElement],
+	);
+
+	/**
+	 * The asset swap (#260), which is the rail's write with a file in front of it.
+	 *
+	 * The picture and the splice land in one call, carrying the fingerprint the
+	 * surface read the element out of. The undo it records is the source half:
+	 * the picture stays in the folder, because a file spool put in somebody's
+	 * repo is theirs to keep or delete, and an undo that took it away again
+	 * would be spool deleting a file nobody asked it to.
+	 */
+	const swapPicture = useCallback(
+		(
+			frame: string,
+			selector: string,
+			at: { source: string; fingerprint: string },
+			put: { file: File } | { asset: string },
+		) => {
+			setRefused(null);
+			const bytes = "file" in put ? fileAsAsset(put.file).then((file) => ({ file })) : Promise.resolve(put);
+			void bytes
+				.then((body) => swapAsset(project, frame, at.source, at.fingerprint, body))
+				.then((written) => {
+					if (written === undefined) {
+						setNotice({ kind: "error", message: "The picture did not reach the file" });
+						return;
+					}
+					if (!written.ok) {
+						setRefused({ frame, selector, refusal: written.refusal, attempted: "a picture" });
+						return;
+					}
+					if (written.undo.start === written.undo.end && written.undo.text === "") return;
+					const edit = ++pickSeq.current;
+					landed(frame, at.source, written);
+					recordEntry({ kind: "hand", frame, edit, patch: written.undo, readAt: at.source });
+					if (written.uncaught === true) {
+						setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
+					}
+				});
+		},
+		[landed, project, recordEntry],
+	);
+
+	/**
+	 * The drop half of the asset swap (#260): the frame is armed, never open.
+	 *
+	 * A file dragged onto an image lands inside that frame's own document, so
+	 * the shim is the only thing that can catch it — and it catches nothing
+	 * until the canvas names one element, because the parity law says a frame
+	 * with a drop zone of its own must behave exactly as its bare document
+	 * does. One selected image is the whole of the arming, and it is taken back
+	 * the moment the selection moves.
+	 */
+	const armedDrop = useRef<string | null>(null);
+	useEffect(() => {
+		const only = picked.length === 1 ? picked[0] : undefined;
+		const target = only !== undefined && only.tag === "img" && !only.generated ? only : undefined;
+		const was = armedDrop.current;
+		if (was !== null && was !== target?.frame) {
+			iframes.current.get(was)?.contentWindow?.postMessage(dropTargetMessage(null), "*");
+		}
+		armedDrop.current = target?.frame ?? null;
+		if (target === undefined) return;
+		iframes.current.get(target.frame)?.contentWindow?.postMessage(dropTargetMessage(target.selector), "*");
+	}, [picked]);
 
 	// A refusal is about the element it was refused on, so it goes when the
 	// selection moves rather than sitting over whatever comes next. The keys
@@ -3325,6 +3506,30 @@ export function ProjectCanvas({
 					waiter?.(message.ok);
 					return;
 				}
+				case "altered": {
+					const waiter = alterWaiters.current.get(message.id);
+					alterWaiters.current.delete(message.id);
+					waiter?.({ ok: message.ok, owner: message.owner });
+					return;
+				}
+				// a picture dropped on the one image the canvas armed (#260). The
+				// swap is measured against the file the surface read, like every
+				// other write, so the stamp's own rung is asked for first — a drop
+				// is the one gesture that arrives with no read behind it
+				case "dropped": {
+					const pick = pickedRef.current.find(
+						(candidate) => candidate.frame === message.frame && candidate.selector === message.selector,
+					);
+					const stamp = pick === undefined ? undefined : stampOf(pick);
+					if (pick === undefined || typeof stamp !== "string") return;
+					const file = message.file;
+					void readRungs(project, message.frame, [stamp]).then((rungs) => {
+						const fingerprint = rungs?.[0]?.fingerprint;
+						if (fingerprint === undefined) return;
+						swapPicture(message.frame, pick.selector, { source: stamp, fingerprint }, { file });
+					});
+					return;
+				}
 				case "snapped": {
 					const waiter = snapWaiters.current.get(message.id);
 					snapWaiters.current.delete(message.id);
@@ -3495,6 +3700,7 @@ export function ProjectCanvas({
 		finishEdit,
 		setEdit,
 		showRefusal,
+		swapPicture,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -4855,13 +5061,16 @@ export function ProjectCanvas({
 			"canvas.reload": () => {
 				for (const name of verbTarget()) reloadFrameDocument(name);
 			},
-			// ⌫ is the frame's own trash. With a rung open it takes nothing: the
-			// element is what is held, and the frame behind it is not what the
-			// press meant.
+			// ⌫ is the frame's own trash, and an element's own delete when one is
+			// held (#317): the frame behind it is never what the press meant. One
+			// element at a time, and never while its words are open — that press
+			// belongs to the text being typed.
 			"canvas.trash": (event) => {
 				if (enteredRef.current !== null) return;
 				if (pickedRef.current.length > 0) {
 					event?.preventDefault();
+					const only = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
+					if (only !== undefined && editingRef.current === null) deleteElement(only);
 					return;
 				}
 				const targets = verbTarget();
@@ -4997,6 +5206,7 @@ export function ProjectCanvas({
 		zoomFit,
 		resetZoom,
 		animateCamera,
+		deleteElement,
 		exitEntered,
 		enterFrame,
 		nudge,
@@ -5543,6 +5753,8 @@ export function ProjectCanvas({
 							onGeometryCommit: commitFrameGeometry,
 							property: propertyControls,
 							onOpenFile: (path, line) => copySourcePath(`${path}:${line}`),
+							onElement: railAlter,
+							onSwap: swapPicture,
 						}}
 					/>
 				)}

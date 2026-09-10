@@ -92,32 +92,25 @@ export type HistoryEntry =
 	// the frame moves it happens among, because one press has to walk all of it
 	// — a hand that moved a frame and then a page undoes them in that order
 	| { readonly kind: "place"; readonly places: Places }
-	// words typed into a frame (#314): the patch to run next, in whichever
-	// direction this entry currently sits, and the ask the frame holds the DOM
-	// half under. Running the patch answers with its own inverse, and the entry
-	// is amended with what came back, because a file that has just changed has
-	// a new fingerprint and the old one would refuse
+	// one thing a hand did to a frame's source (#314, #315, #317): words typed,
+	// an element taken out, hidden, shown, an attribute set, a class changed, a
+	// picture swapped. The patch to run next, in whichever direction this entry
+	// currently sits, and the ask the frame holds the DOM half under. Running the
+	// patch answers with its own inverse, and the entry is amended with what came
+	// back, because a file that has just changed has a new fingerprint and the old
+	// one would refuse
 	| {
-			readonly kind: "text";
+			readonly kind: "hand";
 			readonly frame: string;
 			readonly edit: number;
 			readonly patch: HeldPatch;
 			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */
 			readonly readAt: string;
-	  }
-	// one class change on an element (#315): the same patch and inverse a text
-	// edit holds, and the literal the frame swaps between — from the one the
-	// element wears to the one running this entry leaves it wearing, flipped
-	// with the patch when it is amended, since the element is swapped by hand
-	// rather than reloaded
-	| {
-			readonly kind: "class";
-			readonly frame: string;
-			readonly selector: string;
-			readonly patch: HeldPatch;
-			readonly readAt: string;
-			readonly from: string;
-			readonly to: string;
+			// a class change is swapped on the element by hand rather than reloaded
+			// (#315), so the entry carries the literal the element wears and the one
+			// running this entry leaves it wearing, flipped with the patch when it is
+			// amended
+			readonly classes?: { readonly selector: string; readonly from: string; readonly to: string };
 	  }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {
@@ -395,8 +388,7 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			const pages = livePaged(entry.pages, entry.to, alive, way);
 			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
-		case "text":
-		case "class":
+		case "hand":
 			// the daemon's fingerprint is the real check and it happens on the wire;
 			// what the projection can say is whether the frame is still there to edit
 			return alive.frames.has(entry.frame) ? entry : undefined;

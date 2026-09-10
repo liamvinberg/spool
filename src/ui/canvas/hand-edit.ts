@@ -40,10 +40,23 @@ export interface ShownRefusal {
 	selector: string;
 	refusal: Refusal;
 	attempted?: string;
-	/** what the attempt was: the element's words (#314), or its classes (#315) */
-	about?: "words" | "classes";
+	/** what the hand tried, in plain words, when it was not typing words (#315, #317) */
+	asked?: string;
 	/** the file the refusal points at, for the link that hands its path out (#315) */
 	file?: { path: string; line: number };
+}
+
+/** What a structural gesture was, said the way a person would say it (#317). */
+export function alterAsk(
+	act: "delete" | "hide" | "show" | "attribute",
+	tag: string,
+	attribute?: { name: string; value: string },
+): string {
+	if (act === "attribute" && attribute !== undefined) {
+		return `Set ${attribute.name} to ${JSON.stringify(attribute.value)} on the ${tag}`;
+	}
+	if (act === "delete") return `Delete the ${tag}`;
+	return `${act === "hide" ? "Hide" : "Show"} the ${tag}`;
 }
 
 /**
@@ -105,8 +118,8 @@ export function wordsOf(nodes: readonly EditedNode[]): string {
 export function askText(refused: ShownRefusal, pick: PickedSelection | undefined): string {
 	const where = pick?.source ? ` at design/${pick.source}` : "";
 	const what = pick === undefined ? "the element" : `the ${pick.tag}`;
-	if (refused.about === "classes") {
-		return `Change the classes of ${what}${where}: ${refused.attempted ?? ""}. ${refused.refusal.says}, so the hand could not write it in place.`;
+	if (refused.asked !== undefined) {
+		return `${refused.asked}${where}. ${refused.refusal.says}, so the hand could not do it in place.`;
 	}
 	return `Change the words of ${what}${where} to ${JSON.stringify(refused.attempted ?? "")}. ${refused.refusal.says}, so the hand could not write it in place.`;
 }
