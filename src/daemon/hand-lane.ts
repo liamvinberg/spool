@@ -313,23 +313,14 @@ export async function classSite(
 /**
  * One structural change as the canvas sends it (#317): what to do, where, and
  * the fingerprint of the file the rung was read from.
- *
- * The call site rides along the way a text commit's does, because the frame is
- * the only thing that knows it: an element that is the whole of a shared
- * component cannot be taken out of that component, but the call that renders
- * it can be taken out of this frame, and that is what a person deleting a
- * shader means.
  */
 export interface ElementAsk {
 	act: "delete" | "hide" | "show" | "attribute";
 	source: string;
-	owner?: string;
 	/** the attribute an `attribute` ask writes, and what it writes there */
 	name?: string;
 	value?: string;
 	fingerprint: string;
-	/** the hash of the call site's own file, when the canvas holds one — as a text commit's */
-	ownerFingerprint?: string;
 }
 
 /**
@@ -338,9 +329,11 @@ export interface ElementAsk {
  * The same promise every other write in the lane makes: the file is parsed
  * fresh at the stamp, measured against the fingerprint the surface read it out
  * of, and spliced or refused. A shared definition is written where it is
- * defined, exactly as the frame's own is (#318) — with one door beside it,
- * which is a delete of something that is all of a component: no body can lose
- * its whole return, so the call that renders it goes instead.
+ * defined, exactly as the frame's own is (#318). A delete of something that is
+ * all of a component refuses like any other: no body can lose its whole
+ * return, and the honest next gesture — deleting the call that renders it — is
+ * one the person makes, on the call's own stamp and against the call's own
+ * file, rather than one this quietly makes for them.
  */
 export async function elementSite(root: string, frame: string, ask: ElementAsk): Promise<WriteSite> {
 	const found = lookupFrame(root, frame);
@@ -356,16 +349,8 @@ export async function elementSite(root: string, frame: string, ask: ElementAsk):
 		return { kind: "refusal", refusal: STALE_STAMP };
 	}
 	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
-	const site = callSite(root, ask);
 	if (ask.act === "delete") {
 		const here = planOps(source, [{ kind: "delete", source: ask.source }]);
-		// the element is all of a component: the call that renders it is what a
-		// hand can honestly take out, and the frame is the only thing that knows
-		// which call it was
-		if (!here.ok && here.refusal.code === "whole-return" && site !== undefined) {
-			if ("refusal" in site) return { kind: "refusal", refusal: site.refusal };
-			return planned(site.stamp, site.source, [{ kind: "delete", source: site.at }]);
-		}
 		if (!here.ok) return { kind: "refusal", refusal: here.refusal };
 		return spliced(at, source, here);
 	}
@@ -377,33 +362,6 @@ export async function elementSite(root: string, frame: string, ask: ElementAsk):
 		return planned(at, source, [{ kind: "set-attribute", source: ask.source, name, value }]);
 	}
 	return planned(at, source, [{ kind: "set-hidden", source: ask.source, hidden: ask.act === "hide" }]);
-}
-
-/**
- * The call one owner up, wherever it is written, when the frame named one.
- *
- * Its file is measured against the fingerprint the canvas holds for it, the
- * same as the element's own — a second file is a second thing that can have
- * moved. Where the canvas holds none, this read is the first anybody has seen
- * of that file and there is nothing for it to have moved from.
- */
-function callSite(
-	root: string,
-	ask: ElementAsk,
-): { stamp: Stamp; at: string; source: string } | { refusal: PatchRefusal } | undefined {
-	if (ask.owner === undefined) return undefined;
-	const call = stampIn(root, ask.owner);
-	if ("message" in call || call.stamp === undefined) return undefined;
-	let source: string;
-	try {
-		source = readFileSync(call.stamp.file, "utf8");
-	} catch {
-		return { refusal: STALE_STAMP };
-	}
-	if (ask.ownerFingerprint !== undefined && fingerprintOf(source) !== ask.ownerFingerprint) {
-		return { refusal: STALE_FILE };
-	}
-	return { stamp: call.stamp, at: ask.owner, source };
 }
 
 /** The ops planned against one file, the frame's own or a shared definition's alike (#318). */

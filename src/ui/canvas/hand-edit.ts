@@ -44,6 +44,14 @@ export interface ShownRefusal {
 	asked?: string;
 	/** the file the refusal points at, for the link that hands its path out (#315) */
 	file?: { path: string; line: number };
+	/**
+	 * The one gesture the refusal offers in place of what was asked (#317).
+	 *
+	 * A delete of something that is all of a component is the case it exists
+	 * for: the element cannot go, the call that renders it can, and the person
+	 * is the one who decides that is what they meant.
+	 */
+	instead?: { says: string; act: () => void };
 }
 
 /** What a structural gesture was, said the way a person would say it (#317). */

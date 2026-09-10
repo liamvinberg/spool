@@ -480,6 +480,17 @@ export function SelectionOverlay({
 							{refused.file !== undefined && onOpenFile !== undefined && (
 								<FileLink path={refused.file.path} line={refused.file.line} onOpen={onOpenFile} />
 							)}
+							{refused.instead !== undefined && (
+								<button
+									type="button"
+									data-hand-instead=""
+									className="shrink-0 text-thread-strong hover:underline"
+									onPointerDown={(event) => event.stopPropagation()}
+									onClick={refused.instead.act}
+								>
+									{refused.instead.says}
+								</button>
+							)}
 							{refused.attempted !== undefined && onAsk !== undefined && (
 								<button
 									type="button"

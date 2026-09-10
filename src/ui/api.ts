@@ -354,9 +354,8 @@ export type ClassWritten =
 
 /**
  * A structural write (#317): what the hand did, where, and the file it was
- * measured against. The call site rides along when the frame knows it, because
- * an element that is all of a shared component is deleted at the call that
- * renders it.
+ * measured against. An element that is all of a component refuses: deleting
+ * the call that renders it is its own gesture, addressed by the call's stamp.
  */
 export async function writeElement(
 	project: string,
@@ -364,12 +363,9 @@ export async function writeElement(
 	ask: {
 		act: "delete" | "hide" | "show" | "attribute";
 		source: string;
-		owner?: string;
 		name?: string;
 		value?: string;
 		fingerprint: string;
-		/** the hash of the call site's own file, when the canvas holds one */
-		ownerFingerprint?: string;
 	},
 ): Promise<TextWritten | undefined> {
 	try {

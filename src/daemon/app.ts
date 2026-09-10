@@ -578,14 +578,16 @@ export function createDaemonApp({
 	 *
 	 * The same shape as a text commit and for the same reasons — a stamp is a
 	 * place in a file the daemon is about to open, and the fingerprint is the
-	 * file the surface formed the gesture against.
+	 * file the surface formed the gesture against. No call site rides along:
+	 * a delete of something that is all of a component refuses, and deleting
+	 * the call instead is its own gesture on the call's own stamp (#317).
 	 */
 	const elementBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const stamps = parseStamps([body.source, ...(body.owner === undefined ? [] : [body.owner])]);
+		const stamps = parseStamps([body.source]);
 		const act = body.act;
 		const acts = ["delete", "hide", "show", "attribute"];
-		const says = 'an element write is { "frame", "act", "source", "owner"?, "name"?, "value"?, "fingerprint" }';
+		const says = 'an element write is { "frame", "act", "source", "name"?, "value"?, "fingerprint" }';
 		if (
 			typeof body.frame !== "string" ||
 			!isSafeName(body.frame) ||
@@ -596,7 +598,7 @@ export function createDaemonApp({
 		) {
 			return c.text(says, 400);
 		}
-		const [source, owner] = stamps;
+		const [source] = stamps;
 		if (source === undefined) return c.text(says, 400);
 		if (act === "attribute" && (typeof body.name !== "string" || typeof body.value !== "string")) {
 			return c.text(says, 400);
@@ -605,16 +607,11 @@ export function createDaemonApp({
 			return c.text(says, 400);
 		}
 		if (typeof body.value === "string" && body.value.length > 4096) return c.text(says, 400);
-		if (body.ownerFingerprint !== undefined && typeof body.ownerFingerprint !== "string") {
-			return c.text(says, 400);
-		}
 		return {
 			frame: body.frame,
 			act: act as "delete" | "hide" | "show" | "attribute",
 			source,
 			fingerprint: body.fingerprint,
-			...(owner === undefined ? {} : { owner }),
-			...(typeof body.ownerFingerprint === "string" ? { ownerFingerprint: body.ownerFingerprint } : {}),
 			...(typeof body.name === "string" ? { name: body.name } : {}),
 			...(typeof body.value === "string" ? { value: body.value } : {}),
 		};

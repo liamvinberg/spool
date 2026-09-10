@@ -731,6 +731,15 @@ export function ProjectCanvas({
 	// the open edit as the handlers read it, a paint earlier than the render
 	const editingRef = useRef<HandEdit | null>(null);
 	const endEditRef = useRef<(commit: boolean) => void>(() => {});
+	/** the structural gesture as its own refusal reaches for it: a delete that offers the call */
+	const alterElementRef = useRef<
+		(
+			pick: PickedSelection,
+			act: "delete" | "hide" | "show" | "attribute",
+			at: { source: string; fingerprint: string },
+			attribute?: { name: string; value: string },
+		) => void
+	>(() => {});
 	// a press on the element already held, acted on at pointer-up (#255)
 	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
 	const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -2964,11 +2973,17 @@ export function ProjectCanvas({
 	 * One structural gesture, in the frame and then in the file.
 	 *
 	 * The frame changes first and answers with whether it could and with the
-	 * call one owner up — the only place that knows it, and what a delete of
-	 * something that is all of a shared component lands on. Then one write in
-	 * the background, addressed by the stamp and measured against the file the
-	 * rung was read out of. A refusal puts the document back exactly as it was
-	 * and sits under the element with the reason and the door to the agent.
+	 * call one owner up — the only place that knows it. Then one write in the
+	 * background, addressed by the stamp and measured against the file the rung
+	 * was read out of. A refusal puts the document back exactly as it was and
+	 * sits under the element with the reason and the door to the agent.
+	 *
+	 * A delete of something that is all of a component is refused rather than
+	 * quietly turned into a delete of the call: no body can lose its whole
+	 * return, and taking the call out of this frame is a different thing to
+	 * mean. The notice names the file the component is written in and offers
+	 * that delete as one press, which sends the same gesture again on the
+	 * call's own stamp and against the call's own file.
 	 */
 	const alterElement = useCallback(
 		(
@@ -2982,9 +2997,36 @@ export function ProjectCanvas({
 			const id = ++pickSeq.current;
 			setRefused(null);
 			const asked = alterAsk(act, pick.tag, attribute);
-			const refuse = (refusal: Refusal) => {
+			const refuse = (refusal: Refusal, instead?: ShownRefusal["instead"]) => {
 				restoreWords(pick.frame, id, "before", () => {});
-				setRefused({ frame: pick.frame, selector: pick.selector, refusal, attempted: asked, asked });
+				const file =
+					refusal.line === undefined
+						? undefined
+						: { path: `design/${at.source.replace(/:\d+:\d+$/, "")}`, line: refusal.line };
+				setRefused({
+					frame: pick.frame,
+					selector: pick.selector,
+					refusal,
+					attempted: asked,
+					asked,
+					...(file === undefined ? {} : { file }),
+					...(instead === undefined ? {} : { instead }),
+				});
+			};
+			/**
+			 * The delete a whole-return refusal offers: the call that renders it,
+			 * on the call's own stamp and against the call's own file. Nothing
+			 * where the frame named no call or the canvas has never read the file
+			 * that call is in, because then there is nothing to measure it against.
+			 */
+			const insteadDeleteCall = (refusal: Refusal, call: string | null) => {
+				if (act !== "delete" || refusal.code !== "whole-return" || call === null) return undefined;
+				const fingerprint = fingerprintFor(pick.frame, call);
+				if (fingerprint === undefined) return undefined;
+				return {
+					says: "Delete the call",
+					act: () => alterElementRef.current(pick, "delete", { source: call, fingerprint }),
+				};
 			};
 			alterWaiters.current.set(id, ({ ok, owner }) => {
 				if (!ok) {
@@ -2997,13 +3039,10 @@ export function ProjectCanvas({
 				const read = ringRef.current.read;
 				const readers = read?.source === at.source ? (read.shared?.frames ?? []) : [];
 				holdReaders(pick.frame, readers);
-				const ownerFingerprint = owner === null ? undefined : fingerprintFor(pick.frame, owner);
 				void writeElement(project, pick.frame, {
 					act,
 					source: at.source,
 					fingerprint: at.fingerprint,
-					...(owner === null ? {} : { owner }),
-					...(ownerFingerprint === undefined ? {} : { ownerFingerprint }),
 					...(attribute ?? {}),
 				}).then((written) => {
 					settled(written, {
@@ -3011,7 +3050,7 @@ export function ProjectCanvas({
 						readers,
 						edit: id,
 						readAt: () => at.source,
-						refuse,
+						refuse: (refusal) => refuse(refusal, insteadDeleteCall(refusal, owner)),
 						failed: "the change did not reach the file",
 						// the element is gone: the rung above it is what the hand holds
 						// now, and it holds it only once the write has actually landed,
@@ -3029,6 +3068,7 @@ export function ProjectCanvas({
 		},
 		[fingerprintFor, holdParent, holdReaders, project, restoreWords, settled, showRefusal],
 	);
+	alterElementRef.current = alterElement;
 
 	/**
 	 * ⌫ on a held element (#317): it goes, here and in the file.

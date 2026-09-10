@@ -749,7 +749,8 @@ describe("delete", () => {
 		const shared = `export function Shader({ effect }: { effect: string }) {\n\treturn <div className="shader-surface" data-effect={effect} />;\n}\n`;
 		expect(refusal([{ kind: "delete", source: stamp(shared, "<div") }], shared)).toEqual({
 			code: "whole-return",
-			says: "it is all of Shader; delete it where it is used or ask the agent",
+			says: "it is all of Shader; the call that renders it is what a hand can take out",
+			line: 2,
 		});
 	});
 

@@ -597,7 +597,10 @@ function planDelete(source: string, element: Element): OnePlan {
 				says:
 					owner === ""
 						? "it is the whole of what a function returns; edit it in code or ask the agent"
-						: `it is all of ${owner}; delete it where it is used or ask the agent`,
+						: `it is all of ${owner}; the call that renders it is what a hand can take out`,
+				// the line it is defined on, so the notice names the file it is
+				// defined in rather than the frame the hand was looking at
+				line: element.node.loc?.start.line ?? 0,
 			},
 		};
 	}

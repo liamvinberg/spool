@@ -108,9 +108,18 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	await shows("#details p", 1);
 
 	// a `Link` call: the `<a>` it renders is all of a component in another file,
-	// so the call is what goes and the shared file is left exactly as it was
+	// so ⌫ refuses, names the file that component is written in, and offers the
+	// call instead — which is the delete that can honestly land
 	await hold("a.solid");
 	await page.keyboard.press("Backspace");
+	const instead = page.locator("[data-hand-instead]");
+	await expect.poll(() => instead.count(), { timeout: 15_000 }).toBe(1);
+	expect(await page.locator("[data-hand-refusal] [data-hand-file]").getAttribute("data-hand-file")).toContain(
+		"design/shared/ui/page-parts.tsx",
+	);
+	await says('<Link className="solid"');
+	await shows("a.solid", 1);
+	await instead.click();
 	await says('<Link className="solid"', false);
 	await shows("a.solid", 0);
 	expect(f.bytes("shared/ui/page-parts.tsx")).toBe(PAGE_PARTS);
@@ -118,6 +127,8 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	// the `Shader` call, the same way
 	await hold(".shader-surface");
 	await page.keyboard.press("Backspace");
+	await expect.poll(() => instead.count(), { timeout: 15_000 }).toBe(1);
+	await instead.click();
 	await says("<Shader", false);
 	await shows(".shader-surface", 0);
 	expect(f.bytes("shared/ui/shader.tsx")).toBe(SHADER);
