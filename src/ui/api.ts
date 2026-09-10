@@ -14,6 +14,7 @@ import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
+import type { ProjectAsset } from "../daemon/hand-asset";
 import type { RungRead } from "../daemon/hand-lane";
 import type { AttributeRead, EditedNode, PatchRefusal, StampShift } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
@@ -54,6 +55,7 @@ export type {
 	LocatedRange,
 	PatchRefusal,
 	Place,
+	ProjectAsset,
 	ProjectCard,
 	ProjectedFrame,
 	Projection,
@@ -342,6 +344,85 @@ export type ClassWritten =
 			css?: string;
 	  })
 	| { ok: false; refusal: PatchRefusal };
+
+/**
+ * A structural write (#317): what the hand did, where, and the file it was
+ * measured against. The call site rides along when the frame knows it, because
+ * an element that is all of a shared component is deleted at the call that
+ * renders it.
+ */
+export async function writeElement(
+	project: string,
+	frame: string,
+	ask: {
+		act: "delete" | "hide" | "show" | "attribute";
+		source: string;
+		owner?: string;
+		name?: string;
+		value?: string;
+		fingerprint: string;
+	},
+): Promise<TextWritten | undefined> {
+	try {
+		const res = await client.api.p[":project"].element.$post({ param: { project }, json: { frame, ...ask } });
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as TextWritten;
+	} catch {
+		return undefined;
+	}
+}
+
+export interface AssetFile {
+	name: string;
+	/** base64, which is how it rides to the daemon */
+	data: string;
+}
+
+/**
+ * A file the hands dropped or chose, as the bytes that ride to the daemon.
+ *
+ * Base64 because a browser never reveals a dropped file's path, so the bytes
+ * are the only thing there is to send. Chunked: `String.fromCharCode` takes
+ * its bytes as arguments and a photograph is hundreds of thousands of them,
+ * which is a stack overflow rather than a slow call.
+ */
+export async function fileAsAsset(file: File): Promise<AssetFile> {
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	let binary = "";
+	for (let at = 0; at < bytes.length; at += 8192) binary += String.fromCharCode(...bytes.subarray(at, at + 8192));
+	return { name: file.name, data: btoa(binary) };
+}
+
+/** The picture on an `img`, replaced: the bytes land beside the frame and the import is written (#260). */
+export async function swapAsset(
+	project: string,
+	frame: string,
+	source: string,
+	fingerprint: string,
+	put: { file: AssetFile } | { asset: string },
+): Promise<TextWritten | undefined> {
+	try {
+		const res = await client.api.p[":project"].asset.$post({
+			param: { project },
+			json: { frame, source, fingerprint, asset: undefined, file: undefined, ...put },
+		});
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as TextWritten;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The imports one frame may choose from: what is beside it, and what is shared. */
+export async function listAssets(project: string, frame: string): Promise<ProjectAsset[] | undefined> {
+	try {
+		const res = await client.api.p[":project"].assets.$get({ param: { project }, query: { frame } });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { assets: ProjectAsset[] }).assets;
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * The write half of a class change (#315): the tokens the rail decided, on

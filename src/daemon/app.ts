@@ -71,8 +71,18 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { listAssets } from "./hand-asset";
-import { classSite, readRungs, revertTarget, STALE_FILE, textSite } from "./hand-lane";
+import { ASSET_REQUEST_CAP, base64Length, listAssets } from "./hand-asset";
+import {
+	type AssetPut,
+	assetSite,
+	classSite,
+	elementSite,
+	readRungs,
+	revertTarget,
+	STALE_FILE,
+	textSite,
+	type WriteSite,
+} from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
 import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
@@ -495,6 +505,29 @@ export function createDaemonApp({
 		},
 	});
 
+	/**
+	 * A planned write, landed (#314, #317).
+	 *
+	 * Every hand write answers the same three things, so they are said in one
+	 * place: where it went, what the file hashes to now, how the stamps on the
+	 * patched lines moved, and the patch that takes it back. A write that says
+	 * what the file already said writes nothing at all.
+	 */
+	const written = (root: string, site: Extract<WriteSite, { kind: "ok" }>) => {
+		const undo = spanBetween(site.source, site.text);
+		if (site.text !== site.source) writeAtomic(site.file, site.text);
+		const after = fingerprintOf(site.text);
+		return {
+			ok: true as const,
+			path: site.path,
+			fingerprint: after,
+			shifts: site.shifts,
+			undo: { path: site.path, ...undo, fingerprint: after },
+			// the one project with nothing catching a hand edit hears so once
+			...(site.text !== site.source && uncaughtNotice(root) ? { uncaught: true as const } : {}),
+		};
+	};
+
 	/** The rail's read (#256): one frame, and the ancestry's stamps in rung order. */
 	const rungsBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -533,6 +566,90 @@ export function createDaemonApp({
 			fingerprint: body.fingerprint,
 			...(owner === undefined ? {} : { owner }),
 		};
+	});
+
+	/**
+	 * A structural change (#317): a delete, a hide, a show, or one attribute.
+	 *
+	 * The same shape as a text commit and for the same reasons — a stamp is a
+	 * place in a file the daemon is about to open, and the fingerprint is the
+	 * file the surface formed the gesture against.
+	 */
+	const elementBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const stamps = parseStamps([body.source, ...(body.owner === undefined ? [] : [body.owner])]);
+		const act = body.act;
+		const acts = ["delete", "hide", "show", "attribute"];
+		const says = 'an element write is { "frame", "act", "source", "owner"?, "name"?, "value"?, "fingerprint" }';
+		if (
+			typeof body.frame !== "string" ||
+			!isSafeName(body.frame) ||
+			typeof act !== "string" ||
+			!acts.includes(act) ||
+			stamps === undefined ||
+			typeof body.fingerprint !== "string"
+		) {
+			return c.text(says, 400);
+		}
+		const [source, owner] = stamps;
+		if (source === undefined) return c.text(says, 400);
+		if (act === "attribute" && (typeof body.name !== "string" || typeof body.value !== "string")) {
+			return c.text(says, 400);
+		}
+		if (typeof body.name === "string" && (body.name.length === 0 || body.name.length > 64)) {
+			return c.text(says, 400);
+		}
+		if (typeof body.value === "string" && body.value.length > 4096) return c.text(says, 400);
+		return {
+			frame: body.frame,
+			act: act as "delete" | "hide" | "show" | "attribute",
+			source,
+			fingerprint: body.fingerprint,
+			...(owner === undefined ? {} : { owner }),
+			...(typeof body.name === "string" ? { name: body.name } : {}),
+			...(typeof body.value === "string" ? { value: body.value } : {}),
+		};
+	});
+
+	/**
+	 * The asset swap (#260): one `<img>`, and the picture it is to draw.
+	 *
+	 * Either a file a hand just dropped — its name and its bytes, because a
+	 * browser never reveals a dropped file's path — or one the project already
+	 * holds, named the way the canvas spells every path. Exactly one of the two:
+	 * a body carrying both is a client that has not decided.
+	 */
+	const assetBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const { frame, source, fingerprint, file, asset } = body;
+		const says = 'a swap is { "frame", "source", "fingerprint", and one of "file" or "asset" }';
+		if (typeof frame !== "string" || !isSafeName(frame) || typeof source !== "string") return c.text(says, 400);
+		if (parseStamps([source]) === undefined) return c.text(says, 400);
+		if (typeof fingerprint !== "string" || fingerprint === "") {
+			return c.text("a swap carries the fingerprint it was formed against", 400);
+		}
+		const swap: {
+			frame: string;
+			source: string;
+			fingerprint: string;
+			asset: string | undefined;
+			file: { name: string; data: string } | undefined;
+		} = { frame, source, fingerprint, asset: undefined, file: undefined };
+		if (typeof asset === "string" && file === undefined) {
+			if (asset.length === 0 || asset.length > 512) return c.text(says, 400);
+			swap.asset = asset;
+			return swap;
+		}
+		if (typeof file !== "object" || file === null || asset !== undefined) return c.text(says, 400);
+		const { name, data } = file as Record<string, unknown>;
+		if (typeof name !== "string" || typeof data !== "string") return c.text(says, 400);
+		if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
+			return c.text("not a file spool can read", 400);
+		// the budget is the real ceiling and the lane says so in the project's own
+		// words; this is only a bound on what one request may carry at all
+		if (data.length > base64Length(ASSET_REQUEST_CAP)) return c.text("not a file spool can read", 400);
+		swap.file = { name, data };
+		return swap;
 	});
 
 	/**
@@ -2267,19 +2384,42 @@ export function createDaemonApp({
 			const site = await textSite(project.root, frame, ask, framesUsingIn(project.root));
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
-			// an edit that says what the file already says writes nothing
-			const undo = spanBetween(site.source, site.text);
-			if (site.text !== site.source) writeAtomic(site.file, site.text);
-			const after = fingerprintOf(site.text);
-			return c.json({
-				ok: true,
-				path: site.path,
-				fingerprint: after,
-				shifts: site.shifts,
-				undo: { path: site.path, ...undo, fingerprint: after },
-				// the one project with nothing catching a hand edit hears so once
-				...(site.text !== site.source && uncaughtNotice(project.root) ? { uncaught: true } : {}),
-			});
+			return c.json(written(project.root, site));
+		})
+		/*
+		 * The structural writes (#317): a delete, a hide, a show, one attribute.
+		 * The frame already shows what happened; this puts it in the file, once,
+		 * and answers with the patch that takes it back.
+		 */
+		.post("/api/p/:project/element", elementBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { frame, ...ask } = c.req.valid("json");
+			const site = await elementSite(project.root, frame, ask, framesUsingIn(project.root));
+			if (site.kind === "error") return c.text(site.message, site.status);
+			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
+			return c.json(written(project.root, site));
+		})
+		/*
+		 * The asset swap (#260): the picture and the import it is written as.
+		 *
+		 * The bytes land before the source, because a document that reloads
+		 * between the two writes must never find an import of a file that is not
+		 * there yet.
+		 */
+		.post("/api/p/:project/asset", assetBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { frame, source, fingerprint, file, asset } = c.req.valid("json");
+			const put: AssetPut =
+				file === undefined
+					? { kind: "held", path: asset ?? "" }
+					: { kind: "new", name: file.name, bytes: Buffer.from(file.data, "base64") };
+			const site = await assetSite(project.root, frame, source, put, framesUsingIn(project.root), fingerprint);
+			if (site.kind === "error") return c.text(site.message, site.status);
+			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
+			if (site.asset.bytes !== undefined) writeAtomic(site.asset.file, site.asset.bytes);
+			return c.json({ ...written(project.root, site), asset: `design/${site.asset.path}` });
 		})
 		/*
 		 * The write half of a class change (#315). The frame already shows it
@@ -2297,20 +2437,9 @@ export function createDaemonApp({
 			const site = await classSite(project.root, frame, ask, framesUsingIn(project.root), theme);
 			if (site.kind === "error") return c.text(site.message, site.status);
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
-			const undo = spanBetween(site.source, site.text);
-			if (site.text !== site.source) writeAtomic(site.file, site.text);
-			const after = fingerprintOf(site.text);
+			const landed = written(project.root, site);
 			const css = site.text === site.source ? undefined : await compiler.stylesheet(project.root, frame);
-			return c.json({
-				ok: true,
-				path: site.path,
-				fingerprint: after,
-				shifts: site.shifts,
-				undo: { path: site.path, ...undo, fingerprint: after },
-				className: site.className,
-				...(css === undefined ? {} : { css }),
-				...(site.text !== site.source && uncaughtNotice(project.root) ? { uncaught: true } : {}),
-			});
+			return c.json({ ...landed, className: site.className, ...(css === undefined ? {} : { css }) });
 		})
 		/*
 		 * Undo and redo (#314): the characters put back, and refused rather

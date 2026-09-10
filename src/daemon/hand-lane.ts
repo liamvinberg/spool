@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ClassEdit, ClassTheme } from "./class-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { assetChosen, assetDestination, assetName, identifierHint, overBudget, specifierFrom } from "./hand-asset";
 import {
 	type AttributeRead,
 	type EditedNode,
@@ -167,7 +168,7 @@ export interface TextAsk {
 	fingerprint: string;
 }
 
-export type TextSite =
+export type WriteSite =
 	| {
 			kind: "ok";
 			/** the file on disk, resolved through design/'s boundary */
@@ -192,7 +193,7 @@ export type TextSite =
  * the hand edited was rendered from — and a mismatch refuses rather than
  * landing somewhere wrong. Both files are read again here, never mirrored.
  */
-export async function textSite(root: string, frame: string, ask: TextAsk, deps: LaneDeps): Promise<TextSite> {
+export async function textSite(root: string, frame: string, ask: TextAsk, deps: LaneDeps): Promise<WriteSite> {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
 	const folder = `${frameFolder(frame, found.page)}/`;
@@ -254,11 +255,11 @@ export interface ClassAsk {
 }
 
 export type ClassSite =
-	| (Extract<TextSite, { kind: "ok" }> & {
+	| (Extract<WriteSite, { kind: "ok" }> & {
 			/** the literal before and after, which is what the frame swaps on the element */
 			className: { was: string; now: string };
 	  })
-	| Exclude<TextSite, { kind: "ok" }>;
+	| Exclude<WriteSite, { kind: "ok" }>;
 
 /**
  * Where a class write lands (#315): the element's own file, at its stamp,
@@ -305,9 +306,102 @@ export async function classSite(
 	return { ...site, className: { was: before.className, now: after?.className ?? before.className } };
 }
 
-function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1], theme?: ClassTheme): TextSite {
+/**
+ * One structural change as the canvas sends it (#317): what to do, where, and
+ * the fingerprint of the file the rung was read from.
+ *
+ * The call site rides along the way a text commit's does, because the frame is
+ * the only thing that knows it: an element that is the whole of a shared
+ * component cannot be taken out of that component, but the call that renders
+ * it can be taken out of this frame, and that is what a person deleting a
+ * shader means.
+ */
+export interface ElementAsk {
+	act: "delete" | "hide" | "show" | "attribute";
+	source: string;
+	owner?: string;
+	/** the attribute an `attribute` ask writes, and what it writes there */
+	name?: string;
+	value?: string;
+	fingerprint: string;
+}
+
+/**
+ * Where a delete, a hide, a show or an attribute lands (#317).
+ *
+ * The same promise every other write in the lane makes: the file is parsed
+ * fresh at the stamp, measured against the fingerprint the surface read it
+ * out of, and spliced or refused. An element written somewhere this frame does
+ * not own reads whole and adjusts nowhere — with one door through it, which is
+ * a delete of something that is all of a shared component: the component keeps
+ * its body and the call that renders it goes instead.
+ */
+export async function elementSite(root: string, frame: string, ask: ElementAsk, deps: LaneDeps): Promise<WriteSite> {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
+	const folder = `${frameFolder(frame, found.page)}/`;
+	const stamp = stampIn(root, ask.source);
+	if ("message" in stamp) return { kind: "error", ...stamp };
+	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	const at = stamp.stamp;
+	let source: string;
+	try {
+		source = readFileSync(at.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+	const own = at.rel.startsWith(folder);
+	const site = await callSite(root, ask, folder);
+	if (ask.act === "delete") {
+		const here = planOps(source, [{ kind: "delete", source: ask.source }]);
+		// the element is all of a component: the call that renders it is what a
+		// hand can honestly take out, and the frame is the only thing that knows
+		// which call it was
+		if (!here.ok && here.refusal.code === "whole-return" && site !== undefined) {
+			if ("refusal" in site) return { kind: "refusal", refusal: site.refusal };
+			return planned(site.stamp, site.source, [{ kind: "delete", source: site.at }]);
+		}
+		if (!own) return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
+		if (!here.ok) return { kind: "refusal", refusal: here.refusal };
+		return spliced(at, source, here);
+	}
+	if (!own) return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
+	if (ask.act === "attribute") {
+		const { name, value } = ask;
+		if (name === undefined || value === undefined) {
+			return { kind: "error", status: 400, message: "an attribute write names one and says what it holds" };
+		}
+		return planned(at, source, [{ kind: "set-attribute", source: ask.source, name, value }]);
+	}
+	return planned(at, source, [{ kind: "set-hidden", source: ask.source, hidden: ask.act === "hide" }]);
+}
+
+/** The call one owner up, when the frame named one and this frame owns the file it is in. */
+async function callSite(
+	root: string,
+	ask: ElementAsk,
+	folder: string,
+): Promise<{ stamp: Stamp; at: string; source: string } | { refusal: PatchRefusal } | undefined> {
+	if (ask.owner === undefined) return undefined;
+	const call = stampIn(root, ask.owner);
+	if ("message" in call || call.stamp === undefined) return undefined;
+	if (!call.stamp.rel.startsWith(folder)) return undefined;
+	try {
+		return { stamp: call.stamp, at: ask.owner, source: readFileSync(call.stamp.file, "utf8") };
+	} catch {
+		return { refusal: STALE_STAMP };
+	}
+}
+
+function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1], theme?: ClassTheme): WriteSite {
 	const plan = planOps(source, ops, theme);
+
 	if (!plan.ok) return { kind: "refusal", refusal: plan.refusal };
+	return spliced(stamp, source, plan);
+}
+
+function spliced(stamp: Stamp, source: string, plan: Extract<ReturnType<typeof planOps>, { ok: true }>): WriteSite {
 	return {
 		kind: "ok",
 		file: stamp.file,
@@ -316,6 +410,110 @@ function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1
 		text: plan.text,
 		shifts: shiftsOf(source, plan.patches),
 	};
+}
+
+/* ---------- the picture on an image (#260, back on the lane for #317) ---------- */
+
+/** Whether an import written into this file lands on something still inside design/. */
+function reachesAsset(root: string, file: string, specifier: string): boolean {
+	try {
+		const designDir = realDesignDir(root);
+		resolveDesignPath(designDir, resolve(dirname(file), specifier));
+		return true;
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return false;
+		throw error;
+	}
+}
+
+/** The picture an asset swap points at: bytes a hand just dropped, or a file the project already holds. */
+export type AssetPut = { kind: "new"; name: string; bytes: Buffer } | { kind: "held"; path: string };
+
+export type AssetSite =
+	| (Extract<WriteSite, { kind: "ok" }> & {
+			/** the picture, and whether its bytes still have to be put on disk */
+			asset: { file: string; path: string; write: boolean; bytes: Buffer | undefined };
+	  })
+	| { kind: "refusal"; refusal: PatchRefusal }
+	| { kind: "error"; status: 400 | 404; message: string };
+
+/**
+ * The asset swap, from the picture to the characters (#260).
+ *
+ * Everything the write lane cannot know: where the file goes, what the import
+ * may be called, and whether one document can carry it. What comes back is the
+ * file as the swap would leave it and the bytes still owed to disk, so the
+ * caller writes the picture first and the source second — a document that
+ * reloads between them must never find an import of a file that is not there
+ * yet.
+ */
+export async function assetSite(
+	root: string,
+	frame: string,
+	stampedAt: string,
+	put: AssetPut,
+	deps: LaneDeps,
+	fingerprint: string,
+): Promise<AssetSite> {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
+	const folder = `${frameFolder(frame, found.page)}/`;
+	const stamp = stampIn(root, stampedAt);
+	if ("message" in stamp) return { kind: "error", ...stamp };
+	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	const at = stamp.stamp;
+	if (!at.rel.startsWith(folder)) {
+		return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
+	}
+	let source: string;
+	try {
+		source = readFileSync(at.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	if (fingerprintOf(source) !== fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+
+	const asset = resolveAsset(root, found.dir, put);
+	if ("refusal" in asset) return { kind: "refusal", refusal: asset.refusal };
+	if ("message" in asset) return { kind: "error", status: asset.status, message: asset.message };
+	const specifier = specifierFrom(at.file, asset.file);
+	// a specifier is a path, and every path a hand names is checked against
+	// design/'s own boundary before anything is written through it
+	if (!reachesAsset(root, at.file, specifier)) {
+		return { kind: "error", status: 400, message: "an import reaches a project asset" };
+	}
+	const site = planned(at, source, [
+		{ kind: "set-asset", source: stampedAt, specifier, hint: identifierHint(asset.name) },
+	]);
+	if (site.kind !== "ok") return site;
+	return { ...site, asset: { file: asset.file, path: asset.path, write: asset.write, bytes: asset.bytes } };
+}
+
+type ResolvedAsset =
+	| { file: string; path: string; name: string; write: boolean; bytes: Buffer | undefined }
+	| { refusal: PatchRefusal }
+	| { status: 400 | 404; message: string };
+
+function resolveAsset(root: string, frameDir: string, put: AssetPut): ResolvedAsset {
+	try {
+		if (put.kind === "held") {
+			const chosen = assetChosen(root, put.path);
+			if (chosen === undefined) return { status: 404, message: `no image at design/${put.path}` };
+			const over = overBudget(chosen.bytes);
+			if (over !== undefined) return { refusal: over };
+			const name = put.path.split("/").at(-1) ?? put.path;
+			return { file: chosen.file, path: put.path, name, write: false, bytes: undefined };
+		}
+		const name = assetName(put.name);
+		if (name === undefined) return { status: 400, message: `"${put.name}" is not an image spool writes` };
+		const over = overBudget(put.bytes.length);
+		if (over !== undefined) return { refusal: over };
+		const where = assetDestination(root, frameDir, name, put.bytes);
+		return { ...where, name, bytes: where.write ? put.bytes : undefined };
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
+		throw error;
+	}
 }
 
 /** A stamp resolved through design/'s boundary: the place, nothing, or the boundary's own no. */
