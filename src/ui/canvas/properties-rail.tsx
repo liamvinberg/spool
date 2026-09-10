@@ -9,6 +9,7 @@ import { fieldsFor } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
 import {
 	FAINT,
+	FileLink,
 	LABEL,
 	Menu,
 	NumField,
@@ -32,7 +33,8 @@ import {
 	tokenState,
 	variantsOf,
 } from "./properties-scope";
-import { AddClassRow, PropertySections, type View } from "./properties-sections";
+import { AddClassRow, PropertySections, spellingControls, type View } from "./properties-sections";
+import type { PropertyControls, PropertyValue } from "./property-controls";
 import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
 
@@ -93,6 +95,15 @@ export interface RailPreview {
 
 export interface PropertiesActs {
 	onAsk?: () => void;
+	/**
+	 * The class write lane for the rung held (#315): a value previews on the
+	 * element in the frame at once and lands in the file as one class change
+	 * on Enter or blur. Nothing when no rung is held that the canvas can
+	 * address, and the rows draw without a gesture.
+	 */
+	property?: PropertyControls | null;
+	/** the file a refusal names, handed out the way the frame's own source path is */
+	onOpenFile?: (path: string, line: number) => void;
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
 	/** the frame's own geometry, which is `frame.json` and never source */
@@ -289,12 +300,15 @@ function Body({
 		...(read?.mapped === true ? { mapped: true } : {}),
 	};
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
-	// nothing writes from the rail yet: every field draws what the file says and
-	// offers no gesture
+	const spelling = { scope: live, scoped: scopedClass(literal, live), theme };
+	// the rows write through the canvas's lane once the file has been read
+	// (#315): a write is measured against that read, so there is no gesture
+	// to offer before it lands
+	const lastPreviewed = useRef<{ property: string; value: PropertyValue } | null>(null);
 	const view: View = {
-		property: null,
+		property: read === undefined ? null : spellingControls(spelling, acts.property ?? null, lastPreviewed),
 		scope: live,
-		scoped: scopedClass(literal, live),
+		scoped: spelling.scoped,
 		base: scopedClass(literal, BASE),
 		theme,
 		element: rowElement,
@@ -429,8 +443,11 @@ function Head({
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
 			{read?.refusal === undefined ? null : (
-				<div className="flex h-5 items-center px-2.5 pb-1">
+				<div className="flex h-5 items-center gap-2 px-2.5 pb-1">
 					<span className={cn("min-w-0 truncate", FAINT)}>{read.refusal.says}</span>
+					{read.refusal.line === undefined || read.path === undefined || acts.onOpenFile === undefined ? null : (
+						<FileLink path={read.path} line={read.refusal.line} onOpen={acts.onOpenFile} />
+					)}
 				</div>
 			)}
 		</div>

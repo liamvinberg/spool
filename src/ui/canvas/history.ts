@@ -105,6 +105,19 @@ export type HistoryEntry =
 			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */
 			readonly readAt: string;
 	  }
+	// one class change on an element (#315): the same patch and inverse a text
+	// edit holds, and the literal the frame swaps between — `was` to `now` in
+	// the direction this entry currently runs, flipped with the patch when it is
+	// amended, since the element is swapped by hand rather than reloaded
+	| {
+			readonly kind: "class";
+			readonly frame: string;
+			readonly selector: string;
+			readonly patch: HeldPatch;
+			readonly readAt: string;
+			readonly was: string;
+			readonly now: string;
+	  }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {
 			readonly kind: "move";
@@ -382,6 +395,7 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
 		case "text":
+		case "class":
 			// the daemon's fingerprint is the real check and it happens on the wire;
 			// what the projection can say is whether the frame is still there to edit
 			return alive.frames.has(entry.frame) ? entry : undefined;

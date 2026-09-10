@@ -44,6 +44,7 @@ import {
 	type RowValue,
 	type Rule,
 	readRow,
+	removalToken,
 	rowFor,
 	rowsIn,
 	type Section as SectionName,
@@ -101,13 +102,83 @@ export interface View {
 	fresh: (token: string | null) => boolean;
 }
 
-function atOf(view: View): At {
+function atOf(view: Pick<View, "scoped" | "theme">): At {
 	return { scoped: view.scoped, theme: view.theme };
 }
 
 function writeValue(view: View, row: ModelRow, value: RowValue): void {
 	if (!writableProperty(row)) return;
 	view.property?.apply(propertyNameOf(row), propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
+}
+
+/**
+ * A control's own value as the tokens the lane writes (#315).
+ *
+ * A number-token field and the colour field hand over a raw CSS value —
+ * `15px`, `#ff0044` — and a rail row never assembles a className, so the
+ * value is spelled here as the row's arbitrary token under the live scope:
+ * `text-[15px]`, `bg-[#ff0044]`. A removal with no token names its family
+ * the cheapest true way. A value the row cannot spell writes nothing.
+ */
+function spelled(view: Spelling, property: string, value: PropertyValue): PropertyValue | undefined {
+	const row = modelRow(property);
+	const scope = scopeKey(view.scope);
+	if (value.kind === "remove") {
+		return value.tokens === undefined
+			? { kind: "remove", tokens: [`${scope}${removalToken(row, atOf(view))}`] }
+			: value;
+	}
+	if (value.kind !== "custom") return value;
+	const token = unlinkTo(row, value.value);
+	return token.ok ? { kind: "binding", tokens: [`${scope}${token.token}`] } : undefined;
+}
+
+/** What spelling a value needs of the view: the scope it is written under, and the theme. */
+type Spelling = Pick<View, "scope" | "scoped" | "theme">;
+
+/**
+ * The controls the rows write through, over the canvas's own (#315).
+ *
+ * The canvas writes tokens and previews CSS; a field that types a raw value
+ * previews it as it is and commits with `finish(true)`, so the last value
+ * previewed is remembered here and spelled as a token at the commit. A value
+ * no row can spell lifts the preview and writes nothing.
+ */
+export function spellingControls(
+	view: Spelling,
+	base: PropertyControls | null,
+	last: { current: { property: string; value: PropertyValue } | null },
+): PropertyControls | null {
+	if (base === null) return null;
+	const written = (property: string, value: PropertyValue) => {
+		const tokens = spelled(view, property, value);
+		if (tokens === undefined) base.finish(false);
+		else base.apply(property, tokens);
+	};
+	return {
+		begin: (property) => {
+			last.current = null;
+			base.begin(property);
+		},
+		preview: (property, value, sample) => {
+			last.current = { property, value };
+			base.preview(property, value, sample);
+		},
+		apply: (property, value) => {
+			last.current = null;
+			written(property, value);
+		},
+		applyFields: (changes) => {
+			last.current = null;
+			base.applyFields(changes);
+		},
+		finish: (commit) => {
+			const held = last.current;
+			last.current = null;
+			if (commit && held !== null && held.value.kind === "custom") written(held.property, held.value);
+			else base.finish(commit);
+		},
+	};
 }
 
 /** Two properties one control decides together: an alignment is both of them. */

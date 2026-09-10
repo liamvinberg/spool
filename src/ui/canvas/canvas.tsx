@@ -41,6 +41,7 @@ import {
 	resolveFlows,
 	revertPatch,
 	subscribeSse,
+	writeClass,
 	writeText,
 } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
@@ -171,7 +172,9 @@ import { PageObjectLabel, PageObjectView } from "./page-object";
 import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import { type Held, PropertiesRail } from "./properties-rail";
+import { classEditsOf, type PropertyControls, type PropertyValue } from "./property-controls";
 import {
+	classMessage,
 	clipboardCopyAllowed,
 	type EditedNode,
 	type ElementSizing,
@@ -197,6 +200,7 @@ import {
 	sitesMessage,
 	sizingMessage,
 	snappingMessage,
+	styleMessage,
 	walkRejectionReason,
 } from "./protocol";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
@@ -1905,17 +1909,21 @@ export function ProjectCanvas({
 	 * write only a reload can place, reloads behind its hold now.
 	 */
 	const landed = useCallback(
-		(frame: string, readAt: string, written: { path: string; fingerprint: string; shifts: StampShift[] | null }) => {
+		(
+			frame: string,
+			readAt: string,
+			written: { path: string; fingerprint: string; shifts: StampShift[] | null },
+		): boolean => {
 			setSaves((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
 			if (written.shifts === null || !frameHeld(frame)) {
 				saved.current.delete(frame);
 				holdNext.current.add(frame);
 				reloadFrameDocument(frame);
-				return;
+				return false;
 			}
 			saved.current.set(frame, { source: readAt, fingerprint: written.fingerprint });
 			const shifts = written.shifts;
-			if (!shifts.some((shift) => shift.delta !== 0)) return;
+			if (!shifts.some((shift) => shift.delta !== 0)) return true;
 			const file = written.path.replace(/^design\//, "");
 			iframes.current.get(frame)?.contentWindow?.postMessage(restampMessage(file, shifts), "*");
 			const move = (source: string | null) => (source === null ? null : restamped(source, file, shifts));
@@ -1926,8 +1934,36 @@ export function ProjectCanvas({
 			if (chain?.frame === frame) {
 				holdChain({ frame, chain: chain.chain.map((hit) => ({ ...hit, source: move(hit.source) })) });
 			}
+			return true;
 		},
 		[frameHeld, holdChain, reloadFrameDocument],
+	);
+
+	/**
+	 * The DOM half of a class change (#315): the frame swaps the tokens that
+	 * changed on the element, takes the sheet the file now compiles to, and
+	 * lifts the inline preview. It says whether the element was still there.
+	 */
+	const swapClass = useCallback(
+		(
+			frame: string,
+			selector: string,
+			change: { was: string; now: string; css?: string },
+			then: (ok: boolean) => void,
+		) => {
+			const target = iframes.current.get(frame)?.contentWindow;
+			if (target == null) {
+				then(false);
+				return;
+			}
+			const ask = ++pickSeq.current;
+			restoreWaiters.current.set(ask, then);
+			target.postMessage(classMessage(selector, change.was, change.now, change.css, ask), "*");
+			setTimeout(() => {
+				if (restoreWaiters.current.delete(ask)) then(false);
+			}, PICK_REPLY_MS);
+		},
+		[],
 	);
 
 	/** The DOM half of undo and redo: the frame puts one edit's words back itself, and says whether it could. */
@@ -1985,6 +2021,47 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * One class entry, run either way (#315): the same wire as a text entry,
+	 * with the frame named so the answer carries the sheet, and the element
+	 * swapped between the two literals by hand rather than reloaded. The entry
+	 * is amended with the inverse patch and the literals the other way round.
+	 */
+	const walkClass = useCallback(
+		(entry: Extract<HistoryEntry, { kind: "class" }>, way: Way, taking: History) => {
+			void revertPatch(project, entry.patch, entry.frame).then((reverted) => {
+				if (history.current !== taking) return;
+				if (reverted === undefined || !reverted.ok) {
+					updateHistory(drop(history.current, way));
+					setNotice({
+						kind: "error",
+						message:
+							reverted === undefined
+								? "The step could not be put back"
+								: "The file changed since; this step is dropped",
+					});
+					return;
+				}
+				updateHistory(
+					amend(history.current, way, { ...entry, patch: reverted.undo, was: entry.now, now: entry.was }),
+				);
+				if (!landed(entry.frame, entry.readAt, reverted)) return;
+				const change = {
+					was: entry.was,
+					now: entry.now,
+					...(reverted.css === undefined ? {} : { css: reverted.css }),
+				};
+				swapClass(entry.frame, entry.selector, change, (ok) => {
+					if (ok || !saved.current.has(entry.frame)) return;
+					saved.current.delete(entry.frame);
+					holdNext.current.add(entry.frame);
+					reloadFrameDocument(entry.frame);
+				});
+			});
+		},
+		[landed, project, reloadFrameDocument, swapClass, updateHistory],
+	);
+
+	/**
 	 * One step of the one stack (#230).
 	 *
 	 * The pure module already skipped whatever the projection no longer holds, so
@@ -2023,6 +2100,10 @@ export function ProjectCanvas({
 				walkText(entry, way, taken.history);
 				return;
 			}
+			if (entry.kind === "class") {
+				walkClass(entry, way, taken.history);
+				return;
+			}
 			// a gather is a page the rail made and the frames it gathered into it, and
 			// the order the two halves go in is the whole reason it is one entry: going
 			// back, the frames leave before the page is staged, or they would ride into
@@ -2041,7 +2122,18 @@ export function ProjectCanvas({
 				void refetchFrames();
 			});
 		},
-		[applyPlaces, applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash, updateHistory, walkText],
+		[
+			applyPlaces,
+			applyRects,
+			flushNudge,
+			liveness,
+			refetchFrames,
+			stageEntry,
+			undoTrash,
+			updateHistory,
+			walkClass,
+			walkText,
+		],
 	);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens
@@ -2572,6 +2664,159 @@ export function ProjectCanvas({
 		[landed, project, recordEntry, restoreWords, setEdit, walkKin],
 	);
 
+	// --- the class gesture (#315) ------------------------------------------------
+
+	/** the property gesture in flight: what the rail last previewed, which is what a scrub commits */
+	const propertyGesture = useRef<{ property: string; last: PropertyValue | null } | null>(null);
+
+	/** The inline preview on an element in its frame, put on or lifted; no daemon in it (rule 1). */
+	const previewStyle = useCallback(
+		(frame: string, selector: string, declarations: Readonly<Record<string, string | null>> | null) => {
+			iframes.current.get(frame)?.contentWindow?.postMessage(styleMessage(selector, declarations), "*");
+		},
+		[],
+	);
+
+	/**
+	 * One class change, written (#315). The frame already shows it as inline
+	 * style; this is the write behind it, measured against the file the rung
+	 * was read from — the hand's own last save when it has one, the ring's
+	 * read otherwise. What comes back swaps the literal on the element and
+	 * the sheet under it and lifts the preview, with no reload. A refusal
+	 * lifts the preview too and sits under the element with the reason, the
+	 * file it points at, and the door to the agent.
+	 */
+	const commitClass = useCallback(
+		(pick: PickedSelection, values: readonly PropertyValue[]) => {
+			const stamp = stampOf(pick);
+			const lift = () => previewStyle(pick.frame, pick.selector, null);
+			const edits = values.flatMap(classEditsOf);
+			const attempted = edits.map((edit) => `${edit.remove ? "-" : "+"}${edit.scope}${edit.token}`).join(" ");
+			const refuse = (refusal: Refusal) => {
+				lift();
+				const file =
+					refusal.line === undefined || typeof stamp !== "string"
+						? undefined
+						: { path: `design/${stamp.replace(/:\d+:\d+$/, "")}`, line: refusal.line };
+				if (pickedRef.current.some((held) => held.frame === pick.frame && held.selector === pick.selector)) {
+					setRefused({
+						frame: pick.frame,
+						selector: pick.selector,
+						refusal,
+						attempted,
+						about: "classes",
+						...(file === undefined ? {} : { file }),
+					});
+				} else setNotice({ kind: "error", message: refusal.says });
+			};
+			if (typeof stamp !== "string") {
+				refuse(stamp);
+				return;
+			}
+			if (edits.length === 0) {
+				lift();
+				return;
+			}
+			const file = stamp.replace(/:\d+:\d+$/, "");
+			const own = saved.current.get(pick.frame);
+			const read = ringRef.current.read;
+			const fingerprint =
+				own !== undefined && own.source.replace(/:\d+:\d+$/, "") === file
+					? own.fingerprint
+					: read?.source === stamp
+						? read.fingerprint
+						: undefined;
+			if (fingerprint === undefined) {
+				refuse({ code: "unread", says: "the file was never read; select the element again" });
+				return;
+			}
+			void writeClass(project, pick.frame, { source: stamp, edits, fingerprint }).then((written) => {
+				if (written === undefined) {
+					refuse({ code: "failed", says: "the class did not reach the file" });
+					return;
+				}
+				if (!written.ok) {
+					refuse(written.refusal);
+					// a file that moved underneath is a fresh read of the rung
+					if (written.refusal.code === "stale-file") {
+						setSaves((current) => ({ ...current, [pick.frame]: (current[pick.frame] ?? 0) + 1 }));
+					}
+					return;
+				}
+				// a change that said what the file already said wrote nothing, and is no step
+				if (written.undo.start === written.undo.end && written.undo.text === "") {
+					lift();
+					return;
+				}
+				const kept = landed(pick.frame, stamp, written);
+				recordEntry({
+					kind: "class",
+					frame: pick.frame,
+					selector: pick.selector,
+					patch: written.undo,
+					readAt: stamp,
+					was: written.className.was,
+					now: written.className.now,
+				});
+				if (kept) {
+					const change = { ...written.className, ...(written.css === undefined ? {} : { css: written.css }) };
+					swapClass(pick.frame, pick.selector, change, (ok) => {
+						if (ok || !saved.current.has(pick.frame)) return;
+						saved.current.delete(pick.frame);
+						holdNext.current.add(pick.frame);
+						reloadFrameDocument(pick.frame);
+					});
+				}
+				if (written.uncaught === true) {
+					setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
+				}
+			});
+		},
+		[landed, previewStyle, project, recordEntry, reloadFrameDocument, swapClass],
+	);
+
+	/**
+	 * The rail's write lane for the one rung held (#315). Preview is the DOM:
+	 * a typed or stepped value goes on the element as inline style and nothing
+	 * leaves the canvas; Enter, blur or the end of a scrub is the one write.
+	 * Nothing when no single element with a stamp is held, and the rows draw
+	 * without a gesture.
+	 */
+	const propertyControls = useMemo<PropertyControls | null>(() => {
+		const pick = picked.length === 1 ? picked[0] : undefined;
+		if (pick === undefined || typeof stampOf(pick) !== "string") return null;
+		const { frame, selector } = pick;
+		return {
+			begin: (property) => {
+				propertyGesture.current = { property, last: null };
+			},
+			preview: (property, value, sample) => {
+				const gesture = propertyGesture.current ?? { property, last: null };
+				gesture.last = value;
+				propertyGesture.current = gesture;
+				const css = sample ?? (value.kind === "custom" ? value.value : value.kind === "remove" ? "" : undefined);
+				if (css !== undefined) previewStyle(frame, selector, { [property]: css });
+			},
+			apply: (_property, value) => {
+				propertyGesture.current = null;
+				commitClass(pick, [value]);
+			},
+			applyFields: (changes) => {
+				propertyGesture.current = null;
+				commitClass(
+					pick,
+					changes.map((change) => change.value),
+				);
+			},
+			finish: (commit) => {
+				const held = propertyGesture.current;
+				propertyGesture.current = null;
+				if (commit && held?.last != null) commitClass(pick, [held.last]);
+				else previewStyle(frame, selector, null);
+			},
+		};
+	}, [commitClass, picked, previewStyle]);
+
 	// A refusal is about the element it was refused on, so it goes when the
 	// selection moves rather than sitting over whatever comes next. The keys
 	// rather than the array: a click at the scope re-picks the same element and
@@ -3073,7 +3318,8 @@ export function ProjectCanvas({
 					finishEdit(held, message.commit, message.nodes, message.owner);
 					return;
 				}
-				case "restored": {
+				case "restored":
+				case "classed": {
 					const waiter = restoreWaiters.current.get(message.id);
 					restoreWaiters.current.delete(message.id);
 					waiter?.(message.ok);
@@ -5148,6 +5394,7 @@ export function ProjectCanvas({
 							preview={pointerTool ? preview : null}
 							refused={refused}
 							onAsk={() => askAgent(refused ?? undefined)}
+							onOpenFile={(path, line) => copySourcePath(`${path}:${line}`)}
 							handles={elementHandles}
 							marks={marks}
 							elementGuides={elementGuides}
@@ -5294,6 +5541,8 @@ export function ProjectCanvas({
 							onGeometry: setFrameGeometry,
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
+							property: propertyControls,
+							onOpenFile: (path, line) => copySourcePath(`${path}:${line}`),
 						}}
 					/>
 				)}

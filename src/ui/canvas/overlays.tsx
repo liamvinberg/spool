@@ -7,6 +7,7 @@ import type { GapAxis, GapHandles } from "./hand-gap";
 import { drawnHandles, type Edge, type LiveHandles, type Sign } from "./hand-resize";
 import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
+import { FileLink } from "./properties-fields";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
 import type { SnapMarks } from "./snap";
 
@@ -145,6 +146,7 @@ export function SelectionOverlay({
 	lit = null,
 	preview,
 	refused = null,
+	onOpenFile,
 	onAsk,
 	handles = null,
 	marks,
@@ -180,6 +182,8 @@ export function SelectionOverlay({
 	refused?: ShownRefusal | null;
 	/** The door to the agent a refusal of typed words offers (#314): the composer, prefilled. */
 	onAsk?: () => void;
+	/** The file a refusal points at (#315), handed out by path. */
+	onOpenFile?: (path: string, line: number) => void;
 	/**
 	 * The held element's own ring furniture (#259) — nothing where no handle
 	 * is live, because a handle no write would take must not be there to grab.
@@ -473,6 +477,9 @@ export function SelectionOverlay({
 									<span className="text-thread-strong"> {refused.refusal.expression}</span>
 								)}
 							</span>
+							{refused.file !== undefined && onOpenFile !== undefined && (
+								<FileLink path={refused.file.path} line={refused.file.line} onOpen={onOpenFile} />
+							)}
 							{refused.attempted !== undefined && onAsk !== undefined && (
 								<button
 									type="button"

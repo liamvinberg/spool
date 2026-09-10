@@ -17,6 +17,8 @@ export interface Refusal {
 	says: string;
 	/** what the file says instead, when naming it is the whole of the answer */
 	expression?: string;
+	/** the line the sentence points at, when editing the file there is the answer (#315) */
+	line?: number;
 }
 
 /** The pick is a box on screen the file has no line for — JS-created DOM (#6). */
@@ -38,6 +40,10 @@ export interface ShownRefusal {
 	selector: string;
 	refusal: Refusal;
 	attempted?: string;
+	/** what the attempt was: the element's words (#314), or its classes (#315) */
+	about?: "words" | "classes";
+	/** the file the refusal points at, for the link that hands its path out (#315) */
+	file?: { path: string; line: number };
 }
 
 /**
@@ -99,6 +105,9 @@ export function wordsOf(nodes: readonly EditedNode[]): string {
 export function askText(refused: ShownRefusal, pick: PickedSelection | undefined): string {
 	const where = pick?.source ? ` at design/${pick.source}` : "";
 	const what = pick === undefined ? "the element" : `the ${pick.tag}`;
+	if (refused.about === "classes") {
+		return `Change the classes of ${what}${where}: ${refused.attempted ?? ""}. ${refused.refusal.says}, so the hand could not write it in place.`;
+	}
 	return `Change the words of ${what}${where} to ${JSON.stringify(refused.attempted ?? "")}. ${refused.refusal.says}, so the hand could not write it in place.`;
 }
 

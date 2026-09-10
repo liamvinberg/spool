@@ -449,3 +449,30 @@ describe("entries about a nested page", () => {
 		expect(takeRedo({ undo: [], redo: [restructured] }, alive)).toBeUndefined();
 	});
 });
+
+describe("class entries", () => {
+	const changed: HistoryEntry = {
+		kind: "class",
+		frame: "home",
+		selector: "div.veil-art",
+		patch: { path: "design/frames/home/frame.tsx", start: 300, end: 305, text: "990", fingerprint: "a" },
+		readAt: "frames/home/frame.tsx:8:5",
+		was: "veil-art w-[990px]",
+		now: "veil-art w-[700px]",
+	};
+
+	it("runs while the frame is there, and is amended with the inverse and the literals the other way round", () => {
+		const history = record(emptyHistory(), changed);
+		const undone = takeUndo(history, alive("home"));
+		expect(undone?.entry).toEqual(changed);
+		const back = {
+			...changed,
+			patch: { ...changed.patch, text: "700", fingerprint: "b" },
+			was: changed.now,
+			now: changed.was,
+		};
+		const amended = amend(undone?.history ?? history, "undo", back);
+		expect(takeRedo(amended, alive("home"))?.entry).toEqual(back);
+		expect(takeUndo(record(emptyHistory(), changed), alive("cart"))).toBeUndefined();
+	});
+});

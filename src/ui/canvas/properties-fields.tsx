@@ -162,6 +162,9 @@ export function Row({
 	return (
 		<div
 			data-properties-row={name}
+			// the saved mark (#315): a label in thread colour reads the file's own
+			// re-read, so it lights once the file has the value and never before
+			{...(changed ? { "data-properties-saved": "" } : {})}
 			className={cn(
 				"grid grid-cols-[92px_1fr] items-center gap-2 border-border/80 border-b px-2.5",
 				tall ? "py-1.5" : long ? "min-h-7 py-1" : "h-7",
@@ -336,6 +339,34 @@ export function NumField({
 			/>
 			{readout === undefined || readout === null ? null : <span className={cn("shrink-0", FAINT)}>{readout}</span>}
 		</label>
+	);
+}
+
+/**
+ * The file a refusal points at (#315): `frame.tsx:12`, and a press hands the
+ * path out the way the frame's own source path is handed out — copied, never
+ * opened in an editor spool would have to choose.
+ */
+export function FileLink({
+	path,
+	line,
+	onOpen,
+}: {
+	path: string;
+	line: number;
+	onOpen: (path: string, line: number) => void;
+}) {
+	return (
+		<button
+			type="button"
+			data-hand-file={`${path}:${line}`}
+			title={`Copy ${path}:${line}`}
+			className={cn("shrink-0 text-thread-strong hover:underline", FAINT)}
+			onPointerDown={(event) => event.stopPropagation()}
+			onClick={() => onOpen(path, line)}
+		>
+			{path.slice(path.lastIndexOf("/") + 1)}:{line}
+		</button>
 	);
 }
 
