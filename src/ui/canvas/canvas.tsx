@@ -1549,6 +1549,19 @@ export function ProjectCanvas({
 		viewportRef.current?.focus({ preventScroll: true });
 	}, []);
 
+	/**
+	 * Picking a tool (#321). The Edit tool is never inside a frame: taking it
+	 * while one is live steps back out of it, holding that frame as the
+	 * selection, which is where the ladder's first click starts from.
+	 */
+	const chooseTool = useCallback(
+		(next: CanvasTool) => {
+			if (next === "edit" && enteredRef.current !== null) exitEntered(true);
+			setTool(next);
+		},
+		[exitEntered],
+	);
+
 	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
 
 	/**
@@ -5053,8 +5066,9 @@ export function ProjectCanvas({
 	 * Keeping them apart is what lets both be the plain gesture. Running a
 	 * frame is the constant act on this canvas and takes no modifier for it;
 	 * descending is constant too, but only once you have said you are editing,
-	 * which is what picking up the tool says. The frame's label has no rung
-	 * under it either way, so a double-click there always goes inside.
+	 * which is what picking up the tool says. Edit has no door into a live
+	 * frame at all (#321), the label included: a tool for changing a page must
+	 * never hand the page the pointer by accident.
 	 */
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
@@ -5081,10 +5095,11 @@ export function ProjectCanvas({
 		}
 		if (hit === enteredRef.current) return;
 		cancelGesture();
-		if (label !== null || toolRef.current === "select") {
+		if (toolRef.current === "select") {
 			enterFrame(hit);
 			return;
 		}
+		if (label !== null) return; // the label has no rung under it to descend to
 		const local = frameLocalAt(hit, world);
 		if (local !== null) descendAt(hit, local);
 	};
@@ -5324,9 +5339,9 @@ export function ProjectCanvas({
 			},
 			// the threads toggle (#34): persisted per project
 			"canvas.threads": () => toggleArrows(),
-			"canvas.tool-select": () => setTool("select"),
-			"canvas.tool-edit": () => setTool("edit"),
-			"canvas.tool-hand": () => setTool("hand"),
+			"canvas.tool-select": () => chooseTool("select"),
+			"canvas.tool-edit": () => chooseTool("edit"),
+			"canvas.tool-hand": () => chooseTool("hand"),
 			// the menu's verbs (#7) on bare keys, each acting on the selection;
 			// Play wants one frame to open on, whether P or ⇧⏎ asked
 			"canvas.play": (event) => {
@@ -5382,8 +5397,16 @@ export function ProjectCanvas({
 				}
 			},
 			// ⏎ goes inside, from the frame or from a rung within it; the ladder's
-			// own descent is ⌘⏎, and the climb ⇧⏎ (#254)
+			// own descent is ⌘⏎, and the climb ⇧⏎ (#254). In Edit ⏎ is that
+			// descent itself, because that tool has no way inside at all (#321)
 			"canvas.enter": (event) => {
+				if (toolRef.current === "edit") {
+					if (enteredRef.current !== null) return;
+					event?.preventDefault();
+					setPreview(null);
+					descendKey();
+					return;
+				}
 				const targets = verbTarget();
 				const [only] = targets;
 				if (targets.length !== 1 || only === undefined) return;
@@ -5495,6 +5518,7 @@ export function ProjectCanvas({
 		stageTrash,
 		cancelGesture,
 		cancelPicks,
+		chooseTool,
 		toggleArrows,
 		cancelExportDialog,
 		playFrame,
@@ -5569,6 +5593,18 @@ export function ProjectCanvas({
 	 * lane has nothing to write against, so there is nothing to grab.
 	 */
 	const ringPick = picked.length === 1 ? picked[0] : undefined;
+	/**
+	 * The box an open edit hands its frame (#321): the element the words are
+	 * drawn in, and nothing else. The whole document was the frame's while an
+	 * edit stood open, which is indistinguishable from being inside it — the
+	 * prototype's own hover states lit up and the canvas heard no pointer at
+	 * all. The rest of the frame stays the canvas's, so the click-away still
+	 * commits and the rings go on being drawn around the caret.
+	 */
+	const editedBox =
+		editing === null || editing.phase !== "open"
+			? null
+			: (picked.find((held) => held.frame === editing.frame && held.selector === editing.selector)?.rect ?? null);
 	/**
 	 * The selection's one read, and the two clocks behind it.
 	 *
@@ -5794,6 +5830,7 @@ export function ProjectCanvas({
 													? true
 													: isEntered && !accelDown
 											}
+											pointerOnly={editing?.frame === frame.name ? editedBox : null}
 											docNonce={docNonces[frame.name] ?? 0}
 											holdNonce={heldPaint[frame.name] ?? null}
 											cover={frame.cover}
@@ -6002,7 +6039,7 @@ export function ProjectCanvas({
 					</div>
 				)}
 				{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}
-				{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={setTool} />}
+				{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={chooseTool} />}
 				{finding ? (
 					<FindPalette
 						frames={navigatorFrames}

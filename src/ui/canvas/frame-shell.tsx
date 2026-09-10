@@ -17,6 +17,9 @@ import type { FrameState } from "./lifecycle";
  * reconciling an iframe whose src changed reloads it and resets its state.
  */
 
+/** How far past the edited element's own box the caret is still the frame's (#321). */
+const EDIT_SLACK_PX = 2;
+
 export interface CoverPlan {
 	/** The cover layer sits fully opaque over the (missing or booting) frame. */
 	cover: boolean;
@@ -95,6 +98,7 @@ export const FrameShell = memo(function FrameShell({
 	holdNonce,
 	cover,
 	walkArrival,
+	pointerOnly = null,
 	onIframe,
 }: {
 	project: string;
@@ -108,6 +112,16 @@ export const FrameShell = memo(function FrameShell({
 	active?: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
 	interactive: boolean;
+	/**
+	 * The one box inside an interactive frame that takes the pointer (#321):
+	 * the element an open text edit is drawn in, in frame-local pixels.
+	 *
+	 * An edit hands the frame the words being typed and nothing else. The
+	 * canvas keeps the rest of the document, so a press out there is the
+	 * click-away that commits, a link under the pointer stays inert, and the
+	 * rings go on being drawn while the caret is in.
+	 */
+	pointerOnly?: { x: number; y: number; w: number; h: number } | null;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
 	/**
@@ -275,6 +289,28 @@ export const FrameShell = memo(function FrameShell({
 				</div>
 			)}
 			{!interactive && <div className="absolute inset-0" />}
+			{/* the field around an open edit: four bands the canvas still owns */}
+			{interactive &&
+				pointerOnly !== null &&
+				[
+					{ left: 0, top: 0, right: 0, height: Math.max(pointerOnly.y - EDIT_SLACK_PX, 0) },
+					{ left: 0, top: pointerOnly.y + pointerOnly.h + EDIT_SLACK_PX, right: 0, bottom: 0 },
+					{
+						left: 0,
+						top: pointerOnly.y - EDIT_SLACK_PX,
+						width: Math.max(pointerOnly.x - EDIT_SLACK_PX, 0),
+						height: pointerOnly.h + EDIT_SLACK_PX * 2,
+					},
+					{
+						left: pointerOnly.x + pointerOnly.w + EDIT_SLACK_PX,
+						top: pointerOnly.y - EDIT_SLACK_PX,
+						right: 0,
+						height: pointerOnly.h + EDIT_SLACK_PX * 2,
+					},
+				].map((band, index) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: the four sides of one box, in a fixed order
+					<div key={`edit-band-${index}`} data-edit-band="" className="absolute" style={band} />
+				))}
 		</>
 	);
 });
