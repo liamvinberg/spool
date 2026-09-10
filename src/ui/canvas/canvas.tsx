@@ -2844,9 +2844,6 @@ export function ProjectCanvas({
 					showRefusal(pick.frame, pick.selector, GONE);
 					return;
 				}
-				// the element is gone: the rung above it is what the hand is holding
-				// now, which is also what keeps the frame from reloading under the save
-				if (act === "delete") holdParent(pick);
 				void writeElement(project, pick.frame, {
 					act,
 					source: at.source,
@@ -2869,6 +2866,10 @@ export function ProjectCanvas({
 					if (written.undo.start === written.undo.end && written.undo.text === "") return;
 					const readAt = written.path === `design/${at.source.replace(/:\d+:\d+$/, "")}` ? at.source : null;
 					landed(pick.frame, readAt ?? at.source, written);
+					// the element is gone: the rung above it is what the hand holds now,
+					// and it holds it only once the write has actually landed, so a
+					// refusal still has the element it was about to sit under
+					if (act === "delete") holdParent(pick);
 					recordEntry({
 						kind: "hand",
 						frame: pick.frame,

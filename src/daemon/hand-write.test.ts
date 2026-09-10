@@ -346,7 +346,9 @@ export function Link({ children }: { children: ReactNode }) {
 		);
 		if (!planned.ok) throw new Error(planned.refusal.says);
 		const column = VEIL.indexOf("Make something") - VEIL.lastIndexOf("\n", VEIL.indexOf("Make something"));
-		expect(shiftsOf(VEIL, planned.patches)).toEqual([{ line: 2, column, delta: -"something ".length }]);
+		expect(shiftsOf(VEIL, planned.patches)).toEqual([
+			{ line: 2, column, delta: -"something ".length, taken: "Make something".length },
+		]);
 		// a patch across a line break moves the lines under it, and only a reload can say where
 		expect(shiftsOf("a\nb", [{ start: 0, end: 2, text: "" }])).toBeNull();
 	});
@@ -771,9 +773,12 @@ const d = <p className={LABEL}>four</p>;
 		expect(written([{ kind: "set-hidden", source: at, hidden: false }], hidden)).toBe(HIDE);
 	});
 
-	it("writes a className onto an element that carries none", () => {
+	it("writes a className onto an element that carries none, and takes it back out", () => {
 		const text = written([{ kind: "set-hidden", source: stamp(HIDE, "<p>two"), hidden: true }], HIDE);
 		expect(text).toContain('<p className="hidden">two</p>');
+		expect(
+			written([{ kind: "set-hidden", source: stamp(text, '<p className="hidden">two'), hidden: false }], text),
+		).toBe(HIDE);
 	});
 
 	it("writes the literal part of a cn() call and keeps the condition", () => {

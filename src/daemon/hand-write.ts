@@ -178,7 +178,21 @@ export function spanBetween(before: string, after: string): SpanPatch {
 	) {
 		tail += 1;
 	}
-	return { start, end: after.length - tail, text: before.slice(start, before.length - tail) };
+	const end = after.length - tail;
+	let text = before.slice(start, before.length - tail);
+	// A run put back where nothing was taken is slid as far left as it will go.
+	// Any rotation of it writes the same bytes, and the leftmost one is the
+	// place an author would have written it — which is what makes the stamp
+	// sitting there the element the run begins rather than its neighbour: the
+	// `<` of a paragraph put back is the paragraph's, not the link after it.
+	if (start === end) {
+		while (start > 0 && text.length > 0 && after[start - 1] === text[text.length - 1]) {
+			text = `${after[start - 1]}${text.slice(0, -1)}`;
+			start -= 1;
+		}
+		return { start, end: start, text };
+	}
+	return { start, end, text };
 }
 
 /**
@@ -506,6 +520,15 @@ export interface StampShift {
 	line: number;
 	column: number;
 	delta: number;
+	/**
+	 * How many characters the patch replaced.
+	 *
+	 * It is what tells an insertion from a replacement, and the two move the
+	 * stamp sitting exactly at the patch differently: characters put in front of
+	 * an element push it along, characters written over a run leave whatever
+	 * stood at the run's own start where it was.
+	 */
+	taken: number;
 }
 
 export function shiftsOf(source: string, patches: readonly SpanPatch[]): StampShift[] | null {
@@ -516,7 +539,7 @@ export function shiftsOf(source: string, patches: readonly SpanPatch[]): StampSh
 		const before = source.slice(0, patch.start);
 		const line = before.split("\n").length;
 		const column = patch.start - (before.lastIndexOf("\n") + 1) + 1;
-		shifts.push({ line, column, delta: patch.text.length - replaced.length });
+		shifts.push({ line, column, delta: patch.text.length - replaced.length, taken: replaced.length });
 	}
 	return shifts;
 }
@@ -639,6 +662,17 @@ function planHidden(source: string, element: Element, hidden: boolean): OnePlan 
 		: tokens.filter((token) => token !== HIDDEN);
 	const written = next.join(" ");
 	if (written === literal.className) return { patches: [] };
+	// the class was only ever the `hidden` a hide wrote: showing takes the whole
+	// attribute back out, so hide then show leaves the file byte for byte as it
+	// was rather than leaving an empty className behind
+	const held = attributeNamed(element, "className");
+	const value = held?.value;
+	const inner = value?.type === "JSXExpressionContainer" ? value.expression : value;
+	if (written === "" && held !== undefined && inner?.type === "StringLiteral") {
+		let start = nodeStart(held);
+		while (start > 0 && (source[start - 1] === " " || source[start - 1] === "\t")) start -= 1;
+		return { patches: [{ start, end: nodeEnd(held), text: "" }] };
+	}
 	return { patches: [fill(element, "className", written, literal.slot)] };
 }
 

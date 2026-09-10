@@ -93,14 +93,14 @@ export const OPENING_MS = 300;
 export function restamped(
 	source: string,
 	file: string,
-	shifts: readonly { line: number; column: number; delta: number }[],
+	shifts: readonly { line: number; column: number; delta: number; taken: number }[],
 ): string {
 	const match = /^(.*):(\d+):(\d+)$/.exec(source);
 	if (match === null || match[1] !== file) return source;
 	const line = Number(match[2]);
 	const column = Number(match[3]);
 	let moved = column;
-	for (const shift of shifts) if (shift.line === line && shift.column < column) moved += shift.delta;
+	for (const shift of shifts) if (shift.line === line && shift.column + shift.taken <= moved) moved += shift.delta;
 	return `${match[1]}:${line}:${moved}`;
 }
 

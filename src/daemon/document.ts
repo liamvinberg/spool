@@ -1519,7 +1519,7 @@ const canvasShimJs = `(() => {
 			const component = typeof type === "function" || (type && typeof type === "object" && (typeof type.type === "function" || typeof type.render === "function"));
 			if (!component) continue;
 			const site = siteOf(fiber.memoizedProps);
-			return typeof site === "string" ? site : null;
+			return typeof site === "string" ? stampNow(site) : null;
 		}
 		return null;
 	}
@@ -1575,16 +1575,42 @@ const canvasShimJs = `(() => {
 
 	// A write moved the stamps on its line, and this document is not reloaded
 	// for its own save: every element on that line past the patch shifts with it.
+	//
+	// The attributes are walked here and now. The call sites the runtime minted
+	// are not attributes and cannot be walked at all, so every shift is kept and
+	// applied to one on its way out instead (#317).
+	var shifted = new Map();
 	function restamp(file, shifts) {
+		const held = shifted.get(file) || [];
+		for (const shift of shifts) held.push(shift);
+		shifted.set(file, held);
 		for (const el of document.querySelectorAll("[data-spool-source]")) {
-			const match = /^(.*):(\\d+):(\\d+)$/.exec(el.getAttribute("data-spool-source") || "");
-			if (!match || match[1] !== file) continue;
-			const line = Number(match[2]);
-			const column = Number(match[3]);
-			let moved = column;
-			for (const shift of shifts) if (shift.line === line && shift.column < column) moved += shift.delta;
-			if (moved !== column) el.setAttribute("data-spool-source", match[1] + ":" + line + ":" + moved);
+			const at = stampParts(el.getAttribute("data-spool-source"));
+			if (!at || at.file !== file) continue;
+			let moved = at.column;
+			for (const shift of shifts) {
+				if (shift.line === at.line && shift.column + (shift.taken || 0) <= moved) moved += shift.delta;
+			}
+			if (moved !== at.column) el.setAttribute("data-spool-source", at.file + ":" + at.line + ":" + moved);
 		}
+	}
+
+	function stampParts(source) {
+		const match = /^(.*):(\\d+):(\\d+)$/.exec(source || "");
+		return match ? { file: match[1], line: Number(match[2]), column: Number(match[3]) } : null;
+	}
+
+	// One compile-time stamp, as the file has it now: every shift this document
+	// was told about, in the order it was told, which is the arithmetic the
+	// attributes went through one call at a time.
+	function stampNow(source) {
+		const at = stampParts(source);
+		if (!at) return source;
+		let moved = at.column;
+		for (const shift of shifted.get(at.file) || []) {
+			if (shift.line === at.line && shift.column + (shift.taken || 0) <= moved) moved += shift.delta;
+		}
+		return at.file + ":" + at.line + ":" + moved;
 	}
 
 	// The structural gestures (#317): the element out of the document, hidden,

@@ -48,8 +48,8 @@ describe("the second click", () => {
 
 describe("after a save that is not a reload", () => {
 	const shifts = [
-		{ line: 7, column: 41, delta: -5 },
-		{ line: 7, column: 90, delta: 2 },
+		{ line: 7, column: 41, delta: -5, taken: 12 },
+		{ line: 7, column: 90, delta: 2, taken: 4 },
 	];
 
 	it("moves the stamps on the patched line past each patch, and no other", () => {
@@ -62,6 +62,13 @@ describe("after a save that is not a reload", () => {
 		expect(restamped("frames/veil/frame.tsx:7:37", "frames/veil/frame.tsx", shifts)).toBe(
 			"frames/veil/frame.tsx:7:37",
 		);
+		// characters put in front of an element push it along, so a stamp sitting
+		// exactly where an insertion lands moves with it (#317)
+		expect(
+			restamped("frames/veil/frame.tsx:7:60", "frames/veil/frame.tsx", [
+				{ line: 7, column: 60, delta: 9, taken: 0 },
+			]),
+		).toBe("frames/veil/frame.tsx:7:69");
 		expect(restamped("frames/veil/frame.tsx:8:50", "frames/veil/frame.tsx", shifts)).toBe(
 			"frames/veil/frame.tsx:8:50",
 		);
