@@ -145,6 +145,7 @@ export function SelectionOverlay({
 	lit = null,
 	preview,
 	refused = null,
+	onAsk,
 	handles = null,
 	marks,
 	elementGuides = null,
@@ -177,6 +178,8 @@ export function SelectionOverlay({
 	 * when the selection does.
 	 */
 	refused?: ShownRefusal | null;
+	/** The door to the agent a refusal of typed words offers (#314): the composer, prefilled. */
+	onAsk?: () => void;
 	/**
 	 * The held element's own ring furniture (#259) — nothing where no handle
 	 * is live, because a handle no write would take must not be there to grab.
@@ -461,12 +464,25 @@ export function SelectionOverlay({
 					return (
 						<div
 							data-hand-refusal={refused.refusal.code}
-							className="absolute max-w-[280px] truncate rounded-md border border-border-raised bg-raised px-2 py-1 text-muted type-detail"
+							className="pointer-events-auto absolute flex max-w-[360px] items-baseline gap-2 rounded-md border border-border-raised bg-raised px-2 py-1 text-muted type-detail"
 							style={{ left: box.x - 2, top: box.y + box.h + 8 }}
 						>
-							{refused.refusal.says}
-							{refused.refusal.expression !== undefined && (
-								<span className="text-thread-strong"> {refused.refusal.expression}</span>
+							<span className="truncate">
+								{refused.refusal.says}
+								{refused.refusal.expression !== undefined && refused.attempted === undefined && (
+									<span className="text-thread-strong"> {refused.refusal.expression}</span>
+								)}
+							</span>
+							{refused.attempted !== undefined && onAsk !== undefined && (
+								<button
+									type="button"
+									data-hand-ask
+									className="shrink-0 text-thread-strong hover:underline"
+									onPointerDown={(event) => event.stopPropagation()}
+									onClick={onAsk}
+								>
+									Ask agent
+								</button>
 							)}
 						</div>
 					);

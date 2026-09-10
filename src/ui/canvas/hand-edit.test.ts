@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GENERATED, NO_STAMP, secondClick, stampOf } from "./hand-edit";
+import { askText, GENERATED, NO_STAMP, restamped, secondClick, stampOf, wordsOf } from "./hand-edit";
 import type { PickedSelection } from "./overlays";
 
 const pick = (over: Partial<PickedSelection> = {}): PickedSelection => ({
@@ -43,5 +43,49 @@ describe("the second click", () => {
 
 	it("is nothing at all with nothing held, which is the click that selects", () => {
 		expect(secondClick([], "cart", { x: 20, y: 20 })).toBeUndefined();
+	});
+});
+
+describe("after a save that is not a reload", () => {
+	const shifts = [
+		{ line: 7, column: 41, delta: -5 },
+		{ line: 7, column: 90, delta: 2 },
+	];
+
+	it("moves the stamps on the patched line past each patch, and no other", () => {
+		expect(restamped("frames/veil/frame.tsx:7:117", "frames/veil/frame.tsx", shifts)).toBe(
+			"frames/veil/frame.tsx:7:114",
+		);
+		expect(restamped("frames/veil/frame.tsx:7:60", "frames/veil/frame.tsx", shifts)).toBe(
+			"frames/veil/frame.tsx:7:55",
+		);
+		expect(restamped("frames/veil/frame.tsx:7:37", "frames/veil/frame.tsx", shifts)).toBe(
+			"frames/veil/frame.tsx:7:37",
+		);
+		expect(restamped("frames/veil/frame.tsx:8:50", "frames/veil/frame.tsx", shifts)).toBe(
+			"frames/veil/frame.tsx:8:50",
+		);
+		expect(restamped("shared/ui/parts.tsx:7:50", "frames/veil/frame.tsx", shifts)).toBe("shared/ui/parts.tsx:7:50");
+	});
+
+	it("reads the words of what the frame handed back, a line break for each <br>", () => {
+		expect(wordsOf([{ text: "Make" }, { tag: "br", nodes: [] }, { tag: "span", nodes: [{ text: "it" }] }])).toBe(
+			"Make\nit",
+		);
+	});
+
+	it("prepares the ask in plain words: what was tried, where, and why the hand could not", () => {
+		const text = askText(
+			{
+				frame: "home",
+				selector: "main > h2",
+				refusal: { code: "expression-text", says: "{title} is an expression; edit it in code or ask the agent" },
+				attempted: "Studio",
+			},
+			pick({ tag: "h2", source: "frames/home/frame.tsx:9:5" }),
+		);
+		expect(text).toBe(
+			'Change the words of the h2 at design/frames/home/frame.tsx:9:5 to "Studio". {title} is an expression; edit it in code or ask the agent, so the hand could not write it in place.',
+		);
 	});
 });

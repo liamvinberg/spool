@@ -1,5 +1,5 @@
 import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
-import type { Geometry, Place } from "../api";
+import type { Geometry, HeldPatch, Place } from "../api";
 
 /**
  * One undo stack for the hands (#23, #230).
@@ -92,6 +92,19 @@ export type HistoryEntry =
 	// the frame moves it happens among, because one press has to walk all of it
 	// — a hand that moved a frame and then a page undoes them in that order
 	| { readonly kind: "place"; readonly places: Places }
+	// words typed into a frame (#314): the patch to run next, in whichever
+	// direction this entry currently sits, and the ask the frame holds the DOM
+	// half under. Running the patch answers with its own inverse, and the entry
+	// is amended with what came back, because a file that has just changed has
+	// a new fingerprint and the old one would refuse
+	| {
+			readonly kind: "text";
+			readonly frame: string;
+			readonly edit: number;
+			readonly patch: HeldPatch;
+			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */
+			readonly readAt: string;
+	  }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {
 			readonly kind: "move";
@@ -368,6 +381,10 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			const pages = livePaged(entry.pages, entry.to, alive, way);
 			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
+		case "text":
+			// the daemon's fingerprint is the real check and it happens on the wire;
+			// what the projection can say is whether the frame is still there to edit
+			return alive.frames.has(entry.frame) ? entry : undefined;
 		case "reorder":
 			return entry;
 		case "gather": {

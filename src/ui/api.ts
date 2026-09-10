@@ -15,7 +15,7 @@ import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows"
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { RungRead } from "../daemon/hand-lane";
-import type { AttributeRead, PatchRefusal } from "../daemon/hand-write";
+import type { AttributeRead, EditedNode, PatchRefusal, StampShift } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
@@ -273,6 +273,70 @@ export async function putSelection(project: string, selection: SelectionPut): Pr
 		const res = await client.api.p[":project"].selection.$put({ param: { project }, json: selection });
 		if (!res.ok) return undefined;
 		return ((await res.json()) as { selection: SelectionEntry[] }).selection;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The patch the canvas holds after a write (#314): the run that puts the file
+ * back, and the fingerprint of the file it puts back into. Running it answers
+ * with its own inverse, so a redo is the same call again.
+ */
+export interface HeldPatch {
+	path: string;
+	start: number;
+	end: number;
+	text: string;
+	fingerprint: string;
+}
+
+export type TextWritten =
+	| {
+			ok: true;
+			path: string;
+			fingerprint: string;
+			/** how the stamps on the patched line moved; null when only a reload can say */
+			shifts: StampShift[] | null;
+			undo: HeldPatch;
+			/** the project keeps no history, said once per project */
+			uncaught?: true;
+	  }
+	| { ok: false; refusal: PatchRefusal };
+
+/**
+ * The write half of a text edit (#314): the element's child nodes as the
+ * frame has them, the call one owner up when the frame knows it, and the
+ * fingerprint of the file the rung was read from. A refusal comes back as
+ * one; anything else is a write that could not land.
+ */
+export async function writeText(
+	project: string,
+	frame: string,
+	ask: { source: string; nodes: readonly EditedNode[]; owner?: string; fingerprint: string },
+): Promise<TextWritten | undefined> {
+	try {
+		const res = await client.api.p[":project"].text.$post({
+			param: { project },
+			json: { frame, ...ask, nodes: [...ask.nodes] },
+		});
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as TextWritten;
+	} catch {
+		return undefined;
+	}
+}
+
+export type Reverted =
+	| { ok: true; path: string; fingerprint: string; shifts: StampShift[] | null; undo: HeldPatch }
+	| { ok: false; refusal: PatchRefusal };
+
+/** Undo and redo (#314): the held patch run, refused rather than clobbered if the file moved. */
+export async function revertPatch(project: string, patch: HeldPatch): Promise<Reverted | undefined> {
+	try {
+		const res = await client.api.p[":project"].text.revert.$post({ param: { project }, json: patch });
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as Reverted;
 	} catch {
 		return undefined;
 	}

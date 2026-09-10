@@ -1,5 +1,6 @@
 import type { Point } from "./camera";
 import type { PickedSelection } from "./overlays";
+import type { EditedNode } from "./protocol";
 
 /**
  * A reason a gesture does not apply, in the lane's own shape.
@@ -27,11 +28,78 @@ export const NO_STAMP: Refusal = { code: "stale-stamp", says: "no stamp of its o
 /** The frame has nothing answering to that selector any more. */
 export const GONE: Refusal = { code: "stale-stamp", says: "the element is no longer there" };
 
-/** Where a refusal is shown: on the element it was about, in its own frame. */
+/**
+ * Where a refusal is shown: on the element it was about, in its own frame.
+ * One that refused words the hand had already typed carries them, and that
+ * is what the Ask agent action hands the composer (#314).
+ */
 export interface ShownRefusal {
 	frame: string;
 	selector: string;
 	refusal: Refusal;
+	attempted?: string;
+}
+
+/**
+ * An in-place text edit, from the second click to the frame's `edited`.
+ *
+ * `opening` is one double-click interval after the caret landed: the frame
+ * already has the caret, and the words already take the keys, but its
+ * pointer stays the canvas's for that long so the second half of a
+ * double-click can still descend the ladder (#254) rather than land in the
+ * words. `start` is the words the edit began with, and an edit that ends on
+ * the same ones writes nothing at all.
+ */
+export interface HandEdit {
+	frame: string;
+	selector: string;
+	/** the stamp the write is addressed by */
+	source: string;
+	/** the ask the frame answers; a reply carrying another is a dead edit */
+	id: number;
+	/** the hash of the file the rung was read out of, once that read has landed */
+	fingerprint: string | undefined;
+	phase: "opening" | "open";
+	start: string;
+}
+
+/** How long the frame's pointer stays out here after the caret lands: a double-click's second half. */
+export const OPENING_MS = 300;
+
+/**
+ * A stamp after a save moved the stamps on its line (#314): every element on
+ * that line past a patch shifts by what the patch added or took. The same
+ * arithmetic the frame runs over its own document, for the picks out here.
+ */
+export function restamped(
+	source: string,
+	file: string,
+	shifts: readonly { line: number; column: number; delta: number }[],
+): string {
+	const match = /^(.*):(\d+):(\d+)$/.exec(source);
+	if (match === null || match[1] !== file) return source;
+	const line = Number(match[2]);
+	const column = Number(match[3]);
+	let moved = column;
+	for (const shift of shifts) if (shift.line === line && shift.column < column) moved += shift.delta;
+	return `${match[1]}:${line}:${moved}`;
+}
+
+/** The words of a node list as one string, which is what an ask carries. */
+export function wordsOf(nodes: readonly EditedNode[]): string {
+	return nodes.map((node) => ("text" in node ? node.text : node.tag === "br" ? "\n" : wordsOf(node.nodes))).join("");
+}
+
+/**
+ * What the composer opens holding after a refused edit (#314): the change
+ * the hand tried, where, and why the hand could not make it. Plain words,
+ * because the agent reads them as a request and the person reads them
+ * before sending.
+ */
+export function askText(refused: ShownRefusal, pick: PickedSelection | undefined): string {
+	const where = pick?.source ? ` at design/${pick.source}` : "";
+	const what = pick === undefined ? "the element" : `the ${pick.tag}`;
+	return `Change the words of ${what}${where} to ${JSON.stringify(refused.attempted ?? "")}. ${refused.refusal.says}, so the hand could not write it in place.`;
 }
 
 /** The stamp a gesture on this pick would act on, or why there is none. */

@@ -165,7 +165,8 @@ export type FrameMessage =
 	| { spool: "snapped"; frame: string; id: number; snapping: ElementSnapping | null }
 	| { spool: "gapped"; frame: string; id: number; gaps: GapReading | null }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
-	| { spool: "edited"; frame: string; id: number; commit: boolean; text: string }
+	| { spool: "edited"; frame: string; id: number; commit: boolean; nodes: EditedNode[]; owner: string | null }
+	| { spool: "restored"; frame: string; id: number; ok: boolean }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| FrameDroppedMessage
 	| { spool: "external"; frame: string; href: string }
@@ -277,9 +278,14 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "edited":
-			return typeof m.id === "number" && typeof m.commit === "boolean" && typeof m.text === "string"
+			return typeof m.id === "number" &&
+				typeof m.commit === "boolean" &&
+				Array.isArray(m.nodes) &&
+				(m.owner === null || typeof m.owner === "string")
 				? (m as unknown as FrameMessage)
 				: undefined;
+		case "restored":
+			return typeof m.id === "number" && typeof m.ok === "boolean" ? (m as unknown as FrameMessage) : undefined;
 		case "dropped":
 			return typeof m.selector === "string" && m.selector !== "" && m.file instanceof File
 				? (m as unknown as FrameMessage)
@@ -774,6 +780,24 @@ export const gapsMessage = (selector: string, id: number) => ({ spool: "gaps", s
 export const editMessage = (selector: string, x: number, y: number, id: number) =>
 	({ spool: "edit", selector, x, y, id }) as const;
 export const endEditMessage = (commit: boolean) => ({ spool: "edit-end", commit }) as const;
+
+/**
+ * One child node of an edited element (#314), as the frame hands them back:
+ * a text node's words, or an element with its own children.
+ */
+export type EditedNode = { text: string } | { tag: string; nodes: EditedNode[] };
+
+/**
+ * The DOM half of undo and redo (#314): the words of one committed edit put
+ * back to before or forward to after, on the very nodes the frame still
+ * holds. `ask` pairs the answer with the press that made it.
+ */
+export const restoreMessage = (id: number, way: "before" | "after", ask: number) =>
+	({ spool: "restore", id, way, ask }) as const;
+
+/** How a save moved the stamps on its line, for a document that is not reloaded for it (#314). */
+export const restampMessage = (file: string, shifts: readonly { line: number; column: number; delta: number }[]) =>
+	({ spool: "restamp", file, shifts }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;
 
 /** The page's state handed to a sibling frame after one of them wrote. */

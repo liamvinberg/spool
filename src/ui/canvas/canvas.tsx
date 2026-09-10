@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
 import type { AgentEngineId } from "../../daemon/agent-engine";
+import type { StampShift } from "../../daemon/hand-write";
 import type { Unseen } from "../../daemon/seen";
 import { pageWithin, ROOT_PAGE } from "../../page-path";
 import { STEP } from "../../properties/theme";
@@ -36,8 +37,11 @@ import {
 	putPlaces,
 	putSelection,
 	putSetting,
+	readRungs,
 	resolveFlows,
+	revertPatch,
 	subscribeSse,
+	writeText,
 } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
@@ -81,7 +85,18 @@ import {
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
-import type { Refusal, ShownRefusal } from "./hand-edit";
+import {
+	askText,
+	GONE,
+	type HandEdit,
+	OPENING_MS,
+	type Refusal,
+	restamped,
+	type ShownRefusal,
+	secondClick,
+	stampOf,
+	wordsOf,
+} from "./hand-edit";
 import {
 	type GapAxis,
 	type GapBand,
@@ -117,6 +132,7 @@ import {
 	useRing,
 } from "./hand-resize";
 import {
+	amend,
 	drop,
 	emptyHistory,
 	entryOf,
@@ -157,8 +173,11 @@ import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCame
 import { type Held, PropertiesRail } from "./properties-rail";
 import {
 	clipboardCopyAllowed,
+	type EditedNode,
 	type ElementSizing,
 	type ElementSnapping,
+	editMessage,
+	endEditMessage,
 	gapsMessage,
 	type KinStep,
 	kinMessage,
@@ -167,6 +186,8 @@ import {
 	parseFrameMessage,
 	pickKey,
 	pickMessage,
+	restampMessage,
+	restoreMessage,
 	type SessionRecord,
 	type SiteAnchor,
 	type SnapTrial,
@@ -422,6 +443,12 @@ export function ProjectCanvas({
 	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
 	// the reason the last hand gesture was refused, drawn on the element it was about
 	const [refused, setRefused] = useState<ShownRefusal | null>(null);
+	// the in-place text edit that is open (#314), which is what hands the frame its pointer
+	const [editing, setEditing] = useState<HandEdit | null>(null);
+	// how many times the hand has saved each frame without reloading it (#314):
+	// a save rewrites the very file the rung was read out of, so it is a fresh
+	// read too, and the read has to carry the fingerprint the next write needs
+	const [saves, setSaves] = useState<Record<string, number>>({});
 	const [agentRequest, setAgentRequest] = useState<AgentRequest>();
 	/**
 	 * The element drag in flight (#259), as the ring draws it.
@@ -664,6 +691,22 @@ export function ProjectCanvas({
 	const departedFrameDocuments = useRef(new Set<string>());
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
+	/** the frame's answer to putting one edit's words back (#314) */
+	const restoreWaiters = useRef(new Map<number, (ok: boolean) => void>());
+	// the open edit as the handlers read it, a paint earlier than the render
+	const editingRef = useRef<HandEdit | null>(null);
+	const endEditRef = useRef<(commit: boolean) => void>(() => {});
+	// a press on the element already held, acted on at pointer-up (#255)
+	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
+	const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	/**
+	 * The frames the hand has saved and is still in (#314): the stamp it last
+	 * wrote through and the fingerprint the file has now. A change the watcher
+	 * reports on one of these is asked about before it reloads anything, and
+	 * the frame reloads behind its hold the moment the hand leaves it.
+	 */
+	const saved = useRef(new Map<string, { source: string; fingerprint: string }>());
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
 	const sizingWaiters = useRef(new Map<number, (sizing: ElementSizing | null) => void>());
@@ -703,8 +746,9 @@ export function ProjectCanvas({
 	// frames whose next reload the canvas caused, so the outgoing document is
 	// held rather than blinking through its own still (#253's no blink)
 	const holdNext = useRef(new Set<string>());
-	// frames whose file changed while the hand held an element in them (#319):
-	// the reload they owe is paid on the deselect, not under the gesture
+	// frames whose file changed from outside while the hand held an element in
+	// them (#319): the reload they owe is paid when the hand leaves the frame,
+	// not under the gesture — the same flush the hand's own saves wait on
 	const writtenUnderHand = useRef(new Set<string>());
 	const holdTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 	// the range anchor: shift over the page tree's frame rows
@@ -889,6 +933,13 @@ export function ProjectCanvas({
 				);
 			}
 			setDocNonces((current) => ({ ...current, [frame]: was + 1 }));
+			// the document an edit was open in is going: the shim's half of it goes
+			// with it, so the canvas must not keep holding this frame's pointer
+			if (editingRef.current?.frame === frame) {
+				editingRef.current = null;
+				setEditing(null);
+			}
+			saved.current.delete(frame);
 			setWalkArrivals((current) => withoutFrame(current, frame));
 			// a reload drops every pick in the frame: the new document is asked afresh
 			setPicked((current) => current.filter((pick) => pick.frame !== frame));
@@ -906,11 +957,12 @@ export function ProjectCanvas({
 	 * is a remount: the pick, the ring and the rail all address the DOM that is
 	 * on screen, and swapping it mid-gesture takes the element out from under the
 	 * hand that just wrote it. The reload is still owed — the frame is showing a
-	 * document the file no longer says — so it is remembered and paid on the
-	 * deselect, behind the frame's own last paint rather than through its still.
+	 * document the file no longer says — so it is remembered and paid when the
+	 * hand leaves the frame, behind its own last paint rather than through its
+	 * still, alongside the reloads the hand's own saves owe (#314).
 	 *
-	 * This is the seam a hand write lands on: whatever wrote the file, the change
-	 * arrives here, and a save made while the element is held simply waits.
+	 * This is the seam every change lands on: whatever wrote the file, the change
+	 * arrives here, and one made while the element is held simply waits.
 	 */
 	const reloadOrHold = useCallback(
 		(frame: string) => {
@@ -922,20 +974,6 @@ export function ProjectCanvas({
 		},
 		[reloadFrameDocument],
 	);
-
-	// Letting go pays what the hold deferred: the frames written while the hand
-	// was in them reload behind their outgoing paint, so a deselect shows the
-	// saved document without a white frame in between (#319).
-	const handHeld = useRef<ReadonlySet<string>>(new Set());
-	useEffect(() => {
-		const holding = new Set(picked.map((pick) => pick.frame));
-		for (const frame of handHeld.current) {
-			if (holding.has(frame) || !writtenUnderHand.current.delete(frame)) continue;
-			holdNext.current.add(frame);
-			reloadFrameDocument(frame);
-		}
-		handHeld.current = holding;
-	}, [picked, reloadFrameDocument]);
 
 	/**
 	 * A frame that changed size is a frame whose picture is wrong.
@@ -1817,10 +1855,134 @@ export function ProjectCanvas({
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
-	/** The hand's door to the agent: the composer takes focus, on the thread that is open. */
-	const askAgent = useCallback(() => {
-		setAgentRequest({ id: crypto.randomUUID(), thread: deck.open });
-	}, [deck.open]);
+	/**
+	 * The hand's door to the agent: the composer takes focus, on the thread that
+	 * is open. From a refusal of typed words it opens holding the change the
+	 * hand tried (#314), and sends nothing until the person does.
+	 */
+	const askAgent = useCallback(
+		(from?: ShownRefusal) => {
+			const pick =
+				from === undefined
+					? undefined
+					: pickedRef.current.find((held) => held.frame === from.frame && held.selector === from.selector);
+			setAgentRequest({
+				id: crypto.randomUUID(),
+				thread: deck.open,
+				...(from?.attempted === undefined
+					? {}
+					: {
+							prepared: {
+								intent: `text ${from.frame} ${from.selector}`,
+								text: askText(from, pick),
+								selection: [],
+							},
+						}),
+			});
+		},
+		[deck.open],
+	);
+
+	// --- where a text write lands (#314) -----------------------------------------
+
+	/** Whether the hand is still in a frame: selected, an element of it held, or entered. */
+	const frameHeld = useCallback(
+		(frame: string) =>
+			selectedRef.current.includes(frame) ||
+			pickedRef.current.some((pick) => pick.frame === frame) ||
+			enteredRef.current === frame,
+		[],
+	);
+
+	/**
+	 * What a write that has landed leaves behind, whichever direction it ran.
+	 *
+	 * The frame already shows the words, so it is not reloaded (rule 4): the
+	 * file is a fresh read for the rung, the stamps a save shifted along its
+	 * line are moved in the document and in the held picks, and the frame is
+	 * remembered as saved so the watcher's echo of this write reloads nothing
+	 * and leaving the frame does. A frame the hand had already left, or a
+	 * write only a reload can place, reloads behind its hold now.
+	 */
+	const landed = useCallback(
+		(frame: string, readAt: string, written: { path: string; fingerprint: string; shifts: StampShift[] | null }) => {
+			setSaves((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
+			if (written.shifts === null || !frameHeld(frame)) {
+				saved.current.delete(frame);
+				holdNext.current.add(frame);
+				reloadFrameDocument(frame);
+				return;
+			}
+			saved.current.set(frame, { source: readAt, fingerprint: written.fingerprint });
+			const shifts = written.shifts;
+			if (!shifts.some((shift) => shift.delta !== 0)) return;
+			const file = written.path.replace(/^design\//, "");
+			iframes.current.get(frame)?.contentWindow?.postMessage(restampMessage(file, shifts), "*");
+			const move = (source: string | null) => (source === null ? null : restamped(source, file, shifts));
+			setPicked((current) =>
+				current.map((pick) => (pick.frame === frame ? { ...pick, source: move(pick.source) } : pick)),
+			);
+			const chain = pickedChain.current;
+			if (chain?.frame === frame) {
+				holdChain({ frame, chain: chain.chain.map((hit) => ({ ...hit, source: move(hit.source) })) });
+			}
+		},
+		[frameHeld, holdChain, reloadFrameDocument],
+	);
+
+	/** The DOM half of undo and redo: the frame puts one edit's words back itself, and says whether it could. */
+	const restoreWords = useCallback(
+		(frame: string, edit: number, way: "before" | "after", then: (ok: boolean) => void) => {
+			const target = iframes.current.get(frame)?.contentWindow;
+			if (target == null) {
+				then(false);
+				return;
+			}
+			const ask = ++pickSeq.current;
+			restoreWaiters.current.set(ask, then);
+			target.postMessage(restoreMessage(edit, way, ask), "*");
+			setTimeout(() => {
+				if (restoreWaiters.current.delete(ask)) then(false);
+			}, PICK_REPLY_MS);
+		},
+		[],
+	);
+
+	/**
+	 * One text entry, run either way (#314). The patch goes back over the wire,
+	 * the daemon re-checks the fingerprint, and what comes back is the inverse
+	 * this entry carries from here on. A refusal means the file moved since —
+	 * the step is dropped, and said so. The frame puts the words back on its
+	 * own nodes; one that no longer holds them reloads behind its hold.
+	 */
+	const walkText = useCallback(
+		(entry: Extract<HistoryEntry, { kind: "text" }>, way: Way, taking: History) => {
+			void revertPatch(project, entry.patch).then((reverted) => {
+				// a press that landed after this one owns the stacks now
+				if (history.current !== taking) return;
+				if (reverted === undefined || !reverted.ok) {
+					updateHistory(drop(history.current, way));
+					setNotice({
+						kind: "error",
+						message:
+							reverted === undefined
+								? "The step could not be put back"
+								: "The file changed since; this step is dropped",
+					});
+					return;
+				}
+				updateHistory(amend(history.current, way, { ...entry, patch: reverted.undo }));
+				landed(entry.frame, entry.readAt, reverted);
+				restoreWords(entry.frame, entry.edit, way === "undo" ? "before" : "after", (ok) => {
+					if (ok || !saved.current.has(entry.frame)) return;
+					saved.current.delete(entry.frame);
+					holdNext.current.add(entry.frame);
+					reloadFrameDocument(entry.frame);
+				});
+			});
+		},
+		[landed, project, reloadFrameDocument, restoreWords, updateHistory],
+	);
 
 	/**
 	 * One step of the one stack (#230).
@@ -1857,6 +2019,10 @@ export function ProjectCanvas({
 				else undoTrash();
 				return;
 			}
+			if (entry.kind === "text") {
+				walkText(entry, way, taken.history);
+				return;
+			}
 			// a gather is a page the rail made and the frames it gathered into it, and
 			// the order the two halves go in is the whole reason it is one entry: going
 			// back, the frames leave before the page is staged, or they would ride into
@@ -1875,7 +2041,7 @@ export function ProjectCanvas({
 				void refetchFrames();
 			});
 		},
-		[applyPlaces, applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash, updateHistory],
+		[applyPlaces, applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash, updateHistory, walkText],
 	);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens
@@ -2138,9 +2304,12 @@ export function ProjectCanvas({
 			cancelPicks();
 			beginPick(frame, local, (chain) => {
 				const target = oneDown(chain, scope);
-				// no rung under this one: the two clicks meant the element itself, and
-				// frame background answers nothing either way (#254)
+				// no rung under this one: the two clicks meant the words, and the
+				// second of them has already opened the edit; leaving it alone is
+				// what lets one gesture descend a branch and edit a leaf (#254,
+				// #255). Frame background answers nothing either way
 				if (target === undefined) return;
+				endEditRef.current(false);
 				applyPick(frame, chain, target);
 			});
 		},
@@ -2256,6 +2425,146 @@ export function ProjectCanvas({
 		setRefused({ frame, selector, refusal });
 	}, []);
 
+	// --- the text gesture (#255, #314) --------------------------------------------
+
+	/**
+	 * The edit, in both places that read it: the state drives the render — the
+	 * frame owns its pointer while an edit is open — and the ref is what the
+	 * pointer and key handlers read, a paint earlier than the render would.
+	 */
+	const setEdit = useCallback((next: HandEdit | null) => {
+		editingRef.current = next;
+		setEditing(next);
+	}, []);
+
+	/**
+	 * End an open edit from out here, which is what a press anywhere on the
+	 * field means. The frame answers with `edited` either way, and that answer
+	 * is what writes — this only says which way it ended. One the frame never
+	 * answers for is let go anyway, or it would hold that frame's pointer for
+	 * the rest of the session.
+	 */
+	const endEdit = useCallback(
+		(commit: boolean) => {
+			const held = editingRef.current;
+			if (held === null) return;
+			iframes.current.get(held.frame)?.contentWindow?.postMessage(endEditMessage(commit), "*");
+			clearTimeout(closeTimer.current);
+			closeTimer.current = setTimeout(() => {
+				if (editingRef.current?.id === held.id) setEdit(null);
+			}, PICK_REPLY_MS);
+		},
+		[setEdit],
+	);
+	endEditRef.current = endEdit;
+
+	/**
+	 * The text gesture (#255): a second click on an element's own words puts
+	 * the caret there at once (#314). Nothing is asked first — the frame makes
+	 * the element editable the moment the message lands, and whether the file
+	 * will take the words is the daemon's answer when the edit ends. The
+	 * fingerprint the write will carry is the one the ring's read holds for
+	 * this very rung, when that read has landed.
+	 */
+	const beginTextEdit = useCallback(
+		(pick: PickedSelection, local: Point) => {
+			const stamp = stampOf(pick);
+			if (typeof stamp !== "string") {
+				showRefusal(pick.frame, pick.selector, stamp);
+				return;
+			}
+			const target = iframes.current.get(pick.frame);
+			if (target?.contentWindow == null) return;
+			const id = ++pickSeq.current;
+			const read = ringRef.current.read;
+			setEdit({
+				frame: pick.frame,
+				selector: pick.selector,
+				source: stamp,
+				id,
+				fingerprint: read?.source === stamp ? read.fingerprint : undefined,
+				phase: "opening",
+				start: "",
+			});
+			setRefused(null);
+			target.contentWindow.postMessage(editMessage(pick.selector, local.x, local.y, id), "*");
+			// typing has to land in the frame, which only happens once the
+			// document it is drawn in holds the focus
+			target.focus();
+			clearTimeout(openTimer.current);
+			openTimer.current = setTimeout(() => {
+				const held = editingRef.current;
+				if (held?.id === id && held.phase === "opening") setEdit({ ...held, phase: "open" });
+			}, OPENING_MS);
+		},
+		[setEdit, showRefusal],
+	);
+
+	/**
+	 * The edit has ended (#314). The frame already shows the words, so the
+	 * ring is re-read off the element they are drawn in, and a commit that
+	 * changed them is one write in the background. A refusal puts the words
+	 * back on the element and sits under it with the reason and the door to
+	 * the agent; a file that moved underneath is a fresh read of the rung too.
+	 */
+	const finishEdit = useCallback(
+		(held: HandEdit, commit: boolean, nodes: readonly EditedNode[], owner: string | null) => {
+			setEdit(null);
+			viewportRef.current?.focus();
+			walkKin(held.frame, held.selector, "self");
+			const attempted = wordsOf(nodes);
+			if (!commit || attempted === held.start) return;
+			const read = ringRef.current.read;
+			const fingerprint = held.fingerprint ?? (read?.source === held.source ? read.fingerprint : undefined);
+			const refuse = (refusal: Refusal) => {
+				restoreWords(held.frame, held.id, "before", () => {});
+				if (pickedRef.current.some((pick) => pick.frame === held.frame && pick.selector === held.selector)) {
+					setRefused({ frame: held.frame, selector: held.selector, refusal, attempted });
+				} else setNotice({ kind: "error", message: refusal.says });
+			};
+			if (fingerprint === undefined) {
+				refuse({ code: "unread", says: "the file was never read; select the element again" });
+				return;
+			}
+			void writeText(project, held.frame, {
+				source: held.source,
+				nodes,
+				fingerprint,
+				...(owner === null ? {} : { owner }),
+			}).then((written) => {
+				if (written === undefined) {
+					refuse({ code: "failed", says: "the words did not reach the file" });
+					return;
+				}
+				if (!written.ok) {
+					refuse(written.refusal);
+					if (written.refusal.code === "stale-file") {
+						setSaves((current) => ({ ...current, [held.frame]: (current[held.frame] ?? 0) + 1 }));
+					}
+					return;
+				}
+				// the stamp in the file that was written: the element's own, or the
+				// call site's when the words were supplied there
+				const readAt = written.path === `design/${held.source.replace(/:\d+:\d+$/, "")}` ? held.source : owner;
+				landed(held.frame, readAt ?? held.source, written);
+				// an edit that said what the file already said wrote nothing, and is no step
+				if (written.undo.start !== written.undo.end || written.undo.text !== "") {
+					recordEntry({
+						kind: "text",
+						frame: held.frame,
+						edit: held.id,
+						patch: written.undo,
+						readAt: readAt ?? held.source,
+					});
+				}
+				if (written.uncaught === true) {
+					setNotice({ kind: "error", message: "No history here: nothing is catching hand edits" });
+				}
+			});
+		},
+		[landed, project, recordEntry, restoreWords, setEdit, walkKin],
+	);
+
 	// A refusal is about the element it was refused on, so it goes when the
 	// selection moves rather than sitting over whatever comes next. The keys
 	// rather than the array: a click at the scope re-picks the same element and
@@ -2266,12 +2575,36 @@ export function ProjectCanvas({
 		setRefused(null);
 	}, [pickedKeys]);
 
-	// nothing holds a document past the window it was drawn in
+	// Letting go pays every reload the hold deferred, behind the frame's own
+	// outgoing paint: the frames the hand saved (#314, rule 4) and the frames
+	// something outside wrote while the hand held an element in them (#319).
+	// Both owe the same thing — the file the frame is not yet showing — and both
+	// are paid the moment the hand leaves the frame, so what a deselect shows is
+	// the saved document with no white frame in between.
+	const heldFrames = [
+		...new Set([...selected, ...picked.map((pick) => pick.frame), ...(entered === null ? [] : [entered])]),
+	]
+		.sort()
+		.join("\n");
+	useEffect(() => {
+		const holding = new Set(heldFrames.split("\n"));
+		for (const frame of new Set([...saved.current.keys(), ...writtenUnderHand.current])) {
+			if (holding.has(frame)) continue;
+			saved.current.delete(frame);
+			writtenUnderHand.current.delete(frame);
+			holdNext.current.add(frame);
+			reloadFrameDocument(frame);
+		}
+	}, [heldFrames, reloadFrameDocument]);
+
+	// nothing holds a document, or an edit, past the window it was drawn in
 	useEffect(() => {
 		const timers = holdTimers.current;
 		return () => {
 			for (const timer of timers.values()) clearTimeout(timer);
 			timers.clear();
+			clearTimeout(openTimer.current);
+			clearTimeout(closeTimer.current);
 		};
 	}, []);
 
@@ -2536,7 +2869,19 @@ export function ProjectCanvas({
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (event.kind === "frame" && event.frame !== undefined) {
-						reloadOrHold(event.frame);
+						const frame = event.frame;
+						const own = saved.current.get(frame);
+						if (own === undefined) reloadOrHold(frame);
+						else {
+							// a frame the hand saved and is still in already shows the file
+							// (#314): the file is asked whether it is still the one the hand
+							// wrote, and only a change from outside reloads — and that one
+							// waits for the hand like any other (#319)
+							void readRungs(project, frame, [own.source]).then((rungs) => {
+								if (saved.current.get(frame) !== own || rungs?.[0]?.fingerprint === own.fingerprint) return;
+								reloadOrHold(frame);
+							});
+						}
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -2700,6 +3045,33 @@ export function ProjectCanvas({
 					waiter?.(message.chain);
 					return;
 				}
+				// the in-place edit (#255): the frame says it has opened, and later
+				// says how it ended. A reply carrying another ask is a dead edit —
+				// its element has moved on, and writing what it says would land on
+				// whatever took its place.
+				case "edit-open": {
+					const held = editingRef.current;
+					if (held === null || held.id !== message.id) return;
+					if (!message.ok) {
+						setEdit(null);
+						showRefusal(held.frame, held.selector, GONE);
+						return;
+					}
+					setEdit({ ...held, start: message.text });
+					return;
+				}
+				case "edited": {
+					const held = editingRef.current;
+					if (held === null || held.id !== message.id) return;
+					finishEdit(held, message.commit, message.nodes, message.owner);
+					return;
+				}
+				case "restored": {
+					const waiter = restoreWaiters.current.get(message.id);
+					restoreWaiters.current.delete(message.id);
+					waiter?.(message.ok);
+					return;
+				}
 				case "snapped": {
 					const waiter = snapWaiters.current.get(message.id);
 					snapWaiters.current.delete(message.id);
@@ -2858,7 +3230,19 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [project, walkTo, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes, strike, releaseHold]);
+	}, [
+		project,
+		walkTo,
+		stopAnimation,
+		zoomAtPoint,
+		viewportCenter,
+		requestSiteBoxes,
+		strike,
+		releaseHold,
+		finishEdit,
+		setEdit,
+		showRefusal,
+	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -3226,6 +3610,18 @@ export function ProjectCanvas({
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		const p = localPoint(event);
+		pressOnHeld.current = null;
+		// a press out on the field is the click-away that commits an open edit
+		// (#255). While the frame's pointer is still out here, a press over it
+		// is the second half of the very double-click that opened the edit and
+		// belongs to nobody on the field.
+		const openEdit = editingRef.current;
+		if (openEdit !== null) {
+			const over = frameAtWorld(toWorld(p, cam)) === openEdit.frame;
+			if (over && openEdit.phase === "opening") return;
+			endEdit(true);
+			if (over) return;
+		}
 		const panningIntent = event.button === 1 || (event.button === 0 && toolRef.current === "hand");
 		viewportRef.current?.setPointerCapture(event.pointerId);
 
@@ -3401,7 +3797,14 @@ export function ProjectCanvas({
 			const scoped = toolRef.current === "edit" || (anchor !== undefined && anchor.frame === hit);
 			if (scoped) {
 				const local = frameLocalAt(hit, world);
-				if (local !== null) scopedSelectAt(hit, local);
+				// a press on the element that was already held is the second click
+				// the text gesture is (#255) — noted here and acted on at pointer-up,
+				// because until then it may yet turn out to be a drag of the frame
+				if (local !== null) {
+					const again = secondClick(pickedRef.current, hit, local);
+					pressOnHeld.current = again === undefined ? null : { pick: again, local };
+					scopedSelectAt(hit, local);
+				}
 			}
 			const names = selectedRef.current.includes(hit) ? [...selectedRef.current] : [hit];
 			if (!scoped) {
@@ -3900,6 +4303,10 @@ export function ProjectCanvas({
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
+		// the press never became a drag, so the second click meant the words (#255)
+		const again = pressOnHeld.current;
+		pressOnHeld.current = null;
+		if (active.kind === "pending" && again !== null) beginTextEdit(again.pick, again.local);
 	};
 
 	/**
@@ -4264,6 +4671,10 @@ export function ProjectCanvas({
 			"canvas.escape": () => {
 				cancelPicks();
 				setPreview(null);
+				if (editingRef.current !== null) {
+					endEditRef.current(false);
+					return;
+				}
 				if (!gestureStill()) cancelGesture();
 				else if (menuOpenRef.current) setMenu(null);
 				else if (enteredRef.current !== null) exitEntered(true);
@@ -4427,7 +4838,7 @@ export function ProjectCanvas({
 		// reloading the document, so a saved source is a fresh read too: without
 		// it the ring goes on answering out of the file as it was (#306). Only
 		// this frame's own saves count, so a save elsewhere leaves the read alone
-		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0),
+		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0) + (saves[ringPick.frame] ?? 0),
 	);
 	ringRef.current = ring;
 	/** the drag in flight on the rung the ring is drawn on, and nothing else */
@@ -4613,7 +5024,17 @@ export function ProjectCanvas({
 											entered={isEntered}
 											active={selectionTargets.has(frame.name)}
 											// ⌘ borrows an entered frame's pointer to reach an element under it
-											interactive={isEntered && !accelDown}
+											// an open in-place edit gives the frame its pointer back, so
+											// the words can be typed into the element itself (#255) —
+											// once it is open: for one double-click interval the canvas
+											// still hears the second half of the click that opened it.
+											// ⌘ borrows an entered frame's pointer to reach an element
+											// under it; an open edit is already inside one
+											interactive={
+												editing?.frame === frame.name && editing.phase === "open"
+													? true
+													: isEntered && !accelDown
+											}
 											docNonce={docNonces[frame.name] ?? 0}
 											holdNonce={heldPaint[frame.name] ?? null}
 											cover={frame.cover}
@@ -4709,6 +5130,7 @@ export function ProjectCanvas({
 							lit={lit}
 							preview={pointerTool ? preview : null}
 							refused={refused}
+							onAsk={() => askAgent(refused ?? undefined)}
 							handles={elementHandles}
 							marks={marks}
 							elementGuides={elementGuides}
@@ -4845,7 +5267,7 @@ export function ProjectCanvas({
 					<PropertiesRail
 						project={project}
 						held={railHeld}
-						revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0)}
+						revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0) + (saves[railFrame] ?? 0)}
 						width={width}
 						onCollapse={shut}
 						preview={elementDrag === null ? null : { box: elementDrag.box }}

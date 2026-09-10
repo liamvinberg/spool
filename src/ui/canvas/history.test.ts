@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Geometry } from "../api";
 import {
+	amend,
 	drop,
 	emptyHistory,
 	entryOf,
@@ -112,6 +113,32 @@ describe("geometry entries", () => {
 	it("is undefined on an empty stack", () => {
 		expect(takeUndo(emptyHistory(), alive("a"))).toBeUndefined();
 		expect(takeRedo(emptyHistory(), alive("a"))).toBeUndefined();
+	});
+});
+
+describe("text entries", () => {
+	const typed: HistoryEntry = {
+		kind: "text",
+		frame: "home",
+		edit: 3,
+		patch: { path: "design/frames/home/frame.tsx", start: 40, end: 52, text: "Make something", fingerprint: "a" },
+		readAt: "frames/home/frame.tsx:7:37",
+	};
+
+	it("runs while the frame is still there, and is amended with the inverse the run answers", () => {
+		const history = record(emptyHistory(), typed);
+		const undone = takeUndo(history, alive("home"));
+		expect(undone?.entry).toEqual(typed);
+		const inverse = { ...typed.patch, text: "Make it", fingerprint: "b" };
+		const amended = amend(undone?.history ?? history, "undo", { ...typed, patch: inverse });
+		expect(amended.redo).toEqual([{ ...typed, patch: inverse }]);
+		expect(takeRedo(amended, alive("home"))?.entry).toEqual({ ...typed, patch: inverse });
+	});
+
+	it("is skipped once the frame is gone, and dropped when the file moved underneath", () => {
+		expect(takeUndo(record(emptyHistory(), typed), alive("cart"))).toBeUndefined();
+		const taken = takeUndo(record(emptyHistory(), typed), alive("home"));
+		expect(drop(taken?.history ?? emptyHistory(), "undo")).toEqual(emptyHistory());
 	});
 });
 
