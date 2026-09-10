@@ -342,10 +342,14 @@ export function writableSize(value: number, extra: number, write: SizeWrite): nu
 	return Number((authored / write.per).toFixed(3)) * write.per + extra;
 }
 
-/** What a turn writes: the signed token it is at, or the family taken away at rest. */
-export function turnValue(deg: number): PropertyValue {
+/**
+ * What a turn writes: the signed token it is at, or the token it started in
+ * taken off where the drag brought it back to rest. A removal has to name the
+ * token it is taking off, since the literal is edited rather than replaced.
+ */
+export function turnValue(deg: number, worn: number): PropertyValue {
 	const [token] = rotateTokens(deg);
-	return token === undefined ? { kind: "remove" } : { kind: "binding", tokens: [token] };
+	return token === undefined ? { kind: "remove", tokens: rotateTokens(worn) } : { kind: "binding", tokens: [token] };
 }
 
 /** Everything one resize gesture may write, and nothing else. */
@@ -468,6 +472,24 @@ export function resizeFields(
 		const token = scaledToken(family, px(live, shift, offset), step, writes[property]);
 		return { property, value: { kind: "binding", tokens: [token] } };
 	});
+}
+
+/**
+ * The inline style one sample wears (#316).
+ *
+ * Preview is the DOM: every sample of a live drag puts the values the release
+ * would write straight on the element, and nothing leaves the canvas for it.
+ * The numbers are the ones `resizeFields` spells, read through the same table,
+ * so what the pointer shows and what the file gets cannot drift apart; the
+ * properties are CSS's own names for them.
+ */
+export function resizeStyle(held: ResizeMeasurement): Record<string, string> {
+	const style: Record<string, string> = {};
+	for (const property of held.properties) {
+		const px = RESIZE_PROPERTIES[property].px(held.live, held.shift, held.offset);
+		style[property] = `${Number(px.toFixed(2))}px`;
+	}
+	return style;
 }
 
 /**

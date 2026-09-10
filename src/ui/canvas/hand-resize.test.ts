@@ -6,8 +6,10 @@ import {
 	draggedRect,
 	drawnHandles,
 	handlesFor,
+	type ResizeMeasurement,
 	resizedBox,
 	resizeFields,
+	resizeStyle,
 	rotateTokens,
 	rotationOf,
 	turnValue,
@@ -113,9 +115,47 @@ describe("what a drag writes", () => {
 		expect(rotateTokens(12)).toEqual(["rotate-12"]);
 		expect(rotateTokens(-45)).toEqual(["-rotate-45"]);
 		expect(rotateTokens(0)).toEqual([]);
-		// a turn back to rest takes the family away rather than writing a zero
-		expect(turnValue(0)).toEqual({ kind: "remove" });
-		expect(turnValue(-45)).toEqual({ kind: "binding", tokens: ["-rotate-45"] });
+		// a turn back to rest takes off the token it started in rather than
+		// writing a zero, and names it, because the literal is edited in place
+		expect(turnValue(0, 30)).toEqual({ kind: "remove", tokens: ["rotate-30"] });
+		expect(turnValue(0, 0)).toEqual({ kind: "remove", tokens: [] });
+		expect(turnValue(-45, 0)).toEqual({ kind: "binding", tokens: ["-rotate-45"] });
+	});
+
+	it("wears the same numbers on the element that it writes to the file", () => {
+		const held: ResizeMeasurement = {
+			modifiers: { center: false, proportional: false },
+			properties: ["width", "height"],
+			writes: {
+				width: { unit: "px", per: 1 },
+				height: { unit: "px", per: 1 },
+				left: { unit: "px", per: 1 },
+				top: { unit: "px", per: 1 },
+			},
+			start: { w: 990, h: 400 },
+			extra: { w: 0, h: 0 },
+			offset: { left: 0, top: 0 },
+			limits: { minW: 0, minH: 0, maxW: null, maxH: null },
+			raw: { w: 640, h: 400 },
+			live: { w: 640, h: 400 },
+			shift: { x: 0, y: 0 },
+		};
+		expect(resizeStyle(held)).toEqual({ width: "640px", height: "400px" });
+		// the properties the gesture never opened on stay off the element
+		expect(resizeStyle({ ...held, properties: ["width"] })).toEqual({ width: "640px" });
+		// a free element's placement rides along, off the shift the size made
+		expect(
+			resizeStyle({
+				...held,
+				properties: ["width", "left"],
+				offset: { left: 20, top: 0 },
+				shift: { x: 350, y: 0 },
+			}),
+		).toEqual({ width: "640px", left: "370px" });
+		// a fractional sample is spelled short rather than at full precision
+		expect(resizeStyle({ ...held, properties: ["height"], live: { w: 640, h: 400.126 } })).toEqual({
+			height: "400.13px",
+		});
 	});
 });
 

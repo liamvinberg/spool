@@ -319,6 +319,26 @@ export function gapPaint(drag: GapDrag, step: number): { band: GapBand; says: st
 }
 
 /**
+ * The inline style one sample of a gap drag wears (#316).
+ *
+ * Preview is the DOM, and only the axis the band was grabbed on: a drag on
+ * the columns says nothing about the rows, and setting the shorthand would.
+ * The value goes on in the spelling it will be written in, so a gap authored
+ * in `rem` previews in `rem` and one in `%` previews in `%` — the element can
+ * wear a length the band has no pixels for. Nothing for a value that is not a
+ * length at all, which is an element that waits for the write.
+ */
+export function gapStyle(drag: GapDrag, step: number): Record<string, string> | null {
+	if (drag.live === null) return null;
+	const written = writtenLength(drag.live);
+	if (written === null) return null;
+	if (written.scale) return { [drag.axis]: `${Number(written.value) * step}px` };
+	if (written.value === "px") return { [drag.axis]: "1px" };
+	if (written.custom === null) return null;
+	return { [drag.axis]: `${written.custom.number}${written.custom.unit}` };
+}
+
+/**
  * Whether this drag has anything to save.
  *
  * A drag that never moved a step writes nothing: the source already says this,

@@ -13,6 +13,7 @@ import {
 	gapPaint,
 	gapSample,
 	gapSteppable,
+	gapStyle,
 	gapValuePixels,
 	gapWritable,
 	ownedGap,
@@ -388,6 +389,24 @@ describe("what one drag decides", () => {
 			band: { x: 40, y: 0, w: 16, h: 20 },
 			says: "[51%]",
 		});
+	});
+
+	it("wears the space it is making on the one axis it grabbed", () => {
+		expect(gapStyle(drag({ units: 4, live: "8" }), 4)).toEqual({ "column-gap": "32px" });
+		expect(gapStyle(drag({ axis: "row-gap", units: 4, live: "8" }), 4)).toEqual({ "row-gap": "32px" });
+		// a gap authored in its own unit previews in that unit rather than in pixels
+		expect(gapStyle(drag({ authored: "[1rem]", units: 1, live: "[2rem]" }), 4)).toEqual({
+			"column-gap": "2rem",
+		});
+		// `px` is Tailwind's own name for one pixel
+		expect(gapStyle(drag({ authored: "px", units: 0, live: "px" }), 4)).toEqual({ "column-gap": "1px" });
+		// a percentage the band cannot draw is still a gap the element can wear
+		expect(gapStyle(drag({ authored: "[50%]", units: 1, live: "[51%]" }), 4)).toEqual({
+			"column-gap": "51%",
+		});
+		// nothing before the first sample, and nothing that is not a length
+		expect(gapStyle(drag(), 4)).toBe(null);
+		expect(gapStyle(drag({ authored: "(--gap)", units: 1, live: "(--gap)" }), 4)).toBe(null);
 	});
 
 	it("has nothing to save until it moved a step", () => {
