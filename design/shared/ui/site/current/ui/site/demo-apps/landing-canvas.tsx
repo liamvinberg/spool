@@ -127,7 +127,15 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 	const [entered, setEntered] = useState<DemoTake | null>(null);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [geometry, setGeometry] = useState(POSITIONS);
-	const [camera, setCameraState] = useState<Camera>({ x: 200, y: 108, k: 0.32 });
+	const [camera, setCameraState] = useState<Camera>(() =>
+		// Match the fixed 1600 × 900 stage, 248px page rail and 44px header/strip
+		// in prerendered HTML too. Hydration must not zoom already-visible frames.
+		fitCamera(
+			{ x: 0, y: 0, w: 2520, h: 1860 },
+			1600 - 248 - 44 - (view === "agent" ? 420 : view === "properties" ? 300 : 0),
+			900 - 44,
+		),
+	);
 	const current = useRef(camera);
 	const viewport = useRef<HTMLDivElement>(null);
 	const flight = useRef(0);

@@ -63,7 +63,7 @@ function createPipeline(gl: WebGLRenderingContext) {
 }
 
 /** Owns this canvas's GPU resources, document measurements and animation loop. */
-export function createBloomRenderer(canvas: HTMLCanvasElement, entrance: "none" | "grow" | "quiet" = "none") {
+export function createBloomRenderer(canvas: HTMLCanvasElement, entrance: "none" | "grow" = "none") {
 	const holder = canvas.parentElement;
 	const page = canvas.closest(".bl-page")?.querySelector<HTMLElement>(".sg-page");
 	if (!holder || !page) return null;
@@ -89,10 +89,11 @@ export function createBloomRenderer(canvas: HTMLCanvasElement, entrance: "none" 
 	let last: number | null = null;
 	let accumulated = 0;
 	let drawnScroll = Number.NaN;
-	let revealed = entrance !== "grow";
+	let opening = entrance === "grow" && document.documentElement.dataset.opening === "pending";
+	let revealed = entrance !== "grow" || document.documentElement.dataset.opening === "fallback";
 	let paused = false,
 		disposed = false;
-	const running = () => !!pipeline && !paused && !preference.matches && !document.hidden && !disposed;
+	const running = () => !!pipeline && !opening && !paused && !preference.matches && !document.hidden && !disposed;
 
 	const resizeBuffer = () => {
 		const size = drawingSize(width, height, window.devicePixelRatio || 1, budget.scale);
@@ -196,11 +197,16 @@ export function createBloomRenderer(canvas: HTMLCanvasElement, entrance: "none" 
 		// A paused or reduced-motion field still follows document scrolling.
 		if (!raf && pipeline && !disposed && !document.hidden) raf = window.requestAnimationFrame(tick);
 	};
+	const onOpening = () => {
+		opening = false;
+		sync();
+	};
 	const resize = new ResizeObserver(measure);
 	resize.observe(page);
 	window.addEventListener("scroll", onScroll, { passive: true });
 	window.addEventListener("resize", measure, { passive: true });
 	window.addEventListener("pageshow", measure);
+	window.addEventListener("spool:opening", onOpening);
 	preference.addEventListener("change", sync);
 	document.addEventListener("visibilitychange", sync);
 	canvas.addEventListener("webglcontextlost", onLost);
@@ -220,6 +226,7 @@ export function createBloomRenderer(canvas: HTMLCanvasElement, entrance: "none" 
 			window.removeEventListener("scroll", onScroll);
 			window.removeEventListener("resize", measure);
 			window.removeEventListener("pageshow", measure);
+			window.removeEventListener("spool:opening", onOpening);
 			preference.removeEventListener("change", sync);
 			document.removeEventListener("visibilitychange", sync);
 			canvas.removeEventListener("webglcontextlost", onLost);

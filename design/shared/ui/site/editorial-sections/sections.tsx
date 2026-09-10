@@ -287,7 +287,7 @@ function Bloom({
 }: {
 	children: ReactNode;
 	hero?: "inline" | "tray";
-	entrance?: "none" | "grow" | "quiet";
+	entrance?: "none" | "grow";
 }) {
 	const canvas = useRef<HTMLCanvasElement>(null),
 		renderer = useRef<ReturnType<typeof createBloomRenderer>>(null);
@@ -349,7 +349,7 @@ export function AssembledLanding({
 }: {
 	hero: "inline" | "tray";
 	ending?: EndingTake;
-	entrance?: "none" | "grow" | "quiet";
+	entrance?: "none" | "grow";
 }) {
 	return (
 		<Bloom hero={hero} entrance={entrance}>

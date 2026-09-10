@@ -1,27 +1,44 @@
 /* Opening is occasional: 300ms for text, longer for the ambient pigment. */
-.es-page:is([data-entrance="grow"], [data-entrance="quiet"]) :is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview) {
+:where(.es-page[data-entrance="grow"]) :is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview) {
 	animation: es-enter 300ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
-.es-page[data-entrance] .ef-hero h1 {
+:where(.es-page[data-entrance="grow"]) .ef-hero h1 {
 	animation-delay: 45ms;
 }
-.es-page[data-entrance] .ef-bottom {
+:where(.es-page[data-entrance="grow"]) .ef-bottom {
 	animation-delay: 90ms;
 }
-.es-page[data-entrance] .ef-preview {
+:where(.es-page[data-entrance="grow"]) .ef-preview {
 	animation-delay: 140ms;
 }
-.es-page:is([data-entrance="grow"], [data-entrance="quiet"]) .bl-field {
+:where(.es-page[data-entrance="grow"]) .bl-field {
 	animation: es-field-enter 950ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
-.es-page[data-entrance="quiet"] {
-	--es-lift: 3px;
-}
-.es-page[data-entrance="grow"] {
+:where(.es-page[data-entrance="grow"]) {
 	--es-lift: 8px;
 }
-.es-page[data-entrance] :is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview):focus-within {
+:where(.es-page[data-entrance="grow"]) :is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview):focus-within {
 	animation: none;
+}
+:where(html[data-opening]) .privacy-banner {
+	animation: es-field-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+:where(html[data-opening="pending"])
+	:where(.es-page[data-entrance="grow"])
+	:is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview, .bl-field),
+:where(html[data-opening="pending"]) .privacy-banner {
+	animation-play-state: paused;
+}
+/* If the bundle arrives after the deadline, blend its finished shader over
+ * the same fallback field already on screen rather than restarting the page. */
+:where(html[data-opening="fallback"]) :where(.es-page[data-entrance="grow"]) .bl-field {
+	background: radial-gradient(ellipse at 83% 28%, #502015 0%, #24120e 25%, #101010 62%);
+}
+:where(html[data-opening="fallback"])
+	:where(.es-page[data-entrance="grow"])
+	:where(.bl-field[data-backend="webgl"])
+	.bl-canvas {
+	animation: es-field-enter 450ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 @keyframes es-enter {
 	from {
@@ -42,7 +59,17 @@
 	}
 }
 @media (prefers-reduced-motion: reduce) {
-	.es-page[data-entrance] :is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview, .bl-field) {
+	:where(.es-page[data-entrance="grow"]) :is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview, .bl-field) {
 		animation: none;
+	}
+	:where(html[data-opening]) .privacy-banner,
+	:where(html[data-opening="fallback"]) :where(.es-page[data-entrance="grow"]) .bl-canvas {
+		animation: none;
+	}
+	:where(html[data-opening="pending"])
+		:where(.es-page[data-entrance="grow"])
+		:is(.ef-nav, .ef-hero h1, .ef-bottom, .ef-preview, .bl-field),
+	:where(html[data-opening="pending"]) .privacy-banner {
+		opacity: 0;
 	}
 }
