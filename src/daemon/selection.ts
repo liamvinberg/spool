@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
 import { isSafeName } from "../page-path";
+import { parseStampRef } from "../stamp";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { extractJsxSpan, type JsxSpan } from "./jsx-span";
 import { frameFolder, frameGeometry, lookupFrame } from "./projection";
@@ -223,13 +224,11 @@ export interface Stamp {
  * the shared path-relative boundary diagnostic.
  */
 export function parseStamp(root: string, source: string): Stamp | undefined {
-	const match = source.match(/^(.+):(\d+):(\d+)$/);
-	const [, raw, lineText, columnText] = match ?? [];
-	if (raw === undefined || lineText === undefined || columnText === undefined) return undefined;
+	const at = parseStampRef(source);
+	if (at === undefined) return undefined;
+	const { rel: raw, line, column } = at;
 	const rel = normalize(raw.replaceAll("\\", "/"));
 	if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) return undefined;
-	const line = Number.parseInt(lineText, 10);
-	const column = Number.parseInt(columnText, 10);
 	if (line < 1 || column < 1) return undefined;
 	let file: string;
 	try {

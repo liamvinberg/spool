@@ -1,4 +1,7 @@
 import { captureRasterSize, coverCaptureScale, LIVE_MIN_CSS_PX } from "../../cover";
+
+export { parseStampRef, type StampRef } from "../../stamp";
+
 import { type ClipboardCopyRequest, parseClipboardCopyRequest } from "../../runtime/clipboard-protocol";
 import type { SessionRecord } from "../../runtime/frame-runtime";
 import type { AccelKeyName } from "../../runtime/platform-keys";
@@ -37,19 +40,6 @@ export interface PickedHit {
  * the removal that has to reach from one to the other (#116).
  */
 export const pickKey = (frame: string, selector: string): string => `${frame}\0${selector}`;
-
-/** A stamp taken apart: "frames/cart/frame.tsx:10:5" → rel, line, col. */
-export interface StampRef {
-	rel: string;
-	line: number;
-	col: number;
-}
-
-export function parseStampRef(source: string | null | undefined): StampRef | undefined {
-	const [, rel, line, col] = source?.match(/^(.+):(\d+):(\d+)$/) ?? [];
-	if (rel === undefined || line === undefined || col === undefined) return undefined;
-	return { rel, line: Number.parseInt(line, 10), col: Number.parseInt(col, 10) };
-}
 
 interface FrameWheelZoomMessage {
 	spool: "zoom";

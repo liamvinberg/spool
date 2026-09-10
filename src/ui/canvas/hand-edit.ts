@@ -1,3 +1,4 @@
+import { parseStampRef } from "../../stamp";
 import type { Point } from "./camera";
 import type { PickedSelection } from "./overlays";
 import type { EditedNode } from "./protocol";
@@ -103,13 +104,11 @@ export function restamped(
 	file: string,
 	shifts: readonly { line: number; column: number; delta: number; taken: number }[],
 ): string {
-	const match = /^(.*):(\d+):(\d+)$/.exec(source);
-	if (match === null || match[1] !== file) return source;
-	const line = Number(match[2]);
-	const column = Number(match[3]);
-	let moved = column;
-	for (const shift of shifts) if (shift.line === line && shift.column + shift.taken <= moved) moved += shift.delta;
-	return `${match[1]}:${line}:${moved}`;
+	const at = parseStampRef(source);
+	if (at === undefined || at.rel !== file) return source;
+	let moved = at.column;
+	for (const shift of shifts) if (shift.line === at.line && shift.column + shift.taken <= moved) moved += shift.delta;
+	return `${at.rel}:${at.line}:${moved}`;
 }
 
 /** The words of a node list as one string, which is what an ask carries. */

@@ -37,13 +37,6 @@ export type ClassSlot =
 /** The class helpers whose first string argument is the literal a hand edits. */
 const CLASS_CALLS: ReadonlySet<string> = new Set(["cn", "clsx", "cx"]);
 
-/** `frames/cart/frame.tsx:14:3` as the place it names. */
-export function parseStampRef(stamp: string): { rel: string; line: number; column: number } | undefined {
-	const match = /^(.*):(\d+):(\d+)$/.exec(stamp);
-	if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return undefined;
-	return { rel: match[1], line: Number(match[2]), column: Number(match[3]) };
-}
-
 /**
  * The answer for an opening tag already in hand, which is how the write lane
  * asks: it has parsed the file once for every op and is not parsing it again

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
 import type { ImportDeclaration, JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
+import { parseStampRef } from "../stamp";
 import { ASSET_FILTER } from "./assets";
-import { classSlotOf, parseStampRef } from "./class-literal";
+import { classSlotOf } from "./class-literal";
 import { type ClassEdit, type ClassTheme, screenConflict, writeClass } from "./class-write";
 import { isLayoutOnly, readJsxText, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
