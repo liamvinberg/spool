@@ -34,6 +34,10 @@ export type HandOp =
 	/** words a call site supplies to a component, written at that call (#314) */
 	| { kind: "set-supplied"; source: string; prop: string; text: string }
 	| { kind: "set-class"; source: string; token: string; scope: string; remove?: boolean }
+	/** the element out of the file, its own line with it when it stands alone (#317) */
+	| { kind: "delete"; source: string }
+	/** the `hidden` token in or out of the class literal, and nothing else (#317) */
+	| { kind: "set-hidden"; source: string; hidden: boolean }
 	| { kind: "set-attribute"; source: string; name: string; value: string }
 	| { kind: "set-asset"; source: string; specifier: string; hint: string };
 
@@ -50,6 +54,12 @@ export type RefusalCode =
 	| "supplied-text"
 	| "expression-attribute"
 	| "class-attribute"
+	// the element is the whole of what a component returns, so taking it out
+	// would take the component with it (#317)
+	| "whole-return"
+	// it is written inside an expression rather than standing as a child, so
+	// its characters are not a thing that can simply go (#317)
+	| "expression-child"
 	| "walk-target"
 	| "not-an-image"
 	| "image-budget"
@@ -369,6 +379,10 @@ function planOne(source: string, program: Node, element: Element, op: HandOp): O
 			return planText(source, element, op.nodes);
 		case "set-supplied":
 			return planSupplied(source, element, op.prop, op.text);
+		case "delete":
+			return planDelete(source, element);
+		case "set-hidden":
+			return planHidden(source, element, op.hidden);
 		case "set-attribute":
 			return planAttribute(source, element, op.name, op.value);
 		case "set-asset":
@@ -530,6 +544,106 @@ function planSupplied(source: string, call: Element, prop: string, text: string)
 	const escaped = escapeAttribute(text).replaceAll("\n", "&#10;").replaceAll("\r", "&#13;");
 	return { patches: [narrowed(slot.start, slot.raw, escaped)] };
 }
+
+/**
+ * The element, out of the file (#317).
+ *
+ * Its own characters where it sits among words on a line, and its whole line
+ * where it stands alone on one — indentation and line break included, because
+ * an author who gave an element a line of its own did not also ask for a blank
+ * one in its place.
+ *
+ * It has to be a child of JSX for its characters to be a thing that can simply
+ * go. The whole of what a function returns is not: taking it out would leave a
+ * component returning nothing, so that refuses and the surface offers the call
+ * that renders it instead. Anything written inside an expression — a branch, a
+ * row of an array, a value passed to a prop — refuses for the same reason in a
+ * different shape.
+ */
+function planDelete(source: string, element: Element): OnePlan {
+	const parent = element.parent;
+	if (parent?.type !== "JSXElement" && parent?.type !== "JSXFragment") {
+		const owner = returnedFrom(element);
+		if (owner === undefined) {
+			return {
+				refusal: {
+					code: "expression-child",
+					says: "it is written inside an expression; edit it in code or ask the agent",
+				},
+			};
+		}
+		return {
+			refusal: {
+				code: "whole-return",
+				says:
+					owner === ""
+						? "it is the whole of what a function returns; edit it in code or ask the agent"
+						: `it is all of ${owner}; delete it where it is used or ask the agent`,
+			},
+		};
+	}
+	return { patches: [cutOut(source, nodeStart(element.node), nodeEnd(element.node))] };
+}
+
+/** Whether this element is the whole of a function's return, and what that function is called. */
+function returnedFrom(element: Element): string | undefined {
+	const ancestors = element.ancestors;
+	const parent = ancestors[ancestors.length - 1];
+	if (parent === undefined) return undefined;
+	const returned =
+		parent.type === "ReturnStatement" || (parent.type === "ArrowFunctionExpression" && parent.body === element.node);
+	if (!returned) return undefined;
+	for (let at = ancestors.length - 1; at >= 0; at -= 1) {
+		const node = ancestors[at];
+		if (node === undefined) continue;
+		if (node.type === "FunctionDeclaration" || node.type === "FunctionExpression") return node.id?.name ?? "";
+		if (node.type === "ArrowFunctionExpression") {
+			const held = ancestors[at - 1];
+			if (held?.type === "VariableDeclarator" && held.id.type === "Identifier") return held.id.name;
+			return "";
+		}
+	}
+	return "";
+}
+
+/** The characters an element takes with it: its own, plus its line when nothing else is on it. */
+function cutOut(source: string, start: number, end: number): SpanPatch {
+	const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+	let after = end;
+	while (after < source.length && (source[after] === " " || source[after] === "\t")) after += 1;
+	const alone = /^[ \t]*$/.test(source.slice(lineStart, start)) && (after >= source.length || source[after] === "\n");
+	if (!alone) return { start, end, text: "" };
+	// the last line of a file has no break of its own to take, so it takes the
+	// one above it and leaves the line before it ending where it did
+	if (after >= source.length) return { start: lineStart === 0 ? 0 : lineStart - 1, end: after, text: "" };
+	return { start: lineStart, end: after + 1, text: "" };
+}
+
+/**
+ * Hide and show (#317): the `hidden` token, in or out of the class literal.
+ *
+ * Nothing else moves. A hide adds the token where the file has a literal to
+ * add it to and a whole `className` where it has none; a show takes it out
+ * again, so hide then show leaves the file byte for byte as it was. The
+ * literal is the one every other class write lands in, which is what makes a
+ * `cn("…", cond && "…")` component as hideable as a plain one.
+ */
+function planHidden(source: string, element: Element, hidden: boolean): OnePlan {
+	const literal = literalOf(source, element);
+	if ("refusal" in literal) return literal;
+	const tokens = literal.className.split(/\s+/).filter((token) => token !== "");
+	const next = hidden
+		? tokens.includes(HIDDEN)
+			? tokens
+			: [...tokens, HIDDEN]
+		: tokens.filter((token) => token !== HIDDEN);
+	const written = next.join(" ");
+	if (written === literal.className) return { patches: [] };
+	return { patches: [fill(element, "className", written, literal.slot)] };
+}
+
+/** The one token hide and show write, which is Tailwind's own `display: none`. */
+const HIDDEN = "hidden";
 
 type Child = JSXElement["children"][number];
 
@@ -1001,6 +1115,8 @@ interface Element {
 	attributes: readonly (JSXAttribute | JSXSpreadAttribute)[];
 	children: readonly JSXElement["children"][number][];
 	parent: Node | undefined;
+	/** everything above it, outermost first: what says whose return this is (#317) */
+	ancestors: readonly Node[];
 	/** an ancestor is a `map` call: one literal here, every rendered row moved */
 	mapped: boolean;
 	/** the element takes props it cannot see, so an absent attribute may exist */
@@ -1033,6 +1149,7 @@ function elementAt(program: Node, line: number, column: number, rel = ""): Eleme
 			attributes: opening.attributes,
 			children: node.children,
 			parent: ancestors[ancestors.length - 1],
+			ancestors: [...ancestors],
 			mapped: ancestors.some(isMapCall),
 			spread: opening.attributes.some((attribute) => attribute.type === "JSXSpreadAttribute"),
 			selfClosing: opening.selfClosing,
