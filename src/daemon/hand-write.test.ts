@@ -180,11 +180,11 @@ describe("set-text", () => {
 		});
 	});
 
-	it("refuses the words of a mapped row, because they are data", () => {
-		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<li"), nodes: text("x") }])).toEqual({
-			code: "mapped-text",
-			says: "the words are data, not design",
-		});
+	it("writes literal words inside a map, which every rendered row then says", () => {
+		const source = `const rows = items.map((item) => <li key={item} className="px-2">Row</li>);\n`;
+		const planned = plan([{ kind: "set-text", source: stamp(source, "<li"), nodes: text("Line") }], source);
+		expect(planned.ok && planned.text).toContain('className="px-2">Line</li>');
+		expect(planned.ok && planned.mapped).toBe(true);
 	});
 
 	it("refuses an element whose content is block elements, and one with no inside", () => {

@@ -47,7 +47,6 @@ export type RefusalCode =
 	| "spread-props"
 	| "variant-conflict"
 	| "stale-stamp"
-	| "mapped-text"
 	| "expression-text"
 	| "no-text"
 	| "text-shape"
@@ -474,7 +473,6 @@ function planClass(source: string, element: Element, edits: readonly ClassEdit[]
  * across a line break is the most ordinary edit there is.
  */
 function planText(source: string, element: Element, nodes: readonly EditedNode[]): OnePlan {
-	if (element.mapped) return { refusal: { code: "mapped-text", says: "the words are data, not design" } };
 	if (element.selfClosing) return { refusal: { code: "no-text", says: "no text of its own" } };
 	const refused = textRule(source, element.children);
 	if (refused !== undefined) return { refusal: refused };
