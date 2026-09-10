@@ -327,7 +327,9 @@ it("hands the frame under a drag its animation frames, and takes them back after
 	const surfaceFrame = page.frameLocator('iframe[title="home"]');
 	/** How many times the surface repainted over a third of a second. */
 	const painted = () =>
-		surfaceFrame.locator("canvas").evaluate((el) => (el.ownerDocument.defaultView as unknown as { painted?: number }).painted ?? -1);
+		surfaceFrame
+			.locator("canvas")
+			.evaluate((el) => (el.ownerDocument.defaultView as unknown as { painted?: number }).painted ?? -1);
 	const repainting = async () => {
 		const before = await painted();
 		await page.waitForTimeout(300);

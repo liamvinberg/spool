@@ -279,7 +279,9 @@ it("picks the block under the pointer before it opens any words", { timeout: 240
 
 	// and ⌫ on the held heading takes it out of the file
 	await page.keyboard.press("Escape");
-	await expect.poll(() => frame.locator("#details h2").getAttribute("contenteditable"), { timeout: 15_000 }).toBe(null);
+	await expect
+		.poll(() => frame.locator("#details h2").getAttribute("contenteditable"), { timeout: 15_000 })
+		.toBe(null);
 	await expect.poll(held, { timeout: 15_000 }).toBe("h2");
 	// the frame holds the keyboard until its own answer lands, so ⌫ waits
 	await expect
@@ -306,9 +308,13 @@ it("scrubs every layout number while the lock takes the pointer", { timeout: 240
 	await page.evaluate(() => {
 		Reflect.set(window, "__lost", 0);
 		let held = 1;
-		document.addEventListener("pointerdown", (event) => {
-			held = event.pointerId;
-		}, true);
+		document.addEventListener(
+			"pointerdown",
+			(event) => {
+				held = event.pointerId;
+			},
+			true,
+		);
 		Element.prototype.requestPointerLock = function granted(this: Element) {
 			Reflect.set(window, "__lost", (Reflect.get(window, "__lost") as number) + 1);
 			this.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: held }));
