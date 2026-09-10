@@ -141,6 +141,8 @@ export function Row({
 		let at = event.clientX,
 			carry = 0,
 			started = false,
+			asked = false,
+			pending = false,
 			locked = false,
 			finished = false;
 		const finish = (canceled: boolean) => {
@@ -150,16 +152,18 @@ export function Row({
 			doc.removeEventListener("pointermove", move, true);
 			doc.removeEventListener("pointerup", up, true);
 			doc.removeEventListener("pointercancel", cancelPointer, true);
-			doc.removeEventListener("pointerlockchange", locking, true);
 			doc.defaultView?.removeEventListener("keydown", key, true);
-			target.removeEventListener("lostpointercapture", cancelPointer);
+			target.removeEventListener("lostpointercapture", lostCapture);
 			doc.defaultView?.removeEventListener("blur", cancel);
 			try {
 				if (target.hasPointerCapture(pointer)) target.releasePointerCapture(pointer);
 			} catch {
 				/* The document listeners also work when capture is unavailable. */
 			}
-			if (locked && doc.pointerLockElement === target) doc.exitPointerLock?.();
+			// a lock still on its way is given up when it arrives, so a scrub that
+			// ended first never leaves the pointer hidden
+			if (doc.pointerLockElement === target) doc.exitPointerLock?.();
+			else if (!pending) unlisten();
 			if (!started) return;
 			if (canceled) callbacks.current.onScrubCancel?.();
 			else callbacks.current.onScrubEnd?.();
@@ -167,25 +171,44 @@ export function Row({
 		/**
 		 * Past the first whole step the pointer belongs to the number.
 		 *
-		 * Locked, the drag is measured in movement rather than in position, so
-		 * it never runs out of screen: a width goes on growing past the edge of
-		 * the display for as long as the hand keeps moving. Escape gives the
-		 * lock back without the page hearing the key, so losing it is how a
-		 * locked scrub is called off.
+		 * The drag is measured in movement all the way through, granted or not,
+		 * so the scrub is the same gesture either way and starts at the
+		 * threshold rather than when an answer arrives (#322). Granted, it also
+		 * never runs out of screen: a width goes on growing past the edge of the
+		 * display for as long as the hand keeps moving. Escape gives the lock
+		 * back without the page hearing the key, so losing it is how a locked
+		 * scrub is called off.
 		 */
+		const unlisten = () => {
+			doc.removeEventListener("pointerlockchange", locking, true);
+			doc.removeEventListener("pointerlockerror", refused, true);
+		};
 		const lock = () => {
 			if (typeof target.requestPointerLock !== "function") return;
+			asked = true;
+			pending = true;
 			doc.addEventListener("pointerlockchange", locking, true);
+			doc.addEventListener("pointerlockerror", refused, true);
 			try {
-				const asked: unknown = target.requestPointerLock();
-				if (asked instanceof Promise) asked.catch(() => {});
+				const answer: unknown = target.requestPointerLock();
+				if (answer instanceof Promise) answer.catch(() => {});
 			} catch {
 				/* a browser that will not lock: the drag stays on the screen it has */
 			}
 		};
+		/** The browser will not lock, which the drag on `movementX` does not need. */
+		const refused = () => {
+			pending = false;
+			if (finished) unlisten();
+		};
 		const locking = () => {
-			if (finished) return;
+			pending = false;
 			const now = doc.pointerLockElement === target;
+			if (finished) {
+				if (now) doc.exitPointerLock?.();
+				else unlisten();
+				return;
+			}
 			if (locked && !now) {
 				cancel();
 				return;
@@ -194,7 +217,9 @@ export function Row({
 		};
 		const move = (next: PointerEvent) => {
 			if (next.pointerId !== pointer || finished) return;
-			const moved = locked ? next.movementX : next.clientX - at;
+			// movement first: under a lock the pointer stays where it was, and a
+			// browser that reports none leaves the position to say what moved
+			const moved = next.movementX || next.clientX - at;
 			at = next.clientX;
 			const step = scrubStep(carry, moved, next.shiftKey);
 			carry = step.carry;
@@ -212,6 +237,14 @@ export function Row({
 		const cancelPointer = (next: PointerEvent) => {
 			if (next.pointerId === pointer) finish(true);
 		};
+		/**
+		 * The capture is gone. Engaging the lock is what takes it here (#322) —
+		 * this gesture's own doing, and not the pointer being taken away — so
+		 * once the lock has been asked for, the loss says nothing.
+		 */
+		const lostCapture = (next: PointerEvent) => {
+			if (!asked) cancelPointer(next);
+		};
 		const cancel = () => finish(true);
 		const key = (next: KeyboardEvent) => {
 			if (next.key !== "Escape") return;
@@ -225,7 +258,7 @@ export function Row({
 		doc.addEventListener("pointerup", up, true);
 		doc.addEventListener("pointercancel", cancelPointer, true);
 		doc.defaultView?.addEventListener("keydown", key, true);
-		target.addEventListener("lostpointercapture", cancelPointer);
+		target.addEventListener("lostpointercapture", lostCapture);
 		doc.defaultView?.addEventListener("blur", cancel);
 		try {
 			target.setPointerCapture(pointer);

@@ -289,3 +289,84 @@ it("picks the block under the pointer before it opens any words", { timeout: 240
 	await expect.poll(() => frame.locator("#details h2").count(), { timeout: 15_000 }).toBe(0);
 	await expect.poll(() => f.bytes().includes("Ideas stay"), { timeout: 15_000 }).toBe(false);
 });
+
+it("scrubs every layout number while the lock takes the pointer", { timeout: 240_000 }, async () => {
+	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 700 });
+	const { page, frame } = f;
+	const requests = apiRequests(page, f.project.name);
+	const inline = (property: string) =>
+		frame
+			.locator("div.veil-art")
+			.first()
+			.evaluate((el, name) => el.style.getPropertyValue(name), property);
+
+	// A granted lock takes the pointer capture with it, which is what Chromium
+	// does the moment it engages and what this headless shell never reaches:
+	// the app window has the focus a lock needs and this one does not (#322).
+	await page.evaluate(() => {
+		Reflect.set(window, "__lost", 0);
+		let held = 1;
+		document.addEventListener("pointerdown", (event) => {
+			held = event.pointerId;
+		}, true);
+		Element.prototype.requestPointerLock = function granted(this: Element) {
+			Reflect.set(window, "__lost", (Reflect.get(window, "__lost") as number) + 1);
+			this.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: held }));
+			return Promise.resolve();
+		};
+	});
+
+	await f.select("div.veil-art", { x: 60, y: 45 });
+	await expect.poll(() => page.locator('[data-properties-row="width"] input').count(), { timeout: 30_000 }).toBe(1);
+
+	/** Drag one row's number to the right and let go, reading what the frame drew on the way. */
+	const scrub = async (row: string, property: string) => {
+		const field = page.locator(`[data-properties-row="${row}"] input`).first();
+		await expect.poll(() => field.count(), { timeout: 15_000 }).toBe(1);
+		const spot = await field.boundingBox();
+		if (spot === null) throw new Error(`the rail drew no ${row} field`);
+		const from = { x: spot.x + spot.width / 2, y: spot.y + spot.height / 2 };
+		await requests.quiet();
+		await page.mouse.move(from.x, from.y);
+		await page.mouse.down();
+		const drawn: string[] = [];
+		for (const dx of [24, 120, 400]) {
+			await page.mouse.move(from.x + dx, from.y);
+			await expect.poll(() => inline(property), { timeout: 15_000 }).not.toBe("");
+			drawn.push(await inline(property));
+		}
+		const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
+		await page.mouse.up();
+		await wrote;
+		await expect.poll(() => inline(property), { timeout: 15_000 }).toBe("");
+		// every sample drew, each further along than the last, and one write ended it
+		expect(new Set(drawn).size, `${row} drew ${drawn.join(", ")}`).toBe(drawn.length);
+		expect(requests.taken().filter((sent) => sent.endsWith("/class"))).toHaveLength(1);
+		return drawn[drawn.length - 1] ?? "";
+	};
+
+	/** Open a spacing fold onto its four sides, one caret press per level. */
+	const unfold = async (prefix: string) => {
+		for (const row of [prefix, `${prefix}-inline`]) {
+			await page.locator(`[data-properties-row="${row}"] button[aria-expanded]`).click();
+		}
+	};
+
+	// the width is an arbitrary value the file spells in brackets, and the sides
+	// are rows nothing sets, which read `auto` until a drag gives them a number
+	expect(Number.parseInt(await scrub("width", "width"), 10)).toBeGreaterThan(990);
+	await expect.poll(() => f.bytes().includes("w-["), { timeout: 15_000 }).toBe(true);
+	await scrub("height", "height");
+	await expect.poll(() => f.bytes().includes("h-["), { timeout: 15_000 }).toBe(true);
+	// the sides one at a time, which is the fold opened all the way
+	await unfold("margin");
+	await scrub("margin-left", "margin-left");
+	await expect.poll(() => f.bytes().includes("ml-["), { timeout: 15_000 }).toBe(true);
+	await unfold("padding");
+	await scrub("padding-top", "padding-top");
+	await expect.poll(() => f.bytes().includes("pt-["), { timeout: 15_000 }).toBe(true);
+
+	// the lock was asked for on every one of them, and taking the capture away
+	// is not what ends a scrub
+	expect(await page.evaluate(() => Reflect.get(window, "__lost"))).toBe(4);
+});
