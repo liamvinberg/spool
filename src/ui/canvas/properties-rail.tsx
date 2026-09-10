@@ -242,7 +242,7 @@ export function stampsOf(held: Held | null): { frame: string; sources: string[];
  * would offer a handle this one may not have.
  */
 export function useRungs(project: string, held: Held | null, revision: number): (RungRead | undefined)[] | null {
-	const [answered, setAnswered] = useState<{ asked: string; rungs: RungRead[] } | null>(null);
+	const [answered, setAnswered] = useState<{ asked: string; on: string; rungs: RungRead[] } | null>(null);
 	const ask = stampsOf(held);
 	/**
 	 * The whole ask on one line: the revision of the file, the frame, the stamps.
@@ -252,18 +252,26 @@ export function useRungs(project: string, held: Held | null, revision: number): 
 	 * daemon again every time the pointer moved.
 	 */
 	const asked = ask === null ? "" : [String(revision), ask.frame, ...ask.sources].join("\n");
+	/** which element the answer is about, which a re-read of it does not change */
+	const on = held?.kind === "element" ? `${held.frame}\n${held.selector}` : "";
 	useEffect(() => {
 		const [, frame, ...sources] = asked.split("\n");
 		if (frame === undefined || sources.length === 0) return;
 		let live = true;
 		void readRungs(project, frame, sources).then((read) => {
-			if (live && read !== undefined) setAnswered({ asked, rungs: read });
+			if (live && read !== undefined) setAnswered({ asked, on, rungs: read });
 		});
 		return () => {
 			live = false;
 		};
-	}, [project, asked]);
-	if (ask === null || answered?.asked !== asked) return null;
+	}, [project, asked, on]);
+	if (ask === null || answered === null) return null;
+	// A re-read of the element already answered for is the hand's own write
+	// coming back, and its rows go on saying what they said until it lands
+	// (#321). Blanking there took every reading off the rail and every handle
+	// off the ring for a round trip after each property change — a flash that
+	// reads as the frame reloading, on the one gesture that reloads nothing.
+	if (answered.asked !== asked && (on === "" || answered.on !== on)) return null;
 	const byRung: (RungRead | undefined)[] = [];
 	for (const [index, rung] of ask.rungs.entries()) byRung[rung] = answered.rungs[index];
 	return byRung;
