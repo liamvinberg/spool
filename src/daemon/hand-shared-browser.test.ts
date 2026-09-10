@@ -223,6 +223,26 @@ it("edits a shared component from one frame and every frame follows", { timeout:
 	await expect.poll(() => marked(frame, "sameDocument"), { timeout: 15_000 }).toBe(false);
 	await expect.poll(() => radius(frame), { timeout: 15_000 }).toBe("12px");
 
+	// a hide is the same write as any other: the shared file, once, and every
+	// other frame reloads behind its held paint (#317, #318)
+	await mark(second, "hiddenDocument");
+	await watchSwaps();
+	await f.select("em.surface-note");
+	await requests.quiet();
+	const hide = page.locator("[data-hidden-toggle]");
+	await expect.poll(() => hide.count(), { timeout: 15_000 }).toBe(1);
+	await hide.click();
+	await fileHas("shared/ui/surface.tsx", '<em className="surface-note hidden">');
+	expect(f.bytes()).toBe(HOME);
+	await sharedEcho();
+	await settledSwap(1);
+	expect(await marked(second, "hiddenDocument")).toBe(false);
+	await f.history();
+	await fileHas("shared/ui/surface.tsx", '<em className="surface-note">Rendered live</em>');
+	await sharedEcho();
+	await settledSwap(2);
+	await deselect();
+
 	// a label supplied at the call edits that call alone: the frame's own file,
 	// the definition untouched, the other frames' labels their own
 	await mark(frame, "labelDocument");
