@@ -98,14 +98,32 @@ describe("set-class", () => {
 		expect(text).toContain('<ul className="flex flex-col gap-2">');
 	});
 
-	it("refuses a computed className and names the expression", () => {
+	it("refuses a computed className, naming the expression and where to edit it", () => {
 		expect(
 			refusal([{ kind: "set-class", source: stamp(FRAME, "<p className={busy"), token: "p-2", scope: "" }]),
 		).toEqual({
 			code: "computed-class",
-			says: "className is an expression",
+			says: "class is computed here; edit frames/cart/frame.tsx line 13 or ask the agent",
 			expression: '{busy ? "opacity-50" : "opacity-100"}',
+			line: 13,
 		});
+	});
+
+	it("writes into the first string of a cn call and keeps the condition (#315)", () => {
+		const source = `const x = <div className={cn("flex gap-3 px-5 py-4", tone === "right" && "border-l")}>a</div>;\n`;
+		const text = written([{ kind: "set-class", source: stamp(source, "<div"), token: "px-8", scope: "" }], source);
+		expect(text).toBe(
+			`const x = <div className={cn("flex gap-3 py-4 px-8", tone === "right" && "border-l")}>a</div>;\n`,
+		);
+	});
+
+	it("keeps a JS literal's own quote and escapes into it", () => {
+		const source = "const x = <p className={'p-2'}>a</p>;\n";
+		const text = written(
+			[{ kind: "set-class", source: stamp(source, "<p"), token: "content-['x']", scope: "" }],
+			source,
+		);
+		expect(text).toBe("const x = <p className={'p-2 content-[\\'x\\']'}>a</p>;\n");
 	});
 
 	it("refuses when an inline style pins the element", () => {
@@ -520,6 +538,7 @@ describe("readElements", () => {
 	it("refuses a computed className with the expression the file says instead", () => {
 		const [one] = read("<p className={busy");
 		expect(one?.refusal?.code).toBe("computed-class");
+		expect(one?.refusal?.line).toBe(13);
 		expect(one?.refusal?.expression).toBe('{busy ? "opacity-50" : "opacity-100"}');
 		expect(one?.className).toBe("");
 	});

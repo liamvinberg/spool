@@ -524,8 +524,9 @@ describe("the rungs read", () => {
 		]);
 		expect(computed?.refusal).toEqual({
 			code: "computed-class",
-			says: "className is an expression",
+			says: "class is computed here; edit frames/cart/frame.tsx line 10 or ask the agent",
 			expression: '{busy ? "opacity-50" : "opacity-100"}',
+			line: 10,
 		});
 		expect(computed?.className).toBe("");
 		expect(mapped).toMatchObject({ className: "px-2", mapped: true });

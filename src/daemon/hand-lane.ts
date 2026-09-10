@@ -89,11 +89,11 @@ export async function readRungs(
 	// the same file over and over
 	const byFile = new Map<
 		string,
-		{ at: { line: number; column: number }[]; reads: (ElementRead | undefined)[]; fingerprint?: string }
+		{ rel: string; at: { line: number; column: number }[]; reads: (ElementRead | undefined)[]; fingerprint?: string }
 	>();
 	for (const stamp of stamps) {
 		if (stamp === undefined) continue;
-		const held = byFile.get(stamp.file) ?? { at: [], reads: [] };
+		const held = byFile.get(stamp.file) ?? { rel: stamp.rel, at: [], reads: [] };
 		held.at.push({ line: stamp.line, column: stamp.column });
 		byFile.set(stamp.file, held);
 	}
@@ -105,7 +105,7 @@ export async function readRungs(
 			held.reads = held.at.map(() => undefined);
 			continue;
 		}
-		held.reads = readElements(source, held.at);
+		held.reads = readElements(source, held.at, held.rel);
 		held.fingerprint = fingerprintOf(source);
 	}
 	const taken = new Map<string, number>();

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
 import type { ImportDeclaration, JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
 import { ASSET_FILTER } from "./assets";
+import { classSlotOf, parseStampRef } from "./class-literal";
 import { type ClassEdit, type ClassTheme, screenConflict, writeClass } from "./class-write";
 import { isLayoutOnly, readJsxText, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
@@ -66,6 +67,8 @@ export interface PatchRefusal {
 	says: string;
 	/** what the file says instead, when naming it is the whole of the answer */
 	expression?: string;
+	/** the line the sentence points at, when editing the file there is the answer (#315) */
+	line?: number;
 }
 
 export type Planned =
@@ -190,8 +193,8 @@ export function planOps(source: string, ops: readonly HandOp[], theme?: ClassThe
 	const classEdits = new Map<Node, { element: Element; edits: ClassEdit[] }>();
 
 	for (const op of ops) {
-		const stamp = stampOf(op.source);
-		const element = stamp === undefined ? undefined : elementAt(program, stamp.line, stamp.column);
+		const stamp = parseStampRef(op.source);
+		const element = stamp === undefined ? undefined : elementAt(program, stamp.line, stamp.column, stamp.rel);
 		if (element === undefined) return { ok: false, refusal: STALE_STAMP };
 		if (element.mapped) mapped = true;
 		if (op.kind === "set-class") {
@@ -321,6 +324,8 @@ function attributesOf(source: string, element: Element, assets: ReadonlyMap<stri
 export function readElements(
 	source: string,
 	at: readonly { line: number; column: number }[],
+	/** how the file is named to a person: what a refusal points at */
+	rel = "",
 ): (ElementRead | undefined)[] {
 	let program: Node;
 	try {
@@ -336,7 +341,7 @@ export function readElements(
 			.map((held) => [held.local ?? "", held.specifier]),
 	);
 	return at.map(({ line, column }) => {
-		const element = elementAt(program, line, column);
+		const element = elementAt(program, line, column, rel);
 		if (element === undefined) return undefined;
 		const name = rawOf(source, element.node.openingElement.name);
 		const attributes = attributesOf(source, element, assets);
@@ -382,7 +387,8 @@ function planOne(source: string, program: Node, element: Element, op: HandOp): O
  * Both the write and the rail's read come through here, which is what keeps
  * them from drifting: the rail greys a row for exactly the reason the write
  * would have refused, and the literal it prints on the source line is the one
- * a splice would land in.
+ * a splice would land in. Where the literal is — an attribute, a `cn()`
+ * call's first string, nowhere yet — is `class-literal.ts`'s answer (#315).
  */
 function literalOf(
 	source: string,
@@ -391,16 +397,22 @@ function literalOf(
 	if (attributeNamed(element, "style") !== undefined) {
 		return { refusal: { code: "inline-style", says: "inline style pins it" } };
 	}
-	const held = attributeNamed(element, "className");
-	const slot = held === undefined ? undefined : slotOf(source, held);
-	if (held !== undefined && slot === undefined) {
-		const value = held.value == null ? "" : source.slice(nodeStart(held.value), nodeEnd(held.value));
-		return { refusal: { code: "computed-class", says: "className is an expression", expression: value } };
+	const slot = classSlotOf(source, element.node.openingElement);
+	if (slot.kind === "computed") {
+		return {
+			refusal: {
+				code: "computed-class",
+				says: `class is computed here; edit ${element.rel} line ${slot.line} or ask the agent`,
+				expression: slot.expression,
+				line: slot.line,
+			},
+		};
 	}
-	if (held === undefined && element.spread) {
-		return { refusal: { code: "spread-props", says: "spread props with no literal" } };
+	if (slot.kind === "none") {
+		if (element.spread) return { refusal: { code: "spread-props", says: "spread props with no literal" } };
+		return { slot: undefined, className: "" };
 	}
-	return { slot, className: slot?.kind === "literal" ? slot.value : "" };
+	return { slot, className: slot.kind === "literal" ? slot.value : "" };
 }
 
 function planClass(source: string, element: Element, edits: readonly ClassEdit[], theme?: ClassTheme): OnePlan {
@@ -938,7 +950,13 @@ function dropLine(source: string, from: number, to: number): SpanPatch {
  * which is where a hand would have written it.
  */
 function fill(element: Element, name: string, value: string, slot: Slot | undefined): SpanPatch {
-	if (slot?.kind === "literal") return narrowed(slot.start, slot.raw, escapeAttribute(value));
+	if (slot?.kind === "literal") {
+		return narrowed(
+			slot.start,
+			slot.raw,
+			slot.quote === undefined ? escapeAttribute(value) : escapeJs(value, slot.quote),
+		);
+	}
 	if (slot?.kind === "bare") return { start: slot.at, end: slot.at, text: `="${escapeAttribute(value)}"` };
 	return { start: element.nameEnd, end: element.nameEnd, text: ` ${name}="${escapeAttribute(value)}"` };
 }
@@ -969,6 +987,11 @@ function escapeAttribute(value: string): string {
 	return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
+/** A JS string literal keeps its own quote: a class inside `cn("…")` is written the way JS reads it. */
+function escapeJs(value: string, quote: '"' | "'"): string {
+	return value.replaceAll("\\", "\\\\").replaceAll(quote, `\\${quote}`).replaceAll("\n", "\\n");
+}
+
 /* ---------- the element a stamp points at ---------- */
 
 interface Element {
@@ -987,13 +1010,8 @@ interface Element {
 	nameEnd: number;
 	/** just past the opening tag's `>`, where an element's own words begin */
 	openEnd: number;
-}
-
-/** "frames/cart/frame.tsx:14:3" as the position it names. */
-function stampOf(source: string): { line: number; column: number } | undefined {
-	const match = /:(\d+):(\d+)$/.exec(source);
-	if (match?.[1] === undefined || match[2] === undefined) return undefined;
-	return { line: Number(match[1]), column: Number(match[2]) };
+	/** the file as a person names it, which is what a refusal points at */
+	rel: string;
 }
 
 /**
@@ -1003,7 +1021,7 @@ function stampOf(source: string): { line: number; column: number } | undefined {
  * at serve time by the same triple esbuild hands `jsxDEV`. Anything else is a
  * stamp the file has moved on from.
  */
-function elementAt(program: Node, line: number, column: number): Element | undefined {
+function elementAt(program: Node, line: number, column: number, rel = ""): Element | undefined {
 	let found: Element | undefined;
 	walkNodes(program, [], (node, ancestors) => {
 		if (node.type !== "JSXElement") return;
@@ -1020,6 +1038,7 @@ function elementAt(program: Node, line: number, column: number): Element | undef
 			selfClosing: opening.selfClosing,
 			nameEnd: nodeEnd(opening.name),
 			openEnd: nodeEnd(opening),
+			rel,
 		};
 	});
 	return found;
@@ -1047,8 +1066,9 @@ function attributeNamed(element: Element, name: string): JSXAttribute | undefine
 
 /** Where an attribute's value is written, when it is written literally at all. */
 type Slot =
-	/** the characters between the quotes, as the file spells them */
-	{ kind: "literal"; value: string; raw: string; start: number; end: number } | { kind: "bare"; at: number };
+	/** the characters between the quotes, as the file spells them; a JS string says which quote */
+	| { kind: "literal"; value: string; raw: string; start: number; end: number; quote?: '"' | "'" }
+	| { kind: "bare"; at: number };
 
 /**
  * The string a literal attribute holds, and where its characters sit. A
@@ -1063,7 +1083,15 @@ function slotOf(source: string, attribute: JSXAttribute): Slot | undefined {
 	if (held.type !== "StringLiteral") return undefined;
 	const start = nodeStart(held) + 1;
 	const end = nodeEnd(held) - 1;
-	return { kind: "literal", value: held.value, raw: source.slice(start, end), start, end };
+	const quote = value.type === "JSXExpressionContainer" ? (source[nodeStart(held)] === "'" ? "'" : '"') : undefined;
+	return {
+		kind: "literal",
+		value: held.value,
+		raw: source.slice(start, end),
+		start,
+		end,
+		...(quote === undefined ? {} : { quote }),
+	};
 }
 
 function rawOf(source: string, node: Node): string {
