@@ -111,9 +111,12 @@ import {
 	gapAxisOf,
 	gapBands,
 	gapDragSign,
+	gapField,
+	gapMoved,
 	gapPaint,
 	gapSample,
 	gapSteppable,
+	gapStyle,
 	gapWritable,
 	ownedGap,
 } from "./hand-gap";
@@ -131,9 +134,12 @@ import {
 	type ResizeModifiers,
 	type ResizeProperty,
 	resizedBox,
+	resizeFields,
+	resizeStyle,
 	type Size,
 	type SizeWrite,
 	snapTrial,
+	turnValue,
 	useRing,
 } from "./hand-resize";
 import {
@@ -176,6 +182,7 @@ import { PageObjectLabel, PageObjectView } from "./page-object";
 import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import { type Held, PropertiesRail } from "./properties-rail";
+import { BASE, scopedClass } from "./properties-scope";
 import { classEditsOf, type PropertyControls, type PropertyValue } from "./property-controls";
 import {
 	alterMessage,
@@ -3812,11 +3819,20 @@ export function ProjectCanvas({
 		};
 	};
 
-	/** What the ring draws while an element drag is live (#259). */
+	/**
+	 * What the ring draws while an element drag is live (#259), and what the
+	 * element itself wears for it (#316).
+	 *
+	 * Preview is the DOM: every sample puts the values the release will write
+	 * on the element as inline style, and nothing leaves the canvas for it.
+	 * The write at the end lifts the preview by putting the class on in its
+	 * place, and a cancelled drag lifts it with nothing written.
+	 */
 	const showElementDrag = (active: Gesture): void => {
 		if (active.kind === "element-size") {
 			const { pick, edge, measured } = active;
 			if (measured === null) return;
+			previewStyle(pick.frame, pick.selector, resizeStyle(measured));
 			// whole pixels once: the readout, the ring and the rail's fields are all
 			// about the same box, and a rounding each is three chances to disagree
 			const whole = { w: Math.round(measured.live.w), h: Math.round(measured.live.h) };
@@ -3833,6 +3849,7 @@ export function ProjectCanvas({
 		}
 		if (active.kind === "element-turn") {
 			const { pick, live } = active;
+			previewStyle(pick.frame, pick.selector, { rotate: `${live}deg` });
 			setElementDrag({
 				frame: pick.frame,
 				selector: pick.selector,
@@ -3996,6 +4013,9 @@ export function ProjectCanvas({
 
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
+		// an interrupted ring drag wrote nothing and shows nothing: the inline
+		// preview comes off and the element is as the file still has it (#316)
+		if (isRingGesture(active)) previewStyle(active.pick.frame, active.pick.selector, null);
 		gesture.current = { kind: "idle" };
 		dropResize();
 		setMarks(NO_MARKS);
@@ -4018,7 +4038,7 @@ export function ProjectCanvas({
 				current.map((frame) => (frame.name === active.frame ? { ...frame, ...active.origin } : frame)),
 			);
 		}
-	}, [dropResize]);
+	}, [dropResize, previewStyle]);
 
 	/**
 	 * The two interruptions a ring drag never sees coming.
@@ -4725,8 +4745,14 @@ export function ProjectCanvas({
 		showGapDrag(next);
 	};
 
-	/** What the band draws while a gap drag is live: the space the pointer is making. */
+	/**
+	 * What the band draws while a gap drag is live: the space the pointer is
+	 * making, and the same space on the element itself (#316), on the one axis
+	 * the band was grabbed on.
+	 */
 	const showGapDrag = (active: Extract<Gesture, { kind: "element-gap" }>): void => {
+		const style = gapStyle(active, ringRef.current.step);
+		if (style !== null) previewStyle(active.pick.frame, active.pick.selector, style);
 		setGapDrag({ selector: active.pick.selector, index: active.index, ...gapPaint(active, ringRef.current.step) });
 	};
 
@@ -4746,6 +4772,55 @@ export function ProjectCanvas({
 		applyPlaces({ [page]: at });
 	};
 
+	/**
+	 * Where a ring drag left it: one class write and one step on the one stack
+	 * (#316).
+	 *
+	 * The element already wears what the release means, so this is only what
+	 * makes it durable — the same lane a rail field commits through, on the
+	 * values the last sample showed. The write's own answer puts the class on
+	 * and lifts the preview, so the frame is never reloaded for its own drag.
+	 * A drag that moved nothing writes nothing and simply lifts.
+	 */
+	const commitRingGesture = (active: Extract<Gesture, { kind: "element-size" | "element-turn" | "element-gap" }>) => {
+		const lift = () => previewStyle(active.pick.frame, active.pick.selector, null);
+		if (active.kind === "element-size") {
+			const held = active.measured;
+			if (held === null || (held.live.w === held.start.w && held.live.h === held.start.h)) {
+				lift();
+				return;
+			}
+			const fields = resizeFields(
+				held.properties,
+				held.live,
+				held.shift,
+				held.offset,
+				ringRef.current.step,
+				held.writes,
+			);
+			commitClass(
+				active.pick,
+				fields.map((field) => field.value),
+			);
+			return;
+		}
+		if (active.kind === "element-turn") {
+			if (active.live === active.base) {
+				lift();
+				return;
+			}
+			commitClass(active.pick, [turnValue(active.live, active.base)]);
+			return;
+		}
+		const live = active.live;
+		if (live === null || !gapMoved(active)) {
+			lift();
+			return;
+		}
+		const at = { scoped: scopedClass(ringRef.current.className, BASE), theme: ringRef.current.theme };
+		commitClass(active.pick, [gapField(active.axis, live, at)]);
+	};
+
 	const onPointerUp = () => {
 		const active = gesture.current;
 		// settled while the drag still counts as in flight, so the footprint the
@@ -4763,6 +4838,7 @@ export function ProjectCanvas({
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
+		if (isRingGesture(active)) commitRingGesture(active);
 		// the press never became a drag, so the second click meant the words (#255)
 		const again = pressOnHeld.current;
 		pressOnHeld.current = null;
