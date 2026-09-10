@@ -1699,13 +1699,21 @@ const canvasShimJs = `(() => {
 		selection.addRange(range);
 	}
 
+	// Whether a press inside the words would set something off: a link, a button
+	// or a form, above the edited element or standing under it. Editing a heading
+	// that wraps a link, or one with a link inside it, must not follow that link.
+	function wouldActivate(target) {
+		if (editing && editing.el.closest("a,button,form")) return true;
+		return !!(target && typeof target.closest === "function" && target.closest("a,button,form"));
+	}
+
 	// A press inside the words places the caret and goes no further; a press
 	// anywhere else is the click-away that commits, and the frame never sees it.
 	var swallowWhileEditing = (event) => {
 		if (!editing) { if (swallowUntilClick) { event.preventDefault(); event.stopImmediatePropagation(); if (event.type === "click") swallowUntilClick = false; } return; }
 		if (editing.el.contains(event.target)) {
 			event.stopImmediatePropagation();
-			if (event.type === "click" && editing.el.closest("a,button")) event.preventDefault();
+			if (event.type === "click" && wouldActivate(event.target)) event.preventDefault();
 			return;
 		}
 		event.stopImmediatePropagation();
@@ -1715,6 +1723,15 @@ const canvasShimJs = `(() => {
 	for (const kind of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick"]) {
 		addEventListener(kind, swallowWhileEditing, true);
 	}
+
+	// The other way a form under the words goes off, which no click carries.
+	addEventListener("submit", (event) => {
+		if (!editing) return;
+		const form = event.target;
+		if (!editing.el.contains(form) && !(form && form.contains && form.contains(editing.el))) return;
+		event.preventDefault();
+		event.stopImmediatePropagation();
+	}, true);
 
 	// Blur saves: the element's, and the window's, which is what a click out on
 	// the canvas is by the time anything here hears of it.

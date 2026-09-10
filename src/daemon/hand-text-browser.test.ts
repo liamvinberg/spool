@@ -27,6 +27,7 @@ h2 { font-size: 28px; line-height: 1.1; margin: 20px 0 8px; font-weight: 500; }
 h3 { font-size: 16px; margin: 12px 0 4px; }
 p { font-size: 15px; line-height: 1.4; margin: 0 0 10px; }
 .serif { font-family: Georgia, serif; }
+h2 a { color: #c96a3c; }
 .veil-art { height: 90px; background: #c96a3c; margin: 12px 0; }
 .action { display: inline-flex; gap: 6px; align-items: center; }
 .action svg { width: 14px; height: 14px; }
@@ -61,7 +62,7 @@ export default function Veil() {
     <header className="nav"><a className="brand" href="#top">veil®</a><nav aria-label="Main"><a className="optional-mobile" href="#work">Selected work</a><a className="optional" href="#details">Our approach</a><Link className="bordered" href="#work">Explore the studio</Link></nav></header>
     <section className="veil-intro"><h1>Make something<br/><span className="serif"><i>worth feeling.</i></span></h1><p>Independent design and digital experiences.<br/>Made with instinct.<br/>Built with intention.</p></section>
     <div className="veil-art w-[990px]"></div>
-    <section className="veil-work" id="work"><div id="details"><h2>Ideas that stay<br/>with you.</h2><Link className="line" href="#projects">Selected projects</Link></div><h3>{title}</h3></section>
+    <section className="veil-work" id="work"><div id="details"><h2>Ideas that stay<br/>with you. <a className="inline" href="#work">Read on</a></h2><Link className="line" href="#projects">Selected projects</Link></div><h3>{title}</h3></section>
     <Footer name="veil®" note="Independent by nature. Curious by default."/>
   </main>;
 }
@@ -143,12 +144,19 @@ it("edits the veil page's words in place and saves each once", { timeout: 240_00
 		"<p>Independent design and digital experiences. Always.<br/>Made with instinct.<br/>Built with intention.</p>",
 	);
 
-	// the h2
-	await open("h2", { x: 12, y: 10 });
+	// the h2, and the link standing under its words: a press on that link while
+	// the heading is being edited places the caret and never follows it
+	const heading = await open("h2", { x: 12, y: 10 });
+	const inner = await frame.locator("h2 a").boundingBox();
+	if (!inner) throw new Error("no link under the words");
+	await page.mouse.click(inner.x + inner.width / 2, inner.y + inner.height / 2);
+	expect(await frame.locator("body").evaluate(() => location.hash)).toBe("");
+	await expect.poll(() => editable("h2")).toBe("plaintext-only");
+	await page.mouse.click(heading.at.x, heading.at.y);
 	await page.keyboard.press("End");
 	await page.keyboard.type(" here");
 	await commit("h2");
-	await fileHas("<h2>Ideas that stay here<br/>with you.</h2>");
+	await fileHas('<h2>Ideas that stay here<br/>with you. <a className="inline" href="#work">Read on</a></h2>');
 
 	// the nav link: a press on its words during the edit places the caret and
 	// never follows the link
