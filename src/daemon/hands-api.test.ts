@@ -644,7 +644,7 @@ export default function Frame({ open }: { open: boolean }) {
 		};
 		expect(body.className).toEqual({ was: "flex flex-col gap-2 p-4", now: "flex flex-col gap-2 p-4 w-[700px]" });
 		expect(body.css).toContain("700px");
-		expect(body.shifts).toEqual([{ line: 5, column: 43, delta: 10 }]);
+		expect(body.shifts).toEqual([{ line: 5, column: 43, delta: 10, taken: 0 }]);
 		const written = readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8");
 		expect(written).toContain('<main className="flex flex-col gap-2 p-4 w-[700px]">');
 		expect(body.undo.fingerprint).toBe(fingerprintOf(written));
