@@ -2938,7 +2938,20 @@ export function ProjectCanvas({
 						if (!kept || ok === undefined) return;
 						const change = { ...ok.className, ...(ok.css === undefined ? {} : { css: ok.css }) };
 						swapClass(pick.frame, pick.selector, change, (landedOn) => {
-							if (landedOn || !saved.current.has(pick.frame)) return;
+							if (landedOn) {
+								// the class this wrote is a size, a gap or a turn as often
+								// as not, so the box the ring is drawn round moved with it
+								// — the same re-read the words get when an edit ends (#321)
+								if (
+									pickedRef.current.some(
+										(held) => held.frame === pick.frame && held.selector === pick.selector,
+									)
+								) {
+									walkKin(pick.frame, pick.selector, "self");
+								}
+								return;
+							}
+							if (!saved.current.has(pick.frame)) return;
 							saved.current.delete(pick.frame);
 							holdNext.current.add(pick.frame);
 							reloadFrameDocument(pick.frame);
@@ -2947,7 +2960,7 @@ export function ProjectCanvas({
 				});
 			});
 		},
-		[holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass],
+		[holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass, walkKin],
 	);
 
 	/**
