@@ -788,6 +788,8 @@ export function ProjectCanvas({
 	// where the ring was last drawn, so pressing or releasing ⌘ redraws it
 	// under a pointer that has not moved (#254)
 	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
+	// the ancestry the last hover found, which is the branch ⏎ descends (#321)
+	const hoverChain = useRef<{ frame: string; chain: readonly PickedHit[] } | null>(null);
 	// the redraw, reached from the key layer that outlives every render
 	const refreshRings = useRef<() => void>(() => {});
 	// frames whose next reload the canvas caused, so the outgoing document is
@@ -2615,8 +2617,17 @@ export function ProjectCanvas({
 		const held = onlyHeldRung();
 		const frame = held?.frame ?? (selectedRef.current.length === 1 ? selectedRef.current[0] : undefined);
 		if (enteredRef.current !== null || frame === undefined) return;
+		// the branch the pointer is over is what a descent means while it rests
+		// on one (#321): the very rung its double-click would take, straight
+		// off the ancestry the hover already has, with nothing asked for it
+		const hover = hoverChain.current;
+		const target = hover?.frame === frame ? oneDown(hover.chain, scopeIn(frame), frameBox(frame)) : undefined;
+		if (target !== undefined) {
+			applyPick(frame, [...(hover?.chain ?? [])], target);
+			return;
+		}
 		walkKin(frame, held?.selector ?? "", "child");
-	}, [onlyHeldRung, walkKin]);
+	}, [applyPick, frameBox, onlyHeldRung, scopeIn, walkKin]);
 
 	/** Tab and ⇧Tab: the next or previous sibling of the held element. */
 	const walkSibling = useCallback(
@@ -4095,6 +4106,7 @@ export function ProjectCanvas({
 	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean, measuring = false) => {
 		if (frame === null) {
 			hoverPoint.current = null;
+			hoverChain.current = null;
 			setPreview(null);
 			return;
 		}
@@ -4130,6 +4142,7 @@ export function ProjectCanvas({
 			local,
 			(chain) => {
 				hoverBusy.current = false;
+				hoverChain.current = chain.length === 0 ? null : { frame, chain };
 				if (gesture.current.kind !== "idle" || toolRef.current === "hand") return;
 				// a deep hover is ⌘'s: let go while the frame was answering and
 				// the answer is stale, so it must not redraw the rings
