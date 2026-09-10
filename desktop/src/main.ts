@@ -9,6 +9,7 @@ import {
 	type MenuItemConstructorOptions,
 	nativeImage,
 	screen,
+	session,
 	shell,
 	Tray,
 } from "electron";
@@ -209,6 +210,24 @@ function guard(created: BrowserWindow): void {
 		event.preventDefault();
 		void shell.openExternal(url);
 	});
+}
+
+/**
+ * What a page in this app may ask the browser for.
+ *
+ * Chromium asks the app before it hands a page the pointer lock, and a number
+ * scrubbed in the rail is a locked pointer (#322): unasked, the drag runs out
+ * of screen, and in this window Chromium's own answer is no. Nothing else in
+ * here is the web — `guard` sends every other origin to the browser — so the
+ * daemon's own pages are the only ones anybody meant to ask, and the answer to
+ * everything else is no.
+ */
+function installPermissions(): void {
+	const daemonPage = (url: string | undefined) => url !== undefined && isDaemonUrl(url);
+	session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback, details) => {
+		callback(daemonPage(details.requestingUrl));
+	});
+	session.defaultSession.setPermissionCheckHandler((_contents, _permission, origin) => daemonPage(origin));
 }
 
 function isDaemonUrl(candidate: string): boolean {
@@ -1168,6 +1187,7 @@ export function boot(): void {
 	void app.whenReady().then(async () => {
 		log("boot", `pid=${process.pid}`, `v${version()}`, DIRECTORY);
 		await offerApplicationsFolder();
+		installPermissions();
 		Menu.setApplicationMenu(buildAppMenu());
 		installDockIcon();
 		installTray();
