@@ -1048,9 +1048,6 @@ function HiddenField({ hidden, ok, onToggle }: { hidden: boolean; ok: boolean; o
 	);
 }
 
-/** The one option that is not a picture: the OS file dialog, as a row in the menu. */
-const CHOOSE = " choose";
-
 /** The picture, chosen — never typed, because the op has to write an import. */
 function AssetField({
 	field,
@@ -1064,7 +1061,9 @@ function AssetField({
 	const picker = useRef<HTMLInputElement | null>(null);
 	const held = field.specifier ?? "";
 	const options: Option[] = [
-		{ token: CHOOSE, name: "choose a file…" },
+		// the one row that is not a picture: the OS file dialog, which carries its
+		// own act rather than a token the pick has to recognise
+		{ kind: "action", name: "choose a file…", act: () => picker.current?.click() },
 		...assets.map((asset) => ({
 			token: asset.path,
 			name: asset.path.split("/").at(-1) ?? asset.path,
@@ -1085,10 +1084,6 @@ function AssetField({
 				filter={assets.length > 8}
 				onPick={(token) => {
 					if (token === null) return;
-					if (token === CHOOSE) {
-						picker.current?.click();
-						return;
-					}
 					onSwap({ asset: token });
 				}}
 			/>

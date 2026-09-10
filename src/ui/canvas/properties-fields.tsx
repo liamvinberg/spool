@@ -479,7 +479,9 @@ export function useCloseOnPressAway(
 
 /* ---------- the menu: words and named tokens, picked by name ---------- */
 
-export interface Option {
+/** a value the row can hold, which is what almost every option is */
+export interface ValueOption {
+	kind?: undefined;
 	/** null is the absent state: `unset`, and the row's fallback reads again */
 	token: string | null;
 	name: string;
@@ -489,7 +491,25 @@ export interface Option {
 	swatch?: string;
 	/** a divider above this option: `default` for what Tailwind named, not the project */
 	group?: string;
+	act?: undefined;
 }
+
+/**
+ * A row that does something instead of standing for a value — the OS file
+ * dialog, say. It carries its own act, so nothing has to smuggle a verb
+ * through the token a value row uses.
+ */
+export interface ActionOption {
+	kind: "action";
+	token?: undefined;
+	name: string;
+	value?: undefined;
+	swatch?: undefined;
+	group?: string;
+	act: () => void;
+}
+
+export type Option = ValueOption | ActionOption;
 
 const MENU_H = 296;
 
@@ -596,7 +616,10 @@ export function Menu({
 
 	const commit = (index: number) => {
 		const option = shown[index];
-		if (option !== undefined) onPick(option.token);
+		if (option !== undefined) {
+			if (option.kind === "action") option.act();
+			else onPick(option.token);
+		}
 		setOpen(false);
 		buttonRef.current?.focus();
 	};
