@@ -141,6 +141,16 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 		.poll(() => frame.locator("#details h3").evaluate((el) => getComputedStyle(el).display))
 		.not.toBe("none");
 
+	// and a hide undoes like anything else: the token out of the file and the
+	// element drawn again
+	await toggle.click();
+	await says('<h3 className="hidden">');
+	await f.history();
+	await expect.poll(() => f.bytes(), { timeout: 15_000 }).toBe(before);
+	await expect
+		.poll(() => frame.locator("#details h3").evaluate((el) => getComputedStyle(el).display))
+		.not.toBe("none");
+
 	// a literal href is typed where it is written; the frame carries it before
 	// the file does
 	await hold("a.optional");
