@@ -35,6 +35,14 @@ export interface PickedHit {
 	 */
 	rects?: readonly { x: number; y: number; w: number; h: number }[];
 	radius: number;
+	/**
+	 * Whether the element has words of its own (#321).
+	 *
+	 * What decides whether the bottom of a descent is a text element or an
+	 * empty container: a double-click on the first opens its words, and on the
+	 * second there is nothing under the pointer and nothing to type into.
+	 */
+	words?: boolean;
 	/** Nearest data-spool-source stamp, "frames/…/frame.tsx:line:col". */
 	source: string | null;
 	/** True when the stamp sits on an ancestor — JS-created DOM (#6 degrade). */

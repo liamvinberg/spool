@@ -2574,7 +2574,9 @@ export function ProjectCanvas({
 				// always what was held — the slow second click opens the edit on
 				// the held element, and this is where that is put right (#321).
 				const words = atRung(chain, scope, box);
-				if (words === undefined) return; // frame background: nothing to edit
+				// frame background, or a container with no words in it: two clicks
+				// there mean neither a rung nor a caret
+				if (words === undefined || words.words !== true) return;
 				const open = editingRef.current;
 				if (open?.frame === frame && open.selector === words.selector) return;
 				endEditRef.current(false);

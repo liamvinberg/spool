@@ -946,6 +946,16 @@ const canvasShimJs = `(() => {
 		return parts.join(" > ");
 	}
 
+	// whether the element has words of its own, which is what makes it something
+	// a double-click could open rather than descend into (#321)
+	function hasWords(el) {
+		for (let i = 0; i < el.childNodes.length; i++) {
+			const node = el.childNodes[i];
+			if (node.nodeType === 3 && node.nodeValue && node.nodeValue.trim() !== "") return true;
+		}
+		return false;
+	}
+
 	function hitOf(el) {
 		let stamped = el;
 		while (stamped && stamped.nodeType === 1 && !stamped.hasAttribute("data-spool-source")) {
@@ -970,6 +980,7 @@ const canvasShimJs = `(() => {
 			outerHtml: el.outerHTML.slice(0, 240),
 			rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
 			...(lines.length > 1 ? { rects: lines } : {}),
+			words: hasWords(el),
 			radius,
 			source,
 			generated: stamped !== el,
