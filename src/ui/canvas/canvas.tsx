@@ -3618,7 +3618,13 @@ export function ProjectCanvas({
 		const openEdit = editingRef.current;
 		if (openEdit !== null) {
 			const over = frameAtWorld(toWorld(p, cam)) === openEdit.frame;
-			if (over && openEdit.phase === "opening") return;
+			if (over && openEdit.phase === "opening") {
+				// and it must not take the focus with it, or the frame would read
+				// the press as the blur that saves
+				event.preventDefault();
+				iframes.current.get(openEdit.frame)?.focus();
+				return;
+			}
 			endEdit(true);
 			if (over) return;
 		}
