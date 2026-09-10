@@ -7,6 +7,7 @@ import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
+import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
 import type { Cover } from "../cover";
@@ -71,8 +72,9 @@ import { createDirectory, listDirectory, refreshIndex, searchDirectories } from 
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
 import { listAssets } from "./hand-asset";
-import { readRungs } from "./hand-lane";
-import { parseStamps } from "./hand-write";
+import { readRungs, revertTarget, STALE_FILE, textSite } from "./hand-lane";
+import { uncaughtNotice } from "./hand-notice";
+import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
@@ -501,6 +503,48 @@ export function createDaemonApp({
 			return c.text('a read is { "frame", "sources": [ "frames/…/frame.tsx:12:4" ] }', 400);
 		}
 		return { frame: body.frame, sources };
+	});
+
+	/**
+	 * A text commit (#314): one element's words as the frame has them now,
+	 * addressed by its stamp and measured against the file the rung was read
+	 * from. A stamp is a place in a file the daemon is about to open, so the
+	 * shape is strict.
+	 */
+	const textBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const stamps = parseStamps([body.source, ...(body.owner === undefined ? [] : [body.owner])]);
+		const nodes = parseEditedNodes(body.nodes);
+		if (
+			typeof body.frame !== "string" ||
+			!isSafeName(body.frame) ||
+			stamps === undefined ||
+			nodes === undefined ||
+			typeof body.fingerprint !== "string"
+		) {
+			return c.text('a text edit is { "frame", "source", "nodes", "owner"?, "fingerprint" }', 400);
+		}
+		const [source, owner] = stamps;
+		if (source === undefined) return c.text("a text edit names the element it is on", 400);
+		return {
+			frame: body.frame,
+			source,
+			nodes,
+			fingerprint: body.fingerprint,
+			...(owner === undefined ? {} : { owner }),
+		};
+	});
+
+	/** The patch that puts a text edit back (#314): the run, and the file it was taken of. */
+	const revertBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const { path, start, end, text, fingerprint } = body;
+		const spans = typeof start === "number" && typeof end === "number" && Number.isInteger(start);
+		if (typeof path !== "string" || !spans || typeof text !== "string" || typeof fingerprint !== "string") {
+			return c.text('a revert is { "path", "start", "end", "text", "fingerprint" }', 400);
+		}
+		if (!Number.isInteger(end) || start < 0 || end < start) return c.text("not a span", 400);
+		return { path, start, end, text, fingerprint };
 	});
 
 	/**
@@ -2165,6 +2209,64 @@ export function createDaemonApp({
 			const read = await readRungs(project.root, frame, sources, framesUsingIn(project.root));
 			if (read.kind === "error") return c.text(read.message, read.status);
 			return c.json({ rungs: read.rungs });
+		})
+		/*
+		 * The write half of a text edit (#314). The frame already shows the
+		 * words; this puts them in the file, once, and answers with the patch
+		 * that takes them out again and how the stamps on that line moved. A
+		 * refusal is the lane's own no and comes back as one.
+		 */
+		.post("/api/p/:project/text", textBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { frame, ...ask } = c.req.valid("json");
+			const site = await textSite(project.root, frame, ask, framesUsingIn(project.root));
+			if (site.kind === "error") return c.text(site.message, site.status);
+			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
+			// an edit that says what the file already says writes nothing
+			const undo = spanBetween(site.source, site.text);
+			if (site.text !== site.source) writeAtomic(site.file, site.text);
+			const after = fingerprintOf(site.text);
+			return c.json({
+				ok: true,
+				path: site.path,
+				fingerprint: after,
+				shifts: site.shifts,
+				undo: { path: site.path, ...undo, fingerprint: after },
+				// the one project with nothing catching a hand edit hears so once
+				...(site.text !== site.source && uncaughtNotice(project.root) ? { uncaught: true } : {}),
+			});
+		})
+		/*
+		 * Undo and redo (#314): the characters put back, and refused rather
+		 * than clobbered if the file moved since. Its own inverse comes back,
+		 * so a redo is the same call again.
+		 */
+		.post("/api/p/:project/text/revert", revertBody, (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { path, start, end, text, fingerprint } = c.req.valid("json");
+			const target = revertTarget(project.root, path);
+			if ("message" in target) return c.text(target.message, target.status);
+			let source: string;
+			try {
+				source = readFileSync(target.file, "utf8");
+			} catch {
+				return c.text(`no ${path} to put back`, 404);
+			}
+			if (fingerprintOf(source) !== fingerprint) return c.json({ ok: false, refusal: STALE_FILE }, 409);
+			if (end > source.length) return c.text("not a span in this file", 400);
+			const patch = { start, end, text };
+			const next = applySpan(source, patch);
+			if (next !== source) writeAtomic(target.file, next);
+			const after = fingerprintOf(next);
+			return c.json({
+				ok: true,
+				path,
+				fingerprint: after,
+				shifts: shiftsOf(source, [patch]),
+				undo: { path, start, end: start + text.length, text: source.slice(start, end), fingerprint: after },
+			});
 		})
 		/*
 		 * The compiled theme (#257). Every properties menu reads it, because a

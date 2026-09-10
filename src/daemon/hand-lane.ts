@@ -1,15 +1,22 @@
 import { readFileSync } from "node:fs";
-import { DesignBoundaryError } from "./design-path";
+import { join } from "node:path";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
 	type AttributeRead,
+	type EditedNode,
 	type ElementRead,
 	fingerprintOf,
+	flatText,
 	type PatchRefusal,
+	planOps,
 	readElements,
 	STALE_STAMP,
+	type StampShift,
+	shiftsOf,
+	textOwner,
 } from "./hand-write";
 import { frameFolder, lookupFrame } from "./projection";
-import { parseStamp } from "./selection";
+import { parseStamp, type Stamp } from "./selection";
 
 /**
  * What the rail's read needs from the project (#256): the frames whose source
@@ -142,4 +149,139 @@ async function definedElsewhere(deps: LaneDeps, rel: string, line: number): Prom
 	const rendered =
 		readers === undefined ? "" : `, rendered by ${readers.length} frame${readers.length === 1 ? "" : "s"}`;
 	return { code: "shared-definition", says: `defined in ${rel}:${line}${rendered}` };
+}
+
+/** The file moved under the read the op was formed against. */
+export const STALE_FILE: PatchRefusal = { code: "stale-file", says: "the file changed underneath" };
+
+/**
+ * A text commit as the canvas sends it (#314): the element's stamp, its child
+ * nodes as the frame has them now, the call site one owner up when the frame
+ * knows it, and the fingerprint of the file the rung was read from.
+ */
+export interface TextAsk {
+	source: string;
+	nodes: readonly EditedNode[];
+	owner?: string;
+	fingerprint: string;
+}
+
+export type TextSite =
+	| {
+			kind: "ok";
+			/** the file on disk, resolved through design/'s boundary */
+			file: string;
+			/** how the canvas spells it: `design/frames/cart/frame.tsx` */
+			path: string;
+			source: string;
+			/** the file as the write leaves it, byte-identical outside the words */
+			text: string;
+			/** how the stamps on the patched lines moved, or nothing when only a reload can say */
+			shifts: StampShift[] | null;
+	  }
+	| { kind: "refusal"; refusal: PatchRefusal }
+	| { kind: "error"; status: 400 | 404; message: string };
+
+/**
+ * Where a text write lands (#314).
+ *
+ * The element's own file decides whose words they are: its own, spliced at
+ * the stamp, or a call site's, spliced one owner up. The fingerprint is the
+ * element file's — the file the rung was read out of, and the one the DOM
+ * the hand edited was rendered from — and a mismatch refuses rather than
+ * landing somewhere wrong. Both files are read again here, never mirrored.
+ */
+export async function textSite(root: string, frame: string, ask: TextAsk, deps: LaneDeps): Promise<TextSite> {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
+	const folder = `${frameFolder(frame, found.page)}/`;
+	const stamp = stampIn(root, ask.source);
+	if ("message" in stamp) return { kind: "error", ...stamp };
+	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	const at = stamp.stamp;
+	let source: string;
+	try {
+		source = readFileSync(at.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+	const owner = textOwner(source, at.line, at.column);
+	if (owner === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	if (owner.kind === "own") {
+		// this ticket writes the frame's own file: an element defined anywhere
+		// else reads whole and adjusts nowhere yet
+		if (!at.rel.startsWith(folder)) {
+			return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
+		}
+		return planned(at, source, [{ kind: "set-text", source: ask.source, nodes: ask.nodes }]);
+	}
+	// supplied words: the literal lives at the call site the runtime named
+	const expression = {
+		code: "expression-text" as const,
+		says: `{${owner.prop}} is an expression; edit it in code or ask the agent`,
+		expression: `{${owner.prop}}`,
+	};
+	if (ask.owner === undefined) return { kind: "refusal", refusal: expression };
+	const call = stampIn(root, ask.owner);
+	if ("message" in call) return { kind: "error", ...call };
+	if (call.stamp === undefined) return { kind: "refusal", refusal: expression };
+	if (!call.stamp.rel.startsWith(folder)) {
+		return { kind: "refusal", refusal: await definedElsewhere(deps, call.stamp.rel, call.stamp.line) };
+	}
+	let callSource: string;
+	try {
+		callSource = readFileSync(call.stamp.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	return planned(call.stamp, callSource, [
+		{ kind: "set-supplied", source: ask.owner, prop: owner.prop, text: flatText(ask.nodes) },
+	]);
+}
+
+function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1]): TextSite {
+	const plan = planOps(source, ops);
+	if (!plan.ok) return { kind: "refusal", refusal: plan.refusal };
+	return {
+		kind: "ok",
+		file: stamp.file,
+		path: `design/${stamp.rel}`,
+		source,
+		text: plan.text,
+		shifts: shiftsOf(source, plan.patches),
+	};
+}
+
+/** A stamp resolved through design/'s boundary: the place, nothing, or the boundary's own no. */
+function stampIn(root: string, source: string): { stamp: Stamp | undefined } | { status: 400; message: string } {
+	try {
+		return { stamp: parseStamp(root, source) };
+	} catch (error) {
+		// a stamp that resolves out of design/ through a symlink is the
+		// boundary's answer, not a 500
+		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
+		throw error;
+	}
+}
+
+/**
+ * The file a revert names, or why it is not one.
+ *
+ * A revert carries a path rather than a stamp, so it is the one call where the
+ * lane's scope has to be checked against the path itself: frame source, inside
+ * design/, and never an app-owned file — `canvas.json` and `.spool/` are
+ * spool's, and no patch has any business in them.
+ */
+export function revertTarget(root: string, path: string): { file: string } | { status: 400 | 404; message: string } {
+	if (!path.startsWith("design/frames/")) return { status: 400, message: "a revert puts back frame source" };
+	const rel = path.slice("design/".length);
+	if (rel.split("/").includes(".spool")) return { status: 400, message: "a revert puts back frame source" };
+	try {
+		const designDir = realDesignDir(root);
+		return { file: resolveDesignPath(designDir, join(designDir, rel), path) };
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
+		throw error;
+	}
 }
