@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { screenConflict } from "../../daemon/class-write";
 import { lengthOf, lengthPx, scaleValue } from "../../properties/families";
 import { stepOf } from "../../properties/theme";
-import type { SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { BASE, scopedClass } from "./properties-scope";
+import type { PropertyValue } from "./property-controls";
 import type { SnapTrial, SnapWear } from "./protocol";
 
 /**
@@ -71,8 +71,8 @@ export function handlesFor(read: RungRead | undefined): LiveHandles {
  * All but one of them are: an expression, an inline style, spread props with
  * no literal, a stamp that hits nothing: none of them leaves an axis a write
  * could take. `shared-definition` is the exception, and the reason is #303's: a
- * class cell several uses share is exactly what the source owner edits, so a
- * ring that greyed for it would refuse the ordinary case.
+ * class cell several uses share is exactly what a hand edits, so a ring that
+ * greyed for it would refuse the ordinary case.
  */
 export function ringBlocks(refusal: RungRead["refusal"]): boolean {
 	return refusal !== undefined && refusal.code !== "shared-definition";
@@ -343,7 +343,7 @@ export function writableSize(value: number, extra: number, write: SizeWrite): nu
 }
 
 /** What a turn writes: the signed token it is at, or the family taken away at rest. */
-export function turnValue(deg: number): SourcePropertyValue {
+export function turnValue(deg: number): PropertyValue {
 	const [token] = rotateTokens(deg);
 	return token === undefined ? { kind: "remove" } : { kind: "binding", tokens: [token] };
 }
@@ -448,11 +448,10 @@ function scaledToken(family: string, px: number, step: number, write: SizeWrite)
 }
 
 /**
- * What one resize gesture writes, as the source property path's own fields.
+ * What one resize gesture writes, property by property.
  *
- * The properties are fixed when the gesture opens, because the source read it
- * opens is about exactly those fields; the values are whatever the pointer
- * last made. A size lands on the scale where it sits on a whole step and stays
+ * The properties are fixed when the gesture opens, because the gesture is
+ * about exactly those fields; the values are whatever the pointer last made. A size lands on the scale where it sits on a whole step and stays
  * absolute pixels where it does not, because the drag meant pixels and a bare class
  * silently rescales if `--spacing` moves.
  */
@@ -463,7 +462,7 @@ export function resizeFields(
 	offset: Offset,
 	step: number,
 	writes: Readonly<Record<ResizeProperty, SizeWrite>>,
-): { property: ResizeProperty; value: SourcePropertyValue }[] {
+): { property: ResizeProperty; value: PropertyValue }[] {
 	return properties.map((property) => {
 		const { family, px } = RESIZE_PROPERTIES[property];
 		const token = scaledToken(family, px(live, shift, offset), step, writes[property]);
@@ -477,7 +476,7 @@ export function resizeFields(
  *
  * One shape rather than eight fields, because none of them is knowable before
  * the reply and all of them are knowable after it. The properties are the ones
- * this gesture's source read was opened for, in write order.
+ * this gesture may write, in write order.
  */
 export interface ResizeMeasurement {
 	modifiers: ResizeModifiers;

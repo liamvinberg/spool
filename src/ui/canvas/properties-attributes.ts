@@ -1,4 +1,3 @@
-import { ASSET_MEDIA_TYPES } from "../../daemon/assets";
 import { WALK_TARGET } from "../../daemon/hand-write";
 import { LITERAL_ATTRIBUTES_BY_TAG as BY_TAG, LITERAL_ATTRIBUTES_EVERY as EVERY } from "../../literal-attributes";
 import type { AttributeRead, PatchRefusal } from "../api";
@@ -33,9 +32,6 @@ import type { AttributeRead, PatchRefusal } from "../api";
 export function swappable(tag: string): boolean {
 	return tag === "img";
 }
-
-/** What the OS file dialog offers, which is the one asset table read as media types. */
-export const IMAGE_ACCEPT = [...new Set(Object.values(ASSET_MEDIA_TYPES))].sort().join(",");
 
 /** The sentence a walk target carries, which is the lane's own refusal for it. */
 export const WALK_REASON = "walk target, edit in flows";

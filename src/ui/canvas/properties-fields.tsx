@@ -293,8 +293,8 @@ export function NumField({
 					setDraft(event.target.value);
 					onPreview?.(event.target.value);
 				}}
-				// Focus alone selects the number to type over. Taking the source lane
-				// waits for an edit, so tabbing through the rail cancels nothing.
+				// Focus alone selects the number to type over. A gesture begins with
+				// an edit, so tabbing through the rail cancels nothing.
 				onFocus={(event) => event.target.select()}
 				onBlur={() => finish(false)}
 				onKeyDown={(event) => {
@@ -359,11 +359,12 @@ export function TextField({
 	value: string;
 	ok: boolean;
 	placeholder?: string | undefined;
-	onCommit: (typed: string) => void;
+	/** what a typed value goes to; a field with nowhere to send it reads as text */
+	onCommit?: ((typed: string) => void) | undefined;
 	className?: string;
 }) {
 	const [draft, setDraft] = useState<string | null>(null);
-	if (!ok) {
+	if (!ok || onCommit === undefined) {
 		return (
 			<span className={cn("flex min-w-0 flex-1 items-center px-1", className)}>
 				<span data-text-value="" className={cn("min-w-0 flex-1 truncate text-muted", VALUE)}>
@@ -948,7 +949,8 @@ export function AddField({
 	verdictOf: (token: string) => ClassVerdict | undefined;
 	/** put these to the compiler; the answers arrive through `verdictOf` */
 	onAsk: (tokens: readonly string[]) => void;
-	onAdd: (token: string) => void;
+	/** what a chosen class goes to; a field with nowhere to send it stays shut */
+	onAdd?: ((token: string) => void) | undefined;
 	className?: string;
 }) {
 	const [open, setOpen] = useState(false);
@@ -987,7 +989,7 @@ export function AddField({
 	useCloseOnPressAway(open, shut, listRef, buttonRef);
 
 	const pick = (candidate: Candidate | undefined) => {
-		if (candidate === undefined || verdictOf(candidate.token)?.ok !== true) return;
+		if (candidate === undefined || onAdd === undefined || verdictOf(candidate.token)?.ok !== true) return;
 		onAdd(candidate.token);
 		setTyped("");
 		setCursor(0);

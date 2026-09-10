@@ -1,10 +1,10 @@
 import { screenConflict } from "../../daemon/class-write";
 import { gapOf, stepLength, writtenLength } from "../../properties/families";
 import { type At, editsFor, rowFor } from "../../properties/rows";
-import type { SourcePropertyValue } from "../../source-property";
 import type { RungRead } from "../api";
 import { ringBlocks } from "./hand-resize";
 import { BASE, scopedClass } from "./properties-scope";
+import type { PropertyValue } from "./property-controls";
 
 /**
  * Gap by handle (#306), as decisions over data.
@@ -407,7 +407,7 @@ export function gapWritable(read: RungRead | undefined): boolean {
  * scrubbed field land on the same token: `gap-4` folds into `gap-x-8` and the
  * other axis keeps the value the shorthand lent it.
  */
-export function gapField(axis: GapAxis, value: string, at: At): SourcePropertyValue {
+export function gapField(axis: GapAxis, value: string, at: At): PropertyValue {
 	const row = rowFor(axis);
 	if (row === undefined) return { kind: "remove" };
 	const tokens = editsFor(row, { kind: "value", value }, at)

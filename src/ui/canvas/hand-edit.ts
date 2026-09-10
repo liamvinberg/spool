@@ -1,7 +1,5 @@
-import type { SourceRead } from "../../source-edit";
 import type { Point } from "./camera";
 import type { PickedSelection } from "./overlays";
-import type { SourceIntent } from "./source-intent";
 
 /**
  * A reason a gesture does not apply, in the lane's own shape.
@@ -28,27 +26,6 @@ export const NO_STAMP: Refusal = { code: "stale-stamp", says: "no stamp of its o
 
 /** The frame has nothing answering to that selector any more. */
 export const GONE: Refusal = { code: "stale-stamp", says: "the element is no longer there" };
-
-/**
- * One in-place text edit, from the ask to the write (#255).
- *
- * `asking` is the moment between the gate answering yes and the frame saying
- * it has opened: the frame already owns the pointer then, so a press over it
- * must not be read as a fresh selection. `start` is the words the edit began
- * with, and an edit that ends on the same ones writes nothing at all.
- */
-export interface HandEdit {
-	frame: string;
-	selector: string;
-	/** the source stamp used to find the original occurrence */
-	source: string;
-	/** the ask the frame answers; a reply carrying another is a dead edit */
-	id: number;
-	read?: SourceRead;
-	intent?: SourceIntent;
-	phase: "asking" | "open";
-	start: string;
-}
 
 /** Where a refusal is shown: on the element it was about, in its own frame. */
 export interface ShownRefusal {

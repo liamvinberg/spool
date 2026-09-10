@@ -28,7 +28,6 @@ import {
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
 import { ChevronIcon, PanelCaret } from "./sidebar";
-import type { AgentRequest } from "./source-intent";
 import { useStillness } from "./stillness";
 
 /**
@@ -150,6 +149,18 @@ export interface Threads {
 	readonly onClose: (id: string) => void;
 	/** the plus that leads the column */
 	readonly onNew: (engine?: AgentEngineId) => void;
+}
+
+/**
+ * The canvas handing the person to the agent (#255): the composer takes focus,
+ * and where a gesture was refused, the words that describe it are put in the
+ * draft under the refusal's own key, so a second handoff about the same thing
+ * does not repeat them.
+ */
+export interface AgentRequest {
+	id: string;
+	thread: string;
+	prepared?: { intent: string; text: string; selection: readonly SelectionEntry[] };
 }
 
 /**
@@ -364,49 +375,42 @@ export function AgentRail({
 	const requested = useRef<string | undefined>(undefined);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: one explicit handoff, not a replay when the draft changes
 	useEffect(() => {
-		if (!request || requested.current === request.id) return;
-		if (!request.retire && request.thread !== open) return;
+		if (!request || requested.current === request.id || request.thread !== open) return;
 		requested.current = request.id;
-		// A resolution belongs to its prepared attempt wherever the person left it,
-		// including a different thread or an older request in the same draft.
-		const targets = request.retire ? Object.entries(held) : [[open, held[open] ?? seed] as const];
-		const updates: Record<string, Holding> = {};
-		for (const [thread, was] of targets) {
-			if (request.retire && !request.retire.some((id) => was.prepared?.[id])) continue;
-			let next = was;
-			if (!request.prepared) {
-				const removing = Object.entries(was.prepared ?? {})
-					.filter(([id]) => !request.retire || request.retire.includes(id))
-					.sort(([, a], [, b]) => (b.span?.start ?? -1) - (a.span?.start ?? -1));
-				for (const [id] of removing) {
-					const entry = next.prepared?.[id];
-					if (!entry) continue;
-					const prepared = { ...next.prepared };
-					delete prepared[id];
-					next = { ...next, prepared };
-					if (entry.span && next.draft.slice(entry.span.start, entry.span.end) === entry.inserted)
-						next = changedDraft(next, next.draft.slice(0, entry.span.start) + next.draft.slice(entry.span.end));
-				}
-			} else if (!was.prepared?.[request.prepared.intent]) {
-				const inserted = `${was.draft ? "\n\n" : ""}${request.prepared.text}`;
-				next = {
-					...was,
-					draft: was.draft + inserted,
-					prepared: {
-						...was.prepared,
-						[request.prepared.intent]: {
-							...request.prepared,
-							inserted,
-							span: { start: was.draft.length, end: was.draft.length + inserted.length },
-						},
-					},
-				};
+		const was = held[open] ?? seed;
+		let next = was;
+		if (!request.prepared) {
+			// a plain handoff clears what an earlier refusal put in the draft, so the
+			// words left are the person's own
+			const removing = Object.entries(was.prepared ?? {}).sort(
+				([, a], [, b]) => (b.span?.start ?? -1) - (a.span?.start ?? -1),
+			);
+			for (const [id] of removing) {
+				const entry = next.prepared?.[id];
+				if (!entry) continue;
+				const prepared = { ...next.prepared };
+				delete prepared[id];
+				next = { ...next, prepared };
+				if (entry.span && next.draft.slice(entry.span.start, entry.span.end) === entry.inserted)
+					next = changedDraft(next, next.draft.slice(0, entry.span.start) + next.draft.slice(entry.span.end));
 			}
-			updates[thread] = next;
-			const text = next.draft;
-			onDraft(text, thread);
+		} else if (!was.prepared?.[request.prepared.intent]) {
+			const inserted = `${was.draft ? "\n\n" : ""}${request.prepared.text}`;
+			next = {
+				...was,
+				draft: was.draft + inserted,
+				prepared: {
+					...was.prepared,
+					[request.prepared.intent]: {
+						...request.prepared,
+						inserted,
+						span: { start: was.draft.length, end: was.draft.length + inserted.length },
+					},
+				},
+			};
 		}
-		setHeld((all) => ({ ...all, ...updates }));
+		setHeld((all) => ({ ...all, [open]: next }));
+		onDraft(next.draft, open);
 	}, [request, open]);
 	/**
 	 * The question the composer would answer, read off the log rather than handed in.
@@ -526,7 +530,7 @@ export function AgentRail({
 								waited={waited}
 								finished={threads.finished}
 								answering={asking?.kind === "ask" ? asking.request : null}
-								request={active && request?.thread === open && !request.retire ? request.id : undefined}
+								request={active && request?.thread === open ? request.id : undefined}
 								strip={stripOf(
 									Object.values(holding.prepared ?? {}).length
 										? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)

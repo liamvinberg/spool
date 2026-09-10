@@ -38,8 +38,11 @@ import {
 } from "./families";
 import { arbitraryColourName, KEYWORD_COLOURS, type MenuOption, menuOf, saysOf, stepOf, type ThemeList } from "./theme";
 
-/** The retained property inventory and candidate spelling shared by controls and source planning.
- * Candidate tokens describe the requested value; only captured compiler effects authorize replacement.
+/**
+ * Every row the rail draws, the primitive it uses and the rule it writes by
+ * (#257): about 130 Tailwind class families, each mapped to one primitive and
+ * one rule, shared by the controls that draw them and the planner that spells
+ * their changes.
  */
 
 export type Section = "position" | "size" | "layout" | "appearance" | "fill" | "stroke" | "text" | "source";

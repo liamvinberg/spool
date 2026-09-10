@@ -9,10 +9,6 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
-import type { SourceChange, SourceOccurrence, SourceOperation, SourceUse } from "../../source-edit";
-import { type SourceRead, type SourceResult, sameSourceOccurrence, type UseOutcome } from "../../source-edit";
-import type { SourcePropertyValue } from "../../source-property";
-import { propertyGroupTarget, type SourcePropertyGroupValue } from "../../source-property-group";
 import type {
 	Camera,
 	FlowEdge,
@@ -26,30 +22,21 @@ import type {
 } from "../api";
 import {
 	beaconTrash,
-	cancelSource,
-	commitSource,
 	fetchCanvasState,
 	fetchEnginePreference,
 	fetchFlows,
 	fetchProjection,
-	fileAsAsset,
-	inverseSource,
 	postCaptureFailure,
 	postSeen,
 	postTrash,
 	postWalk,
-	previewPropertySource,
 	putCanvasState,
 	putCover,
 	putGeometry,
 	putPlaces,
 	putSelection,
 	putSetting,
-	readSource,
 	resolveFlows,
-	sourceDelivered,
-	sourceIsCurrent,
-	stageImage,
 	subscribeSse,
 } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
@@ -60,7 +47,7 @@ import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
 import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
-import { AgentRail, type FrameJump } from "./agent-rail";
+import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
@@ -94,9 +81,8 @@ import {
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
-import { GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
+import type { Refusal, ShownRefusal } from "./hand-edit";
 import {
-	type GapAnchor,
 	type GapAxis,
 	type GapBand,
 	type GapDrag,
@@ -105,16 +91,12 @@ import {
 	gapAxisOf,
 	gapBands,
 	gapDragSign,
-	gapField,
-	gapMoved,
 	gapPaint,
 	gapSample,
 	gapSteppable,
 	gapWritable,
 	ownedGap,
 } from "./hand-gap";
-import { GapMenu } from "./hand-gap-menu";
-import { HandNotice, type HandSaid } from "./hand-notice";
 import {
 	authoredSpelling,
 	draggedAngle,
@@ -129,15 +111,12 @@ import {
 	type ResizeModifiers,
 	type ResizeProperty,
 	resizedBox,
-	resizeFields,
 	type Size,
 	type SizeWrite,
 	snapTrial,
-	turnValue,
 	useRing,
 } from "./hand-resize";
 import {
-	amend,
 	drop,
 	emptyHistory,
 	entryOf,
@@ -149,13 +128,11 @@ import {
 	record,
 	rectsOf,
 	type Staging,
-	structuralGenerations,
 	takeRedo,
 	takeUndo,
 	type Way,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
-import { useKeyMove } from "./key-move";
 import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import { decompose, measuredTarget } from "./measure-spacing";
@@ -177,16 +154,11 @@ import {
 import { PageObjectLabel, PageObjectView } from "./page-object";
 import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
-import { swappable } from "./properties-attributes";
 import { type Held, PropertiesRail } from "./properties-rail";
-import { BASE, scopedClass } from "./properties-scope";
 import {
 	clipboardCopyAllowed,
-	dropTargetMessage,
 	type ElementSizing,
 	type ElementSnapping,
-	editMessage,
-	endEditMessage,
 	gapsMessage,
 	type KinStep,
 	kinMessage,
@@ -208,17 +180,6 @@ import {
 } from "./protocol";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
-import { useSourceDelivery } from "./source-delivery";
-import {
-	type AgentRequest,
-	attributedIntent,
-	intentText,
-	inverseIntent,
-	matchesIntentSource,
-	preparedHelp,
-	type SourceIntent,
-	sourceIntent,
-} from "./source-intent";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
@@ -291,14 +252,9 @@ type Gesture =
 	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number }
 	// the gap between a held container's children (#306): the same one read,
 	// preview and save the ring's other drags use, over the space itself
-	| ({
-			kind: "element-gap";
-			pick: PickedSelection;
-			/** where the value a click opens instead of a drag would stand */
-			anchor: GapAnchor;
-	  } & GapDrag);
+	| ({ kind: "element-gap"; pick: PickedSelection } & GapDrag);
 
-/** Every drag the ring owns, which share one source read and every way of being interrupted. */
+/** Every drag the ring owns, which share every way of being interrupted. */
 function isRingGesture(
 	active: Gesture,
 ): active is Extract<Gesture, { kind: "element-size" | "element-turn" | "element-gap" }> {
@@ -464,15 +420,9 @@ export function ProjectCanvas({
 	const [heldPaint, setHeldPaint] = useState<Record<string, number>>({});
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
 	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
-	// the write lane's two canvas gestures (#255): the edit open on an
-	// element's own words, the reason the last one was refused, and the two
-	// things a hand edit says out loud
-	const [editing, setEditing] = useState<HandEdit | null>(null);
+	// the reason the last hand gesture was refused, drawn on the element it was about
 	const [refused, setRefused] = useState<ShownRefusal | null>(null);
-	const [said, setSaid] = useState<HandSaid | null>(null);
 	const [agentRequest, setAgentRequest] = useState<AgentRequest>();
-	const railIntents = useRef(new WeakMap<SourceRead, SourceIntent>());
-	const reloadedIntent = useRef<SourceIntent | undefined>(undefined);
 	/**
 	 * The element drag in flight (#259), as the ring draws it.
 	 *
@@ -481,14 +431,6 @@ export function ProjectCanvas({
 	 * the readout that rides beside it, and the tokens the rail's own fields
 	 * tick in. Nothing here is written until the pointer comes up.
 	 */
-	/**
-	 * The one line a project with `history: false` has earned (#253).
-	 *
-	 * Its own state rather than the notice a save leaves, because it is about
-	 * the project rather than about that edit: it must not take the strip from
-	 * the outcome the save is reporting, and it is said once per project.
-	 */
-	const [uncaught, setUncaught] = useState(false);
 	const [elementDrag, setElementDrag] = useState<{
 		frame: string;
 		selector: string;
@@ -499,7 +441,6 @@ export function ProjectCanvas({
 		edge: Edge | null;
 		box: Size;
 	} | null>(null);
-	const [ringClassPreview, setRingClassPreview] = useState<string>();
 	/**
 	 * The alignments a snapped resize is a true statement about (#311), in the
 	 * frame document's own coordinates. Drawn only after the layout the
@@ -519,14 +460,6 @@ export function ProjectCanvas({
 	const [gapDrag, setGapDrag] = useState<{ selector: string; index: number; band: GapBand; says: string } | null>(
 		null,
 	);
-	/** The exact value opened from a band, which is the rail's own treatment. */
-	const [gapMenu, setGapMenu] = useState<{
-		pick: PickedSelection;
-		axis: GapAxis;
-		authored: string;
-		measured: number;
-		at: GapAnchor;
-	} | null>(null);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
@@ -730,20 +663,6 @@ export function ProjectCanvas({
 	const pageSessions = useRef(new Map<string, SessionRecord>());
 	const departedFrameDocuments = useRef(new Set<string>());
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
-	const sourceDelivery = useSourceDelivery(project, iframes);
-	const retainedPublications = useRef(new Map<string, string>());
-	const unappliedSource = useRef(new Set<string>());
-	const pendingSource = useRef(new Map<string, Promise<unknown>>());
-	const [sourceRevision, setSourceRevision] = useState(0);
-	/**
-	 * How many times each frame's own source has been installed (#306).
-	 *
-	 * A hand save rewrites the literal a read is about without reloading the
-	 * document, so a read of that frame's source is stale the moment the save
-	 * lands. Counting it per frame rather than per project keeps a save in one
-	 * frame from blanking a read that is about another.
-	 */
-	const [sourceSaves, setSourceSaves] = useState<Record<string, number>>({});
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
@@ -781,19 +700,6 @@ export function ProjectCanvas({
 	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
 	// the redraw, reached from the key layer that outlives every render
 	const refreshRings = useRef<() => void>(() => {});
-	// the in-place edit (#255), mirrored for the handlers that outlive a render
-	const editingRef = useRef<HandEdit | null>(null);
-	// the pick paths are declared before the edit is, and have to be able to
-	// call off an ask that a press of the same gesture had just made
-	const endEditRef = useRef<(commit: boolean) => void>(() => {});
-	// the press that landed on the element already held, and where in it: the
-	// second click, once the pointer has come up without having dragged
-	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
-	// the deadline on an edit the frame is being asked to end, and the write
-	// one gesture already has in flight — a held ⌫ repeats, and the second
-	// press would form its op against a fingerprint the first one just spent
-	const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const writing = useRef(false);
 	// frames whose next reload the canvas caused, so the outgoing document is
 	// held rather than blinking through its own still (#253's no blink)
 	const holdNext = useRef(new Set<string>());
@@ -811,14 +717,9 @@ export function ProjectCanvas({
 	// the one undo/redo stack: per window, in memory, hands' writes only — the
 	// canvas's geometry and the rail's file operations on the same ⌘Z (#230)
 	const history = useRef(emptyHistory());
-	const retainStructureHistory = sourceDelivery.retainStructures;
-	const updateHistory = useCallback(
-		(next: History) => {
-			history.current = next;
-			retainStructureHistory(structuralGenerations(next));
-		},
-		[retainStructureHistory],
-	);
+	const updateHistory = useCallback((next: History) => {
+		history.current = next;
+	}, []);
 	// the rail's runner, put here by the rail itself: it owns the stored order
 	// and the explorer calls, so an explorer entry has to be run from there
 	const runEntry = useRef<RunEntry | null>(null);
@@ -899,15 +800,11 @@ export function ProjectCanvas({
 	// pointing at anything (#172).
 	const hoveredFrame = hovered?.visible === true ? hovered.frame : null;
 
-	const sourceTargets = useMemo(
-		() => new Set([...selectionTargets, ...sourceDelivery.liveFrames]),
-		[selectionTargets, sourceDelivery.liveFrames],
-	);
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		allFramesRef,
 		entered,
-		selectionTargets: sourceTargets,
+		selectionTargets,
 		resizing: resizingFrame,
 		selected,
 		hovered: hoveredFrame,
@@ -968,18 +865,6 @@ export function ProjectCanvas({
 	/** The bands a gap gesture may grab, off the render the pointer can see (#306). */
 	const gapRef = useRef<GapTargets>({ axis: null, sign: 1, authored: null, bands: [] });
 
-	/**
-	 * The rung a write has to put back (#258).
-	 *
-	 * A patch reloads the frame's document, and a reload drops every pick in it
-	 * — which was tolerable while the only hand gestures were one-shot, and is
-	 * not once the rail's rows make editing continuous: changing a padding must
-	 * not empty the surface you changed it from. The selector survives the
-	 * reload because a class edit moves no element, so the new document is asked
-	 * for the same one and the rail draws it again.
-	 */
-	const repick = useRef<{ frame: string; selector: string } | null>(null);
-
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
 			// a reload the canvas caused holds its outgoing document on screen
@@ -999,21 +884,10 @@ export function ProjectCanvas({
 				);
 			}
 			setDocNonces((current) => ({ ...current, [frame]: was + 1 }));
-			// the document an edit was open in is going: the shim's half of it goes
-			// with it, so the canvas must not keep holding this frame's pointer
-			if (editingRef.current?.frame === frame) {
-				editingRef.current = null;
-				setEditing(null);
-			}
 			setWalkArrivals((current) => withoutFrame(current, frame));
-			// a reload the rail's own write caused keeps its rung: the selector is
-			// still the same element, and dropping it would empty the surface the
-			// edit was made from between one keystroke and the next (#258)
-			const holding = repick.current?.frame === frame;
-			if (!holding) {
-				setPicked((current) => current.filter((pick) => pick.frame !== frame));
-				if (pickedChain.current?.frame === frame) holdChain(null);
-			}
+			// a reload drops every pick in the frame: the new document is asked afresh
+			setPicked((current) => current.filter((pick) => pick.frame !== frame));
+			if (pickedChain.current?.frame === frame) holdChain(null);
 			setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
 			lifecycleRef.current.markStale(frame);
 		},
@@ -1900,220 +1774,10 @@ export function ProjectCanvas({
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
-	const observingSource = useRef<
-		{ publication: string; frame: string; text: string; intent?: SourceIntent } | undefined
-	>(undefined);
-	const askAgent = useCallback(
-		(failure?: Extract<HandSaid, { kind: "source" }>) => {
-			const intent = failure?.intent;
-			setAgentRequest({
-				id: crypto.randomUUID(),
-				thread: deck.open,
-				...(intent
-					? {
-							prepared: {
-								intent: intent.id,
-								text: preparedHelp(
-									intent,
-									failure.says,
-									!failure.sourceUnchanged && !["blocked", "unknown"].includes(failure.status),
-								),
-								selection: intent.selection,
-							},
-						}
-					: {}),
-			});
-		},
-		[deck.open],
-	);
-	const resolveIntent = useCallback((intent?: SourceIntent) => {
-		if (!intent) return;
-		setAgentRequest({ id: crypto.randomUUID(), retire: [intent.id, ...(intent.resolves ?? [])] });
-	}, []);
-	const presentSourceOutcome = useCallback(
-		(frame: string, outcome: UseOutcome | undefined, text: string, intent?: SourceIntent) => {
-			for (const name of new Set(
-				outcome?.uses?.map((use) => use.frame).filter((name): name is string => !!name) ?? [],
-			))
-				if (outcome?.uses?.filter((use) => use.frame === name).every((use) => use.rendered === "verified"))
-					unappliedSource.current.delete(name);
-			if (outcome?.rendered === "verified") {
-				unappliedSource.current.delete(frame);
-				setSaid((current) => (current?.kind === "source" && current.intent?.id !== intent?.id ? current : null));
-				resolveIntent(intent);
-				return;
-			}
-			setSaid((current) => ({
-				kind: "source",
-				frame,
-				...(intent ? { intent } : {}),
-				dismissed: current?.kind === "source" && current.intent?.id === intent?.id && current.dismissed === true,
-				status: outcome?.rendered ?? "unverified",
-				text,
-				says:
-					outcome?.reason ??
-					(outcome?.rendered === "mismatching"
-						? intent?.operation.kind === "image"
-							? "Saved, but the running app kept a different image."
-							: "Saved, but the running app kept different words."
-						: outcome?.rendered === "pending"
-							? "Saved. The app is still loading."
-							: "Saved. The running result could not be verified."),
-			}));
-		},
-		[resolveIntent],
-	);
-	useEffect(
-		() =>
-			sourceDelivery.observeOutcomes((publication, outcome) => {
-				const held = observingSource.current;
-				if (held?.publication === publication) presentSourceOutcome(held.frame, outcome, held.text, held.intent);
-			}),
-		[sourceDelivery, presentSourceOutcome],
-	);
-
-	const showSourceResult = useCallback(
-		async (
-			frame: string,
-			result: SourceResult | undefined,
-			text = "",
-			undo = false,
-			retainedIntent?: SourceIntent,
-		) => {
-			let intent = retainedIntent;
-			if (intent && result?.ok) {
-				if (result.publication) {
-					const expected = result.publication.expected;
-					intent = {
-						...intent,
-						expected,
-						recovery: {
-							frames: [
-								...new Set([
-									...(intent.recovery?.frames ?? []),
-									result.publication.frame,
-									...(result.publication.related ?? []).map((item) => item.frame),
-									...(result.publication.failures ?? []).flatMap((use) => (use.frame ? [use.frame] : [])),
-								]),
-							],
-							unknown:
-								intent.recovery?.unknown === true ||
-								(result.publication.failures ?? []).some((use) => !use.frame),
-						},
-					};
-					if (undo && expected.kind === "literal") intent.change = { kind: "literal", text: expected.value };
-				} else if (
-					result.source === "unchanged" &&
-					intent.operation.kind === "literal" &&
-					intent.change?.kind === "literal"
-				) {
-					// Acknowledged no-op still has the explicit request's literal result.
-					// It creates neither a source publication nor an Undo receipt.
-					intent = { ...intent, expected: { kind: "literal", value: intent.change.text, absent: false } };
-				}
-			}
-			observingSource.current = undefined;
-			if (result?.ok && result.uncaught === true) setUncaught(true);
-			if (!result) {
-				unappliedSource.current.add(frame);
-				setSaid({
-					kind: "source",
-					...(intent ? { intent } : {}),
-					frame,
-					status: "unknown",
-					text,
-					says: "The save was not acknowledged. It has not been retried.",
-				});
-				return;
-			}
-			if (!result.ok) {
-				unappliedSource.current.add(frame);
-				setSaid({
-					kind: "source",
-					...(intent ? { intent } : {}),
-					frame,
-					status: "blocked",
-					text,
-					says:
-						result.current?.kind === "literal"
-							? `${result.reason}. Checked current source: ${JSON.stringify(result.current.text)}.`
-							: result.current?.kind === "property"
-								? `${result.reason}. Checked current source: ${result.current.value.kind === "binding" ? result.current.value.tokens.join(" ") : result.current.value.kind === "custom" ? result.current.value.value : "no authored declaration"}.`
-								: result.reason,
-				});
-				return;
-			}
-			if (result.source === "unchanged") {
-				const checked = intent ? await sourceDelivery.verifyReload(intent) : undefined;
-				if (
-					intent &&
-					(!checked ||
-						checked.kind === "structure" ||
-						!matchesIntentSource(intent, checked.description) ||
-						checked.outcome.rendered !== "verified")
-				) {
-					unappliedSource.current.add(frame);
-					setSaid({
-						kind: "source",
-						frame,
-						status: "unverified",
-						sourceUnchanged: true,
-						text,
-						intent,
-						says: "Current source already has this value. No new edit was saved; the running result is not verified.",
-					});
-					return;
-				}
-				resolveIntent(intent);
-				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent?.id ? null : current));
-				return;
-			}
-			if (!result.publication) {
-				unappliedSource.current.add(frame);
-				setSaid({
-					kind: "source",
-					...(intent ? { intent } : {}),
-					frame,
-					status: "unverified",
-					text,
-					says: `Saved. ${result.reason ?? "The running result could not be verified."}`,
-				});
-				return;
-			}
-
-			observingSource.current = {
-				publication: result.publication.packet.id,
-				frame,
-				text,
-				...(intent ? { intent } : {}),
-			};
-			const installing = [result.publication, ...(result.publication.related ?? [])];
-			for (const publication of installing) {
-				retainedPublications.current.set(publication.frame, publication.packet.id);
-				unappliedSource.current.add(publication.frame);
-			}
-
-			const admitted = await sourceIsCurrent(project, result.publication.packet.id);
-			if (!admitted) await sourceDelivery.revoke(result.publication);
-			const outcome = admitted ? await sourceDelivery.install(result.publication, undo) : undefined;
-			await sourceDelivered(project, result.publication.packet.id);
-			setSourceRevision((value) => value + 1);
-			setSourceSaves((counts) => {
-				const next = { ...counts };
-				for (const publication of installing) next[publication.frame] = (next[publication.frame] ?? 0) + 1;
-				return next;
-			});
-
-			if (observingSource.current?.publication === result.publication.packet.id)
-				presentSourceOutcome(
-					frame,
-					sourceDelivery.currentOutcome(result.publication.packet.id) ?? outcome,
-					text,
-					intent,
-				);
-		},
-		[sourceDelivery, project, presentSourceOutcome, resolveIntent],
-	);
+	/** The hand's door to the agent: the composer takes focus, on the thread that is open. */
+	const askAgent = useCallback(() => {
+		setAgentRequest({ id: crypto.randomUUID(), thread: deck.open });
+	}, [deck.open]);
 
 	/**
 	 * One step of the one stack (#230).
@@ -2130,7 +1794,6 @@ export function ProjectCanvas({
 	 */
 	const walk = useCallback(
 		(way: Way) => {
-			if (pendingSource.current.size > 0 || editingRef.current !== null) return;
 			flushNudge(); // a pending nudge is its own entry: undo pops it, redo is voided by it
 			const held = history.current;
 			const alive = liveness();
@@ -2151,60 +1814,6 @@ export function ProjectCanvas({
 				else undoTrash();
 				return;
 			}
-			// a hand edit to frame source is the lane's own to run (#253): the patch
-			// goes back over the wire, the daemon re-checks the fingerprint, and what
-			// comes back is the inverse this entry carries from here on. A refusal
-			// means the file moved since — the entry is not a future anybody has
-			if (entry.kind === "source") {
-				const intent = entry.intent ? inverseIntent(entry.intent, way) : undefined;
-				setSaid({
-					kind: "source",
-					...(intent ? { intent } : {}),
-					frame: entry.frame,
-					status: "saving",
-					text: "",
-					says: way === "undo" ? "Undoing…" : "Redoing…",
-				});
-				const ran = history.current;
-				if (entry.structuralGeneration !== undefined)
-					sourceDelivery.holdInverse(entry.receipt.handle, [], entry.structuralGeneration);
-				const operation = sourceDelivery
-					.inventory(entry.receipt.field, entry.receipt.operation)
-					.then((inventories) => {
-						sourceDelivery.holdInverse(
-							entry.receipt.handle,
-							inventories.map((inventory) => inventory.frame),
-							entry.structuralGeneration,
-						);
-						return inverseSource(project, entry.receipt, inventories);
-					})
-					.then(async (result) => {
-						if (result && !result.ok && entry.structuralGeneration !== undefined)
-							sourceDelivery.retireStructure(entry.structuralGeneration);
-						if (history.current !== ran) {
-							if (result?.ok && result.receipt)
-								recordEntry({ ...entry, receipt: result.receipt, ...(intent ? { intent } : {}) });
-							await showSourceResult(entry.frame, result, "", true, intent);
-							return;
-						}
-						if (result?.ok && result.receipt)
-							updateHistory(
-								amend(history.current, way, {
-									...entry,
-									receipt: result.receipt,
-									...(intent ? { intent } : {}),
-								}),
-							);
-						else updateHistory(held); // an unavailable top inverse is explained, never skipped
-						await showSourceResult(entry.frame, result, "", true, intent);
-					});
-				pendingSource.current.set(entry.frame, operation);
-				void operation.finally(() => {
-					pendingSource.current.delete(entry.frame);
-					sourceDelivery.releaseInverse(entry.receipt.handle);
-				});
-				return;
-			}
 			// a gather is a page the rail made and the frames it gathered into it, and
 			// the order the two halves go in is the whole reason it is one entry: going
 			// back, the frames leave before the page is staged, or they would ride into
@@ -2223,23 +1832,7 @@ export function ProjectCanvas({
 				void refetchFrames();
 			});
 		},
-		[
-			applyPlaces,
-			applyRects,
-			flushNudge,
-			liveness,
-			project,
-			refetchFrames,
-			stageEntry,
-			undoTrash,
-			recordEntry,
-			showSourceResult,
-			sourceDelivery.inventory,
-			sourceDelivery.holdInverse,
-			sourceDelivery.releaseInverse,
-			updateHistory,
-			sourceDelivery.retireStructure,
-		],
+		[applyPlaces, applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash, updateHistory],
 	);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens
@@ -2502,12 +2095,9 @@ export function ProjectCanvas({
 			cancelPicks();
 			beginPick(frame, local, (chain) => {
 				const target = oneDown(chain, scope);
-				// no rung under this one, so the two clicks meant the words: the
-				// second of them has already asked the gate, and leaving that ask
-				// alone is what lets one gesture descend a branch and edit a leaf
-				// (#254, #255). Frame background answers nothing either way.
+				// no rung under this one: the two clicks meant the element itself, and
+				// frame background answers nothing either way (#254)
 				if (target === undefined) return;
-				endEditRef.current(false);
 				applyPick(frame, chain, target);
 			});
 		},
@@ -2616,846 +2206,12 @@ export function ProjectCanvas({
 		[holdChain],
 	);
 
-	// --- the write lane's two gestures (#255) -----------------------------------
-
-	/**
-	 * The edit, in both places that read it.
-	 *
-	 * The state drives the render — the frame owns its own pointer while an
-	 * edit is open — and the ref is what the pointer and key handlers read,
-	 * which is a paint earlier than the render would give them.
-	 */
-	const setEdit = useCallback((next: HandEdit | null) => {
-		editingRef.current = next;
-		setEditing(next);
-	}, []);
+	// --- the hand's refusals -----------------------------------------------------
 
 	/** Why the gesture just tried does not apply, on the element it was about. */
-	const showRefusal = useCallback((frame: string, selector: string, refusal: Refusal, intent?: SourceIntent) => {
-		setRefused(intent ? null : { frame, selector, refusal });
-		if (intent)
-			setSaid({
-				kind: "source",
-				frame,
-				status: "blocked",
-				text: intentText(intent) ?? "",
-				says: refusal.says,
-				refusal: refusal.code,
-				intent,
-			});
+	const showRefusal = useCallback((frame: string, selector: string, refusal: Refusal) => {
+		setRefused({ frame, selector, refusal });
 	}, []);
-
-	/**
-	 * End an open edit from out here, which is what a press anywhere on the
-	 * field means. The frame answers with `edited` either way, and that answer
-	 * is what writes — this only says which way it ended.
-	 */
-	const endEdit = useCallback(
-		(commit: boolean) => {
-			const held = editingRef.current;
-			if (held === null) return;
-			iframes.current.get(held.frame)?.contentWindow?.postMessage(endEditMessage(commit), "*");
-			// an edit the frame has not opened yet has nothing to answer with, so it
-			// is closed here rather than left holding the frame's pointer
-			if (held.phase === "asking") {
-				void sourceDelivery.cancel(held.frame, held.id);
-				if (held.read) void cancelSource(project, held.read.handle);
-				setEdit(null);
-				return;
-			}
-			// and one the frame never answers for is let go anyway: an edit that
-			// outlives the document it was open in would hold that frame's pointer
-			// for the rest of the session
-			clearTimeout(closeTimer.current);
-			closeTimer.current = setTimeout(() => {
-				if (editingRef.current?.id === held.id) setEdit(null);
-			}, PICK_REPLY_MS);
-		},
-		[setEdit, project, sourceDelivery],
-	);
-	endEditRef.current = endEdit;
-
-	/**
-	 * The text gesture (#255): a second click on an element's own words opens
-	 * an edit on the element itself.
-	 *
-	 * The source owner captures the original before the editor opens. Completion
-	 * is checked against that read; a refusal leaves the element unchanged.
-	 */
-	const beginTextEdit = useCallback(
-		(pick: PickedSelection, local: Point) => {
-			if (pendingSource.current.size > 0) return;
-			const intent = sourceIntent(pick, pointing.entries);
-			const stamp = stampOf(pick);
-			if (typeof stamp !== "string") {
-				showRefusal(pick.frame, pick.selector, stamp, intent);
-				return;
-			}
-			const id = ++pickSeq.current;
-			const asking: HandEdit = {
-				frame: pick.frame,
-				selector: pick.selector,
-				source: stamp,
-				id,
-				phase: "asking",
-				start: "",
-				intent,
-			};
-			setEdit(asking);
-			setRefused(null);
-			void sourceDelivery.read(pick.frame, pick.selector, id).then(async (original) => {
-				if (editingRef.current?.id !== id) return;
-				if (!original) {
-					setEdit(null);
-					showRefusal(
-						pick.frame,
-						pick.selector,
-						{
-							code: "source",
-							says: "these words have no editable local literal source",
-						},
-						intent,
-					);
-					return;
-				}
-				const asked = await readSource(project, pick.frame, original, id, sourceDelivery.observer);
-				if (editingRef.current?.id !== id) {
-					if (asked?.ok) void cancelSource(project, asked.read.handle);
-					return;
-				}
-				if (!asked?.ok) {
-					setEdit(null);
-					void sourceDelivery.cancel(pick.frame, id);
-					showRefusal(
-						pick.frame,
-						pick.selector,
-						{
-							code: "source",
-							says: asked?.reason ?? "the original source read did not arrive",
-						},
-						{ ...intent, original },
-					);
-					return;
-				}
-				const ready = await sourceDelivery.prepare(pick.frame, asked.read);
-				if (editingRef.current?.id !== id) {
-					void cancelSource(project, ready.handle);
-					void sourceDelivery.cancel(pick.frame, id);
-					return;
-				}
-				setEdit({ ...asking, read: ready, intent: attributedIntent(intent, ready) });
-				retainedPublications.current.set(pick.frame, original.publication);
-				iframes.current
-					.get(pick.frame)
-					?.contentWindow?.postMessage(
-						{ ...editMessage(pick.selector, local.x, local.y, id), sourceGeneration: id },
-						"*",
-					);
-				iframes.current.get(pick.frame)?.focus();
-			});
-		},
-		[project, setEdit, showRefusal, sourceDelivery, pointing.entries],
-	);
-
-	/**
-	 * One structural operation on one original authored unit, through the source
-	 * owner and its inverse receipt: a removal, or a move among its siblings.
-	 *
-	 * Both are the same errand. The unit is read through the frame's own
-	 * committed observation, the owner derives what the operation may touch from
-	 * that read alone, and the save it makes is one entry on the one history.
-	 * Nothing about either is decided from where the element sits on screen.
-	 */
-	const commitStructural = useCallback(
-		(pick: PickedSelection, operation: Extract<SourceOperation, { kind: "delete" | "reorder" }>, action: string) => {
-			const change: SourceChange = operation.kind === "delete" ? { kind: "delete" } : { kind: "reorder" };
-			const initial: SourceIntent = { ...sourceIntent(pick, pointing.entries), operation, change, action };
-			writing.current = true;
-			setRefused(null);
-			const generation = ++pickSeq.current;
-			const completion = (async () => {
-				let intent = initial;
-				const original = await sourceDelivery.read(pick.frame, pick.selector, generation, undefined, operation);
-				if (!original) {
-					showRefusal(
-						pick.frame,
-						pick.selector,
-						{ code: "source", says: "this element has no committed structural source observation" },
-						intent,
-					);
-					return;
-				}
-				intent = { ...intent, original };
-				const result = await readSource(
-					project,
-					pick.frame,
-					original,
-					generation,
-					sourceDelivery.observer,
-					operation,
-				);
-				if (!result?.ok) {
-					await sourceDelivery.cancel(pick.frame, generation);
-					showRefusal(
-						pick.frame,
-						pick.selector,
-						{ code: "source", says: result?.reason ?? "the original structural read did not arrive" },
-						intent,
-					);
-					return;
-				}
-				const read = await sourceDelivery.prepare(pick.frame, result.read);
-				intent = attributedIntent(intent, read);
-				retainedPublications.current.set(pick.frame, original.publication);
-				setSaid({ kind: "source", frame: pick.frame, status: "saving", text: "", says: "Saving…", intent });
-				const saved = await commitSource(project, read, change);
-				if (saved?.ok && saved.receipt)
-					recordEntry({
-						kind: "source",
-						frame: pick.frame,
-						receipt: saved.receipt,
-						intent,
-						structuralGeneration: generation,
-					});
-				if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(pick.frame, generation);
-				await showSourceResult(pick.frame, saved, "", false, intent);
-			})();
-			pendingSource.current.set(pick.frame, completion);
-			void completion.finally(() => {
-				writing.current = false;
-				pendingSource.current.delete(pick.frame);
-			});
-		},
-		[project, pointing.entries, sourceDelivery, showRefusal, recordEntry, showSourceResult],
-	);
-
-	/** Delete one original authored unit through the source owner and its inverse receipt. */
-	const deleteElements = useCallback((): boolean => {
-		const pick = pickedRef.current[0];
-		if (!pick) return false;
-		if (pickedRef.current.length !== 1) {
-			showRefusal(
-				pick.frame,
-				pick.selector,
-				{ code: "source", says: "Delete requires one identifiable authored source unit" },
-				{
-					...sourceIntent(pick, pointing.entries),
-					operation: { kind: "delete" },
-					change: { kind: "delete" },
-					action: "delete this element",
-				},
-			);
-			return true;
-		}
-		if (writing.current || pendingSource.current.size > 0) return true;
-		commitStructural(pick, { kind: "delete" }, "delete this element");
-		return true;
-	}, [pointing.entries, showRefusal, commitStructural]);
-
-	/**
-	 * The drop half of the asset swap (#260): the frame is armed, never open.
-	 *
-	 * A file dragged onto an image lands inside that frame's own document, so
-	 * the shim is the only thing that can catch it — and it catches nothing
-	 * until the canvas names one element, because the parity law says a frame
-	 * with a drop zone of its own must behave exactly as its bare document
-	 * does. One selected image is the whole of the arming, and it is taken back
-	 * the moment the selection moves.
-	 */
-	const armedDrop = useRef<string | null>(null);
-	useEffect(() => {
-		const only = picked.length === 1 ? picked[0] : undefined;
-		const target = only !== undefined && swappable(only.tag) && !only.generated ? only : undefined;
-		const was = armedDrop.current;
-		if (was !== null && was !== target?.frame) {
-			iframes.current.get(was)?.contentWindow?.postMessage(dropTargetMessage(null), "*");
-		}
-		armedDrop.current = target?.frame ?? null;
-		if (target === undefined) return;
-		iframes.current.get(target.frame)?.contentWindow?.postMessage(dropTargetMessage(target.selector), "*");
-	}, [picked]);
-
-	const imageEditing = useRef<{ frame: string; selector: string; generation: number; read?: SourceRead } | undefined>(
-		undefined,
-	);
-	const cancelImage = useCallback(() => {
-		const held = imageEditing.current;
-		if (!held) return;
-		imageEditing.current = undefined;
-		if (held.read) void cancelSource(project, held.read.handle);
-		void sourceDelivery.cancel(held.frame, held.generation);
-		setSaid((current) =>
-			current?.kind === "source" && current.frame === held.frame && current.status === "saving" ? null : current,
-		);
-	}, [project, sourceDelivery]);
-	useEffect(() => {
-		const cancel = (event: KeyboardEvent) => {
-			if (event.key === "Escape" && imageEditing.current) {
-				event.preventDefault();
-				cancelImage();
-			}
-		};
-		window.addEventListener("keydown", cancel, true);
-		window.addEventListener("blur", cancelImage);
-		return () => {
-			window.removeEventListener("keydown", cancel, true);
-			window.removeEventListener("blur", cancelImage);
-		};
-	}, [cancelImage]);
-	useEffect(() => {
-		const held = imageEditing.current;
-		if (held && !picked.some((pick) => pick.frame === held.frame && pick.selector === held.selector)) cancelImage();
-	}, [picked, cancelImage]);
-	const swapPicture = useCallback(
-		(frame: string, selector: string, put: { file: File } | { asset: string }) => {
-			if (writing.current || pendingSource.current.size || editingRef.current) return;
-			const pick = pickedRef.current.find((pick) => pick.frame === frame && pick.selector === selector);
-			if (!pick) return;
-			const generation = ++pickSeq.current;
-			const held: { frame: string; selector: string; generation: number; read?: SourceRead } = {
-				frame,
-				selector,
-				generation,
-			};
-			imageEditing.current = held;
-			let intent: SourceIntent = {
-				...sourceIntent(pick, pointing.entries, "src"),
-				operation: { kind: "image" },
-				action: `replace image with ${JSON.stringify("file" in put ? put.file.name : put.asset)}`,
-			};
-			writing.current = true;
-			setRefused(null);
-			setSaid({ kind: "source", frame, status: "saving", text: "", says: "Reading image source…", intent });
-			const completion = (async () => {
-				const current = () => imageEditing.current === held;
-				const failed = async (reason: string) => {
-					cancelImage();
-					await showSourceResult(frame, { ok: false, reason }, "", false, intent);
-				};
-				try {
-					const original = await sourceDelivery.read(frame, selector, generation, "src", { kind: "image" });
-					if (!current()) return;
-					if (!original) {
-						await failed("This image has no attributable committed source binding.");
-						return;
-					}
-					intent = { ...intent, original };
-					const asked = await readSource(project, frame, original, generation, sourceDelivery.observer, {
-						kind: "image",
-					});
-					if (!current()) {
-						if (asked?.ok) void cancelSource(project, asked.read.handle);
-						return;
-					}
-					if (!asked?.ok) {
-						await failed(asked?.reason ?? "The original image source read did not arrive.");
-						return;
-					}
-					held.read = asked.read;
-					const read = await sourceDelivery.prepare(frame, asked.read);
-					if (!current()) return;
-					intent = attributedIntent(intent, read);
-					const bytes =
-						"file" in put
-							? { kind: "file" as const, ...(await fileAsAsset(put.file)) }
-							: { kind: "existing" as const, path: put.asset.replace(/^design\//, "") };
-					if (!current()) return;
-					const staged = await stageImage(project, read, bytes);
-					if (!current()) return;
-					if (!staged?.ok) {
-						await failed(staged?.reason ?? "The image staging result did not arrive. Source was not changed.");
-						return;
-					}
-					intent = {
-						...intent,
-						change: { kind: "image", path: staged.path },
-						expected: {
-							kind: "image",
-							value: staged.value,
-							absent: false,
-							asset: staged.path,
-							source: read.source,
-						},
-					};
-					setSaid({ kind: "source", frame, status: "saving", text: "", says: "Decoding image…", intent });
-					const previewed = await sourceDelivery.previewImage(frame, generation, staged.value);
-					if (!current()) return;
-					if (previewed !== "ready") {
-						await failed(
-							previewed === "failed"
-								? "The chosen image could not decode in its original uses. Source was not changed."
-								: "The original image content is unavailable for preview. Source was not changed.",
-						);
-						return;
-					}
-					imageEditing.current = undefined;
-					retainedPublications.current.set(frame, original.publication);
-					const saved = await commitSource(project, read, { kind: "image", path: staged.path });
-					if (saved?.ok && saved.receipt) recordEntry({ kind: "source", frame, receipt: saved.receipt, intent });
-					if (!saved?.ok || !saved.publication) await sourceDelivery.cancel(frame, generation);
-					await showSourceResult(frame, saved, "", false, intent);
-				} catch (error) {
-					if (current())
-						await failed(error instanceof Error ? error.message : "The image replacement could not finish.");
-				}
-			})();
-			pendingSource.current.set(frame, completion);
-			void completion.finally(() => {
-				writing.current = false;
-				pendingSource.current.delete(frame);
-			});
-		},
-		[project, pointing.entries, sourceDelivery, cancelImage, recordEntry, showSourceResult],
-	);
-
-	/**
-	 * The frame reporting how an edit ended.
-	 *
-	 * An edit that ends on the words it began with writes nothing: the lane
-	 * would answer that the file already says this, and asking it is a round
-	 * trip nobody needs. Esc is the same, one intent earlier.
-	 */
-	const finishEdit = useCallback(
-		(held: HandEdit, commit: boolean, text: string) => {
-			setEdit(null);
-			viewportRef.current?.focus();
-			if (!held.read) return;
-			if (!commit || text === held.start) {
-				void cancelSource(project, held.read.handle);
-				void sourceDelivery.cancel(held.frame, held.id);
-				return;
-			}
-			const intent: SourceIntent | undefined = held.intent
-				? { ...held.intent, change: { kind: "literal", text } }
-				: undefined;
-			setSaid({
-				kind: "source",
-				frame: held.frame,
-				status: "saving",
-				text,
-				says: "Saving…",
-				...(intent ? { intent } : {}),
-			});
-			const operation = commitSource(project, held.read, { kind: "literal", text }).then(async (result) => {
-				if (result?.ok && result.receipt)
-					recordEntry({
-						kind: "source",
-						frame: held.frame,
-						receipt: result.receipt,
-						...(intent ? { intent } : {}),
-					});
-				if (!result?.ok || !result.publication) void sourceDelivery.cancel(held.frame, held.id);
-				await showSourceResult(held.frame, result, text, false, intent);
-			});
-			pendingSource.current.set(held.frame, operation);
-			void operation.finally(() => pendingSource.current.delete(held.frame));
-		},
-		[setEdit, project, sourceDelivery, recordEntry, showSourceResult],
-	);
-
-	const beginRailText = useCallback(
-		async (
-			frame: string,
-			selector: string,
-			field?: string,
-			purpose: SourceOperation = { kind: "literal", ...(field ? { field } : {}) },
-			request?: { signal: AbortSignal; change(): SourceChange | undefined; preview?: SourcePropertyValue },
-		): Promise<SourceRead | undefined> => {
-			if (pendingSource.current.size > 0) return;
-			const pick = pickedRef.current.find((pick) => pick.frame === frame && pick.selector === selector);
-			const intent = pick
-				? {
-						...sourceIntent(pick, pointing.entries, field),
-						operation: purpose,
-						action:
-							purpose.kind === "properties"
-								? "change classes"
-								: purpose.kind === "property"
-									? `change ${purpose.property}`
-									: field
-										? `change ${field}`
-										: "change text",
-					}
-				: undefined;
-			const generation = ++pickSeq.current;
-			const requestedIntent = (original?: SourceOccurrence) => {
-				const change = request?.change();
-				return intent
-					? {
-							...intent,
-							...(original ? { original } : {}),
-							...(change ? { change } : {}),
-						}
-					: undefined;
-			};
-			request?.signal.addEventListener(
-				"abort",
-				() => {
-					void sourceDelivery.cancel(frame, generation);
-				},
-				{ once: true },
-			);
-			if (request?.signal.aborted) return;
-			const original = await sourceDelivery.read(frame, selector, generation, field, purpose);
-			if (request?.signal.aborted) return;
-			if (!original) {
-				showRefusal(
-					frame,
-					selector,
-					{ code: "source", says: "these words have no editable local literal source" },
-					requestedIntent(),
-				);
-				return;
-			}
-			const result = await readSource(project, frame, original, generation, sourceDelivery.observer, purpose);
-			if (request?.signal.aborted) {
-				if (result?.ok) void cancelSource(project, result.read.handle);
-				return;
-			}
-			if (!result?.ok) {
-				showRefusal(
-					frame,
-					selector,
-					{
-						code: "source",
-						says: result?.reason ?? "the original read did not arrive",
-					},
-					requestedIntent(original),
-				);
-				return;
-			}
-			retainedPublications.current.set(frame, original.publication);
-			const ready = await sourceDelivery.prepare(frame, result.read, request?.signal, request?.preview);
-			if (request?.signal.aborted) {
-				void cancelSource(project, ready.handle);
-				return;
-			}
-			if (intent) railIntents.current.set(ready, attributedIntent(intent, ready));
-			return ready;
-		},
-		[project, sourceDelivery, showRefusal, pointing.entries],
-	);
-	const finishRailSource = useCallback(
-		(frame: string, read: SourceRead, change: SourceChange | undefined, commit: boolean) => {
-			if (
-				!commit ||
-				!change ||
-				(change.kind === "literal" && change.text === read.value && !(read.field && read.original.absent))
-			) {
-				void cancelSource(project, read.handle);
-				void sourceDelivery.cancel(frame, read.generation);
-				return;
-			}
-			const before = railIntents.current.get(read);
-			const intent: SourceIntent | undefined = before ? { ...before, change } : undefined;
-			// the reload this save causes keeps its rung: the selector is still the
-			// same element, and dropping it would empty the surface the edit was
-			// made from between one keystroke and the next (#258)
-			if (intent) repick.current = { frame, selector: intent.selector };
-			const text = change.kind === "literal" ? change.text : "";
-			const operation = sourceDelivery.complete(frame, read.generation).then(async (original) => {
-				if (!original || !sameSourceOccurrence(original, read.original)) {
-					void cancelSource(project, read.handle);
-					await sourceDelivery.cancel(frame, read.generation);
-					setSaid({
-						kind: "source",
-						...(intent ? { intent } : {}),
-						frame,
-						status: "blocked",
-						text,
-						says: "The original element changed. Your edit was not saved.",
-					});
-					return;
-				}
-				const result = await commitSource(project, read, change);
-				if (result?.ok && result.receipt)
-					recordEntry({ kind: "source", ...(intent ? { intent } : {}), frame, receipt: result.receipt });
-				if (!result?.ok || !result.publication) await sourceDelivery.cancel(frame, read.generation);
-				await showSourceResult(frame, result, text, false, intent);
-			});
-			setSaid({ kind: "source", ...(intent ? { intent } : {}), frame, status: "saving", text, says: "Saving…" });
-			pendingSource.current.set(frame, operation);
-			void operation.finally(() => pendingSource.current.delete(frame));
-		},
-		[project, sourceDelivery, recordEntry, showSourceResult],
-	);
-
-	const finishRailText = useCallback(
-		(frame: string, read: SourceRead, text: string, commit: boolean) => {
-			finishRailSource(frame, read, { kind: "literal", text }, commit);
-		},
-		[finishRailSource],
-	);
-
-	/**
-	 * A ring gesture's write (#305), which is the rail's own.
-	 *
-	 * One source read is opened when the pointer goes down, every sample
-	 * previews against it in the running layout, and letting go completes it:
-	 * one save, one entry on the one history. The properties are fixed when the
-	 * read opens because the read is about exactly those fields; the values are
-	 * whatever the pointer last made.
-	 */
-	const ringWrite = useRef<{
-		frame: string;
-		abort: AbortController;
-		read: Promise<SourceRead | undefined>;
-		value: SourcePropertyGroupValue | undefined;
-		revision: number;
-		done: boolean;
-	} | null>(null);
-
-	const openRingWrite = useCallback(
-		(pick: PickedSelection, fields: readonly { property: string; scope: string }[]) => {
-			setRingClassPreview(undefined);
-			const abort = new AbortController();
-			const held: NonNullable<typeof ringWrite.current> = {
-				frame: pick.frame,
-				abort,
-				read: Promise.resolve(undefined),
-				value: undefined,
-				revision: 0,
-				done: false,
-			};
-			ringWrite.current = held;
-			held.read = beginRailText(
-				pick.frame,
-				pick.selector,
-				"className",
-				{ kind: "properties", target: { kind: "fields", fields } },
-				{
-					signal: abort.signal,
-					change: () => (held.value ? { kind: "properties", value: held.value } : undefined),
-				},
-			);
-		},
-		[beginRailText],
-	);
-
-	/**
-	 * One sample of a live gesture, previewed in every use through the common
-	 * owner. The promise is done when this sample is on the running layout, or
-	 * when a later sample has taken its place, which is what lets a snap
-	 * measure what its correction actually made (#311).
-	 */
-	const sampleRingWrite = useCallback(
-		(value: SourcePropertyGroupValue): Promise<void> => {
-			const held = ringWrite.current;
-			if (held === null || held.done) return Promise.resolve();
-			held.value = value;
-			const revision = ++held.revision;
-			return held.read.then(async (read) => {
-				if (!read || held.done || ringWrite.current !== held || held.revision !== revision) return;
-				const plan = await previewPropertySource(project, read, revision, value);
-				if (held.done || ringWrite.current !== held || held.revision !== revision) return;
-				if (plan?.ok) {
-					setRingClassPreview(read.field === "className" ? plan.preview.value : undefined);
-					await sourceDelivery.previewProperty(held.frame, plan.preview);
-				}
-			});
-		},
-		[project, sourceDelivery],
-	);
-
-	/**
-	 * Where a ring gesture ends. A cancelled one retires its samples and puts
-	 * every preview it owns back; a late release finds nothing left to revive.
-	 */
-	const closeRingWrite = useCallback(
-		(commit: boolean) => {
-			const held = ringWrite.current;
-			if (held === null || held.done) return;
-			held.done = true;
-			ringWrite.current = null;
-			setRingClassPreview(undefined);
-			const value = held.value;
-			if (!commit || value === undefined) held.abort.abort();
-			void held.read.then((read) => {
-				if (!read) return;
-				const saving = commit && value !== undefined && !held.abort.signal.aborted;
-				finishRailSource(held.frame, read, saving ? { kind: "properties", value } : undefined, saving);
-			});
-		},
-		[finishRailSource],
-	);
-
-	const { moveElement, finishKeyMove } = useKeyMove({
-		held: () =>
-			pickedRef.current.length === 1 && enteredRef.current === null && editingRef.current === null
-				? pickedRef.current[0]
-				: undefined,
-		busy: () => writing.current || pendingSource.current.size > 0,
-		askSizing,
-		openRingWrite,
-		sampleRingWrite,
-		closeRingWrite,
-		showRefusal,
-		clearRefusal: () => setRefused(null),
-		move: (pick, steps, action) => commitStructural(pick, { kind: "reorder", steps }, action),
-		ring: ringRef,
-	});
-
-	const verifyReloadedIntent = useCallback(
-		async (frame: string) => {
-			const intent = reloadedIntent.current;
-			if (!intent || intent.frame !== frame) return;
-			reloadedIntent.current = undefined;
-			const checked = await sourceDelivery.verifyReload(intent);
-			const matches =
-				checked?.kind === "structure" || (!!checked && matchesIntentSource(intent, checked.description));
-			if (matches && checked?.outcome.rendered === "verified") {
-				setSaid((current) => (current?.kind === "source" && current.intent?.id === intent.id ? null : current));
-				resolveIntent(intent);
-			}
-		},
-		[sourceDelivery, resolveIntent],
-	);
-
-	const checkUnknownSource = useCallback(
-		async (intent: SourceIntent) => {
-			if (
-				(intent.operation.kind !== "literal" && intent.operation.kind !== "property") ||
-				pendingSource.current.size ||
-				editingRef.current
-			)
-				return;
-			const generation = ++pickSeq.current;
-			const original = await sourceDelivery.read(
-				intent.frame,
-				intent.selector,
-				generation,
-				intent.field,
-				intent.operation,
-			);
-			const asked =
-				original && original.occurrence === intent.original?.occurrence
-					? await readSource(
-							project,
-							intent.frame,
-							original,
-							generation,
-							sourceDelivery.observer,
-							intent.operation,
-							true,
-						)
-					: undefined;
-			if (asked?.ok) await cancelSource(project, asked.read.handle);
-			await sourceDelivery.cancel(intent.frame, generation);
-			const text =
-				asked?.ok && asked.read.source === intent.source && asked.read.cell === intent.cell
-					? `Current source says ${JSON.stringify(asked.read.value)}. The earlier save remains unacknowledged; no edit was replayed and its Undo cannot be recovered.`
-					: `The original target could not be checked. ${asked && !asked.ok ? asked.reason : "Locate it in current source."} The earlier save remains unacknowledged.`;
-			setSaid((current) =>
-				current?.kind === "source" && current.status === "unknown" && current.intent?.id === intent.id
-					? { ...current, says: text }
-					: current,
-			);
-		},
-		[project, sourceDelivery],
-	);
-
-	const retrySource = useCallback(
-		async (intent: SourceIntent) => {
-			if (
-				pendingSource.current.size ||
-				editingRef.current ||
-				(intent.operation.kind !== "literal" && intent.operation.kind !== "property") ||
-				!intent.change ||
-				intent.change.kind !== intent.operation.kind ||
-				!intent.original ||
-				intent.inverse
-			)
-				return;
-			const change = intent.change;
-			const text = change.kind === "literal" ? change.text : "";
-			const generation = ++pickSeq.current;
-			setSaid({
-				kind: "source",
-				frame: intent.frame,
-				text,
-				status: "saving",
-				says: "Checking the original target…",
-				intent,
-			});
-			const operation = (async () => {
-				const original = await sourceDelivery.read(
-					intent.frame,
-					intent.selector,
-					generation,
-					intent.field,
-					intent.operation,
-				);
-				if (!original || original.occurrence !== intent.original?.occurrence) {
-					await sourceDelivery.cancel(intent.frame, generation);
-					await showSourceResult(
-						intent.frame,
-						{
-							ok: false,
-							reason:
-								"The original target is no longer available. Locate it in current source before trying again.",
-						},
-						text,
-						false,
-						intent,
-					);
-					return;
-				}
-				const asked = await readSource(
-					project,
-					intent.frame,
-					original,
-					generation,
-					sourceDelivery.observer,
-					intent.operation,
-					true,
-				);
-				if (!asked?.ok) {
-					await sourceDelivery.cancel(intent.frame, generation);
-					await showSourceResult(
-						intent.frame,
-						{ ok: false, reason: asked?.reason ?? "The fresh source read did not arrive. Nothing was retried." },
-						text,
-						false,
-						intent,
-					);
-					return;
-				}
-				const read = await sourceDelivery.prepare(intent.frame, asked.read);
-				if (
-					read.role !== intent.role ||
-					read.scope !== intent.scope ||
-					read.source !== intent.source ||
-					read.cell !== intent.cell
-				) {
-					await cancelSource(project, read.handle);
-					await sourceDelivery.cancel(intent.frame, generation);
-					await showSourceResult(
-						intent.frame,
-						{
-							ok: false,
-							reason: "The original source owner changed. Confirm it in current source before retrying.",
-						},
-						text,
-						false,
-						intent,
-					);
-					return;
-				}
-				const result = await commitSource(project, read, change);
-				if (result?.ok && result.receipt)
-					recordEntry({ kind: "source", frame: intent.frame, receipt: result.receipt, intent });
-				if (!result?.ok || !result.publication) await sourceDelivery.cancel(intent.frame, generation);
-				await showSourceResult(intent.frame, result, text, false, intent);
-			})();
-			pendingSource.current.set(intent.frame, operation);
-			try {
-				await operation;
-			} finally {
-				pendingSource.current.delete(intent.frame);
-			}
-		},
-		[project, sourceDelivery, showSourceResult, recordEntry],
-	);
 
 	// A refusal is about the element it was refused on, so it goes when the
 	// selection moves rather than sitting over whatever comes next. The keys
@@ -3465,16 +2221,14 @@ export function ProjectCanvas({
 	// biome-ignore lint/correctness/useExhaustiveDependencies(pickedKeys): the selection moving is the whole trigger
 	useEffect(() => {
 		setRefused(null);
-		sourceDelivery.clearFeedback();
-	}, [pickedKeys, sourceDelivery.clearFeedback]);
+	}, [pickedKeys]);
 
-	// nothing holds a document, or an edit, past the window it was drawn in
+	// nothing holds a document past the window it was drawn in
 	useEffect(() => {
 		const timers = holdTimers.current;
 		return () => {
 			for (const timer of timers.values()) clearTimeout(timer);
 			timers.clear();
-			clearTimeout(closeTimer.current);
 		};
 	}, []);
 
@@ -3594,32 +2348,6 @@ export function ProjectCanvas({
 		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation],
 	);
 	leavePage.current = switchToPage;
-	const revealSourceUse = useCallback(
-		async (frame: string, use?: SourceUse) => {
-			const target = allFramesRef.current.find((candidate) => candidate.name === frame);
-			if (!target) return;
-			recordDeparture();
-			if (pageOf(target) !== activePageRef.current) switchToPage(pageOf(target), arrivalAt(target));
-			else {
-				const arrival = arrivalAt(target);
-				if (arrival) animateCamera(arrival);
-			}
-			setTool("select");
-			setPicked([]);
-			holdChain(null);
-			setSelected([frame]);
-			if (!use) return;
-			const chain = await sourceDelivery.reveal(frame, use.original);
-			const hit = chain?.at(-1);
-			if (hit && chain && pageOf(target) === activePageRef.current) {
-				holdChain({ frame, chain });
-				setSelected([]);
-				setPicked([{ frame, ...hit }]);
-			}
-		},
-		[recordDeparture, switchToPage, arrivalAt, animateCamera, holdChain, sourceDelivery.reveal],
-	);
-
 	/** Page-folder clicks return selection to the page, even when it is already active. */
 	const activatePageFromTree = useCallback(
 		(target: string) => {
@@ -3759,35 +2487,13 @@ export function ProjectCanvas({
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
-		const refreshSource = (frame: string) => {
-			void (pendingSource.current.get(frame) ?? Promise.resolve()).then(async () => {
-				if (
-					unappliedSource.current.has(frame) ||
-					editingRef.current?.frame === frame ||
-					sourceDelivery.holds(frame)
-				)
-					return;
-				const publication = retainedPublications.current.get(frame);
-				if (publication && (await sourceIsCurrent(project, publication))) return;
-				if (
-					pendingSource.current.has(frame) ||
-					editingRef.current?.frame === frame ||
-					sourceDelivery.holds(frame) ||
-					unappliedSource.current.has(frame)
-				)
-					return;
-				retainedPublications.current.delete(frame);
-				reloadFrameDocument(frame);
-			});
-		};
 		return subscribeSse(
 			`/api/p/${encodeURIComponent(project)}/events`,
 			{
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (event.kind === "frame" && event.frame !== undefined) {
-						const frame = event.frame;
-						refreshSource(frame);
+						reloadFrameDocument(event.frame);
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -3800,7 +2506,7 @@ export function ProjectCanvas({
 						// a shared file the link graph has read names its own readers (#109);
 						// anything it could not name can stale every document
 						const staled = event.frames ?? framesRef.current.map((frame) => frame.name);
-						for (const frame of staled) refreshSource(frame);
+						for (const frame of staled) reloadFrameDocument(frame);
 						void refetchFrames();
 						// a shared source file moves the graph as surely as a frame's own
 						void refetchFlows();
@@ -3823,7 +2529,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync, sourceDelivery.holds]);
+	}, [noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost
@@ -3879,13 +2585,7 @@ export function ProjectCanvas({
 					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
 					return;
 				}
-				case "dropped": {
-					swapPicture(message.frame, message.selector, { file: message.file });
-					return;
-				}
 				case "loaded": {
-					sourceDelivery.retainStructures(structuralGenerations(history.current), message.frame);
-					void verifyReloadedIntent(message.frame);
 					lifecycleRef.current.noteLoaded(message.frame);
 					// the document a hand edit was waiting on: the one held in front
 					// of it has done its job and lets go (#253's no blink)
@@ -3896,21 +2596,6 @@ export function ProjectCanvas({
 					if (enteredRef.current === message.frame) iframes.current.get(message.frame)?.focus();
 					// a fresh document renders fresh elements: re-anchor its arrows (#34)
 					requestSiteBoxes(message.frame);
-					// the rung the rail was editing, asked for again in the document its
-					// own write made: same selector, fresh geometry and a fresh ancestry
-					const again = repick.current;
-					if (again !== null && again.frame === message.frame) {
-						repick.current = null;
-						askChain(
-							message.frame,
-							(id) => kinMessage(again.selector, "self", id),
-							(chain) => {
-								const target = chain[chain.length - 1];
-								if (target === undefined || target.selector !== again.selector) return;
-								applyPick(message.frame, chain, target);
-							},
-						);
-					}
 					return;
 				}
 				case "arrived":
@@ -3996,27 +2681,6 @@ export function ProjectCanvas({
 					waiter?.(message.reading);
 					return;
 				}
-				// the in-place edit (#255): the frame says it has opened, and later
-				// says how it ended. A reply carrying another ask is a dead edit —
-				// its element has moved on, and writing what it says would land on
-				// whatever took its place.
-				case "edit-open": {
-					const held = editingRef.current;
-					if (held === null || held.id !== message.id) return;
-					if (!message.ok) {
-						setEdit(null);
-						showRefusal(held.frame, held.selector, GONE);
-						return;
-					}
-					setEdit({ ...held, phase: "open", start: message.text });
-					return;
-				}
-				case "edited": {
-					const held = editingRef.current;
-					if (held === null || held.id !== message.id) return;
-					finishEdit(held, message.commit, message.text);
-					return;
-				}
 				case "site-boxes": {
 					// only the newest request per frame applies — a slow reply from a
 					// superseded document must not re-anchor arrows to dead geometry
@@ -4039,8 +2703,7 @@ export function ProjectCanvas({
 					// inside a frame, is exactly where ctrl+o is owed. Each chord
 					// runs its register entry, so the relay can never drift from
 					// what the same key does out here.
-					if (message.key === "Escape" && imageEditing.current) cancelImage();
-					else if (message.key === "Escape") runHotkey("canvas.leave");
+					if (message.key === "Escape") runHotkey("canvas.leave");
 					else if (message.key === "ctrl+o") runHotkey("canvas.jump-back");
 					else if (message.key === "ctrl+i") runHotkey("canvas.jump-forward");
 					return;
@@ -4152,25 +2815,7 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [
-		project,
-		walkTo,
-		stopAnimation,
-		zoomAtPoint,
-		viewportCenter,
-		requestSiteBoxes,
-		strike,
-		releaseHold,
-		setEdit,
-		showRefusal,
-		finishEdit,
-		askChain,
-		applyPick,
-		verifyReloadedIntent,
-		swapPicture,
-		cancelImage,
-		sourceDelivery.retainStructures,
-	]);
+	}, [project, walkTo, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes, strike, releaseHold]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -4465,9 +3110,6 @@ export function ProjectCanvas({
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
-		// a ring gesture's samples are retired and its previews put back; a
-		// release that arrives after this finds an idle gesture and no session
-		if (isRingGesture(active)) closeRingWrite(false);
 		dropResize();
 		setMarks(NO_MARKS);
 		setMarquee(null);
@@ -4489,16 +3131,15 @@ export function ProjectCanvas({
 				current.map((frame) => (frame.name === active.frame ? { ...frame, ...active.origin } : frame)),
 			);
 		}
-	}, [dropResize, closeRingWrite]);
+	}, [dropResize]);
 
 	/**
 	 * The two interruptions a ring drag never sees coming.
 	 *
 	 * A window that loses focus never sees the release, and a canvas that
 	 * scrolls or zooms moves the box out from under the pointer: both end the
-	 * gesture where it stands rather than leave it holding a preview nobody
-	 * owns. The wheel is watched on the way down so the pan it also means still
-	 * happens.
+	 * gesture where it stands. The wheel is watched on the way down so the pan
+	 * it also means still happens.
 	 */
 	useEffect(() => {
 		const el = viewportRef.current;
@@ -4537,25 +3178,11 @@ export function ProjectCanvas({
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
 		setMenu(null);
-		// a press anywhere but inside it puts the gap's exact value away (#306)
-		setGapMenu(null);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		const p = localPoint(event);
-		pressOnHeld.current = null;
-		// a press out on the field is the click-away that commits an open edit
-		// (#255). While the gate is still answering the frame does not own its
-		// pointer yet, so a press over it is the second half of the very
-		// double-click that opened the edit and belongs to nobody out here.
-		const openEdit = editingRef.current;
-		if (openEdit !== null) {
-			const over = frameAtWorld(toWorld(p, cam)) === openEdit.frame;
-			if (over && openEdit.phase === "asking") return;
-			endEdit(true);
-			if (over) return;
-		}
 		const panningIntent = event.button === 1 || (event.button === 0 && toolRef.current === "hand");
 		viewportRef.current?.setPointerCapture(event.pointerId);
 
@@ -4596,7 +3223,6 @@ export function ProjectCanvas({
 					};
 					setResizeCursor(ROTATE_CURSOR);
 					showElementDrag(gesture.current);
-					openRingWrite(held, [{ property: "rotate", scope: "" }]);
 					return;
 				}
 			}
@@ -4609,16 +3235,7 @@ export function ProjectCanvas({
 			if (grabbedGap !== null && gapAxis !== null) {
 				const index = Number(grabbedGap);
 				const band = gapRef.current.bands[index];
-				const target = event.target instanceof Element ? event.target.closest("[data-element-gap]") : null;
-				const rect = target?.getBoundingClientRect();
-				setGapMenu(null);
-				if (
-					band !== undefined &&
-					beginElementGap(held, gapAxis, index, band, gapRef.current.sign, p, {
-						left: rect?.left ?? p.x,
-						top: (rect?.bottom ?? p.y) + 6,
-					})
-				) {
+				if (band !== undefined && beginElementGap(held, gapAxis, index, band, gapRef.current.sign, p)) {
 					event.preventDefault();
 					return;
 				}
@@ -4741,14 +3358,7 @@ export function ProjectCanvas({
 			const scoped = toolRef.current === "edit" || (anchor !== undefined && anchor.frame === hit);
 			if (scoped) {
 				const local = frameLocalAt(hit, world);
-				// a press on the element that was already held is the second click
-				// the text gesture is (#255) — noted here and acted on at pointer-up,
-				// because until then it may yet turn out to be a drag of the frame
-				if (local !== null) {
-					const again = secondClick(pickedRef.current, hit, local);
-					pressOnHeld.current = again === undefined ? null : { pick: again, local };
-					scopedSelectAt(hit, local);
-				}
+				if (local !== null) scopedSelectAt(hit, local);
 			}
 			const names = selectedRef.current.includes(hit) ? [...selectedRef.current] : [hit];
 			if (!scoped) {
@@ -4842,10 +3452,6 @@ export function ProjectCanvas({
 			const next: Gesture = { ...active, measured };
 			gesture.current = next;
 			showElementDrag(next);
-			// the pointer's own size goes to the running layout at once, and the
-			// alignment refines it after: a release that beats the correction saves
-			// what the pointer asked for rather than an older sample's answer
-			void sampleElementResize(measured);
 			void alignElementResize(next, accelPressed(event), cam.k);
 			return;
 		}
@@ -4862,7 +3468,6 @@ export function ProjectCanvas({
 			const next: Gesture = { ...active, live };
 			gesture.current = next;
 			showElementDrag(next);
-			sampleRingWrite({ kind: "fields", changes: [{ property: "rotate", scope: "", value: turnValue(live) }] });
 			return;
 		}
 
@@ -5011,12 +3616,11 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * Where a size drag begins (#305): the facts only the document has, and the
-	 * one source read the whole gesture writes through.
+	 * Where a size drag begins (#305): the facts only the document has.
 	 *
-	 * ⇧ and ⌥ are read here and nowhere else. The read is about exactly the
-	 * fields this gesture may write, and a modifier picked up half way through
-	 * would change that set, so the drag that opened without them keeps its own
+	 * ⇧ and ⌥ are read here and nowhere else. The gesture is about exactly the
+	 * fields it may write, and a modifier picked up half way through would
+	 * change that set, so the drag that opened without them keeps its own
 	 * promise and the readout says which one it made.
 	 */
 	const beginElementResize = (pick: PickedSelection, edge: Edge, from: Point, asked: ResizeModifiers) => {
@@ -5075,10 +3679,6 @@ export function ProjectCanvas({
 			};
 			gesture.current = { ...active, measured };
 			showElementDrag(gesture.current);
-			openRingWrite(
-				pick,
-				properties.map((property) => ({ property, scope: "" })),
-			);
 		});
 	};
 
@@ -5141,7 +3741,6 @@ export function ProjectCanvas({
 			const next: Gesture = { ...now, measured };
 			gesture.current = next;
 			showElementDrag(next);
-			await sampleElementResize(measured);
 			return true;
 		};
 		if (bypass || (sx === 0 && sy === 0)) {
@@ -5178,19 +3777,12 @@ export function ProjectCanvas({
 		else await settle(held.raw, null);
 	};
 
-	/** The class cell the ring read, as the base scope's own tokens. */
-	const ringScoped = () => ({
-		scoped: scopedClass(ringRef.current.read?.className ?? "", BASE),
-		theme: ringRef.current.theme,
-	});
-
 	/**
 	 * Where a gap drag begins (#306).
 	 *
-	 * The same shape the size drag has: one source read opened when the pointer
-	 * goes down, about exactly the one property this drag may write. A value no
-	 * step can move without renaming it never opens one: the rail keeps it,
-	 * where it is read for what it is.
+	 * The same shape the size drag has: about exactly the one property this
+	 * drag may move. A value no step can move without renaming it never opens
+	 * one: the rail keeps it, where it is read for what it is.
 	 */
 	const beginElementGap = (
 		pick: PickedSelection,
@@ -5199,7 +3791,6 @@ export function ProjectCanvas({
 		band: GapBand,
 		sign: 1 | -1,
 		from: Point,
-		anchor: GapAnchor,
 	): boolean => {
 		const authored = gapRef.current.authored;
 		if (authored === null || !gapSteppable(authored)) return false;
@@ -5211,86 +3802,26 @@ export function ProjectCanvas({
 			band,
 			sign,
 			from,
-			anchor,
 			authored,
 			measured: axis === "column-gap" ? band.w : band.h,
 			units: 0,
 			live: null,
 		};
-		openRingWrite(pick, [{ property: axis, scope: "" }]);
 		return true;
 	};
 
-	/** One sample of a live gap drag, previewed in every use through the common owner. */
+	/** One sample of a live gap drag, drawn as the band the pointer is making. */
 	const sampleElementGap = (active: Extract<Gesture, { kind: "element-gap" }>, p: Point, coarse: boolean): void => {
 		const sampled = gapSample(active, p, coarse, cameraRef.current?.k ?? 1, ringRef.current.step, DRAG_THRESHOLD_PX);
 		if (sampled === null) return;
 		const next: Gesture = { ...active, units: sampled.units, live: sampled.live };
 		gesture.current = next;
 		showGapDrag(next);
-		sampleRingWrite({
-			kind: "fields",
-			changes: [{ property: active.axis, scope: "", value: gapField(active.axis, sampled.live, ringScoped()) }],
-		});
 	};
 
 	/** What the band draws while a gap drag is live: the space the pointer is making. */
 	const showGapDrag = (active: Extract<Gesture, { kind: "element-gap" }>): void => {
 		setGapDrag({ selector: active.pick.selector, index: active.index, ...gapPaint(active, ringRef.current.step) });
-	};
-
-	/** The gap a drag settled on, saved once (#306). */
-	const commitElementGap = (active: Extract<Gesture, { kind: "element-gap" }>): void => {
-		closeRingWrite(gapMoved(active));
-	};
-
-	/** One value the popover picked, written through the same read the drag uses. */
-	const writeGapValue = (pick: PickedSelection, axis: GapAxis, value: string): void => {
-		// the popover outliving its selection would be a bug; a write against one
-		// that is gone would be a wrong file, so this is checked rather than trusted
-		const held = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
-		if (held === undefined || held.frame !== pick.frame || held.selector !== pick.selector) return;
-		openRingWrite(pick, [{ property: axis, scope: "" }]);
-		sampleRingWrite({
-			kind: "fields",
-			changes: [{ property: axis, scope: "", value: gapField(axis, value, ringScoped()) }],
-		});
-		closeRingWrite(true);
-	};
-
-	/** One sample of a live size drag, in the element's own authored dimensions. */
-	const sampleElementResize = (measured: ResizeMeasurement) => {
-		return sampleRingWrite({
-			kind: "fields",
-			changes: resizeFields(
-				measured.properties,
-				{ w: measured.live.w - measured.extra.w, h: measured.live.h - measured.extra.h },
-				measured.shift,
-				measured.offset,
-				ringRef.current.step,
-				measured.writes,
-			).map((change) => ({ ...change, scope: "" })),
-		});
-	};
-
-	/**
-	 * The size a drag settled on, saved once (#305).
-	 *
-	 * A drag that ended where it began writes nothing: the source already says
-	 * this and completing it would be a save nobody asked for.
-	 */
-	const commitElementSize = (active: Extract<Gesture, { kind: "element-size" }>) => {
-		const measured = active.measured;
-		closeRingWrite(
-			measured !== null &&
-				(Math.round(measured.live.w) !== Math.round(measured.start.w) ||
-					Math.round(measured.live.h) !== Math.round(measured.start.h)),
-		);
-	};
-
-	/** The angle a turn settled on. A turn back to rest takes the family away. */
-	const commitElementTurn = (active: Extract<Gesture, { kind: "element-turn" }>) => {
-		closeRingWrite(active.live !== active.base);
 	};
 
 	/**
@@ -5326,24 +3857,6 @@ export function ProjectCanvas({
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
-		if (active.kind === "element-size") commitElementSize(active);
-		if (active.kind === "element-turn") commitElementTurn(active);
-		if (active.kind === "element-gap") {
-			// a press that never became a drag meant the value, not the space
-			if (active.live === null)
-				setGapMenu({
-					pick: active.pick,
-					axis: active.axis,
-					authored: active.authored,
-					measured: active.measured,
-					at: active.anchor,
-				});
-			commitElementGap(active);
-		}
-		// the press never became a drag, so the second click meant the words (#255)
-		const again = pressOnHeld.current;
-		pressOnHeld.current = null;
-		if (active.kind === "pending" && again !== null) beginTextEdit(again.pick, again.local);
 	};
 
 	/**
@@ -5540,12 +4053,6 @@ export function ProjectCanvas({
 		};
 		const nudgeArrow = (event: KeyboardEvent | undefined, step: number) => {
 			if (event === undefined) return;
-			// a held element is what the arrows move first: the element's own
-			// placement or its place among its siblings, never the frame behind it
-			if (moveElement(event, step)) {
-				event.preventDefault();
-				return;
-			}
 			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
 			event.preventDefault();
 			const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
@@ -5645,13 +4152,12 @@ export function ProjectCanvas({
 			"canvas.reload": () => {
 				for (const name of verbTarget()) reloadFrameDocument(name);
 			},
-			// ⌫ takes whatever is held. An element is a handle now (#255), so with
-			// a rung open it takes that element's lines — silent, like every other
-			// patch, and ⌘Z brings it back. With no rung open it is the frame's own
-			// trash, unchanged.
+			// ⌫ is the frame's own trash. With a rung open it takes nothing: the
+			// element is what is held, and the frame behind it is not what the
+			// press meant.
 			"canvas.trash": (event) => {
 				if (enteredRef.current !== null) return;
-				if (deleteElements()) {
+				if (pickedRef.current.length > 0) {
 					event?.preventDefault();
 					return;
 				}
@@ -5713,16 +4219,8 @@ export function ProjectCanvas({
 				if (walkSibling(event?.shiftKey === true ? "previous" : "next")) event?.preventDefault();
 			},
 			"canvas.escape": () => {
-				// a held arrow is retired before anything else it might have opened
-				finishKeyMove(false);
 				cancelPicks();
 				setPreview(null);
-				setGapMenu(null); // the gap's exact value leaves with every other open thing (#306)
-				// an edit still waiting on the gate has no frame to press Esc in yet
-				if (editingRef.current !== null) {
-					endEdit(false);
-					return;
-				}
 				if (!gestureStill()) cancelGesture();
 				else if (menuOpenRef.current) setMenu(null);
 				else if (enteredRef.current !== null) exitEntered(true);
@@ -5810,10 +4308,6 @@ export function ProjectCanvas({
 		descendKey,
 		climbRung,
 		walkSibling,
-		deleteElements,
-		moveElement,
-		finishKeyMove,
-		endEdit,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
@@ -5890,7 +4384,7 @@ export function ProjectCanvas({
 		// reloading the document, so a saved source is a fresh read too: without
 		// it the ring goes on answering out of the file as it was (#306). Only
 		// this frame's own saves count, so a save elsewhere leaves the read alone
-		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0) + (sourceSaves[ringPick.frame] ?? 0),
+		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0),
 	);
 	ringRef.current = ring;
 	/** the drag in flight on the rung the ring is drawn on, and nothing else */
@@ -5946,7 +4440,7 @@ export function ProjectCanvas({
 	};
 	const gapFrame = ringPick?.frame;
 	const gapSelector = ringPick?.selector;
-	const gapNonce = gapFrame === undefined ? 0 : (docNonces[gapFrame] ?? 0) + (sourceSaves[gapFrame] ?? 0);
+	const gapNonce = gapFrame === undefined ? 0 : (docNonces[gapFrame] ?? 0);
 	const gapSettled = gapDrag === null;
 	// the container's own gaps, asked of the document that laid them out: on a
 	// fresh selection, on a reloaded document, after a save, and once a drag has
@@ -5965,12 +4459,6 @@ export function ProjectCanvas({
 			live = false;
 		};
 	}, [askGaps, gapFrame, gapSelector, gapNonce, gapSettled]);
-	// the value belongs to the element it was opened on: a selection that moves
-	// on takes it with it, so nothing is ever written to a pick nobody holds
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the held element is the trigger, not a value this effect reads
-	useEffect(() => {
-		setGapMenu(null);
-	}, [gapFrame, gapSelector]);
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
@@ -6081,20 +4569,8 @@ export function ProjectCanvas({
 											settled={lifecycle.settled.has(frame.name)}
 											entered={isEntered}
 											active={selectionTargets.has(frame.name)}
-											// an open in-place edit gives the frame its pointer back, so
-											// the caret lands where the click did and the words can be
-											// typed into the element itself (#255). Only once it is open:
-											// while the gate is still answering, the very double-click
-											// that asked may yet turn out to be a descent, and the canvas
-											// has to be the one that hears its second half.
-											// ⌘ borrows an entered frame's pointer to reach an element
-											// under it; an open edit is already inside one, and taking
-											// its pointer back mid-word would drop the caret
-											interactive={
-												editing?.frame === frame.name && editing.phase === "open"
-													? true
-													: isEntered && !accelDown
-											}
+											// ⌘ borrows an entered frame's pointer to reach an element under it
+											interactive={isEntered && !accelDown}
 											docNonce={docNonces[frame.name] ?? 0}
 											holdNonce={heldPaint[frame.name] ?? null}
 											cover={frame.cover}
@@ -6196,19 +4672,6 @@ export function ProjectCanvas({
 							marquee={marquee}
 							shellRadius={shellRadius}
 						/>
-						{/* the gap's own exact value (#306), opened from the band a click landed
-						    on: the rail's treatment, over the space it is about */}
-						{gapMenu === null ? null : (
-							<GapMenu
-								axis={gapMenu.axis}
-								authored={gapMenu.authored}
-								measured={gapMenu.measured}
-								step={ring.step}
-								at={gapMenu.at}
-								onWrite={(value) => writeGapValue(gapMenu.pick, gapMenu.axis, value)}
-								onClose={() => setGapMenu(null)}
-							/>
-						)}
 						{/* the agent's hand (#214), in the same screen space as the furniture
 						    beside it: presence on any visible frame at any zoom, and a located
 						    mark wherever a document was live enough to be measured */}
@@ -6274,21 +4737,9 @@ export function ProjectCanvas({
 
 				{notice !== null ? <Toast notice={notice} /> : null}
 
-				{(collisions.length > 0 || uncaught || (said !== null && said.kind !== "source")) && (
+				{collisions.length > 0 && (
 					<NoticeStrip>
-						{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
-						{uncaught && <HandNotice said={{ kind: "uncaught" }} onDismiss={() => setUncaught(false)} />}
-						{said !== null && said.kind !== "source" && (
-							<HandNotice
-								said={said}
-								onDismiss={() => setSaid(null)}
-								onReload={(frame) => {
-									retainedPublications.current.delete(frame);
-									unappliedSource.current.delete(frame);
-									reloadFrameDocument(frame);
-								}}
-							/>
-						)}
+						<CollisionNotice collisions={collisions} />
 					</NoticeStrip>
 				)}
 
@@ -6344,142 +4795,23 @@ export function ProjectCanvas({
 			    Properties by default, the agent one glyph below, one of them in the
 			    panel at a time. */}
 			<Dock
-				request={agentRequest?.retire ? undefined : agentRequest?.id}
+				request={agentRequest?.id}
 				agentWorking={turn.phase === "playing"}
 				onSettings={onSettings}
 				properties={(width, shut) => (
 					<PropertiesRail
-						recovery={
-							said?.kind === "source" ? (
-								<HandNotice
-									said={said}
-									onDismiss={() => {
-										setSaid((current) =>
-											current?.kind === "source" ? { ...current, dismissed: true } : current,
-										);
-										viewportRef.current?.focus({ preventScroll: true });
-									}}
-									onAsk={() => askAgent(said)}
-									onCheck={
-										said.intent?.operation.kind === "literal" || said.intent?.operation.kind === "property"
-											? () => {
-													if (said.intent) void checkUnknownSource(said.intent);
-												}
-											: undefined
-									}
-									onRetry={
-										(said.intent?.operation.kind === "literal" ||
-											said.intent?.operation.kind === "property") &&
-										said.intent.original &&
-										said.intent.change?.kind === said.intent.operation.kind &&
-										!said.intent.inverse
-											? () => {
-													if (said.intent) void retrySource(said.intent);
-												}
-											: undefined
-									}
-									onReload={(frame) => {
-										reloadedIntent.current = said.intent;
-										retainedPublications.current.delete(frame);
-										unappliedSource.current.delete(frame);
-										reloadFrameDocument(frame);
-									}}
-								/>
-							) : undefined
-						}
 						project={project}
 						held={railHeld}
-						revision={sourceRevision + (railFrame === null ? 0 : (docNonces[railFrame] ?? 0))}
+						revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0)}
 						width={width}
 						onCollapse={shut}
-						preview={elementDrag === null ? null : { className: ringClassPreview, box: elementDrag.box }}
+						preview={elementDrag === null ? null : { box: elementDrag.box }}
 						acts={{
-							onAsk: () => askAgent(),
-							ownership: {
-								active: sourceDelivery.active,
-								describe: sourceDelivery.describe,
-								release: sourceDelivery.releaseDescription,
-								highlight: sourceDelivery.highlight,
-								reveal: revealSourceUse,
-							},
+							onAsk: askAgent,
 							onRung: takeRung,
 							onGeometry: setFrameGeometry,
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
-							group: async (frame, selector, value, signal) => {
-								const change: SourceChange = { kind: "properties", value };
-								const read = await beginRailText(
-									frame,
-									selector,
-									"className",
-									{
-										kind: "properties",
-										target: propertyGroupTarget(value),
-									},
-									{ signal, change: () => change },
-								);
-								if (read) finishRailSource(frame, read, change, !signal.aborted);
-							},
-							property: {
-								describe: sourceDelivery.describeProperty,
-								begin: (frame, selector, property, scope, request) =>
-									beginRailText(
-										frame,
-										selector,
-										"className",
-										{ kind: "property", property, scope },
-										{
-											signal: request.signal,
-											...(request.preview ? { preview: request.preview } : {}),
-											change: () => {
-												const value = request.value();
-												return value ? { kind: "property", value } : undefined;
-											},
-										},
-									),
-								plan: async (_frame, read, revision, value) =>
-									(await previewPropertySource(project, read, revision, value)) ?? {
-										ok: false,
-										reason: "The property preview did not arrive.",
-									},
-								refused: (frame, read, value, reason) => {
-									const before = railIntents.current.get(read);
-									void showSourceResult(
-										frame,
-										{ ok: false, reason },
-										"",
-										false,
-										before ? { ...before, change: { kind: "property", value } } : undefined,
-									);
-									void sourceDelivery.cancel(frame, read.generation);
-								},
-								preview: sourceDelivery.previewProperty,
-								finish: (frame, read, value, commit) =>
-									finishRailSource(frame, read, value ? { kind: "property", value } : undefined, commit),
-							},
-							text: {
-								describe: sourceDelivery.describeField,
-								begin: beginRailText,
-								preview: (frame, read, text) => {
-									void sourceDelivery.preview(frame, read.generation, text);
-								},
-								finish: finishRailText,
-								refused: (frame, selector, text, field) =>
-									setSaid((current) =>
-										current?.kind === "source" &&
-										current.intent?.frame === frame &&
-										current.intent.selector === selector &&
-										current.intent.field === field
-											? {
-													...current,
-													dismissed: false,
-													text,
-													intent: { ...current.intent, change: { kind: "literal", text } },
-												}
-											: current,
-									),
-							},
-							onSwap: swapPicture,
 						}}
 					/>
 				)}

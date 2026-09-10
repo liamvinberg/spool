@@ -2,9 +2,9 @@ import { anatomyOf, splitClass } from "../daemon/class-write";
 import type { CompiledTheme } from "../daemon/theme";
 import { knowsColour, paintOf, paintWith, type ThemeList, themeValue } from "./theme";
 
-/** Syntax and display values for the retained property controls.
- * These helpers spell candidates and read existing tokens. The source owner uses
- * actual compiler declarations to prove what a property operation may replace.
+/**
+ * What a Tailwind token is made of, family by family (#257): the readers that
+ * say what a literal wears, and the spellings a control's change comes to.
  */
 
 /* ---------- lengths: a sign, a fraction, a unit ---------- */

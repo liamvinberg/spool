@@ -1,43 +1,40 @@
 import { toggledOf } from "../../properties/families";
 import { type At, editsFor, type Row, type RowValue } from "../../properties/rows";
-import type { SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 
-/** One reading of this element's class cell: what each asked property is wearing, or why none can be. */
-export interface PropertyDescription {
-	readings?: Readonly<Record<string, SourcePropertyReading>> | undefined;
-	reason?: string;
+/** What a control asks to write: tokens to wear, a value of its own, or nothing at all. */
+export type PropertyValue =
+	| { kind: "binding"; tokens: readonly string[] }
+	| { kind: "custom"; value: string }
+	| { kind: "remove" };
+
+/** What a control draws: the tokens the element wears for one property, and what they come to. */
+export interface PropertyReading {
+	tokens: readonly string[];
+	/** the value as it is written, in the unit the author chose */
+	authored?: string;
+	/** the theme reference the value is bound to, the custom value it is, or nothing set */
+	binding: { kind: "page" } | { kind: "custom" } | { kind: "reference"; name: string; value?: string };
+	/** the value as the frame draws it */
+	native?: string;
 }
 
+/** What a control is handed to write with; a rail with nothing to write through hands it none. */
 export interface PropertyControls {
 	/** which element, under which scope, these controls are about */
 	subject: string;
 	/** that subject as this rail last read it, which is what a re-read replaces */
 	identity: string;
-	describe(properties: readonly string[]): Promise<PropertyDescription | undefined>;
-	begin(property: string, preview?: SourcePropertyValue): void;
-	preview(property: string, value: SourcePropertyValue, sampleValue?: string): void;
-	apply(property: string, value: SourcePropertyValue): void;
+	begin(property: string): void;
+	preview(property: string, value: PropertyValue, sampleValue?: string): void;
+	apply(property: string, value: PropertyValue): void;
 	/** Several properties one gesture decides together, saved as one operation. */
-	applyFields(changes: readonly { property: string; value: SourcePropertyValue }[]): void;
+	applyFields(changes: readonly { property: string; value: PropertyValue }[]): void;
 	finish(commit: boolean): void;
 }
 
-/** Every control writes through the source owner; a reading row writes nothing. */
-export function sourceProperty(row: Row): boolean {
+/** Every control writes; a reading row writes nothing. */
+export function writableProperty(row: Row): boolean {
 	return row.primitive !== "read";
-}
-
-/**
- * Whether this control draws the source's own reading rather than the class.
- *
- * A colour, a font size and a radius are drawn from what the source says the
- * property is wearing, so they have nothing to show until that description
- * lands. A length, a word and a mode read the class cell the rail already has,
- * so they keep their control while the source is still answering, and lose it
- * when the source actually refuses.
- */
-export function readsFromSource(row: Row): boolean {
-	return ["appearance", "fill", "stroke", "text"].includes(row.section);
 }
 
 /**
@@ -47,12 +44,12 @@ export function readsFromSource(row: Row): boolean {
  * field and the width mode menu both author the element's width, so a mode
  * change is a width request rather than a request about a control's own name.
  */
-export function sourcePropertyName(row: Row): string {
+export function propertyNameOf(row: Row): string {
 	return row.rule.kind === "size-mode" ? (row.rule.axis === "w" ? "width" : "height") : row.property;
 }
 
-/** Candidate spelling carries the control's request; the source compiler proves ownership. */
-export function propertyControlValue(row: Row, value: RowValue, at: At, scope: string): SourcePropertyValue {
+/** The tokens a row's change comes to, spelled under the scope it is written in. */
+export function propertyControlValue(row: Row, value: RowValue, at: At, scope: string): PropertyValue {
 	if (value === null || (value.kind === "gradient" && value.gradient === null)) return { kind: "remove" };
 	const edits = editsFor(row, value, at);
 	const tokens = row.rule.kind === "toggles" ? new Set(toggledOf(at.scoped, row.rule.set)) : new Set<string>();

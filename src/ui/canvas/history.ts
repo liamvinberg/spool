@@ -1,7 +1,5 @@
 import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
-import type { SourceReceipt } from "../../source-edit";
 import type { Geometry, Place } from "../api";
-import type { SourceIntent } from "./source-intent";
 
 /**
  * One undo stack for the hands (#23, #230).
@@ -94,19 +92,6 @@ export type HistoryEntry =
 	// the frame moves it happens among, because one press has to walk all of it
 	// — a hand that moved a frame and then a page undoes them in that order
 	| { readonly kind: "place"; readonly places: Places }
-	// a span patch on one frame's source (#253), which is every hand edit to
-	// what a frame draws. The patch is the one to run next, in whichever
-	// direction this entry currently sits: running it answers with its own
-	// inverse, and the entry is amended with what came back, because a file
-	// that has just changed has a new fingerprint and the old one would refuse
-	| {
-			readonly kind: "source";
-			readonly frame: string;
-			readonly receipt: SourceReceipt;
-			/** Native evidence retention only; the receipt remains source authority. */
-			readonly structuralGeneration?: number;
-			readonly intent?: SourceIntent;
-	  }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {
 			readonly kind: "move";
@@ -142,17 +127,6 @@ export type HistoryEntry =
 export interface History {
 	undo: readonly HistoryEntry[];
 	redo: readonly HistoryEntry[];
-}
-
-/** Only the existing stacks decide which structural observations may still serve an inverse. */
-export function structuralGenerations(history: History): number[] {
-	return [
-		...new Set(
-			[...history.undo, ...history.redo].flatMap((entry) =>
-				entry.kind === "source" && entry.structuralGeneration !== undefined ? [entry.structuralGeneration] : [],
-			),
-		),
-	];
 }
 
 /**
@@ -394,8 +368,6 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			const pages = livePaged(entry.pages, entry.to, alive, way);
 			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
-		case "source":
-			return entry;
 		case "reorder":
 			return entry;
 		case "gather": {

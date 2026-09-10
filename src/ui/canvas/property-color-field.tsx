@@ -1,8 +1,8 @@
 import "./property-color-field.css";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { ThemeToken } from "../../daemon/theme";
-import type { SourcePropertyReading } from "../../source-property";
 import { Row } from "./properties-fields";
+import type { PropertyReading } from "./property-controls";
 
 export type ColorOption = ThemeToken & { reference: string | null };
 
@@ -41,10 +41,11 @@ function tokenKeys(event: KeyboardEvent<HTMLElement>): void {
 	options[next]?.scrollIntoView({ block: "nearest" });
 }
 
-/** The approved color menu reads compiler identity and native presentation separately. */
+/** The colour menu: the reference the value names, the value it comes to, and the tokens under it. */
 export function PropertyColorField({
 	property,
 	reading,
+	ok,
 	reason,
 	options,
 	begin,
@@ -54,7 +55,9 @@ export function PropertyColorField({
 	accessory,
 }: {
 	property: "color" | "background-color";
-	reading: SourcePropertyReading | undefined;
+	reading: PropertyReading | undefined;
+	/** whether a gesture on this field goes anywhere; a reading alone draws it */
+	ok: boolean;
 	reason?: string | undefined;
 	options: readonly ColorOption[];
 	begin(): void;
@@ -156,22 +159,22 @@ export function PropertyColorField({
 	};
 	return (
 		<div className="ep-color-field" ref={host}>
-			<Row name={property === "background-color" ? "background" : "color"} ok={reading !== undefined}>
+			<Row name={property === "background-color" ? "background" : "color"} ok={ok && reading !== undefined}>
 				<button
 					type="button"
 					ref={trigger}
 					className="ep-color-trigger"
 					aria-label={`Choose ${property}`}
 					aria-expanded={open}
-					disabled={!reading}
+					disabled={!ok || !reading}
 					title={
 						binding
 							? `Linked to ${binding}`
 							: reading?.binding.kind === "custom"
 								? "Custom value"
 								: reading
-									? "Resolved from the page"
-									: (reason ?? "Inspecting source binding…")
+									? "Nothing sets this colour"
+									: (reason ?? "This colour cannot be written here")
 					}
 					onClick={() => {
 						complete(false);

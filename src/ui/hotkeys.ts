@@ -135,7 +135,7 @@ export const HOTKEYS = [
 		id: "canvas.trash",
 		scope: "canvas",
 		group: "Frames",
-		label: "Move the selection to the Trash, or delete the selected element",
+		label: "Move the selection to the Trash",
 		keys: ["backspace", "delete"],
 		shown: ["⌫"],
 	},
@@ -206,15 +206,6 @@ export const HOTKEYS = [
 		group: "Selection",
 		label: "Select the next element, or the one before",
 		keys: ["tab", "shift+tab"],
-	},
-	// the write lane's text gesture (#255): the words are edited where they are
-	// drawn, so the only thing to tell is which press opens one
-	{
-		id: "canvas.edit-text",
-		scope: "canvas",
-		group: "Selection",
-		label: "Edit the selected element's words in place",
-		gesture: "click it again",
 	},
 	{ id: "canvas.accel-hold", scope: "canvas", group: "Selection", label: "", keys: ["accel"], listed: false },
 	// the measurement overlay (#261): ⌥ is held, the pointer names a sibling,

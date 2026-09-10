@@ -1,22 +1,17 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { anatomyOf, splitClass } from "../../daemon/class-write";
+import { splitClass } from "../../daemon/class-write";
 import type { RowElement } from "../../properties/rows";
-import type { SourceDescription, SourceOperation, SourceRead } from "../../source-edit";
-import type { SourcePropertyPreview, SourcePropertyValue } from "../../source-property";
-import type { SourcePropertyGroupValue } from "../../source-property-group";
-import type { CompiledTheme, Geometry, ProjectAsset, RungRead } from "../api";
-import { fetchTheme, listAssets, readRungs } from "../api";
+import type { CompiledTheme, Geometry, RungRead } from "../api";
+import { fetchTheme, readRungs } from "../api";
 import { cn } from "../cn";
-import { ContentText, LiteralField, type TextActions } from "./content-text";
 import { MenuItem } from "./context-menu";
-import { type AttributeField, fieldsFor, IMAGE_ACCEPT, swappable } from "./properties-attributes";
+import { fieldsFor } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
 import {
 	FAINT,
 	LABEL,
 	Menu,
 	NumField,
-	type Option,
 	popoverAt,
 	Row,
 	Section,
@@ -38,13 +33,8 @@ import {
 	variantsOf,
 } from "./properties-scope";
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
-import type { PropertyDescription } from "./property-controls";
-import { createPropertySession, type PropertyPlanResult, type PropertyReadRequest } from "./property-session";
 import type { PickedHit } from "./protocol";
 import { PanelCaret } from "./sidebar";
-import { type OwnershipActions, SourceOwnership } from "./source-ownership";
-
-const IMAGE_OPERATION: SourceOperation = { kind: "image" };
 
 /**
  * The properties rail (#256): the right column, back, and holding one thing.
@@ -94,38 +84,15 @@ export type Held =
  * A gesture in flight on the canvas, as the rail reads it (#259).
  *
  * A resize writes nothing until it is let go, so the fields would sit still
- * through the whole drag if they read only the file. The source owner supplies
- * the proposed class literal, while the canvas supplies the measured box.
+ * through the whole drag if they read only the file. The canvas supplies the
+ * measured box while the drag is live.
  */
 export interface RailPreview {
-	className: string | undefined;
 	box: { w: number; h: number };
 }
 
 export interface PropertiesActs {
 	onAsk?: () => void;
-	ownership?: OwnershipActions;
-	text?: TextActions;
-	group?(frame: string, selector: string, value: SourcePropertyGroupValue, signal: AbortSignal): Promise<void>;
-	property?: {
-		describe(
-			frame: string,
-			selector: string,
-			properties: readonly string[],
-			scope: string,
-		): Promise<PropertyDescription | undefined>;
-		begin(
-			frame: string,
-			selector: string,
-			property: string,
-			scope: string,
-			request: PropertyReadRequest,
-		): Promise<SourceRead | undefined>;
-		plan(frame: string, read: SourceRead, revision: number, value: SourcePropertyValue): Promise<PropertyPlanResult>;
-		refused(frame: string, read: SourceRead, value: SourcePropertyValue, reason: string): void;
-		preview(frame: string, plan: SourcePropertyPreview): Promise<boolean>;
-		finish(frame: string, read: SourceRead, value: SourcePropertyValue | undefined, commit: boolean): void;
-	};
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
 	/** the frame's own geometry, which is `frame.json` and never source */
@@ -134,8 +101,6 @@ export interface PropertiesActs {
 	onGeometryPreview: (name: string, patch: Partial<Geometry>) => void;
 	/** the scrub let go: one write and one undo slot for the whole gesture */
 	onGeometryCommit: (name: string, before: Geometry) => void;
-	/** Image source reads and receipts belong to the common source owner. */
-	onSwap: (frame: string, selector: string, put: { file: File } | { asset: string }) => void;
 }
 
 export function PropertiesRail({
@@ -282,24 +247,10 @@ function Body({
 	const [opened, setOpened] = useState<Scope[]>([]);
 
 	const element = held?.kind === "element" ? held : null;
-	const [sourceSupported, setSourceSupported] = useState<{ identity: string; label: string }>();
-	const [textSupported, setTextSupported] = useState<{ identity: string; label: string; revision: number }>();
-	const support = useCallback(
-		(value: { identity: string; label: string } | undefined, operation: SourceOperation) => {
-			setSourceSupported(value);
-			if (operation.kind === "literal" && !operation.field)
-				setTextSupported(value ? { ...value, revision } : undefined);
-		},
-		[revision],
-	);
 	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
-	const filed = read?.className ?? "";
-	const literal = preview?.className ?? filed;
+	const literal = read?.className ?? "";
 	const identity = element === null ? "" : `${element.frame} ${element.selector}`;
-	const active = acts.ownership?.active;
-	const purpose =
-		element && active?.frame === element.frame && active.selector === element.selector ? active : undefined;
 
 	// the scope is the element's, not the rail's: a fresh rung starts at the base
 	const before = useRef(identity);
@@ -320,7 +271,7 @@ function Body({
 	 */
 	const written = useRef<{ identity: string; tokens: ReadonlySet<string> }>({ identity: "", tokens: new Set() });
 	if (read !== undefined && written.current.identity !== identity) {
-		written.current = { identity, tokens: new Set(splitClass(filed)) };
+		written.current = { identity, tokens: new Set(splitClass(literal)) };
 	}
 	/** true once the file's own literal is known, which is what a splice is measured against */
 	const knownOriginal = written.current.identity === identity;
@@ -330,53 +281,6 @@ function Body({
 	const scopes = [...carried];
 	for (const extra of opened) if (!scopes.some((known) => sameScope(known, extra))) scopes.push(extra);
 	const live = scopes.some((known) => sameScope(known, scope)) ? scope : BASE;
-	const groupRead = useRef<AbortController | undefined>(undefined);
-	// A property session belongs to the originally selected project occurrence.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: actions stay bound to the project/occurrence that began this session
-	const propertySession = useMemo(() => {
-		const actions = acts.property;
-		if (!actions || !element) return undefined;
-		const { frame, selector } = element;
-		return createPropertySession({
-			begin: (property, scope, request) => {
-				groupRead.current?.abort();
-				return actions.begin(frame, selector, property, scope, request);
-			},
-			plan: (read, revision, value) => actions.plan(frame, read, revision, value),
-			refused: (read, value, reason) => actions.refused(frame, read, value, reason),
-			preview: (plan) => actions.preview(frame, plan),
-			finish: (read, value, commit) => actions.finish(frame, read, value, commit),
-		});
-	}, [project, identity]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: a pending group belongs to its original project and occurrence
-	useEffect(() => {
-		const cancel = (event: KeyboardEvent) => {
-			if (event.key !== "Escape" || !groupRead.current) return;
-			groupRead.current.abort();
-		};
-		window.addEventListener("keydown", cancel, true);
-		return () => {
-			window.removeEventListener("keydown", cancel, true);
-			groupRead.current?.abort();
-		};
-	}, [identity, project]);
-	const applyGroup = async (value: SourcePropertyGroupValue) => {
-		if (!element || !acts.group) return;
-		void propertySession?.finish(false);
-		groupRead.current?.abort();
-		const held = new AbortController();
-		groupRead.current = held;
-		await acts.group(element.frame, element.selector, value, held.signal);
-		if (groupRead.current === held) groupRead.current = undefined;
-	};
-	const propertyScope = scopeKey(live);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: changing scope retires its original pending property intent
-	useEffect(
-		() => () => {
-			void propertySession?.finish(false);
-		},
-		[propertySession, propertyScope],
-	);
 
 	const rowElement: RowElement = {
 		tag: element === null ? "div" : (element.chain[rung]?.tag ?? "div"),
@@ -385,42 +289,10 @@ function Body({
 		...(read?.mapped === true ? { mapped: true } : {}),
 	};
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
-	// the imports the swap may choose from, asked for only where a rung has a
-	// picture on it at all
-	const { assets, refresh: refreshAssets } = useAssets(
-		project,
-		element?.frame ?? null,
-		swappable(rowElement.tag),
-		revision,
-	);
+	// nothing writes from the rail yet: every field draws what the file says and
+	// offers no gesture
 	const view: View = {
-		property: propertySession
-			? {
-					subject: JSON.stringify([project, identity, propertyScope]),
-					identity: JSON.stringify([project, identity, revision, propertyScope]),
-					describe: async (properties) =>
-						element
-							? acts.property?.describe(element.frame, element.selector, properties, propertyScope)
-							: undefined,
-					begin: (property, preview) => {
-						propertySession.begin(property, propertyScope, preview);
-					},
-					preview: (property, value, sampleValue) =>
-						propertySession.preview(property, propertyScope, value, sampleValue),
-					apply: (property, value) => {
-						void propertySession.apply(property, propertyScope, value);
-					},
-					applyFields: (changes) => {
-						void applyGroup({
-							kind: "fields",
-							changes: changes.map((change) => ({ ...change, scope: propertyScope })),
-						});
-					},
-					finish: (commit) => {
-						void propertySession.finish(commit);
-					},
-				}
-			: null,
+		property: null,
 		scope: live,
 		scoped: scopedClass(literal, live),
 		base: scopedClass(literal, BASE),
@@ -445,49 +317,17 @@ function Body({
 
 	return (
 		<>
-			<Head
-				held={held}
-				rungs={rungs}
-				acts={acts}
-				onCollapse={onCollapse}
-				sourceSupported={
-					sourceSupported?.identity === identity ||
-					(textSupported?.identity === identity && textSupported.revision === revision)
-				}
-			/>
-			{element && acts.ownership ? (
-				<SourceOwnership
-					key={identity}
-					frame={element.frame}
-					selector={element.selector}
-					name={read?.name ?? rowElement.tag}
-					revision={revision}
-					field={purpose ? purpose.field : rowElement.tag === "img" ? "src" : undefined}
-					operation={purpose?.operation ?? (rowElement.tag === "img" ? IMAGE_OPERATION : undefined)}
-					generation={purpose?.generation}
-					actions={acts.ownership}
-					onSupport={support}
-				/>
-			) : null}
+			<Head held={held} rungs={rungs} acts={acts} onCollapse={onCollapse} />
 			{element === null ? null : (
 				<ScopeBar
 					scopes={scopes}
 					variants={variantsOf(theme)}
 					scope={live}
-					ok={acts.group !== undefined && read?.refusal?.expression === undefined}
-					onScope={(next) => {
-						groupRead.current?.abort();
-						setScope(next);
-					}}
+					ok={read?.refusal?.expression === undefined}
+					onScope={setScope}
 					onAdd={(next) => {
-						groupRead.current?.abort();
 						setOpened((standing) => [...standing, next]);
 						setScope(next);
-					}}
-					onRemove={(gone) => {
-						void applyGroup({ kind: "remove-scope", scope: scopeKey(gone) });
-						setOpened((standing) => standing.filter((extra) => !sameScope(extra, gone)));
-						setScope(BASE);
 					}}
 				/>
 			)}
@@ -500,22 +340,7 @@ function Body({
 				) : null}
 				{held?.kind === "page" ? <PageFacts held={held} /> : null}
 				{/* keyed on the rung: a fold left open on one element is not an opinion
-				    about the next one, and a re-pick after this rail's own write is the
-				    same rung, so an edit does not close what you opened */}
-				{element && acts.text ? (
-					<ContentText
-						scope={
-							textSupported?.identity === identity && textSupported.revision === revision
-								? textSupported.label
-								: undefined
-						}
-						key={`${identity}:${revision}`}
-						frame={element.frame}
-						selector={element.selector}
-						html={element.chain[rung]?.outerHtml ?? ""}
-						actions={acts.text}
-					/>
-				) : null}
+				    about the next one */}
 				{element === null || read === undefined ? null : <PropertySections key={identity} view={view} />}
 				{element === null || read === undefined ? null : (
 					<Attributes
@@ -523,32 +348,9 @@ function Body({
 						key={`${identity} attributes`}
 						read={read}
 						tag={rowElement.tag}
-						assets={assets}
-						refreshAssets={refreshAssets}
-						frame={element.frame}
-						selector={element.selector}
-						actions={acts.text}
-						onSwap={(put) => acts.onSwap(element.frame, element.selector, put)}
 					/>
 				)}
-				{element === null ? null : (
-					<SourceLine
-						read={read}
-						scope={live}
-						original={original}
-						view={view}
-						editable={acts.group !== undefined && read?.refusal?.expression === undefined}
-						onRemove={(token) => void applyGroup({ kind: "tokens", add: [], remove: [token] })}
-						onAdd={(token) => {
-							const chain = anatomyOf(token).variants;
-							void applyGroup({
-								kind: "tokens",
-								add: [chain.length > 0 ? token : `${scopeKey(live)}${token}`],
-								remove: [],
-							});
-						}}
-					/>
-				)}
+				{element === null ? null : <SourceLine read={read} scope={live} original={original} view={view} />}
 			</div>
 		</>
 	);
@@ -578,13 +380,11 @@ function Head({
 	rungs,
 	acts,
 	onCollapse,
-	sourceSupported,
 }: {
 	held: Held | null;
 	rungs: RungRead[] | null;
 	acts: PropertiesActs;
 	onCollapse: () => void;
-	sourceSupported: boolean;
 }) {
 	const element = held?.kind === "element" ? held : null;
 	const rung = rungOf(held);
@@ -628,7 +428,7 @@ function Head({
 				) : null}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
-			{read?.refusal === undefined || (sourceSupported && read.refusal.code === "shared-definition") ? null : (
+			{read?.refusal === undefined ? null : (
 				<div className="flex h-5 items-center px-2.5 pb-1">
 					<span className={cn("min-w-0 truncate", FAINT)}>{read.refusal.says}</span>
 				</div>
@@ -886,7 +686,8 @@ function ScopeBar({
 	ok: boolean;
 	onScope: (scope: Scope) => void;
 	onAdd: (scope: Scope) => void;
-	onRemove: (scope: Scope) => void;
+	/** take every token under a scope away; a rail with nothing to write through offers none */
+	onRemove?: ((scope: Scope) => void) | undefined;
 }) {
 	const [opening, setOpening] = useState(false);
 	const free = variants.filter((variant) => !scopes.some((known) => sameScope(known, [variant.prefix])));
@@ -915,7 +716,7 @@ function ScopeBar({
 						>
 							{scopeLabel(candidate)}
 						</button>
-						{on && ok && candidate.length > 0 ? (
+						{on && ok && onRemove !== undefined && candidate.length > 0 ? (
 							<button
 								type="button"
 								aria-label={`remove ${scopeLabel(candidate)}`}
@@ -1068,70 +869,14 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
 /* ---------- the string fields (#260) ---------- */
 
 /**
- * The imports this frame may choose from, read once per frame.
- *
- * Asked for only where a rung actually has a picture on it, because most
- * elements do not and a menu nobody opens should cost no round trip. Re-read
- * when the menu opens, including staged files retained after cancellation.
- */
-function useAssets(project: string, frame: string | null, wanted: boolean, revision: number) {
-	const [requested, setRequested] = useState(0);
-	const refresh = useCallback(() => setRequested((value) => value + 1), []);
-	const [assets, setAssets] = useState<ProjectAsset[]>([]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a swap of its own puts a new file in the folder this lists
-	useEffect(() => {
-		if (frame === null || !wanted) {
-			setAssets([]);
-			return;
-		}
-		let live = true;
-		void listAssets(project, frame).then((read) => {
-			if (live) setAssets(read ?? []);
-		});
-		return () => {
-			live = false;
-		};
-	}, [project, frame, wanted, revision, requested]);
-	return { assets, refresh };
-}
-
-/** The one option that is not a picture: the OS file dialog, as a row in the menu. */
-const CHOOSE = "\u0000choose";
-
-/**
  * The attributes section: `alt`, `href`, `placeholder`, `title` and their kin.
  *
- * Same mechanics and same gate as the text edit out on the canvas — one typed
- * op, spliced into the characters between the quotes — so a value that is not
- * written literally greys with the expression named rather than disappearing.
- *
- * `src` on an image is the exception and the reason this section is not just a
- * column of text boxes: an image in a frame is an import and never a URL, so
- * the field is a menu of the project's own pictures and a file dialog, and a
- * drop out on the canvas lands in the same place.
+ * Read off the same fresh parse the crumbs are, so a value that is not written
+ * literally shows the expression named rather than disappearing. `src` on an
+ * image is the import it is written as, never a URL.
  */
-function Attributes({
-	html,
-	read,
-	tag,
-	assets,
-	refreshAssets,
-	frame,
-	selector,
-	actions,
-	onSwap,
-}: {
-	html: string;
-	read: RungRead;
-	tag: string;
-	assets: readonly ProjectAsset[];
-	refreshAssets: () => void;
-	frame: string;
-	selector: string;
-	actions: TextActions | undefined;
-	onSwap: (put: { file: File } | { asset: string }) => void;
-}) {
-	const candidates = useMemo(() => {
+function Attributes({ html, read, tag }: { html: string; read: RungRead; tag: string }) {
+	const fields = useMemo(() => {
 		const node = new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
 		const attributes = [...(read.attributes ?? [])];
 		for (const attribute of node?.attributes ?? [])
@@ -1143,134 +888,22 @@ function Attributes({
 				attributes.push({ name: attribute.name, value: attribute.value });
 		return fieldsFor(tag, attributes, read.refusal);
 	}, [tag, read.attributes, read.refusal, html]);
-	const [descriptions, setDescriptions] = useState<Record<string, SourceDescription | undefined>>({});
-	const describe = actions?.describe;
-	useEffect(() => {
-		let live = true;
-		setDescriptions({});
-		if (describe)
-			void Promise.all(
-				candidates
-					.filter((field) => !["className", "style", "data-go", "key", "ref"].includes(field.name))
-					.map(
-						async (field) =>
-							[
-								field.name,
-								await describe(
-									frame,
-									selector,
-									field.name,
-									field.asset ? IMAGE_OPERATION : { kind: "literal", field: field.name },
-								),
-							] as const,
-					),
-			).then((entries) => {
-				if (live) setDescriptions(Object.fromEntries(entries));
-			});
-		return () => {
-			live = false;
-		};
-	}, [candidates, describe, frame, selector]);
-	const fields = candidates.map((field) => {
-		const description = descriptions[field.name];
-		if (!description) return field;
-		if (field.asset && description.operation.kind === "image") {
-			const { reason: _reason, ...supported } = field;
-			return { ...supported, ...(description.asset ? { specifier: description.asset } : {}) };
-		}
-		return { name: field.name, value: description.value };
-	});
 	if (fields.length === 0) return null;
 	return (
 		<Section name="attributes" {...(read.mapped === true ? { reason: "all rows" } : {})}>
 			{fields.map((field) => (
 				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
-					{field.asset === true ? (
-						<AssetField field={field} assets={assets} onOpen={refreshAssets} onSwap={onSwap} />
-					) : field.reason === undefined && actions ? (
-						<LiteralField
-							frame={frame}
-							selector={selector}
-							field={field.name}
-							initial={field.value}
-							actions={actions}
-						/>
-					) : (
-						<TextField
-							value={field.expression ?? field.value}
-							ok={field.reason === undefined}
-							placeholder="none"
-							onCommit={() => {}}
-						/>
-					)}
+					<TextField
+						value={field.asset === true ? (field.specifier ?? "") : (field.expression ?? field.value)}
+						ok={false}
+						placeholder="none"
+					/>
 					{field.reason === undefined ? null : (
 						<span className={cn("ml-auto min-w-0 shrink truncate pl-1", FAINT)}>{field.reason}</span>
 					)}
 				</Row>
 			))}
 		</Section>
-	);
-}
-
-/** The picture, chosen — never typed, because the op has to write an import. */
-function AssetField({
-	field,
-	assets,
-	onSwap,
-	onOpen,
-}: {
-	field: AttributeField;
-	assets: readonly ProjectAsset[];
-	onOpen: () => void;
-	onSwap: (put: { file: File } | { asset: string }) => void;
-}) {
-	const picker = useRef<HTMLInputElement | null>(null);
-	const held = field.specifier ?? "";
-	const options: Option[] = [
-		{ token: CHOOSE, name: "choose a file…" },
-		...assets.map((asset) => ({
-			token: asset.path,
-			name: asset.path.split("/").at(-1) ?? asset.path,
-			value: `${Math.ceil(asset.bytes / 1024)} KB`,
-			group: asset.path.startsWith("shared/") ? "shared" : "beside the frame",
-		})),
-	];
-	return (
-		<>
-			<Menu
-				current={{
-					token: held === "" ? null : held,
-					name: held === "" ? "none" : (held.split("/").at(-1) ?? held),
-				}}
-				options={options}
-				ok={field.reason === undefined}
-				label="image"
-				onOpen={onOpen}
-				filter={assets.length > 8}
-				onPick={(token) => {
-					if (token === null) return;
-					if (token === CHOOSE) {
-						picker.current?.click();
-						return;
-					}
-					onSwap({ asset: token });
-				}}
-			/>
-			{/* the OS dialog, which is the other half of choose-an-import: a browser
-			    never reveals a dropped or chosen file's path, so the bytes are what
-			    travels and the daemon decides where they land */}
-			<input
-				ref={picker}
-				type="file"
-				accept={IMAGE_ACCEPT}
-				className="hidden"
-				onChange={(event) => {
-					const file = event.target.files?.[0];
-					event.target.value = "";
-					if (file !== undefined) onSwap({ file });
-				}}
-			/>
-		</>
 	);
 }
 
@@ -1310,28 +943,20 @@ function tokensWritten(className: string): { token: string; at: string }[] {
 }
 
 function SourceLine({
-	editable,
 	read,
 	scope,
 	original,
 	view,
-	onRemove,
-	onAdd,
 }: {
-	editable: boolean;
 	read: RungRead | undefined;
 	scope: Scope;
 	/** the tokens the file was written with; anything else is the hands' own */
 	original: ReadonlySet<string>;
 	view: View;
-	/** a press on a token: take its family away under the scope it is written in */
-	onRemove: (token: string) => void;
-	onAdd: (token: string) => void;
 }) {
 	if (read === undefined) return null;
 	const tokens = tokensWritten(read.className);
 	const where = read.line === undefined ? read.path : `${read.path}:${read.line}`;
-	const ok = editable;
 	return (
 		<Section name="className" {...(read.mapped === true ? { reason: "one row of many" } : {})}>
 			<div className="flex flex-col gap-1.5 px-2.5 py-2">
@@ -1346,35 +971,14 @@ function SourceLine({
 							return (
 								<span key={at}>
 									{index > 0 ? " " : ""}
-									{/* the only way back out for a `+`-added class with no row of
-									    its own (#258's P5), so it is a press rather than a span */}
-									{ok ? (
-										<button
-											type="button"
-											title={`remove ${token}`}
-											onClick={() => onRemove(token)}
-											className={cn(
-												"cursor-pointer break-all text-left hover:text-text hover:line-through",
-												ink,
-											)}
-										>
-											{token}
-										</button>
-									) : (
-										<span className={ink}>{token}</span>
-									)}
+									<span className={ink}>{token}</span>
 								</span>
 							);
 						})
 					)}
 				</p>
 				<div className="flex items-center gap-2">
-					<AddClassRow
-						view={view}
-						editable={editable}
-						taken={new Set(tokens.map((held) => held.token))}
-						onAdd={onAdd}
-					/>
+					<AddClassRow view={view} taken={new Set(tokens.map((held) => held.token))} />
 					{where === undefined ? null : <span className={cn("min-w-0 truncate", FAINT)}>{where}</span>}
 				</div>
 			</div>

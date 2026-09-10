@@ -14,7 +14,6 @@ import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
-import type { ProjectAsset } from "../daemon/hand-asset";
 import type { RungRead } from "../daemon/hand-lane";
 import type { AttributeRead, PatchRefusal } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
@@ -23,19 +22,6 @@ import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "..
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
-import type {
-	SourceChange,
-	SourceDescription,
-	SourceInventory,
-	SourceOccurrence,
-	SourceOperation,
-	SourceRead,
-	SourceReceipt,
-	SourceResult,
-} from "../source-edit";
-import type { SourceImagePut, SourceImageStaged } from "../source-image";
-import type { SourcePropertyPreview, SourcePropertyValue } from "../source-property";
-import type { SourcePropertyGroupValue } from "../source-property-group";
 
 declare global {
 	interface Window {
@@ -68,7 +54,6 @@ export type {
 	LocatedRange,
 	PatchRefusal,
 	Place,
-	ProjectAsset,
 	ProjectCard,
 	ProjectedFrame,
 	Projection,
@@ -299,69 +284,6 @@ export async function putGeometry(project: string, frames: Record<string, Geomet
 		return (await client.api.p[":project"].geometry.$put({ param: { project }, json: { frames } })).ok;
 	} catch {
 		return false;
-	}
-}
-
-/**
- * The asset swap (#260): the picture, and what came back from putting it in.
- *
- * Its answer is a patch's, with the file it wrote named — an image in a frame
- * is an import, so the swap is bytes on disk and a splice in the source, and
- * the undo it hands back is the source half, which is the half a hand made.
- */
-/** A picture a hand dropped or chose, as bytes, because a browser never reveals its path. */
-export interface AssetFile {
-	name: string;
-	/** base64, which is how it rides to the daemon */
-	data: string;
-}
-
-/**
- * A file the hands dropped or chose, as the bytes that ride to the daemon.
- *
- * Base64 because a browser never reveals a dropped file's path, so the bytes
- * are the only thing there is to send. Chunked: `String.fromCharCode` takes
- * its bytes as arguments and a photograph is hundreds of thousands of them,
- * which is a stack overflow rather than a slow call.
- */
-export async function fileAsAsset(file: File): Promise<AssetFile> {
-	const bytes = new Uint8Array(await file.arrayBuffer());
-	let binary = "";
-	for (let at = 0; at < bytes.length; at += 8192) binary += String.fromCharCode(...bytes.subarray(at, at + 8192));
-	return { name: file.name, data: btoa(binary) };
-}
-
-export async function stageImage(
-	project: string,
-	read: SourceRead,
-	put: SourceImagePut,
-): Promise<SourceImageStaged | undefined> {
-	try {
-		const response = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: {
-				action: "stage-image",
-				handle: read.handle,
-				generation: read.generation,
-				original: read.original,
-				put,
-			},
-		});
-		if (!response.ok) return;
-		return (await response.json()) as SourceImageStaged;
-	} catch {
-		return;
-	}
-}
-
-/** The imports one frame may choose from: what is beside it, and what is shared. */
-export async function listAssets(project: string, frame: string): Promise<ProjectAsset[] | undefined> {
-	try {
-		const res = await client.api.p[":project"].assets.$get({ param: { project }, query: { frame } });
-		if (!res.ok) return undefined;
-		return ((await res.json()) as { assets: ProjectAsset[] }).assets;
-	} catch {
-		return undefined;
 	}
 }
 
@@ -1468,185 +1390,5 @@ export async function agentPermissions(
 		return { reason: "The engine did not report its permissions." };
 	} catch {
 		return { reason: "Could not reach the engine." };
-	}
-}
-
-export async function readSource(
-	project: string,
-	frame: string,
-	original: SourceOccurrence,
-	generation: number,
-	observer: string,
-	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
-	retry = false,
-): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
-	try {
-		const res = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: { action: "read", frame, original, generation, observer, operation, retry },
-		});
-		return res.ok
-			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })
-			: undefined;
-	} catch {
-		return undefined;
-	}
-}
-export async function sourceReach(
-	project: string,
-	handle: string,
-	inventories: SourceInventory[],
-	preview?: SourcePropertyValue,
-): Promise<{ ok: true; read: SourceRead } | { ok: false; reason: string } | undefined> {
-	try {
-		const res = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: { action: "reach", handle, inventories, ...(preview ? { preview } : {}) },
-		});
-		return res.ok
-			? ((await res.json()) as { ok: true; read: SourceRead } | { ok: false; reason: string })
-			: undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/**
- * One read-only sample of a property edit, in the running frames.
- *
- * A single control asks about its own property; a gesture that decides several
- * fields together, such as the resize ring's width, height and placement, asks
- * about the group its read was opened for. The two value kinds are disjoint, so the
- * change the owner is sent follows from the value itself.
- */
-export async function previewPropertySource(
-	project: string,
-	read: SourceRead,
-	revision: number,
-	value: SourcePropertyValue | SourcePropertyGroupValue,
-): Promise<{ ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string } | undefined> {
-	const change: SourceChange =
-		value.kind === "binding" || value.kind === "custom" || value.kind === "remove"
-			? { kind: "property", value }
-			: { kind: "properties", value };
-	try {
-		const res = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: {
-				action: "preview",
-				handle: read.handle,
-				generation: read.generation,
-				revision,
-				original: read.original,
-				change,
-			},
-		});
-		return res.ok
-			? ((await res.json()) as { ok: true; preview: SourcePropertyPreview } | { ok: false; reason: string })
-			: undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-export async function commitSource(
-	project: string,
-	read: SourceRead,
-	change: SourceChange,
-): Promise<SourceResult | undefined> {
-	try {
-		const res = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: {
-				action: "commit",
-				handle: read.handle,
-				generation: read.generation,
-				original: read.original,
-				change,
-			},
-		});
-		return res.ok ? ((await res.json()) as SourceResult) : undefined;
-	} catch {
-		return undefined;
-	}
-}
-export async function inverseSource(
-	project: string,
-	receipt: SourceReceipt,
-	inventories?: SourceInventory[],
-): Promise<SourceResult | undefined> {
-	try {
-		const res = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: { action: "inverse", receipt, ...(inventories ? { inventories } : {}) },
-		});
-		return res.ok ? ((await res.json()) as SourceResult) : undefined;
-	} catch {
-		return undefined;
-	}
-}
-export async function cancelSource(project: string, handle: string): Promise<void> {
-	try {
-		await client.api.p[":project"].source.$post({ param: { project }, json: { action: "cancel", handle } });
-	} catch {
-		/* a cancelled read never writes */
-	}
-}
-export async function sourceIsCurrent(project: string, publication: string): Promise<boolean> {
-	try {
-		const res = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: { action: "current", publication },
-		});
-		const data: unknown = await res.json();
-		return res.ok && typeof data === "object" && data !== null && "current" in data && data.current === true;
-	} catch {
-		return false;
-	}
-}
-
-export async function sourceDelivered(project: string, publication: string): Promise<void> {
-	try {
-		await client.api.p[":project"].source.$post({ param: { project }, json: { action: "delivered", publication } });
-	} catch {
-		/* the owner expires this delivery lease */
-	}
-}
-
-export async function respondSourceObservation(
-	project: string,
-	observer: string,
-	challenge: string,
-	original: SourceOccurrence | undefined,
-): Promise<void> {
-	try {
-		await client.api.p[":project"].source.$post({
-			param: { project },
-			json: { action: "observed", observer, challenge, ...(original ? { original } : {}) },
-		});
-	} catch {
-		/* no observation cannot authorize source */
-	}
-}
-
-export async function describeSource(
-	project: string,
-	frame: string,
-	original: SourceOccurrence,
-	inventories: SourceInventory[],
-	operation: SourceOperation = { kind: "literal", ...(original.field ? { field: original.field } : {}) },
-	readings: readonly string[] = [],
-): Promise<{ ok: true; description: SourceDescription } | { ok: false; reason: string }> {
-	try {
-		const res = await client.api.p[":project"].source.$post({
-			param: { project },
-			json: { action: "describe", frame, original, inventories, operation, readings: [...readings] },
-		});
-		const result = (await res.json()) as { ok: boolean; description?: SourceDescription; reason?: string };
-		return res.ok && result.ok && result.description
-			? { ok: true, description: result.description }
-			: { ok: false, reason: result.reason ?? "Source description is unavailable." };
-	} catch {
-		return { ok: false, reason: "Source description could not be reached." };
 	}
 }

@@ -1,11 +1,10 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { ThemeToken } from "../../daemon/theme";
 import {
 	borderColoursOf,
 	borderWidthsOf,
 	type Colour,
 	colourOf,
-	colourToken,
 	cornersOf,
 	DIRECTIONS,
 	describe,
@@ -53,7 +52,6 @@ import {
 	verdictFor,
 } from "../../properties/rows";
 import { arbitraryColourName, KEYWORD_COLOURS, listOf, paintOf, paintWith, stepOf } from "../../properties/theme";
-import { propertySamplePlaceholder, type SourcePropertyValue } from "../../source-property";
 import type { CompiledTheme } from "../api";
 import { cn } from "../cn";
 import type { Compiler } from "./properties-compile";
@@ -77,18 +75,14 @@ import { scopeKey } from "./properties-scope";
 import { PropertyColorField } from "./property-color-field";
 import {
 	type PropertyControls,
-	type PropertyDescription,
+	type PropertyReading,
+	type PropertyValue,
 	propertyControlValue,
+	propertyNameOf,
 	propertyNumericSample,
-	readsFromSource,
-	sourceProperty,
-	sourcePropertyName,
+	writableProperty,
 } from "./property-controls";
 import { type NumericTokenProperty, PropertyNumberField } from "./property-number-field";
-
-/** Rows read candidate spellings from the shared property inventory.
- * Every control retains an original source operation through preview and completion.
- */
 
 /** What every row is handed: the element under one scope, and how to write under it. */
 export interface View {
@@ -105,8 +99,6 @@ export interface View {
 	compiler: Compiler;
 	/** true when a bare token under this scope is not one the file was written with */
 	fresh: (token: string | null) => boolean;
-	/** What the source says this element's class cell wears, or why it cannot be written. */
-	described?: PropertyDescription | undefined;
 }
 
 function atOf(view: View): At {
@@ -114,15 +106,15 @@ function atOf(view: View): At {
 }
 
 function writeValue(view: View, row: ModelRow, value: RowValue): void {
-	if (!sourceProperty(row)) return;
-	view.property?.apply(sourcePropertyName(row), propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
+	if (!writableProperty(row)) return;
+	view.property?.apply(propertyNameOf(row), propertyControlValue(row, value, atOf(view), scopeKey(view.scope)));
 }
 
 /** Two properties one control decides together: an alignment is both of them. */
 function writeFields(view: View, changes: readonly { row: ModelRow; value: RowValue }[]): void {
 	view.property?.applyFields(
 		changes.map((change) => ({
-			property: sourcePropertyName(change.row),
+			property: propertyNameOf(change.row),
 			value: propertyControlValue(change.row, change.value, atOf(view), scopeKey(view.scope)),
 		})),
 	);
@@ -135,7 +127,7 @@ function usePropertyScrub(
 	value: string,
 	step: (from: string, units: number) => string | undefined,
 ) {
-	const control = sourceProperty(row) ? view.property : null;
+	const control = writableProperty(row) ? view.property : null;
 	const held = useRef<{ value: string; moved: boolean } | undefined>(undefined);
 	const [draft, setDraft] = useState<string>();
 	const scope = scopeKey(view.scope);
@@ -155,7 +147,7 @@ function usePropertyScrub(
 				value: draft ?? value,
 				start: () => {
 					held.current = { value, moved: false };
-					control.begin(sourcePropertyName(row));
+					control.begin(propertyNameOf(row));
 				},
 				move: (units: number) => {
 					const original = held.current;
@@ -166,7 +158,7 @@ function usePropertyScrub(
 					original.moved = true;
 					setDraft(next);
 					control.preview(
-						sourcePropertyName(row),
+						propertyNameOf(row),
 						propertyControlValue(row, { kind: "value", value: next }, atOf(view), scope),
 						propertyNumericSample(row, { kind: "value", value: next }),
 					);
@@ -204,34 +196,17 @@ function okOf(view: View, row: ModelRow): boolean {
 }
 
 /**
- * What a control is allowed to write, in the source's own words.
+ * Whether a control may write here, and the reason it may not.
  *
- * An open session is somewhere to send a request, never evidence that the source
- * will take one: the element's own description says whether its class cell can
- * be written, and a control that draws the source's own reading has nothing to
- * offer until it has one. A control that reads the class keeps its field while
- * the source is still answering, and loses it when the source refuses.
+ * What the element itself cannot wear comes first, in the model's own words.
+ * Past that, a control writes only where the rail has handed it something to
+ * write through: a rail with nothing behind its fields draws them and offers
+ * no gesture.
  */
 function rowAdmission(view: View, row: ModelRow): { ok: boolean; reason: string | undefined } {
-	// What the element itself cannot wear comes first. The write lane's own
-	// refusal is not asked about: a class cell shared by several uses is what
-	// the source owner edits, and its description is the answer here.
 	const box = boxRefusal(row, view.element, view.scoped);
 	if (box !== undefined) return { ok: false, reason: box };
-	if (view.described?.reason !== undefined) return { ok: false, reason: view.described.reason };
-	// A row standing for several declarations at once can only be written where
-	// they share a source. Where they do not, it says so in the source's own
-	// words instead of offering a write the source would refuse.
-	const held = view.described?.readings?.[row.property];
-	if (held?.source === "mixed")
-		return { ok: false, reason: held.reason ?? "this property has no single source to write" };
-	const answered = view.described?.readings !== undefined;
-	const ok = view.property !== null && (answered || !readsFromSource(row));
-	// A project rule written under a condition is part of what this row is, even
-	// where the condition is not the one holding now: the row says so beside
-	// whatever it may write, and the value shown stays the one that is running.
-	if (held?.written?.length) return { ok, reason: `also written under ${held.written.join(" and ")}` };
-	return { ok, reason: undefined };
+	return { ok: view.property !== null, reason: undefined };
 }
 
 /**
@@ -400,7 +375,7 @@ function ClassNumberRow({
 	aside?: ReactNode;
 }) {
 	const { ok, reason } = rowAdmission(view, row);
-	const control = sourceProperty(row) ? view.property : null;
+	const control = writableProperty(row) ? view.property : null;
 	const write = (next: RowValue) => writeValue(view, row, next);
 	const stepBy = (units: number) => {
 		const next = stepped(value, units);
@@ -425,13 +400,13 @@ function ClassNumberRow({
 				faint={faint}
 				changed={changed}
 				placeholder={placeholder}
-				onBegin={() => control?.begin(sourcePropertyName(row))}
+				onBegin={() => control?.begin(propertyNameOf(row))}
 				onCancel={() => control?.finish(false)}
 				onPreview={(typed) => {
 					const next = typedValue(typed);
 					if (next !== undefined)
 						control?.preview(
-							sourcePropertyName(row),
+							propertyNameOf(row),
 							propertyControlValue(row, next, atOf(view), scopeKey(view.scope)),
 							propertyNumericSample(row, next),
 						);
@@ -540,83 +515,52 @@ function colourTyped(theme: CompiledTheme | null, typed: string): Option | null 
 }
 
 /**
- * What the source says about this element, kept while it is being read again.
+ * What the class says one property is wearing, as a control draws it.
  *
- * A description belongs to one element under one scope, so a different subject
- * retires it immediately. A re-read of the same subject does not: dropping the
- * description while its replacement is in flight would retire the controls it
- * admits, and the gesture already under way with them. What that read answers
- * stands in its place, including a read that retired or refused.
+ * The token under the live scope, the theme reference it names where it
+ * names one, and the value the theme gives that reference. What the frame
+ * actually draws is not asked: the reading is the file's own.
  */
-function usePropertyDescription(control: PropertyControls | null | undefined, properties: readonly string[]) {
-	const subject = JSON.stringify([control?.subject, properties]);
-	const identity = JSON.stringify([control?.identity, properties]);
-	const [described, setDescribed] = useState<{
-		subject: string;
-		description: PropertyDescription | undefined;
-	}>();
-	const describe = useRef(control?.describe);
-	describe.current = control?.describe;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `identity` is not read in here, it is the trigger; the same element read again describes again
-	useEffect(() => {
-		let live = true;
-		if (properties.length)
-			void describe.current?.(properties).then((description) => {
-				if (live) setDescribed({ subject, description });
-			});
-		return () => {
-			live = false;
-		};
-	}, [subject, identity, properties]);
-	return described?.subject === subject ? described.description : undefined;
+function authoredReading(view: View, property: string): PropertyReading | undefined {
+	const row = rowFor(property);
+	if (row === undefined) return undefined;
+	const read = readRow(row, view.scoped, view.theme);
+	if (read.token === null) return { tokens: [], binding: { kind: "page" } };
+	const reference = themeReference(row, read.value, view.theme);
+	const value = reference?.value ?? read.says ?? undefined;
+	return {
+		tokens: [`${scopeKey(view.scope)}${read.token}`],
+		...(value === undefined ? {} : { authored: value, native: value }),
+		binding:
+			reference === undefined
+				? { kind: "custom" }
+				: { kind: "reference", name: reference.name, value: reference.value },
+	};
 }
 
-/**
- * One control's own reading, measured against its own property.
- *
- * The element's description says whether the cell can be written; a control
- * that draws the source's value also needs that property's native measurement,
- * which the frame captures for the property the read names.
- */
-function useOwnReading(view: View, property: string) {
-	// The element's own description already measured the property it was read
-	// against; every other control asks for its own native reading.
-	const shared = view.described?.readings?.[property];
-	const measured = shared?.native !== undefined;
-	// Until that description lands there is nothing to ask about: a control that
-	// asked first would pay for a second reading of the same class cell.
-	const own = view.described !== undefined && !measured;
-	const properties = useMemo(() => (own ? [property] : []), [property, own]);
-	const asked = usePropertyDescription(view.property, properties)?.readings?.[property];
-	return measured ? shared : asked;
+/** The theme variable a row's value names, where the value is a theme token rather than its own. */
+function themeReference(
+	row: ModelRow,
+	value: string | null,
+	theme: CompiledTheme | null,
+): { name: string; value: string } | undefined {
+	if (value === null || theme === null) return undefined;
+	const rule = row.rule;
+	const list =
+		rule.kind === "colour"
+			? "colour"
+			: rule.kind === "theme"
+				? rule.list
+				: rule.kind === "radius"
+					? "radius"
+					: undefined;
+	if (list === undefined) return undefined;
+	const name = rule.kind === "colour" ? (value.split("/")[0] ?? value) : value;
+	const token = listOf(theme, list).find((held) => held.name === name);
+	if (token === undefined) return undefined;
+	const variable = list === "colour" ? "color" : list;
+	return { name: `--${variable}-${token.name}`, value: token.value };
 }
-
-/**
- * The controls that read the source's own value rather than the class it can see.
- *
- * The first is what the element's own read is measured against, so it is the one
- * control this description can hand a native value to.
- */
-const DESCRIBED_PROPERTIES: readonly string[] = [
-	"color",
-	"background-color",
-	"font-size",
-	"line-height",
-	"letter-spacing",
-	"border-radius",
-	"border-top-left-radius",
-	"border-top-right-radius",
-	"border-bottom-right-radius",
-	"border-bottom-left-radius",
-	// The boxes ask for every side of their own, because which source owns a side
-	// is what decides whether the box can be one row at all (#304).
-	...["padding", "margin", "inset"].flatMap((box) => [
-		box,
-		...(box === "inset"
-			? ["top", "right", "bottom", "left"]
-			: ["inline", "block", "top", "right", "bottom", "left"].map((side) => `${box}-${side}`)),
-	]),
-];
 
 function ColourRow({
 	view,
@@ -641,8 +585,8 @@ function ColourRow({
 	const row = ruleRow(property, "colour");
 	const prefix = row.rule.prefix;
 	const { ok, reason } = rowAdmission(view, row);
-	const own = useOwnReading(view, property);
-	const reading = property === "color" || property === "background-color" ? own : undefined;
+	const reading =
+		property === "color" || property === "background-color" ? authoredReading(view, property) : undefined;
 	const reader = read ?? ((scoped: string) => colourOf(scoped, prefix, view.theme));
 	const held = worn<Colour>(view, reader, (colour) => colour.token === null);
 	const shown = held.shown;
@@ -670,6 +614,7 @@ function ColourRow({
 			<PropertyColorField
 				property={property}
 				reading={reading}
+				ok={ok}
 				reason={reason}
 				options={[
 					...(view.theme?.colour ?? []).map((token) => ({ ...token, reference: `--color-${token.name}` })),
@@ -829,12 +774,12 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 }
 
 /**
- * A number the source owns: its own token menu, its own reading, one gesture.
+ * A number the theme may name: its own token menu, its own reading, one gesture.
  *
- * The class says nothing this control trusts. It draws what the source read
- * says the property is wearing, and every gesture it makes is a source request.
+ * It draws what the class says the property is wearing, reference and value
+ * both, and a custom value typed over it keeps the unit it was typed in.
  */
-function SourceNumberRow({
+function NumberTokenRow({
 	view,
 	property,
 	options,
@@ -848,13 +793,14 @@ function SourceNumberRow({
 	accessory?: ReactNode;
 }) {
 	const control = view.property;
-	const { reason } = rowAdmission(view, modelRow(property));
-	const reading = useOwnReading(view, property);
+	const { ok, reason } = rowAdmission(view, modelRow(property));
+	const reading = authoredReading(view, property);
 	return (
 		<PropertyNumberField
 			property={property}
 			{...(name === undefined ? {} : { name })}
 			reading={reading}
+			ok={ok}
 			reason={reason}
 			options={options}
 			scope={scopeKey(view.scope)}
@@ -1062,15 +1008,7 @@ function Folded<P extends string>({
 	const own = read(view.scoped);
 	const inherited = view.scope.length > 0 ? read(view.base) : own;
 	const even = Object.values(own).every((value) => value === null) ? inherited : own;
-	// Sides written in different sources are as much a reason to open the box as
-	// sides with different values: one row cannot write two sources at once.
-	const sides = fold.levels[max] ?? [];
-	const sourceOf = (side: Side): string | null => {
-		const entry = sides.find((row) => row.sides.includes(side));
-		return (entry ? view.described?.readings?.[entry.property]?.source : undefined) ?? null;
-	};
-	const owners: Sides = { t: sourceOf("t"), r: sourceOf("r"), b: sourceOf("b"), l: sourceOf("l") };
-	const natural = Math.max(levelOf(even, max), levelOf(owners, max));
+	const natural = levelOf(even, max);
 	const level = Math.min(max, Math.max(want, natural));
 	const rows = fold.levels[level] ?? [];
 	const ok = fold.levels[0]?.[0] === undefined ? false : okOf(view, modelRow(fold.levels[0][0].property));
@@ -1206,23 +1144,7 @@ function GradientRows({ view }: { view: View }) {
 			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
 			sample,
 		);
-	const begin = (next: Gradient) =>
-		control?.begin(
-			row.property,
-			propertyControlValue(row, { kind: "gradient", gradient: next }, atOf(view), scopeKey(view.scope)),
-		);
-	const beginAlpha = (stop: Stop) => {
-		if (!gradient || !stop.colour?.name) return;
-		const value = propertyControlValue(row, { kind: "gradient", gradient }, atOf(view), scopeKey(view.scope));
-		if (value.kind !== "binding") return;
-		const prefix = scopeKey(view.scope);
-		const original = `${prefix}${colourToken(stop.at, stop.colour.name, stop.colour.alpha)}`;
-		const sample = `${prefix}${stop.at}-${stop.colour.name}/[${propertySamplePlaceholder}]`;
-		control?.begin(row.property, {
-			kind: "binding",
-			tokens: value.tokens.map((token) => (token === original ? sample : token)),
-		});
-	};
+	const begin = () => control?.begin(row.property);
 	const direction = (typed: string): Gradient | undefined => {
 		const degrees = gradientAngle(typed.trim().replace(/deg$/, ""));
 		return gradient && degrees !== undefined ? { ...gradient, direction: String(degrees) } : undefined;
@@ -1295,7 +1217,7 @@ function GradientRows({ view }: { view: View }) {
 									placeholder="deg"
 									ok={ok}
 									faint
-									onBegin={() => begin({ ...gradient, direction: `[${propertySamplePlaceholder}]` })}
+									onBegin={begin}
 									onCancel={() => control?.finish(false)}
 									onPreview={(typed) => {
 										const next = direction(typed);
@@ -1357,7 +1279,7 @@ function GradientRows({ view }: { view: View }) {
 								alpha={stop.colour?.alpha ?? null}
 								ok={ok && stop.colour !== null}
 								faint={false}
-								onBegin={() => beginAlpha(stop)}
+								onBegin={begin}
 								onCancel={() => control?.finish(false)}
 								onPreview={(alpha) =>
 									preview(
@@ -1385,14 +1307,7 @@ function GradientRows({ view }: { view: View }) {
 									readout="%"
 									ok={ok && stop.colour !== null}
 									faint={stop.position === null}
-									onBegin={() =>
-										begin(
-											withStop(gradient, index, (held) => ({
-												...held,
-												position: `[percentage:${propertySamplePlaceholder}]`,
-											})),
-										)
-									}
+									onBegin={begin}
 									onCancel={() => control?.finish(false)}
 									onPreview={(typed) => {
 										const next = position(index, typed);
@@ -1833,7 +1748,7 @@ function AppearanceSection({ view }: { view: View }) {
 				fold={RADIUS_FOLD}
 				read={(scoped) => cornersAsSides(scoped, view.theme)}
 				draw={(entry, caret) => (
-					<SourceNumberRow
+					<NumberTokenRow
 						key={entry.property}
 						view={view}
 						property={entry.property}
@@ -1951,10 +1866,10 @@ function TextSection({ view }: { view: View }) {
 	]);
 	return (
 		<Section name="Typography" reason={sectionReason(view, ["font-size"])}>
-			<SourceNumberRow view={view} property="font-size" options={view.theme?.text ?? []} />
-			<SourceNumberRow view={view} property="line-height" options={view.theme?.leading ?? []} />
+			<NumberTokenRow view={view} property="font-size" options={view.theme?.text ?? []} />
+			<NumberTokenRow view={view} property="line-height" options={view.theme?.leading ?? []} />
 			{readRow(modelRow("letter-spacing"), view.scoped, view.theme).token !== null ? (
-				<SourceNumberRow view={view} property="letter-spacing" options={view.theme?.tracking ?? []} />
+				<NumberTokenRow view={view} property="letter-spacing" options={view.theme?.tracking ?? []} />
 			) : null}
 			<TokenRow view={view} property="font-weight" absent={{ token: null, name: "inherit" }} />
 			<Row
@@ -2008,7 +1923,7 @@ const OPTIONAL_PROPERTIES: readonly string[] = [
  * showing: a constraint opens at `none`, a spacing at zero. A border with no
  * width paints nothing, so it opens at one.
  */
-function openingRequest(property: string): SourcePropertyValue {
+function openingRequest(property: string): PropertyValue {
 	const none = MAX_CONSTRAINTS[property];
 	if (none !== undefined) return { kind: "binding", tokens: [none] };
 	return { kind: "custom", value: property === "border-width" ? "1px" : "0px" };
@@ -2048,16 +1963,12 @@ function AddProperty({ view }: { view: View }) {
 
 /** Typography and Appearance follow the approved editing controls; remaining layout rows retain their sections. */
 export function PropertySections({ view }: { view: View }) {
-	// One description of this element's class cell: whether it can be written at
-	// all, and what each drawn control is wearing.
-	const described = usePropertyDescription(view.property, DESCRIBED_PROPERTIES);
-	const held: View = { ...view, described: view.described ?? described };
 	return (
 		<>
-			<LayoutSection view={held} />
-			<TextSection view={held} />
-			<AppearanceSection view={held} />
-			<AddProperty view={held} />
+			<LayoutSection view={view} />
+			<TextSection view={view} />
+			<AppearanceSection view={view} />
+			<AddProperty view={view} />
 		</>
 	);
 }
@@ -2116,22 +2027,21 @@ const NOT_INLINE = /^(flex-1|min-h-0|size-full|aspect-square|self-center|order-f
 
 export function AddClassRow({
 	view,
-	editable,
 	taken,
 	onAdd,
 }: {
 	view: View;
-	editable: boolean;
 	/** the whole literal's tokens, so one the element already wears is not offered */
 	taken: ReadonlySet<string>;
-	onAdd: (token: string) => void;
+	/** put one class on the element; a rail with nothing to write through offers none */
+	onAdd?: ((token: string) => void) | undefined;
 }) {
 	const inline = displayOf(view.element, view.scoped) === "inline";
 	return (
 		<AddField
 			candidates={SEEDS.filter((token) => !(inline && NOT_INLINE.test(token))).map((token) => ({ token }))}
 			taken={taken}
-			ok={editable}
+			ok={onAdd !== undefined}
 			verdictOf={view.compiler.verdictOf}
 			onAsk={view.compiler.ask}
 			onAdd={onAdd}

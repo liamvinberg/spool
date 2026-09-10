@@ -1,8 +1,8 @@
 import { type ReactNode, useRef, useState } from "react";
 import type { ThemeToken } from "../../daemon/theme";
 import { stepLength } from "../../properties/families";
-import type { SourcePropertyReading, SourcePropertyValue } from "../../source-property";
 import { Menu, NumField, Row } from "./properties-fields";
+import type { PropertyReading, PropertyValue } from "./property-controls";
 
 const prefixes = {
 	"font-size": "text",
@@ -22,10 +22,11 @@ function numberUnit(value: string): { number: string; unit: string } | undefined
 	return match ? { number: match[1]!, unit: match[2]! } : undefined;
 }
 
-/** Numeric token fields preserve authored units and complete one original gesture. */
+/** A number the theme may name: its own token menu, its own reading, one gesture. */
 export function PropertyNumberField({
 	property,
 	reading,
+	ok,
 	reason,
 	options,
 	scope = "",
@@ -37,13 +38,15 @@ export function PropertyNumberField({
 	accessory,
 }: {
 	property: NumericTokenProperty;
-	reading: SourcePropertyReading | undefined;
+	reading: PropertyReading | undefined;
+	/** whether a gesture on this field goes anywhere; a reading alone draws it */
+	ok: boolean;
 	reason?: string | undefined;
 	options: readonly ThemeToken[];
 	scope?: string;
 	begin(): void;
-	preview(value: SourcePropertyValue): void;
-	apply(value: SourcePropertyValue): void;
+	preview(value: PropertyValue): void;
+	apply(value: PropertyValue): void;
 	finish(commit: boolean): void;
 	name?: string;
 	accessory?: ReactNode;
@@ -71,7 +74,7 @@ export function PropertyNumberField({
 		setScrubbed(undefined);
 		finish(commit && held.moved);
 	};
-	const requested = (typed: string): SourcePropertyValue | undefined => {
+	const requested = (typed: string): PropertyValue | undefined => {
 		if (!typed.trim()) return { kind: "remove" };
 		const parsed = numberUnit(typed);
 		if (!parsed) return;
@@ -106,7 +109,7 @@ export function PropertyNumberField({
 		<Row
 			name={name ?? property}
 			reason={reason ?? (binding ? "Choose a token or type a custom value to change this reference." : undefined)}
-			ok={reading !== undefined}
+			ok={ok && reading !== undefined}
 			onScrubStart={() => {
 				customDraft.current = false;
 				scrub.current = { value: initial?.number ?? "", moved: false };
@@ -135,7 +138,7 @@ export function PropertyNumberField({
 				value={scrubbed ?? initial?.number ?? ""}
 				readout={keyword ? null : unit}
 				placeholder={keyword}
-				ok={reading !== undefined}
+				ok={ok && reading !== undefined}
 				onBegin={() => {
 					customDraft.current = false;
 					begin();
@@ -171,7 +174,7 @@ export function PropertyNumberField({
 						...(option.from === "default" ? { group: "default" } : {}),
 					})),
 				]}
-				ok={reading !== undefined}
+				ok={ok && reading !== undefined}
 				filter
 				onPick={(token) =>
 					apply(
