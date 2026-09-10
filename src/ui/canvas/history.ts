@@ -102,6 +102,13 @@ export type HistoryEntry =
 	| {
 			readonly kind: "hand";
 			readonly frame: string;
+			/**
+			 * The element the hand changed (#322). Walking the entry puts the ring
+			 * back on it, with its box read again — a class or a word put back
+			 * moves the box it is drawn in — and lets the pick go when the step
+			 * took the element away.
+			 */
+			readonly selector: string;
 			readonly edit: number;
 			readonly patch: HeldPatch;
 			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */

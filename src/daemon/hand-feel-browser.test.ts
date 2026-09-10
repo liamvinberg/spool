@@ -370,3 +370,50 @@ it("scrubs every layout number while the lock takes the pointer", { timeout: 240
 	// is not what ends a scrub
 	expect(await page.evaluate(() => Reflect.get(window, "__lost"))).toBe(4);
 });
+
+it("puts the ring back on the element a step was about", { timeout: 240_000 }, async () => {
+	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 700 });
+	const { page, frame } = f;
+	const held = () => heldTag(f.project);
+	/** How far the ring is from the box of the element it is drawn round. */
+	const hugging = async () => {
+		const ring = await page.locator("[data-element-ring]").first().boundingBox();
+		const box = await frame.locator("div.veil-art").first().boundingBox();
+		return ring === null || box === null ? null : Math.round(Math.abs(ring.width - box.width));
+	};
+
+	await f.select("div.veil-art", { x: 60, y: 45 });
+	await expect.poll(() => page.locator('[data-element-handle="w"]').count(), { timeout: 30_000 }).toBe(1);
+	const knob = await page.locator('[data-element-handle="w"]').boundingBox();
+	if (knob === null) throw new Error("the ring drew no west handle");
+	const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
+	await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(knob.x + knob.width / 2 + 291, knob.y + knob.height / 2);
+	await page.mouse.up();
+	await wrote;
+	await expect.poll(() => f.bytes().includes("w-[699px]"), { timeout: 15_000 }).toBe(true);
+
+	// ⌘Z puts the size back and the ring with it, on the element it was about
+	await f.history();
+	await expect.poll(() => f.bytes().includes("w-[990px]"), { timeout: 15_000 }).toBe(true);
+	await expect.poll(held, { timeout: 15_000 }).toBe("div");
+	await expect.poll(hugging, { timeout: 15_000 }).toBeLessThanOrEqual(6);
+
+	await f.history(true);
+	await expect.poll(() => f.bytes().includes("w-[699px]"), { timeout: 15_000 }).toBe(true);
+	await expect.poll(held, { timeout: 15_000 }).toBe("div");
+	await expect.poll(hugging, { timeout: 15_000 }).toBeLessThanOrEqual(6);
+
+	// and a step that takes the element away leaves nothing to point at, while
+	// the step that brings it back is picked again
+	await page.keyboard.press("Backspace");
+	await expect.poll(() => frame.locator("div.veil-art").count(), { timeout: 15_000 }).toBe(0);
+	await f.history();
+	await expect.poll(() => frame.locator("div.veil-art").count(), { timeout: 15_000 }).toBe(1);
+	await expect.poll(held, { timeout: 15_000 }).toBe("div");
+	await expect.poll(hugging, { timeout: 15_000 }).toBeLessThanOrEqual(6);
+	await f.history(true);
+	await expect.poll(() => frame.locator("div.veil-art").count(), { timeout: 15_000 }).toBe(0);
+	await expect.poll(held, { timeout: 15_000 }).toBe("frame");
+});

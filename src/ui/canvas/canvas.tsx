@@ -2111,6 +2111,8 @@ export function ProjectCanvas({
 				readers: readonly string[];
 				/** the ask the frame holds the DOM half of this write under */
 				edit: number;
+				/** the element the write was about, which is what walking its entry points at again (#322) */
+				selector: string;
 				/** the stamp the entry re-reads its rung at, given the file the write landed in */
 				readAt: (path: string) => string;
 				refuse: (refusal: Refusal) => void;
@@ -2150,6 +2152,7 @@ export function ProjectCanvas({
 			recordEntry({
 				kind: "hand",
 				frame,
+				selector: about.selector,
 				edit: about.edit,
 				patch: written.undo,
 				readAt,
@@ -2210,6 +2213,12 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * The keyboard's own walk along the ancestry, put here by its own definition
+	 * further down: undo runs before it in the file and needs it (#322).
+	 */
+	const walkKinRef = useRef<(frame: string, selector: string, step: KinStep, gone?: () => void) => void>(() => {});
+
+	/**
 	 * One hand entry, run either way (#314, #315). The patch goes back over the
 	 * wire, the daemon re-checks the fingerprint, and what comes back is the
 	 * inverse this entry carries from here on. A refusal means the file moved
@@ -2220,6 +2229,19 @@ export function ProjectCanvas({
 	 */
 	const walkHand = useCallback(
 		(entry: Extract<HistoryEntry, { kind: "hand" }>, way: Way, taking: History) => {
+			/**
+			 * The step is in the document: the ring goes back on the element it
+			 * was about (#322), its box read again because a class or a word put
+			 * back moves the box it is drawn in. A step that took the element
+			 * away has nothing to point at, and the frame is what is left held.
+			 */
+			const rering = () => {
+				walkKinRef.current(entry.frame, entry.selector, "self", () => {
+					holdChain(null);
+					setPicked([]);
+					setSelected([entry.frame]);
+				});
+			};
 			const classes = entry.classes;
 			const readers = entry.frames ?? [];
 			holdReaders(entry.frame, readers);
@@ -2249,10 +2271,15 @@ export function ProjectCanvas({
 				);
 				const kept = landed(entry.frame, entry.readAt, reverted);
 				const held = (ok: boolean) => {
-					if (ok || !saved.current.has(entry.frame)) return;
-					saved.current.delete(entry.frame);
-					holdNext.current.add(entry.frame);
-					reloadFrameDocument(entry.frame);
+					if (!ok && saved.current.has(entry.frame)) {
+						saved.current.delete(entry.frame);
+						holdNext.current.add(entry.frame);
+						reloadFrameDocument(entry.frame);
+						// the document is being replaced: its own arrival is what the
+						// ring waits on, not this answer
+						return;
+					}
+					rering();
 				};
 				if (classes === undefined) {
 					restoreWords(entry.frame, entry.edit, way === "undo" ? "before" : "after", held);
@@ -2267,7 +2294,17 @@ export function ProjectCanvas({
 				swapClass(entry.frame, classes.selector, change, held);
 			});
 		},
-		[holdReaders, landed, project, releaseReaders, reloadFrameDocument, restoreWords, swapClass, updateHistory],
+		[
+			holdChain,
+			holdReaders,
+			landed,
+			project,
+			releaseReaders,
+			reloadFrameDocument,
+			restoreWords,
+			swapClass,
+			updateHistory,
+		],
 	);
 
 	/**
@@ -2624,24 +2661,30 @@ export function ProjectCanvas({
 	/**
 	 * The keyboard's own rung (#254): kinship instead of position. An empty
 	 * selector is the boot root, so a `child` step off the frame itself lands
-	 * on its root element. A rung that does not exist answers with no chain and
-	 * the selection stays where it was.
+	 * on its root element. A rung that does not exist answers with no chain, and
+	 * the selection stays where it was unless the caller says what to do then
+	 * — which undo does, because a step that took the element away has nothing
+	 * left to point at (#322).
 	 */
 	const walkKin = useCallback(
-		(frame: string, selector: string, step: KinStep) => {
+		(frame: string, selector: string, step: KinStep, gone?: () => void) => {
 			cancelPicks();
 			askChain(
 				frame,
 				(id) => kinMessage(selector, step, id),
 				(chain) => {
 					const target = chain[chain.length - 1];
-					if (target === undefined) return;
+					if (target === undefined) {
+						gone?.();
+						return;
+					}
 					applyPick(frame, chain, target);
 				},
 			);
 		},
 		[askChain, applyPick, cancelPicks],
 	);
+	walkKinRef.current = walkKin;
 
 	/**
 	 * ⌘⏎, and the rung a descent from the frame itself lands on: the first
@@ -2868,6 +2911,7 @@ export function ProjectCanvas({
 			}).then((written) => {
 				settled(written, {
 					frame: held.frame,
+					selector: held.selector,
 					readers,
 					edit: held.id,
 					// the stamp in the file that was written: the element's own, or
@@ -2959,6 +3003,7 @@ export function ProjectCanvas({
 				const ok = written?.ok === true ? written : undefined;
 				settled(written, {
 					frame: pick.frame,
+					selector: pick.selector,
 					readers,
 					edit: ++pickSeq.current,
 					readAt: () => stamp,
@@ -3153,6 +3198,7 @@ export function ProjectCanvas({
 				}).then((written) => {
 					settled(written, {
 						frame: pick.frame,
+						selector: pick.selector,
 						readers,
 						edit: id,
 						readAt: () => at.source,
@@ -3248,6 +3294,7 @@ export function ProjectCanvas({
 				.then((written) => {
 					settled(written, {
 						frame,
+						selector,
 						readers,
 						edit: ++pickSeq.current,
 						readAt: () => at.source,

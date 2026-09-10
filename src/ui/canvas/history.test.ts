@@ -120,6 +120,7 @@ describe("text entries", () => {
 	const typed: HistoryEntry = {
 		kind: "hand",
 		frame: "home",
+		selector: "main > h1",
 		edit: 3,
 		patch: { path: "design/frames/home/frame.tsx", start: 40, end: 52, text: "Make something", fingerprint: "a" },
 		readAt: "frames/home/frame.tsx:7:37",
@@ -454,6 +455,7 @@ describe("class entries", () => {
 	const changed: HistoryEntry = {
 		kind: "hand",
 		frame: "home",
+		selector: "div.veil-art",
 		edit: 9,
 		patch: { path: "design/frames/home/frame.tsx", start: 300, end: 305, text: "990", fingerprint: "a" },
 		readAt: "frames/home/frame.tsx:8:5",
