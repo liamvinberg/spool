@@ -219,6 +219,9 @@ describe("familyOf, against the project's own theme (#257)", () => {
 	it("takes the scale and the brackets wherever a family names values too", () => {
 		expect(familyOf("leading-4", theme)).toBe("leading");
 		expect(familyOf("text-[15px]", theme)).toBe("text:size");
+		expect(familyOf("text-[#ff0044]", theme)).toBe("text:color");
+		expect(familyOf("text-[rgb(18,52,86)]", theme)).toBe("text:color");
+		expect(write("p-3 text-red-500", "text-[#123456]", "", false, theme)).toBe("p-3 text-[#123456]");
 		expect(familyOf("bg-[#ff0044]", theme)).toBe("bg:color");
 		expect(familyOf("bg-transparent", theme)).toBe("bg:color");
 	});

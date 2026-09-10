@@ -913,6 +913,17 @@ const NAMED_BY_PREFIX = [...NAMED].sort((a, b) => b.prefix.length - a.prefix.len
 /** The three colour words that are never theme values, and so are on every list. */
 const COLOUR_WORDS = new Set(["transparent", "current", "inherit"]);
 
+/** A bracketed value that is a colour: a hex, a colour function, a colour variable, or one typed as one. */
+function isColourValue(value: string): boolean {
+	return (
+		/^#[0-9a-f]{3,8}$/i.test(value) ||
+		/^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\(/i.test(value) ||
+		value.startsWith("color:") ||
+		value.startsWith("var(--color-") ||
+		COLOUR_WORDS.has(value)
+	);
+}
+
 /**
  * Whether a name belongs to a family, read against the project's own theme.
  *
@@ -956,6 +967,10 @@ export function familyOf(base: string, theme?: ClassTheme): string | undefined {
 	if (word !== undefined) return word;
 	const pinned = arbitraryAxis(base);
 	if (pinned !== undefined) return pinned;
+	// `text-[#fff]` is a colour and `text-[15px]` a size, told apart by the value
+	// the brackets hold, which is how Tailwind reads them too (#315)
+	const bracketed = /^text-\[(.+)\]$/.exec(base)?.[1];
+	if (bracketed !== undefined && isColourValue(bracketed)) return "text:color";
 	const length = lengthOf(base);
 	if (length !== null) return length.family;
 	if (isRadius(base, theme)) return "radius";
