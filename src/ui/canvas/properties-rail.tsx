@@ -146,8 +146,11 @@ export function PropertiesRail({
 	recovery,
 	project,
 	held,
+	rungs,
+	theme,
 	acts,
 	revision,
+	reloads,
 	preview = null,
 	width,
 	onCollapse,
@@ -155,11 +158,17 @@ export function PropertiesRail({
 	recovery?: ReactNode;
 	project: string;
 	held: Held | null;
+	/** the selection's one read (#256), indexed by rung; the canvas owns it */
+	rungs: (RungRead | undefined)[] | null;
+	/** the compiled theme every menu in the rail offers, read once per project */
+	theme: CompiledTheme | null;
 	acts: PropertiesActs;
 	/** the canvas gesture in flight, which the fields tick in until it lands */
 	preview?: RailPreview | null;
-	/** bumps when the held frame's document reloads, so the read follows the file */
+	/** bumps on the held frame's reloads and on the hand's own saves: what the folder holds moved */
 	revision: number;
+	/** bumps only on a reload, which is the one thing that could have changed the theme */
+	reloads: number;
 	/** what the dock has given this surface, which is its own remembered width */
 	width: number;
 	/** the caret in the head: it shuts the column rather than this rail (`dock.tsx`) */
@@ -175,8 +184,11 @@ export function PropertiesRail({
 			<Body
 				project={project}
 				held={held}
+				rungs={rungs}
+				theme={theme}
 				acts={acts}
 				revision={revision}
+				reloads={reloads}
 				preview={preview}
 				onCollapse={onCollapse}
 			/>
@@ -188,29 +200,49 @@ export function PropertiesRail({
 /* ---------- what the file says about the ancestry ---------- */
 
 /** Which rung of the ancestry is held, or -1 when the chain no longer carries it. */
-function rungOf(held: Held | null): number {
+export function rungOf(held: Held | null): number {
 	return held?.kind === "element" ? held.chain.findIndex((hit) => hit.selector === held.selector) : -1;
 }
 
-/** The rungs' stamps, in rung order, down to and including the one held. */
-function stampsOf(held: Held | null): { frame: string; sources: string[] } | null {
+/**
+ * The rungs' stamps, in rung order, down to and including the one held, and
+ * which rung of the chain each one belongs to.
+ *
+ * A rung the file has no stamp for — DOM some code drew — is left out of the
+ * ask rather than blanking the whole read, so the rungs above and below it
+ * still say what the file calls them.
+ */
+export function stampsOf(held: Held | null): { frame: string; sources: string[]; rungs: number[] } | null {
 	if (held?.kind !== "element") return null;
 	const rung = rungOf(held);
 	if (rung < 0) return null;
-	const sources = held.chain.slice(0, rung + 1).map((hit) => hit.source ?? "");
-	return sources.every((source) => source !== "") ? { frame: held.frame, sources } : null;
+	const sources: string[] = [];
+	const rungs: number[] = [];
+	for (const [index, hit] of held.chain.slice(0, rung + 1).entries()) {
+		const source = hit.source ?? "";
+		if (source === "") continue;
+		sources.push(source);
+		rungs.push(index);
+	}
+	return sources.length === 0 ? null : { frame: held.frame, sources, rungs };
 }
 
 /**
- * The read the rail draws from, kept per ancestry.
+ * The one read behind everything a selection draws (#256, #259).
  *
- * A read in flight never blanks what is on screen: the crumbs fall back to the
- * live tags, so a fresh pick draws immediately and gains its authored names a
- * beat later. A frame that reloads — an agent's edit, or the rail's own write
- * — re-reads, because the literal on screen has to be the one in the file.
+ * The whole ancestry in one ask, answered once per selection and shared by
+ * every reader of it: the rail's crumbs, scope bar and rows, and the ring's
+ * own question of which handles the file leaves live. Two reads of the same
+ * rungs was two round trips saying the same thing.
+ *
+ * What comes back is scattered back onto the chain, so a caller indexes it by
+ * rung and gets nothing where a rung had no stamp to ask about. A read in
+ * flight is nothing rather than the last rung's answer: crumbs fall back to
+ * the live tags for a beat, and a ring wearing the previous element's answer
+ * would offer a handle this one may not have.
  */
-function useRungs(project: string, held: Held | null, revision: number): RungRead[] | null {
-	const [rungs, setRungs] = useState<RungRead[] | null>(null);
+export function useRungs(project: string, held: Held | null, revision: number): (RungRead | undefined)[] | null {
+	const [answered, setAnswered] = useState<{ asked: string; rungs: RungRead[] } | null>(null);
 	const ask = stampsOf(held);
 	/**
 	 * The whole ask on one line: the revision of the file, the frame, the stamps.
@@ -222,33 +254,33 @@ function useRungs(project: string, held: Held | null, revision: number): RungRea
 	const asked = ask === null ? "" : [String(revision), ask.frame, ...ask.sources].join("\n");
 	useEffect(() => {
 		const [, frame, ...sources] = asked.split("\n");
-		if (frame === undefined || sources.length === 0) {
-			setRungs(null);
-			return;
-		}
+		if (frame === undefined || sources.length === 0) return;
 		let live = true;
 		void readRungs(project, frame, sources).then((read) => {
-			if (live) setRungs(read ?? null);
+			if (live && read !== undefined) setAnswered({ asked, rungs: read });
 		});
 		return () => {
 			live = false;
 		};
 	}, [project, asked]);
-	return rungs;
+	if (ask === null || answered?.asked !== asked) return null;
+	const byRung: (RungRead | undefined)[] = [];
+	for (const [index, rung] of ask.rungs.entries()) byRung[rung] = answered.rungs[index];
+	return byRung;
 }
 
 /**
  * The compiled theme, which is what every menu in the rail offers (#257).
  *
- * It is read per project and again whenever the held frame's document reloads:
- * tokens.css is one of that document's own inputs, so a theme edit is a reload,
- * and the daemon answers a re-read off its own cache when nothing changed.
- * Nothing until the read lands, which is a rail with no menus rather than one
- * offering Tailwind's defaults over a project that renamed them.
+ * One read per project, kept for as long as the canvas is open, and asked
+ * again only when a held frame's document reloads: tokens.css is one of that
+ * document's own inputs, so a theme edit is a reload. A hand's own save is
+ * not — it writes a class into frame source and leaves the theme alone — so
+ * nothing about committing an edit asks for this again.
  */
-function useTheme(project: string, revision: number): CompiledTheme | null {
+export function useTheme(project: string, reloads: number): CompiledTheme | null {
 	const [theme, setTheme] = useState<CompiledTheme | null>(null);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a document that reloaded may have reloaded because tokens.css changed
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `reloads` is not read in here, it is the trigger — a document that reloaded may have reloaded because tokens.css changed
 	useEffect(() => {
 		let live = true;
 		void fetchTheme(project).then((read) => {
@@ -257,7 +289,7 @@ function useTheme(project: string, revision: number): CompiledTheme | null {
 		return () => {
 			live = false;
 		};
-	}, [project, revision]);
+	}, [project, reloads]);
 	return theme;
 }
 
@@ -266,21 +298,25 @@ function useTheme(project: string, revision: number): CompiledTheme | null {
 function Body({
 	project,
 	held,
+	rungs,
+	theme,
 	acts,
 	revision,
+	reloads,
 	preview,
 	onCollapse,
 }: {
 	project: string;
 	held: Held | null;
+	rungs: (RungRead | undefined)[] | null;
+	theme: CompiledTheme | null;
 	acts: PropertiesActs;
 	revision: number;
+	reloads: number;
 	preview: RailPreview | null;
 	onCollapse: () => void;
 }) {
-	const rungs = useRungs(project, held, revision);
-	const theme = useTheme(project, revision);
-	const compiler = useCompiler(project, revision);
+	const compiler = useCompiler(project, reloads);
 	const [scope, setScope] = useState<Scope>(BASE);
 	/** a scope opened by the `+` and not yet written to: it stands until it is filled or left */
 	const [opened, setOpened] = useState<Scope[]>([]);
@@ -443,7 +479,7 @@ function Head({
 	onCollapse,
 }: {
 	held: Held | null;
-	rungs: RungRead[] | null;
+	rungs: (RungRead | undefined)[] | null;
 	acts: PropertiesActs;
 	onCollapse: () => void;
 }) {

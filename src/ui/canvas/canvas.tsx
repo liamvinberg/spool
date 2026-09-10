@@ -5,7 +5,6 @@ import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { StampShift } from "../../daemon/hand-write";
 import type { Unseen } from "../../daemon/seen";
 import { pageWithin, ROOT_PAGE } from "../../page-path";
-import { STEP } from "../../properties/theme";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
@@ -126,21 +125,22 @@ import {
 	draggedRect,
 	type Edge,
 	edgeSigns,
-	NO_HANDLES,
+	NO_RING,
 	placementShift,
 	quantizerFor,
 	RESIZE_PROPERTIES,
 	type ResizeMeasurement,
 	type ResizeModifiers,
 	type ResizeProperty,
+	type Ring,
 	resizedBox,
 	resizeFields,
 	resizeStyle,
+	ringOf,
 	type Size,
 	type SizeWrite,
 	snapTrial,
 	turnValue,
-	useRing,
 } from "./hand-resize";
 import {
 	amend,
@@ -189,7 +189,7 @@ import {
 	stateCameraSlots,
 	switchPage,
 } from "./pages";
-import { type Held, PropertiesRail } from "./properties-rail";
+import { type Held, PropertiesRail, rungOf, useRungs, useTheme } from "./properties-rail";
 import { BASE, scopedClass } from "./properties-scope";
 import { classEditsOf, type PropertyControls, type PropertyValue } from "./property-controls";
 import {
@@ -930,14 +930,7 @@ export function ProjectCanvas({
 	 * handlers are written before it and a grab has to answer off the file
 	 * rather than off a render.
 	 */
-	const ringRef = useRef<ReturnType<typeof useRing>>({
-		live: NO_HANDLES,
-		step: STEP,
-		rotation: 0,
-		className: "",
-		read: undefined,
-		theme: null,
-	});
+	const ringRef = useRef<Ring>(NO_RING);
 
 	/** The bands a gap gesture may grab, off the render the pointer can see (#306). */
 	const gapRef = useRef<GapTargets>({ axis: null, sign: 1, authored: null, bands: [] });
@@ -5490,17 +5483,24 @@ export function ProjectCanvas({
 	 * lane has nothing to write against, so there is nothing to grab.
 	 */
 	const ringPick = picked.length === 1 ? picked[0] : undefined;
-	const ringSource = ringPick === undefined || ringPick.generated ? null : (ringPick.source ?? null);
-	const ring = useRing(
-		project,
-		ringPick === undefined || ringSource === null || ringSource === ""
-			? null
-			: { frame: ringPick.frame, source: ringSource },
-		// a hand save rewrites the very literal this read is about without
-		// reloading the document, so a saved source is a fresh read too: without
-		// it the ring goes on answering out of the file as it was (#306). Only
-		// this frame's own saves count, so a save elsewhere leaves the read alone
-		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0) + (saves[ringPick.frame] ?? 0),
+	/**
+	 * The selection's one read, and the two clocks behind it.
+	 *
+	 * `reloads` is the held frame's document coming back: tokens.css is one of
+	 * its inputs, so it is the one thing that could have changed the theme.
+	 * `revision` adds the hand's own saves, because a save rewrites the very
+	 * literal this read is about without reloading the document — without it
+	 * the ring and the rows go on answering out of the file as it was (#306).
+	 */
+	const railReloads = railFrame === null ? 0 : (docNonces[railFrame] ?? 0);
+	const railRevision = railFrame === null ? 0 : railReloads + (saves[railFrame] ?? 0);
+	const railRungs = useRungs(project, railHeld, railRevision);
+	const railTheme = useTheme(project, railReloads);
+	const ring = ringOf(
+		railHeld?.kind === "element" && ringPick !== undefined && !ringPick.generated
+			? railRungs?.[rungOf(railHeld)]
+			: undefined,
+		railTheme,
 	);
 	ringRef.current = ring;
 	/** the drag in flight on the rung the ring is drawn on, and nothing else */
@@ -5940,7 +5940,10 @@ export function ProjectCanvas({
 					<PropertiesRail
 						project={project}
 						held={railHeld}
-						revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0) + (saves[railFrame] ?? 0)}
+						rungs={railRungs}
+						theme={railTheme}
+						revision={railRevision}
+						reloads={railReloads}
 						width={width}
 						onCollapse={shut}
 						preview={elementDrag === null ? null : { box: elementDrag.box }}

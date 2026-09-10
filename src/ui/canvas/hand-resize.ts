@@ -1,9 +1,7 @@
-import { useEffect, useState } from "react";
 import { screenConflict } from "../../daemon/class-write";
 import { lengthOf, lengthPx, scaleValue } from "../../properties/families";
 import { stepOf } from "../../properties/theme";
 import type { CompiledTheme, RungRead } from "../api";
-import { fetchTheme, readRungs } from "../api";
 import { BASE, scopedClass } from "./properties-scope";
 import type { PropertyValue } from "./property-controls";
 import type { SnapTrial, SnapWear } from "./protocol";
@@ -19,8 +17,10 @@ import type { SnapTrial, SnapWear } from "./protocol";
  * dead drag: a handle no write would take is simply not drawn.
  *
  * The decisions are pure over the read the lane already answers with (#256's
- * `RungRead`) and the numbers the pointer made; `useRing` is the one round
- * trip they need, which is that read and the step the theme resolves.
+ * `RungRead`) and the numbers the pointer made. Neither is this module's to
+ * fetch: the canvas reads the selection's ancestry once and hands the held
+ * rung and the theme here, so the ring and the properties rail cost one round
+ * trip between them rather than one each.
  */
 
 /** -1 grabs the top or left side, 1 the bottom or right, 0 leaves the axis alone. */
@@ -116,54 +116,36 @@ export function rotateTokens(deg: number): string[] {
 	return deg === 0 ? [] : [`${deg < 0 ? "-" : ""}rotate-${Math.abs(deg)}`];
 }
 
-/**
- * What the ring needs before a grab: which handles the file leaves live, and
- * the step a whole class is measured in.
- *
- * Asked per held rung and again whenever that frame's document reloads, since
- * the literal it answers about is one of that document's own inputs. Nothing
- * until the read lands, which is a ring with no handles rather than one
- * offering a drag the file would refuse.
- */
-export function useRing(
-	project: string,
-	held: { frame: string; source: string } | null,
-	revision: number,
-): {
+/** What the ring draws and what a grab on it may write, all of it off one read. */
+export interface Ring {
 	live: LiveHandles;
 	step: number;
 	rotation: number;
 	className: string;
 	read: RungRead | undefined;
 	theme: CompiledTheme | null;
-} {
-	const [read, setRead] = useState<RungRead | undefined>(undefined);
-	const [theme, setTheme] = useState<CompiledTheme | null>(null);
-	const asked = held === null ? "" : `${revision}\n${held.frame}\n${held.source}`;
-	useEffect(() => {
-		const [, frame, source] = asked.split("\n");
-		// the previous rung's answer is not this one's: a ring wearing it would
-		// offer a handle this element may not have, which is the dead drag
-		setRead(undefined);
-		if (frame === undefined || source === undefined) return;
-		let live = true;
-		void readRungs(project, frame, [source]).then((rungs) => {
-			if (live) setRead(rungs?.[0]);
-		});
-		return () => {
-			live = false;
-		};
-	}, [project, asked]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a document that reloaded may have reloaded because tokens.css changed
-	useEffect(() => {
-		let live = true;
-		void fetchTheme(project).then((answered) => {
-			if (live && answered !== undefined) setTheme(answered);
-		});
-		return () => {
-			live = false;
-		};
-	}, [project, revision]);
+}
+
+/** A ring on nothing: what is drawn before the selection's read has landed. */
+export const NO_RING: Ring = {
+	live: NO_HANDLES,
+	step: stepOf(null),
+	rotation: 0,
+	className: "",
+	read: undefined,
+	theme: null,
+};
+
+/**
+ * What the ring needs before a grab: which handles the file leaves live, and
+ * the step a whole class is measured in.
+ *
+ * Read over the held rung of the selection's own read, so a read still in
+ * flight is a ring with no handles rather than one offering a drag the file
+ * would refuse — and never the previous rung's answer, which would offer a
+ * handle this element may not have.
+ */
+export function ringOf(read: RungRead | undefined, theme: CompiledTheme | null): Ring {
 	return {
 		live: handlesFor(read),
 		step: stepOf(theme),
