@@ -82,8 +82,6 @@ export function PropertyNumberField({
 		return CSS.supports(property, value) ? { kind: "custom", value } : undefined;
 	};
 	const step = (typed: string, units: number): string | undefined => {
-		// A displayed native value does not prove a compatible reference scale.
-		if (binding && !customDraft.current) return;
 		const parsed = numberUnit(typed);
 		if (!parsed) return;
 		const next = stepLength(
@@ -108,28 +106,30 @@ export function PropertyNumberField({
 	return (
 		<Row
 			name={name ?? property}
-			reason={reason ?? (binding ? "Choose a token or type a custom value to change this reference." : undefined)}
+			reason={reason ?? (binding ? "Pick a token, or scrub or type to make this a value of its own." : undefined)}
 			ok={ok && reading !== undefined}
 			onScrubStart={() => {
 				customDraft.current = false;
 				scrub.current = { value: initial?.number ?? "", moved: false };
 				begin();
 			}}
-			onScrub={
-				binding
-					? undefined
-					: (units) => {
-							const held = scrub.current;
-							if (!held) return;
-							const next = step(held.value, units);
-							const value = next === undefined ? undefined : requested(next);
-							if (next === undefined || value === undefined) return;
-							held.value = next;
-							held.moved = true;
-							setScrubbed(next);
-							preview(value);
-						}
-			}
+			// every number here scrubs, a token-bound one included: a hand pulling
+			// on `text-lg` means a size, and what it lands on is a custom one
+			// (#321). A value CSS will not take is somewhere the number passes
+			// through rather than a wall — the gesture goes on from it, and what
+			// is shown is the last value that was real
+			onScrub={(units) => {
+				const held = scrub.current;
+				if (!held) return;
+				const next = step(held.value, units);
+				if (next === undefined) return;
+				held.value = next;
+				const value = requested(next);
+				if (value === undefined) return;
+				held.moved = true;
+				setScrubbed(next);
+				preview(value);
+			}}
 			onScrubEnd={() => finishScrub(true)}
 			onScrubCancel={() => finishScrub(false)}
 		>

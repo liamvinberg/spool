@@ -1,7 +1,9 @@
 import {
+	createContext,
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
 	useCallback,
+	useContext,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -32,6 +34,35 @@ export const VALUE = "type-value";
 export const FAINT = "text-muted type-detail";
 export const BOX =
 	"rounded-xs border border-transparent hover:border-border hover:bg-surface focus-within:border-border-raised focus-within:bg-surface";
+
+/** How far the pointer travels for one step of a scrub. */
+export const SCRUB_PX = 4;
+
+/**
+ * One sample of a scrub: the whole steps the pointer crossed, and the pixels
+ * left over for the sample after it.
+ *
+ * The leftovers are what make it continuous. A number moves in whole steps, so
+ * a sample shorter than one has to be carried rather than dropped, or most of
+ * a slow drag never happens. Shift is read per sample and multiplies only the
+ * steps that sample sends, so taking it up mid-drag slows the rest of the
+ * gesture down instead of rescaling what has already been written.
+ */
+export function scrubStep(carried: number, movement: number, coarse: boolean): { carry: number; units: number } {
+	const together = carried + movement;
+	const steps = Math.trunc(together / SCRUB_PX);
+	return { carry: together - steps * SCRUB_PX, units: steps * (coarse ? 10 : 1) };
+}
+
+/**
+ * The scrub of the row a field is drawn in (#321).
+ *
+ * The gesture belongs to the row, which is what knows the value and how it
+ * steps; the number itself is the thing a hand reaches for. So the row hands
+ * its press down rather than every number box growing an argument for it, and
+ * a box in a row with nothing to scrub gets nothing.
+ */
+const RowScrub = createContext<((event: ReactPointerEvent<HTMLElement>) => void) | null>(null);
 
 /* ---------- the section and the row ---------- */
 
@@ -76,9 +107,9 @@ export function Row({
 	tall?: boolean;
 	/** the label reads in thread colour when the value under it is not the file's */
 	changed?: boolean;
-	/** a numeric row: dragging the label steps the value by the units crossed */
+	/** a numeric row: dragging the label or the field steps the value by the units crossed */
 	onScrub?: ((units: number) => void) | undefined;
-	/** establish the original edit before the first scrub preview */
+	/** the pointer has travelled a whole step: the original edit, before the first preview */
 	onScrubStart?: (() => void) | undefined;
 	/** the pointer let go: whatever the scrub was making is done being made */
 	onScrubEnd?: (() => void) | undefined;
@@ -95,14 +126,22 @@ export function Row({
 		if (!scrubbable) cancelScrub.current?.();
 		return () => cancelScrub.current?.();
 	}, [scrubbable]);
-	const down = (event: ReactPointerEvent<HTMLSpanElement>) => {
+	const down = (event: ReactPointerEvent<HTMLElement>) => {
 		if (!scrubbable || event.button !== 0 || cancelScrub.current !== null) return;
-		event.preventDefault();
 		const target = event.currentTarget,
 			doc = target.ownerDocument;
-		const pointer = event.pointerId,
-			from = event.clientX;
-		let sent = 0,
+		// A field takes the press as well: it is focused and its caret placed,
+		// exactly as a click on it always was, and only a pointer that travels
+		// turns into a scrub. The label has nothing to focus, so its press is
+		// the gesture whole, and preventing the default keeps a drag across it
+		// from selecting the words of the row.
+		const field = target.tagName === "INPUT";
+		if (!field) event.preventDefault();
+		const pointer = event.pointerId;
+		let at = event.clientX,
+			carry = 0,
+			started = false,
+			locked = false,
 			finished = false;
 		const finish = (canceled: boolean) => {
 			if (finished) return;
@@ -111,6 +150,7 @@ export function Row({
 			doc.removeEventListener("pointermove", move, true);
 			doc.removeEventListener("pointerup", up, true);
 			doc.removeEventListener("pointercancel", cancelPointer, true);
+			doc.removeEventListener("pointerlockchange", locking, true);
 			doc.defaultView?.removeEventListener("keydown", key, true);
 			target.removeEventListener("lostpointercapture", cancelPointer);
 			doc.defaultView?.removeEventListener("blur", cancel);
@@ -119,16 +159,52 @@ export function Row({
 			} catch {
 				/* The document listeners also work when capture is unavailable. */
 			}
+			if (locked && doc.pointerLockElement === target) doc.exitPointerLock?.();
+			if (!started) return;
 			if (canceled) callbacks.current.onScrubCancel?.();
 			else callbacks.current.onScrubEnd?.();
 		};
+		/**
+		 * Past the first whole step the pointer belongs to the number.
+		 *
+		 * Locked, the drag is measured in movement rather than in position, so
+		 * it never runs out of screen: a width goes on growing past the edge of
+		 * the display for as long as the hand keeps moving. Escape gives the
+		 * lock back without the page hearing the key, so losing it is how a
+		 * locked scrub is called off.
+		 */
+		const lock = () => {
+			if (typeof target.requestPointerLock !== "function") return;
+			doc.addEventListener("pointerlockchange", locking, true);
+			try {
+				const asked: unknown = target.requestPointerLock();
+				if (asked instanceof Promise) asked.catch(() => {});
+			} catch {
+				/* a browser that will not lock: the drag stays on the screen it has */
+			}
+		};
+		const locking = () => {
+			if (finished) return;
+			const now = doc.pointerLockElement === target;
+			if (locked && !now) {
+				cancel();
+				return;
+			}
+			locked = now;
+		};
 		const move = (next: PointerEvent) => {
 			if (next.pointerId !== pointer || finished) return;
-			const units = Math.round((next.clientX - from) / 4);
-			if (units === sent) return;
-			const delta = units - sent;
-			sent = units;
-			callbacks.current.onScrub?.(delta);
+			const moved = locked ? next.movementX : next.clientX - at;
+			at = next.clientX;
+			const step = scrubStep(carry, moved, next.shiftKey);
+			carry = step.carry;
+			if (step.units === 0) return;
+			if (!started) {
+				started = true;
+				lock();
+				callbacks.current.onScrubStart?.();
+			}
+			callbacks.current.onScrub?.(step.units);
 		};
 		const up = (next: PointerEvent) => {
 			if (next.pointerId === pointer) finish(false);
@@ -156,7 +232,6 @@ export function Row({
 		} catch {
 			/* Keep the document fallback. */
 		}
-		callbacks.current.onScrubStart?.();
 	};
 	const long = name.length > 14;
 	return (
@@ -183,7 +258,9 @@ export function Row({
 			>
 				{name}
 			</span>
-			<div className="flex min-w-0 items-center gap-1">{children}</div>
+			<div className="flex min-w-0 items-center gap-1">
+				<RowScrub.Provider value={scrubbable ? down : null}>{children}</RowScrub.Provider>
+			</div>
 		</div>
 	);
 }
@@ -235,6 +312,7 @@ export function NumField({
 	className?: string;
 }) {
 	const [draft, setDraft] = useState<string | null>(null);
+	const scrub = useContext(RowScrub);
 	const session = useRef<{ original: string; draft: string | null } | null>(null);
 	const cancel = useRef(onCancel);
 	useLayoutEffect(() => {
@@ -289,6 +367,9 @@ export function NumField({
 				value={draft ?? value}
 				placeholder={placeholder}
 				spellCheck={false}
+				// the number is the thing a hand reaches for: a press on it scrubs
+				// the row's own value the moment the pointer travels (#321)
+				{...(scrub === null ? {} : { onPointerDown: scrub })}
 				onChange={(event) => {
 					const held = begin();
 					if (session.current !== held) return;

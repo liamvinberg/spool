@@ -3,7 +3,7 @@
 import { act, createElement, type ReactNode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { NumField, Row } from "./properties-fields";
+import { NumField, Row, scrubStep } from "./properties-fields";
 
 async function mount(content: ReactNode) {
 	const host = document.createElement("div");
@@ -141,6 +141,57 @@ async function scrub() {
 	});
 	return { ...mounted, label, onScrub, onScrubStart, onScrubEnd, onScrubCancel };
 }
+
+it("carries the pixels left over by a step, and sends ten of them under shift", () => {
+	// four pixels is one step, and the fifth is carried into the sample after it
+	expect(scrubStep(0, 4, false)).toEqual({ carry: 0, units: 1 });
+	expect(scrubStep(0, 5, false)).toEqual({ carry: 1, units: 1 });
+	expect(scrubStep(1, 3, false)).toEqual({ carry: 0, units: 1 });
+	// a sample shorter than a step is nothing yet, and is not lost either
+	expect(scrubStep(0, 3, false)).toEqual({ carry: 3, units: 0 });
+	// back the other way, and coarse: whole steps, ten at a time
+	expect(scrubStep(0, -9, false)).toEqual({ carry: -1, units: -2 });
+	expect(scrubStep(0, 8, true)).toEqual({ carry: 0, units: 20 });
+	expect(scrubStep(0, 3, true)).toEqual({ carry: 3, units: 0 });
+});
+
+it("scrubs the row's value from the number field itself, leaving the press to focus it", async () => {
+	const onScrub = vi.fn(),
+		onScrubStart = vi.fn(),
+		onScrubEnd = vi.fn();
+	const props = {
+		name: "width",
+		onScrub,
+		onScrubStart,
+		onScrubEnd,
+		children: createElement(NumField, { value: "990", ok: true, onCommit: vi.fn() }),
+	};
+	const mounted = await mount(createElement(Row, props));
+	const field = mounted.host.querySelector("input");
+	if (!field) throw new Error("missing field");
+	const press = new PointerEvent("pointerdown", {
+		clientX: 100,
+		pointerId: 3,
+		button: 0,
+		bubbles: true,
+		cancelable: true,
+	});
+	await act(() => {
+		field.dispatchEvent(press);
+	});
+	// the press is the field's own: it focuses and puts the caret in
+	expect(press.defaultPrevented).toBe(false);
+	// and nothing has been scrubbed until the pointer has travelled a step
+	await pointer(document, "pointermove", 102, 3);
+	expect(onScrubStart).not.toHaveBeenCalled();
+	expect(onScrub).not.toHaveBeenCalled();
+
+	await pointer(document, "pointermove", 110, 3);
+	await pointer(document, "pointerup", 110, 3);
+	expect(onScrubStart).toHaveBeenCalledTimes(1);
+	expect(onScrub.mock.calls).toEqual([[2]]);
+	expect(onScrubEnd).toHaveBeenCalledTimes(1);
+});
 
 it("scrubs outside its label without capture and completes once for the initiating pointer", async () => {
 	const f = await scrub();
