@@ -2543,22 +2543,21 @@ export function ProjectCanvas({
 					}
 					return;
 				}
+				// an edit that said what the file already said wrote nothing, and is no step
+				if (written.undo.start === written.undo.end && written.undo.text === "") return;
 				// the stamp in the file that was written: the element's own, or the
 				// call site's when the words were supplied there
 				const readAt = written.path === `design/${held.source.replace(/:\d+:\d+$/, "")}` ? held.source : owner;
 				landed(held.frame, readAt ?? held.source, written);
-				// an edit that said what the file already said wrote nothing, and is no step
-				if (written.undo.start !== written.undo.end || written.undo.text !== "") {
-					recordEntry({
-						kind: "text",
-						frame: held.frame,
-						edit: held.id,
-						patch: written.undo,
-						readAt: readAt ?? held.source,
-					});
-				}
+				recordEntry({
+					kind: "text",
+					frame: held.frame,
+					edit: held.id,
+					patch: written.undo,
+					readAt: readAt ?? held.source,
+				});
 				if (written.uncaught === true) {
-					setNotice({ kind: "error", message: "No history here: nothing is catching hand edits" });
+					setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
 				}
 			});
 		},
