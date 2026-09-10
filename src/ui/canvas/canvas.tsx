@@ -163,7 +163,7 @@ import {
 	type Way,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
-import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
+import { atRung, type FrameBox, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import { decompose, measuredTarget } from "./measure-spacing";
 import {
@@ -731,6 +731,8 @@ export function ProjectCanvas({
 	// the open edit as the handlers read it, a paint earlier than the render
 	const editingRef = useRef<HandEdit | null>(null);
 	const endEditRef = useRef<(commit: boolean) => void>(() => {});
+	/** the text gesture, reached from the descent above it in the file (#321) */
+	const beginTextEditRef = useRef<(pick: PickedSelection, local: Point) => void>(() => {});
 	/** the structural gesture as its own refusal reaches for it: a delete that offers the call */
 	const alterElementRef = useRef<
 		(
@@ -2485,6 +2487,12 @@ export function ProjectCanvas({
 		[pickAnchor],
 	);
 
+	/** The frame's own box: what the ladder measures a root wrapper against (#321). */
+	const frameBox = useCallback((frame: string): FrameBox | null => {
+		const found = framesRef.current.find((candidate) => candidate.name === frame);
+		return found === undefined ? null : { w: found.w, h: found.h };
+	}, []);
+
 	/** Figma's deep select (⌘-click, and the right-click point): the deepest element. */
 	const deepSelectAt = useCallback(
 		(frame: string, local: Point) => {
@@ -2509,7 +2517,7 @@ export function ProjectCanvas({
 				frame,
 				local,
 				(chain) => {
-					const target = atRung(chain, scopeIn(frame));
+					const target = atRung(chain, scopeIn(frame), frameBox(frame));
 					if (target === undefined) {
 						pop();
 						return;
@@ -2519,7 +2527,7 @@ export function ProjectCanvas({
 				pop,
 			);
 		},
-		[beginPick, applyPick, holdChain, scopeIn],
+		[beginPick, applyPick, frameBox, holdChain, scopeIn],
 	);
 
 	/**
@@ -2536,19 +2544,30 @@ export function ProjectCanvas({
 	const descendAt = useCallback(
 		(frame: string, local: Point) => {
 			const scope = scopeIn(frame);
+			const box = frameBox(frame);
 			cancelPicks();
 			beginPick(frame, local, (chain) => {
-				const target = oneDown(chain, scope);
-				// no rung under this one: the two clicks meant the words, and the
-				// second of them has already opened the edit; leaving it alone is
-				// what lets one gesture descend a branch and edit a leaf (#254,
-				// #255). Frame background answers nothing either way
-				if (target === undefined) return;
+				const target = oneDown(chain, scope, box);
+				if (target !== undefined) {
+					endEditRef.current(false);
+					applyPick(frame, chain, target);
+					return;
+				}
+				// No rung under this one: the two clicks meant the words (#254,
+				// #255). What they meant them on is the rung the pointer landed
+				// in at the held depth, which on overlapping text boxes is not
+				// always what was held — the slow second click opens the edit on
+				// the held element, and this is where that is put right (#321).
+				const words = atRung(chain, scope, box);
+				if (words === undefined) return; // frame background: nothing to edit
+				const open = editingRef.current;
+				if (open?.frame === frame && open.selector === words.selector) return;
 				endEditRef.current(false);
-				applyPick(frame, chain, target);
+				applyPick(frame, chain, words);
+				beginTextEditRef.current({ frame, ...words }, local);
 			});
 		},
-		[beginPick, applyPick, cancelPicks, scopeIn],
+		[beginPick, applyPick, cancelPicks, frameBox, scopeIn],
 	);
 
 	/**
@@ -2734,6 +2753,7 @@ export function ProjectCanvas({
 		},
 		[setEdit, showRefusal],
 	);
+	beginTextEditRef.current = beginTextEdit;
 
 	/**
 	 * The edit has ended (#314). The frame already shows the words, so the
@@ -3236,7 +3256,7 @@ export function ProjectCanvas({
 	const togglePickAt = useCallback(
 		(frame: string, local: Point, deepest: boolean) => {
 			beginPick(frame, local, (chain) => {
-				const target = deepest ? chain[chain.length - 1] : atRung(chain, scopeIn(frame));
+				const target = deepest ? chain[chain.length - 1] : atRung(chain, scopeIn(frame), frameBox(frame));
 				if (target === undefined) return; // frame background: nothing to toggle
 				const current = pickedRef.current;
 				const held = current.filter((pick) => !(pick.frame === frame && pick.selector === target.selector));
@@ -3249,7 +3269,7 @@ export function ProjectCanvas({
 				setSelected([]);
 			});
 		},
-		[beginPick, holdChain, scopeIn],
+		[beginPick, frameBox, holdChain, scopeIn],
 	);
 
 	/** The tree grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
@@ -4107,12 +4127,13 @@ export function ProjectCanvas({
 				// already says so. Edit always points at an element, so it always
 				// draws one — and the rung under it dashed, because that is where
 				// its double-click descends to.
+				const box = frameBox(frame);
 				const target = deepest
 					? chain[chain.length - 1]
 					: editing || scope !== null
-						? atRung(chain, scope)
+						? atRung(chain, scope, box)
 						: undefined;
-				const under = deepest || !editing ? undefined : oneDown(chain, scope);
+				const under = deepest || !editing ? undefined : oneDown(chain, scope, box);
 				const ring = (hit: PickedHit | undefined): ElementPreview | null =>
 					hit === undefined ? null : { frame, selector: hit.selector, rect: hit.rect, radius: hit.radius };
 				const click = ring(target);

@@ -4,21 +4,50 @@ import type { PickedHit } from "./protocol";
  * The selection ladder (#254): which rung a gesture lands on, given the
  * ancestry under the pointer and the rung the selection already holds.
  *
- * A frame's component returns one root element, so rung 1 is always the whole
- * screen and looks identical to the frame. Descent does not skip it: the root
- * carries real classes the agent wrote, and every property the agent applies
- * has to be reachable by hand.
+ * A frame's component returns one root element, and a page's root is a wrapper
+ * drawn over the whole frame. A click on it looks like a click that did
+ * nothing, so the first rung a pointer takes is the top-level child under it
+ * (#321) — Figma's own first click. The wrapper is still a rung: Esc climbs
+ * onto it, the crumbs name it, and every class the agent wrote on it is
+ * reachable from there.
  *
  * The scope is the pair the canvas already keeps — the ancestry the last pick
  * was found in, and which element of it is held. Everything here is a walk
  * over selectors, so the whole ladder is decidable without a document.
  */
 
+/** The frame's own box, in the frame-local pixels a hit's rect is measured in. */
+export interface FrameBox {
+	w: number;
+	h: number;
+}
+
 export interface LadderScope {
 	/** the ancestry the held element was found in, the frame's root element first */
 	chain: readonly PickedHit[];
 	/** the held element, somewhere in that ancestry */
 	selector: string;
+}
+
+/**
+ * Whether this rung is the frame wearing a wrapper: a box over the whole
+ * frame, at its origin, with something inside it. Nothing about it is
+ * distinguishable from the frame under the pointer, so the pointer goes past.
+ */
+function coversFrame(rect: PickedHit["rect"], frame: FrameBox): boolean {
+	return rect.x <= 1 && rect.y <= 1 && rect.w >= frame.w - 1 && rect.h >= frame.h - 1;
+}
+
+/**
+ * The rung a pointer takes with no scope open: the top-level child under it,
+ * past a root wrapper the size of the frame. No frame box to measure against
+ * — the keyboard's own descent — is the root element itself.
+ */
+export function firstRung(chain: readonly PickedHit[], frame: FrameBox | null): PickedHit | undefined {
+	const root = chain[0];
+	if (root === undefined) return undefined;
+	const child = chain[1];
+	return child !== undefined && frame !== null && coversFrame(root.rect, frame) ? child : root;
 }
 
 /** The rung the held element sits on, or -1 when the scope no longer holds it. */
@@ -39,10 +68,14 @@ function sharesRung(chain: readonly PickedHit[], scope: LadderScope, rung: numbe
  * rung under a fresh ancestry — a sibling inside the shared ancestry, the
  * divergence point outside it, the root element when no scope holds.
  */
-export function atRung(chain: readonly PickedHit[], scope: LadderScope | null): PickedHit | undefined {
+export function atRung(
+	chain: readonly PickedHit[],
+	scope: LadderScope | null,
+	frame: FrameBox | null,
+): PickedHit | undefined {
 	if (chain.length === 0) return undefined;
 	const rung = rungOf(scope);
-	if (scope === null || rung < 0) return chain[0];
+	if (scope === null || rung < 0) return firstRung(chain, frame);
 	let shared = 0;
 	while (shared < rung && shared < chain.length && scope.chain[shared]?.selector === chain[shared]?.selector) {
 		shared++;
@@ -59,11 +92,19 @@ export function oneUp(scope: LadderScope | null): PickedHit | undefined {
 /**
  * One rung down this ancestry, which is what a double-click takes in Edit. A
  * scope held on another branch is not a rung on this one, so the descent
- * restarts at the root element rather than jumping sideways at depth.
+ * restarts at the top rather than jumping sideways at depth.
+ *
+ * A leaf has nothing under it and answers with nothing at all: the two clicks
+ * that got there meant the words in it (#321), and a descent that answered
+ * with the leaf again would cancel the edit they opened.
  */
-export function oneDown(chain: readonly PickedHit[], scope: LadderScope | null): PickedHit | undefined {
+export function oneDown(
+	chain: readonly PickedHit[],
+	scope: LadderScope | null,
+	frame: FrameBox | null,
+): PickedHit | undefined {
 	if (chain.length === 0) return undefined;
 	const rung = rungOf(scope);
-	if (scope === null || rung < 0 || !sharesRung(chain, scope, rung)) return chain[0];
-	return chain[Math.min(rung + 1, chain.length - 1)];
+	if (scope === null || rung < 0 || !sharesRung(chain, scope, rung)) return firstRung(chain, frame);
+	return chain[rung + 1];
 }
