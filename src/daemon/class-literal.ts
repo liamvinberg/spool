@@ -1,6 +1,4 @@
-import { parse } from "@babel/parser";
 import type { JSXAttribute, JSXOpeningElement, Node, StringLiteral } from "@babel/types";
-import { walkNodes } from "./jsx-walk";
 
 /**
  * Where an element's classes are typed (#315, #317): the one place a class
@@ -36,14 +34,8 @@ export type ClassSlot =
 	| { kind: "bare"; at: number }
 	| { kind: "computed"; line: number; expression: string };
 
-export type ClassLiteral =
-	| Exclude<ClassSlot, { kind: "computed" }>
-	| { kind: "computed"; file: string; line: number; expression: string }
-	/** the stamp hits nothing */
-	| { kind: "stale" };
-
 /** The class helpers whose first string argument is the literal a hand edits. */
-export const CLASS_CALLS: ReadonlySet<string> = new Set(["cn", "clsx", "cx"]);
+const CLASS_CALLS: ReadonlySet<string> = new Set(["cn", "clsx", "cx"]);
 
 /** `frames/cart/frame.tsx:14:3` as the place it names. */
 export function parseStampRef(stamp: string): { rel: string; line: number; column: number } | undefined {
@@ -52,30 +44,10 @@ export function parseStampRef(stamp: string): { rel: string; line: number; colum
 	return { rel: match[1], line: Number(match[2]), column: Number(match[3]) };
 }
 
-/** The class literal of the element a stamp points at, parsed fresh from the file. */
-export function classLiteralAt(source: string, stamp: string): ClassLiteral {
-	const at = parseStampRef(stamp);
-	if (at === undefined) return { kind: "stale" };
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
-		return { kind: "stale" };
-	}
-	let opening: JSXOpeningElement | undefined;
-	walkNodes(program, [], (node) => {
-		if (node.type !== "JSXElement") return;
-		if (node.loc?.start.line === at.line && node.loc.start.column + 1 === at.column) opening = node.openingElement;
-	});
-	if (opening === undefined) return { kind: "stale" };
-	const slot = classSlotOf(source, opening);
-	return slot.kind === "computed" ? { ...slot, file: at.rel } : slot;
-}
-
 /**
- * The same answer for an opening tag already in hand, which is how the write
- * lane asks: it has parsed the file once for every op and is not parsing it
- * again per attribute.
+ * The answer for an opening tag already in hand, which is how the write lane
+ * asks: it has parsed the file once for every op and is not parsing it again
+ * per attribute.
  */
 export function classSlotOf(source: string, opening: JSXOpeningElement): ClassSlot {
 	const held = opening.attributes.find(

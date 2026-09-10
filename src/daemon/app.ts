@@ -42,6 +42,7 @@ import {
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
+import type { ClassEdit } from "./class-write";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -692,7 +693,7 @@ export function createDaemonApp({
 		return {
 			frame: body.frame,
 			source: stamps[0],
-			edits: edits as { token: string; scope: string; remove?: true }[],
+			edits: edits as ClassEdit[],
 			fingerprint: body.fingerprint,
 		};
 	});

@@ -10,6 +10,7 @@ import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
 import type { CanvasPlaces, Place } from "../daemon/canvas-places";
+import type { ClassEdit } from "../daemon/class-write";
 import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
@@ -336,13 +337,6 @@ export async function writeText(
 	}
 }
 
-/** One token on or off under its scope, as the class planner takes it (#315). */
-export interface ClassEditAsk {
-	token: string;
-	scope: string;
-	remove?: true;
-}
-
 export type ClassWritten =
 	| (Extract<TextWritten, { ok: true }> & {
 			/** the literal before and after, which is what the frame swaps on the element */
@@ -438,7 +432,7 @@ export async function listAssets(project: string, frame: string): Promise<Projec
 export async function writeClass(
 	project: string,
 	frame: string,
-	ask: { source: string; edits: readonly ClassEditAsk[]; fingerprint: string },
+	ask: { source: string; edits: readonly ClassEdit[]; fingerprint: string },
 ): Promise<ClassWritten | undefined> {
 	try {
 		const res = await client.api.p[":project"].class.$post({

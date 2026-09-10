@@ -1,4 +1,4 @@
-import { anatomyOf, composeToken } from "../../daemon/class-write";
+import { anatomyOf, type ClassEdit, composeToken } from "../../daemon/class-write";
 import { toggledOf } from "../../properties/families";
 import { type At, editsFor, type Row, type RowValue } from "../../properties/rows";
 
@@ -42,15 +42,8 @@ export interface PropertyControls {
 	finish(commit: boolean): void;
 }
 
-/** One token on or off under its scope, as the class planner takes it. */
-export interface ClassEditOf {
-	token: string;
-	scope: string;
-	remove?: true;
-}
-
 /** A scoped spelling taken apart: `md:hover:-mt-2` is `-mt-2` under `md:hover:`. */
-function scoped(token: string, remove: boolean): ClassEditOf {
+function scoped(token: string, remove: boolean): ClassEdit {
 	const anatomy = anatomyOf(token);
 	return {
 		token: composeToken({ ...anatomy, variants: [] }),
@@ -60,7 +53,7 @@ function scoped(token: string, remove: boolean): ClassEditOf {
 }
 
 /** The edits a value comes to for the lane; a custom value has to be spelled as a token first. */
-export function classEditsOf(value: PropertyValue): ClassEditOf[] {
+export function classEditsOf(value: PropertyValue): ClassEdit[] {
 	if (value.kind === "custom") return [];
 	if (value.kind === "remove") return (value.tokens ?? []).map((token) => scoped(token, true));
 	return [

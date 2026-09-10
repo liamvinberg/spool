@@ -384,7 +384,8 @@ export function readElements(
  */
 type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
 
-function planOne(source: string, program: Node, element: Element, op: HandOp): OnePlan {
+/** Every op but a class edit, which `planOps` folds together per element before it gets here. */
+function planOne(source: string, program: Node, element: Element, op: Exclude<HandOp, { kind: "set-class" }>): OnePlan {
 	switch (op.kind) {
 		case "set-text":
 			return planText(source, element, op.nodes);
@@ -398,8 +399,6 @@ function planOne(source: string, program: Node, element: Element, op: HandOp): O
 			return planAttribute(source, element, op.name, op.value);
 		case "set-asset":
 			return planAsset(source, program, element, op.specifier, op.hint);
-		case "set-class":
-			return planClass(source, element, [op]);
 	}
 }
 
