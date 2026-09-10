@@ -2619,8 +2619,10 @@ export function ProjectCanvas({
 		if (enteredRef.current !== null || frame === undefined) return;
 		// the branch the pointer is over is what a descent means while it rests
 		// on one (#321): the very rung its double-click would take, straight
-		// off the ancestry the hover already has, with nothing asked for it
-		const hover = hoverChain.current;
+		// off the ancestry the hover already has, with nothing asked for it.
+		// Only in Edit, where the pointer is pointing at elements at all — in
+		// Select it means frames, and the ladder there is the keyboard's own
+		const hover = toolRef.current === "edit" ? hoverChain.current : null;
 		const target = hover?.frame === frame ? oneDown(hover.chain, scopeIn(frame), frameBox(frame)) : undefined;
 		if (target !== undefined) {
 			applyPick(frame, [...(hover?.chain ?? [])], target);

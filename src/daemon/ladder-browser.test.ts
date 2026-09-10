@@ -235,12 +235,20 @@ it("walks the ladder from the keyboard and goes inside on a double-click, out on
 	// this walk starts from the top of the ladder rather than the bottom
 	await page.locator('[data-frame-label="cart"]').click();
 	await expect.poll(held).toBe("frame");
+	// the cart's root element is drawn over the whole frame, so the click goes
+	// past it to the list, which is the top-level thing under the pointer (#321)
 	await page.mouse.click(at.x, at.y);
-	await expect.poll(held).toBe("div");
-	await page.mouse.dblclick(at.x, at.y);
 	await expect.poll(held).toBe("div > ul");
 	await page.mouse.dblclick(at.x, at.y);
 	await expect.poll(held).toBe("div > ul > li:nth-of-type(2)");
+	// the row is a leaf: a double-click on it means its words, and the rung it
+	// is on stays held while they are open
+	await page.mouse.dblclick(at.x, at.y);
+	await expect
+		.poll(() => page.frameLocator('iframe[title="cart"]').locator("li").nth(1).getAttribute("contenteditable"))
+		.toBe("plaintext-only");
+	await expect.poll(held).toBe("div > ul > li:nth-of-type(2)");
+	await page.keyboard.press("Escape");
 	// and none of that went inside, which is the other tool's meaning
 	expect(await page.locator('[data-frame-label="cart"]').innerText()).not.toContain("esc exits");
 
