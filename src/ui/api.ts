@@ -327,14 +327,60 @@ export async function writeText(
 	}
 }
 
-export type Reverted =
-	| { ok: true; path: string; fingerprint: string; shifts: StampShift[] | null; undo: HeldPatch }
+/** One token on or off under its scope, as the class planner takes it (#315). */
+export interface ClassEditAsk {
+	token: string;
+	scope: string;
+	remove?: true;
+}
+
+export type ClassWritten =
+	| (Extract<TextWritten, { ok: true }> & {
+			/** the literal before and after, which is what the frame swaps on the element */
+			className: { was: string; now: string };
+			/** the stylesheet the frame's document now compiles to; absent when nothing changed */
+			css?: string;
+	  })
 	| { ok: false; refusal: PatchRefusal };
 
-/** Undo and redo (#314): the held patch run, refused rather than clobbered if the file moved. */
-export async function revertPatch(project: string, patch: HeldPatch): Promise<Reverted | undefined> {
+/**
+ * The write half of a class change (#315): the tokens the rail decided, on
+ * the element at one stamp, and the fingerprint of the file the rung was
+ * read from. The frame already shows the change; this is the file catching
+ * up, and what comes back is what the frame needs to show it for real.
+ */
+export async function writeClass(
+	project: string,
+	frame: string,
+	ask: { source: string; edits: readonly ClassEditAsk[]; fingerprint: string },
+): Promise<ClassWritten | undefined> {
 	try {
-		const res = await client.api.p[":project"].text.revert.$post({ param: { project }, json: patch });
+		const res = await client.api.p[":project"].class.$post({
+			param: { project },
+			json: { frame, ...ask, edits: [...ask.edits] },
+		});
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as ClassWritten;
+	} catch {
+		return undefined;
+	}
+}
+
+export type Reverted =
+	| { ok: true; path: string; fingerprint: string; shifts: StampShift[] | null; undo: HeldPatch; css?: string }
+	| { ok: false; refusal: PatchRefusal };
+
+/**
+ * Undo and redo (#314): the held patch run, refused rather than clobbered if
+ * the file moved. Named a frame, the answer carries the stylesheet that
+ * frame now compiles to (#315).
+ */
+export async function revertPatch(project: string, patch: HeldPatch, frame?: string): Promise<Reverted | undefined> {
+	try {
+		const res = await client.api.p[":project"].revert.$post({
+			param: { project },
+			json: { ...patch, ...(frame === undefined ? {} : { frame }) },
+		});
 		if (!res.ok && res.status !== 409) return undefined;
 		return (await res.json()) as Reverted;
 	} catch {

@@ -72,7 +72,7 @@ import { createDirectory, listDirectory, refreshIndex, searchDirectories } from 
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
 import { listAssets } from "./hand-asset";
-import { readRungs, revertTarget, STALE_FILE, textSite } from "./hand-lane";
+import { classSite, readRungs, revertTarget, STALE_FILE, textSite } from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
 import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
@@ -116,7 +116,7 @@ import {
 } from "./session";
 import { createSettingsStore } from "./settings";
 import { createShotTaker } from "./shots";
-import { compileClasses, readTheme } from "./theme";
+import { classThemeFor, compileClasses, readTheme } from "./theme";
 import {
 	createThumbHealer,
 	isCoverHash,
@@ -535,16 +535,60 @@ export function createDaemonApp({
 		};
 	});
 
-	/** The patch that puts a text edit back (#314): the run, and the file it was taken of. */
+	/**
+	 * One class change (#315): the tokens the rail wants on or off, each under
+	 * its scope, on the element at one stamp. A handful, because one gesture
+	 * decides one property or two.
+	 */
+	const classBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const stamps = parseStamps([body.source]);
+		const edits =
+			Array.isArray(body.edits) && body.edits.length > 0 && body.edits.length <= 16 ? body.edits : undefined;
+		const shaped = edits?.every(
+			(edit) =>
+				typeof edit === "object" &&
+				edit !== null &&
+				typeof (edit as { token?: unknown }).token === "string" &&
+				typeof (edit as { scope?: unknown }).scope === "string" &&
+				((edit as { remove?: unknown }).remove === undefined || (edit as { remove?: unknown }).remove === true),
+		);
+		if (
+			typeof body.frame !== "string" ||
+			!isSafeName(body.frame) ||
+			stamps?.[0] === undefined ||
+			edits === undefined ||
+			shaped !== true ||
+			typeof body.fingerprint !== "string"
+		) {
+			return c.text(
+				'a class edit is { "frame", "source", "edits": [{ "token", "scope", "remove"? }], "fingerprint" }',
+				400,
+			);
+		}
+		return {
+			frame: body.frame,
+			source: stamps[0],
+			edits: edits as { token: string; scope: string; remove?: true }[],
+			fingerprint: body.fingerprint,
+		};
+	});
+
+	/**
+	 * The patch that puts a hand edit back (#314): the run, and the file it
+	 * was taken of. It names the frame it was made in when the frame needs the
+	 * stylesheet the put-back file compiles to (#315).
+	 */
 	const revertBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const { path, start, end, text, fingerprint } = body;
+		const { path, start, end, text, fingerprint, frame } = body;
 		const spans = typeof start === "number" && typeof end === "number" && Number.isInteger(start);
 		if (typeof path !== "string" || !spans || typeof text !== "string" || typeof fingerprint !== "string") {
-			return c.text('a revert is { "path", "start", "end", "text", "fingerprint" }', 400);
+			return c.text('a revert is { "path", "start", "end", "text", "fingerprint", "frame"? }', 400);
 		}
 		if (!Number.isInteger(end) || start < 0 || end < start) return c.text("not a span", 400);
-		return { path, start, end, text, fingerprint };
+		if (frame !== undefined && (typeof frame !== "string" || !isSafeName(frame))) return c.text("not a frame", 400);
+		return { path, start, end, text, fingerprint, ...(typeof frame === "string" ? { frame } : {}) };
 	});
 
 	/**
@@ -2238,14 +2282,47 @@ export function createDaemonApp({
 			});
 		})
 		/*
-		 * Undo and redo (#314): the characters put back, and refused rather
-		 * than clobbered if the file moved since. Its own inverse comes back,
-		 * so a redo is the same call again.
+		 * The write half of a class change (#315). The frame already shows it
+		 * as an inline style; this plans the tokens through the class planner
+		 * at the stamp, writes once, and answers with the literal before and
+		 * after and the stylesheet the file now compiles to, so the frame sets
+		 * the attribute, swaps the sheet and drops the preview without a
+		 * reload. A refusal is the lane's own no and comes back as one.
 		 */
-		.post("/api/p/:project/text/revert", revertBody, (c) => {
+		.post("/api/p/:project/class", classBody, async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const { path, start, end, text, fingerprint } = c.req.valid("json");
+			const { frame, ...ask } = c.req.valid("json");
+			const theme = await classThemeFor(project.root);
+			const site = await classSite(project.root, frame, ask, framesUsingIn(project.root), theme);
+			if (site.kind === "error") return c.text(site.message, site.status);
+			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
+			const undo = spanBetween(site.source, site.text);
+			if (site.text !== site.source) writeAtomic(site.file, site.text);
+			const after = fingerprintOf(site.text);
+			const css = site.text === site.source ? undefined : await compiler.stylesheet(project.root, frame);
+			return c.json({
+				ok: true,
+				path: site.path,
+				fingerprint: after,
+				shifts: site.shifts,
+				undo: { path: site.path, ...undo, fingerprint: after },
+				className: site.className,
+				...(css === undefined ? {} : { css }),
+				...(site.text !== site.source && uncaughtNotice(project.root) ? { uncaught: true } : {}),
+			});
+		})
+		/*
+		 * Undo and redo (#314): the characters put back, and refused rather
+		 * than clobbered if the file moved since. Its own inverse comes back,
+		 * so a redo is the same call again. Named a frame, it answers with the
+		 * stylesheet that frame's document now compiles to (#315), for a frame
+		 * that swaps a class back without reloading.
+		 */
+		.post("/api/p/:project/revert", revertBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { path, start, end, text, fingerprint, frame } = c.req.valid("json");
 			const target = revertTarget(project.root, path);
 			if ("message" in target) return c.text(target.message, target.status);
 			let source: string;
@@ -2260,12 +2337,15 @@ export function createDaemonApp({
 			const next = applySpan(source, patch);
 			if (next !== source) writeAtomic(target.file, next);
 			const after = fingerprintOf(next);
+			const css =
+				frame === undefined || next === source ? undefined : await compiler.stylesheet(project.root, frame);
 			return c.json({
 				ok: true,
 				path,
 				fingerprint: after,
 				shifts: shiftsOf(source, [patch]),
 				undo: { path, start, end: start + text.length, text: source.slice(start, end), fingerprint: after },
+				...(css === undefined ? {} : { css }),
 			});
 		})
 		/*

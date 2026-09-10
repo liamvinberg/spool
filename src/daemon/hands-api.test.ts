@@ -589,3 +589,136 @@ describe("the rungs read", () => {
 		);
 	});
 });
+
+describe("the class write", () => {
+	const voiceTsx = `import { cn } from "../../shared/lib/utils";
+
+export default function Frame({ open }: { open: boolean }) {
+	return (
+		<main className="flex flex-col gap-2 p-4">
+			<div className={cn("flex gap-3 px-5 py-4", open && "border-l")}>a</div>
+			<p className={busy ? "opacity-50" : "opacity-100"}>state</p>
+		</main>
+	);
+}
+`;
+	const utils = `export function cn(...inputs: (string | false | null | undefined)[]) { return inputs.filter(Boolean).join(" "); }\n`;
+
+	function stampIn(source: string, snippet: string): string {
+		const at = source.indexOf(snippet);
+		const before = source.slice(0, at);
+		return `frames/voice/frame.tsx:${before.split("\n").length}:${at - (before.lastIndexOf("\n") + 1) + 1}`;
+	}
+
+	async function served(root: string, name: string, app: ReturnType<typeof makeApp>) {
+		// a frame document served first, which is what a canvas has done before any hand touches it
+		const res = await app.request(`/p/${name}/frames/voice`);
+		expect(res.status).toBe(200);
+		return fingerprintOf(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8"));
+	}
+
+	it("writes one class change at the stamp and answers with the literal and the sheet", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/lib/utils.ts", utils);
+		writeFrame(root, "voice", voiceTsx);
+		const app = makeApp(spoolDir);
+		const fingerprint = await served(root, name, app);
+
+		const res = await app.request(
+			`/api/p/${name}/class`,
+			jsonPost({
+				frame: "voice",
+				source: stampIn(voiceTsx, "<main"),
+				edits: [{ token: "w-[700px]", scope: "" }],
+				fingerprint,
+			}),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			ok: true;
+			className: { was: string; now: string };
+			css: string;
+			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
+			shifts: unknown[];
+		};
+		expect(body.className).toEqual({ was: "flex flex-col gap-2 p-4", now: "flex flex-col gap-2 p-4 w-[700px]" });
+		expect(body.css).toContain("700px");
+		expect(body.shifts).toEqual([{ line: 5, column: 43, delta: 10 }]);
+		const written = readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8");
+		expect(written).toContain('<main className="flex flex-col gap-2 p-4 w-[700px]">');
+		expect(body.undo.fingerprint).toBe(fingerprintOf(written));
+
+		// the put-back, named a frame, carries the sheet the file now compiles to
+		const back = await app.request(`/api/p/${name}/revert`, jsonPost({ ...body.undo, frame: "voice" }));
+		expect(back.status).toBe(200);
+		const reverted = (await back.json()) as { ok: true; css: string };
+		expect(reverted.css).not.toContain("700px");
+		expect(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8")).toBe(voiceTsx);
+	});
+
+	it("edits the first string of a cn call and keeps the condition", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/lib/utils.ts", utils);
+		writeFrame(root, "voice", voiceTsx);
+		const app = makeApp(spoolDir);
+		const fingerprint = await served(root, name, app);
+
+		const res = await app.request(
+			`/api/p/${name}/class`,
+			jsonPost({
+				frame: "voice",
+				source: stampIn(voiceTsx, "<div"),
+				edits: [{ token: "px-8", scope: "" }],
+				fingerprint,
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8")).toContain(
+			'<div className={cn("flex gap-3 py-4 px-8", open && "border-l")}>',
+		);
+	});
+
+	it("refuses a computed class with the file and line, and a file that moved underneath", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/lib/utils.ts", utils);
+		writeFrame(root, "voice", voiceTsx);
+		const app = makeApp(spoolDir);
+		const fingerprint = await served(root, name, app);
+
+		const computed = await app.request(
+			`/api/p/${name}/class`,
+			jsonPost({
+				frame: "voice",
+				source: stampIn(voiceTsx, "<p"),
+				edits: [{ token: "p-2", scope: "" }],
+				fingerprint,
+			}),
+		);
+		expect(computed.status).toBe(409);
+		expect(await computed.json()).toEqual({
+			ok: false,
+			refusal: {
+				code: "computed-class",
+				says: "class is computed here; edit frames/voice/frame.tsx line 7 or ask the agent",
+				expression: '{busy ? "opacity-50" : "opacity-100"}',
+				line: 7,
+			},
+		});
+		const stale = await app.request(
+			`/api/p/${name}/class`,
+			jsonPost({
+				frame: "voice",
+				source: stampIn(voiceTsx, "<main"),
+				edits: [{ token: "p-2", scope: "" }],
+				fingerprint: "0".repeat(64),
+			}),
+		);
+		expect(stale.status).toBe(409);
+		expect(((await stale.json()) as { refusal: { code: string } }).refusal.code).toBe("stale-file");
+		expect(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8")).toBe(voiceTsx);
+		expect((await app.request(`/api/p/${name}/class`, jsonPost({ frame: "voice", edits: [] }))).status).toBe(400);
+	});
+});

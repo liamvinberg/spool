@@ -31,6 +31,8 @@ export interface FrameAuthority {
 interface CacheEntry {
 	/** Every file the document was built from: the bundle closure plus the shared baseline. */
 	inputs: string[];
+	/** The bundle closure alone: what the stylesheet is compiled over. */
+	sources: string[];
 	hash: string;
 	etag: string;
 	document: string;
@@ -108,7 +110,35 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 	}
 
-	return { getDocument };
+	/**
+	 * The stylesheet a frame's document would carry now (#315): the theme and
+	 * the utilities its source closure uses, compiled fresh. A hand edit that
+	 * wrote one class needs the sheet that class is in, and the frame that
+	 * shows it is not reloaded for its own save, so the sheet travels alone.
+	 * The closure is the one the document was last served from — a class
+	 * write moves no import — and is built when nothing has served it yet.
+	 */
+	async function stylesheet(root: string, frame: string): Promise<string | undefined> {
+		const lookup = lookupFrame(root, frame);
+		if (lookup.kind !== "found") return undefined;
+		const designDir = realDesignDir(root);
+		const served = [...cache.entries()].find(([key]) => key.startsWith(`${root}\0${frame}\0`))?.[1];
+		const sources =
+			served?.sources ??
+			(
+				await buildDesignEntry({
+					designDir,
+					resolveDir: lookup.dir,
+					sourcefile: STDIN_NAME,
+					contents: bootEntry(frame),
+					label: `frame "${frame}"`,
+					imageBudget: IMAGE_BUDGET_BYTES,
+				})
+			).sourceFiles;
+		return (await buildFrameCss(designDir, sources)).css;
+	}
+
+	return { getDocument, stylesheet };
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;
@@ -263,7 +293,7 @@ async function compileFrame({
 		join(shared, "importmap.json"),
 	];
 	const hash = hashInputs(version, stamp, inputs, designDir);
-	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: webfonts.revision() };
+	return { inputs, sources: sourceFiles, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: webfonts.revision() };
 }
 
 /**

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ClassEdit, ClassTheme } from "./class-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
 	type AttributeRead,
@@ -240,8 +241,72 @@ export async function textSite(root: string, frame: string, ask: TextAsk, deps: 
 	]);
 }
 
-function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1]): TextSite {
-	const plan = planOps(source, ops);
+/**
+ * One class change as the rail sends it (#315): the element's stamp, the
+ * tokens it wants on or off under their scopes, and the fingerprint of the
+ * file the rung was read from. Several edits are one write, because one
+ * gesture can decide two properties.
+ */
+export interface ClassAsk {
+	source: string;
+	edits: readonly ClassEdit[];
+	fingerprint: string;
+}
+
+export type ClassSite =
+	| (Extract<TextSite, { kind: "ok" }> & {
+			/** the literal before and after, which is what the frame swaps on the element */
+			className: { was: string; now: string };
+	  })
+	| Exclude<TextSite, { kind: "ok" }>;
+
+/**
+ * Where a class write lands (#315): the element's own file, at its stamp,
+ * through the Tailwind class planner. The frame already shows the change as
+ * an inline style; this is the one write behind it, and the answer is the
+ * literal as it was and as it is, so the frame can set the attribute and
+ * drop the preview without a reload.
+ */
+export async function classSite(
+	root: string,
+	frame: string,
+	ask: ClassAsk,
+	deps: LaneDeps,
+	theme: ClassTheme | undefined,
+): Promise<ClassSite> {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
+	const folder = `${frameFolder(frame, found.page)}/`;
+	const stamp = stampIn(root, ask.source);
+	if ("message" in stamp) return { kind: "error", ...stamp };
+	if (stamp.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	const at = stamp.stamp;
+	let source: string;
+	try {
+		source = readFileSync(at.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	if (fingerprintOf(source) !== ask.fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+	// this ticket writes the frame's own file: an element defined anywhere
+	// else reads whole and adjusts nowhere yet
+	if (!at.rel.startsWith(folder)) return { kind: "refusal", refusal: await definedElsewhere(deps, at.rel, at.line) };
+	const [before] = readElements(source, [{ line: at.line, column: at.column }], at.rel);
+	if (before === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	if (before.refusal !== undefined) return { kind: "refusal", refusal: before.refusal };
+	const site = planned(
+		at,
+		source,
+		ask.edits.map((edit) => ({ kind: "set-class" as const, source: ask.source, ...edit })),
+		theme,
+	);
+	if (site.kind !== "ok") return site;
+	const [after] = readElements(site.text, [{ line: at.line, column: at.column }], at.rel);
+	return { ...site, className: { was: before.className, now: after?.className ?? before.className } };
+}
+
+function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1], theme?: ClassTheme): TextSite {
+	const plan = planOps(source, ops, theme);
 	if (!plan.ok) return { kind: "refusal", refusal: plan.refusal };
 	return {
 		kind: "ok",
