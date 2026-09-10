@@ -3,7 +3,7 @@ import { parse } from "@babel/parser";
 import type { ImportDeclaration, JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
 import { ASSET_FILTER } from "./assets";
 import { type ClassEdit, type ClassTheme, screenConflict, writeClass } from "./class-write";
-import { isLayoutOnly, textCore, writeJsxText } from "./jsx-text";
+import { isLayoutOnly, readJsxText, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
 
 /**
@@ -28,7 +28,10 @@ import { walkNodes } from "./jsx-walk";
  */
 
 export type HandOp =
-	| { kind: "set-text"; source: string; text: string }
+	/** the element's words, as the frame's child nodes after the edit (#314) */
+	| { kind: "set-text"; source: string; nodes: readonly EditedNode[] }
+	/** words a call site supplies to a component, written at that call (#314) */
+	| { kind: "set-supplied"; source: string; prop: string; text: string }
 	| { kind: "set-class"; source: string; token: string; scope: string; remove?: boolean }
 	| { kind: "set-attribute"; source: string; name: string; value: string }
 	| { kind: "set-asset"; source: string; specifier: string; hint: string };
@@ -42,6 +45,8 @@ export type RefusalCode =
 	| "mapped-text"
 	| "expression-text"
 	| "no-text"
+	| "text-shape"
+	| "supplied-text"
 	| "expression-attribute"
 	| "class-attribute"
 	| "walk-target"
@@ -84,6 +89,44 @@ export interface SpanPatch {
 
 /** The one attribute no hand edit writes: its value is a walk target (#260). */
 export const WALK_TARGET = "data-go";
+
+/**
+ * One child node of an edited element, as the frame hands it back (#314): a
+ * text node's words, or an element and its own children. The daemon maps each
+ * one to the JSX child at the same index, so this is the whole of what a
+ * commit says.
+ */
+export type EditedNode = { text: string } | { tag: string; nodes: readonly EditedNode[] };
+
+/** The inline tags an editable element may hold, each passing the same rule. */
+export const INLINE_TAGS: ReadonlySet<string> = new Set(["span", "i", "b", "em", "strong", "a", "small", "code"]);
+
+const NODE_CAP = 256;
+const NODE_DEPTH = 8;
+
+/** The child nodes a commit carries, or nothing: bounded, because the daemon is about to walk them. */
+export function parseEditedNodes(value: unknown, depth = 0): EditedNode[] | undefined {
+	if (!Array.isArray(value) || value.length > NODE_CAP || depth > NODE_DEPTH) return undefined;
+	const nodes: EditedNode[] = [];
+	for (const one of value) {
+		if (typeof one !== "object" || one === null) return undefined;
+		const held = one as Record<string, unknown>;
+		if (typeof held.text === "string") {
+			nodes.push({ text: held.text });
+			continue;
+		}
+		if (typeof held.tag !== "string" || !/^[a-z][a-z0-9]*$/.test(held.tag)) return undefined;
+		const inner = parseEditedNodes(held.nodes ?? [], depth + 1);
+		if (inner === undefined) return undefined;
+		nodes.push({ tag: held.tag, nodes: inner });
+	}
+	return nodes;
+}
+
+/** The words of a node list as one string: what a supplied prop or an ask carries. */
+export function flatText(nodes: readonly EditedNode[]): string {
+	return nodes.map((node) => ("text" in node ? node.text : node.tag === "br" ? "\n" : flatText(node.nodes))).join("");
+}
 
 const STAMP = /^[^\s:]+:\d+:\d+$/;
 
@@ -318,7 +361,9 @@ type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
 function planOne(source: string, program: Node, element: Element, op: HandOp): OnePlan {
 	switch (op.kind) {
 		case "set-text":
-			return planText(source, element, op.text);
+			return planText(source, element, op.nodes);
+		case "set-supplied":
+			return planSupplied(source, element, op.prop, op.text);
 		case "set-attribute":
 			return planAttribute(source, element, op.name, op.value);
 		case "set-asset":
@@ -373,60 +418,275 @@ function planClass(source: string, element: Element, edits: readonly ClassEdit[]
 	return { patches: [fill(element, "className", className, slot)] };
 }
 
-function planText(source: string, element: Element, text: string): OnePlan {
+/**
+ * The words, in place (#314).
+ *
+ * The rule is about the file and not the DOM: every child of the element at
+ * the stamp is JSX text, a line break, a string in braces, or an inline
+ * element whose children pass the same rule. An expression child refuses and
+ * is named, because it is code. What the frame hands back is its child nodes,
+ * and each text node maps to the JSX child at the same index and rewrites its
+ * range with the lane's escaping; a child the hand did not touch is not
+ * written, so the file keeps its spelling there.
+ *
+ * Inline elements anchor the mapping and must still be there, in order. Text
+ * between two anchors is a run: while the browser kept the run's shape the
+ * nodes map one to one, and once it merged or split them the run is written
+ * whole. A `<br/>` is part of a run rather than an anchor, because deleting
+ * across a line break is the most ordinary edit there is.
+ */
+function planText(source: string, element: Element, nodes: readonly EditedNode[]): OnePlan {
 	if (element.mapped) return { refusal: { code: "mapped-text", says: "the words are data, not design" } };
-	// layout whitespace and a JSX comment are both things the frame does not
-	// show, so neither one is any part of the element's words
-	const children = element.children.filter((child) =>
+	if (element.selfClosing) return { refusal: { code: "no-text", says: "no text of its own" } };
+	const refused = textRule(source, element.children);
+	if (refused !== undefined) return { refusal: refused };
+	return planChildren(source, spoken(source, element.children), element.openEnd, nodes);
+}
+
+/**
+ * Whose words the element at a stamp carries (#314): its own, or ones a call
+ * site supplies as `{children}` or a prop name standing alone between the
+ * tags. Nothing when the stamp hits nothing.
+ */
+export function textOwner(
+	source: string,
+	line: number,
+	column: number,
+): { kind: "own" } | { kind: "supplied"; prop: string } | undefined {
+	let program: Node;
+	try {
+		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+	} catch {
+		return undefined;
+	}
+	const element = elementAt(program, line, column);
+	if (element === undefined) return undefined;
+	const children = spoken(source, element.children);
+	const only = children.length === 1 ? children[0] : undefined;
+	if (only?.type === "JSXExpressionContainer" && only.expression.type === "Identifier") {
+		return { kind: "supplied", prop: only.expression.name };
+	}
+	return { kind: "own" };
+}
+
+/**
+ * How a write moved the stamps around it (#314): every element on the same
+ * line after a patch shifts by the characters it added or took, and a frame
+ * that is not reloaded carries those stamps on. Nothing when a patch crossed
+ * a line, because then the lines under it moved too and only a reload says
+ * where to.
+ */
+export interface StampShift {
+	line: number;
+	column: number;
+	delta: number;
+}
+
+export function shiftsOf(source: string, patches: readonly SpanPatch[]): StampShift[] | null {
+	const shifts: StampShift[] = [];
+	for (const patch of patches) {
+		const replaced = source.slice(patch.start, patch.end);
+		if (replaced.includes("\n") || patch.text.includes("\n")) return null;
+		const before = source.slice(0, patch.start);
+		const line = before.split("\n").length;
+		const column = patch.start - (before.lastIndexOf("\n") + 1) + 1;
+		shifts.push({ line, column, delta: patch.text.length - replaced.length });
+	}
+	return shifts;
+}
+
+function planSupplied(source: string, call: Element, prop: string, text: string): OnePlan {
+	const computed: OnePlan = {
+		refusal: { code: "supplied-text", says: `${prop} is computed at the call site` },
+	};
+	if (prop === "children") {
+		if (call.selfClosing) return computed;
+		const children = spoken(source, call.children);
+		if (children.length === 0 || children.some((child) => !isTextish(child))) return computed;
+		return { patches: [runPatch(source, children, call.openEnd, [{ text }])] };
+	}
+	const held = attributeNamed(call, prop);
+	if (held === undefined) return computed;
+	if (held.value?.type === "JSXExpressionContainer" && held.value.expression.type === "StringLiteral") {
+		const literal = held.value.expression;
+		return { patches: [{ start: nodeStart(literal), end: nodeEnd(literal), text: jsonString(text) }] };
+	}
+	const slot = slotOf(source, held);
+	if (slot?.kind !== "literal") return computed;
+	// a raw line break in an attribute is legal, and it would move the stamp of
+	// every element under it, so typed ones are written as the entity
+	const escaped = escapeAttribute(text).replaceAll("\n", "&#10;").replaceAll("\r", "&#13;");
+	return { patches: [narrowed(slot.start, slot.raw, escaped)] };
+}
+
+type Child = JSXElement["children"][number];
+
+/** The children the frame draws: layout whitespace and JSX comments are neither words nor nodes. */
+function spoken(source: string, children: readonly Child[]): Child[] {
+	return children.filter((child) =>
 		child.type === "JSXText"
 			? !isLayoutOnly(rawOf(source, child))
 			: !(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression"),
 	);
-	const spoken = children.find(
-		(child) =>
-			child.type !== "JSXText" &&
-			!(child.type === "JSXExpressionContainer" && child.expression.type === "StringLiteral"),
-	);
-	if (spoken !== undefined) {
-		const says = source.slice(nodeStart(spoken), nodeEnd(spoken));
-		if (spoken.type === "JSXExpressionContainer") {
-			return { refusal: { code: "expression-text", says: "the text is an expression", expression: says } };
-		}
-		return { refusal: { code: "no-text", says: "no text of its own", expression: says } };
-	}
-	const own = children[0];
-	if (
-		children.some((child) => child.type === "JSXExpressionContainer") ||
-		text.includes("\n") ||
-		text === "" ||
-		children.length > 1
-	) {
-		const last = children.at(-1);
-		return {
-			patches: [
-				{
-					start: own ? nodeStart(own) : element.openEnd,
-					end: last ? nodeEnd(last) : element.openEnd,
-					text: `{${JSON.stringify(text)}}`,
-				},
-			],
-		};
-	}
-	if (own !== undefined) return { patches: [coreOf(source, own, text)] };
-	// nothing but layout between the tags: the words go where they would have
-	// been written, inside whatever indentation is already there
-	const layout = element.children.find((child) => child.type === "JSXText");
-	if (layout !== undefined) return { patches: [coreOf(source, layout, text)] };
-	// a self-closing element has no inside to write into, and giving it one
-	// would be authoring rather than adjusting
-	if (element.selfClosing) return { refusal: { code: "no-text", says: "no text of its own" } };
-	return { patches: [{ start: element.openEnd, end: element.openEnd, text: writeJsxText(text) }] };
 }
 
-function coreOf(source: string, child: Node, text: string): SpanPatch {
+/** A child that is words: JSX text, or a string in braces. */
+function isTextish(child: Child): boolean {
+	return (
+		child.type === "JSXText" || (child.type === "JSXExpressionContainer" && child.expression.type === "StringLiteral")
+	);
+}
+
+function isBreak(child: Child): boolean {
+	return child.type === "JSXElement" && nameOf(child.openingElement.name) === "br" && child.children.length === 0;
+}
+
+/** Why these children are not words a hand may write, or nothing when they are. */
+function textRule(source: string, children: readonly Child[]): PatchRefusal | undefined {
+	for (const child of spoken(source, children)) {
+		if (isTextish(child) || isBreak(child)) continue;
+		const says = rawOf(source, child);
+		if (child.type === "JSXElement") {
+			const tag = nameOf(child.openingElement.name);
+			if (!INLINE_TAGS.has(tag)) {
+				return { code: "no-text", says: `<${tag}> is not inline text; edit it in code or ask the agent` };
+			}
+			const inner = textRule(source, child.children);
+			if (inner !== undefined) return inner;
+			continue;
+		}
+		return {
+			code: "expression-text",
+			says: `${says} is an expression; edit it in code or ask the agent`,
+			expression: says,
+		};
+	}
+	return undefined;
+}
+
+const RESHAPED: PatchRefusal = {
+	code: "text-shape",
+	says: "the words changed shape; edit it in code or ask the agent",
+};
+
+function planChildren(
+	source: string,
+	children: readonly Child[],
+	openEnd: number,
+	nodes: readonly EditedNode[],
+): OnePlan {
+	const anchors = children.filter((child): child is JSXElement => child.type === "JSXElement" && !isBreak(child));
+	const held = nodes.filter(
+		(node): node is { tag: string; nodes: readonly EditedNode[] } => "tag" in node && node.tag !== "br",
+	);
+	if (anchors.length !== held.length) return { refusal: RESHAPED };
+	const patches: SpanPatch[] = [];
+	let at = 0;
+	let from = 0;
+	for (const [index, anchor] of anchors.entries()) {
+		const node = held[index];
+		if (node === undefined || nameOf(anchor.openingElement.name) !== node.tag) return { refusal: RESHAPED };
+		const run = planRun(
+			source,
+			children.slice(at, children.indexOf(anchor)),
+			nodes.slice(from, nodes.indexOf(node)),
+			insertionBefore(children, at, openEnd),
+		);
+		if ("refusal" in run) return run;
+		patches.push(...run.patches);
+		const inner = planChildren(source, spoken(source, anchor.children), nodeEnd(anchor.openingElement), node.nodes);
+		if ("refusal" in inner) return inner;
+		patches.push(...inner.patches);
+		at = children.indexOf(anchor) + 1;
+		from = nodes.indexOf(node) + 1;
+	}
+	const tail = planRun(source, children.slice(at), nodes.slice(from), insertionBefore(children, at, openEnd));
+	if ("refusal" in tail) return tail;
+	patches.push(...tail.patches);
+	return { patches };
+}
+
+/** Where words go when a run has none: past the anchor before it, or past the opening tag. */
+function insertionBefore(children: readonly Child[], at: number, openEnd: number): number {
+	const before = children[at - 1];
+	return before === undefined ? openEnd : nodeEnd(before);
+}
+
+/**
+ * One run of words against the nodes the frame has for it. The same shape
+ * maps one to one and writes only what changed; any other shape is written
+ * whole, which is the one place the file's own spelling of a run gives way.
+ */
+function planRun(source: string, run: readonly Child[], nodes: readonly EditedNode[], insertAt: number): OnePlan {
+	const kinds = (child: Child) => (isBreak(child) ? "br" : "text");
+	const same =
+		run.length === nodes.length &&
+		run.every((child, index) => {
+			const node = nodes[index];
+			return (
+				node !== undefined &&
+				("text" in node ? kinds(child) === "text" : node.tag === "br" && kinds(child) === "br")
+			);
+		});
+	if (same) {
+		const patches: SpanPatch[] = [];
+		for (const [index, child] of run.entries()) {
+			const node = nodes[index];
+			if (node === undefined || !("text" in node)) continue;
+			const text = plainText(node.text);
+			if (text === shown(source, child)) continue;
+			patches.push(textPatch(source, child, text));
+		}
+		return { patches };
+	}
+	if (nodes.some((node) => "tag" in node && node.tag !== "br")) return { refusal: RESHAPED };
+	if (run.length === 0) return { patches: [{ start: insertAt, end: insertAt, text: serialize(nodes) }] };
+	return { patches: [runPatch(source, run, insertAt, nodes)] };
+}
+
+/** A whole run rewritten between the indentation it sits in. */
+function runPatch(source: string, run: readonly Child[], insertAt: number, nodes: readonly EditedNode[]): SpanPatch {
+	const first = run[0];
+	const last = run[run.length - 1];
+	if (first === undefined || last === undefined) return { start: insertAt, end: insertAt, text: serialize(nodes) };
+	const lead = first.type === "JSXText" ? textCore(rawOf(source, first)).start : 0;
+	const trail = last.type === "JSXText" ? rawOf(source, last).length - textCore(rawOf(source, last)).end : 0;
+	return { start: nodeStart(first) + lead, end: nodeEnd(last) - trail, text: serialize(nodes) };
+}
+
+function serialize(nodes: readonly EditedNode[]): string {
+	return nodes
+		.map((node) => ("text" in node ? writeJsxText(plainText(node.text)) : node.tag === "br" ? "<br/>" : ""))
+		.join("");
+}
+
+/** What the frame shows for one words child, which is what an unchanged node is measured against. */
+function shown(source: string, child: Child): string {
+	if (child.type === "JSXText") return readJsxText(rawOf(source, child));
+	if (child.type === "JSXExpressionContainer" && child.expression.type === "StringLiteral") {
+		return child.expression.value;
+	}
+	return "";
+}
+
+function textPatch(source: string, child: Child, text: string): SpanPatch {
+	if (child.type === "JSXExpressionContainer" && child.expression.type === "StringLiteral") {
+		const literal = child.expression;
+		return { start: nodeStart(literal), end: nodeEnd(literal), text: jsonString(text) };
+	}
 	const raw = rawOf(source, child);
 	const core = textCore(raw);
 	return { start: nodeStart(child) + core.start, end: nodeStart(child) + core.end, text: writeJsxText(text) };
+}
+
+/** A no-break space the editor minted to keep a trailing space visible is a space. */
+function plainText(text: string): string {
+	return text.replaceAll("\u00a0", " ");
+}
+
+/** A string literal as JS spells it, kept on one line: a raw separator would move every stamp under it. */
+function jsonString(text: string): string {
+	return JSON.stringify(text).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
 }
 
 function planAttribute(source: string, element: Element, name: string, value: string): OnePlan {
@@ -457,7 +717,7 @@ function planAttribute(source: string, element: Element, name: string, value: st
 				{
 					start: nodeStart(literal),
 					end: nodeEnd(literal),
-					text: JSON.stringify(value).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029"),
+					text: jsonString(value),
 				},
 			],
 		};

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { applySpan, fingerprintOf, type HandOp, planOps, readElements, spanBetween } from "./hand-write";
+import {
+	applySpan,
+	fingerprintOf,
+	type HandOp,
+	planOps,
+	readElements,
+	shiftsOf,
+	spanBetween,
+	textOwner,
+} from "./hand-write";
 import { readJsxText } from "./jsx-text";
 
 /**
@@ -132,35 +141,196 @@ describe("set-class", () => {
 	});
 });
 
+const text = (words: string) => [{ text: words }];
+
 describe("set-text", () => {
 	it("replaces the words and keeps the author's indentation", () => {
-		const text = written([{ kind: "set-text", source: stamp(FRAME, "<button"), text: "Pay later" }]);
-		expect(text).toContain("\t\t\t\tPay later\n\t\t\t</button>");
+		const after = written([{ kind: "set-text", source: stamp(FRAME, "<button"), nodes: text("Pay later") }]);
+		expect(after).toContain("\t\t\t\tPay later\n\t\t\t</button>");
 	});
 
 	it("writes braces, quotes and ampersands as the entities that read back", () => {
-		const text = written([{ kind: "set-text", source: stamp(FRAME, "<h1"), text: 'Tom & {Jerry} say "hi"' }]);
-		expect(text).toContain('<h1 className="text-lg">Tom &amp; &#123;Jerry&#125; say "hi"</h1>');
+		const after = written([{ kind: "set-text", source: stamp(FRAME, "<h1"), nodes: text('Tom & {Jerry} say "hi"') }]);
+		expect(after).toContain('<h1 className="text-lg">Tom &amp; &#123;Jerry&#125; say "hi"</h1>');
 	});
 
 	it("refuses an expression child and names it", () => {
-		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<span"), text: "x" }])).toEqual({
+		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<span"), nodes: text("x") }])).toEqual({
 			code: "expression-text",
-			says: "the text is an expression",
+			says: "{count} is an expression; edit it in code or ask the agent",
 			expression: "{count}",
 		});
 	});
 
 	it("refuses the words of a mapped row, because they are data", () => {
-		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<li"), text: "x" }])).toEqual({
+		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<li"), nodes: text("x") }])).toEqual({
 			code: "mapped-text",
 			says: "the words are data, not design",
 		});
 	});
 
-	it("refuses an element whose content is other elements", () => {
-		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<main"), text: "x" }]).code).toBe("no-text");
-		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<img"), text: "x" }]).code).toBe("no-text");
+	it("refuses an element whose content is block elements, and one with no inside", () => {
+		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<main"), nodes: text("x") }]).code).toBe("no-text");
+		expect(refusal([{ kind: "set-text", source: stamp(FRAME, "<img"), nodes: text("x") }]).code).toBe("no-text");
+	});
+});
+
+/**
+ * The rule the words live by (#314): every child is text, a line break, a
+ * string in braces or an inline element passing the same rule; and the map
+ * from the frame's child nodes to the file's children, index for index.
+ */
+describe("mixed content", () => {
+	const VEIL = `export default function Veil() {
+  return <section className="veil-intro"><h1>Make something<br/><span className="serif"><i>worth feeling.</i></span></h1><p>Independent design.<br/>Made with instinct.<br/>Built with intention.</p><h2>Ideas that stay<br/>with you.</h2><p className="note">Hello {"there"} <b>friend</b>{title}</p></section>;
+}
+`;
+	const at = (snippet: string) => stamp(VEIL, snippet);
+	const br = { tag: "br", nodes: [] };
+
+	it("maps each text node to the child at the same index, through an inline element", () => {
+		const after = written(
+			[
+				{
+					kind: "set-text",
+					source: at("<h1"),
+					nodes: [
+						{ text: "Make something & more" },
+						br,
+						{ tag: "span", nodes: [{ tag: "i", nodes: text("worth it.") }] },
+					],
+				},
+			],
+			VEIL,
+		);
+		expect(after).toContain('<h1>Make something &amp; more<br/><span className="serif"><i>worth it.</i></span></h1>');
+		// and nothing else moved
+		expect(spanBetween(VEIL, after).start).toBe(VEIL.indexOf("Make something") + "Make something".length);
+	});
+
+	it("writes only the nodes that changed, so untouched spelling stays", () => {
+		const after = written(
+			[{ kind: "set-text", source: at("<h2"), nodes: [{ text: "Ideas that stay" }, br, { text: "with us." }] }],
+			VEIL,
+		);
+		expect(after).toContain("<h2>Ideas that stay<br/>with us.</h2>");
+		expect(after.length - VEIL.length).toBe(-1);
+	});
+
+	it("writes a run whole once the browser merged across a line break", () => {
+		const after = written(
+			[
+				{
+					kind: "set-text",
+					source: at("<p>Independent"),
+					nodes: [{ text: "Independent design. Made with instinct." }, br, { text: "Built well." }],
+				},
+			],
+			VEIL,
+		);
+		expect(after).toContain("<p>Independent design. Made with instinct.<br/>Built well.</p>");
+	});
+
+	it("adds a line break the hand typed and drops words it deleted", () => {
+		const after = written(
+			[
+				{
+					kind: "set-text",
+					source: at("<h2"),
+					nodes: [{ text: "Ideas" }, br, { text: "that" }, br, { text: "stay" }],
+				},
+			],
+			VEIL,
+		);
+		expect(after).toContain("<h2>Ideas<br/>that<br/>stay</h2>");
+	});
+
+	it("refuses when an inline element went missing, and names the expression it finds", () => {
+		expect(refusal([{ kind: "set-text", source: at("<h1"), nodes: [{ text: "Make" }, br] }], VEIL).code).toBe(
+			"text-shape",
+		);
+		expect(refusal([{ kind: "set-text", source: at('<p className="note"'), nodes: text("x") }], VEIL)).toEqual({
+			code: "expression-text",
+			says: "{title} is an expression; edit it in code or ask the agent",
+			expression: "{title}",
+		});
+	});
+
+	it("rewrites a string in braces as one, and a no-break space as a space", () => {
+		const source = VEIL.replace("{title}", "");
+		const after = written(
+			[
+				{
+					kind: "set-text",
+					source: stamp(source, '<p className="note"'),
+					nodes: [{ text: "Hi\u00a0" }, { text: 'th"ere' }, { text: " " }, { tag: "b", nodes: text("friend") }],
+				},
+			],
+			source,
+		);
+		expect(after).toContain('<p className="note">Hi&#32;{"th\\"ere"} <b>friend</b></p>');
+	});
+
+	it("says whose words an element carries", () => {
+		const PARTS = `export function Footer({ name, note }: { name: string; note: string }) {
+  return <footer className="page-footer"><a href="#top">{name}</a><span>{note}</span><a href="#top">Back to top</a></footer>;
+}
+export function Link({ children }: { children: ReactNode }) {
+  return <a>{children}</a>;
+}
+`;
+		const owner = (snippet: string) => {
+			const [, line, column] = stamp(PARTS, snippet).split(":");
+			return textOwner(PARTS, Number(line), Number(column));
+		};
+		expect(owner("<span>")).toEqual({ kind: "supplied", prop: "note" });
+		expect(owner("<a>{children}")).toEqual({ kind: "supplied", prop: "children" });
+		expect(owner('<a href="#top">Back')).toEqual({ kind: "own" });
+		expect(owner("<footer")).toEqual({ kind: "own" });
+		expect(textOwner(PARTS, 99, 1)).toBeUndefined();
+	});
+
+	it("writes supplied words at the call site, as an attribute or as children", () => {
+		const CALLS = `export default function Page() {
+  return <main><Link className="bordered" href="#work">Explore the studio</Link><Footer name="veil" note="Independent by nature."/><Card title={heading}/></main>;
+}
+`;
+		const after = written(
+			[
+				{ kind: "set-supplied", source: stamp(CALLS, "<Footer"), prop: "note", text: 'Curious & "bold"\nalways' },
+				{ kind: "set-supplied", source: stamp(CALLS, "<Link"), prop: "children", text: "Explore <us>" },
+			],
+			CALLS,
+		);
+		expect(after).toContain('<Footer name="veil" note="Curious &amp; &quot;bold&quot;&#10;always"/>');
+		expect(after).toContain('href="#work">Explore &lt;us&gt;</Link>');
+		expect(
+			refusal([{ kind: "set-supplied", source: stamp(CALLS, "<Card"), prop: "title", text: "x" }], CALLS),
+		).toEqual({
+			code: "supplied-text",
+			says: "title is computed at the call site",
+		});
+		expect(
+			refusal([{ kind: "set-supplied", source: stamp(CALLS, "<Card"), prop: "note", text: "x" }], CALLS).code,
+		).toBe("supplied-text");
+	});
+
+	it("says how a write moved the stamps on its line", () => {
+		const planned = plan(
+			[
+				{
+					kind: "set-text",
+					source: at("<h1"),
+					nodes: [{ text: "Make" }, br, { tag: "span", nodes: [{ tag: "i", nodes: text("worth feeling.") }] }],
+				},
+			],
+			VEIL,
+		);
+		if (!planned.ok) throw new Error(planned.refusal.says);
+		const column = VEIL.indexOf("Make something") - VEIL.lastIndexOf("\n", VEIL.indexOf("Make something"));
+		expect(shiftsOf(VEIL, planned.patches)).toEqual([{ line: 2, column, delta: -"something ".length }]);
+		// a patch across a line break moves the lines under it, and only a reload can say where
+		expect(shiftsOf("a\nb", [{ start: 0, end: 2, text: "" }])).toBeNull();
 	});
 });
 
@@ -238,12 +408,12 @@ describe("all of them or none", () => {
 	});
 
 	it("applies two ops on two elements against the offsets the canvas read", () => {
-		const text = written([
-			{ kind: "set-text", source: stamp(FRAME, "<h1"), text: "Basket" },
+		const after = written([
+			{ kind: "set-text", source: stamp(FRAME, "<h1"), nodes: text("Basket") },
 			{ kind: "set-class", source: stamp(FRAME, "<main"), token: "p-8", scope: "" },
 		]);
-		expect(text).toContain(">Basket</h1>");
-		expect(text).toContain("gap-2 p-8");
+		expect(after).toContain(">Basket</h1>");
+		expect(after).toContain("gap-2 p-8");
 	});
 });
 
@@ -293,9 +463,10 @@ describe("the round trip an edit makes", () => {
 		return readJsxText(source.slice(source.lastIndexOf(">", closing) + 1, closing));
 	}
 
-	it.each(typed)("puts %j into the file and reads it back out of the frame", (text) => {
+	it.each(typed)("puts %j into the file and reads it back out of the frame", (words) => {
 		const source = stamp(FRAME, "<button");
-		const after = written([{ kind: "set-text", source, text }]);
+		const text = words;
+		const after = written([{ kind: "set-text", source, nodes: [{ text }] }]);
 		expect(drawn(after)).toBe(text);
 		// and the file is the file everywhere the words are not, down to the
 		// author's indentation on the lines either side of them
@@ -306,7 +477,7 @@ describe("the round trip an edit makes", () => {
 
 	it("puts the words back byte for byte when the edit is undone", () => {
 		const source = stamp(FRAME, "<button");
-		const after = written([{ kind: "set-text", source, text: '{a} & "b"' }]);
+		const after = written([{ kind: "set-text", source, nodes: text('{a} & "b"') }]);
 		expect(after).not.toBe(FRAME);
 		expect(applySpan(after, spanBetween(FRAME, after))).toBe(FRAME);
 	});
