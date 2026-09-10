@@ -293,8 +293,11 @@ export function writtenLength(signed: string): WrittenLength | null {
 }
 
 /**
- * Explicit units are custom values. Bare spacing numbers deliberately keep
- * their scale reference; equal pixels never choose that reference for a person.
+ * What typed text means to a length field. Explicit units are custom values,
+ * and so is a bare number in a spacing field: `700` typed into width is
+ * 700px, never `w-700` (#315) — a scale reference is chosen from the token
+ * menu, where the scale is visible, not inferred from a number that looks
+ * like one. Counts, percents, degrees and milliseconds keep their own units.
  */
 export function parseTyped(kind: Kind, typed: string): { value: string; negative: boolean } | null {
 	let text = typed.trim().replace(/\s+/g, "_");
@@ -313,6 +316,7 @@ export function parseTyped(kind: Kind, typed: string): { value: string; negative
 		if (kind === "count" && (unit !== undefined || hasFraction(number[1]))) return null;
 		if (unit !== undefined) return { value: `[${number[1]}${unit}]`, negative };
 		const value = number[1].startsWith(".") ? `0${number[1]}` : number[1];
+		if (kind === "spacing") return { value: `[${value}px]`, negative };
 		return numericCandidate(kind, value, negative);
 	}
 	if (kind === "spacing" && /^\d+\/\d+$/.test(text) && BigInt(text.split("/")[1]!) !== 0n)

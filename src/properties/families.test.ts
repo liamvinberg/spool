@@ -74,7 +74,9 @@ describe("a written length taken back apart", () => {
 
 describe("a number box takes a sign, a fraction and a unit", () => {
 	it("reads what was typed as what the class would say", () => {
-		expect(parseTyped("spacing", "-4")).toEqual({ value: "4", negative: true });
+		// a bare number is pixels (#315): `700` is never `w-700`, which is 2800px
+		expect(parseTyped("spacing", "-4")).toEqual({ value: "[4px]", negative: true });
+		expect(parseTyped("spacing", "700")).toEqual({ value: "[700px]", negative: false });
 		expect(parseTyped("spacing", "50%")).toEqual({ value: "[50%]", negative: false });
 		expect(parseTyped("spacing", "1/2")).toEqual({ value: "1/2", negative: false });
 		expect(parseTyped("spacing", "347px")).toEqual({ value: "[347px]", negative: false });
