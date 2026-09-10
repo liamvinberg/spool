@@ -9,6 +9,7 @@ const pick = (over: Partial<PickedSelection> = {}): PickedSelection => ({
 	outerHtml: "<h1>Pay now</h1>",
 	rect: { x: 10, y: 10, w: 100, h: 40 },
 	radius: 0,
+	words: true,
 	source: "frames/cart/frame.tsx:7:4",
 	generated: false,
 	...over,
@@ -43,6 +44,11 @@ describe("the second click", () => {
 
 	it("is nothing at all with nothing held, which is the click that selects", () => {
 		expect(secondClick([], "cart", { x: 20, y: 20 })).toBeUndefined();
+	});
+
+	it("is not a press on a container, which holds rungs rather than words (#322)", () => {
+		expect(secondClick([pick({ words: false })], "cart", { x: 20, y: 20 })).toBeUndefined();
+		expect(secondClick([pick({ words: undefined })], "cart", { x: 20, y: 20 })).toBeUndefined();
 	});
 });
 

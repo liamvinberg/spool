@@ -147,6 +147,11 @@ export function stampOf(pick: PickedSelection): string | Refusal {
  * beneath it to descend to. One rung only: a second click has to mean one
  * element, and the press has to land inside the box that element is drawn in,
  * so a click onto a sibling reads as a move of the selection instead.
+ *
+ * Words of its own is the whole of it (#322). A container holds rungs, not
+ * text, and the clicks landing in it mean the one under the pointer; an edit
+ * opened on it would hand the page the pointer across everything it contains,
+ * so the double-click meant for the rung beneath would land in the prototype.
  */
 export function secondClick(
 	picks: readonly PickedSelection[],
@@ -154,7 +159,7 @@ export function secondClick(
 	local: Point,
 ): PickedSelection | undefined {
 	const only = picks.length === 1 ? picks[0] : undefined;
-	if (only === undefined || only.frame !== frame) return undefined;
+	if (only === undefined || only.frame !== frame || only.words !== true) return undefined;
 	const { x, y, w, h } = only.rect;
 	const inside = local.x >= x && local.x <= x + w && local.y >= y && local.y <= y + h;
 	return inside ? only : undefined;

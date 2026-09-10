@@ -234,3 +234,58 @@ it("keeps its targets off a small element, its ring on the box, and scrubs unbou
 	// one write for the whole gesture, however many samples it drew
 	expect(requests.taken().filter((sent) => sent.endsWith("/class"))).toHaveLength(1);
 });
+
+it("picks the block under the pointer before it opens any words", { timeout: 240_000 }, async () => {
+	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 600 });
+	const { page, frame } = f;
+	const held = () => heldTag(f.project);
+	const editable = () => frame.locator("[contenteditable]").count();
+	const pointerEvents = () =>
+		page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents);
+
+	const words = await frame.locator("#details h2").boundingBox();
+	if (words === null) throw new Error("the veil page drew no work heading");
+	const at = { x: words.x + 30, y: words.y + 14 };
+
+	await page.getByRole("button", { name: "edit", exact: true }).click();
+
+	await page.mouse.click(at.x, at.y);
+	await expect.poll(held, { timeout: 15_000 }).toBe("section");
+
+	// a click on the section it is already holding is not the words gesture: a
+	// container has no words of its own, and an edit opened on one would hand
+	// the page the pointer everywhere inside it (#322)
+	await page.mouse.click(at.x, at.y);
+	await page.waitForTimeout(600);
+	expect(await editable()).toBe(0);
+	expect(await pointerEvents()).toBe("none");
+	await expect.poll(held, { timeout: 15_000 }).toBe("section");
+
+	// with the section held, the two clicks mean the rung under the pointer —
+	// the block the heading sits in — and never the words at the bottom of it
+	await page.mouse.dblclick(at.x, at.y);
+	await expect.poll(held, { timeout: 15_000 }).toBe("div");
+	expect(await editable()).toBe(0);
+
+	await page.mouse.dblclick(at.x, at.y);
+	await expect.poll(held, { timeout: 15_000 }).toBe("h2");
+	expect(await editable()).toBe(0);
+
+	// only on the element already held, and only where it has words of its own
+	await page.mouse.dblclick(at.x, at.y);
+	await expect
+		.poll(() => frame.locator("#details h2").getAttribute("contenteditable"), { timeout: 15_000 })
+		.toBe("plaintext-only");
+
+	// and ⌫ on the held heading takes it out of the file
+	await page.keyboard.press("Escape");
+	await expect.poll(() => frame.locator("#details h2").getAttribute("contenteditable"), { timeout: 15_000 }).toBe(null);
+	await expect.poll(held, { timeout: 15_000 }).toBe("h2");
+	// the frame holds the keyboard until its own answer lands, so ⌫ waits
+	await expect
+		.poll(() => page.evaluate(() => document.activeElement?.getAttribute("role") ?? "none"), { timeout: 15_000 })
+		.toBe("application");
+	await page.keyboard.press("Backspace");
+	await expect.poll(() => frame.locator("#details h2").count(), { timeout: 15_000 }).toBe(0);
+	await expect.poll(() => f.bytes().includes("Ideas stay"), { timeout: 15_000 }).toBe(false);
+});

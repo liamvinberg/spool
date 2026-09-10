@@ -154,7 +154,9 @@ export function Footer({ name, note }: { name: string; note: string }) {
 /**
  * The veil page: the h1 wears its size as a class, the art block the width a
  * drag wrote, the marks row the gap a band stands over, the action its colour
- * and radius; the voice block and the mono span are design/'s own.
+ * and radius; the voice block and the mono span are design/'s own. The work
+ * section is the one block with a rung between the section and its words: a
+ * container holding a heading, which is what a descent has to stop on (#322).
  */
 export const VEIL_PAGE = `import { cn } from '../../shared/lib/utils';
 import { Arrow, Footer, Link } from '../../shared/ui/page-parts';
@@ -171,6 +173,7 @@ export default function Veil() {
     <span id="mono" className={MONO}>canvas-chrome.tsx</span>
     <div id="marks" className="flex gap-4"><span className="mark">01</span><span className="mark">02</span></div>
     <a id="cta" className="rounded-md bg-[#c96a3c] p-3 text-white" href="#work">Explore</a>
+    <section className="veil-work" id="work"><div id="details"><h2>Ideas stay<br/>with you.</h2><Link className="line" href="#projects">Selected projects</Link></div></section>
     <Footer name="veil®" note="Independent by nature. Curious by default."/>
   </main>;
 }
