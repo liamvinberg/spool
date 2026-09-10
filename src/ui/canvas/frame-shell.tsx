@@ -118,8 +118,10 @@ export const FrameShell = memo(function FrameShell({
 	 * the iframe goes white, the still comes back, and the frame the words were
 	 * just typed into blinks its old self at you. So a self-caused reload keeps
 	 * the outgoing document mounted, on top and inert, until the incoming one
-	 * reports loaded — its last paint held, exactly as it was, then swapped.
-	 * The canvas owns the timing, because it is the one that hears the report.
+	 * reports arrived — its last paint held, exactly as it was, then swapped
+	 * onto a settled document rather than onto the still that covers a loaded
+	 * one until it settles. The canvas owns the timing, because it is the one
+	 * that hears the report.
 	 */
 	holdNonce: number | null;
 	/** The frame's immutable cover image, absent when it has none to show. */

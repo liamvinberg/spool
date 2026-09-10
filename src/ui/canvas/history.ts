@@ -111,6 +111,8 @@ export type HistoryEntry =
 			// running this entry leaves it wearing, flipped with the patch when it is
 			// amended
 			readonly classes?: { readonly selector: string; readonly from: string; readonly to: string };
+			/** the other frames rendering a shared file the patch is on (#318), whose paint a run holds */
+			readonly frames?: readonly string[];
 	  }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {

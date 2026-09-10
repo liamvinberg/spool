@@ -180,7 +180,15 @@ import {
 } from "./overlays";
 import { PageObjectLabel, PageObjectView } from "./page-object";
 import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
-import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
+import {
+	camerasFromState,
+	frameFolderRel,
+	frameSourcePath,
+	pageOf,
+	resolveActivePage,
+	stateCameraSlots,
+	switchPage,
+} from "./pages";
 import { type Held, PropertiesRail } from "./properties-rail";
 import { BASE, scopedClass } from "./properties-scope";
 import { classEditsOf, type PropertyControls, type PropertyValue } from "./property-controls";
@@ -721,11 +729,12 @@ export function ProjectCanvas({
 	const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	/**
 	 * The frames the hand has saved and is still in (#314): the stamp it last
-	 * wrote through and the fingerprint the file has now. A change the watcher
+	 * wrote through, the fingerprint the file has now, and whether that file is
+	 * the frame's own or a shared definition's (#318). A change the watcher
 	 * reports on one of these is asked about before it reloads anything, and
 	 * the frame reloads behind its hold the moment the hand leaves it.
 	 */
-	const saved = useRef(new Map<string, { source: string; fingerprint: string }>());
+	const saved = useRef(new Map<string, { source: string; fingerprint: string; own: boolean }>());
 	/** the measurement overlay's own replies (#261), on the same id sequence */
 	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
 	const sizingWaiters = useRef(new Map<number, (sizing: ElementSizing | null) => void>());
@@ -902,7 +911,7 @@ export function ProjectCanvas({
 			?.contentWindow?.postMessage({ spool: "content-size", id: contentRequest.current }, "*");
 	}, [resizingFrame, resizingWidth, lifecycle.ready]);
 
-	/** The held document lets go: the one behind it has loaded, or given up. */
+	/** The held document lets go: the one behind it has arrived, or given up. */
 	const releaseHold = useCallback((frame: string) => {
 		clearTimeout(holdTimers.current.get(frame));
 		holdTimers.current.delete(frame);
@@ -936,9 +945,9 @@ export function ProjectCanvas({
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
 			// a reload the canvas caused holds its outgoing document on screen
-			// until the new one reports loaded (#253's no blink); the timer is the
-			// bound, because a document that never loads must not leave a dead one
-			// standing in front of it
+			// until the new one reports arrived (#253's no blink); the timer is the
+			// bound, because a document that never arrives must not leave a dead
+			// one standing in front of it
 			const was = docNoncesRef.current[frame] ?? 0;
 			// the mirror moves now rather than at the next render, so a second
 			// reload in the same tick holds the document it actually replaced
@@ -992,6 +1001,22 @@ export function ProjectCanvas({
 			reloadFrameDocument(frame);
 		},
 		[reloadFrameDocument],
+	);
+
+	/**
+	 * A change reported on the file a frame the hand saved is still showing
+	 * (#314, #318). The frame already shows what the hand wrote, so the file
+	 * is asked whether it is still that, and only a change from outside
+	 * reloads — and that one waits for the hand like any other (#319).
+	 */
+	const changedUnderHand = useCallback(
+		(frame: string, own: { source: string; fingerprint: string }) => {
+			void readRungs(project, frame, [own.source]).then((rungs) => {
+				if (saved.current.get(frame) !== own || rungs?.[0]?.fingerprint === own.fingerprint) return;
+				reloadOrHold(frame);
+			});
+		},
+		[project, reloadOrHold],
 	);
 
 	/**
@@ -1904,6 +1929,29 @@ export function ProjectCanvas({
 
 	// --- where a text write lands (#314) -----------------------------------------
 
+	/** Whether a write landed outside the frame's own folder: in a shared definition's file (#318). */
+	const sharedWrite = useCallback((frame: string, path: string): boolean => {
+		const held = allFramesRef.current.find((entry) => entry.name === frame);
+		return held === undefined || !path.startsWith(`design/${frameFolderRel(frame, pageOf(held))}`);
+	}, []);
+
+	/**
+	 * The other frames rendering a shared file the hand is about to write
+	 * (#318), read off the rung before the gesture. Each is showing a document
+	 * the file is about to stop saying, and the watcher's echo will reload it;
+	 * its last paint is held from here, before the write leaves, so that
+	 * reload lands behind the document on screen rather than through a still
+	 * of the old design — the echo can reach the canvas before the answer
+	 * does, so nothing about this may wait on the answer. A write that lands
+	 * somewhere else after all, or not at all, lets them go.
+	 */
+	const holdReaders = useCallback((frame: string, readers: readonly string[]) => {
+		for (const other of readers) if (other !== frame && iframes.current.has(other)) holdNext.current.add(other);
+	}, []);
+	const releaseReaders = useCallback((frame: string, readers: readonly string[]) => {
+		for (const other of readers) if (other !== frame) holdNext.current.delete(other);
+	}, []);
+
 	/** Whether the hand is still in a frame: selected, an element of it held, or entered. */
 	const frameHeld = useCallback(
 		(frame: string) =>
@@ -1922,6 +1970,7 @@ export function ProjectCanvas({
 	 * remembered as saved so the watcher's echo of this write reloads nothing
 	 * and leaving the frame does. A frame the hand had already left, or a
 	 * write only a reload can place, reloads behind its hold now.
+	 *
 	 */
 	const landed = useCallback(
 		(
@@ -1936,7 +1985,11 @@ export function ProjectCanvas({
 				reloadFrameDocument(frame);
 				return false;
 			}
-			saved.current.set(frame, { source: readAt, fingerprint: written.fingerprint });
+			saved.current.set(frame, {
+				source: readAt,
+				fingerprint: written.fingerprint,
+				own: !sharedWrite(frame, written.path),
+			});
 			const shifts = written.shifts;
 			if (!shifts.some((shift) => shift.delta !== 0)) return true;
 			const file = written.path.replace(/^design\//, "");
@@ -1951,7 +2004,7 @@ export function ProjectCanvas({
 			}
 			return true;
 		},
-		[frameHeld, holdChain, reloadFrameDocument],
+		[frameHeld, holdChain, reloadFrameDocument, sharedWrite],
 	);
 
 	/**
@@ -2011,12 +2064,15 @@ export function ProjectCanvas({
 	const walkHand = useCallback(
 		(entry: Extract<HistoryEntry, { kind: "hand" }>, way: Way, taking: History) => {
 			const classes = entry.classes;
+			const readers = entry.frames ?? [];
+			holdReaders(entry.frame, readers);
 			// a class change is swapped on the element rather than reloaded, so the
 			// answer has to carry the sheet the frame now compiles to
 			void revertPatch(project, entry.patch, classes === undefined ? undefined : entry.frame).then((reverted) => {
 				// a press that landed after this one owns the stacks now
 				if (history.current !== taking) return;
 				if (reverted === undefined || !reverted.ok) {
+					releaseReaders(entry.frame, readers);
 					updateHistory(drop(history.current, way));
 					setNotice({
 						kind: "error",
@@ -2054,7 +2110,7 @@ export function ProjectCanvas({
 				swapClass(entry.frame, classes.selector, change, held);
 			});
 		},
-		[landed, project, reloadFrameDocument, restoreWords, swapClass, updateHistory],
+		[holdReaders, landed, project, releaseReaders, reloadFrameDocument, restoreWords, swapClass, updateHistory],
 	);
 
 	/**
@@ -2607,6 +2663,11 @@ export function ProjectCanvas({
 				refuse({ code: "unread", says: "the file was never read; select the element again" });
 				return;
 			}
+			// the element's file may be a shared definition's; whether the words
+			// land there or at a call site in this frame's own file is the daemon's
+			// to say, so its readers are held now and let go if they did not
+			const readers = read?.source === held.source ? (read.shared?.frames ?? []) : [];
+			holdReaders(held.frame, readers);
 			void writeText(project, held.frame, {
 				source: held.source,
 				nodes,
@@ -2614,18 +2675,25 @@ export function ProjectCanvas({
 				...(owner === null ? {} : { owner }),
 			}).then((written) => {
 				if (written === undefined) {
+					releaseReaders(held.frame, readers);
 					refuse({ code: "failed", says: "the words did not reach the file" });
 					return;
 				}
 				if (!written.ok) {
+					releaseReaders(held.frame, readers);
 					refuse(written.refusal);
 					if (written.refusal.code === "stale-file") {
 						setSaves((current) => ({ ...current, [held.frame]: (current[held.frame] ?? 0) + 1 }));
 					}
 					return;
 				}
+				const shared = sharedWrite(held.frame, written.path);
+				if (!shared) releaseReaders(held.frame, readers);
 				// an edit that said what the file already said wrote nothing, and is no step
-				if (written.undo.start === written.undo.end && written.undo.text === "") return;
+				if (written.undo.start === written.undo.end && written.undo.text === "") {
+					releaseReaders(held.frame, readers);
+					return;
+				}
 				// the stamp in the file that was written: the element's own, or the
 				// call site's when the words were supplied there
 				const readAt = written.path === `design/${held.source.replace(/:\d+:\d+$/, "")}` ? held.source : owner;
@@ -2636,13 +2704,14 @@ export function ProjectCanvas({
 					edit: held.id,
 					patch: written.undo,
 					readAt: readAt ?? held.source,
+					...(shared ? { frames: readers } : {}),
 				});
 				if (written.uncaught === true) {
 					setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
 				}
 			});
 		},
-		[landed, project, recordEntry, restoreWords, setEdit, walkKin],
+		[holdReaders, landed, project, recordEntry, releaseReaders, restoreWords, setEdit, sharedWrite, walkKin],
 	);
 
 	// --- the class gesture (#315) ------------------------------------------------
@@ -2711,12 +2780,17 @@ export function ProjectCanvas({
 				refuse({ code: "unread", says: "the file was never read; select the element again" });
 				return;
 			}
+			// a shared definition's readers are held before the write leaves (#318)
+			const readers = read?.source === stamp ? (read.shared?.frames ?? []) : [];
+			holdReaders(pick.frame, readers);
 			void writeClass(project, pick.frame, { source: stamp, edits, fingerprint }).then((written) => {
 				if (written === undefined) {
+					releaseReaders(pick.frame, readers);
 					refuse({ code: "failed", says: "the class did not reach the file" });
 					return;
 				}
 				if (!written.ok) {
+					releaseReaders(pick.frame, readers);
 					refuse(written.refusal);
 					// a file that moved underneath is a fresh read of the rung
 					if (written.refusal.code === "stale-file") {
@@ -2724,7 +2798,11 @@ export function ProjectCanvas({
 					}
 					return;
 				}
+				const shared = sharedWrite(pick.frame, written.path);
 				// a change that said what the file already said wrote nothing, and is no step
+				if (!shared || (written.undo.start === written.undo.end && written.undo.text === "")) {
+					releaseReaders(pick.frame, readers);
+				}
 				if (written.undo.start === written.undo.end && written.undo.text === "") {
 					lift();
 					return;
@@ -2737,6 +2815,7 @@ export function ProjectCanvas({
 					patch: written.undo,
 					readAt: stamp,
 					classes: { selector: pick.selector, from: written.className.now, to: written.className.was },
+					...(shared ? { frames: readers } : {}),
 				});
 				if (kept) {
 					const change = { ...written.className, ...(written.css === undefined ? {} : { css: written.css }) };
@@ -2752,7 +2831,17 @@ export function ProjectCanvas({
 				}
 			});
 		},
-		[landed, previewStyle, project, recordEntry, reloadFrameDocument, swapClass],
+		[
+			holdReaders,
+			landed,
+			previewStyle,
+			project,
+			recordEntry,
+			releaseReaders,
+			reloadFrameDocument,
+			sharedWrite,
+			swapClass,
+		],
 	);
 
 	/**
@@ -2851,6 +2940,12 @@ export function ProjectCanvas({
 					showRefusal(pick.frame, pick.selector, GONE);
 					return;
 				}
+				// the element's file may be a shared definition's; whether the change
+				// lands there or at a call site in this frame's own file is the daemon's
+				// to say, so its readers are held now and let go if they did not (#318)
+				const read = ringRef.current.read;
+				const readers = read?.source === at.source ? (read.shared?.frames ?? []) : [];
+				holdReaders(pick.frame, readers);
 				void writeElement(project, pick.frame, {
 					act,
 					source: at.source,
@@ -2859,18 +2954,25 @@ export function ProjectCanvas({
 					...(attribute ?? {}),
 				}).then((written) => {
 					if (written === undefined) {
+						releaseReaders(pick.frame, readers);
 						refuse({ code: "failed", says: "the change did not reach the file" });
 						return;
 					}
 					if (!written.ok) {
+						releaseReaders(pick.frame, readers);
 						refuse(written.refusal);
 						if (written.refusal.code === "stale-file") {
 							setSaves((current) => ({ ...current, [pick.frame]: (current[pick.frame] ?? 0) + 1 }));
 						}
 						return;
 					}
+					const shared = sharedWrite(pick.frame, written.path);
+					if (!shared) releaseReaders(pick.frame, readers);
 					// a gesture that said what the file already said is no step at all
-					if (written.undo.start === written.undo.end && written.undo.text === "") return;
+					if (written.undo.start === written.undo.end && written.undo.text === "") {
+						releaseReaders(pick.frame, readers);
+						return;
+					}
 					const readAt = written.path === `design/${at.source.replace(/:\d+:\d+$/, "")}` ? at.source : null;
 					landed(pick.frame, readAt ?? at.source, written);
 					// the element is gone: the rung above it is what the hand holds now,
@@ -2883,6 +2985,7 @@ export function ProjectCanvas({
 						edit: id,
 						patch: written.undo,
 						readAt: readAt ?? at.source,
+						...(shared ? { frames: readers } : {}),
 					});
 					if (written.uncaught === true) {
 						setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
@@ -2894,7 +2997,7 @@ export function ProjectCanvas({
 				if (alterWaiters.current.delete(id)) showRefusal(pick.frame, pick.selector, GONE);
 			}, PICK_REPLY_MS);
 		},
-		[holdParent, landed, project, recordEntry, restoreWords, showRefusal],
+		[holdParent, holdReaders, landed, project, recordEntry, releaseReaders, restoreWords, sharedWrite, showRefusal],
 	);
 
 	/**
@@ -2959,28 +3062,46 @@ export function ProjectCanvas({
 			put: { file: File } | { asset: string },
 		) => {
 			setRefused(null);
+			// a shared definition's readers are held before the write leaves (#318)
+			const read = ringRef.current.read;
+			const readers = read?.source === at.source ? (read.shared?.frames ?? []) : [];
+			holdReaders(frame, readers);
 			const bytes = "file" in put ? fileAsAsset(put.file).then((file) => ({ file })) : Promise.resolve(put);
 			void bytes
 				.then((body) => swapAsset(project, frame, at.source, at.fingerprint, body))
 				.then((written) => {
 					if (written === undefined) {
+						releaseReaders(frame, readers);
 						setNotice({ kind: "error", message: "The picture did not reach the file" });
 						return;
 					}
 					if (!written.ok) {
+						releaseReaders(frame, readers);
 						setRefused({ frame, selector, refusal: written.refusal, attempted: "a picture" });
 						return;
 					}
-					if (written.undo.start === written.undo.end && written.undo.text === "") return;
+					const shared = sharedWrite(frame, written.path);
+					if (!shared) releaseReaders(frame, readers);
+					if (written.undo.start === written.undo.end && written.undo.text === "") {
+						releaseReaders(frame, readers);
+						return;
+					}
 					const edit = ++pickSeq.current;
 					landed(frame, at.source, written);
-					recordEntry({ kind: "hand", frame, edit, patch: written.undo, readAt: at.source });
+					recordEntry({
+						kind: "hand",
+						frame,
+						edit,
+						patch: written.undo,
+						readAt: at.source,
+						...(shared ? { frames: readers } : {}),
+					});
 					if (written.uncaught === true) {
 						setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
 					}
 				});
 		},
-		[landed, project, recordEntry],
+		[holdReaders, landed, project, recordEntry, releaseReaders, sharedWrite],
 	);
 
 	/**
@@ -3312,17 +3433,10 @@ export function ProjectCanvas({
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
 						const own = saved.current.get(frame);
-						if (own === undefined) reloadOrHold(frame);
-						else {
-							// a frame the hand saved and is still in already shows the file
-							// (#314): the file is asked whether it is still the one the hand
-							// wrote, and only a change from outside reloads — and that one
-							// waits for the hand like any other (#319)
-							void readRungs(project, frame, [own.source]).then((rungs) => {
-								if (saved.current.get(frame) !== own || rungs?.[0]?.fingerprint === own.fingerprint) return;
-								reloadOrHold(frame);
-							});
-						}
+						// the hand's own save echoes as a change to the frame's own file;
+						// one to a frame whose last save went to a shared file is from outside
+						if (own === undefined || !own.own) reloadOrHold(frame);
+						else changedUnderHand(frame, own);
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -3335,7 +3449,13 @@ export function ProjectCanvas({
 						// a shared file the link graph has read names its own readers (#109);
 						// anything it could not name can stale every document
 						const staled = event.frames ?? framesRef.current.map((frame) => frame.name);
-						for (const frame of staled) reloadOrHold(frame);
+						for (const frame of staled) {
+							const own = saved.current.get(frame);
+							// the frame the hand wrote the shared file from already shows it
+							// (#318); every other reader reloads, behind the paint the save held
+							if (own !== undefined && !own.own) changedUnderHand(frame, own);
+							else reloadOrHold(frame);
+						}
 						void refetchFrames();
 						// a shared source file moves the graph as surely as a frame's own
 						void refetchFlows();
@@ -3358,7 +3478,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [noteCover, project, refetchFlows, refetchFrames, reloadOrHold, resync]);
+	}, [changedUnderHand, noteCover, project, refetchFlows, refetchFrames, reloadOrHold, resync]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost
@@ -3416,9 +3536,6 @@ export function ProjectCanvas({
 				}
 				case "loaded": {
 					lifecycleRef.current.noteLoaded(message.frame);
-					// the document a hand edit was waiting on: the one held in front
-					// of it has done its job and lets go (#253's no blink)
-					releaseHold(message.frame);
 					// a completed boot retires its walk cover — later reboots are honest
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
 					// the keyboard follows the walk: an entered frame owns it (#28)
@@ -3431,6 +3548,11 @@ export function ProjectCanvas({
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
 					lifecycleRef.current.noteArrived(message.frame);
+					// and so has the document held in front of a reload the hand
+					// caused (#253's no blink): let go at loaded, the still would
+					// stand in until here, which is the flash the hold exists to
+					// prevent — so it lets go onto a settled document (#318)
+					releaseHold(message.frame);
 					// Fonts and entry motion can change the bottom after loaded.
 					if (gesture.current.kind === "resize" && gesture.current.frame === message.frame) {
 						contentRequest.current += 1;
