@@ -11,7 +11,6 @@ import type { AgentLogin } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
 import { type BundledReply, type BundledRequest, bundledAnswerFits, type HostOutput } from "./bundled-protocol";
 import { privateDirectory } from "./bundled-store";
-import type { SourceAgentAuthority, SourceAgentSupervisor } from "./source-agent";
 
 /** Only OS necessities enter the host; provider variables and user config roots stay out. */
 export function bundledEnvironment(directory: string): NodeJS.ProcessEnv {
@@ -49,9 +48,6 @@ export class BundledHostClient {
 	private child: ChildProcess | undefined;
 	private closing: Promise<void> | undefined;
 	private closed = false;
-	private generation = "";
-	public source: SourceAgentSupervisor | undefined;
-	private readonly authorities = new Map<string, SourceAgentAuthority>();
 	private readonly requests = new Map<
 		string,
 		{ resolve: (value: BundledReply) => void; reject: (error: Error) => void }
@@ -67,26 +63,8 @@ export class BundledHostClient {
 		privateDirectory(this.directory);
 		const child = this.start(this.directory);
 		this.child = child;
-		this.generation = randomUUID();
 		child.on("message", (message: HostOutput) => {
 			if (this.child !== child) return;
-			if (message.kind === "source") {
-				const authority = this.authorities.get(message.turn);
-				void (async () => {
-					if (this.source && !authority) throw new Error("The source session has ended");
-					const value = authority ? await authority.request(message.request) : { kind: "outside" as const };
-					if (this.child === child && (!authority || this.authorities.get(message.turn) === authority))
-						child.send({ kind: "source-reply", id: message.id, value });
-				})().catch((error: unknown) => {
-					if (this.child === child)
-						child.send({
-							kind: "source-reply",
-							id: message.id,
-							error: error instanceof Error ? error.message : "Source operation failed",
-						});
-				});
-				return;
-			}
 			if (message.kind === "event") {
 				this.turns.get(message.id)?.(message.event);
 				if (message.event.kind === "closed") this.turns.delete(message.id);
@@ -104,12 +82,6 @@ export class BundledHostClient {
 		const failed = () => {
 			if (this.child !== child) return;
 			this.child = undefined;
-			let unknownSource = false;
-			for (const authority of this.authorities.values()) {
-				unknownSource ||= authority.unknown?.() === true;
-				authority.revoke();
-			}
-			this.authorities.clear();
 			for (const request of this.requests.values())
 				request.reject(new Error("The bundled engine stopped. Try again."));
 			this.requests.clear();
@@ -117,9 +89,7 @@ export class BundledHostClient {
 				emit({
 					kind: "closed",
 					code: 1,
-					message: unknownSource
-						? "The bundled engine stopped during a source write. It may have saved and has not been retried. Read the file again before editing."
-						: "The bundled engine stopped. Send another message to continue.",
+					message: "The bundled engine stopped. Send another message to continue.",
 					parent: null,
 				});
 			this.turns.clear();
@@ -157,8 +127,6 @@ export class BundledHostClient {
 				finished = true;
 				asking.clear();
 				this.turns.delete(id);
-				this.authorities.get(id)?.revoke();
-				this.authorities.delete(id);
 			}
 			wake?.();
 		};
@@ -167,9 +135,7 @@ export class BundledHostClient {
 			if (finished) return;
 			try {
 				this.turns.set(id, emit);
-				const child = this.host();
-				if (this.source) this.authorities.set(id, this.source.open(request.options, this.generation));
-				child.send({ id, request }, (error) => {
+				this.host().send({ id, request }, (error) => {
 					if (error)
 						emit({ kind: "closed", code: 1, message: "Could not start the bundled engine", parent: null });
 				});
@@ -179,7 +145,6 @@ export class BundledHostClient {
 		});
 		const stop = () => {
 			if (finished) return false;
-			this.authorities.get(id)?.revoke();
 			queueMicrotask(() => {
 				void this.request({ kind: "stop", turn: id }).catch(() => {});
 			});
@@ -277,9 +242,6 @@ export function createSpoolEngine(
 ): AgentEngine {
 	return {
 		id: "spool",
-		coordinateSource: (source) => {
-			client.source = source;
-		},
 		installed: () => true,
 		prepareRename: (root, target, sessions) => client.prepareRename(root, target, sessions),
 		account: async () => (await client.request({ kind: "account" })) as AgentLogin,

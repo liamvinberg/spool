@@ -1,8 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
-import type { RetainedValues } from "../source-edit";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
 import { captureWorkerCsp } from "./document";
@@ -236,37 +235,6 @@ describe("daemon authority matrix", () => {
 		expect((await request(CONTROL_HOST, "/api/health")).status).toBe(200);
 	});
 
-	it("keeps the write lane behind the control door, out of reach of a frame document", async () => {
-		const { project, request, control, render } = makeSecurityHarness();
-		const path = `/api/p/${encodeURIComponent(project.name)}/source`;
-		const body = JSON.stringify({
-			action: "commit",
-			handle: "not-a-held-read",
-			generation: 1,
-			original: {
-				publication: "publication",
-				cell: "className",
-				occurrence: "occurrence",
-				invocation: "invocation",
-				context: "context",
-				value: "p-4",
-			},
-			change: { kind: "literal", text: "written" },
-		});
-		const init = { method: "POST", headers: { "content-type": "application/json" }, body };
-
-		// the one route that writes frame source: a document that renders a frame
-		// shares neither origin nor token with the canvas, and cannot reach it
-		expect((await request(CONTROL_HOST, path, init)).status).toBe(401);
-		expect((await render(path, init)).status).toBe(404);
-		// with the token it is a lane like any other, and the read it names is
-		// what stops this one rather than the door
-		const answered = await control(path, init);
-		expect(answered.status).toBe(200);
-		expect(await answered.json()).toMatchObject({ ok: false });
-		expect(readFileSync(join(project.root, "design", "frames", "home", "frame.tsx"), "utf8")).toContain("<main>safe");
-	});
-
 	it("lets a cover's own address be its credential, on the control host alone", async () => {
 		const { project, request, control } = makeSecurityHarness();
 		const body = new FormData();
@@ -367,17 +335,6 @@ describe("daemon authority matrix", () => {
 		const frame = await render(framePath);
 		expect(frame.status).toBe(200);
 		expect(frame.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
-		const frameHtml = await frame.text();
-		const serialized = frameHtml.match(/configureSource\((\{[^\n]*\})\);/)?.[1];
-		expect(serialized, "render document configures its current source packet").toBeDefined();
-		const packet: RetainedValues = JSON.parse(serialized ?? "{}");
-		const cells = Object.keys(packet.values);
-		expect(cells).toHaveLength(1);
-		const cell = cells[0];
-		if (cell === undefined) throw new Error("missing authored literal cell");
-		expect(packet.values[cell]).toBe("safe");
-		expect(packet.childValues?.[cell]).toBe("safe");
-		expect(packet.locations?.[cell]).toBe("frames/home/frame.tsx:1:41");
 
 		const shell = await request(CONTROL_HOST, playPath);
 		const shellHtml = await shell.text();

@@ -1404,15 +1404,15 @@ const canvasShimJs = `(() => {
 	var swallowUntilClick = false;
 	var editingKeys = new Set();
 
-	function beginEdit(selector, x, y, id, sourceGeneration) {
+	function beginEdit(selector, x, y, id) {
 		endEdit(false);
 		const frame = (window.__SPOOL__ || {}).frame;
 		const el = elementFor(selector);
-		if (!el || (sourceGeneration !== undefined && !window.__SPOOL_SOURCE__?.valid(sourceGeneration))) {
+		if (!el) {
 			parent.postMessage({ spool: "edit-open", frame, id, ok: false, text: "" }, "*");
 			return;
 		}
-		editing = { el, id, sourceGeneration, composing: false, finish: false, text: el.textContent || "", editable: el.getAttribute("contenteditable"), spellcheck: el.getAttribute("spellcheck") };
+		editing = { el, id, composing: false, finish: false, text: el.textContent || "", editable: el.getAttribute("contenteditable"), spellcheck: el.getAttribute("spellcheck") };
 		el.setAttribute("contenteditable", "plaintext-only");
 		el.setAttribute("spellcheck", "false");
 		try { el.focus({ preventScroll: true }); } catch { try { el.focus(); } catch {} }
@@ -1427,13 +1427,13 @@ const canvasShimJs = `(() => {
 		editing = null;
 		const el = held.el;
 		const text = el.innerText ?? el.textContent ?? "";
-		if (held.sourceGeneration !== undefined && commit && !window.__SPOOL_SOURCE__?.complete(held.sourceGeneration)) commit = false;
 		if (held.editable === null) el.removeAttribute("contenteditable"); else el.setAttribute("contenteditable", held.editable);
 		if (held.spellcheck === null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", held.spellcheck);
 		try { el.blur(); } catch {}
-		// Esc restores; completion leaves the owned preview standing until the
-		// acknowledged publication reconciles in the same task that removes it.
-		if (!commit) { if (held.sourceGeneration !== undefined) window.__SPOOL_SOURCE__?.cancel(held.sourceGeneration); else el.textContent = held.text; }
+		// Esc restores; a commit leaves the typed words standing, because the
+		// reload that carries them into the file is a moment away and flashing
+		// the old ones back is exactly the blink the write lane avoids
+		if (!commit) el.textContent = held.text;
 		parent.postMessage({
 			spool: "edited",
 			frame: (window.__SPOOL__ || {}).frame,
@@ -1503,13 +1503,6 @@ const canvasShimJs = `(() => {
 		if (!editing) return;
 		event.stopImmediatePropagation();
 		if (kind === "submit") event.preventDefault();
-if(kind === "input" && editing.sourceGeneration) {
-const config=window.__SPOOL__ || {};
-// Native input belongs to this intent before the asynchronous parent echo.
-const text=editing.el.innerText ?? editing.el.textContent ?? "";
-window.__SPOOL_SOURCE__?.preview(editing.sourceGeneration,text);
-parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing.sourceGeneration,text},"*");
-}
 	}, true);
 
 	// Swallow the release half too. Relay modifier releases explicitly because
@@ -1796,34 +1789,6 @@ parent.postMessage({spool:"source-preview",frame:config.frame,generation:editing
 			parent.postMessage({ spool: "measured", frame, id: m.id, reading }, "*");
 			return;
 		}
-		if (m.spool === "source-request") {
-			const config = window.__SPOOL__ || {};
-			if (event.source !== parent || event.origin !== config.controlOrigin || typeof m.id !== "string") return;
-			const source = window.__SPOOL_SOURCE__;
-			const reply = (result) => parent.postMessage({ spool: "source-reply", frame: config.frame, id: m.id, result }, "*");
-			if (!source) { reply(undefined); return; }
-			try {
-				if (["inventory", "inspect", "read"].includes(m.action) && !["literal", "property", "properties", "delete", "reorder", "image"].includes(m.operation?.kind)) { reply(undefined); return; }
-				if (m.action === "inventory") reply(source.inventory(m.field,m.operation));
-else if(m.action === "prepare") reply(source.prepare(m.generation,m.uses,m.structure));
-else if(m.action === "highlight") {source.highlight(m.uses);reply(true);}
-else if(m.action === "reveal") {const el=source.element(m.original);if(el){el.scrollIntoView({block:"center",inline:"nearest"});reply(chainOf(el));}else reply(undefined);}
-else if(m.action === "clear-feedback") {source.clearFeedback();reply(true);}
-else if(m.action === "retain-structure") {source.retainStructures(m.generations);reply(true);}
-else if(m.action === "retire-structure") {source.retireStructure(m.generation);reply(true);}
-else if (m.action === "verify") reply(source.verify(m.original,m.expected,m.publication));
-else if (m.action === "inspect") { const el=elementFor(m.selector); reply(el ? source.inspect(el,m.field,m.operation) : undefined); }
-else if (m.action === "read") { const el = elementFor(m.selector); reply(el ? source.read(el, m.generation, m.field,m.operation) : undefined); }
-				else if (m.action === "complete") reply(source.complete(m.generation));
-				else if (m.action === "cancel") { source.cancel(m.generation); reply(true); }
-				else if (m.action === "preview") reply(source.preview(m.generation, m.text));
-else if (m.action === "preview-property") reply(source.previewProperty(m.preview));
-				else if (m.action === "preview-image") source.previewImage(m.generation,m.value).then(reply,()=>reply("unavailable"));
-				else if (m.action === "install") source.install(m.publication, m.undo === true).then(reply, () => reply(undefined));
-				else if (m.action === "revoke") { source.revoke(m.publication); reply(true); }
-			} catch { reply(undefined); }
-			return;
-		}
 		if (m.spool === "edit" || m.spool === "edit-end") {
 			// the two verbs that change the document rather than read it, so they
 			// are held to the same door the capture is: this frame's own canvas
@@ -1834,7 +1799,7 @@ else if (m.action === "preview-property") reply(source.previewProperty(m.preview
 				return;
 			}
 			try {
-				beginEdit(m.selector, m.x, m.y, m.id, m.sourceGeneration);
+				beginEdit(m.selector, m.x, m.y, m.id);
 			} catch {
 				parent.postMessage({ spool: "edit-open", frame: config.frame, id: m.id, ok: false, text: "" }, "*");
 			}

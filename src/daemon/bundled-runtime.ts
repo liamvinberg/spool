@@ -26,7 +26,6 @@ import { BundledQuestionTurn } from "./bundled-questions";
 import { prepareRelocation, relocationPath } from "./bundled-relocation";
 import { bundledResources } from "./bundled-resources";
 import { BundledCredentialStore, privateDirectory, writePrivate } from "./bundled-store";
-import type { SourceAgentClient } from "./source-agent";
 
 /**
  * The Google adapters refuse any fetch they did not install themselves, throwing
@@ -47,7 +46,6 @@ interface HeldSession {
 
 /** Lives only in the host. Tests may supply a deterministic native provider runtime. */
 export class BundledRuntime {
-	public source: ((turn: string) => SourceAgentClient) | undefined;
 	private readonly auth: BundledAuth;
 	private readonly sessions = new Map<string, HeldSession>();
 	private readonly active = new Map<string, { session: string; stopped: boolean }>();
@@ -413,7 +411,6 @@ export class BundledRuntime {
 				await held.session.setModel(model);
 				held.session.setThinkingLevel((offer.current.effort ?? "off") as ThinkingLevel);
 			}
-			held.files.source = this.source?.(id);
 			const session = held.session;
 			const manager = held.manager;
 			streamBefore = session.agent.streamFunction;

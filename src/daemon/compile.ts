@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
-import { type BuildOptions, build, formatMessagesSync, type OnResolveResult, type Plugin } from "esbuild";
+import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbuild";
 import { isSafeName } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
 import {
@@ -12,19 +12,8 @@ import {
 	resolveDesignPath,
 } from "./design-path";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
+import { readIfExists } from "./project-files";
 import { describeCollision, describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
-import {
-	digest,
-	directoryEntries,
-	emptyCompilation,
-	type RetainedCompilation,
-	readInput,
-	retainedPlugin,
-	type SourceInput,
-	sameInput,
-} from "./retained-compile";
-import { resolveImageValues } from "./source-image-values";
-import { captureLazyGraph } from "./source-lazy-graph";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
@@ -47,7 +36,6 @@ interface CacheEntry {
 	document: string;
 	/** The webfont resolution this document was assembled from (#80). */
 	fonts: number;
-	retained: RetainedCompilation;
 }
 
 const STDIN_NAME = "<spool-boot>";
@@ -61,7 +49,6 @@ const VIRTUAL_OUTDIR = "<spool-out>";
  */
 export function createFrameCompiler(version: string, webfonts: Webfonts = inertWebfonts()) {
 	const cache = new Map<string, CacheEntry>();
-	const publications = new Map<string, { root: string; frame: string; compilation: RetainedCompilation }>();
 
 	async function getDocument(root: string, frame: string, authority: FrameAuthority): Promise<FrameDocument> {
 		if (!isSafeName(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
@@ -98,11 +85,6 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			if (
 				cached !== undefined &&
 				cached.fonts === webfonts.revision() &&
-				[...cached.retained.directories].every(([path, entries]) => directoryEntries(path) === entries) &&
-				[...cached.retained.configuration].every(
-					([file, input]) => existsSync(file) && sameInput(input, readInput(file)),
-				) &&
-				[...cached.retained.configurationAbsent].every((file) => !existsSync(file)) &&
 				hashInputs(version, stamp, cached.inputs, designDir) === cached.hash
 			) {
 				return { kind: "ok", document: cached.document, etag: cached.etag, cache: "hit" };
@@ -118,7 +100,6 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 				webfonts,
 			});
 			cache.set(key, entry);
-			publications.set(entry.retained.packet.id, { root, frame, compilation: entry.retained });
 			return { kind: "ok", document: entry.document, etag: entry.etag, cache: "miss" };
 		} catch (error) {
 			cache.delete(key);
@@ -127,91 +108,7 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 	}
 
-	/** Compile captured bytes without publishing them or asserting that they are current. */
-	async function compileSnapshot(
-		root: string,
-		frame: string,
-		frozen: ReadonlyMap<string, SourceInput>,
-		sequence: number,
-		absent: ReadonlySet<string> = new Set(),
-		resolution?: Pick<RetainedCompilation, "directories" | "resolutions" | "configuration" | "configurationAbsent">,
-	): Promise<RetainedCompilation> {
-		const found = lookupFrame(root, frame);
-		if (found.kind !== "found") throw new Error("the frame source is no longer there");
-		const designDir = realDesignDir(root);
-		const retained = emptyCompilation();
-		if (resolution) {
-			retained.configuration = new Map(resolution.configuration);
-			retained.configurationAbsent = new Set(resolution.configurationAbsent);
-		}
-		const built = await buildDesignEntry({
-			designDir,
-			resolveDir: found.dir,
-			sourcefile: STDIN_NAME,
-			contents: bootEntry(frame),
-			label: `frame "${frame}"`,
-			imageBudget: IMAGE_BUDGET_BYTES,
-			retained,
-			frozen,
-			resolutions: resolution?.resolutions,
-		});
-		for (const file of built.sourceFiles) {
-			const original = frozen.get(file);
-			if (!original) throw new Error("a compiler dependency is not part of the publication");
-			retained.inputs.set(file, original);
-		}
-		for (const [file, input] of frozen) {
-			assertDesignFile(designDir, file);
-			retained.inputs.set(file, input);
-		}
-		const sheets = await buildFrameCss(designDir, built.sourceFiles, (file) => {
-			const input = frozen.get(file);
-			if (!input) throw new Error("a stylesheet is not part of the publication");
-			return input.bytes.toString("utf8");
-		});
-		retained.packet.css = sheets.css;
-		retained.packet.bundledCss = built.bundledCss ?? "";
-		retained.absent = new Set(absent);
-		retained.directories = new Map(resolution?.directories ?? retained.directories);
-		for (const [path, entries] of retained.directories)
-			if (directoryEntries(path) !== entries) throw new Error("module resolution changed during compilation");
-		for (const [file, input] of retained.configuration)
-			if (!sameInput(input, readInput(file))) throw new Error("compiler configuration changed during compilation");
-		for (const file of retained.configurationAbsent)
-			if (existsSync(file)) throw new Error("compiler configuration resolution changed during compilation");
-		for (const file of absent)
-			if (existsSync(resolveDesignPath(designDir, file))) throw new Error("an absent dependency was created");
-		finishCompilation(retained, sequence, designDir);
-		return retained;
-	}
-	async function compilePublication(...args: Parameters<typeof compileSnapshot>): Promise<RetainedCompilation> {
-		const [root, frame, frozen] = args;
-		const retained = await compileSnapshot(...args);
-		for (const [file, input] of frozen)
-			if (!sameInput(input, readInput(file))) throw new Error("source changed during retained compilation");
-		publications.set(retained.packet.id, { root, frame, compilation: retained });
-		return retained;
-	}
-	return {
-		compileSnapshot,
-		getDocument,
-		compilePublication,
-		publication: (id: string) => publications.get(id),
-		matchingPublications: (root: string, frame: string, inputs: ReadonlyMap<string, SourceInput>, shape: string) =>
-			[...publications.values()]
-				.filter(
-					(one) =>
-						one.root === root &&
-						one.frame === frame &&
-						one.compilation.packet.shape === shape &&
-						one.compilation.inputs.size === inputs.size &&
-						[...inputs].every(([file, input]) => {
-							const held = one.compilation.inputs.get(file);
-							return held && sameInput(held, input);
-						}),
-				)
-				.map((one) => one.compilation.packet.id),
-	};
+	return { getDocument };
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;
@@ -240,9 +137,6 @@ export interface DesignEntryOptions {
 	 * document is the exact whole-player failure `composePlayer` exists to stop.
 	 */
 	imageBudget?: number | undefined;
-	retained?: RetainedCompilation;
-	frozen?: ReadonlyMap<string, SourceInput>;
-	resolutions?: ReadonlyMap<string, OnResolveResult> | undefined;
 }
 
 /**
@@ -272,23 +166,9 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		outdir: VIRTUAL_OUTDIR,
 		absWorkingDir: designDir,
 		plugins: [
-			...(options.retained
-				? [retainedPlugin(designDir, options.retained, options.frozen, options.resolutions)]
-				: []),
 			sharedImportPlugin(designDir),
 			spoolBoundaryPlugin(designDir),
-			spoolAssetPlugin(
-				designDir,
-				label,
-				imageBudget,
-				options.retained
-					? (file) => {
-							const input = options.retained?.inputs.get(file);
-							if (!input) throw new Error("an asset is not part of the publication");
-							return input.bytes;
-						}
-					: undefined,
-			),
+			spoolAssetPlugin(designDir, label, imageBudget),
 		],
 		logLevel: "silent",
 	};
@@ -311,58 +191,7 @@ export function designOutputName(designDir: string, path: string): string {
 
 /** The design/ compile (#16) of one entry into one module: frame documents, and blame. */
 export async function buildDesignEntry(options: DesignEntryOptions): Promise<DesignBundle> {
-	let result = await build(designBuildOptions(options));
-	if (options.retained) captureLazyGraph(options.designDir, result.metafile, options.retained);
-	if (options.retained?.globDiscoveries?.length && !options.frozen) {
-		// Discovery can enlarge the graph through esbuild's computed-import glob.
-		// Only a fresh build from the complete captured input set may be served.
-		const discovered = options.retained;
-		const validate = () => {
-			for (const [file, input] of discovered.inputs) {
-				assertDesignFile(options.designDir, file);
-				if (!sameInput(input, readInput(file))) throw new Error("source changed during module discovery");
-			}
-			for (const [directory, entries] of discovered.directories)
-				if (directoryEntries(directory) !== entries) throw new Error("module discovery directory changed");
-			for (const [file, input] of discovered.configuration)
-				if (!sameInput(input, readInput(file))) throw new Error("module discovery configuration changed");
-			for (const file of discovered.configurationAbsent)
-				if (existsSync(file)) throw new Error("module discovery configuration resolution changed");
-		};
-		validate();
-		const captured = emptyCompilation();
-		result = await build(
-			designBuildOptions({
-				...options,
-				retained: captured,
-				frozen: new Map(discovered.inputs),
-				resolutions: new Map(discovered.resolutions),
-			}),
-		);
-		captureLazyGraph(options.designDir, result.metafile, captured);
-		validate();
-		if (captured.inputs.size !== discovered.inputs.size || captured.resolutions.size !== discovered.resolutions.size)
-			throw new Error("module discovery did not stabilize before publication");
-		if (JSON.stringify(captured.globDiscoveries) !== JSON.stringify(discovered.globDiscoveries))
-			throw new Error("computed module discovery changed before publication");
-		if (
-			captured.directories.size !== discovered.directories.size ||
-			[...captured.directories].some(([directory, entries]) => discovered.directories.get(directory) !== entries)
-		)
-			throw new Error("module discovery directory inventory changed before publication");
-		for (const [file, input] of captured.configuration) {
-			const previous = discovered.configuration.get(file);
-			if (!previous || !sameInput(previous, input))
-				throw new Error("module discovery configuration changed before publication");
-		}
-		if (
-			captured.configuration.size !== discovered.configuration.size ||
-			captured.configurationAbsent.size !== discovered.configurationAbsent.size ||
-			[...captured.configurationAbsent].some((file) => !discovered.configurationAbsent.has(file))
-		)
-			throw new Error("module discovery configuration resolution changed before publication");
-		Object.assign(discovered, captured);
-	}
+	const result = await build(designBuildOptions(options));
 	const bootKey = designEntryKey(options);
 	const sourceFiles = Object.keys(result.metafile.inputs)
 		.filter((input) => input !== bootKey)
@@ -394,7 +223,6 @@ async function compileFrame({
 	stamp,
 	webfonts,
 }: FrameCompile): Promise<CacheEntry> {
-	const retained = emptyCompilation();
 	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry({
 		designDir,
 		resolveDir: frameDir,
@@ -402,57 +230,20 @@ async function compileFrame({
 		contents: bootEntry(frame),
 		label: `frame "${frame}"`,
 		imageBudget: IMAGE_BUDGET_BYTES,
-		retained,
 	});
 
 	const shared = join(designDir, "shared");
-	const capture = (file: string): string => {
-		const input = readInput(resolveDesignPath(designDir, file));
-		const held = retained.inputs.get(file);
-		if (held && !sameInput(held, input)) throw new Error("source changed during compilation");
-		retained.inputs.set(file, input);
-		return input.bytes.toString("utf8");
-	};
-	const optional = (file: string): string | undefined => {
-		if (existsSync(resolveDesignPath(designDir, file))) return capture(file);
-		retained.absent.add(file);
-		return undefined;
-	};
-	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles, capture);
-	retained.packet.css = css;
-	retained.packet.bundledCss = bundledCss ?? "";
+	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
 	// The stills' fonts (#80): remote faces resolved to this daemon so a
 	// capture can inline them, the file as written whenever that fails. The
 	// project's own faces (#101) then ride the document as data URIs.
-	const resolvedFonts = await webfonts.resolve(optional(join(shared, "fonts.css")));
-	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts, (file) => {
-		const input = readInput(file);
-		retained.inputs.set(file, input);
-		return input.bytes;
-	});
-	const importMap = mergeImportMap(parseImportMap(optional(join(shared, "importmap.json"))), importMapPins());
+	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts);
+	const importMap = mergeImportMap(
+		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
+		importMapPins(),
+	);
 
-	for (const file of [...sourceFiles, ...stylesheets, ...fontFiles]) {
-		const captured = retained.inputs.get(file);
-		if (!existsSync(resolveDesignPath(designDir, file))) {
-			retained.absent.add(file);
-			continue;
-		}
-		const current = readInput(file);
-		if (captured && !sameInput(captured, current)) throw new Error("source changed during compilation");
-		retained.inputs.set(file, current);
-	}
-	for (const [file, input] of retained.inputs)
-		if (!sameInput(input, readInput(file))) throw new Error("a dependency changed during compilation");
-	for (const file of retained.absent)
-		if (existsSync(resolveDesignPath(designDir, file))) throw new Error("an absent dependency was created");
-	for (const [path, entries] of retained.directories)
-		if (directoryEntries(path) !== entries) throw new Error("module resolution changed during compilation");
-	for (const [file, input] of retained.configuration)
-		if (!sameInput(input, readInput(file))) throw new Error("compiler configuration changed during compilation");
-	for (const file of retained.configurationAbsent)
-		if (existsSync(file)) throw new Error("compiler configuration resolution changed during compilation");
-	finishCompilation(retained, 0, designDir);
 	const document = assembleFrameDocument({
 		project,
 		frame,
@@ -460,7 +251,7 @@ async function compileFrame({
 		controlOrigin: authority.controlOrigin,
 		css,
 		importMap,
-		bootJs: `import {configureSource} from "spool/jsx-dev-runtime";configureSource(${JSON.stringify(retained.packet)});\n${bootJs}`,
+		bootJs,
 		fonts,
 		bundledCss,
 	});
@@ -472,7 +263,7 @@ async function compileFrame({
 		join(shared, "importmap.json"),
 	];
 	const hash = hashInputs(version, stamp, inputs, designDir);
-	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: webfonts.revision(), retained };
+	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: webfonts.revision() };
 }
 
 /**
@@ -486,7 +277,6 @@ async function compileFrame({
  */
 function bootEntry(frame: string): string {
 	return `import "spool";
-import {observeEntry} from "spool/jsx-dev-runtime";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import Frame from "./frame.tsx";
@@ -501,7 +291,7 @@ function Ready() {
 	return null;
 }
 createRoot(document.getElementById("root")).render(
-	createElement(Fragment, null, observeEntry(createElement(Frame)), createElement(Ready)),
+	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
 );
 `;
 }
@@ -586,12 +376,7 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
  * encoding keeps those predicates as tight as they are instead of teaching them
  * a looser shape.
  */
-function spoolAssetPlugin(
-	designDir: string,
-	label: string,
-	budget: number | undefined,
-	readSource?: (file: string) => Buffer,
-): Plugin {
+function spoolAssetPlugin(designDir: string, label: string, budget: number | undefined): Plugin {
 	let spent = 0;
 	return {
 		name: "spool-assets",
@@ -617,8 +402,7 @@ function spoolAssetPlugin(
 				if (type === undefined) return null;
 				let bytes: Buffer;
 				try {
-					const file = resolveDesignPath(designDir, args.path);
-					bytes = readSource ? readSource(file) : readFileSync(file);
+					bytes = readFileSync(resolveDesignPath(designDir, args.path));
 				} catch (error) {
 					// Same shape as the boundary plugin's own complaint, so a caller
 					// that must refuse the whole player still recognizes an escape.
@@ -693,31 +477,4 @@ export function describeCompileError(error: unknown): string {
 		return formatMessagesSync(error.errors, { kind: "error" }).join("\n");
 	}
 	return error instanceof Error ? error.message : String(error);
-}
-
-function finishCompilation(compilation: RetainedCompilation, sequence: number, designDir: string): void {
-	resolveImageValues(compilation, designDir);
-	compilation.packet.sequence = sequence;
-	compilation.packet.owners = {
-		...compilation.structureOwners,
-		...Object.fromEntries(Object.entries(compilation.cells).map(([id, cell]) => [id, cell.owner])),
-	};
-	compilation.packet.attributes = {};
-	for (const [cell, definition] of Object.entries(compilation.cells))
-		if (definition.field && definition.syntax === "jsx") {
-			const site = cell.slice(0, cell.lastIndexOf("@"));
-			compilation.packet.attributes[site] ??= {};
-			compilation.packet.attributes[site][definition.field] = { cell, absent: definition.absent === true };
-		}
-	compilation.packet.values = Object.fromEntries(
-		Object.entries(compilation.cells)
-			.filter(([, cell]) => !cell.absent)
-			.map(([id, cell]) => [id, cell.value]),
-	);
-	compilation.packet.childValues = Object.fromEntries(
-		Object.entries(compilation.cells)
-			.filter(([, cell]) => cell.childValue !== undefined)
-			.map(([id, cell]) => [id, cell.childValue!]),
-	);
-	compilation.packet.shape = digest(JSON.stringify(Object.entries(compilation.shapes).sort()));
 }

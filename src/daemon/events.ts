@@ -1,4 +1,3 @@
-import { type FSWatcher, watch } from "node:fs";
 import { join, sep } from "node:path";
 import type { Cover } from "../cover";
 import { realDesignDir } from "./design-path";
@@ -50,14 +49,10 @@ export type ChangeEvent =
 	// a render pass filled dark targets (#34), published by the resolve API: the
 	// graph really did gain edges, which a witnessed walk never does
 	| { kind: "resolved" };
-export type SourceObservation = { kind: "named"; path: string } | { kind: "unknown" } | { kind: "lost" };
-type SourceListener = (event: SourceObservation) => void;
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {
 	listeners: Set<Listener>;
-	sources: Set<SourceListener>;
-	covered: boolean;
 	/** The teardown the last subscriber armed, cancelled by the next one to arrive. */
 	linger: NodeJS.Timeout | undefined;
 	stop(): void;
@@ -70,8 +65,6 @@ export interface ChangeHubDeps {
 	 * nobody using it, so nothing means every frame.
 	 */
 	framesUsing(root: string, path: string): string[] | undefined;
-	/** Exact owner-created asset addition, released after its coalesced watch batch. */
-	stagedAddition?(root: string, file: string): (() => void) | undefined;
 }
 
 const DEBOUNCE_MS = 40;
@@ -97,16 +90,9 @@ const WATCH_LINGER_MS = 10_000;
 export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undefined }) {
 	const roots = new Map<string, RootWatch>();
 
-	function acquire(root: string): RootWatch {
-		const previous = roots.get(root);
-		if (previous?.covered) return previous;
-		previous?.stop();
-		const entry = start(root, previous?.listeners);
-		roots.set(root, entry);
-		return entry;
-	}
 	function subscribe(root: string, listener: Listener): () => void {
-		const entry = acquire(root);
+		const entry = roots.get(root) ?? start(root);
+		roots.set(root, entry);
 		// a stream that came back inside the window keeps the watcher it left
 		if (entry.linger !== undefined) {
 			clearTimeout(entry.linger);
@@ -115,75 +101,39 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		entry.listeners.add(listener);
 		return () => {
 			entry.listeners.delete(listener);
-			const current = roots.get(root);
-			if (!current || current.listeners !== entry.listeners) return;
-			const held = current;
-			if (held.listeners.size > 0 || held.sources.size > 0 || roots.get(root) !== held || held.linger !== undefined)
-				return;
+			if (entry.listeners.size > 0 || roots.get(root) !== entry || entry.linger !== undefined) return;
 			// the last subscriber does not take the watcher with it straight away
-			held.linger = setTimeout(() => {
-				held.linger = undefined;
-				if (held.listeners.size > 0 || held.sources.size > 0 || roots.get(root) !== held) return;
-				held.stop();
+			entry.linger = setTimeout(() => {
+				entry.linger = undefined;
+				if (entry.listeners.size > 0 || roots.get(root) !== entry) return;
+				entry.stop();
 				roots.delete(root);
 			}, WATCH_LINGER_MS);
-			held.linger.unref?.();
+			entry.linger.unref?.();
 		};
 	}
 
-	function start(root: string, listeners = new Set<Listener>()): RootWatch {
+	function start(root: string): RootWatch {
+		const listeners = new Set<Listener>();
 		const pending = new Map<string, ChangeEvent>();
-		const additions = new Set<() => void>();
 		let timer: NodeJS.Timeout | undefined;
-		const sources = new Set<SourceListener>();
-		const entry: RootWatch = {
-			listeners,
-			sources,
-			covered: true,
-			linger: undefined,
-			stop: () => {
-				lost();
-				clear();
-			},
-		};
-		function lost(): void {
-			if (!entry.covered) return;
-			entry.covered = false;
-			for (const emit of sources) emit({ kind: "lost" });
-		}
-		let configuration: FSWatcher | undefined;
+		const entry: RootWatch = { listeners, linger: undefined, stop: () => clear() };
 
 		let watcher: TreeWatch | undefined;
 		try {
 			const designDir = realDesignDir(root);
-
 			watcher = watchTree(
 				designDir,
 				(filename) => {
-					if (filename === null) {
-						for (const emit of sources) emit({ kind: "unknown" });
-					} else if (
-						!filename.split(sep).includes(".spool") &&
-						!/(^|\/)frame\.json(?:$|\.)/.test(filename) &&
-						filename !== "canvas.json"
-					) {
-						for (const emit of sources) emit({ kind: "named", path: join(designDir, filename) });
-					}
-					const addition = filename === null ? undefined : deps.stagedAddition?.(root, join(designDir, filename));
-					if (addition) additions.add(addition);
-					const event = addition
-						? undefined
-						: classify(designDir, filename, (path) => deps.framesUsing(root, path));
-					if (event === undefined && !addition) return;
-					if (event?.kind === "frame") pending.set(`frame ${event.frame}`, event);
+					const event = classify(designDir, filename, (path) => deps.framesUsing(root, path));
+					if (event === undefined) return;
+					if (event.kind === "frame") pending.set(`frame ${event.frame}`, event);
 					// a move and an edit to the same frame are two facts about it, so a
 					// sidecar keeps its own slot rather than collapsing into the source one
-					else if (event?.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
-					else if (event) pending.set("shared", mergeShared(pending.get("shared"), event));
+					else if (event.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
+					else pending.set("shared", mergeShared(pending.get("shared"), event));
 					timer ??= setTimeout(() => {
 						timer = undefined;
-						for (const release of additions) release();
-						additions.clear();
 						const batch = [...pending.values()];
 						pending.clear();
 						for (const change of batch) {
@@ -194,37 +144,18 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 				// an unhandled watch error would kill the daemon; drop the watcher
 				// and let the next subscriber start a fresh one
 				() => {
-					lost();
 					clear();
+					if (roots.get(root) === entry) roots.delete(root);
 				},
 			);
-			try {
-				configuration = watch(root, (_event, filename) => {
-					if (filename === "design") return;
-					for (const emit of sources)
-						emit(filename ? { kind: "named", path: join(root, filename.toString()) } : { kind: "unknown" });
-				});
-				configuration.on("error", () => {
-					lost();
-					clear();
-				});
-			} catch {
-				lost();
-			}
 		} catch {
-			lost();
 			// design/ vanished after registration: push degrades to silence — the
 			// pull side (compile-on-request) stays the truth, so never crash for this
 			return entry;
 		}
 
 		function clear(): void {
-			for (const release of additions) release();
-			additions.clear();
 			watcher?.close();
-			watcher = undefined;
-			configuration?.close();
-			configuration = undefined;
 			if (timer !== undefined) clearTimeout(timer);
 			timer = undefined;
 			if (entry.linger !== undefined) clearTimeout(entry.linger);
@@ -255,15 +186,7 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		for (const emit of entry.listeners) emit(event);
 	}
 
-	function observeSource(root: string, listener: SourceListener): () => void {
-		const entry = acquire(root);
-		entry.sources.add(listener);
-		if (!entry.covered) listener({ kind: "lost" });
-		return () => {
-			entry.sources.delete(listener);
-		};
-	}
-	return { subscribe, observeSource, publish, forget, close };
+	return { subscribe, publish, forget, close };
 }
 
 export type ChangeHub = ReturnType<typeof createChangeHub>;

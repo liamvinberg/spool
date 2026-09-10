@@ -7,15 +7,14 @@ import { isLayoutOnly, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
 
 /**
- * Planning one class or literal edit (#253): a typed op in, the exact
- * characters out.
+ * The write lane (#253): a typed op in, the exact characters out.
  *
- * The source owner is what a hand actually writes through; this is the parse
- * and the plan it asks for. An op names the stamp it acted on; this parses the
- * file fresh, never a mirror of it, finds the element that stamp points at,
- * and either answers with a span patch or refuses with a reason the surface
- * can show. A refusal means the gesture does not apply and nothing else
- * happens: nothing is forwarded to an agent, and the element stays what it was.
+ * Everything a hand changes about frame source comes through here. An op names
+ * the stamp it acted on; this parses the file fresh, never a mirror of it,
+ * finds the element that stamp points at, and either answers with a span patch
+ * or refuses with a reason the surface can show. A refusal means the gesture
+ * does not apply and nothing else happens: nothing is forwarded to an agent,
+ * and the element stays what it was.
  *
  * The splice replaces the touched characters and nothing else, so the file
  * comes back byte-identical outside them — the other attributes on the same

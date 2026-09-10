@@ -142,7 +142,6 @@ const URL_RULE = () => /url\(\s*["']?([^"')\s]+)["']?\s*\)/gi;
 export function inlineLocalFonts(
 	designDir: string,
 	css: string | undefined,
-	readSource: (file: string) => Buffer = readFileSync,
 ): { css: string | undefined; files: string[] } {
 	if (css === undefined) return { css: undefined, files: [] };
 	const sharedDir = join(designDir, "shared");
@@ -160,7 +159,7 @@ export function inlineLocalFonts(
 		files.push(file);
 		let bytes: Buffer;
 		try {
-			bytes = readSource(file);
+			bytes = readFileSync(file);
 		} catch {
 			// A face spool cannot read is left to the browser exactly as written.
 			return whole;

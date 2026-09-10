@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { observeReactValues } from "./source-react";
 
 /**
  * The one pinned React (#16): a single ESM bundle covering react, react-dom,
@@ -57,18 +56,6 @@ function lazyBuild<T>(builder: () => Promise<T>): () => Promise<T> {
 export const vendorReactJs: () => Promise<string> = lazyBuild(buildVendorReact);
 
 async function buildVendorReact(): Promise<string> {
-	// Committed source reads use this renderer's host-props/alternate contract.
-	// Upgrading React requires replaying retained state, memo and native-input tests.
-	const renderer = join(
-		dirname(fileURLToPath(import.meta.resolve("react-dom/client"))),
-		"cjs/react-dom-client.production.js",
-	);
-	if (
-		createHash("sha256").update(readFileSync(renderer)).digest("hex") !==
-		"9d2de2ee4a588c5d0b8580ff3467f796b8d9bbc45bdc35b257f7d1380e686c56"
-	) {
-		throw new Error("the pinned React renderer changed; source observation requires revalidation");
-	}
 	const seen = new Set<string>(["default"]);
 	const lines: string[] = [];
 	for (const [i, spec] of REACT_SPECIFIERS.entries()) {
@@ -91,67 +78,6 @@ async function buildVendorReact(): Promise<string> {
 		define: { "process.env.NODE_ENV": '"production"' },
 		write: false,
 		logLevel: "silent",
-		plugins: [
-			{
-				name: "spool-committed-renderer",
-				setup(build) {
-					build.onLoad({ filter: /[/\\]react\.production\.js$/ }, ({ path }) => ({
-						contents: observeReactValues(readFileSync(path, "utf8")),
-						loader: "js",
-					}));
-					build.onLoad({ filter: /react-dom-client\.production\.js$/ }, ({ path }) => {
-						let contents = readFileSync(path, "utf8");
-						const replace = (before: string, after: string) => {
-							if (contents.split(before).length !== 2)
-								throw new Error("pinned renderer observation anchor changed");
-							contents = contents.replace(before, after);
-						};
-						replace(
-							"nextRenderLanes = Component(props, secondArg);",
-							"nextRenderLanes = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => globalThis.__SPOOL_RECONCILE__.invoke(workInProgress, props, () => Component(props, secondArg))) : Component(props, secondArg);",
-						);
-						replace(
-							"children = Component(props, secondArg);",
-							"children = globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(Component, () => globalThis.__SPOOL_RECONCILE__.invoke(workInProgress, props, () => Component(props, secondArg))) : Component(props, secondArg);",
-						);
-						replace(
-							": context.render()),",
-							": (globalThis.__SPOOL_REACT__ ? globalThis.__SPOOL_REACT__.invoke(context, () => context.render()) : context.render())),",
-						);
-						replace(
-							"root.current = finishedWork;",
-							"root.current = finishedWork; globalThis.__SPOOL_REACT__?.commit(finishedWork); globalThis.__SPOOL_OBSERVER__?.commit(finishedWork);",
-						);
-
-						replace(
-							"function logCaughtError(root, boundary, errorInfo) {",
-							"function logCaughtError(root, boundary, errorInfo) { globalThis.__SPOOL_REACT__?.caught(boundary);",
-						);
-						replace(
-							"function logUncaughtError(root, errorInfo) {",
-							"function logUncaughtError(root, errorInfo) { globalThis.__SPOOL_REACT__?.uncaught(root);",
-						);
-						replace(
-							"function coerceRef(workInProgress, element) {",
-							"function coerceRef(workInProgress, element) { globalThis.__SPOOL_RECONCILE__?.bind(workInProgress, element);",
-						);
-						replace(
-							"  return workInProgress;\n}\nfunction resetWorkInProgress",
-							"  globalThis.__SPOOL_RECONCILE__?.copy(current, workInProgress); globalThis.__SPOOL_CONSUMED__?.copyFiber(current, workInProgress); return workInProgress;\n}\nfunction resetWorkInProgress",
-						);
-						replace(
-							"  return workInProgress;\n}\nfunction createFiberFromTypeAndProps",
-							"  globalThis.__SPOOL_RECONCILE__?.copy(current, workInProgress); globalThis.__SPOOL_CONSUMED__?.copyFiber(current, workInProgress); return workInProgress;\n}\nfunction createFiberFromTypeAndProps",
-						);
-						replace(
-							"current = resolveLazy(workInProgress.elementType);",
-							"current = resolveLazy(workInProgress.elementType); globalThis.__SPOOL_CONSUMED__?.bind(workInProgress);",
-						);
-						return { contents, loader: "js" };
-					});
-				},
-			},
-		],
 	});
 	const js = result.outputFiles[0]?.text;
 	if (js === undefined) throw new Error("vendor react bundle produced no output");

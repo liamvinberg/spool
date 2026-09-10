@@ -1,7 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
-import { buildBundledEditor } from "./src/daemon/bundled-editor";
 import { buildBundledOAuth } from "./src/daemon/bundled-oauth-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
@@ -16,7 +15,6 @@ export default defineConfig([
 		format: "esm",
 		target: "node22",
 		onSuccess: async () => {
-			await buildBundledEditor("dist/bundled-editor.js");
 			const renderer = fileURLToPath(new URL("./src/daemon/bundled-oauth-page.ts", import.meta.url));
 			await writeFile("dist/bundled-oauth-native.js", await buildBundledOAuth(renderer));
 		},

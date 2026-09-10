@@ -18,7 +18,6 @@ import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
-import { MATCHED_RULE_LIMIT } from "../source-edit";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
@@ -39,7 +38,6 @@ import {
 	readThreads,
 	serveThreads,
 } from "./agent-threads";
-import { IMAGE_BUDGET_BYTES } from "./assets";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
@@ -72,7 +70,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { ASSET_REQUEST_CAP, listAssets } from "./hand-asset";
+import { listAssets } from "./hand-asset";
 import { readRungs } from "./hand-lane";
 import { parseStamps } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
@@ -116,8 +114,6 @@ import {
 } from "./session";
 import { createSettingsStore } from "./settings";
 import { createShotTaker } from "./shots";
-import { createSourceObservers } from "./source-observers";
-import { createSourceOwner } from "./source-owner";
 import { compileClasses, readTheme } from "./theme";
 import {
 	createThumbHealer,
@@ -425,11 +421,6 @@ export function createDaemonApp({
 	const startedAt = new Date().toISOString();
 	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
-	const sourceObservers = createSourceObservers();
-	const sourceOwner = createSourceOwner(compiler, sourceObservers.verify, async (root, file) => {
-		const graphs = await flowGraph.sources(root);
-		return [...graphs].filter(([, graph]) => graph.files.includes(file)).map(([frame]) => frame);
-	});
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
@@ -484,11 +475,7 @@ export function createDaemonApp({
 	}
 	const flowGraph = createFlowGraph();
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
-	const hub = createChangeHub({
-		framesUsing: (root, path) => flowGraph.framesUsing(root, path),
-		stagedAddition: sourceOwner.stagedAddition,
-	});
-	sourceOwner.watchSource(hub.observeSource);
+	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
 	const trashImpl = moveToTrash ?? (async (paths: string[]) => void (await trash(paths, { glob: false })));
@@ -563,10 +550,7 @@ export function createDaemonApp({
 	const emitAppEvent = (event: AppEvent) => {
 		// a project that arrived or left changes who keeps history, and an arrival
 		// brings whatever design/ churn the daemon was not up for
-		if (event.kind === "registry" || event.kind === "project-renamed") {
-			history.keeping(registeredRoots());
-			sourceOwner.keepProjects(registeredRoots());
-		}
+		if (event.kind === "registry" || event.kind === "project-renamed") history.keeping(registeredRoots());
 		for (const listener of appListeners) listener(event);
 	};
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
@@ -615,15 +599,6 @@ export function createDaemonApp({
 		).map((engine) => [engine.id, engine]),
 	);
 
-	for (const engine of engines.values())
-		engine.coordinateSource?.({
-			open: (options, _generation) =>
-				sourceOwner.agent(options.root, () => {
-					if (!options.thread || !registeredRoots().includes(options.root)) return false;
-					const thread = readThread(spoolDir, options.root, options.thread);
-					return thread?.engine === "spool" && !thread.closed && thread.session.id === options.session.id;
-				}),
-		});
 	const permissionChanges = new Set<string>();
 	const projectRenames = new Set<string>();
 
@@ -797,12 +772,7 @@ export function createDaemonApp({
 	}
 
 	function isRenderOnlyPath(path: string): boolean {
-		return (
-			/^\/p\/[^/]+\/frames\/[^/]+$/.test(path) ||
-			path.startsWith("/vendor/") ||
-			path.startsWith("/source-admission/") ||
-			isProjectDataPath(path)
-		);
+		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
 	}
 
 	function normalizedOrigin(value: string): string | undefined {
@@ -1711,7 +1681,6 @@ export function createDaemonApp({
 					});
 				}
 				const turn = selected.engine.start({
-					thread,
 					...(recovery === undefined ? {} : { recovery }),
 					root: project.root,
 					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
@@ -2183,288 +2152,6 @@ export function createDaemonApp({
 			},
 		)
 		/*
-		 * The source owner captures an original read, plans its previews and
-		 * completes or reverses that edit. Saved source reaches running frames
-		 * through retained publications, with delivery reported separately.
-		 * A refusal leaves source untouched and gives the surface its reason.
-		 */
-		.post(
-			"/api/p/:project/source",
-			validator("json", (value, c) => {
-				const propertyValue = z.discriminatedUnion("kind", [
-					z
-						.object({ kind: z.literal("binding"), tokens: z.array(z.string().max(10_000)).max(100).readonly() })
-						.strict(),
-					z.object({ kind: z.literal("custom"), value: z.string().max(10_000) }).strict(),
-					z.object({ kind: z.literal("remove") }).strict(),
-				]);
-				const groupTarget = z.discriminatedUnion("kind", [
-					z
-						.object({
-							kind: z.literal("fields"),
-							fields: z
-								.array(z.object({ property: z.string(), scope: z.string() }).strict())
-								.min(1)
-								.max(100)
-								.readonly(),
-						})
-						.strict(),
-					z.object({ kind: z.literal("remove-scope"), scope: z.string().min(1) }).strict(),
-					z.object({ kind: z.literal("tokens") }).strict(),
-				]);
-				const groupValue = z.discriminatedUnion("kind", [
-					z
-						.object({
-							kind: z.literal("fields"),
-							changes: z
-								.array(z.object({ property: z.string(), scope: z.string(), value: propertyValue }).strict())
-								.min(1)
-								.max(100)
-								.readonly(),
-						})
-						.strict(),
-					z.object({ kind: z.literal("remove-scope"), scope: z.string().min(1) }).strict(),
-					z
-						.object({
-							kind: z.literal("tokens"),
-							add: z.array(z.string().max(10_000)).max(100).readonly(),
-							remove: z.array(z.string().max(10_000)).max(100).readonly(),
-						})
-						.strict(),
-				]);
-				const operation = z.discriminatedUnion("kind", [
-					z
-						.object({ kind: z.literal("literal"), field: z.string().optional() })
-						.strict()
-						.transform(({ kind, field }) => ({ kind, ...(field === undefined ? {} : { field }) })),
-					z.object({ kind: z.literal("property"), property: z.string(), scope: z.string() }).strict(),
-					z.object({ kind: z.literal("properties"), target: groupTarget }).strict(),
-					z.object({ kind: z.literal("image") }).strict(),
-					z.object({ kind: z.literal("delete") }).strict(),
-					z.object({ kind: z.literal("reorder"), steps: z.number().int().min(-1000).max(1000) }).strict(),
-				]);
-				const change = z.discriminatedUnion("kind", [
-					z.object({ kind: z.literal("literal"), text: z.string().max(100_000) }).strict(),
-					z.object({ kind: z.literal("image"), path: z.string().max(10_000) }).strict(),
-					z.object({ kind: z.literal("delete") }).strict(),
-					z.object({ kind: z.literal("reorder") }).strict(),
-					z.object({ kind: z.literal("property"), value: propertyValue }).strict(),
-					z.object({ kind: z.literal("properties"), value: groupValue }).strict(),
-				]);
-				const occurrence = z
-					.object({
-						publication: z.string(),
-						cell: z.string(),
-						occurrence: z.string(),
-						invocation: z.string(),
-						provenance: z.string().optional(),
-						structure: z
-							.object({
-								parent: z.string(),
-								source: z
-									.object({ site: z.string(), chain: z.array(z.string()).readonly() })
-									.strict()
-									.optional(),
-							})
-							.strict()
-							.optional(),
-						field: z.string().optional(),
-						absent: z.boolean().optional(),
-						value: z.string().max(IMAGE_BUDGET_BYTES),
-						context: z.string().max(100_000),
-						propertyNative: z
-							.object({ property: z.string().max(200), value: z.string().max(100_000) })
-							.strict()
-							.optional(),
-						// The rule chains this element's own document matched. A chain is
-						// evidence, not authority: the compiler still has to carry it.
-						propertyRules: z
-							.array(
-								z
-									.object({ path: z.array(z.string().max(2000)).max(20).readonly(), active: z.boolean() })
-									.strict()
-									.readonly(),
-							)
-							.max(MATCHED_RULE_LIMIT)
-							.readonly()
-							.optional(),
-					})
-					.strict();
-				const inventory = z
-					.object({
-						frame: z.string(),
-						publication: z.string(),
-						unknown: z.number().int().nonnegative(),
-						uses: z.array(z.object({ original: occurrence, visible: z.boolean() }).strict()),
-					})
-					.strict();
-				const parsed = z
-					.discriminatedUnion("action", [
-						z
-							.object({
-								action: z.literal("stage-image"),
-								handle: z.string(),
-								generation: z.number().int().positive(),
-								original: occurrence,
-								put: z.discriminatedUnion("kind", [
-									z.object({ kind: z.literal("existing"), path: z.string().max(512) }).strict(),
-									z
-										.object({
-											kind: z.literal("file"),
-											name: z.string().max(96),
-											data: z.string().max(ASSET_REQUEST_CAP),
-										})
-										.strict(),
-								]),
-							})
-							.strict(),
-						z
-							.object({
-								action: z.literal("describe"),
-								operation,
-								frame: z.string(),
-								original: occurrence,
-								inventories: z.array(inventory),
-								readings: z.array(z.string()).optional(),
-							})
-							.strict(),
-						z
-							.object({
-								action: z.literal("read"),
-								operation,
-								retry: z.boolean().optional(),
-								observer: z.string(),
-								frame: z.string(),
-								original: occurrence,
-								generation: z.number().int().positive(),
-							})
-							.strict(),
-						z
-							.object({
-								action: z.literal("preview"),
-								handle: z.string(),
-								generation: z.number().int().positive(),
-								revision: z.number().int().positive(),
-								original: occurrence,
-								change,
-							})
-							.strict(),
-						z
-							.object({
-								action: z.literal("commit"),
-								handle: z.string(),
-								generation: z.number().int().positive(),
-								original: occurrence,
-								change,
-							})
-							.strict(),
-						z
-							.object({
-								action: z.literal("inverse"),
-								receipt: z
-									.object({ handle: z.string(), owner: z.string(), operation, field: z.string().optional() })
-									.strict(),
-								inventories: z.array(inventory).optional(),
-							})
-							.strict(),
-						z
-							.object({
-								action: z.literal("observed"),
-								observer: z.string(),
-								challenge: z.string(),
-								original: occurrence.optional(),
-							})
-							.strict(),
-						z
-							.object({
-								action: z.literal("reach"),
-								preview: propertyValue.optional(),
-								handle: z.string(),
-								inventories: z.array(
-									z
-										.object({
-											frame: z.string(),
-											publication: z.string(),
-											unknown: z.number().int().nonnegative(),
-											uses: z.array(z.object({ original: occurrence, visible: z.boolean() }).strict()),
-										})
-										.strict(),
-								),
-							})
-							.strict(),
-						z.object({ action: z.literal("cancel"), handle: z.string() }).strict(),
-						z.object({ action: z.literal("current"), publication: z.string() }).strict(),
-						z.object({ action: z.literal("delivered"), publication: z.string() }).strict(),
-					])
-					.safeParse(value);
-				return parsed.success ? parsed.data : c.text("invalid source operation", 400);
-			}),
-			async (c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const body = c.req.valid("json");
-				switch (body.action) {
-					case "stage-image":
-						return c.json(
-							await sourceOwner.stageImage(project.root, body.handle, body.generation, body.original, body.put),
-						);
-					case "read":
-						return c.json(
-							await sourceOwner.read(
-								project.root,
-								body.frame,
-								body.original,
-								body.generation,
-								body.observer,
-								body.operation,
-								body.retry,
-							),
-						);
-					case "reach":
-						return c.json(await sourceOwner.reach(project.root, body.handle, body.inventories, body.preview));
-					case "observed":
-						sourceObservers.reply(project.root, body.observer, body.challenge, body.original);
-						return c.json({ ok: true });
-					case "describe":
-						return c.json(
-							await sourceOwner.describe(
-								project.root,
-								body.frame,
-								body.original,
-								body.inventories,
-								body.operation,
-								body.readings ?? [],
-							),
-						);
-					case "preview":
-						return c.json(
-							await sourceOwner.preview(
-								project.root,
-								body.handle,
-								body.generation,
-								body.revision,
-								body.original,
-								body.change,
-							),
-						);
-					case "commit":
-						return c.json(
-							await sourceOwner.commit(project.root, body.handle, body.generation, body.original, body.change),
-						);
-					case "inverse":
-						return c.json(await sourceOwner.inverse(project.root, body.receipt, body.inventories));
-					case "cancel":
-						sourceOwner.cancel(project.root, body.handle);
-						return c.json({ ok: true });
-					case "current":
-						return c.json({ current: sourceOwner.current(project.root, body.publication) });
-					case "delivered":
-						sourceOwner.delivered(body.publication);
-						return c.json({ ok: true });
-				}
-			},
-		)
-		/*
 		 * The read half (#256). The properties rail draws an element before
 		 * anybody touches it, so it asks the same file the write lane parses:
 		 * the name the author wrote, the literal className, and the refusal a
@@ -2916,19 +2603,6 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			return serveProjectJson(c, readScenario(project.root, c.req.param("name")));
 		})
-		.get("/api/p/:project/source-observer/:observer", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return streamSSE(c, async (stream) => {
-				beatWhileOpen(stream);
-				const disconnect = sourceObservers.connect(project.root, c.req.param("observer"), (challenge) => {
-					void stream.writeSSE({ event: "observe", data: JSON.stringify(challenge) }).catch(() => {});
-				});
-				stream.onAbort(disconnect);
-				await stream.writeSSE({ event: "hello", data: "{}" });
-				await new Promise<void>((resolve) => stream.onAbort(resolve));
-			});
-		})
 		.get("/api/p/:project/events", (c) => {
 			const name = c.req.param("project");
 			const project = resolveProject(c, name);
@@ -2943,11 +2617,6 @@ export function createDaemonApp({
 				stream.onAbort(unsubscribe);
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
-		})
-		.get("/source-admission/:token", (c) => {
-			c.header("access-control-allow-origin", "*");
-			c.header("cache-control", "no-store");
-			return c.json({ admitted: sourceOwner.admit(c.req.param("token")) });
 		})
 		.get("/vendor/react.js", async (c) => {
 			// sandboxed srcdoc frames fetch this from a null origin — CORS must be open
@@ -3286,7 +2955,6 @@ export function createDaemonApp({
 			history.close();
 			liveTurns.close();
 			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
-			sourceOwner.close();
 			hub.close();
 			updateChecker.stop();
 			const closed = await Promise.allSettled([compiled, ...stoppedEngines, shots.close(), goReader.close()]);
