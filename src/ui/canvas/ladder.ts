@@ -66,7 +66,14 @@ function sharesRung(chain: readonly PickedHit[], scope: LadderScope, rung: numbe
 /**
  * Figma's scope memory, and what a plain click takes: the element at the held
  * rung under a fresh ancestry — a sibling inside the shared ancestry, the
- * divergence point outside it, the root element when no scope holds.
+ * divergence point outside it, the top-level child under the pointer when no
+ * scope holds.
+ *
+ * A root wrapper is never what a click takes, whatever the scope says. It has
+ * no siblings to move between, so a click that answered with it would answer
+ * with it for every point in the frame: press after press on a page that never
+ * moves. Esc and the crumbs still reach it, which is where a class on the
+ * wrapper is edited from.
  */
 export function atRung(
 	chain: readonly PickedHit[],
@@ -80,7 +87,8 @@ export function atRung(
 	while (shared < rung && shared < chain.length && scope.chain[shared]?.selector === chain[shared]?.selector) {
 		shared++;
 	}
-	return chain[Math.min(shared, chain.length - 1)];
+	const taken = chain[Math.min(shared, chain.length - 1)];
+	return taken === chain[0] ? firstRung(chain, frame) : taken;
 }
 
 /** One rung up: the parent of the held element, or nothing at the root element. */

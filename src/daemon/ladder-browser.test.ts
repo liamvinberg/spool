@@ -248,7 +248,11 @@ it("walks the ladder from the keyboard and goes inside on a double-click, out on
 		.poll(() => page.frameLocator('iframe[title="cart"]').locator("li").nth(1).getAttribute("contenteditable"))
 		.toBe("plaintext-only");
 	await expect.poll(held).toBe("div > ul > li:nth-of-type(2)");
+	// Escape lets the words go, and the keyboard comes back out here with them
 	await page.keyboard.press("Escape");
+	await expect
+		.poll(() => page.frameLocator('iframe[title="cart"]').locator("li").nth(1).getAttribute("contenteditable"))
+		.toBe(null);
 	// and none of that went inside, which is the other tool's meaning
 	expect(await page.locator('[data-frame-label="cart"]').innerText()).not.toContain("esc exits");
 

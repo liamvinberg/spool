@@ -76,8 +76,12 @@ describe("atRung", () => {
 		expect(atRung(PAY, scope(PAY, "pay"), FRAME)?.selector).toBe("pay");
 	});
 
-	it("holds the root wrapper once a climb has put the scope on it", () => {
-		expect(atRung(WRAPPED, scope(WRAPPED, "screen"), FRAME)?.selector).toBe("screen");
+	it("moves off a root wrapper the scope is on rather than answering with it again", () => {
+		// the wrapper has no siblings to move between, so a click that took it
+		// would take it at every point in the frame (#321)
+		expect(atRung(WRAPPED, scope(WRAPPED, "screen"), FRAME)?.selector).toBe("footer");
+		// a root element that is a component of its own is a rung like any other
+		expect(atRung(PAY, scope(PAY, "screen"), FRAME)?.selector).toBe("screen");
 	});
 
 	it("has nothing to take on the frame background", () => {
