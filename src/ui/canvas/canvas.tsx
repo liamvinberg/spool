@@ -2511,13 +2511,21 @@ export function ProjectCanvas({
 		(held: HandEdit, commit: boolean, nodes: readonly EditedNode[], owner: string | null) => {
 			setEdit(null);
 			viewportRef.current?.focus();
-			walkKin(held.frame, held.selector, "self");
+			// the box the words are drawn in moved with them, so the ring is
+			// re-read off the element itself — while it is still the one held: a
+			// descent that ended this edit has already moved the selection on
+			const stillHeld = pickedRef.current.some(
+				(pick) => pick.frame === held.frame && pick.selector === held.selector,
+			);
+			if (stillHeld) walkKin(held.frame, held.selector, "self");
 			const attempted = wordsOf(nodes);
 			if (!commit || attempted === held.start) return;
 			const read = ringRef.current.read;
 			const fingerprint = held.fingerprint ?? (read?.source === held.source ? read.fingerprint : undefined);
 			const refuse = (refusal: Refusal) => {
 				restoreWords(held.frame, held.id, "before", () => {});
+				// on the element while it is still held, and as a notice once the
+				// selection has moved on and there is nothing to draw it under
 				if (pickedRef.current.some((pick) => pick.frame === held.frame && pick.selector === held.selector)) {
 					setRefused({ frame: held.frame, selector: held.selector, refusal, attempted });
 				} else setNotice({ kind: "error", message: refusal.says });
@@ -3617,13 +3625,7 @@ export function ProjectCanvas({
 		const openEdit = editingRef.current;
 		if (openEdit !== null) {
 			const over = frameAtWorld(toWorld(p, cam)) === openEdit.frame;
-			if (over && openEdit.phase === "opening") {
-				// and it must not take the focus with it, or the frame would read
-				// the press as the blur that saves
-				event.preventDefault();
-				iframes.current.get(openEdit.frame)?.focus();
-				return;
-			}
+			if (over && openEdit.phase === "opening") return;
 			endEdit(true);
 			if (over) return;
 		}
@@ -4967,6 +4969,16 @@ export function ProjectCanvas({
 				className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-canvas outline-none"
 				style={{ cursor }}
 				onPointerDown={onPointerDown}
+				// the second half of the double-click that opened an edit must not
+				// take the focus out of the frame, or the frame reads it as the blur
+				// that saves. Here rather than on the pointer press, because a
+				// cancelled pointerdown takes the double-click with it (#314)
+				onMouseDown={(event) => {
+					const openEdit = editingRef.current;
+					const cam = cameraRef.current;
+					if (openEdit === null || openEdit.phase !== "opening" || cam === null) return;
+					if (frameAtWorld(toWorld(localPoint(event), cam)) === openEdit.frame) event.preventDefault();
+				}}
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerUp}
 				onPointerCancel={cancelGesture}
