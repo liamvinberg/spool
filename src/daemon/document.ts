@@ -1422,6 +1422,12 @@ const canvasShimJs = `(() => {
 	var edits = new Map();
 	var EDITS_HELD = 100;
 
+	// what a bounded map does when it fills: the oldest ask goes, because a
+	// document held open all day must not grow one entry per keystroke
+	function evictOldest(held) {
+		for (const key of held.keys()) { if (held.size <= EDITS_HELD) break; held.delete(key); }
+	}
+
 	function beginEdit(selector, x, y, id) {
 		endEdit(false);
 		const frame = (window.__SPOOL__ || {}).frame;
@@ -1452,7 +1458,7 @@ const canvasShimJs = `(() => {
 		if (!commit) restore(el, held.before);
 		else {
 			edits.set(held.id, { el, before: held.before, after: snapshotOf(el) });
-			for (const key of edits.keys()) { if (edits.size <= EDITS_HELD) break; edits.delete(key); }
+			evictOldest(edits);
 		}
 		parent.postMessage({
 			spool: "edited",
@@ -1587,17 +1593,26 @@ const canvasShimJs = `(() => {
 		for (const el of document.querySelectorAll("[data-spool-source]")) {
 			const at = stampParts(el.getAttribute("data-spool-source"));
 			if (!at || at.file !== file) continue;
-			let moved = at.column;
-			for (const shift of shifts) {
-				if (shift.line === at.line && shift.column + (shift.taken || 0) <= moved) moved += shift.delta;
-			}
+			const moved = movedColumn(at, shifts);
 			if (moved !== at.column) el.setAttribute("data-spool-source", at.file + ":" + at.line + ":" + moved);
 		}
 	}
 
+	// The one copy of parseStampRef (src/stamp.ts) this repository keeps: the
+	// shim is injected text with no module of its own to import from.
 	function stampParts(source) {
 		const match = /^(.*):(\\d+):(\\d+)$/.exec(source || "");
 		return match ? { file: match[1], line: Number(match[2]), column: Number(match[3]) } : null;
+	}
+
+	// Where a stamp's column ends up after a run of shifts: every patch earlier
+	// on its own line moves it by what that patch added or took.
+	function movedColumn(at, shifts) {
+		let moved = at.column;
+		for (const shift of shifts) {
+			if (shift.line === at.line && shift.column + (shift.taken || 0) <= moved) moved += shift.delta;
+		}
+		return moved;
 	}
 
 	// One compile-time stamp, as the file has it now: every shift this document
@@ -1606,11 +1621,7 @@ const canvasShimJs = `(() => {
 	function stampNow(source) {
 		const at = stampParts(source);
 		if (!at) return source;
-		let moved = at.column;
-		for (const shift of shifted.get(at.file) || []) {
-			if (shift.line === at.line && shift.column + (shift.taken || 0) <= moved) moved += shift.delta;
-		}
-		return at.file + ":" + at.line + ":" + moved;
+		return at.file + ":" + at.line + ":" + movedColumn(at, shifted.get(at.file) || []);
 	}
 
 	// The structural gestures (#317): the element out of the document, hidden,
@@ -1648,7 +1659,7 @@ const canvasShimJs = `(() => {
 			else { el.classList.remove("hidden"); el.style.display = ""; }
 			alters.set(id, { kind: "shown", el: el, before: before, after: displayOf(el) });
 		}
-		for (const key of alters.keys()) { if (alters.size <= EDITS_HELD) break; alters.delete(key); }
+		evictOldest(alters);
 		return { ok: true, owner: owner };
 	}
 
