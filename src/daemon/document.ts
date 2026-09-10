@@ -377,8 +377,13 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * that element's first child or either sibling, which is the keyboard's half
  * of the same ladder (#254); {spool:"edit", selector, x, y} makes that element's
  * own words editable in place and answers {spool:"edit-open"}, then
- * {spool:"edited"} once Enter, Esc or a click away has ended it, and
+ * {spool:"edited"} once Enter, Esc or a click away has ended it, carrying the
+ * element's child nodes and the call site one owner up (#314), and
  * {spool:"edit-end", commit} ends one from the canvas side (#255);
+ * {spool:"restore", id, way, ask} puts one committed edit's words back or
+ * forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
+ * moves the stamps a save shifted on their line, since the document is not
+ * reloaded for its own save;
  * {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
@@ -1403,6 +1408,11 @@ const canvasShimJs = `(() => {
 	var editing = null;
 	var swallowUntilClick = false;
 	var editingKeys = new Set();
+	// the edits this document has committed, by ask: the words before and after
+	// each, held as the very nodes React owns, so undo and redo put back the
+	// same objects rather than a copy React would go on updating blind (#314)
+	var edits = new Map();
+	var EDITS_HELD = 100;
 
 	function beginEdit(selector, x, y, id) {
 		endEdit(false);
@@ -1412,7 +1422,7 @@ const canvasShimJs = `(() => {
 			parent.postMessage({ spool: "edit-open", frame, id, ok: false, text: "" }, "*");
 			return;
 		}
-		editing = { el, id, composing: false, finish: false, text: el.textContent || "", editable: el.getAttribute("contenteditable"), spellcheck: el.getAttribute("spellcheck") };
+		editing = { el, id, composing: false, finish: false, text: wordsOf(nodesOf(el)), before: snapshotOf(el), editable: el.getAttribute("contenteditable"), spellcheck: el.getAttribute("spellcheck") };
 		el.setAttribute("contenteditable", "plaintext-only");
 		el.setAttribute("spellcheck", "false");
 		try { el.focus({ preventScroll: true }); } catch { try { el.focus(); } catch {} }
@@ -1426,21 +1436,98 @@ const canvasShimJs = `(() => {
 		const held = editing;
 		editing = null;
 		const el = held.el;
-		const text = el.innerText ?? el.textContent ?? "";
 		if (held.editable === null) el.removeAttribute("contenteditable"); else el.setAttribute("contenteditable", held.editable);
 		if (held.spellcheck === null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", held.spellcheck);
 		try { el.blur(); } catch {}
-		// Esc restores; a commit leaves the typed words standing, because the
-		// reload that carries them into the file is a moment away and flashing
-		// the old ones back is exactly the blink the write lane avoids
-		if (!commit) el.textContent = held.text;
+		// Esc puts the words back; a commit leaves the typed ones standing, because
+		// the DOM is the preview and the file is about to say the same thing
+		if (!commit) restore(el, held.before);
+		else {
+			edits.set(held.id, { el, before: held.before, after: snapshotOf(el) });
+			for (const key of edits.keys()) { if (edits.size <= EDITS_HELD) break; edits.delete(key); }
+		}
 		parent.postMessage({
 			spool: "edited",
 			frame: (window.__SPOOL__ || {}).frame,
 			id: held.id,
 			commit: commit === true,
-			text,
+			nodes: commit ? nodesOf(el) : [],
+			owner: commit ? ownerOf(el) : null,
 		}, "*");
+	}
+
+	// The element's children as they stand: the nodes themselves and the words
+	// each text node holds, so putting them back is putting back these objects.
+	function snapshotOf(el) {
+		return Array.from(el.childNodes, (node) => ({
+			node,
+			text: node.nodeType === 3 ? node.nodeValue : null,
+			children: node.nodeType === 1 ? snapshotOf(node) : [],
+		}));
+	}
+
+	function restore(el, snapshot) {
+		for (const held of snapshot) {
+			if (held.node.nodeType === 3) held.node.nodeValue = held.text;
+			else if (held.node.nodeType === 1) restore(held.node, held.children);
+		}
+		el.replaceChildren(...snapshot.map((held) => held.node));
+	}
+
+	// The words before or after one committed edit, put back on the same
+	// element; nothing to put back once the document has moved on from it.
+	function restoreEdit(id, way) {
+		const edit = edits.get(id);
+		if (!edit || !edit.el.isConnected) return false;
+		restore(edit.el, way === "before" ? edit.before : edit.after);
+		return true;
+	}
+
+	// what a commit says: the child nodes, text and inline elements alike
+	function nodesOf(el) {
+		const nodes = [];
+		for (const node of el.childNodes) {
+			if (node.nodeType === 3) nodes.push({ text: node.nodeValue || "" });
+			else if (node.nodeType === 1) nodes.push({ tag: node.localName, nodes: node.localName === "br" ? [] : nodesOf(node) });
+		}
+		return nodes;
+	}
+
+	// the words as one string, a line break for each <br>, which is what the
+	// canvas measures an ended edit against to know whether anything changed
+	function wordsOf(nodes) {
+		return nodes.map((node) => ("text" in node ? node.text : node.tag === "br" ? "\\n" : wordsOf(node.nodes))).join("");
+	}
+
+	// The call one owner up: the nearest component above the element, and the
+	// stamp of the call that passed it its props, which the runtime kept.
+	function ownerOf(el) {
+		const siteOf = window.__spoolCallSiteOf;
+		if (typeof siteOf !== "function") return null;
+		const key = Object.keys(el).find((name) => name.startsWith("__reactFiber$"));
+		let fiber = key ? el[key] : null;
+		while (fiber && (fiber = fiber.return)) {
+			const type = fiber.type;
+			const component = typeof type === "function" || (type && typeof type === "object" && (typeof type.type === "function" || typeof type.render === "function"));
+			if (!component) continue;
+			const site = siteOf(fiber.memoizedProps);
+			return typeof site === "string" ? site : null;
+		}
+		return null;
+	}
+
+	// A write moved the stamps on its line, and this document is not reloaded
+	// for its own save: every element on that line past the patch shifts with it.
+	function restamp(file, shifts) {
+		for (const el of document.querySelectorAll("[data-spool-source]")) {
+			const match = /^(.*):(\\d+):(\\d+)$/.exec(el.getAttribute("data-spool-source") || "");
+			if (!match || match[1] !== file) continue;
+			const line = Number(match[2]);
+			const column = Number(match[3]);
+			let moved = column;
+			for (const shift of shifts) if (shift.line === line && shift.column < column) moved += shift.delta;
+			if (moved !== column) el.setAttribute("data-spool-source", match[1] + ":" + line + ":" + moved);
+		}
 	}
 
 	// the caret where the click was, and the whole of the words when the
@@ -1486,9 +1573,10 @@ const canvasShimJs = `(() => {
 		addEventListener(kind, swallowWhileEditing, true);
 	}
 
-	// Field blur finishes; losing the window cancels the native session.
+	// Blur saves: the element's, and the window's, which is what a click out on
+	// the canvas is by the time anything here hears of it.
 	addEventListener("blur", (event) => {
-		if (editing && (event.target === editing.el || event.target === window)) endEdit(event.target !== window);
+		if (editing && (event.target === editing.el || event.target === window)) endEdit(true);
 	}, true);
 
 	addEventListener("compositionstart", (event) => { if (editing) { editing.composing = true; event.stopImmediatePropagation(); } }, true);
@@ -1803,6 +1891,19 @@ const canvasShimJs = `(() => {
 			} catch {
 				parent.postMessage({ spool: "edit-open", frame: config.frame, id: m.id, ok: false, text: "" }, "*");
 			}
+			return;
+		}
+		if (m.spool === "restore" || m.spool === "restamp") {
+			// both change the document, so the same door
+			const config = window.__SPOOL__ || {};
+			if (event.source !== parent || event.origin !== config.controlOrigin) return;
+			if (m.spool === "restamp") {
+				try { restamp(m.file, Array.isArray(m.shifts) ? m.shifts : []); } catch {}
+				return;
+			}
+			let ok = false;
+			try { ok = restoreEdit(m.id, m.way); } catch {}
+			parent.postMessage({ spool: "restored", frame: config.frame, id: m.ask, ok }, "*");
 			return;
 		}
 		if (m.spool === "drop-target") {

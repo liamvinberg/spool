@@ -29,6 +29,11 @@ export function callSiteOf(props: object): string | undefined {
 	return callSites.get(props);
 }
 
+// The shim is a classic script with no way to import this module, and the
+// component's props are what React keeps on the fiber, so the reader is put
+// where the shim can reach it (#314).
+if (typeof window !== "undefined") Reflect.set(window, "__spoolCallSiteOf", callSiteOf);
+
 export function jsxDEV(
 	type: unknown,
 	props: Record<string, unknown> | null,

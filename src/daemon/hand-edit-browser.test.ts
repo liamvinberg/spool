@@ -5,16 +5,13 @@ import { assembleFrameDocument } from "./document";
 import { RENDER_HOST } from "./security";
 
 /**
- * The two canvas gestures in a real document (#255).
- *
- * The first test is the frame's half alone: an element made editable in place,
- * the keys it swallows while it is, and the two ways an edit ends. The second
- * is the whole lane out on a canvas — the words typed into the element itself
- * land in the file on disk, and ⌫ removes one keyed authored child.
+ * The frame's half of the text gesture alone (#255, #314): an element made
+ * editable in place, the keys and presses it swallows while it is, what it
+ * says when the edit ends, and the words put back on the same nodes.
  */
 
 const BOOT = `document.getElementById("root").innerHTML =
-	'<div class="screen"><h1 id="crumb">cart</h1><button id="pay">Pay now</button></div>';
+	'<div class="screen"><h1 id="crumb">cart<br><i>now</i></h1><button id="pay">Pay now</button></div>';
 document.getElementById("pay").addEventListener("click", () => { window.__CLICKED__ = true; });
 document.addEventListener("keydown", (event) => {
 	window.__TYPED__ = (window.__TYPED__ || "") + event.key;
@@ -74,12 +71,12 @@ async function serveFrame(): Promise<Served> {
 	let asked = 0;
 	window.said = [];
 	window.addEventListener("message", (event) => {
-		if (event.data && (event.data.spool === "edit-open" || event.data.spool === "edited")) {
+		if (event.data && ["edit-open", "edited", "restored"].includes(event.data.spool)) {
 			window.said.push(event.data);
 		}
 	});
 	window.send = (message) => {
-		document.getElementById("frame").contentWindow.postMessage({ ...message, id: ++asked }, "*");
+		document.getElementById("frame").contentWindow.postMessage({ id: ++asked, ...message }, "*");
 	};
 </script>
 </body></html>`;
@@ -126,8 +123,12 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 	await page.keyboard.press("ControlOrMeta+a");
 	await page.keyboard.type("Pay later");
 	// the keys are the edit's, not the prototype's: nothing frame code bound
-	// ran while they were typed
+	// ran while they were typed, and a press on the button under the edit
+	// places the caret rather than pressing it
 	expect(await inFrame(() => (window as unknown as { __TYPED__?: string }).__TYPED__)).toBe(undefined);
+	await frame.locator("#pay").click();
+	expect(await inFrame(() => (window as unknown as { __CLICKED__?: boolean }).__CLICKED__)).toBe(undefined);
+	expect(await editable("#pay")).toBe("plaintext-only");
 
 	await page.keyboard.press("Enter");
 	await expect
@@ -135,7 +136,8 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 		.toMatchObject({
 			spool: "edited",
 			commit: true,
-			text: "Pay later",
+			nodes: [{ text: "Pay later" }],
+			owner: null,
 		});
 	// the typed words stand: the reload that carries them into the file is a
 	// moment away, and flashing the old ones back is the blink the lane avoids
@@ -145,15 +147,47 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 	await frame.locator("#pay").click();
 	expect(await inFrame(() => (window as unknown as { __CLICKED__?: boolean }).__CLICKED__)).toBe(true);
 
-	// Esc cancels and restores, down to the words that were there
+	// Esc cancels and restores, down to the words that were there — on the
+	// nodes that were there, line break and inline element included
 	await send({ spool: "edit", selector: "#crumb", x: 4, y: 4 });
-	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "edit-open", ok: true, text: "cart" });
+	await expect
+		.poll(async () => (await said()).at(-1))
+		.toMatchObject({ spool: "edit-open", ok: true, text: "cart\nnow" });
 	await page.keyboard.press("ControlOrMeta+a");
 	await page.keyboard.type("basket");
 	await expect.poll(() => text("#crumb")).toBe("basket");
 	await page.keyboard.press("Escape");
 	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "edited", commit: false });
-	await expect.poll(() => text("#crumb")).toBe("cart");
+	await expect.poll(() => frame.locator("#crumb").innerHTML()).toBe("cart<br><i>now</i>");
+
+	// a committed edit is held by its ask: the words before it and after it
+	// come back on request, and a document that has moved on says no
+	await send({ spool: "edit", selector: "#crumb", x: 4, y: 4 });
+	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "edit-open", ok: true });
+	const opened = (await said()).at(-1) as { id: number };
+	await page.keyboard.press("End");
+	await page.keyboard.type("!");
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(async () => (await said()).at(-1))
+		.toMatchObject({ spool: "edited", commit: true, nodes: [{ text: "cart!" }, { tag: "br" }, { tag: "i" }] });
+	await send({ spool: "restore", id: opened.id, way: "before" });
+	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "restored", ok: true });
+	expect(await frame.locator("#crumb").innerHTML()).toBe("cart<br><i>now</i>");
+	await send({ spool: "restore", id: opened.id, way: "after" });
+	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "restored", ok: true });
+	expect(await frame.locator("#crumb").innerHTML()).toBe("cart!<br><i>now</i>");
+	await send({ spool: "restore", id: 999, way: "before" });
+	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "restored", ok: false });
+
+	// a save moved the stamps on its line, and the document carries them on
+	await inFrame(() => {
+		document.getElementById("crumb")?.setAttribute("data-spool-source", "frames/cart/frame.tsx:7:10");
+		document.getElementById("pay")?.setAttribute("data-spool-source", "frames/cart/frame.tsx:7:40");
+	});
+	await send({ spool: "restamp", file: "frames/cart/frame.tsx", shifts: [{ line: 7, column: 14, delta: 3 }] });
+	await expect.poll(() => frame.locator("#pay").getAttribute("data-spool-source")).toBe("frames/cart/frame.tsx:7:43");
+	expect(await frame.locator("#crumb").getAttribute("data-spool-source")).toBe("frames/cart/frame.tsx:7:10");
 
 	// a selector nothing answers to is a no, not an edit nobody can end
 	await send({ spool: "edit", selector: "#gone", x: 0, y: 0 });
