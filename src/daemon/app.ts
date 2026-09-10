@@ -558,6 +558,9 @@ export function createDaemonApp({
 		) {
 			return c.text('a text edit is { "frame", "source", "nodes", "owner"?, "fingerprint" }', 400);
 		}
+		if (body.ownerFingerprint !== undefined && typeof body.ownerFingerprint !== "string") {
+			return c.text("a call site carries the fingerprint it was read at", 400);
+		}
 		const [source, owner] = stamps;
 		if (source === undefined) return c.text("a text edit names the element it is on", 400);
 		return {
@@ -566,6 +569,7 @@ export function createDaemonApp({
 			nodes,
 			fingerprint: body.fingerprint,
 			...(owner === undefined ? {} : { owner }),
+			...(typeof body.ownerFingerprint === "string" ? { ownerFingerprint: body.ownerFingerprint } : {}),
 		};
 	});
 
@@ -601,12 +605,16 @@ export function createDaemonApp({
 			return c.text(says, 400);
 		}
 		if (typeof body.value === "string" && body.value.length > 4096) return c.text(says, 400);
+		if (body.ownerFingerprint !== undefined && typeof body.ownerFingerprint !== "string") {
+			return c.text(says, 400);
+		}
 		return {
 			frame: body.frame,
 			act: act as "delete" | "hide" | "show" | "attribute",
 			source,
 			fingerprint: body.fingerprint,
 			...(owner === undefined ? {} : { owner }),
+			...(typeof body.ownerFingerprint === "string" ? { ownerFingerprint: body.ownerFingerprint } : {}),
 			...(typeof body.name === "string" ? { name: body.name } : {}),
 			...(typeof body.value === "string" ? { value: body.value } : {}),
 		};

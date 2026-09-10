@@ -315,7 +315,14 @@ export type TextWritten =
 export async function writeText(
 	project: string,
 	frame: string,
-	ask: { source: string; nodes: readonly EditedNode[]; owner?: string; fingerprint: string },
+	ask: {
+		source: string;
+		nodes: readonly EditedNode[];
+		owner?: string;
+		fingerprint: string;
+		/** the hash of the call site's own file, when the canvas holds one */
+		ownerFingerprint?: string;
+	},
 ): Promise<TextWritten | undefined> {
 	try {
 		const res = await client.api.p[":project"].text.$post({
@@ -361,6 +368,8 @@ export async function writeElement(
 		name?: string;
 		value?: string;
 		fingerprint: string;
+		/** the hash of the call site's own file, when the canvas holds one */
+		ownerFingerprint?: string;
 	},
 ): Promise<TextWritten | undefined> {
 	try {

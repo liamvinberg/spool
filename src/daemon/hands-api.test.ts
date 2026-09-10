@@ -836,6 +836,43 @@ export default () => <Card>Keep going</Card>;
 		expect(read("shared/ui/card.tsx")).toBe(shared);
 	});
 
+	it("refuses supplied words when the call site's own file moved underneath", async () => {
+		const { name, app, read } = project();
+		// the canvas holds the call site's file at what it read, and the file
+		// has changed since: the words are the definition's to point at, but
+		// the call is not the call the surface was looking at any more
+		const stale = await app.request(
+			`/api/p/${name}/text`,
+			jsonPost({
+				frame: "cart",
+				source: stampIn("shared/ui/card.tsx", card, "<span"),
+				owner: stampIn("frames/cart/frame.tsx", cart, "<Card"),
+				nodes: [{ text: "Pay later" }],
+				fingerprint: fingerprintOf(card),
+				ownerFingerprint: "0".repeat(64),
+			}),
+		);
+		expect(stale.status).toBe(409);
+		expect(((await stale.json()) as { refusal: { code: string } }).refusal.code).toBe("stale-file");
+		expect(read("frames/cart/frame.tsx")).toBe(cart);
+		expect(read("shared/ui/card.tsx")).toBe(card);
+
+		// the same write measured against the file as it stands lands
+		const fresh = await app.request(
+			`/api/p/${name}/text`,
+			jsonPost({
+				frame: "cart",
+				source: stampIn("shared/ui/card.tsx", card, "<span"),
+				owner: stampIn("frames/cart/frame.tsx", cart, "<Card"),
+				nodes: [{ text: "Pay later" }],
+				fingerprint: fingerprintOf(card),
+				ownerFingerprint: fingerprintOf(cart),
+			}),
+		);
+		expect(fresh.status).toBe(200);
+		expect(read("frames/cart/frame.tsx")).toContain('<Card className="cart">Pay later</Card>');
+	});
+
 	it("keeps the fingerprint guard on a shared file, and the revert scope to source", async () => {
 		const { name, app, read } = project();
 		const stale = await app.request(

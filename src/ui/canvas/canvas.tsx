@@ -18,6 +18,7 @@ import type {
 	HeldPatch,
 	Place,
 	ProjectedFrame,
+	RungRead,
 	SelectionEntry,
 	SelectionPut,
 	TextWritten,
@@ -938,6 +939,8 @@ export function ProjectCanvas({
 	 * rather than off a render.
 	 */
 	const ringRef = useRef<Ring>(NO_RING);
+	/** the selection's read as the handlers see it, a paint earlier than the render */
+	const railRungsRef = useRef<(RungRead | undefined)[] | null>(null);
 
 	/** The bands a gap gesture may grab, off the render the pointer can see (#306). */
 	const gapRef = useRef<GapTargets>({ axis: null, sign: 1, authored: null, bands: [] });
@@ -1929,6 +1932,26 @@ export function ProjectCanvas({
 
 	// --- where a text write lands (#314) -----------------------------------------
 
+	/**
+	 * The fingerprint the canvas holds for the file a stamp names (#314).
+	 *
+	 * Every write is measured against the file the surface read it out of, and
+	 * a write that reaches a call site one owner up reaches a second file — so
+	 * that one is looked up the same way: the hand's own last save on this
+	 * frame first, because it is newer than any read, then the rungs of the
+	 * selection's own read. Nothing when neither knows the file, which leaves
+	 * the daemon's fresh read of it the first anybody has seen.
+	 */
+	const fingerprintFor = useCallback((frame: string, stamp: string): string | undefined => {
+		const path = `design/${stamp.replace(/:\d+:\d+$/, "")}`;
+		const own = saved.current.get(frame);
+		if (own !== undefined && `design/${own.source.replace(/:\d+:\d+$/, "")}` === path) return own.fingerprint;
+		for (const rung of railRungsRef.current ?? []) {
+			if (rung?.path === path && rung.fingerprint !== undefined) return rung.fingerprint;
+		}
+		return undefined;
+	}, []);
+
 	/** Whether a write landed outside the frame's own folder: in a shared definition's file (#318). */
 	const sharedWrite = useCallback((frame: string, path: string): boolean => {
 		const held = allFramesRef.current.find((entry) => entry.name === frame);
@@ -2742,11 +2765,15 @@ export function ProjectCanvas({
 			// to say, so its readers are held now and let go if they did not
 			const readers = read?.source === held.source ? (read.shared?.frames ?? []) : [];
 			holdReaders(held.frame, readers);
+			// the call site is a second file, and a second promise: the canvas sends
+			// what it read that file at, and the daemon refuses if it has moved
+			const ownerFingerprint = owner === null ? undefined : fingerprintFor(held.frame, owner);
 			void writeText(project, held.frame, {
 				source: held.source,
 				nodes,
 				fingerprint,
 				...(owner === null ? {} : { owner }),
+				...(ownerFingerprint === undefined ? {} : { ownerFingerprint }),
 			}).then((written) => {
 				settled(written, {
 					frame: held.frame,
@@ -2761,7 +2788,7 @@ export function ProjectCanvas({
 				});
 			});
 		},
-		[holdReaders, project, restoreWords, setEdit, settled, walkKin],
+		[fingerprintFor, holdReaders, project, restoreWords, setEdit, settled, walkKin],
 	);
 
 	// --- the class gesture (#315) ------------------------------------------------
@@ -2970,11 +2997,13 @@ export function ProjectCanvas({
 				const read = ringRef.current.read;
 				const readers = read?.source === at.source ? (read.shared?.frames ?? []) : [];
 				holdReaders(pick.frame, readers);
+				const ownerFingerprint = owner === null ? undefined : fingerprintFor(pick.frame, owner);
 				void writeElement(project, pick.frame, {
 					act,
 					source: at.source,
 					fingerprint: at.fingerprint,
 					...(owner === null ? {} : { owner }),
+					...(ownerFingerprint === undefined ? {} : { ownerFingerprint }),
 					...(attribute ?? {}),
 				}).then((written) => {
 					settled(written, {
@@ -2998,7 +3027,7 @@ export function ProjectCanvas({
 				if (alterWaiters.current.delete(id)) showRefusal(pick.frame, pick.selector, GONE);
 			}, PICK_REPLY_MS);
 		},
-		[holdParent, holdReaders, project, restoreWords, settled, showRefusal],
+		[fingerprintFor, holdParent, holdReaders, project, restoreWords, settled, showRefusal],
 	);
 
 	/**
@@ -5497,6 +5526,7 @@ export function ProjectCanvas({
 		railTheme,
 	);
 	ringRef.current = ring;
+	railRungsRef.current = railRungs;
 	/** the drag in flight on the rung the ring is drawn on, and nothing else */
 	const ringDrag = elementDrag !== null && elementDrag.selector === ringPick?.selector ? elementDrag : null;
 	/**

@@ -169,6 +169,17 @@ export interface TextAsk {
 	nodes: readonly EditedNode[];
 	owner?: string;
 	fingerprint: string;
+	/**
+	 * The hash of the call site's own file, when the canvas holds one.
+	 *
+	 * A supplied word lands one owner up, in a second file, and that file is
+	 * owed the same promise as the element's: the write is measured against
+	 * what the surface read. The canvas holds it whenever the call site is a
+	 * rung it read or a file it just saved; where it holds none the daemon's
+	 * own read of the call is the first anybody has seen of that file, and
+	 * there is nothing for it to have moved from.
+	 */
+	ownerFingerprint?: string;
 }
 
 export type WriteSite =
@@ -191,11 +202,12 @@ export type WriteSite =
  * Where a text write lands (#314).
  *
  * The element's own file decides whose words they are: its own, spliced at
- * the stamp, or a call site's, spliced one owner up. The fingerprint is the
- * element file's — the file the rung was read out of, and the one the DOM
- * the hand edited was rendered from — and a mismatch refuses rather than
- * landing somewhere wrong. Both files are read again here, never mirrored.
- * A shared definition's own words are written in the shared file (#318).
+ * the stamp, or a call site's, spliced one owner up. Each file is measured
+ * against the fingerprint the surface read it out of — the element's always,
+ * the call site's whenever the canvas holds one — and a mismatch refuses
+ * rather than landing somewhere wrong. Both files are read again here, never
+ * mirrored. A shared definition's own words are written in the shared file
+ * (#318).
  */
 export async function textSite(root: string, frame: string, ask: TextAsk): Promise<WriteSite> {
 	const found = lookupFrame(root, frame);
@@ -229,6 +241,9 @@ export async function textSite(root: string, frame: string, ask: TextAsk): Promi
 		callSource = readFileSync(call.stamp.file, "utf8");
 	} catch {
 		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	if (ask.ownerFingerprint !== undefined && fingerprintOf(callSource) !== ask.ownerFingerprint) {
+		return { kind: "refusal", refusal: STALE_FILE };
 	}
 	return planned(call.stamp, callSource, [
 		{ kind: "set-supplied", source: ask.owner, prop: owner.prop, text: flatText(ask.nodes) },
@@ -313,6 +328,8 @@ export interface ElementAsk {
 	name?: string;
 	value?: string;
 	fingerprint: string;
+	/** the hash of the call site's own file, when the canvas holds one — as a text commit's */
+	ownerFingerprint?: string;
 }
 
 /**
@@ -362,7 +379,14 @@ export async function elementSite(root: string, frame: string, ask: ElementAsk):
 	return planned(at, source, [{ kind: "set-hidden", source: ask.source, hidden: ask.act === "hide" }]);
 }
 
-/** The call one owner up, wherever it is written, when the frame named one. */
+/**
+ * The call one owner up, wherever it is written, when the frame named one.
+ *
+ * Its file is measured against the fingerprint the canvas holds for it, the
+ * same as the element's own — a second file is a second thing that can have
+ * moved. Where the canvas holds none, this read is the first anybody has seen
+ * of that file and there is nothing for it to have moved from.
+ */
 function callSite(
 	root: string,
 	ask: ElementAsk,
@@ -370,11 +394,16 @@ function callSite(
 	if (ask.owner === undefined) return undefined;
 	const call = stampIn(root, ask.owner);
 	if ("message" in call || call.stamp === undefined) return undefined;
+	let source: string;
 	try {
-		return { stamp: call.stamp, at: ask.owner, source: readFileSync(call.stamp.file, "utf8") };
+		source = readFileSync(call.stamp.file, "utf8");
 	} catch {
 		return { refusal: STALE_STAMP };
 	}
+	if (ask.ownerFingerprint !== undefined && fingerprintOf(source) !== ask.ownerFingerprint) {
+		return { refusal: STALE_FILE };
+	}
+	return { stamp: call.stamp, at: ask.owner, source };
 }
 
 /** The ops planned against one file, the frame's own or a shared definition's alike (#318). */
