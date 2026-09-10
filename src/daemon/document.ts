@@ -380,8 +380,11 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * {spool:"edited"} once Enter, Esc or a click away has ended it, carrying the
  * element's child nodes and the call site one owner up (#314), and
  * {spool:"edit-end", commit} ends one from the canvas side (#255);
- * {spool:"restore", id, way, ask} puts one committed edit's words back or
- * forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
+ * {spool:"alter", id, selector, act, name, value} takes the element out of the
+ * document, hides it, shows it or sets one attribute on it, and answers
+ * {spool:"altered"} with the call one owner up (#317);
+ * {spool:"restore", id, way, ask} puts one committed edit's words or one
+ * alteration back or forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
  * moves the stamps a save shifted on their line, since the document is not
  * reloaded for its own save; {spool:"style", selector, declarations} previews
  * a rail value as inline style on the element, and {spool:"class", selector,
@@ -1584,6 +1587,66 @@ const canvasShimJs = `(() => {
 		}
 	}
 
+	// The structural gestures (#317): the element out of the document, hidden,
+	// shown, or one attribute set on it. Each is held by the ask that made it,
+	// so undo and redo put the very node back where it stood rather than a copy
+	// React would go on updating blind.
+	var alters = new Map();
+
+	function displayOf(el) {
+		return { display: el.style.display, hidden: el.classList.contains("hidden") };
+	}
+
+	function showAs(el, held) {
+		el.style.display = held.display;
+		if (held.hidden) el.classList.add("hidden"); else el.classList.remove("hidden");
+	}
+
+	function alterElement(id, selector, act, name, value) {
+		const el = elementFor(selector);
+		if (!el) return { ok: false, owner: null };
+		const owner = ownerOf(el);
+		if (act === "delete") {
+			const parent = el.parentNode;
+			if (!parent) return { ok: false, owner: owner };
+			alters.set(id, { kind: "gone", el: el, parent: parent, next: el.nextSibling });
+			parent.removeChild(el);
+		} else if (act === "attribute") {
+			alters.set(id, { kind: "attribute", el: el, name: name, before: el.getAttribute(name), after: value });
+			el.setAttribute(name, value);
+		} else {
+			const before = displayOf(el);
+			// hiding is the inline none the file's own class is about to say; showing
+			// takes both away, so an element the agent wrote hidden comes back too
+			if (act === "hide") el.style.display = "none";
+			else { el.classList.remove("hidden"); el.style.display = ""; }
+			alters.set(id, { kind: "shown", el: el, before: before, after: displayOf(el) });
+		}
+		for (const key of alters.keys()) { if (alters.size <= EDITS_HELD) break; alters.delete(key); }
+		return { ok: true, owner: owner };
+	}
+
+	// One alteration put back or forward. False when the document has moved on
+	// from it, which is the canvas's cue to reload the frame instead.
+	function unalter(id, way) {
+		const held = alters.get(id);
+		if (!held) return false;
+		if (held.kind === "gone") {
+			if (way !== "before") { if (held.el.isConnected) held.el.remove(); return true; }
+			if (!held.parent.isConnected) return false;
+			try { held.parent.insertBefore(held.el, held.next && held.next.isConnected ? held.next : null); } catch { return false; }
+			return true;
+		}
+		if (!held.el.isConnected) return false;
+		if (held.kind === "attribute") {
+			const value = way === "before" ? held.before : held.after;
+			if (value === null) held.el.removeAttribute(held.name); else held.el.setAttribute(held.name, value);
+			return true;
+		}
+		showAs(held.el, way === "before" ? held.before : held.after);
+		return true;
+	}
+
 	// the caret where the click was, and the whole of the words when the
 	// browser cannot resolve a point inside them
 	function caretAt(el, x, y) {
@@ -1947,10 +2010,22 @@ const canvasShimJs = `(() => {
 			}
 			return;
 		}
-		if (m.spool === "restore" || m.spool === "restamp" || m.spool === "style" || m.spool === "class") {
+		if (
+			m.spool === "restore" ||
+			m.spool === "restamp" ||
+			m.spool === "style" ||
+			m.spool === "class" ||
+			m.spool === "alter"
+		) {
 			// all of them change the document, so the same door
 			const config = window.__SPOOL__ || {};
 			if (event.source !== parent || event.origin !== config.controlOrigin) return;
+			if (m.spool === "alter") {
+				let answer = { ok: false, owner: null };
+				try { answer = alterElement(m.id, m.selector, m.act, m.name, m.value); } catch {}
+				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner }, "*");
+				return;
+			}
 			if (m.spool === "restamp") {
 				try { restamp(m.file, Array.isArray(m.shifts) ? m.shifts : []); } catch {}
 				return;
@@ -1967,7 +2042,7 @@ const canvasShimJs = `(() => {
 				return;
 			}
 			let ok = false;
-			try { ok = restoreEdit(m.id, m.way); } catch {}
+			try { ok = alters.has(m.id) ? unalter(m.id, m.way) : restoreEdit(m.id, m.way); } catch {}
 			parent.postMessage({ spool: "restored", frame: config.frame, id: m.ask, ok }, "*");
 			return;
 		}

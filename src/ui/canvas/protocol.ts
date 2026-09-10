@@ -168,6 +168,7 @@ export type FrameMessage =
 	| { spool: "edited"; frame: string; id: number; commit: boolean; nodes: EditedNode[]; owner: string | null }
 	| { spool: "restored"; frame: string; id: number; ok: boolean }
 	| { spool: "classed"; frame: string; id: number; ok: boolean }
+	| { spool: "altered"; frame: string; id: number; ok: boolean; owner: string | null }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| FrameDroppedMessage
 	| { spool: "external"; frame: string; href: string }
@@ -288,6 +289,12 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "restored":
 		case "classed":
 			return typeof m.id === "number" && typeof m.ok === "boolean" ? (m as unknown as FrameMessage) : undefined;
+		case "altered":
+			return typeof m.id === "number" &&
+				typeof m.ok === "boolean" &&
+				(m.owner === null || typeof m.owner === "string")
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "dropped":
 			return typeof m.selector === "string" && m.selector !== "" && m.file instanceof File
 				? (m as unknown as FrameMessage)
@@ -796,6 +803,20 @@ export type EditedNode = { text: string } | { tag: string; nodes: EditedNode[] }
  */
 export const restoreMessage = (id: number, way: "before" | "after", ask: number) =>
 	({ spool: "restore", id, way, ask }) as const;
+
+/**
+ * A structural gesture, in the document (#317): the element out of it, hidden,
+ * shown, or one attribute set. The frame answers with whether it could and with
+ * the call one owner up, which is the only place that knows it — a delete of
+ * something that is all of a shared component lands on that call instead.
+ */
+export const alterMessage = (
+	id: number,
+	selector: string,
+	act: "delete" | "hide" | "show" | "attribute",
+	name?: string,
+	value?: string,
+) => ({ spool: "alter", id, selector, act, name, value }) as const;
 
 /** How a save moved the stamps on its line, for a document that is not reloaded for it (#314). */
 export const restampMessage = (file: string, shifts: readonly { line: number; column: number; delta: number }[]) =>
