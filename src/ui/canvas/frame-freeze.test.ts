@@ -7,11 +7,12 @@ import type { Camera, ProjectedFrame } from "../api";
 import { IDLE_FREEZE_MS, isFrameAttended, isFrameFrozen, useFrameLifecycle } from "./lifecycle";
 
 /**
- * The freeze (#171, #172): a live HTML frame holds its animations while the
- * camera moves, and again once a minute passes with nothing attending it. Here
- * it is the traffic on one real frame window — the decisions are
- * `isFrameFrozen` and `isFrameAttended`, the delivery is one message per
- * document, and they are tested apart because only the first two are rules.
+ * The freeze (#171, #172, #319): a live HTML frame holds its animations while
+ * the camera moves, once a minute passes with nothing attending it, and for as
+ * long as the hand holds an element anywhere on the canvas. Here it is the
+ * traffic on one real frame window — the decisions are `isFrameFrozen` and
+ * `isFrameAttended`, the delivery is one message per document, and they are
+ * tested apart because only the first two are rules.
  */
 
 type Lifecycle = ReturnType<typeof useFrameLifecycle>;
@@ -50,6 +51,8 @@ interface Attention {
 	entered?: string | null;
 	selected?: string | null;
 	hovered?: string | null;
+	/** The hand holds an element somewhere on the canvas (#319). */
+	picking?: boolean;
 }
 
 async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
@@ -69,6 +72,7 @@ async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
 			selectionTargets: new Set(),
 			selected: props.selected == null ? [] : [props.selected],
 			hovered: props.hovered ?? null,
+			picking: props.picking ?? false,
 			hasCover: () => true,
 			onShot: () => undefined,
 			cameraRef: { current: { x: 0, y: 0, k: 1 } } as RefObject<Camera | null>,
@@ -121,7 +125,14 @@ const held = { spool: "freeze", on: true };
 const handedBack = { spool: "freeze", on: false };
 
 describe("which frames hold their animations", () => {
-	const resting = { cameraMoving: false, idleMs: 0, state: "live" as const, entered: false, capturing: false };
+	const resting = {
+		cameraMoving: false,
+		idleMs: 0,
+		state: "live" as const,
+		entered: false,
+		capturing: false,
+		picking: false,
+	};
 
 	it("freezes a live frame while the camera is moving", () => {
 		expect(isFrameFrozen(resting)).toBe(false);
@@ -131,6 +142,21 @@ describe("which frames hold their animations", () => {
 	it("freezes a live frame nothing has attended for the whole minute", () => {
 		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS - 1 })).toBe(false);
 		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS })).toBe(true);
+	});
+
+	it("freezes every live frame while the hand holds an element", () => {
+		// the whole field, at rest, with nobody near this frame in particular:
+		// the pick is somewhere on the canvas and that is the whole rule (#319)
+		expect(isFrameFrozen({ ...resting, picking: true })).toBe(true);
+	});
+
+	it("keeps the same three frames running while the hand holds one", () => {
+		// a picked element is no reason to photograph a frame held, to stop the
+		// frame whose own hands are inside it, or to touch a still
+		expect(isFrameFrozen({ ...resting, picking: true, entered: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, picking: true, capturing: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, picking: true, state: "refreshing" })).toBe(false);
+		expect(isFrameFrozen({ ...resting, picking: true, state: "picture" })).toBe(false);
 	});
 
 	it("never freezes the frame you went inside", () => {
@@ -290,6 +316,28 @@ describe("delivering the freeze", () => {
 		expect(freezes(post)).toEqual([]);
 		await wait(1);
 		expect(freezes(post)).toEqual([held]);
+	});
+
+	it("holds the very frame the hand is editing, and hands it back on the deselect", async () => {
+		// the frame the picked element is in is attended by definition, so the
+		// idle clock never reaches it: the pick is what freezes it (#319)
+		const { post, render, wait } = await mountLive({ selected: "landing" });
+
+		await render({ picking: true });
+		expect(freezes(post)).toEqual([held]);
+
+		// and it stays held for as long as the hand does, however long that is
+		await wait(IDLE_FREEZE_MS * 2);
+		expect(freezes(post)).toEqual([held]);
+
+		await render({ picking: false, selected: null });
+		expect(freezes(post)).toEqual([held, handedBack]);
+
+		// the minute runs from the deselect, not from before the pick
+		await wait(IDLE_FREEZE_MS - 1);
+		expect(freezes(post)).toEqual([held, handedBack]);
+		await wait(1);
+		expect(freezes(post)).toEqual([held, handedBack, held]);
 	});
 
 	it("starts the minute over when the camera stops", async () => {

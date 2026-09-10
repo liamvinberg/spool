@@ -1,35 +1,48 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, serveProject, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 
-// The freeze end to end (#171): a real canvas, a real sandboxed frame document,
-// and a real wheel pan. The shim's rAF gate and the canvas's gesture window are
-// each covered on their own; what only a browser can show is that the two meet
-// across the iframe boundary — that a frame animating at speed stops counting
-// while the camera moves, and picks up again once it stops.
+// The freeze end to end (#171, #319): a real canvas, real sandboxed frame
+// documents, a real wheel pan and a real pick. The shim's rAF gate and the
+// canvas's decisions are each covered on their own; what only a browser can
+// show is that the two meet across the iframe boundary — that a frame animating
+// at speed stops counting while the camera moves, and again for as long as the
+// hand holds an element on any frame, and picks up where it held afterwards.
 
 /**
- * A loop that counts its own animation frames onto the frame's own window. The
- * lookup is `view.requestAnimationFrame` at call time on purpose: a destructured
- * reference would be the native one, which the shim's gate never sees.
+ * A loop that counts its own animation frames onto the frame's own window, as a
+ * ref body. The lookup is `view.requestAnimationFrame` at call time on purpose:
+ * a destructured reference would be the native one, which the shim's gate never
+ * sees.
  */
+const counting = `(el) => {
+	if (el === null) return;
+	const view = el.ownerDocument.defaultView;
+	if (view === null || view.spun !== undefined) return;
+	view.spun = 0;
+	const loop = () => {
+		view.spun++;
+		view.requestAnimationFrame(loop);
+	};
+	view.requestAnimationFrame(loop);
+}`;
+
 const spinner = `export default function Frame() {
+	return <p ref={${counting}}>spinning</p>;
+}
+`;
+
+/**
+ * The frame the hand works on: a heading to pick, a line whose width is a
+ * fraction of the frame so a resize has something to reflow, and a shader-shaped
+ * loop of its own running underneath.
+ */
+const veil = (words: string) => `export default function Frame() {
 	return (
-		<p
-			ref={(el) => {
-				if (el === null) return;
-				const view = el.ownerDocument.defaultView;
-				if (view === null || view.spun !== undefined) return;
-				view.spun = 0;
-				const loop = () => {
-					view.spun++;
-					view.requestAnimationFrame(loop);
-				};
-				view.requestAnimationFrame(loop);
-			}}
-		>
-			spinning
-		</p>
+		<main style={{ padding: 24, fontFamily: "system-ui" }}>
+			<h1 style={{ width: "50%", margin: 0, fontSize: 40 }}>${words}</h1>
+			<p ref={${counting}}>spinning</p>
+		</main>
 	);
 }
 `;
@@ -81,4 +94,175 @@ it("holds a live frame's animation while the camera moves, and lets it go after"
 
 	expect(held, "a frame animating under a moving camera runs no frames").toBe(atFreeze);
 	await expect.poll(spun, { timeout: 10_000 }).toBeGreaterThan(atFreeze + 4);
+});
+
+/**
+ * Two live frames side by side at rest: the one the hand works on, and one
+ * beside it doing nothing but animating. Both are drawn wide enough to read at
+ * k=1, so both hold documents rather than pictures.
+ */
+async function twoLiveFrames(home: string) {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir });
+
+	writeFrame(project.root, "home", home);
+	writeDesignFile(project.root, "frames/home/frame.json", '{ "x": 0, "y": 0, "w": 620, "h": 480 }\n');
+	writeFrame(project.root, "beside", spinner);
+	writeDesignFile(project.root, "frames/beside/frame.json", '{ "x": 700, "y": 0, "w": 620, "h": 480 }\n');
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
+
+	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+
+	const heading = page.frameLocator('iframe[title="home"]').locator("h1");
+	const spun = (frame: string) =>
+		page
+			.frameLocator(`iframe[title="${frame}"]`)
+			.locator("p")
+			.evaluate((el) => (el.ownerDocument.defaultView as unknown as { spun?: number }).spun ?? -1);
+	/** How many animation frames a document ran over a third of a second. */
+	const ran = async (frame: string) => {
+		const before = await spun(frame);
+		await page.waitForTimeout(300);
+		return (await spun(frame)) - before;
+	};
+	const selected = async () => {
+		const response = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/selection`, {
+			headers: { "X-Spool-Control": project.controlToken },
+		});
+		const body = (await response.json()) as { selection?: unknown[] };
+		return body.selection?.length ?? 0;
+	};
+	const pick = async () => {
+		await expect.poll(() => heading.count(), { timeout: 30_000 }).toBe(1);
+		// the canvas takes the pointer off the iframe before a click can pick
+		// through it; on a loaded runner that lands well after the frame does
+		await expect
+			.poll(() => page.locator('iframe[title="home"]').evaluate((el) => getComputedStyle(el).pointerEvents), {
+				timeout: 30_000,
+			})
+			.toBe("none");
+		await heading.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+		await expect.poll(selected, { timeout: 30_000 }).toBe(1);
+	};
+	/** Let go, on the empty field below both frames. */
+	const deselect = async () => {
+		await page.mouse.click(400, 820);
+		await expect.poll(selected, { timeout: 30_000 }).toBe(0);
+	};
+	return { project, page, heading, spun, ran, pick, deselect };
+}
+
+it("holds every live frame while the hand holds an element, and hands them back", { timeout: 180_000 }, async () => {
+	const { page, ran, pick, deselect } = await twoLiveFrames(veil("veil"));
+
+	// both loops are really running before anything is asked of them
+	await expect.poll(() => ran("home"), { timeout: 60_000 }).toBeGreaterThan(4);
+	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBeGreaterThan(4);
+
+	await pick();
+
+	// polled rather than sampled once: a frame owing a picture is photographed
+	// out of a thawed document, and that errand outlives the pick by a moment.
+	// The frame the element is in stops with the rest of them.
+	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBe(0);
+	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBe(0);
+	// and it stays stopped rather than thawing itself a moment later
+	await page.waitForTimeout(1000);
+	expect(await ran("beside"), "a frozen field stays frozen while the hand holds").toBe(0);
+
+	await deselect();
+
+	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBeGreaterThan(4);
+	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBeGreaterThan(4);
+});
+
+it("reflows a frozen frame, so a preview under the hand is true", { timeout: 180_000 }, async () => {
+	const { project, heading, ran, pick } = await twoLiveFrames(veil("veil"));
+
+	await expect.poll(() => ran("home"), { timeout: 60_000 }).toBeGreaterThan(4);
+	await pick();
+	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBe(0);
+
+	const width = () => heading.evaluate((el) => Math.round(el.getBoundingClientRect().width));
+	const before = await width();
+	// the heading is half the frame's own width: a wider frame is a wider
+	// heading, and only layout can say so
+	expect(before).toBeGreaterThan(0);
+
+	const response = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/geometry`, {
+		method: "PUT",
+		headers: { "content-type": "application/json", "X-Spool-Control": project.controlToken },
+		body: JSON.stringify({ frames: { home: { x: 0, y: 0, w: 900, h: 480 } } }),
+	});
+	expect(response.status).toBe(204);
+
+	// the held document laid itself out at its new size
+	await expect.poll(width, { timeout: 30_000 }).toBeGreaterThan(before + 100);
+	// the freeze never lifted for it: rAF is what stopped, not layout
+	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBe(0);
+});
+
+it("reloads a frame written under the hand on the deselect, behind its own paint", { timeout: 180_000 }, async () => {
+	const { project, page, heading, ran, pick, deselect } = await twoLiveFrames(veil("before"));
+
+	await expect.poll(() => ran("home"), { timeout: 60_000 }).toBeGreaterThan(4);
+	await pick();
+	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBe(0);
+	expect(await heading.textContent()).toBe("before");
+
+	// this document is the one the hand is working in; a reload replaces it, and
+	// the marker says whether one happened
+	const kept = () => heading.evaluate((el) => Reflect.get(el.ownerDocument.defaultView ?? {}, "kept"));
+	await heading.evaluate((el) => {
+		const view = el.ownerDocument.defaultView;
+		if (view !== null) Reflect.set(view, "kept", true);
+	});
+	// the held document is the one still on screen when the reload comes, so
+	// there is never a white frame in between (#253's no blink)
+	await page.evaluate(() => {
+		Reflect.set(window, "everHeld", false);
+		new MutationObserver(() => {
+			if (document.querySelector('iframe[title="home (held)"]') !== null) Reflect.set(window, "everHeld", true);
+		}).observe(document.body, { subtree: true, childList: true });
+	});
+
+	// the same stream the canvas is reading, so the case waits on the change the
+	// canvas is being told about rather than on a guess at the watcher's pace
+	const controller = new AbortController();
+	onTestFinished(() => controller.abort());
+	const events = sseReader(
+		await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/events`, {
+			headers: { "X-Spool-Control": project.controlToken },
+			signal: controller.signal,
+		}),
+	);
+
+	// the save a hand write would make, straight to the file the frame renders
+	writeFrame(project.root, "home", veil("after"));
+	await expect
+		.poll(
+			async () => {
+				const event = await events.next(15_000);
+				return event.event === "change" && (event.data as { kind?: string }).kind === "frame";
+			},
+			{ timeout: 30_000 },
+		)
+		.toBe(true);
+	// and the moment a reload would have taken
+	await page.waitForTimeout(1500);
+
+	expect(await heading.textContent(), "the frame the hand holds is not reloaded under it").toBe("before");
+	expect(await kept()).toBe(true);
+
+	await deselect();
+
+	await expect.poll(() => heading.textContent(), { timeout: 30_000 }).toBe("after");
+	expect(await page.evaluate(() => Reflect.get(window, "everHeld")), "the outgoing document stood in front").toBe(
+		true,
+	);
+	// the document really is a new one, and it animates again
+	expect(await kept()).toBe(undefined);
+	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBeGreaterThan(4);
 });

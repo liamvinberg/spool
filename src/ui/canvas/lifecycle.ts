@@ -27,9 +27,10 @@ import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage }
  * A picture stands in below the readable threshold. Above it, a nearby frame
  * is live; a borrowed or held frame remains behind its still.
  *
- * Live HTML frames hold their animations while the camera moves (#171) and
- * again once nothing has attended them for a long minute (#172) — the mount is
- * unchanged either way, only the frames it is running.
+ * Live HTML frames hold their animations while the camera moves (#171), once
+ * nothing has attended them for a long minute (#172), and for as long as the
+ * hand holds an element (#319) — the mount is unchanged in every case, only the
+ * frames it is running.
  */
 
 export type FrameState = "picture" | "refreshing" | "held" | "live";
@@ -298,17 +299,25 @@ function isFrameLive(
 }
 
 /**
- * Whether a frame holds its animations right now (#171, #172). Two causes, and
- * both of them are "nobody is reading this frame". The camera is moving, so
- * nothing out there is being read at all and the frames' own rAF loops are what
- * the gesture competes with for the renderer. Or the frame has gone
+ * Whether a frame holds its animations right now (#171, #172, #319). Three
+ * causes. Two of them are "nobody is reading this frame": the camera is moving,
+ * so nothing out there is being read at all and the frames' own rAF loops are
+ * what the gesture competes with for the renderer; or the frame has gone
  * `IDLE_FREEZE_MS` without anything attending it — see `isFrameAttended` for
  * what counts, and note that a camera at rest is not attention, only its motion.
  *
- * Three frames never freeze. The one you went inside is the one being used. A
- * borrowed frame is mid-errand, and a capture settles on the frame's own rAF
- * and animations, so a frozen one would photograph itself held; a frame with a
- * capture already in flight is that same errand, one step later.
+ * The third is the opposite: somebody is reading one frame very closely. While
+ * the hand holds an element, every live frame holds still — the one being
+ * edited most of all, because a heading you are about to retype should not be
+ * sliding under the caret, and a shader beside it should not be spending the
+ * renderer the edit needs. Layout is untouched either way: the shim gates rAF
+ * and pauses declarative animations, so a preview still reflows under the hold.
+ *
+ * Three frames never freeze. The one you went inside is the one being used —
+ * its own hands are inside it, and a pick elsewhere on the canvas does not
+ * reach in. A borrowed frame is mid-errand, and a capture settles on the
+ * frame's own rAF and animations, so a frozen one would photograph itself held;
+ * a frame with a capture already in flight is that same errand, one step later.
  */
 export function isFrameFrozen(input: {
 	cameraMoving: boolean;
@@ -317,10 +326,12 @@ export function isFrameFrozen(input: {
 	state: FrameState | undefined;
 	entered: boolean;
 	capturing: boolean;
+	/** Whether the hand holds an element selection anywhere on the canvas (#319). */
+	picking: boolean;
 }): boolean {
-	const { cameraMoving, idleMs, state, entered, capturing } = input;
+	const { cameraMoving, idleMs, state, entered, capturing, picking } = input;
 	if (state !== "live" || entered || capturing) return false;
-	return cameraMoving || idleMs >= IDLE_FREEZE_MS;
+	return picking || cameraMoving || idleMs >= IDLE_FREEZE_MS;
 }
 
 /**
@@ -598,6 +609,12 @@ export interface LifecycleDeps {
 	 * it, and pointing at a picture has never been worth a document.
 	 */
 	hovered: string | null;
+	/**
+	 * Whether the hand holds an element selection (#319) — one flag for the whole
+	 * canvas rather than a set of frames, because the field is what freezes, not
+	 * the frame the element is in.
+	 */
+	picking: boolean;
 	hasCover: (frame: string) => boolean;
 	onShot: (frame: string, image: CoverRaster) => void;
 	/**
@@ -629,6 +646,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		resizing = null,
 		selected,
 		hovered,
+		picking,
 		hasCover,
 		onShot,
 		onCaptureFailure,
@@ -661,6 +679,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	selectedRef.current = selected;
 	const hoveredRef = useRef(hovered);
 	hoveredRef.current = hovered;
+	const pickingRef = useRef(picking);
+	pickingRef.current = picking;
 	const hasCoverRef = useRef(hasCover);
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
@@ -756,6 +776,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 							state,
 							entered: entered === name,
 							capturing: captureWaiters.current.has(name),
+							picking: pickingRef.current,
 						}),
 				);
 			}
@@ -1132,14 +1153,16 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		compute();
 	}, [settled, compute]);
 
-	// So must the wake: a frozen frame you point at or pick animates now, not up
-	// to a sweep later. This is the freeze alone, never a sweep — neither the
-	// pointer nor a selection the current tool ignores mounts anything.
+	// So must the wake, and so must the hold: a frozen frame you point at
+	// animates now and a live one holds the instant you pick an element (#319),
+	// not up to a sweep later. This is the freeze alone, never a sweep — neither
+	// the pointer nor a selection the current tool ignores mounts anything.
 	useEffect(() => {
 		hoveredRef.current = hovered;
 		selectedRef.current = selected;
+		pickingRef.current = picking;
 		applyFreeze();
-	}, [hovered, selected, applyFreeze]);
+	}, [hovered, selected, picking, applyFreeze]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);

@@ -703,6 +703,9 @@ export function ProjectCanvas({
 	// frames whose next reload the canvas caused, so the outgoing document is
 	// held rather than blinking through its own still (#253's no blink)
 	const holdNext = useRef(new Set<string>());
+	// frames whose file changed while the hand held an element in them (#319):
+	// the reload they owe is paid on the deselect, not under the gesture
+	const writtenUnderHand = useRef(new Set<string>());
 	const holdTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 	// the range anchor: shift over the page tree's frame rows
 	const frameAnchor = useRef<string | null>(null);
@@ -808,6 +811,8 @@ export function ProjectCanvas({
 		resizing: resizingFrame,
 		selected,
 		hovered: hoveredFrame,
+		// the hand holding an element holds the whole field still (#319)
+		picking: picked.length > 0,
 		hasCover: hasCover,
 		onShot,
 		onCaptureFailure,
@@ -893,6 +898,44 @@ export function ProjectCanvas({
 		},
 		[holdChain, releaseHold],
 	);
+
+	/**
+	 * A frame's document changed on disk, when the hand may be holding it (#319).
+	 *
+	 * The frame you have an element picked in does not reload under you. A reload
+	 * is a remount: the pick, the ring and the rail all address the DOM that is
+	 * on screen, and swapping it mid-gesture takes the element out from under the
+	 * hand that just wrote it. The reload is still owed — the frame is showing a
+	 * document the file no longer says — so it is remembered and paid on the
+	 * deselect, behind the frame's own last paint rather than through its still.
+	 *
+	 * This is the seam a hand write lands on: whatever wrote the file, the change
+	 * arrives here, and a save made while the element is held simply waits.
+	 */
+	const reloadOrHold = useCallback(
+		(frame: string) => {
+			if (pickedRef.current.some((pick) => pick.frame === frame)) {
+				writtenUnderHand.current.add(frame);
+				return;
+			}
+			reloadFrameDocument(frame);
+		},
+		[reloadFrameDocument],
+	);
+
+	// Letting go pays what the hold deferred: the frames written while the hand
+	// was in them reload behind their outgoing paint, so a deselect shows the
+	// saved document without a white frame in between (#319).
+	const handHeld = useRef<ReadonlySet<string>>(new Set());
+	useEffect(() => {
+		const holding = new Set(picked.map((pick) => pick.frame));
+		for (const frame of handHeld.current) {
+			if (holding.has(frame) || !writtenUnderHand.current.delete(frame)) continue;
+			holdNext.current.add(frame);
+			reloadFrameDocument(frame);
+		}
+		handHeld.current = holding;
+	}, [picked, reloadFrameDocument]);
 
 	/**
 	 * A frame that changed size is a frame whose picture is wrong.
@@ -2493,7 +2536,7 @@ export function ProjectCanvas({
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (event.kind === "frame" && event.frame !== undefined) {
-						reloadFrameDocument(event.frame);
+						reloadOrHold(event.frame);
 						void refetchFrames();
 						// an edit moves the graph: edges re-derive, verified marks may drop —
 						// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -2506,7 +2549,7 @@ export function ProjectCanvas({
 						// a shared file the link graph has read names its own readers (#109);
 						// anything it could not name can stale every document
 						const staled = event.frames ?? framesRef.current.map((frame) => frame.name);
-						for (const frame of staled) reloadFrameDocument(frame);
+						for (const frame of staled) reloadOrHold(frame);
 						void refetchFrames();
 						// a shared source file moves the graph as surely as a frame's own
 						void refetchFlows();
@@ -2529,7 +2572,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync]);
+	}, [noteCover, project, refetchFlows, refetchFrames, reloadOrHold, resync]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost
