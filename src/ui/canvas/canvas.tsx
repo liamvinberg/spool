@@ -15,10 +15,12 @@ import type {
 	FrameCollision,
 	FrameCopy,
 	Geometry,
+	HeldPatch,
 	Place,
 	ProjectedFrame,
 	SelectionEntry,
 	SelectionPut,
+	TextWritten,
 } from "../api";
 import {
 	beaconTrash,
@@ -332,6 +334,11 @@ const HOVER_PICK_MS = 80;
 const COPY_CASCADE_PX = 24;
 /** how long a hand edit's outgoing document may stand before the still returns */
 const HOLD_PAINT_MS = 3000;
+
+/** A write that said what the file already said: no characters moved, so it is no step. */
+function wroteNothing(undo: HeldPatch): boolean {
+	return undo.start === undo.end && undo.text === "";
+}
 
 /**
  * One entry on the trash toast (#23, #229).
@@ -2001,6 +2008,80 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * What every hand write does with its answer (#314–#318).
+	 *
+	 * The four gestures differ in what they send and in what they do with a
+	 * write that landed; everything between was the same thirty lines written
+	 * out four times. The readers held before the write go free the moment it
+	 * turns out not to have reached them; a refusal is shown where the gesture
+	 * was, and one about a file that moved underneath re-reads the rung; a
+	 * write that said what the file already said is no step at all; and a write
+	 * that landed is one history entry and, once per project, the line about
+	 * nothing catching hand edits.
+	 */
+	const settled = useCallback(
+		(
+			written: TextWritten | undefined,
+			about: {
+				frame: string;
+				/** the frames rendering a shared file, held before the write left */
+				readers: readonly string[];
+				/** the ask the frame holds the DOM half of this write under */
+				edit: number;
+				/** the stamp the entry re-reads its rung at, given the file the write landed in */
+				readAt: (path: string) => string;
+				refuse: (refusal: Refusal) => void;
+				/** the sentence for a write that never reached the daemon at all */
+				failed: string;
+				/** what this gesture's entry carries beyond the patch */
+				entry?: Pick<Extract<HistoryEntry, { kind: "hand" }>, "classes">;
+				/** the write said what the file already said */
+				nothing?: () => void;
+				/** the write landed, and whether the frame kept the document it is showing */
+				onLanded?: (kept: boolean) => void;
+			},
+		) => {
+			const { frame, readers } = about;
+			if (written === undefined) {
+				releaseReaders(frame, readers);
+				about.refuse({ code: "failed", says: about.failed });
+				return;
+			}
+			if (!written.ok) {
+				releaseReaders(frame, readers);
+				about.refuse(written.refusal);
+				// a file that moved underneath is a fresh read of the rung
+				if (written.refusal.code === "stale-file") {
+					setSaves((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
+				}
+				return;
+			}
+			const shared = sharedWrite(frame, written.path);
+			if (!shared || wroteNothing(written.undo)) releaseReaders(frame, readers);
+			if (wroteNothing(written.undo)) {
+				about.nothing?.();
+				return;
+			}
+			const readAt = about.readAt(written.path);
+			const kept = landed(frame, readAt, written);
+			recordEntry({
+				kind: "hand",
+				frame,
+				edit: about.edit,
+				patch: written.undo,
+				readAt,
+				...(about.entry ?? {}),
+				...(shared ? { frames: readers } : {}),
+			});
+			about.onLanded?.(kept);
+			if (written.uncaught === true) {
+				setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
+			}
+		},
+		[landed, recordEntry, releaseReaders, sharedWrite],
+	);
+
+	/**
 	 * The DOM half of a class change (#315): the frame swaps the tokens that
 	 * changed on the element, takes the sheet the file now compiles to, and
 	 * lifts the inline preview. It says whether the element was still there.
@@ -2667,44 +2748,20 @@ export function ProjectCanvas({
 				fingerprint,
 				...(owner === null ? {} : { owner }),
 			}).then((written) => {
-				if (written === undefined) {
-					releaseReaders(held.frame, readers);
-					refuse({ code: "failed", says: "the words did not reach the file" });
-					return;
-				}
-				if (!written.ok) {
-					releaseReaders(held.frame, readers);
-					refuse(written.refusal);
-					if (written.refusal.code === "stale-file") {
-						setSaves((current) => ({ ...current, [held.frame]: (current[held.frame] ?? 0) + 1 }));
-					}
-					return;
-				}
-				const shared = sharedWrite(held.frame, written.path);
-				if (!shared) releaseReaders(held.frame, readers);
-				// an edit that said what the file already said wrote nothing, and is no step
-				if (written.undo.start === written.undo.end && written.undo.text === "") {
-					releaseReaders(held.frame, readers);
-					return;
-				}
-				// the stamp in the file that was written: the element's own, or the
-				// call site's when the words were supplied there
-				const readAt = written.path === `design/${held.source.replace(/:\d+:\d+$/, "")}` ? held.source : owner;
-				landed(held.frame, readAt ?? held.source, written);
-				recordEntry({
-					kind: "hand",
+				settled(written, {
 					frame: held.frame,
+					readers,
 					edit: held.id,
-					patch: written.undo,
-					readAt: readAt ?? held.source,
-					...(shared ? { frames: readers } : {}),
+					// the stamp in the file that was written: the element's own, or
+					// the call site's when the words were supplied there
+					readAt: (path) =>
+						(path === `design/${held.source.replace(/:\d+:\d+$/, "")}` ? held.source : owner) ?? held.source,
+					refuse,
+					failed: "the words did not reach the file",
 				});
-				if (written.uncaught === true) {
-					setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
-				}
 			});
 		},
-		[holdReaders, landed, project, recordEntry, releaseReaders, restoreWords, setEdit, sharedWrite, walkKin],
+		[holdReaders, project, restoreWords, setEdit, settled, walkKin],
 	);
 
 	// --- the class gesture (#315) ------------------------------------------------
@@ -2777,64 +2834,38 @@ export function ProjectCanvas({
 			const readers = read?.source === stamp ? (read.shared?.frames ?? []) : [];
 			holdReaders(pick.frame, readers);
 			void writeClass(project, pick.frame, { source: stamp, edits, fingerprint }).then((written) => {
-				if (written === undefined) {
-					releaseReaders(pick.frame, readers);
-					refuse({ code: "failed", says: "the class did not reach the file" });
-					return;
-				}
-				if (!written.ok) {
-					releaseReaders(pick.frame, readers);
-					refuse(written.refusal);
-					// a file that moved underneath is a fresh read of the rung
-					if (written.refusal.code === "stale-file") {
-						setSaves((current) => ({ ...current, [pick.frame]: (current[pick.frame] ?? 0) + 1 }));
-					}
-					return;
-				}
-				const shared = sharedWrite(pick.frame, written.path);
-				// a change that said what the file already said wrote nothing, and is no step
-				if (!shared || (written.undo.start === written.undo.end && written.undo.text === "")) {
-					releaseReaders(pick.frame, readers);
-				}
-				if (written.undo.start === written.undo.end && written.undo.text === "") {
-					lift();
-					return;
-				}
-				const kept = landed(pick.frame, stamp, written);
-				recordEntry({
-					kind: "hand",
+				const ok = written?.ok === true ? written : undefined;
+				settled(written, {
 					frame: pick.frame,
+					readers,
 					edit: ++pickSeq.current,
-					patch: written.undo,
-					readAt: stamp,
-					classes: { selector: pick.selector, from: written.className.now, to: written.className.was },
-					...(shared ? { frames: readers } : {}),
+					readAt: () => stamp,
+					refuse,
+					failed: "the class did not reach the file",
+					...(ok === undefined
+						? {}
+						: {
+								classes: {
+									selector: pick.selector,
+									from: ok.className.now,
+									to: ok.className.was,
+								},
+							}),
+					nothing: lift,
+					onLanded: (kept) => {
+						if (!kept || ok === undefined) return;
+						const change = { ...ok.className, ...(ok.css === undefined ? {} : { css: ok.css }) };
+						swapClass(pick.frame, pick.selector, change, (landedOn) => {
+							if (landedOn || !saved.current.has(pick.frame)) return;
+							saved.current.delete(pick.frame);
+							holdNext.current.add(pick.frame);
+							reloadFrameDocument(pick.frame);
+						});
+					},
 				});
-				if (kept) {
-					const change = { ...written.className, ...(written.css === undefined ? {} : { css: written.css }) };
-					swapClass(pick.frame, pick.selector, change, (ok) => {
-						if (ok || !saved.current.has(pick.frame)) return;
-						saved.current.delete(pick.frame);
-						holdNext.current.add(pick.frame);
-						reloadFrameDocument(pick.frame);
-					});
-				}
-				if (written.uncaught === true) {
-					setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
-				}
 			});
 		},
-		[
-			holdReaders,
-			landed,
-			previewStyle,
-			project,
-			recordEntry,
-			releaseReaders,
-			reloadFrameDocument,
-			sharedWrite,
-			swapClass,
-		],
+		[holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass],
 	);
 
 	/**
@@ -2946,43 +2977,20 @@ export function ProjectCanvas({
 					...(owner === null ? {} : { owner }),
 					...(attribute ?? {}),
 				}).then((written) => {
-					if (written === undefined) {
-						releaseReaders(pick.frame, readers);
-						refuse({ code: "failed", says: "the change did not reach the file" });
-						return;
-					}
-					if (!written.ok) {
-						releaseReaders(pick.frame, readers);
-						refuse(written.refusal);
-						if (written.refusal.code === "stale-file") {
-							setSaves((current) => ({ ...current, [pick.frame]: (current[pick.frame] ?? 0) + 1 }));
-						}
-						return;
-					}
-					const shared = sharedWrite(pick.frame, written.path);
-					if (!shared) releaseReaders(pick.frame, readers);
-					// a gesture that said what the file already said is no step at all
-					if (written.undo.start === written.undo.end && written.undo.text === "") {
-						releaseReaders(pick.frame, readers);
-						return;
-					}
-					const readAt = written.path === `design/${at.source.replace(/:\d+:\d+$/, "")}` ? at.source : null;
-					landed(pick.frame, readAt ?? at.source, written);
-					// the element is gone: the rung above it is what the hand holds now,
-					// and it holds it only once the write has actually landed, so a
-					// refusal still has the element it was about to sit under
-					if (act === "delete") holdParent(pick);
-					recordEntry({
-						kind: "hand",
+					settled(written, {
 						frame: pick.frame,
+						readers,
 						edit: id,
-						patch: written.undo,
-						readAt: readAt ?? at.source,
-						...(shared ? { frames: readers } : {}),
+						readAt: () => at.source,
+						refuse,
+						failed: "the change did not reach the file",
+						// the element is gone: the rung above it is what the hand holds
+						// now, and it holds it only once the write has actually landed,
+						// so a refusal still has the element it was about to sit under
+						onLanded: () => {
+							if (act === "delete") holdParent(pick);
+						},
 					});
-					if (written.uncaught === true) {
-						setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
-					}
 				});
 			});
 			target.postMessage(alterMessage(id, pick.selector, act, attribute?.name, attribute?.value), "*");
@@ -2990,7 +2998,7 @@ export function ProjectCanvas({
 				if (alterWaiters.current.delete(id)) showRefusal(pick.frame, pick.selector, GONE);
 			}, PICK_REPLY_MS);
 		},
-		[holdParent, holdReaders, landed, project, recordEntry, releaseReaders, restoreWords, sharedWrite, showRefusal],
+		[holdParent, holdReaders, project, restoreWords, settled, showRefusal],
 	);
 
 	/**
@@ -3063,38 +3071,20 @@ export function ProjectCanvas({
 			void bytes
 				.then((body) => swapAsset(project, frame, at.source, at.fingerprint, body))
 				.then((written) => {
-					if (written === undefined) {
-						releaseReaders(frame, readers);
-						setNotice({ kind: "error", message: "The picture did not reach the file" });
-						return;
-					}
-					if (!written.ok) {
-						releaseReaders(frame, readers);
-						setRefused({ frame, selector, refusal: written.refusal, attempted: "a picture" });
-						return;
-					}
-					const shared = sharedWrite(frame, written.path);
-					if (!shared) releaseReaders(frame, readers);
-					if (written.undo.start === written.undo.end && written.undo.text === "") {
-						releaseReaders(frame, readers);
-						return;
-					}
-					const edit = ++pickSeq.current;
-					landed(frame, at.source, written);
-					recordEntry({
-						kind: "hand",
+					settled(written, {
 						frame,
-						edit,
-						patch: written.undo,
-						readAt: at.source,
-						...(shared ? { frames: readers } : {}),
+						readers,
+						edit: ++pickSeq.current,
+						readAt: () => at.source,
+						refuse: (refusal) =>
+							refusal.code === "failed"
+								? setNotice({ kind: "error", message: "The picture did not reach the file" })
+								: setRefused({ frame, selector, refusal, attempted: "a picture" }),
+						failed: "the picture did not reach the file",
 					});
-					if (written.uncaught === true) {
-						setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
-					}
 				});
 		},
-		[holdReaders, landed, project, recordEntry, releaseReaders, sharedWrite],
+		[holdReaders, project, settled],
 	);
 
 	/**
@@ -3138,11 +3128,15 @@ export function ProjectCanvas({
 	// the saved document with no white frame in between.
 	const heldFrames = [
 		...new Set([...selected, ...picked.map((pick) => pick.frame), ...(entered === null ? [] : [entered])]),
-	]
-		.sort()
-		.join("\n");
+	].sort();
+	// the names as one string is the dep, and the names themselves are what the
+	// effect reads: a list rebuilt on every render is not a change of selection
+	const heldKey = JSON.stringify(heldFrames);
+	const heldFramesRef = useRef(heldFrames);
+	heldFramesRef.current = heldFrames;
+	// biome-ignore lint/correctness/useExhaustiveDependencies(heldKey): the frames the hand is in changing is the whole trigger
 	useEffect(() => {
-		const holding = new Set(heldFrames.split("\n"));
+		const holding = new Set(heldFramesRef.current);
 		for (const frame of new Set([...saved.current.keys(), ...writtenUnderHand.current])) {
 			if (holding.has(frame)) continue;
 			saved.current.delete(frame);
@@ -3150,7 +3144,7 @@ export function ProjectCanvas({
 			holdNext.current.add(frame);
 			reloadFrameDocument(frame);
 		}
-	}, [heldFrames, reloadFrameDocument]);
+	}, [heldKey, reloadFrameDocument]);
 
 	// nothing holds a document, or an edit, past the window it was drawn in
 	useEffect(() => {
