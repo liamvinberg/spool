@@ -896,6 +896,39 @@ export function ProjectCanvas({
 	// pointing at anything (#172).
 	const hoveredFrame = hovered?.visible === true ? hovered.frame : null;
 
+	/**
+	 * The frame a hand gesture is drawing in right now (#322).
+	 *
+	 * The hand holding an element holds every live frame still (#319), which is
+	 * right until the hand starts moving one: a document that never gets an
+	 * animation frame cannot redraw what the drag is changing, and a canvas
+	 * element clears itself the moment its size changes and stays black. So the
+	 * one frame under a handle, a gap band or a scrubbed number animates while
+	 * the gesture lasts, and the rest of the field stays held.
+	 */
+	const [gesturing, setGesturing] = useState<string | null>(null);
+	const restTick = useRef<number | null>(null);
+	const drawWhile = useCallback((frame: string) => {
+		if (restTick.current !== null) cancelAnimationFrame(restTick.current);
+		restTick.current = null;
+		setGesturing((held) => (held === frame ? held : frame));
+	}, []);
+	/**
+	 * The gesture is over. One more tick, so the document draws what the write
+	 * left it wearing, and then it holds again under the pick that is still on
+	 * it — a frame refrozen the same instant would keep the half-drawn box the
+	 * last sample gave it.
+	 */
+	const drawOnce = useCallback(() => {
+		if (restTick.current !== null) cancelAnimationFrame(restTick.current);
+		restTick.current = requestAnimationFrame(() => {
+			restTick.current = requestAnimationFrame(() => {
+				restTick.current = null;
+				setGesturing(null);
+			});
+		});
+	}, []);
+
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		allFramesRef,
@@ -906,6 +939,7 @@ export function ProjectCanvas({
 		hovered: hoveredFrame,
 		// the hand holding an element holds the whole field still (#319)
 		picking: picked.length > 0,
+		gesturing,
 		hasCover: hasCover,
 		onShot,
 		onCaptureFailure,
@@ -2856,9 +2890,13 @@ export function ProjectCanvas({
 	/** The inline preview on an element in its frame, put on or lifted; no daemon in it (rule 1). */
 	const previewStyle = useCallback(
 		(frame: string, selector: string, declarations: Readonly<Record<string, string | null>> | null) => {
+			// a preview is a gesture drawing, and the frame it draws in animates
+			// through it however tightly the rest of the field is held (#322)
+			if (declarations === null) drawOnce();
+			else drawWhile(frame);
 			iframes.current.get(frame)?.contentWindow?.postMessage(styleMessage(selector, declarations), "*");
 		},
-		[],
+		[drawOnce, drawWhile],
 	);
 
 	/**
@@ -2939,9 +2977,14 @@ export function ProjectCanvas({
 							}),
 					nothing: lift,
 					onLanded: (kept) => {
-						if (!kept || ok === undefined) return;
+						if (!kept || ok === undefined) {
+							drawOnce();
+							return;
+						}
 						const change = { ...ok.className, ...(ok.css === undefined ? {} : { css: ok.css }) };
 						swapClass(pick.frame, pick.selector, change, (landedOn) => {
+							// the class is on: one more tick to draw it, then the hold
+							drawOnce();
 							if (landedOn) {
 								// the class this wrote is a size, a gap or a turn as often
 								// as not, so the box the ring is drawn round moved with it
@@ -2964,7 +3007,7 @@ export function ProjectCanvas({
 				});
 			});
 		},
-		[holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass, walkKin],
+		[drawOnce, holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass, walkKin],
 	);
 
 	/**

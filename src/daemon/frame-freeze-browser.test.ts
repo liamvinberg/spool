@@ -97,11 +97,59 @@ it("holds a live frame's animation while the camera moves, and lets it go after"
 });
 
 /**
+ * A shader-shaped surface: a canvas that clears itself the moment its size
+ * changes and only ever paints inside an animation frame. The observer runs
+ * under a freeze — layout never stops — so a frozen document resized by a drag
+ * goes black and stays black until it is handed a tick (#322).
+ */
+const surface = `(el) => {
+	if (el === null) return;
+	const view = el.ownerDocument.defaultView;
+	if (view === null || view.painted !== undefined) return;
+	view.painted = 0;
+	let dirty = true;
+	new view.ResizeObserver((entries) => {
+		const box = entries[0].contentRect;
+		// setting the size is what clears it, exactly as a WebGL surface clears
+		el.width = Math.max(1, Math.round(box.width));
+		el.height = Math.max(1, Math.round(box.height));
+		dirty = true;
+	}).observe(el);
+	const paint = () => {
+		if (dirty) {
+			const ctx = el.getContext("2d");
+			if (ctx !== null) {
+				ctx.fillStyle = "#c96a3c";
+				ctx.fillRect(0, 0, el.width, el.height);
+			}
+			dirty = false;
+			view.painted++;
+		}
+		view.requestAnimationFrame(paint);
+	};
+	view.requestAnimationFrame(paint);
+}`;
+
+/** The art block a drag resizes, drawn over a surface that only paints in rAF. */
+const art = `export default function Frame() {
+	return (
+		<main style={{ padding: 24, fontFamily: "system-ui" }}>
+			<h1 style={{ margin: 0, fontSize: 24 }}>art</h1>
+			<div className="w-[300px] h-[200px] p-[12px]">
+				<canvas style={{ display: "block", width: "100%", height: "100%" }} ref={${surface}} />
+			</div>
+			<p ref={${counting}}>spinning</p>
+		</main>
+	);
+}
+`;
+
+/**
  * Two live frames side by side at rest: the one the hand works on, and one
  * beside it doing nothing but animating. Both are drawn wide enough to read at
  * k=1, so both hold documents rather than pictures.
  */
-async function twoLiveFrames(home: string) {
+async function twoLiveFrames(home: string, pickSelector = "h1") {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
@@ -115,7 +163,7 @@ async function twoLiveFrames(home: string) {
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 
-	const heading = page.frameLocator('iframe[title="home"]').locator("h1");
+	const heading = page.frameLocator('iframe[title="home"]').locator(pickSelector);
 	const spun = (frame: string) =>
 		page
 			.frameLocator(`iframe[title="${frame}"]`)
@@ -134,7 +182,7 @@ async function twoLiveFrames(home: string) {
 		const body = (await response.json()) as { selection?: unknown[] };
 		return body.selection?.length ?? 0;
 	};
-	const pick = async () => {
+	const pick = async (position?: { x: number; y: number }) => {
 		await expect.poll(() => heading.count(), { timeout: 30_000 }).toBe(1);
 		// the canvas takes the pointer off the iframe before a click can pick
 		// through it; on a loaded runner that lands well after the frame does
@@ -143,7 +191,10 @@ async function twoLiveFrames(home: string) {
 				timeout: 30_000,
 			})
 			.toBe("none");
-		await heading.click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+		await heading.click({
+			modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
+			...(position === undefined ? {} : { position }),
+		});
 		await expect.poll(selected, { timeout: 30_000 }).toBe(1);
 	};
 	/** Let go, on the empty field below both frames. */
@@ -265,4 +316,65 @@ it("reloads a frame written under the hand on the deselect, behind its own paint
 	// the document really is a new one, and it animates again
 	expect(await kept()).toBe(undefined);
 	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBeGreaterThan(4);
+});
+
+it("hands the frame under a drag its animation frames, and takes them back after", {
+	timeout: 240_000,
+}, async () => {
+	const { page, ran, pick } = await twoLiveFrames(art, "main > div");
+	// on the block's own rim rather than the surface filling it: the modifier
+	// takes the deepest element under the pointer
+	const surfaceFrame = page.frameLocator('iframe[title="home"]');
+	/** How many times the surface repainted over a third of a second. */
+	const painted = () =>
+		surfaceFrame.locator("canvas").evaluate((el) => (el.ownerDocument.defaultView as unknown as { painted?: number }).painted ?? -1);
+	const repainting = async () => {
+		const before = await painted();
+		await page.waitForTimeout(300);
+		return (await painted()) - before;
+	};
+	/** Whether the middle of the surface is drawn on rather than cleared. */
+	const lit = () =>
+		surfaceFrame.locator("canvas").evaluate((el) => {
+			const canvas = el as HTMLCanvasElement;
+			const ctx = canvas.getContext("2d");
+			if (ctx === null || canvas.width === 0) return false;
+			const dot = ctx.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+			return (dot[3] ?? 0) > 0;
+		});
+
+	await expect.poll(() => ran("beside"), { timeout: 60_000 }).toBeGreaterThan(4);
+	expect(await lit()).toBe(true);
+
+	await pick({ x: 6, y: 6 });
+	// the whole field holds still, the surface included
+	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBe(0);
+	await expect.poll(repainting, { timeout: 30_000 }).toBe(0);
+
+	await expect.poll(() => page.locator('[data-element-handle="e"]').count(), { timeout: 30_000 }).toBe(1);
+	const knob = await page.locator('[data-element-handle="e"]').boundingBox();
+	if (knob === null) throw new Error("the ring drew no east handle");
+	const from = { x: knob.x + knob.width / 2, y: knob.y + knob.height / 2 };
+	await page.mouse.move(from.x, from.y);
+	await page.mouse.down();
+	for (const dx of [30, 70, 120, 170]) {
+		await page.mouse.move(from.x + dx, from.y);
+		// the size changed, which cleared the surface: only an animation frame
+		// puts it back, and the drag is what earns the frame one
+		await expect.poll(lit, { timeout: 15_000 }).toBe(true);
+	}
+	// the frame under the hand is animating again; nothing else on the field is
+	expect(await ran("home"), "the frame under the drag gets its animation frames").toBeGreaterThan(0);
+	expect(await ran("beside"), "the rest of the field stays held").toBe(0);
+	expect(await lit()).toBe(true);
+	expect(await repainting()).toBe(0); // the surface repaints on a resize, not on a tick
+
+	const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
+	await page.mouse.up();
+	await wrote;
+	// the write left it wearing a size it had to draw, and it holds again after
+	await expect.poll(lit, { timeout: 15_000 }).toBe(true);
+	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBe(0);
+	expect(await lit()).toBe(true);
+	expect(await ran("beside")).toBe(0);
 });

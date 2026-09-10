@@ -53,6 +53,8 @@ interface Attention {
 	hovered?: string | null;
 	/** The hand holds an element somewhere on the canvas (#319). */
 	picking?: boolean;
+	/** The frame a hand gesture is drawing in (#322). */
+	gesturing?: string | null;
 }
 
 async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
@@ -73,6 +75,7 @@ async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
 			selected: props.selected == null ? [] : [props.selected],
 			hovered: props.hovered ?? null,
 			picking: props.picking ?? false,
+			gesturing: props.gesturing ?? null,
 			hasCover: () => true,
 			onShot: () => undefined,
 			cameraRef: { current: { x: 0, y: 0, k: 1 } } as RefObject<Camera | null>,
@@ -132,7 +135,15 @@ describe("which frames hold their animations", () => {
 		entered: false,
 		capturing: false,
 		picking: false,
+		gesturing: false,
 	};
+
+	it("hands a frame back while a hand gesture is drawing in it (#322)", () => {
+		expect(isFrameFrozen({ ...resting, picking: true })).toBe(true);
+		expect(isFrameFrozen({ ...resting, picking: true, gesturing: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, cameraMoving: true, gesturing: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS, gesturing: true })).toBe(false);
+	});
 
 	it("freezes a live frame while the camera is moving", () => {
 		expect(isFrameFrozen(resting)).toBe(false);

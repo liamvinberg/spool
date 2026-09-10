@@ -313,11 +313,17 @@ function isFrameLive(
  * renderer the edit needs. Layout is untouched either way: the shim gates rAF
  * and pauses declarative animations, so a preview still reflows under the hold.
  *
- * Three frames never freeze. The one you went inside is the one being used —
+ * Four frames never freeze. The one you went inside is the one being used —
  * its own hands are inside it, and a pick elsewhere on the canvas does not
  * reach in. A borrowed frame is mid-errand, and a capture settles on the
  * frame's own rAF and animations, so a frozen one would photograph itself held;
  * a frame with a capture already in flight is that same errand, one step later.
+ *
+ * The fourth is the frame a hand gesture is moving (#322). A drag changes what
+ * the document draws, and a document that gets no animation frames cannot draw
+ * it: a canvas element clears itself the moment its size changes and stays
+ * black until its own loop paints again. So the one frame under the gesture
+ * animates while it lasts, and the rest of the field stays held.
  */
 export function isFrameFrozen(input: {
 	cameraMoving: boolean;
@@ -328,9 +334,11 @@ export function isFrameFrozen(input: {
 	capturing: boolean;
 	/** Whether the hand holds an element selection anywhere on the canvas (#319). */
 	picking: boolean;
+	/** Whether a hand gesture is drawing in this frame right now (#322). */
+	gesturing: boolean;
 }): boolean {
-	const { cameraMoving, idleMs, state, entered, capturing, picking } = input;
-	if (state !== "live" || entered || capturing) return false;
+	const { cameraMoving, idleMs, state, entered, capturing, picking, gesturing } = input;
+	if (state !== "live" || entered || capturing || gesturing) return false;
 	return picking || cameraMoving || idleMs >= IDLE_FREEZE_MS;
 }
 
@@ -615,6 +623,12 @@ export interface LifecycleDeps {
 	 * the frame the element is in.
 	 */
 	picking: boolean;
+	/**
+	 * The frame a hand gesture is drawing in (#322) — a handle, a gap band or a
+	 * number scrubbed in the rail. One frame rather than a flag, because it is
+	 * the one document the gesture is changing that has to keep drawing.
+	 */
+	gesturing: string | null;
 	hasCover: (frame: string) => boolean;
 	onShot: (frame: string, image: CoverRaster) => void;
 	/**
@@ -647,6 +661,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		selected,
 		hovered,
 		picking,
+		gesturing,
 		hasCover,
 		onShot,
 		onCaptureFailure,
@@ -681,6 +696,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	hoveredRef.current = hovered;
 	const pickingRef = useRef(picking);
 	pickingRef.current = picking;
+	const gesturingRef = useRef(gesturing);
+	gesturingRef.current = gesturing;
 	const hasCoverRef = useRef(hasCover);
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
@@ -777,6 +794,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 							entered: entered === name,
 							capturing: captureWaiters.current.has(name),
 							picking: pickingRef.current,
+							gesturing: gesturingRef.current === name,
 						}),
 				);
 			}
@@ -1161,8 +1179,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		hoveredRef.current = hovered;
 		selectedRef.current = selected;
 		pickingRef.current = picking;
+		gesturingRef.current = gesturing;
 		applyFreeze();
-	}, [hovered, selected, picking, applyFreeze]);
+	}, [hovered, selected, picking, gesturing, applyFreeze]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);

@@ -60,6 +60,7 @@ async function mountLifecycle(
 			allFramesRef: framesRef,
 			entered: null,
 			selectionTargets: new Set(),
+			gesturing: null,
 			selected: [],
 			hovered: null,
 			picking: false,

@@ -48,7 +48,8 @@ describe("the second click", () => {
 
 	it("is not a press on a container, which holds rungs rather than words (#322)", () => {
 		expect(secondClick([pick({ words: false })], "cart", { x: 20, y: 20 })).toBeUndefined();
-		expect(secondClick([pick({ words: undefined })], "cart", { x: 20, y: 20 })).toBeUndefined();
+		const { words: _unread, ...silent } = pick();
+		expect(secondClick([silent], "cart", { x: 20, y: 20 })).toBeUndefined();
 	});
 });
 
