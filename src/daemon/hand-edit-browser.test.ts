@@ -71,7 +71,7 @@ async function serveFrame(): Promise<Served> {
 	let asked = 0;
 	window.said = [];
 	window.addEventListener("message", (event) => {
-		if (event.data && ["edit-open", "edited", "restored"].includes(event.data.spool)) {
+		if (event.data && ["edit-open", "edited", "restored", "classed"].includes(event.data.spool)) {
 			window.said.push(event.data);
 		}
 	});
@@ -192,4 +192,37 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 	// a selector nothing answers to is a no, not an edit nobody can end
 	await send({ spool: "edit", selector: "#gone", x: 0, y: 0 });
 	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "edit-open", ok: false });
+
+	// the rail's preview is inline style on the element (#315), lifted again
+	// to whatever the inline style said before it
+	const width = () => frame.locator("#pay").evaluate((el) => getComputedStyle(el).width);
+	await inFrame(() => document.getElementById("pay")?.style.setProperty("width", "150px"));
+	await send({ spool: "style", selector: "#pay", declarations: { width: "700px", "padding-left": "12px" } });
+	await expect.poll(width).toBe("700px");
+	await send({ spool: "style", selector: "#pay", declarations: null });
+	await expect.poll(width).toBe("150px");
+	expect(await frame.locator("#pay").evaluate((el) => el.style.paddingLeft)).toBe("");
+
+	// the file's class arrives: the tokens that changed are swapped on the
+	// element beside whatever else it wears, the sheet is the file's, and the
+	// preview that stood in for it is lifted
+	await inFrame(() => {
+		document.getElementById("pay")?.style.removeProperty("width");
+		document.getElementById("pay")?.setAttribute("class", "w-[990px] action");
+	});
+	await send({ spool: "style", selector: "#pay", declarations: { width: "700px" } });
+	await expect.poll(width).toBe("700px");
+	await send({
+		spool: "class",
+		selector: "#pay",
+		was: "veil-art w-[990px]",
+		now: "veil-art w-[700px]",
+		css: "#pay { display: block; height: 40px } .w-\\[700px\\] { width: 700px }",
+	});
+	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "classed", ok: true });
+	expect(await frame.locator("#pay").getAttribute("class")).toBe("action w-[700px]");
+	expect(await frame.locator("#pay").evaluate((el) => el.style.width)).toBe("");
+	expect(await width()).toBe("700px");
+	await send({ spool: "class", selector: "#gone", was: "", now: "p-2", css: undefined });
+	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "classed", ok: false });
 });

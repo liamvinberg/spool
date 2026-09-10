@@ -383,7 +383,12 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * {spool:"restore", id, way, ask} puts one committed edit's words back or
  * forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
  * moves the stamps a save shifted on their line, since the document is not
- * reloaded for its own save;
+ * reloaded for its own save; {spool:"style", selector, declarations} previews
+ * a rail value as inline style on the element, and {spool:"class", selector,
+ * was, now, css, id} is the file catching up (#315): the tokens the write
+ * took off and put on are swapped on the element's class list, the compiled
+ * stylesheet is replaced, the preview is cleared, and {spool:"classed"} says
+ * whether the element was still there to take it;
  * {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
@@ -1516,6 +1521,55 @@ const canvasShimJs = `(() => {
 		return null;
 	}
 
+	// The rail's preview (#315): a value typed or stepped lands on the element
+	// as inline style at once, and what the inline style said before is kept
+	// so the preview can be lifted again — when the file's class arrives, or
+	// when the gesture is cancelled — without a reload.
+	var previewed = new WeakMap();
+
+	function previewStyle(selector, declarations) {
+		const el = elementFor(selector);
+		if (!el) return;
+		let held = previewed.get(el);
+		if (declarations === null) {
+			if (!held) return;
+			for (const [property, was] of held) {
+				if (was.value === "") el.style.removeProperty(property);
+				else el.style.setProperty(property, was.value, was.priority);
+			}
+			previewed.delete(el);
+			return;
+		}
+		if (!held) { held = new Map(); previewed.set(el, held); }
+		for (const property of Object.keys(declarations)) {
+			if (!held.has(property)) {
+				held.set(property, { value: el.style.getPropertyValue(property), priority: el.style.getPropertyPriority(property) });
+			}
+			const value = declarations[property];
+			if (value === null || value === "") el.style.removeProperty(property);
+			else el.style.setProperty(property, value);
+		}
+	}
+
+	// The file has the class now (#315): the tokens the write took off come
+	// off the element and the ones it put on go on, which keeps whatever a
+	// cn() call added beside the literal; the sheet is swapped for the one the
+	// file compiles to, and the inline preview that stood in for it is lifted.
+	function applyClass(selector, was, now, css) {
+		const el = elementFor(selector);
+		if (!el) return false;
+		const before = String(was || "").split(/\\s+/).filter(Boolean);
+		const after = String(now || "").split(/\\s+/).filter(Boolean);
+		for (const token of before) if (!after.includes(token)) el.classList.remove(token);
+		for (const token of after) if (!before.includes(token)) el.classList.add(token);
+		if (typeof css === "string") {
+			const sheet = document.getElementById("spool-compiled-css");
+			if (sheet) sheet.textContent = css;
+		}
+		previewStyle(selector, null);
+		return true;
+	}
+
 	// A write moved the stamps on its line, and this document is not reloaded
 	// for its own save: every element on that line past the patch shifts with it.
 	function restamp(file, shifts) {
@@ -1893,12 +1947,23 @@ const canvasShimJs = `(() => {
 			}
 			return;
 		}
-		if (m.spool === "restore" || m.spool === "restamp") {
-			// both change the document, so the same door
+		if (m.spool === "restore" || m.spool === "restamp" || m.spool === "style" || m.spool === "class") {
+			// all of them change the document, so the same door
 			const config = window.__SPOOL__ || {};
 			if (event.source !== parent || event.origin !== config.controlOrigin) return;
 			if (m.spool === "restamp") {
 				try { restamp(m.file, Array.isArray(m.shifts) ? m.shifts : []); } catch {}
+				return;
+			}
+			if (m.spool === "style") {
+				const declarations = m.declarations !== null && typeof m.declarations === "object" ? m.declarations : null;
+				try { previewStyle(m.selector, declarations); } catch {}
+				return;
+			}
+			if (m.spool === "class") {
+				let ok = false;
+				try { ok = applyClass(m.selector, m.was, m.now, m.css); } catch {}
+				parent.postMessage({ spool: "classed", frame: config.frame, id: m.id, ok }, "*");
 				return;
 			}
 			let ok = false;
