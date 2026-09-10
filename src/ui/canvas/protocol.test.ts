@@ -5,6 +5,8 @@ import {
 	editMessage,
 	endEditMessage,
 	parseFrameMessage,
+	restampMessage,
+	restoreMessage,
 	walkRejectionReason,
 } from "./protocol";
 
@@ -167,19 +169,36 @@ describe("frame modifier protocol", () => {
 describe("in-place edit protocol (#255)", () => {
 	it("accepts the frame's two answers and rejects a shapeless one", () => {
 		const opened = { spool: "edit-open", frame: "cart", id: 4, ok: true, text: "Pay now" };
-		const ended = { spool: "edited", frame: "cart", id: 4, commit: true, text: "Pay later" };
+		const ended = {
+			spool: "edited",
+			frame: "cart",
+			id: 4,
+			commit: true,
+			nodes: [{ text: "Pay later" }, { tag: "br", nodes: [] }],
+			owner: "frames/cart/frame.tsx:9:5",
+		};
+		const restored = { spool: "restored", frame: "cart", id: 7, ok: true };
 
 		expect(parseFrameMessage(opened)).toEqual(opened);
 		expect(parseFrameMessage(ended)).toEqual(ended);
+		expect(parseFrameMessage({ ...ended, owner: null })).toEqual({ ...ended, owner: null });
+		expect(parseFrameMessage(restored)).toEqual(restored);
 		// an answer with no ask behind it could end an edit that is not this one
 		expect(parseFrameMessage({ spool: "edit-open", frame: "cart", ok: true, text: "" })).toBeUndefined();
-		expect(parseFrameMessage({ spool: "edited", frame: "cart", id: 4, text: "x" })).toBeUndefined();
-		expect(parseFrameMessage({ spool: "edited", frame: "cart", id: 4, commit: true })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "edited", frame: "cart", id: 4, nodes: [], owner: null })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "edited", frame: "cart", id: 4, commit: true, owner: null })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "restored", frame: "cart", ok: true })).toBeUndefined();
 	});
 
-	it("names the element and the point the caret goes to", () => {
+	it("names the element and the point the caret goes to, and the words to put back", () => {
 		expect(editMessage("div > h1", 12, 8, 5)).toEqual({ spool: "edit", selector: "div > h1", x: 12, y: 8, id: 5 });
 		expect(endEditMessage(true)).toEqual({ spool: "edit-end", commit: true });
+		expect(restoreMessage(5, "before", 9)).toEqual({ spool: "restore", id: 5, way: "before", ask: 9 });
+		expect(restampMessage("frames/cart/frame.tsx", [{ line: 7, column: 41, delta: -5 }])).toEqual({
+			spool: "restamp",
+			file: "frames/cart/frame.tsx",
+			shifts: [{ line: 7, column: 41, delta: -5 }],
+		});
 	});
 });
 
