@@ -361,7 +361,7 @@ export function FileLink({
 			type="button"
 			data-hand-file={`${path}:${line}`}
 			title={`Copy ${path}:${line}`}
-			className={cn("shrink-0 text-thread-strong hover:underline", FAINT)}
+			className={cn("pointer-events-auto shrink-0 text-thread-strong hover:underline", FAINT)}
 			onPointerDown={(event) => event.stopPropagation()}
 			onClick={() => onOpen(path, line)}
 		>

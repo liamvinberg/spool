@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RungRead } from "../api";
 import {
 	authoredSpelling,
+	bigEnough,
 	draggedAngle,
 	draggedRect,
 	drawnHandles,
@@ -172,6 +173,13 @@ describe("which of the eight targets the ring draws", () => {
 
 	it("draws nothing on a target under 24px on its smaller dimension", () => {
 		expect(drawnHandles({ w: 200, h: 20 }, live, null)).toEqual([]);
+	});
+
+	it("says the same floor the rotate zones outside the ring wait for", () => {
+		expect(bigEnough({ w: 200, h: 120 })).toBe(true);
+		// a heading one line high: its rotate zones would overhang the words
+		// above and below it, so it wears none of the ring's targets (#321)
+		expect(bigEnough({ w: 200, h: 20 })).toBe(false);
 	});
 
 	it("keeps the grabbed target drawn however small the box becomes mid-drag", () => {

@@ -4,7 +4,7 @@ import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
 import type { GapAxis, GapHandles } from "./hand-gap";
-import { drawnHandles, type Edge, type LiveHandles, type Sign } from "./hand-resize";
+import { bigEnough, drawnHandles, type Edge, type LiveHandles, type Sign } from "./hand-resize";
 import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
 import { FileLink } from "./properties-fields";
@@ -468,7 +468,10 @@ export function SelectionOverlay({
 					return (
 						<div
 							data-hand-refusal={refused.refusal.code}
-							className="pointer-events-auto absolute flex max-w-[360px] items-baseline gap-2 rounded-md border border-border-raised bg-raised px-2 py-1 text-muted type-detail"
+							// the chip stands outside the element it is about, which is over
+							// whatever is drawn under that: it says its piece and takes no
+							// press of its own, only the two it offers as doors (#321)
+							className="pointer-events-none absolute flex max-w-[360px] items-baseline gap-2 rounded-md border border-border-raised bg-raised px-2 py-1 text-muted type-detail"
 							style={{ left: box.x - 2, top: box.y + box.h + 8 }}
 						>
 							<span className="truncate">
@@ -484,7 +487,7 @@ export function SelectionOverlay({
 								<button
 									type="button"
 									data-hand-instead=""
-									className="shrink-0 text-thread-strong hover:underline"
+									className="pointer-events-auto shrink-0 text-thread-strong hover:underline"
 									onPointerDown={(event) => event.stopPropagation()}
 									onClick={refused.instead.act}
 								>
@@ -495,7 +498,7 @@ export function SelectionOverlay({
 								<button
 									type="button"
 									data-hand-ask
-									className="shrink-0 text-thread-strong hover:underline"
+									className="pointer-events-auto shrink-0 text-thread-strong hover:underline"
 									onPointerDown={(event) => event.stopPropagation()}
 									onClick={onAsk}
 								>
@@ -526,6 +529,11 @@ export function SelectionOverlay({
  * dead drag anywhere on the ring. The cube is the frame ring's own — one
  * canvas, one knob — and the two rings sit side by side often enough that a
  * second size would read as a second kind of object.
+ *
+ * Every one of them, the rotate zones included, waits for a box big enough to
+ * draw it (#321). They overhang the element, and on a heading one line high
+ * that overhang lands on the words above and below it: an 80px band of
+ * somebody else's text that answers a click by turning this one.
  */
 function ElementHandleSet({ box, ring, handles }: { box: Box; ring: Box; handles: ElementHandles }) {
 	const { live } = handles;
@@ -538,7 +546,7 @@ function ElementHandleSet({ box, ring, handles }: { box: Box; ring: Box; handles
 	const drawn = new Set(drawnHandles({ w: box.w, h: box.h }, live, handles.active));
 	return (
 		<>
-			{live.rotate
+			{live.rotate && bigEnough(box)
 				? CORNERS.map((name) => {
 						const { sx, sy } = signsOf(name);
 						const spot = at(sx, sy);

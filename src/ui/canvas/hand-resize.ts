@@ -172,6 +172,17 @@ export const SMALL_TARGET_PX = 24;
 /** The length a side needs before it wears an edge strip of its own. */
 export const EDGE_TARGET_PX = 72;
 
+/**
+ * Whether a box on screen has room to wear targets at all.
+ *
+ * The floor every target on the ring shares (#321): under it the handles
+ * overlap each other and each other's element, so a heading one line high
+ * wears none of them and every point on it belongs to the click.
+ */
+export function bigEnough(ring: Size): boolean {
+	return Math.min(ring.w, ring.h) >= SMALL_TARGET_PX;
+}
+
 /** Which axes a target moves: -1 the near side, 1 the far side, 0 not at all. */
 export function edgeSigns(edge: Edge): { sx: Sign; sy: Sign } {
 	return {
@@ -197,7 +208,7 @@ export function drawnHandles(ring: Size, live: LiveHandles, active: Edge | null)
 		if (edge === active) return true;
 		const { sx, sy } = edgeSigns(edge);
 		if (!(sx !== 0 && live.w) && !(sy !== 0 && live.h)) return false;
-		if (Math.min(ring.w, ring.h) < SMALL_TARGET_PX) return false;
+		if (!bigEnough(ring)) return false;
 		if (edge.length === 2) return true;
 		return (sy === 0 ? ring.h : ring.w) >= EDGE_TARGET_PX;
 	});
