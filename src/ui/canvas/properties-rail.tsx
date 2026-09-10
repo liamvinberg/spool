@@ -489,6 +489,20 @@ function Head({
 				) : null}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
+			{read?.shared === undefined || read.path === undefined || read.line === undefined ? null : (
+				// a shared definition (#318): the file it is written in, and how far
+				// an edit to it reaches, said before anything is touched
+				<div data-properties-shared="" className="flex h-5 items-center gap-2 px-2.5 pb-1">
+					{acts.onOpenFile === undefined ? (
+						<span className={cn("shrink-0", FAINT)}>{read.path.slice(read.path.lastIndexOf("/") + 1)}</span>
+					) : (
+						<FileLink path={read.path} line={read.line} onOpen={acts.onOpenFile} />
+					)}
+					{read.shared.frames === undefined ? null : (
+						<span className={cn("min-w-0 truncate", FAINT)}>{usedIn(read.shared.frames.length)}</span>
+					)}
+				</div>
+			)}
 			{read?.refusal === undefined ? null : (
 				<div className="flex h-5 items-center gap-2 px-2.5 pb-1">
 					<span className={cn("min-w-0 truncate", FAINT)}>{read.refusal.says}</span>
@@ -499,6 +513,11 @@ function Head({
 			)}
 		</div>
 	);
+}
+
+/** How far an edit to a shared definition reaches, as the import graph counts it. */
+export function usedIn(frames: number): string {
+	return `used in ${frames} frame${frames === 1 ? "" : "s"}`;
 }
 
 /** one crumb's worth of the trail: a name, and the rung a press on it climbs to */
