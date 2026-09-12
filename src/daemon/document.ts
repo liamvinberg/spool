@@ -1114,6 +1114,23 @@ const canvasShimJs = `(() => {
 				lines.push({ x: drawn[i].x, y: drawn[i].y, w: drawn[i].width, h: drawn[i].height });
 			}
 		} catch {}
+		// what is in it is wider or taller than the box it is in (#324): the ring
+		// stays the box the handles drag and says so along the side it runs past
+		const spills = [];
+		if (computed) {
+			try {
+				if (el.scrollWidth > el.clientWidth + 0.5) spills.push("right");
+				if (el.scrollHeight > el.clientHeight + 0.5) spills.push("bottom");
+				if (spills.length === 0) {
+					const range = document.createRange();
+					range.selectNodeContents(el);
+					const ink = range.getBoundingClientRect();
+					if (ink.width > rect.width + 0.5) spills.push("right");
+					if (ink.height > rect.height + 0.5) spills.push("bottom");
+					range.detach();
+				}
+			} catch {}
+		}
 		return {
 			selector: cssPath(el),
 			tag: el.tagName.toLowerCase(),
@@ -1124,6 +1141,7 @@ const canvasShimJs = `(() => {
 			radius,
 			...(drawn === null ? {} : { computed: drawn }),
 			...(item === null ? {} : { item }),
+			...(spills.length === 0 ? {} : { spills }),
 			source,
 			generated: stamped !== el,
 		};
@@ -1248,6 +1266,37 @@ const canvasShimJs = `(() => {
 	// What a resize gesture may write (#305): the element's own border box, the
 	// engine's limits on it, the padding and border a content box adds back, and
 	// the placement it already has. Only the document knows any of it.
+	// The narrowest box this element's own content can honour (#324).
+	//
+	// The engine's min-width is nearly always 0, so nothing used to stop a drag
+	// writing a width the element cannot keep: a word with no break opportunity
+	// simply overflows the box the file now says it is, and the ring is left
+	// drawing the truth about a box that is smaller than what is in it. Measured
+	// on a clone in the element's own parent, so the real one never reflows to
+	// answer, and once per gesture, because that is when a drag asks.
+	function minContentWidth(el) {
+		const parent = el.parentElement;
+		if (!parent) return 0;
+		let width = 0;
+		const clone = el.cloneNode(true);
+		clone.removeAttribute("id");
+		clone.setAttribute("aria-hidden", "true");
+		const style = clone.style;
+		style.setProperty("position", "absolute", "important");
+		style.setProperty("visibility", "hidden", "important");
+		style.setProperty("pointer-events", "none", "important");
+		style.setProperty("inset", "auto", "important");
+		style.setProperty("width", "min-content", "important");
+		style.setProperty("min-width", "0", "important");
+		style.setProperty("max-width", "none", "important");
+		try {
+			parent.appendChild(clone);
+			width = clone.getBoundingClientRect().width;
+		} catch {}
+		try { parent.removeChild(clone); } catch {}
+		return width;
+	}
+
 	function elementSizing(selector) {
 		const el = elementFor(selector);
 		if (!el) return null;
@@ -1300,7 +1349,9 @@ const canvasShimJs = `(() => {
 			flow: { axis, reversed },
 			offset: { left: free ? offset("left") : null, top: free ? offset("top") : null },
 			limits: {
-				minW: limit("min-width", extraW, extraW),
+				// the floor is whichever is higher: what the file asked for, and
+				// what the content cannot go under (#324)
+				minW: Math.max(limit("min-width", extraW, extraW), minContentWidth(el)),
 				minH: limit("min-height", extraH, extraH),
 				maxW: limit("max-width", extraW, null),
 				maxH: limit("max-height", extraH, null),

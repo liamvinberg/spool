@@ -428,6 +428,15 @@ export function SelectionOverlay({
 								/>
 							));
 						})}
+						{group.flatMap((pick) =>
+							(pick.spills ?? []).map((side) => (
+								<SpillMark
+									key={`${pickKey(pick.frame, pick.selector)}\u0000${side}`}
+									box={localBox(pick.rect)}
+									side={side}
+								/>
+							)),
+						)}
 						{own === null
 							? null
 							: (() => {
@@ -879,6 +888,24 @@ function ClippedEdges({
 			)}
 		</>
 	);
+}
+
+/**
+ * The mark on the side an element's content runs past its box (#324).
+ *
+ * The ring stays the border box: it is what the handles drag and what the file
+ * says. A width written under the content's own min-content width leaves the
+ * words standing outside it, and a ring shorter than the text it is round
+ * reads as a broken ring rather than as the truth about a box that is smaller
+ * than what is in it. The same two pixels of thread the frame clip already
+ * uses, on the side it spills.
+ */
+function SpillMark({ box, side }: { box: Box; side: "right" | "bottom" }) {
+	const place =
+		side === "right"
+			? { left: box.x + box.w, top: box.y - 2, width: 2, height: box.h + 4 }
+			: { left: box.x - 2, top: box.y + box.h, width: box.w + 4, height: 2 };
+	return <div data-ring-spill={side} className="absolute bg-thread" style={place} />;
 }
 
 function ElementOutline({

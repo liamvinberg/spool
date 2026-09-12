@@ -63,6 +63,15 @@ export interface PickedHit {
 	 * Present only where a selection asked for it, and only inside a list.
 	 */
 	item?: { map: string; index: number; selector: string };
+	/**
+	 * The sides what is in the element runs past the box it is in (#324).
+	 *
+	 * A width a hand wrote under the content's own min-content width leaves the
+	 * words standing outside their box. The ring keeps the border box, because
+	 * that is what the handles drag and what the file says; this is what makes
+	 * the difference visible instead of leaving it as a ring that looks wrong.
+	 */
+	spills?: readonly ("right" | "bottom")[];
 	/** Nearest data-spool-source stamp, "frames/…/frame.tsx:line:col". */
 	source: string | null;
 	/** True when the stamp sits on an ancestor — JS-created DOM (#6 degrade). */
