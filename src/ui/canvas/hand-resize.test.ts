@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { RungRead } from "../api";
 import {
 	authoredSpelling,
-	wearsRotate,
 	draggedAngle,
 	draggedRect,
 	drawnHandles,
@@ -15,6 +14,7 @@ import {
 	rotateTokens,
 	rotationOf,
 	turnValue,
+	wearsRotate,
 } from "./hand-resize";
 
 /**

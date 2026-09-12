@@ -28,10 +28,6 @@ describe("collapsedWords", () => {
 	});
 
 	it("leaves words the engine was already drawing exactly as they are", () => {
-		expect(collapsedWords(["Rodebjer", " ", "Marketing Director"])).toEqual([
-			"Rodebjer",
-			" ",
-			"Marketing Director",
-		]);
+		expect(collapsedWords(["Rodebjer", " ", "Marketing Director"])).toEqual(["Rodebjer", " ", "Marketing Director"]);
 	});
 });

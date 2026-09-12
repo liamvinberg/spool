@@ -146,5 +146,4 @@ it("deletes one row of a list from the array behind it", { timeout: 240_000 }, a
 	expect(array()).toBe(EXPERIENCE);
 
 	requests.stop();
-	await f.browser.close();
 });
