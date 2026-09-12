@@ -635,7 +635,7 @@ export default function Frame({ open }: { open: boolean }) {
 			`/api/p/${name}/class`,
 			jsonPost({
 				frame: "voice",
-				source: stampIn(voiceTsx, "<main"),
+				sources: [stampIn(voiceTsx, "<main")],
 				edits: [{ token: "w-[700px]", scope: "" }],
 				fingerprint,
 			}),
@@ -643,12 +643,18 @@ export default function Frame({ open }: { open: boolean }) {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			ok: true;
-			className: { was: string; now: string };
+			classNames: { source: string; was: string; now: string }[];
 			css: string;
 			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
 			shifts: unknown[];
 		};
-		expect(body.className).toEqual({ was: "flex flex-col gap-2 p-4", now: "flex flex-col gap-2 p-4 w-[700px]" });
+		expect(body.classNames).toEqual([
+			{
+				source: stampIn(voiceTsx, "<main"),
+				was: "flex flex-col gap-2 p-4",
+				now: "flex flex-col gap-2 p-4 w-[700px]",
+			},
+		]);
 		expect(body.css).toContain("700px");
 		expect(body.shifts).toEqual([{ line: 5, column: 43, delta: 10, taken: 0 }]);
 		const written = readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8");
@@ -675,7 +681,7 @@ export default function Frame({ open }: { open: boolean }) {
 			`/api/p/${name}/class`,
 			jsonPost({
 				frame: "voice",
-				source: stampIn(voiceTsx, "<div"),
+				sources: [stampIn(voiceTsx, "<div")],
 				edits: [{ token: "px-8", scope: "" }],
 				fingerprint,
 			}),
@@ -698,7 +704,7 @@ export default function Frame({ open }: { open: boolean }) {
 			`/api/p/${name}/class`,
 			jsonPost({
 				frame: "voice",
-				source: stampIn(voiceTsx, "<p"),
+				sources: [stampIn(voiceTsx, "<p")],
 				edits: [{ token: "p-2", scope: "" }],
 				fingerprint,
 			}),
@@ -717,7 +723,7 @@ export default function Frame({ open }: { open: boolean }) {
 			`/api/p/${name}/class`,
 			jsonPost({
 				frame: "voice",
-				source: stampIn(voiceTsx, "<main"),
+				sources: [stampIn(voiceTsx, "<main")],
 				edits: [{ token: "p-2", scope: "" }],
 				fingerprint: "0".repeat(64),
 			}),
@@ -776,7 +782,7 @@ export default () => <Card>Keep going</Card>;
 			`/api/p/${name}/class`,
 			jsonPost({
 				frame: "cart",
-				source: stampIn("shared/ui/card.tsx", card, "<div"),
+				sources: [stampIn("shared/ui/card.tsx", card, "<div")],
 				edits: [{ token: "rounded-[12px]", scope: "" }],
 				fingerprint: fingerprintOf(card),
 			}),
@@ -784,11 +790,13 @@ export default () => <Card>Keep going</Card>;
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			path: string;
-			className: { was: string; now: string };
+			classNames: { source: string; was: string; now: string }[];
 			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
 		};
 		expect(body.path).toBe("design/shared/ui/card.tsx");
-		expect(body.className).toEqual({ was: "rounded-md p-2", now: "p-2 rounded-[12px]" });
+		expect(body.classNames).toEqual([
+			{ source: stampIn("shared/ui/card.tsx", card, "<div"), was: "rounded-md p-2", now: "p-2 rounded-[12px]" },
+		]);
 		expect(read("shared/ui/card.tsx")).toContain('cn("p-2 rounded-[12px]", className)');
 		expect(read("frames/cart/frame.tsx")).toBe(cart);
 		expect(read("frames/bag/frame.tsx")).toBe(bag);
@@ -879,7 +887,7 @@ export default () => <Card>Keep going</Card>;
 			`/api/p/${name}/class`,
 			jsonPost({
 				frame: "cart",
-				source: stampIn("shared/ui/card.tsx", card, "<div"),
+				sources: [stampIn("shared/ui/card.tsx", card, "<div")],
 				edits: [{ token: "p-4", scope: "" }],
 				fingerprint: "0".repeat(64),
 			}),
