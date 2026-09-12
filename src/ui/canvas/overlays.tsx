@@ -209,6 +209,22 @@ export function SelectionOverlay({
 		w: box.w * k,
 		h: box.h * k,
 	});
+	/**
+	 * A frame-local element rect inside its frame's own clipped box (#323).
+	 *
+	 * A frame is a window on a document that is usually taller than it, and an
+	 * element laid out past the frame's height reports a rect the frame never
+	 * draws. Drawn against the viewport that ring landed out on the canvas, over
+	 * whatever sat beside the frame; drawn in here it is clipped exactly as the
+	 * frame clips its own content, and `ClippedEdges` says which edge it ran
+	 * past. The element snap guides have always been drawn this way.
+	 */
+	const localBox = (rect: { x: number; y: number; w: number; h: number }): Box => ({
+		x: rect.x * k,
+		y: rect.y * k,
+		w: rect.w * k,
+		h: rect.h * k,
+	});
 	/** A frame-local element rect on screen — undefined when the frame is gone. */
 	const elementBox = (name: string, rect: { x: number; y: number; w: number; h: number }): Box | undefined => {
 		const frame = frames.find((f) => f.name === name);
@@ -230,6 +246,8 @@ export function SelectionOverlay({
 			: null;
 	const previewShown = preview === null ? null : unpicked(preview.click);
 	const deeperShown = preview?.under === undefined ? null : unpicked(preview.under);
+	/** the frames the picks and the ring furniture are drawn inside, one clipped box each (#323) */
+	const pickedFrames = [...new Set(picked.map((pick) => pick.frame))];
 
 	return (
 		<div className="pointer-events-none absolute inset-0">
@@ -378,86 +396,92 @@ export function SelectionOverlay({
 					);
 				})()}
 
-			{picked.flatMap((pick) => {
+			{pickedFrames.map((name) => {
+				const frame = frames.find((f) => f.name === name);
+				if (frame === undefined) return null;
+				const rect = screenRect(frame);
+				const group = picked.filter((pick) => pick.frame === name);
+				const own = handles !== null && handles.frame === name ? handles : null;
 				// the ring follows the pointer while a drag is live: the file is
 				// written once, when it is let go. A drag draws the one box it is
 				// dragging; at rest the ring is the element's own lines (#321)
-				const dragged =
-					handles !== null && handles.frame === pick.frame && handles.selector === pick.selector
-						? handles.rect
-						: null;
-				const key = pickKey(pick.frame, pick.selector);
-				return (dragged === null ? lineBoxes(pick) : [dragged]).map((rect) => {
-					const box = elementBox(pick.frame, rect);
-					if (box === undefined) return null;
-					return (
-						<ElementOutline
-							key={`${key}\u0000${rect.y}\u0000${rect.x}`}
-							mark
-							box={box}
-							radius={pick.radius * k}
-							lit={lit === key || lit === WHOLE_SELECTION}
-						/>
-					);
-				});
+				const drawn = group.map((pick) => ({
+					pick,
+					rects: own !== null && own.selector === pick.selector ? [own.rect] : lineBoxes(pick),
+				}));
+				return (
+					<div
+						key={`picked-${name}`}
+						data-frame-clip={name}
+						className="absolute overflow-hidden"
+						style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+					>
+						{drawn.flatMap(({ pick, rects }) => {
+							const key = pickKey(pick.frame, pick.selector);
+							return rects.map((box) => (
+								<ElementOutline
+									key={`${key}\u0000${box.y}\u0000${box.x}`}
+									mark
+									box={localBox(box)}
+									radius={pick.radius * k}
+									lit={lit === key || lit === WHOLE_SELECTION}
+								/>
+							));
+						})}
+						{own === null
+							? null
+							: (() => {
+									const box = localBox(own.rect);
+									// the ring the outline draws: 2px out, which is where a handle sits
+									const ring = { x: box.x - 2, y: box.y - 2, w: box.w + 4, h: box.h + 4 };
+									return <ElementHandleSet box={box} ring={ring} handles={own} />;
+								})()}
+						{own === null || own.gaps.axis === null
+							? null
+							: own.gaps.bands.map((band, index) => {
+									const axis = own.gaps.axis;
+									if (axis === null) return null;
+									return (
+										<GapBandTarget
+											// biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity, naming one adjacent pair for the whole of one drag
+											key={`gap-${index}`}
+											index={index}
+											box={localBox(band)}
+											axis={axis}
+											held={own.gaps.held === index}
+											says={own.gaps.held === index ? own.gaps.says : null}
+										/>
+									);
+								})}
+						<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
+					</div>
+				);
 			})}
 
-			{handles !== null &&
-				(() => {
-					const box = elementBox(handles.frame, handles.rect);
-					if (box === undefined) return null;
-					// the ring the outline draws: 2px out, which is where a handle sits
-					const ring = { x: box.x - 2, y: box.y - 2, w: box.w + 4, h: box.h + 4 };
-					return <ElementHandleSet box={box} ring={ring} handles={handles} />;
-				})()}
-
-			{handles !== null &&
-				handles.gaps.axis !== null &&
-				handles.gaps.bands.map((band, index) => {
-					const box = elementBox(handles.frame, band);
-					const axis = handles.gaps.axis;
-					if (box === undefined || axis === null) return null;
-					return (
-						<GapBandTarget
-							// biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity, naming one adjacent pair for the whole of one drag
-							key={`gap-${index}`}
-							index={index}
-							box={box}
-							axis={axis}
-							held={handles.gaps.held === index}
-							says={handles.gaps.held === index ? handles.gaps.says : null}
-						/>
-					);
-				})}
-
-			{previewShown !== null &&
-				lineBoxes(previewShown).map((rect) => {
-					const box = elementBox(previewShown.frame, rect);
-					if (box === undefined) return null;
-					return (
-						<ElementOutline
-							key={`preview-${rect.y}-${rect.x}`}
-							box={box}
-							radius={previewShown.radius * k}
-							faded
-						/>
-					);
-				})}
-
-			{deeperShown !== null &&
-				lineBoxes(deeperShown).map((rect) => {
-					const box = elementBox(deeperShown.frame, rect);
-					if (box === undefined) return null;
-					return (
-						<ElementOutline
-							key={`deeper-${rect.y}-${rect.x}`}
-							box={box}
-							radius={deeperShown.radius * k}
-							faded
-							dashed
-						/>
-					);
-				})}
+			{[previewShown, deeperShown].map((shown, index) => {
+				if (shown === null) return null;
+				const frame = frames.find((f) => f.name === shown.frame);
+				if (frame === undefined) return null;
+				const rect = screenRect(frame);
+				const dashed = index === 1;
+				return (
+					<div
+						key={dashed ? "hover-under" : "hover-click"}
+						className="absolute overflow-hidden"
+						style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+					>
+						{lineBoxes(shown).map((box) => (
+							<ElementOutline
+								key={`${box.y}-${box.x}`}
+								box={localBox(box)}
+								radius={shown.radius * k}
+								faded
+								{...(dashed ? { dashed: true } : {})}
+							/>
+						))}
+					</div>
+				);
+			})}
 
 			{preview?.spacing === undefined
 				? null
@@ -782,6 +806,45 @@ function round(px: number): string {
  * `dashed` is the rung under the one a click takes (#254), drawn fainter still:
  * a solid second ring would read as a second target rather than as the step after.
  */
+/**
+ * The bar on an edge a picked element runs past (#323).
+ *
+ * The ring is clipped to the frame, which is honest but silent: an element
+ * laid out below a frame's height would otherwise show as a ring with one side
+ * missing and no reason. Two pixels of thread along the edge it ran past is
+ * that reason. It is a whole edge rather than the length of the overrun,
+ * because what it says is about the frame rather than about the box.
+ */
+function ClippedEdges({
+	frame,
+	rects,
+}: {
+	frame: { w: number; h: number };
+	rects: readonly { x: number; y: number; w: number; h: number }[];
+}) {
+	const past = {
+		left: rects.some((rect) => rect.x < -0.5),
+		top: rects.some((rect) => rect.y < -0.5),
+		right: rects.some((rect) => rect.x + rect.w > frame.w + 0.5),
+		bottom: rects.some((rect) => rect.y + rect.h > frame.h + 0.5),
+	};
+	const place = {
+		left: { left: 0, top: 0, width: 2, height: "100%" },
+		right: { right: 0, top: 0, width: 2, height: "100%" },
+		top: { left: 0, top: 0, height: 2, width: "100%" },
+		bottom: { left: 0, bottom: 0, height: 2, width: "100%" },
+	} as const;
+	return (
+		<>
+			{(["left", "right", "top", "bottom"] as const).map((edge) =>
+				past[edge] ? (
+					<div key={edge} data-ring-clipped={edge} className="absolute bg-thread" style={place[edge]} />
+				) : null,
+			)}
+		</>
+	);
+}
+
 function ElementOutline({
 	box,
 	radius,
