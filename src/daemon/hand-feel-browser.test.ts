@@ -106,7 +106,7 @@ it("walks into the page and never hands it the pointer", { timeout: 240_000 }, a
 	await expect.poll(held, { timeout: 15_000 }).toBe("frame");
 });
 
-it("keeps its targets off a small element, its ring on the box, and scrubs unbounded", {
+it("keeps a small element resizable, its ring on the box, and scrubs unbounded", {
 	timeout: 240_000,
 }, async () => {
 	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 700 });
@@ -128,20 +128,22 @@ it("keeps its targets off a small element, its ring on the box, and scrubs unbou
 			{ x, y },
 		);
 
-	// --- a small element wears none of the ring's targets ---------------------
+	// --- a small element keeps its corners and nothing that overhangs ---------
 	await f.select("a.brand");
 	const brand = await frame.locator("a.brand").boundingBox();
 	if (brand === null) throw new Error("the veil page drew no brand");
 	expect(brand.height).toBeLessThan(24);
 	await expect.poll(() => page.locator("[data-element-ring]").count(), { timeout: 15_000 }).toBe(1);
+	// the corners are how a small box is resized at all, so they are always
+	// drawn; the rotate zones overhang the words above and below it and wait
+	// for a box with room for them (#324)
+	await expect.poll(() => page.locator('[data-element-handle="nw"]').count(), { timeout: 15_000 }).toBe(1);
+	expect(await page.locator('[data-element-handle="se"]').count()).toBe(1);
 	expect(await page.locator("[data-element-rotate]").count()).toBe(0);
-	expect(await page.locator("[data-element-handle]").count()).toBe(0);
-	// every point on it, and on the words above and below it, is the frame's
+	// its short side has no length left for a strip either
+	expect(await page.locator('[data-element-handle="e"]').count()).toBe(0);
+	// and the words above and below it are still the frame's
 	for (const point of [
-		{ x: brand.x + 1, y: brand.y + 1 },
-		{ x: brand.x + brand.width - 1, y: brand.y + 1 },
-		{ x: brand.x + 1, y: brand.y + brand.height - 1 },
-		{ x: brand.x + brand.width - 1, y: brand.y + brand.height - 1 },
 		{ x: brand.x + brand.width / 2, y: brand.y + brand.height / 2 },
 		{ x: brand.x + brand.width / 2, y: brand.y - 10 },
 		{ x: brand.x + brand.width / 2, y: brand.y + brand.height + 10 },

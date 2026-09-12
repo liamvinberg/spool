@@ -211,21 +211,23 @@ export type Edge = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 export const EDGES: readonly Edge[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
-/** The smaller dimension a box needs before it wears any handle at all. */
-export const SMALL_TARGET_PX = 24;
-
 /** The length a side needs before it wears an edge strip of its own. */
-export const EDGE_TARGET_PX = 72;
+export const EDGE_TARGET_PX = 24;
+
+/** The smaller dimension a box needs before the rotate zones outside its corners are drawn. */
+export const ROTATE_TARGET_PX = 48;
 
 /**
- * Whether a box on screen has room to wear targets at all.
+ * Whether the rotate zones outside a box's corners are drawn (#321, #324).
  *
- * The floor every target on the ring shares (#321): under it the handles
- * overlap each other and each other's element, so a heading one line high
- * wears none of them and every point on it belongs to the click.
+ * They are the only targets that overhang their element, 22 screen pixels out
+ * into whatever sits beside it, so on a heading one line high they would be a
+ * band of somebody else's words that answers a click by turning this one. That
+ * hazard is theirs alone, which is why they keep the strictest floor while the
+ * corners and the strips graduate under it.
  */
-export function bigEnough(ring: Size): boolean {
-	return Math.min(ring.w, ring.h) >= SMALL_TARGET_PX;
+export function wearsRotate(ring: Size): boolean {
+	return Math.min(ring.w, ring.h) >= ROTATE_TARGET_PX;
 }
 
 /** Which axes a target moves: -1 the near side, 1 the far side, 0 not at all. */
@@ -237,13 +239,20 @@ export function edgeSigns(edge: Edge): { sx: Sign; sy: Sign } {
 }
 
 /**
- * Which of the eight targets the ring draws, at this size on this file.
+ * Which of the eight targets the ring draws, at this size on this screen.
  *
- * The approved outline's own rule (`editing-interface` at 48a07fb): a box
- * under 24px on its smaller dimension wears nothing, because handles that
- * overlap each other are handles nobody can hit; a side under 72px wears no
- * strip, because a strip that short is a corner with worse aim. The corners
- * survive both, which is how a small box is resized at all.
+ * Graduated rather than all-or-nothing (#324). Every threshold is in screen
+ * pixels, because the hazard they guard against is a screen-space one — a
+ * target landing on the neighbour beside it. The old single floor meant a
+ * 101×36 heading at a fit zoom of 0.4 wore nothing at all and could not be
+ * resized until you zoomed in, which is the one thing Figma never does: it
+ * keeps the corners at every zoom and pushes them out of the way instead.
+ *
+ * So the corners are always drawn while the file leaves that axis writable —
+ * they are how a small box is resized at all — and only the strip waits for
+ * room, 24 screen pixels of side, which is the length it needs once its own
+ * 8px insets at either end are taken off. The rotate zones keep the strictest
+ * floor of the three, in `wearsRotate`.
  *
  * The one exception is the target already being dragged. A box shrinking under
  * the pointer must not drop the handle the pointer is holding.
@@ -253,7 +262,6 @@ export function drawnHandles(ring: Size, live: LiveHandles, active: Edge | null)
 		if (edge === active) return true;
 		const { sx, sy } = edgeSigns(edge);
 		if (!(sx !== 0 && live.w) && !(sy !== 0 && live.h)) return false;
-		if (!bigEnough(ring)) return false;
 		if (edge.length === 2) return true;
 		return (sy === 0 ? ring.h : ring.w) >= EDGE_TARGET_PX;
 	});

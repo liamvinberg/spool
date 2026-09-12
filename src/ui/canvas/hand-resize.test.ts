@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RungRead } from "../api";
 import {
 	authoredSpelling,
-	bigEnough,
+	wearsRotate,
 	draggedAngle,
 	draggedRect,
 	drawnHandles,
@@ -208,26 +208,32 @@ describe("which of the eight targets the ring draws", () => {
 		expect(drawnHandles({ w: 200, h: 120 }, live, null)).toEqual(["nw", "n", "ne", "e", "se", "s", "sw", "w"]);
 	});
 
-	it("keeps an edge target off a side shorter than the approved 72px", () => {
-		// a 64px-wide box has no room for a top or bottom strip, and the corners
-		// stay: they are how that box is resized at all
-		expect(drawnHandles({ w: 64, h: 120 }, live, null)).toEqual(["nw", "ne", "e", "se", "sw", "w"]);
-		expect(drawnHandles({ w: 200, h: 64 }, live, null)).toEqual(["nw", "n", "ne", "se", "s", "sw"]);
+	it("keeps an edge strip off a side with no room left for one", () => {
+		// the strip insets 8px at each end, so under 24 there is no length left
+		// to grab; the corners stay, because they are how that box is resized
+		expect(drawnHandles({ w: 20, h: 120 }, live, null)).toEqual(["nw", "ne", "e", "se", "sw", "w"]);
+		expect(drawnHandles({ w: 200, h: 20 }, live, null)).toEqual(["nw", "n", "ne", "se", "s", "sw"]);
 	});
 
-	it("draws nothing on a target under 24px on its smaller dimension", () => {
-		expect(drawnHandles({ w: 200, h: 20 }, live, null)).toEqual([]);
+	// the defect the fourth hand test found (#324): at a fit zoom of 0.4 a
+	// 101 × 36 heading is 40 × 14 on screen, and it used to wear nothing at all
+	it("keeps the corners on however small the box is drawn", () => {
+		expect(drawnHandles({ w: 40, h: 14 }, live, null)).toEqual(["nw", "n", "ne", "se", "s", "sw"]);
+		expect(drawnHandles({ w: 6, h: 6 }, live, null)).toEqual(["nw", "ne", "se", "sw"]);
 	});
 
-	it("says the same floor the rotate zones outside the ring wait for", () => {
-		expect(bigEnough({ w: 200, h: 120 })).toBe(true);
+	it("waits longest for the rotate zones, which are the ones that overhang", () => {
+		expect(wearsRotate({ w: 200, h: 120 })).toBe(true);
+		expect(wearsRotate({ w: 200, h: 48 })).toBe(true);
 		// a heading one line high: its rotate zones would overhang the words
-		// above and below it, so it wears none of the ring's targets (#321)
-		expect(bigEnough({ w: 200, h: 20 })).toBe(false);
+		// above and below it, so it wears the corners and the strips and none
+		// of those (#321, #324)
+		expect(wearsRotate({ w: 200, h: 36 })).toBe(false);
+		expect(drawnHandles({ w: 200, h: 36 }, live, null)).toEqual(["nw", "n", "ne", "e", "se", "s", "sw", "w"]);
 	});
 
 	it("keeps the grabbed target drawn however small the box becomes mid-drag", () => {
-		expect(drawnHandles({ w: 200, h: 6 }, live, "se")).toEqual(["se"]);
+		expect(drawnHandles({ w: 200, h: 6 }, live, "e")).toEqual(["nw", "n", "ne", "e", "se", "s", "sw"]);
 	});
 
 	it("omits every target whose only axis the file has pinned", () => {

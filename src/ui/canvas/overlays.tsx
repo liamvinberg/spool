@@ -4,7 +4,7 @@ import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
 import type { GapAxis, GapHandles } from "./hand-gap";
-import { bigEnough, drawnHandles, type Edge, type LiveHandles, lineBoxes, type Sign } from "./hand-resize";
+import { drawnHandles, type Edge, type LiveHandles, lineBoxes, type Sign, wearsRotate } from "./hand-resize";
 import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
 import { FileLink } from "./properties-fields";
@@ -599,10 +599,13 @@ export function SelectionOverlay({
  * canvas, one knob — and the two rings sit side by side often enough that a
  * second size would read as a second kind of object.
  *
- * Every one of them, the rotate zones included, waits for a box big enough to
- * draw it (#321). They overhang the element, and on a heading one line high
- * that overhang lands on the words above and below it: an 80px band of
- * somebody else's text that answers a click by turning this one.
+ * The targets graduate with the box on screen (#324): the corners are always
+ * drawn, the edge strips wait for a side with room for one, and the rotate
+ * zones wait longest. They are the only ones that overhang the element, and on
+ * a heading one line high that overhang lands on the words above and below it:
+ * a band of somebody else's text that answers a click by turning this one.
+ * Nothing is all-or-nothing, so an element zoomed out is still one a hand can
+ * resize rather than one wearing no target at all.
  */
 function ElementHandleSet({ box, ring, handles }: { box: Box; ring: Box; handles: ElementHandles }) {
 	const { live } = handles;
@@ -615,7 +618,7 @@ function ElementHandleSet({ box, ring, handles }: { box: Box; ring: Box; handles
 	const drawn = new Set(drawnHandles({ w: box.w, h: box.h }, live, handles.active));
 	return (
 		<>
-			{live.rotate && bigEnough(box)
+			{live.rotate && wearsRotate(box)
 				? CORNERS.map((name) => {
 						const { sx, sy } = signsOf(name);
 						const spot = at(sx, sy);
