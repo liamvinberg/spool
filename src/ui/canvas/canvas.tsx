@@ -739,9 +739,9 @@ export function ProjectCanvas({
 	/** the structural gesture as its own refusal reaches for it: a delete that offers the call */
 	const alterElementRef = useRef<
 		(
-			pick: PickedSelection,
+			picks: readonly PickedSelection[],
 			act: "delete" | "hide" | "show" | "attribute",
-			at: { source: string; fingerprint: string },
+			at: { sources: readonly string[]; fingerprint: string },
 			attribute?: { name: string; value: string },
 		) => void
 	>(() => {});
@@ -2127,7 +2127,7 @@ export function ProjectCanvas({
 				/** the sentence for a write that never reached the daemon at all */
 				failed: string;
 				/** what this gesture's entry carries beyond the patch */
-				entry?: Pick<Extract<HistoryEntry, { kind: "hand" }>, "classes">;
+				entry?: Pick<Extract<HistoryEntry, { kind: "hand" }>, "classes" | "picks">;
 				/** the write said what the file already said */
 				nothing?: () => void;
 				/** the write landed, and whether the frame kept the document it is showing */
@@ -2225,6 +2225,8 @@ export function ProjectCanvas({
 	 * further down: undo runs before it in the file and needs it (#322).
 	 */
 	const walkKinRef = useRef<(frame: string, selector: string, step: KinStep, gone?: () => void) => void>(() => {});
+	/** the same walk for a whole multi-pick, which is what a step about several puts back (#323) */
+	const repickRef = useRef<(frame: string, selectors: readonly string[], gone: () => void) => void>(() => {});
 
 	/**
 	 * One hand entry, run either way (#314, #315). The patch goes back over the
@@ -2243,12 +2245,18 @@ export function ProjectCanvas({
 			 * back moves the box it is drawn in. A step that took the element
 			 * away has nothing to point at, and the frame is what is left held.
 			 */
+			const lost = () => {
+				holdChain(null);
+				setPicked([]);
+				setSelected([entry.frame]);
+			};
 			const rering = () => {
-				walkKinRef.current(entry.frame, entry.selector, "self", () => {
-					holdChain(null);
-					setPicked([]);
-					setSelected([entry.frame]);
-				});
+				const held = entry.picks;
+				if (held !== undefined && held.length > 1) {
+					repickRef.current(entry.frame, held, lost);
+					return;
+				}
+				walkKinRef.current(entry.frame, entry.selector, "self", lost);
 			};
 			const classes = entry.classes;
 			const readers = entry.frames ?? [];
@@ -2741,6 +2749,50 @@ export function ProjectCanvas({
 	walkKinRef.current = walkKin;
 
 	/**
+	 * Every element one step was about, held again (#323).
+	 *
+	 * A multi-pick delete is one write and one press of undo, so walking it
+	 * back has to put the whole selection back rather than one member of it.
+	 * Each selector is asked for on its own, because only the frame knows where
+	 * the nodes went back to; the last answer's ancestry is the chain the
+	 * ladder and the rail read from, which is the anchor a multi-pick has
+	 * anyway. A selection nothing answered for is a frame with no rung open.
+	 */
+	const repick = useCallback(
+		(frame: string, selectors: readonly string[], gone: () => void) => {
+			cancelPicks();
+			const found: { hit: PickedHit; chain: PickedHit[] }[] = [];
+			let left = selectors.length;
+			const done = () => {
+				const last = found[found.length - 1];
+				if (last === undefined) {
+					gone();
+					return;
+				}
+				holdChain({ frame, chain: last.chain });
+				setSelected([]);
+				setPicked(found.map((one) => ({ frame, ...one.hit })));
+			};
+			for (const selector of selectors) {
+				const took = (chain: PickedHit[]) => {
+					const target = chain[chain.length - 1];
+					if (target !== undefined) found.push({ hit: target, chain });
+					left -= 1;
+					if (left === 0) done();
+				};
+				askChain(
+					frame,
+					(id) => kinMessage(selector, "self", id, true),
+					took,
+					() => took([]),
+				);
+			}
+		},
+		[askChain, cancelPicks, holdChain],
+	);
+	repickRef.current = repick;
+
+	/**
 	 * ⌘⏎, and the rung a descent from the frame itself lands on: the first
 	 * child of what is held, or the frame's root element when the frame is.
 	 * Figma's descent key takes every child at once; a selection that is a
@@ -3216,22 +3268,28 @@ export function ProjectCanvas({
 	 */
 	const alterElement = useCallback(
 		(
-			pick: PickedSelection,
+			picks: readonly PickedSelection[],
 			act: "delete" | "hide" | "show" | "attribute",
-			at: { source: string; fingerprint: string },
+			at: { sources: readonly string[]; fingerprint: string },
 			attribute?: { name: string; value: string },
 		) => {
+			const pick = picks[0];
+			const source = at.sources[0];
+			if (pick === undefined || source === undefined) return;
 			const target = iframes.current.get(pick.frame)?.contentWindow;
 			if (target == null) return;
 			const id = ++pickSeq.current;
 			setRefused(null);
-			const asked = alterAsk(act, pick.tag, attribute);
+			const asked =
+				picks.length === 1
+					? alterAsk(act, pick.tag, attribute)
+					: `Delete ${picks.length} elements: ${picks.map((held) => held.tag).join(", ")}`;
 			const refuse = (refusal: Refusal, instead?: ShownRefusal["instead"]) => {
 				restoreWords(pick.frame, id, "before", () => {});
 				const file =
 					refusal.line === undefined
 						? undefined
-						: { path: `design/${at.source.replace(/:\d+:\d+$/, "")}`, line: refusal.line };
+						: { path: `design/${source.replace(/:\d+:\d+$/, "")}`, line: refusal.line };
 				setRefused({
 					frame: pick.frame,
 					selector: pick.selector,
@@ -3249,12 +3307,14 @@ export function ProjectCanvas({
 			 * that call is in, because then there is nothing to measure it against.
 			 */
 			const insteadDeleteCall = (refusal: Refusal, call: string | null) => {
-				if (act !== "delete" || refusal.code !== "whole-return" || call === null) return undefined;
+				if (act !== "delete" || picks.length !== 1 || refusal.code !== "whole-return" || call === null) {
+					return undefined;
+				}
 				const fingerprint = fingerprintFor(pick.frame, call);
 				if (fingerprint === undefined) return undefined;
 				return {
 					says: "Delete the call",
-					act: () => alterElementRef.current(pick, "delete", { source: call, fingerprint }),
+					act: () => alterElementRef.current(picks, "delete", { sources: [call], fingerprint }),
 				};
 			};
 			alterWaiters.current.set(id, ({ ok, owner }) => {
@@ -3266,11 +3326,11 @@ export function ProjectCanvas({
 				// lands there or at a call site in this frame's own file is the daemon's
 				// to say, so its readers are held now and let go if they did not (#318)
 				const read = ringRef.current.read;
-				const readers = read?.source === at.source ? (read.shared?.frames ?? []) : [];
+				const readers = read?.source === source ? (read.shared?.frames ?? []) : [];
 				holdReaders(pick.frame, readers);
 				void writeElement(project, pick.frame, {
 					act,
-					source: at.source,
+					sources: [...at.sources],
 					fingerprint: at.fingerprint,
 					...(attribute ?? {}),
 				}).then((written) => {
@@ -3279,19 +3339,29 @@ export function ProjectCanvas({
 						selector: pick.selector,
 						readers,
 						edit: id,
-						readAt: () => at.source,
+						readAt: () => source,
 						refuse: (refusal) => refuse(refusal, insteadDeleteCall(refusal, owner)),
 						failed: "the change did not reach the file",
-						// the element is gone: the rung above it is what the hand holds
-						// now, and it holds it only once the write has actually landed,
-						// so a refusal still has the element it was about to sit under
+						// the elements are gone: the rung above the first is what the
+						// hand holds now, and it holds it only once the write has
+						// actually landed, so a refusal still has them to sit under
+						...(picks.length === 1 ? {} : { entry: { picks: picks.map((held) => held.selector) } }),
 						onLanded: () => {
 							if (act === "delete") holdParent(pick);
 						},
 					});
 				});
 			});
-			target.postMessage(alterMessage(id, pick.selector, act, attribute?.name, attribute?.value), "*");
+			target.postMessage(
+				alterMessage(
+					id,
+					picks.map((held) => held.selector),
+					act,
+					attribute?.name,
+					attribute?.value,
+				),
+				"*",
+			);
 			setTimeout(() => {
 				if (alterWaiters.current.delete(id)) showRefusal(pick.frame, pick.selector, GONE);
 			}, PICK_REPLY_MS);
@@ -3309,24 +3379,45 @@ export function ProjectCanvas({
 	 * rather than to write against whatever the file says now.
 	 */
 	const deleteElement = useCallback(
-		(pick: PickedSelection) => {
-			const stamp = stampOf(pick);
-			if (typeof stamp !== "string") {
-				showRefusal(pick.frame, pick.selector, stamp);
+		(picks: readonly PickedSelection[]) => {
+			const first = picks[0];
+			if (first === undefined) return;
+			const sources: string[] = [];
+			for (const pick of picks) {
+				const stamp = stampOf(pick);
+				if (typeof stamp !== "string") {
+					showRefusal(pick.frame, pick.selector, stamp);
+					return;
+				}
+				sources.push(stamp);
+			}
+			// One write is one file and one fingerprint, which is what makes a
+			// multi-pick delete one press of undo (#323). A selection spread over
+			// two files would be two writes and two steps, so it says so instead
+			// of quietly becoming them.
+			const files = new Set(sources.map((stamp) => stamp.replace(/:\d+:\d+$/, "")));
+			if (files.size > 1 || new Set(picks.map((pick) => pick.frame)).size > 1) {
+				showRefusal(first.frame, first.selector, {
+					code: "spread",
+					says: "these are written in different files; delete them one at a time",
+				});
 				return;
 			}
 			const read = ringRef.current.read;
-			const fingerprint = read?.source === stamp ? read.fingerprint : undefined;
+			const fingerprint =
+				read !== undefined && sources.includes(read.source)
+					? read.fingerprint
+					: fingerprintFor(first.frame, sources[0] ?? "");
 			if (fingerprint === undefined) {
-				showRefusal(pick.frame, pick.selector, {
+				showRefusal(first.frame, first.selector, {
 					code: "unread",
 					says: "the file was never read; select the element again",
 				});
 				return;
 			}
-			alterElement(pick, "delete", { source: stamp, fingerprint });
+			alterElement(picks, "delete", { sources, fingerprint });
 		},
-		[alterElement, showRefusal],
+		[alterElement, fingerprintFor, showRefusal],
 	);
 
 	/** The rail's own structural writes (#317): hide, show, and one attribute. */
@@ -3340,7 +3431,7 @@ export function ProjectCanvas({
 		) => {
 			const pick = pickedRef.current.find((held) => held.frame === frame && held.selector === selector);
 			if (pick === undefined) return;
-			alterElement(pick, act, at, attribute);
+			alterElement([pick], act, { sources: [at.source], fingerprint: at.fingerprint }, attribute);
 		},
 		[alterElement],
 	);
@@ -5601,8 +5692,10 @@ export function ProjectCanvas({
 				if (enteredRef.current !== null) return;
 				if (pickedRef.current.length > 0) {
 					event?.preventDefault();
-					const only = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
-					if (only !== undefined && editingRef.current === null) deleteElement(only);
+					// every element held goes, as one write and one press of undo
+					// (#323); never while words are open, because that press
+					// belongs to the text being typed
+					if (editingRef.current === null) deleteElement(pickedRef.current);
 					return;
 				}
 				const targets = verbTarget();
@@ -5829,7 +5922,13 @@ export function ProjectCanvas({
 		// a page is held on its own, and the selection never holds both (#265)
 		const page = pageObjects.find((object) => object.page === selectedPage);
 		if (page !== undefined) return { kind: "page", page: page.page, name: page.name, count: page.count };
-		if (picked.length > 1) return { kind: "elements", count: picked.length };
+		if (picked.length > 1) {
+			// one frame's picks read and write as one gesture (#323); spread over
+			// two they are a count and nothing else
+			const frame = picked[0]?.frame ?? "";
+			const one = picked.every((pick) => pick.frame === frame);
+			return { kind: "elements", count: picked.length, frame: one ? frame : null, picks: one ? picked : [] };
+		}
 		const rung = picked[0];
 		if (rung !== undefined) {
 			const chain = chainDrawn?.frame === rung.frame ? chainDrawn.chain : [rung];
@@ -5842,7 +5941,14 @@ export function ProjectCanvas({
 			? null
 			: { kind: "frame", name: only.name, geometry: { x: only.x, y: only.y, w: only.w, h: only.h } };
 	})();
-	const railFrame = railHeld?.kind === "element" ? railHeld.frame : railHeld?.kind === "frame" ? railHeld.name : null;
+	const railFrame =
+		railHeld?.kind === "element"
+			? railHeld.frame
+			: railHeld?.kind === "elements"
+				? railHeld.frame
+				: railHeld?.kind === "frame"
+					? railHeld.name
+					: null;
 	/**
 	 * The element ring's own read (#259): which of its handles the file leaves
 	 * live, the step a whole class is measured in, and the turn it already

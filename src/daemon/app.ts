@@ -585,10 +585,10 @@ export function createDaemonApp({
 	 */
 	const elementBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const stamps = parseStamps([body.source]);
+		const stamps = parseStamps(body.sources);
 		const act = body.act;
 		const acts = ["delete", "hide", "show", "attribute"];
-		const says = 'an element write is { "frame", "act", "source", "name"?, "value"?, "fingerprint" }';
+		const says = 'an element write is { "frame", "act", "sources": [ "…:12:4" ], "name"?, "value"?, "fingerprint" }';
 		if (
 			typeof body.frame !== "string" ||
 			!isSafeName(body.frame) ||
@@ -599,8 +599,12 @@ export function createDaemonApp({
 		) {
 			return c.text(says, 400);
 		}
-		const [source] = stamps;
-		if (source === undefined) return c.text(says, 400);
+		// A multi-pick deletes as one write, so its stamps are one file's: one
+		// write is one fingerprint and one span, which is what makes it one
+		// press of undo (#323). Nothing else is ever about more than one.
+		const files = new Set(stamps.map((stamped) => stamped.replace(/:\d+:\d+$/, "")));
+		if (files.size > 1) return c.text("an element write is one file's", 400);
+		if (stamps.length > 1 && act !== "delete") return c.text(says, 400);
 		if (act === "attribute" && (typeof body.name !== "string" || typeof body.value !== "string")) {
 			return c.text(says, 400);
 		}
@@ -611,7 +615,7 @@ export function createDaemonApp({
 		return {
 			frame: body.frame,
 			act: act as "delete" | "hide" | "show" | "attribute",
-			source,
+			sources: stamps,
 			fingerprint: body.fingerprint,
 			...(typeof body.name === "string" ? { name: body.name } : {}),
 			...(typeof body.value === "string" ? { value: body.value } : {}),

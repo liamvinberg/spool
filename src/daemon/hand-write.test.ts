@@ -758,6 +758,36 @@ describe("delete", () => {
 		const source = `const x = <a>{arrow && <Arrow />}</a>;\n`;
 		expect(refusal([{ kind: "delete", source: stamp(source, "<Arrow") }], source).code).toBe("expression-child");
 	});
+
+	// a multi-pick deletes as one write (#323): the ops are addressed by the
+	// file as it stands, and the plan orders its patches itself, so an earlier
+	// deletion never shifts a later stamp out from under its own op
+	it("takes several elements out in one plan, whatever order they were named in", () => {
+		const source = `const x = (\n\t<ul>\n\t\t<li>one</li>\n\t\t<li>two</li>\n\t\t<li>three</li>\n\t</ul>\n);\n`;
+		const ops: HandOp[] = [
+			{ kind: "delete", source: stamp(source, "<li>three") },
+			{ kind: "delete", source: stamp(source, "<li>one") },
+		];
+		const text = written(ops, source);
+		expect(text).toBe(source.replace("\t\t<li>one</li>\n", "").replace("\t\t<li>three</li>\n", ""));
+		// two deletions come to one span either way round, which is what makes
+		// the gesture one write and one press of undo
+		expect(applySpan(source, spanBetween(text, source))).toBe(text);
+		expect(applySpan(text, spanBetween(source, text))).toBe(source);
+	});
+
+	it("refuses the whole gesture when one of several cannot go", () => {
+		const source = `const x = (\n\t<ul>\n\t\t<li>one</li>\n\t\t<a>{arrow && <Arrow />}</a>\n\t</ul>\n);\n`;
+		expect(
+			refusal(
+				[
+					{ kind: "delete", source: stamp(source, "<li>one") },
+					{ kind: "delete", source: stamp(source, "<Arrow") },
+				],
+				source,
+			).code,
+		).toBe("expression-child");
+	});
 });
 
 describe("set-hidden", () => {

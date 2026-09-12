@@ -453,6 +453,21 @@ export function SelectionOverlay({
 										/>
 									);
 								})}
+						{group.length < 2 ? null : (
+							// what several held elements are, as one box (#323): the ring
+							// says the extent of the selection, and wears no handle,
+							// because a corner on a union would size boxes the file has
+							// nothing in common to write for
+							<div
+								data-element-union=""
+								className="absolute border border-thread border-dashed opacity-60"
+								style={(() => {
+									const union = unionOf(drawn.flatMap((one) => one.rects));
+									const box = localBox(union);
+									return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
+								})()}
+							/>
+						)}
 						<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
 					</div>
 				);
@@ -806,6 +821,27 @@ function round(px: number): string {
  * `dashed` is the rung under the one a click takes (#254), drawn fainter still:
  * a solid second ring would read as a second target rather than as the step after.
  */
+/** The one box several held elements come to, which is the ring a multi-pick wears (#323). */
+function unionOf(rects: readonly { x: number; y: number; w: number; h: number }[]): {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+} {
+	let left = Number.POSITIVE_INFINITY;
+	let top = Number.POSITIVE_INFINITY;
+	let right = Number.NEGATIVE_INFINITY;
+	let bottom = Number.NEGATIVE_INFINITY;
+	for (const rect of rects) {
+		left = Math.min(left, rect.x);
+		top = Math.min(top, rect.y);
+		right = Math.max(right, rect.x + rect.w);
+		bottom = Math.max(bottom, rect.y + rect.h);
+	}
+	if (!Number.isFinite(left)) return { x: 0, y: 0, w: 0, h: 0 };
+	return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
 /**
  * The bar on an edge a picked element runs past (#323).
  *

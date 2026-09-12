@@ -356,7 +356,8 @@ export async function writeElement(
 	frame: string,
 	ask: {
 		act: "delete" | "hide" | "show" | "attribute";
-		source: string;
+		/** several only for a delete of a multi-pick, and all in one file (#323) */
+		sources: string[];
 		name?: string;
 		value?: string;
 		fingerprint: string;

@@ -82,7 +82,16 @@ export type Held =
 	// inside it — so what the rail can say is what it is and how much is in it
 	| { kind: "page"; page: string; name: string; count: number }
 	| { kind: "element"; frame: string; chain: readonly PickedHit[]; selector: string }
-	| { kind: "elements"; count: number };
+	/**
+	 * Several elements held at once (#323).
+	 *
+	 * The rail draws the rows they share and says "Mixed" where they disagree,
+	 * and a write from it goes to every one of them. That needs each pick's own
+	 * literal, so the ask is their stamps rather than one ancestry — and it is
+	 * one frame's, because a selection spread over two is two writes. `picks` is
+	 * empty where they are spread, which is the count and nothing else.
+	 */
+	| { kind: "elements"; count: number; frame: string | null; picks: readonly PickedHit[] };
 
 /**
  * A gesture in flight on the canvas, as the rail reads it (#259).
@@ -213,6 +222,17 @@ export function rungOf(held: Held | null): number {
  * still say what the file calls them.
  */
 export function stampsOf(held: Held | null): { frame: string; sources: string[]; rungs: number[] } | null {
+	if (held?.kind === "elements") {
+		if (held.frame === null) return null;
+		const sources: string[] = [];
+		const rungs: number[] = [];
+		for (const [index, hit] of held.picks.entries()) {
+			if (hit.source === null || hit.source === "") continue;
+			sources.push(hit.source);
+			rungs.push(index);
+		}
+		return sources.length === 0 ? null : { frame: held.frame, sources, rungs };
+	}
 	if (held?.kind !== "element") return null;
 	const rung = rungOf(held);
 	if (rung < 0) return null;
@@ -253,7 +273,12 @@ export function useRungs(project: string, held: Held | null, revision: number): 
 	 */
 	const asked = ask === null ? "" : [String(revision), ask.frame, ...ask.sources].join("\n");
 	/** which element the answer is about, which a re-read of it does not change */
-	const on = held?.kind === "element" ? `${held.frame}\n${held.selector}` : "";
+	const on =
+		held?.kind === "element"
+			? `${held.frame}\n${held.selector}`
+			: held?.kind === "elements"
+				? `${held.frame}\n${held.picks.map((hit) => hit.selector).join(" ")}`
+				: "";
 	useEffect(() => {
 		const [, frame, ...sources] = asked.split("\n");
 		if (frame === undefined || sources.length === 0) return;

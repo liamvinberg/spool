@@ -831,11 +831,12 @@ export const restoreMessage = (id: number, way: "before" | "after", ask: number)
  */
 export const alterMessage = (
 	id: number,
-	selector: string,
+	/** several only for a delete of a multi-pick, which is one ask and one undo (#323) */
+	selectors: readonly string[],
 	act: "delete" | "hide" | "show" | "attribute",
 	name?: string,
 	value?: string,
-) => ({ spool: "alter", id, selector, act, name, value }) as const;
+) => ({ spool: "alter", id, selectors, act, name, value }) as const;
 
 /** How a save moved the stamps on its line, for a document that is not reloaded for it (#314). */
 export const restampMessage = (file: string, shifts: readonly { line: number; column: number; delta: number }[]) =>

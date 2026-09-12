@@ -1766,15 +1766,28 @@ const canvasShimJs = `(() => {
 		if (held.hidden) el.classList.add("hidden"); else el.classList.remove("hidden");
 	}
 
-	function alterElement(id, selector, act, name, value) {
-		const el = elementFor(selector);
+	function alterElement(id, selectors, act, name, value) {
+		const found = [];
+		for (let i = 0; i < selectors.length; i++) {
+			const one = elementFor(selectors[i]);
+			if (!one) return { ok: false, owner: null };
+			found.push(one);
+		}
+		const el = found[0];
 		if (!el) return { ok: false, owner: null };
 		const owner = ownerOf(el);
 		if (act === "delete") {
-			const parent = el.parentNode;
-			if (!parent) return { ok: false, owner: owner };
-			alters.set(id, { kind: "gone", el: el, parent: parent, next: el.nextSibling });
-			parent.removeChild(el);
+			// a multi-pick goes as one alteration, so undo puts every node back
+			// under one press. Taken in document order and put back in reverse,
+			// which is what keeps each one's next sibling connected when it is (#323)
+			const gone = [];
+			for (let i = 0; i < found.length; i++) {
+				const parent = found[i].parentNode;
+				if (!parent) return { ok: false, owner: owner };
+				gone.push({ el: found[i], parent: parent, next: found[i].nextSibling });
+			}
+			for (let i = 0; i < gone.length; i++) gone[i].parent.removeChild(gone[i].el);
+			alters.set(id, { kind: "gone", gone: gone });
 		} else if (act === "attribute") {
 			alters.set(id, { kind: "attribute", el: el, name: name, before: el.getAttribute(name), after: value });
 			el.setAttribute(name, value);
@@ -1796,9 +1809,17 @@ const canvasShimJs = `(() => {
 		const held = alters.get(id);
 		if (!held) return false;
 		if (held.kind === "gone") {
-			if (way !== "before") { if (held.el.isConnected) held.el.remove(); return true; }
-			if (!held.parent.isConnected) return false;
-			try { held.parent.insertBefore(held.el, held.next && held.next.isConnected ? held.next : null); } catch { return false; }
+			if (way !== "before") {
+				for (let i = 0; i < held.gone.length; i++) {
+					if (held.gone[i].el.isConnected) held.gone[i].el.remove();
+				}
+				return true;
+			}
+			for (let i = held.gone.length - 1; i >= 0; i--) {
+				const one = held.gone[i];
+				if (!one.parent.isConnected) return false;
+				try { one.parent.insertBefore(one.el, one.next && one.next.isConnected ? one.next : null); } catch { return false; }
+			}
 			return true;
 		}
 		if (!held.el.isConnected) return false;
@@ -2203,7 +2224,7 @@ const canvasShimJs = `(() => {
 			if (event.source !== parent || event.origin !== config.controlOrigin) return;
 			if (m.spool === "alter") {
 				let answer = { ok: false, owner: null };
-				try { answer = alterElement(m.id, m.selector, m.act, m.name, m.value); } catch {}
+				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act, m.name, m.value); } catch {}
 				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner }, "*");
 				return;
 			}

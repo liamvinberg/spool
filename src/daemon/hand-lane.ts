@@ -291,7 +291,16 @@ export function classSite(root: string, frame: string, ask: ClassAsk, theme: Cla
  */
 export interface ElementAsk {
 	act: "delete" | "hide" | "show" | "attribute";
-	source: string;
+	/**
+	 * The stamps the gesture is about (#323).
+	 *
+	 * One for every act but a delete, which a multi-pick makes several of. They
+	 * are one file's, because one write is one fingerprint and one span — the
+	 * lane's own law — and `planOps` orders the patches itself, so nothing here
+	 * has to sort them bottom-up to keep the later stamps from shifting under
+	 * the earlier ones.
+	 */
+	sources: readonly string[];
 	/** the attribute an `attribute` ask writes, and what it writes there */
 	name?: string;
 	value?: string;
@@ -311,11 +320,19 @@ export interface ElementAsk {
  * file, rather than one this quietly makes for them.
  */
 export function elementSite(root: string, frame: string, ask: ElementAsk): WriteSite {
-	const place = siteAt(root, frame, ask.source, ask.fingerprint);
+	const [first, ...rest] = ask.sources;
+	if (first === undefined) return { kind: "error", status: 400, message: "an element write names a stamp" };
+	if (rest.length > 0 && ask.act !== "delete") {
+		return { kind: "error", status: 400, message: "only a delete is about more than one element" };
+	}
+	const place = siteAt(root, frame, first, ask.fingerprint);
 	if ("kind" in place) return place;
 	const { at, source } = place;
 	if (ask.act === "delete") {
-		const here = planOps(source, [{ kind: "delete", source: ask.source }]);
+		const here = planOps(
+			source,
+			ask.sources.map((stamped) => ({ kind: "delete" as const, source: stamped })),
+		);
 		if (!here.ok) return { kind: "refusal", refusal: here.refusal };
 		return spliced(at, source, here);
 	}
@@ -324,9 +341,9 @@ export function elementSite(root: string, frame: string, ask: ElementAsk): Write
 		if (name === undefined || value === undefined) {
 			return { kind: "error", status: 400, message: "an attribute write names one and says what it holds" };
 		}
-		return planned(at, source, [{ kind: "set-attribute", source: ask.source, name, value }]);
+		return planned(at, source, [{ kind: "set-attribute", source: first, name, value }]);
 	}
-	return planned(at, source, [{ kind: "set-hidden", source: ask.source, hidden: ask.act === "hide" }]);
+	return planned(at, source, [{ kind: "set-hidden", source: first, hidden: ask.act === "hide" }]);
 }
 
 /** The ops planned against one file, the frame's own or a shared definition's alike (#318). */

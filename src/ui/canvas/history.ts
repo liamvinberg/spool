@@ -109,6 +109,14 @@ export type HistoryEntry =
 			 * took the element away.
 			 */
 			readonly selector: string;
+			/**
+			 * Every element one write was about, when it was about several (#323).
+			 *
+			 * A multi-pick delete is one write and one step, so walking it back
+			 * has to put the whole selection back rather than one member of it.
+			 * Absent for the one-element gestures, which `selector` says.
+			 */
+			readonly picks?: readonly string[];
 			readonly edit: number;
 			readonly patch: HeldPatch;
 			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */
