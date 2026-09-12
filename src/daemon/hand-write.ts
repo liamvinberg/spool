@@ -57,6 +57,12 @@ export type RefusalCode =
 	// the element is the whole of what a component returns, so taking it out
 	// would take the component with it (#317)
 	| "whole-return"
+	// it is one literal a `.map()` renders once per row, and nothing said which
+	// row the hand is on, so taking it out would take every row (#324)
+	| "mapped-template"
+	// the rows come from something with no literal to take an entry out of: a
+	// call, a fetched value, a prop (#324)
+	| "mapped-expression"
 	// it is written inside an expression rather than standing as a child, so
 	// its characters are not a thing that can simply go (#317)
 	| "expression-child"
@@ -383,7 +389,7 @@ export function readElements(
  * swap orphaned. They still land as one undo step — the stack holds the span
  * between the file before and after, not the ops that made it.
  */
-type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
+export type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
 
 /** Every op but a class edit, which `planOps` folds together per element before it gets here. */
 function planOne(source: string, program: Node, element: Element, op: Exclude<HandOp, { kind: "set-class" }>): OnePlan {
@@ -580,6 +586,21 @@ function planSupplied(source: string, call: Element, prop: string, text: string)
  * different shape.
  */
 function planDelete(source: string, element: Element): OnePlan {
+	// One literal, every row (#324). Taking these characters out takes the row
+	// off every entry of the list at once, which is never what a hand meant by
+	// pressing ⌫ on one of them. The honest gesture is the item, and the canvas
+	// sends that one whenever the running document could say which row it was.
+	const rows = mapCallOver(element.ancestors);
+	if (rows !== undefined) {
+		return {
+			refusal: {
+				code: "mapped-template",
+				says: `these rows come from \`${rows.callee}\`; delete one item, or ask the agent`,
+				expression: rows.callee,
+				line: element.node.loc?.start.line ?? 0,
+			},
+		};
+	}
 	const parent = element.parent;
 	if (parent?.type !== "JSXElement" && parent?.type !== "JSXFragment") {
 		const owner = returnedFrom(element);
@@ -1199,6 +1220,162 @@ function isMapCall(node: Node): boolean {
 	if (node.type !== "CallExpression" || node.callee.type !== "MemberExpression") return false;
 	const property = node.callee.property;
 	return property.type === "Identifier" && property.name === "map";
+}
+
+/**
+ * The nearest `.map()` an element is written inside, and what it runs over
+ * (#324): the callee exactly as the file spells it, and its identifier when it
+ * is one, which is the only shape that has a declaration to look up.
+ */
+function mapCallOver(ancestors: readonly Node[]): { callee: string; name?: string } | undefined {
+	for (let at = ancestors.length - 1; at >= 0; at -= 1) {
+		const node = ancestors[at];
+		if (node === undefined || !isMapCall(node)) continue;
+		if (node.type !== "CallExpression" || node.callee.type !== "MemberExpression") continue;
+		const over = node.callee.object;
+		const callee = calleeText(over);
+		return over.type === "Identifier" ? { callee, name: over.name } : { callee };
+	}
+	return undefined;
+}
+
+/** What the rows come from, as short as a notice can name it. */
+function calleeText(node: Node): string {
+	if (node.type === "Identifier") return node.name;
+	if (node.type === "MemberExpression" && node.property.type === "Identifier" && !node.computed) {
+		return `${calleeText(node.object)}.${node.property.name}`;
+	}
+	if (node.type === "CallExpression") return `${calleeText(node.callee)}()`;
+	if (node.type === "ThisExpression") return "this";
+	if (node.type === "AwaitExpression") return `await ${calleeText(node.argument)}`;
+	return "an expression";
+}
+
+/**
+ * Where the array one row of a list is an entry of is written (#324).
+ *
+ * The stamp names the JSX the `.map()` callback returns — one literal the
+ * document drew once per entry. This walks out to that call, names what it
+ * runs over, and answers with the array: written here, or imported, in which
+ * case the entry lives in a third file and only the caller can read it.
+ */
+export type MappedArray =
+	/** the stamp is not inside a `.map()`: it is one element, and it goes on its own */
+	| { kind: "plain" }
+	/** the array is a `const` in this very file */
+	| { kind: "here"; name: string; callee: string }
+	/** the array is imported: follow the specifier, and take the entry there */
+	| { kind: "imported"; name: string; callee: string; specifier: string }
+	| { kind: "refusal"; refusal: PatchRefusal };
+
+export function mappedArrayAt(source: string, at: { line: number; column: number }, rel = ""): MappedArray {
+	let program: Node;
+	try {
+		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+	} catch {
+		return { kind: "refusal", refusal: { code: "unparsable", says: "the file does not parse" } };
+	}
+	const element = elementAt(program, at.line, at.column, rel);
+	if (element === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	const rows = mapCallOver(element.ancestors);
+	if (rows === undefined) return { kind: "plain" };
+	const name = rows.name;
+	if (name === undefined) return { kind: "refusal", refusal: fromExpression(rows.callee) };
+	const bound = bindingOf(program, name);
+	if (bound?.kind === "array") return { kind: "here", name, callee: rows.callee };
+	if (bound?.kind === "import") {
+		return { kind: "imported", name: bound.imported, callee: rows.callee, specifier: bound.specifier };
+	}
+	return { kind: "refusal", refusal: fromExpression(rows.callee) };
+}
+
+function fromExpression(callee: string): PatchRefusal {
+	return {
+		code: "mapped-expression",
+		says: `these rows come from \`${callee}\`, an expression; ask the agent`,
+		expression: callee,
+	};
+}
+
+/** What a top-level name in this module is: an array literal, an import, or neither. */
+function bindingOf(
+	program: Node,
+	name: string,
+): { kind: "array" } | { kind: "import"; imported: string; specifier: string } | undefined {
+	let found: { kind: "array" } | { kind: "import"; imported: string; specifier: string } | undefined;
+	walkNodes(program, [], (node) => {
+		if (found !== undefined) return;
+		if (node.type === "VariableDeclarator" && node.id.type === "Identifier" && node.id.name === name) {
+			if (node.init?.type === "ArrayExpression") found = { kind: "array" };
+			return;
+		}
+		if (node.type !== "ImportDeclaration") return;
+		for (const held of node.specifiers) {
+			if (held.local.name !== name) continue;
+			if (held.type === "ImportSpecifier") {
+				const imported = held.imported.type === "Identifier" ? held.imported.name : held.imported.value;
+				found = { kind: "import", imported, specifier: node.source.value };
+				return;
+			}
+			if (held.type === "ImportDefaultSpecifier") {
+				found = { kind: "import", imported: "default", specifier: node.source.value };
+				return;
+			}
+		}
+	});
+	return found;
+}
+
+/**
+ * One entry out of an array literal (#324).
+ *
+ * The entry's own characters and the comma that held it to the list, plus its
+ * line when it stands alone on one — the same promise `cutOut` makes for an
+ * element, for the same reason: an author who gave a row a line of its own did
+ * not ask for a blank one in its place. Every other byte of the file stands.
+ */
+export function planItemRemoval(source: string, name: string, index: number): OnePlan {
+	let program: Node;
+	try {
+		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+	} catch {
+		return { refusal: { code: "unparsable", says: "the file does not parse" } };
+	}
+	let literal: Node | undefined;
+	walkNodes(program, [], (node) => {
+		if (literal !== undefined) return;
+		if (node.type !== "VariableDeclarator" || node.id.type !== "Identifier" || node.id.name !== name) return;
+		if (node.init?.type === "ArrayExpression") literal = node.init;
+	});
+	if (literal === undefined || literal.type !== "ArrayExpression") {
+		return { refusal: fromExpression(name) };
+	}
+	const entry = literal.elements[index];
+	if (entry === undefined || entry === null) return { refusal: STALE_STAMP };
+	return { patches: [cutEntry(source, nodeStart(entry), nodeEnd(entry))] };
+}
+
+/** The characters one array entry takes with it: its own, its comma, and its line when it has one. */
+function cutEntry(source: string, start: number, end: number): SpanPatch {
+	const space = (at: number): boolean => source[at] === " " || source[at] === "\t";
+	let from = start;
+	let after = end;
+	while (after < source.length && space(after)) after += 1;
+	if (source[after] === ",") {
+		after += 1;
+		while (after < source.length && space(after)) after += 1;
+	} else {
+		// the last entry carries no comma of its own, so it takes the one that
+		// held it to the entry before it
+		let back = start;
+		while (back > 0 && /\s/.test(source[back - 1] ?? "")) back -= 1;
+		if (source[back - 1] === ",") from = back - 1;
+	}
+	const lineStart = source.lastIndexOf("\n", from - 1) + 1;
+	const alone = /^[ \t]*$/.test(source.slice(lineStart, from)) && (after >= source.length || source[after] === "\n");
+	if (!alone) return { start: from, end: after, text: "" };
+	if (after >= source.length) return { start: lineStart === 0 ? 0 : lineStart - 1, end: after, text: "" };
+	return { start: lineStart, end: after + 1, text: "" };
 }
 
 /** A tag name as one string, member expressions and namespaces flattened. */

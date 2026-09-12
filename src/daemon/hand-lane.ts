@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ClassEdit, ClassTheme } from "./class-write";
-import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import { assetChosen, assetDestination, assetName, identifierHint, overBudget, specifierFrom } from "./hand-asset";
 import {
 	type AttributeRead,
@@ -9,7 +9,9 @@ import {
 	type ElementRead,
 	fingerprintOf,
 	flatText,
+	mappedArrayAt,
 	type PatchRefusal,
+	planItemRemoval,
 	planOps,
 	readElements,
 	STALE_STAMP,
@@ -17,6 +19,7 @@ import {
 	shiftsOf,
 	textOwner,
 } from "./hand-write";
+import { resolveLocalImport } from "./nav-sites";
 import { frameFolder, lookupFrame } from "./projection";
 import { parseStamp, type Stamp } from "./selection";
 
@@ -339,6 +342,17 @@ export interface ElementAsk {
 	name?: string;
 	value?: string;
 	fingerprint: string;
+	/**
+	 * The row a delete is about (#324).
+	 *
+	 * A `.map()` renders one JSX element once per entry, so the stamp under the
+	 * pointer is every row at once and deleting its characters would take the
+	 * row off all of them. Only the running document can say which entry was
+	 * picked: this is the stamp of the element the map renders, where in the
+	 * array it stood, and the fingerprint of the file that stamp is in. The
+	 * write lands on the array literal rather than on the JSX.
+	 */
+	item?: { source: string; index: number; fingerprint: string };
 }
 
 /**
@@ -362,6 +376,7 @@ export function elementSite(root: string, frame: string, ask: ElementAsk): Write
 	const place = siteAt(root, frame, first, ask.fingerprint);
 	if ("kind" in place) return place;
 	const { at, source } = place;
+	if (ask.act === "delete" && ask.item !== undefined) return itemSite(root, frame, ask.item);
 	if (ask.act === "delete") {
 		const here = planOps(
 			source,
@@ -378,6 +393,90 @@ export function elementSite(root: string, frame: string, ask: ElementAsk): Write
 		return planned(at, source, [{ kind: "set-attribute", source: first, name, value }]);
 	}
 	return planned(at, source, [{ kind: "set-hidden", source: first, hidden: ask.act === "hide" }]);
+}
+
+/**
+ * Where deleting one row of a list lands (#324).
+ *
+ * Not on the JSX the stamp names — that literal is every row — but on the
+ * array the `.map()` runs over: the entry at the index the document reported,
+ * out of its literal, with its comma and its own line. The array is written
+ * beside the map or imported from another file under design/, and an import is
+ * followed to the file the entry actually lives in, which is the one the patch
+ * comes back against. Anything the file cannot show as an array literal — a
+ * call, a fetched value, a prop — is named and refused.
+ *
+ * A stamp that turns out not to be inside a `.map()` at all is not a row, so
+ * the ordinary delete of that element is the honest answer and it gets it.
+ */
+function itemSite(
+	root: string,
+	frame: string,
+	item: { source: string; index: number; fingerprint: string },
+): WriteSite {
+	const place = siteAt(root, frame, item.source, item.fingerprint);
+	if ("kind" in place) return place;
+	const { at, source } = place;
+	const held = mappedArrayAt(source, { line: at.line, column: at.column }, at.rel);
+	if (held.kind === "refusal") return { kind: "refusal", refusal: held.refusal };
+	if (held.kind === "plain") return planned(at, source, [{ kind: "delete", source: item.source }]);
+	if (held.kind === "here") {
+		const plan = planItemRemoval(source, held.name, item.index);
+		if ("refusal" in plan) return { kind: "refusal", refusal: plan.refusal };
+		return spliced(at, source, {
+			ok: true,
+			text: applyAll(source, plan.patches),
+			patches: plan.patches,
+			mapped: true,
+		});
+	}
+	const file = importedFile(root, at.file, held.specifier);
+	if (file === undefined) {
+		return {
+			kind: "refusal",
+			refusal: {
+				code: "mapped-expression",
+				says: `these rows come from \`${held.callee}\`, imported from outside design/; ask the agent`,
+				expression: held.callee,
+			},
+		};
+	}
+	let arraySource: string;
+	try {
+		arraySource = readFileSync(file.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	const plan = planItemRemoval(arraySource, held.name, item.index);
+	if ("refusal" in plan) return { kind: "refusal", refusal: plan.refusal };
+	return spliced({ ...file, line: 1, column: 1 }, arraySource, {
+		ok: true,
+		text: applyAll(arraySource, plan.patches),
+		patches: plan.patches,
+		mapped: true,
+	});
+}
+
+/** The file one relative specifier in a design/ source lands on, inside design/. */
+function importedFile(root: string, from: string, specifier: string): { file: string; rel: string } | undefined {
+	let designDir: string;
+	try {
+		designDir = realDesignDir(root);
+	} catch {
+		return undefined;
+	}
+	const file = resolveLocalImport(designDir, from, specifier);
+	if (file === undefined) return undefined;
+	return { file, rel: designRelativePath(designDir, file) };
+}
+
+/** The patches over the text, from the back, so an earlier one never moves a later one. */
+function applyAll(source: string, patches: readonly { start: number; end: number; text: string }[]): string {
+	let text = source;
+	for (const patch of [...patches].sort((a, b) => b.start - a.start)) {
+		text = text.slice(0, patch.start) + patch.text + text.slice(patch.end);
+	}
+	return text;
 }
 
 /** The ops planned against one file, the frame's own or a shared definition's alike (#318). */

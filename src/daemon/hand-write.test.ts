@@ -3,6 +3,8 @@ import {
 	applySpan,
 	fingerprintOf,
 	type HandOp,
+	mappedArrayAt,
+	planItemRemoval,
 	planOps,
 	readElements,
 	shiftsOf,
@@ -857,5 +859,133 @@ describe("the attributes a hand may type", () => {
 			source,
 		);
 		expect(text).toContain('aria-label="Dismiss"');
+	});
+});
+
+/**
+ * One row of a list (#324).
+ *
+ * The stamp under a hand inside a `.map()` names one JSX literal the document
+ * drew once per entry, so the honest thing to take out is the array entry, not
+ * the characters. These are the two halves of that, both pure over text: which
+ * array the rows come from, and the entry out of its literal.
+ */
+describe("the array one row of a list comes from", () => {
+	const BESIDE = `const experience = [
+	{ brand: 'UNIQLO' },
+	{ brand: 'Rodebjer' },
+	{ brand: 'Eton' },
+];
+
+export function Experience() {
+	return <div>{experience.map((item) => <h3 key={item.brand}>{item.brand}</h3>)}</div>;
+}
+`;
+	const IMPORTS = `import { experience } from '../../shared/ui/experience';
+
+export default function Frame() {
+	return <ul>{experience.map((item) => <li key={item.brand}>{item.brand}</li>)}</ul>;
+}
+`;
+
+	/** The stamp, as the lane takes it: a line and a column rather than a ref. */
+	function at(source: string, snippet: string) {
+		const ref = stamp(source, snippet);
+		const [, line, column] = /:(\d+):(\d+)$/.exec(ref) ?? [];
+		return { line: Number(line), column: Number(column) };
+	}
+
+	it("names the array a map runs over when it is written beside it", () => {
+		expect(mappedArrayAt(BESIDE, at(BESIDE, "<h3 key"))).toEqual({
+			kind: "here",
+			name: "experience",
+			callee: "experience",
+		});
+	});
+
+	it("follows the import when the array is written in another file", () => {
+		expect(mappedArrayAt(IMPORTS, at(IMPORTS, "<li key"))).toEqual({
+			kind: "imported",
+			name: "experience",
+			callee: "experience",
+			specifier: "../../shared/ui/experience",
+		});
+	});
+
+	it("names the expression and refuses when the rows are computed", () => {
+		const computed = `export default function Frame() {
+	return <ul>{rows().map((item) => <li key={item.id}>{item.id}</li>)}</ul>;
+}
+`;
+		expect(mappedArrayAt(computed, at(computed, "<li key"))).toEqual({
+			kind: "refusal",
+			refusal: {
+				code: "mapped-expression",
+				says: "these rows come from `rows()`, an expression; ask the agent",
+				expression: "rows()",
+			},
+		});
+	});
+
+	it("names a prop the same way, because a prop has no literal here to take an entry out of", () => {
+		const prop = `export function List({ rows }: { rows: string[] }) {
+	return <ul>{rows.map((row) => <li key={row}>{row}</li>)}</ul>;
+}
+`;
+		const held = mappedArrayAt(prop, at(prop, "<li key"));
+		expect(held.kind === "refusal" && held.refusal.says).toBe(
+			"these rows come from `rows`, an expression; ask the agent",
+		);
+	});
+
+	it("says a stamp outside any map is one plain element, not a row", () => {
+		expect(mappedArrayAt(BESIDE, at(BESIDE, "<div>")).kind).toBe("plain");
+	});
+
+	it("takes the entry out with its comma and its own line", () => {
+		const plan = planItemRemoval(BESIDE, "experience", 1);
+		if ("refusal" in plan) throw new Error(plan.refusal.says);
+		const text = applySpan(BESIDE, plan.patches[0] ?? { start: 0, end: 0, text: "" });
+		expect(text).toBe(BESIDE.replace("\t{ brand: 'Rodebjer' },\n", ""));
+		// the patch carries the one that puts it back, which is what makes the
+		// row one press of undo
+		expect(applySpan(text, spanBetween(BESIDE, text))).toBe(BESIDE);
+	});
+
+	it("takes the comma before it when the last entry carries none of its own", () => {
+		const source = `const rows = [\n\t{ a: 1 },\n\t{ a: 2 }\n];\n`;
+		const plan = planItemRemoval(source, "rows", 1);
+		if ("refusal" in plan) throw new Error(plan.refusal.says);
+		expect(applySpan(source, plan.patches[0] ?? { start: 0, end: 0, text: "" })).toBe(
+			`const rows = [\n\t{ a: 1 }\n];\n`,
+		);
+	});
+
+	it("takes an entry out of a list written on one line and leaves one space between the rest", () => {
+		const source = `const rows = ["a", "b", "c"];\n`;
+		const plan = planItemRemoval(source, "rows", 1);
+		if ("refusal" in plan) throw new Error(plan.refusal.says);
+		expect(applySpan(source, plan.patches[0] ?? { start: 0, end: 0, text: "" })).toBe(`const rows = ["a", "c"];\n`);
+	});
+
+	it("refuses an index the array does not have, so a stale pick re-picks", () => {
+		const plan = planItemRemoval(BESIDE, "experience", 9);
+		expect("refusal" in plan && plan.refusal.code).toBe("stale-stamp");
+	});
+
+	it("refuses a name that is not an array literal", () => {
+		const source = `const rows = await load();\n`;
+		const plan = planItemRemoval(source, "rows", 0);
+		expect("refusal" in plan && plan.refusal.code).toBe("mapped-expression");
+	});
+
+	// never silently edit a template that renders more than once (#324)
+	it("refuses the plain delete of anything inside a map, and names what the rows come from", () => {
+		expect(refusal([{ kind: "delete", source: stamp(BESIDE, "<h3 key") }], BESIDE)).toEqual({
+			code: "mapped-template",
+			says: "these rows come from `experience`; delete one item, or ask the agent",
+			expression: "experience",
+			line: 8,
+		});
 	});
 });

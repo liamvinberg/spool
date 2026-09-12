@@ -1059,6 +1059,33 @@ const canvasShimJs = `(() => {
 		return read;
 	}
 
+	// Which row of a list this element is drawn as (#324).
+	//
+	// A map call renders one JSX element once per entry, so the stamp under the
+	// pointer is every row at once. The runtime noted each child's place in the
+	// array it stood in as that call was made; this walks the same fiber handle
+	// ownerOf walks, up to the nearest element that was one of them, and says
+	// the stamp of that element and its index. The selector is the item's own
+	// root in the document — a component's outermost DOM when the row is a
+	// component — so taking the row out takes the whole row.
+	function itemOf(el) {
+		const siteOf = window.__spoolItemSiteOf;
+		if (typeof siteOf !== "function") return null;
+		const key = Object.keys(el).find((name) => name.startsWith("__reactFiber$"));
+		let fiber = key ? el[key] : null;
+		let host = el;
+		while (fiber) {
+			if (fiber.stateNode && fiber.stateNode.nodeType === 1) host = fiber.stateNode;
+			const props = fiber.memoizedProps;
+			const site = props && typeof props === "object" ? siteOf(props) : undefined;
+			if (site && typeof site.stamp === "string" && typeof site.index === "number") {
+				return { map: stampNow(site.stamp), index: site.index, selector: cssPath(host) };
+			}
+			fiber = fiber.return;
+		}
+		return null;
+	}
+
 	function hitOf(el, computed) {
 		let stamped = el;
 		while (stamped && stamped.nodeType === 1 && !stamped.hasAttribute("data-spool-source")) {
@@ -1069,7 +1096,14 @@ const canvasShimJs = `(() => {
 		let radius = 0;
 		try { radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch {}
 		let drawn = null;
-		if (computed) { try { drawn = drawnStyle(el); } catch {} }
+		let item = null;
+		// a hover asks for a chain many times a second and deletes nothing, so
+		// it walks no fibers: the item context is the selection's, like the
+		// drawn style beside it
+		if (computed) {
+			try { drawn = drawnStyle(el); } catch {}
+			try { item = itemOf(el); } catch {}
+		}
 		// an inline element that wraps is drawn as one box per line, and the box
 		// around all of them is a shape it has nowhere on screen (#321)
 		const lines = [];
@@ -1088,6 +1122,7 @@ const canvasShimJs = `(() => {
 			words: hasWords(el),
 			radius,
 			...(drawn === null ? {} : { computed: drawn }),
+			...(item === null ? {} : { item }),
 			source,
 			generated: stamped !== el,
 		};

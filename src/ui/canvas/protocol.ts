@@ -53,6 +53,16 @@ export interface PickedHit {
 	 * — a hover asks for a chain many times a second and draws none of it.
 	 */
 	computed?: Readonly<Record<string, string>>;
+	/**
+	 * The row of a list this element is drawn as (#324).
+	 *
+	 * A `.map()` renders one JSX element once per entry, so the stamp is every
+	 * row at once and a delete on it would take them all. This is the one thing
+	 * only the running document knows: the stamp of the element the map
+	 * renders, where in the array it stands, and its own root in the document.
+	 * Present only where a selection asked for it, and only inside a list.
+	 */
+	item?: { map: string; index: number; selector: string };
 	/** Nearest data-spool-source stamp, "frames/…/frame.tsx:line:col". */
 	source: string | null;
 	/** True when the stamp sits on an ancestor — JS-created DOM (#6 degrade). */

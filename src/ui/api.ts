@@ -361,6 +361,8 @@ export async function writeElement(
 		name?: string;
 		value?: string;
 		fingerprint: string;
+		/** the row a delete is about, when the document could say which one (#324) */
+		item?: { source: string; index: number; fingerprint: string };
 	},
 ): Promise<TextWritten | undefined> {
 	try {

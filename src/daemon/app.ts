@@ -612,11 +612,34 @@ export function createDaemonApp({
 			return c.text(says, 400);
 		}
 		if (typeof body.value === "string" && body.value.length > 4096) return c.text(says, 400);
+		// The row a delete is about (#324): the stamp of the JSX a `.map()`
+		// renders, where in the array it stood, and the fingerprint of that
+		// stamp's own file. Only a delete has one, and a body carrying half of
+		// one has not decided.
+		const held = typeof body.item === "object" && body.item !== null ? (body.item as Record<string, unknown>) : null;
+		let item: { source: string; index: number; fingerprint: string } | undefined;
+		if (held !== null) {
+			const index = held.index;
+			if (
+				act !== "delete" ||
+				typeof held.source !== "string" ||
+				parseStamps([held.source]) === undefined ||
+				typeof index !== "number" ||
+				!Number.isInteger(index) ||
+				index < 0 ||
+				typeof held.fingerprint !== "string" ||
+				held.fingerprint === ""
+			) {
+				return c.text('a delete of one row is { "item": { "source", "index", "fingerprint" } }', 400);
+			}
+			item = { source: held.source, index, fingerprint: held.fingerprint };
+		}
 		return {
 			frame: body.frame,
 			act: act as "delete" | "hide" | "show" | "attribute",
 			sources: stamps,
 			fingerprint: body.fingerprint,
+			...(item === undefined ? {} : { item }),
 			...(typeof body.name === "string" ? { name: body.name } : {}),
 			...(typeof body.value === "string" ? { value: body.value } : {}),
 		};

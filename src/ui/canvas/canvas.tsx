@@ -3331,12 +3331,21 @@ export function ProjectCanvas({
 		(
 			picks: readonly PickedSelection[],
 			act: "delete" | "hide" | "show" | "attribute",
-			at: { sources: readonly string[]; fingerprint: string },
+			at: {
+				sources: readonly string[];
+				fingerprint: string;
+				item?: { source: string; index: number; fingerprint: string };
+			},
 			attribute?: { name: string; value: string },
 		) => {
 			const pick = picks[0];
 			const source = at.sources[0];
 			if (pick === undefined || source === undefined) return;
+			// One row of a list goes as the row (#324): the file loses the array
+			// entry, and the document loses that entry's own element rather than
+			// the one under the pointer, which is a rung inside it.
+			const gone =
+				at.item !== undefined && pick.item !== undefined ? { ...pick, selector: pick.item.selector } : pick;
 			const target = iframes.current.get(pick.frame)?.contentWindow;
 			if (target == null) return;
 			const id = ++pickSeq.current;
@@ -3394,6 +3403,7 @@ export function ProjectCanvas({
 					sources: [...at.sources],
 					fingerprint: at.fingerprint,
 					...(attribute ?? {}),
+					...(at.item === undefined ? {} : { item: at.item }),
 				}).then((written) => {
 					settled(written, {
 						frame: pick.frame,
@@ -3408,7 +3418,7 @@ export function ProjectCanvas({
 						// actually landed, so a refusal still has them to sit under
 						...(picks.length === 1 ? {} : { entry: { picks: picks.map((held) => held.selector) } }),
 						onLanded: () => {
-							if (act === "delete") holdParent(pick);
+							if (act === "delete") holdParent(gone);
 						},
 					});
 				});
@@ -3416,7 +3426,7 @@ export function ProjectCanvas({
 			target.postMessage(
 				alterMessage(
 					id,
-					picks.map((held) => held.selector),
+					at.item === undefined ? picks.map((held) => held.selector) : [gone.selector],
 					act,
 					attribute?.name,
 					attribute?.value,
@@ -3476,7 +3486,19 @@ export function ProjectCanvas({
 				});
 				return;
 			}
-			alterElement(picks, "delete", { sources, fingerprint });
+			// One row of a list is the row, never the template (#324). The document
+			// says which entry of which array the pick stands in; the write takes
+			// that entry out of the array literal, wherever it is written, and the
+			// file keeps the one JSX literal every row is drawn from. Without an
+			// entry to name the lane refuses rather than quietly editing a
+			// template that renders more than once.
+			const row = picks.length === 1 ? first.item : undefined;
+			const rowPrint = row === undefined ? undefined : fingerprintFor(first.frame, row.map);
+			const item =
+				row === undefined || rowPrint === undefined
+					? undefined
+					: { source: row.map, index: row.index, fingerprint: rowPrint };
+			alterElement(picks, "delete", { sources, fingerprint, ...(item === undefined ? {} : { item }) });
 		},
 		[alterElement, fingerprintFor, showRefusal],
 	);
