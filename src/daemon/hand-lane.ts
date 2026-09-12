@@ -247,15 +247,22 @@ export function textSite(root: string, frame: string, ask: TextAsk): WriteSite {
  * gesture can decide two properties.
  */
 export interface ClassAsk {
-	source: string;
+	/**
+	 * The stamps the same edits land on (#323).
+	 *
+	 * One for a single rung, several when a multi-pick writes a row: the same
+	 * tokens go to each held element, and they are one file's, so the whole of
+	 * it is one write, one span and one press of undo.
+	 */
+	sources: readonly string[];
 	edits: readonly ClassEdit[];
 	fingerprint: string;
 }
 
 export type ClassSite =
 	| (Extract<WriteSite, { kind: "ok" }> & {
-			/** the literal before and after, which is what the frame swaps on the element */
-			className: { was: string; now: string };
+			/** the literal before and after per stamp, which is what the frame swaps on each element */
+			classNames: readonly { source: string; was: string; now: string }[];
 	  })
 	| Exclude<WriteSite, { kind: "ok" }>;
 
@@ -268,21 +275,48 @@ export type ClassSite =
  * set the attribute and drop the preview without a reload.
  */
 export function classSite(root: string, frame: string, ask: ClassAsk, theme: ClassTheme | undefined): ClassSite {
-	const place = siteAt(root, frame, ask.source, ask.fingerprint);
+	const first = ask.sources[0];
+	if (first === undefined) return { kind: "error", status: 400, message: "a class edit names a stamp" };
+	const place = siteAt(root, frame, first, ask.fingerprint);
 	if ("kind" in place) return place;
 	const { at, source } = place;
-	const [before] = readElements(source, [{ line: at.line, column: at.column }], at.rel);
-	if (before === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	if (before.refusal !== undefined) return { kind: "refusal", refusal: before.refusal };
+	const places = ask.sources.map((stamped) => parseStamp(root, stamped));
+	const marks = places.map((stamp) => ({ line: stamp?.line ?? 0, column: stamp?.column ?? 0 }));
+	const before = readElements(source, marks, at.rel);
+	for (const read of before) {
+		if (read === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+		if (read.refusal !== undefined) return { kind: "refusal", refusal: read.refusal };
+	}
 	const site = planned(
 		at,
 		source,
-		ask.edits.map((edit) => ({ kind: "set-class" as const, source: ask.source, ...edit })),
+		ask.sources.flatMap((stamped) =>
+			ask.edits.map((edit) => ({ kind: "set-class" as const, source: stamped, ...edit })),
+		),
 		theme,
 	);
 	if (site.kind !== "ok") return site;
-	const [after] = readElements(site.text, [{ line: at.line, column: at.column }], at.rel);
-	return { ...site, className: { was: before.className, now: after?.className ?? before.className } };
+	// the stamps on a line move with what the write put there, so each literal
+	// is read back where the shifts say it now stands
+	const moved = marks.map((mark) => ({ line: mark.line, column: shiftedColumn(mark, site.shifts ?? []) }));
+	const after = readElements(site.text, moved, at.rel);
+	return {
+		...site,
+		classNames: ask.sources.map((stamped, index) => ({
+			source: stamped,
+			was: before[index]?.className ?? "",
+			now: after[index]?.className ?? before[index]?.className ?? "",
+		})),
+	};
+}
+
+/** Where a stamp's column stands after a write moved the ones before it on its line (#323). */
+function shiftedColumn(at: { line: number; column: number }, shifts: readonly StampShift[]): number {
+	let moved = at.column;
+	for (const shift of shifts) {
+		if (shift.line === at.line && shift.column + shift.taken <= moved) moved += shift.delta;
+	}
+	return moved;
 }
 
 /**

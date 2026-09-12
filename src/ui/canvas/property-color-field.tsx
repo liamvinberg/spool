@@ -73,8 +73,8 @@ export function PropertyColorField({
 	const trigger = useRef<HTMLButtonElement>(null);
 	const editing = useRef(false);
 	const binding = reading?.binding.kind === "reference" ? reading.binding.name : undefined;
-	const resolved = reading?.native ?? "";
-	const shown = colorText(resolved);
+	const resolved = reading?.mixed === true ? "" : (reading?.native ?? "");
+	const shown = reading?.mixed === true ? "Mixed" : colorText(resolved);
 	const valid = draft === null || CSS.supports(property, draft);
 	const validDraft = useRef(valid);
 	validDraft.current = valid;

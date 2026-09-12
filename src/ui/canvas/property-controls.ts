@@ -22,6 +22,8 @@ export interface PropertyReading {
 	binding: { kind: "page" } | { kind: "custom" } | { kind: "reference"; name: string; value?: string };
 	/** the value as the frame draws it */
 	native?: string;
+	/** several elements are held and they do not agree here, so there is no value to show (#323) */
+	mixed?: boolean;
 }
 
 /**

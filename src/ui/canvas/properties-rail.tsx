@@ -355,10 +355,24 @@ function Body({
 	const [opened, setOpened] = useState<Scope[]>([]);
 
 	const element = held?.kind === "element" ? held : null;
-	const rung = rungOf(held);
+	/**
+	 * Several elements held at once (#323), when they are one frame's.
+	 *
+	 * The rail draws one set of rows over all of them: the anchor's reading is
+	 * what a row shows, and where the others disagree the row says "Mixed". The
+	 * anchor is the last pick, which is the one a ⇧-click just added.
+	 */
+	const several = held?.kind === "elements" && held.frame !== null && held.picks.length > 1 ? held : null;
+	const anchor = several === null ? -1 : several.picks.length - 1;
+	const rung = several === null ? rungOf(held) : anchor;
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const literal = read?.className ?? "";
-	const identity = element === null ? "" : `${element.frame} ${element.selector}`;
+	const identity =
+		several !== null
+			? `${several.frame} ${several.picks.map((hit) => hit.selector).join(" ")}`
+			: element === null
+				? ""
+				: `${element.frame} ${element.selector}`;
 
 	// the scope is the element's, not the rail's: a fresh rung starts at the base
 	const before = useRef(identity);
@@ -390,15 +404,31 @@ function Body({
 	for (const extra of opened) if (!scopes.some((known) => sameScope(known, extra))) scopes.push(extra);
 	const live = scopes.some((known) => sameScope(known, scope)) ? scope : BASE;
 
+	/** the rung a row reads: the one held, or a multi-pick's anchor */
+	const hit = several !== null ? several.picks[anchor] : element === null ? undefined : element.chain[rung];
 	const rowElement: RowElement = {
-		tag: element === null ? "div" : (element.chain[rung]?.tag ?? "div"),
+		tag: hit?.tag ?? "div",
 		className: literal,
 		...(read?.refusal === undefined ? {} : { refusal: read.refusal }),
 		...(read?.mapped === true ? { mapped: true } : {}),
 	};
-	const rect = element === null ? undefined : element.chain[rung]?.rect;
+	const rect = hit?.rect;
 	/** what the frame draws this rung with, which is the rail's second source (#323) */
-	const computed = element === null ? undefined : element.chain[rung]?.computed;
+	const computed = hit?.computed;
+	/**
+	 * The elements held beside the anchor, as a row reads them (#323).
+	 *
+	 * Each one's own literal under the live scope and its own drawn style, which
+	 * is what tells a shared value from a "Mixed" one. Empty for a single rung,
+	 * where every row is about one element and nothing can disagree.
+	 */
+	const others =
+		several === null
+			? []
+			: several.picks.slice(0, anchor).map((pick, index) => ({
+					scoped: scopedClass(rungs?.[index]?.className ?? "", live),
+					computed: pick.computed ?? null,
+				}));
 	// the imports the swap may choose from, asked for only where a rung has a
 	// picture on it at all
 	const assets = useAssets(project, element?.frame ?? null, rowElement.tag === "img", revision);
@@ -416,6 +446,7 @@ function Body({
 		element: rowElement,
 		box: preview === null ? { w: rect?.w ?? 0, h: rect?.h ?? 0 } : preview.box,
 		computed: computed ?? null,
+		others,
 		compiler,
 		/**
 		 * A token the hands put there rather than the file's author.
@@ -451,14 +482,16 @@ function Body({
 			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
 				{held === null ? <Empty says="select an element" /> : null}
 				{held?.kind === "frames" ? <Empty says={`${held.count} frames`} /> : null}
-				{held?.kind === "elements" ? <Empty says={`${held.count} elements`} /> : null}
+				{held?.kind === "elements" && several === null ? <Empty says={`${held.count} elements`} /> : null}
 				{held?.kind === "frame" ? (
 					<FrameGeometry key={held.name} name={held.name} geometry={held.geometry} acts={acts} />
 				) : null}
 				{held?.kind === "page" ? <PageFacts held={held} /> : null}
 				{/* keyed on the rung: a fold left open on one element is not an opinion
 				    about the next one */}
-				{element === null || read === undefined ? null : <PropertySections key={identity} view={view} />}
+				{(element === null && several === null) || read === undefined ? null : (
+					<PropertySections key={identity} view={view} />
+				)}
 				{element === null || read === undefined ? null : (
 					<Attributes
 						html={element.chain[rung]?.outerHtml ?? ""}

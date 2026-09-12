@@ -670,7 +670,7 @@ export function createDaemonApp({
 	 */
 	const classBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const stamps = parseStamps([body.source]);
+		const stamps = parseStamps(body.sources);
 		const edits =
 			Array.isArray(body.edits) && body.edits.length > 0 && body.edits.length <= 16 ? body.edits : undefined;
 		const shaped = edits?.every(
@@ -690,13 +690,18 @@ export function createDaemonApp({
 			typeof body.fingerprint !== "string"
 		) {
 			return c.text(
-				'a class edit is { "frame", "source", "edits": [{ "token", "scope", "remove"? }], "fingerprint" }',
+				'a class edit is { "frame", "sources": [ "…:12:4" ], "edits": [{ "token", "scope", "remove"? }], "fingerprint" }',
 				400,
 			);
 		}
+		// a multi-pick writes the same tokens to every element it holds, as one
+		// write: one file, one fingerprint, one span (#323)
+		if (new Set(stamps.map((stamped) => stamped.replace(/:\d+:\d+$/, ""))).size > 1) {
+			return c.text("a class edit is one file's", 400);
+		}
 		return {
 			frame: body.frame,
-			source: stamps[0],
+			sources: stamps,
 			edits: edits as ClassEdit[],
 			fingerprint: body.fingerprint,
 		};
@@ -2450,7 +2455,7 @@ export function createDaemonApp({
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
 			const landed = written(project.root, site);
 			const css = site.text === site.source ? undefined : await compiler.stylesheet(project.root, frame);
-			return c.json({ ...landed, className: site.className, ...(css === undefined ? {} : { css }) });
+			return c.json({ ...landed, classNames: site.classNames, ...(css === undefined ? {} : { css }) });
 		})
 		/*
 		 * Undo and redo (#314): the characters put back, and refused rather

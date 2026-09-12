@@ -125,7 +125,7 @@ export type HistoryEntry =
 			// (#315), so the entry carries the literal the element wears and the one
 			// running this entry leaves it wearing, flipped with the patch when it is
 			// amended
-			readonly classes?: { readonly selector: string; readonly from: string; readonly to: string };
+			readonly classes?: readonly { readonly selector: string; readonly from: string; readonly to: string }[];
 			/** the other frames rendering a shared file the patch is on (#318), whose paint a run holds */
 			readonly frames?: readonly string[];
 	  }

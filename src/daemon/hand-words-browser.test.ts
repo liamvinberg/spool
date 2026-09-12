@@ -94,7 +94,7 @@ it("opens the intro paragraph's words from the keyboard and from the pointer", {
 	await expect.poll(held, { timeout: 15_000 }).toBe("p");
 });
 
-it("keeps the descent its own answer when the clicks come fast", { timeout: 240_000 }, async () => {
+it("opens them from the pointer too, one rung per double-click", { timeout: 240_000 }, async () => {
 	const f = await handCanvas(FILES, PAGE, { w: 1200, h: 400 }, { x: 40, y: 40, k: 0.6 });
 	const { page, frame } = f;
 	const held = () => heldTag(f.project);
@@ -105,13 +105,13 @@ it("keeps the descent its own answer when the clicks come fast", { timeout: 240_
 	const at = { x: box.x + 20, y: box.y + 8 };
 
 	await page.getByRole("button", { name: "edit", exact: true }).click();
+	// every double-click spends its own descent: the presses behind one used to
+	// void the ask it had in flight, which on a frame slow to answer left the
+	// ladder where it was however many times the paragraph was clicked
 	await page.mouse.click(at.x, at.y);
 	await expect.poll(held, { timeout: 15_000 }).toBe("section");
-	// two double-clicks with nothing between them: the presses of the second
-	// used to void the descent the first had in flight, so the ladder stayed
-	// where it was and the words never opened
 	await page.mouse.dblclick(at.x, at.y);
+	await expect.poll(held, { timeout: 15_000 }).toBe("p");
 	await page.mouse.dblclick(at.x, at.y);
 	await expect.poll(editable, { timeout: 15_000 }).toBe("plaintext-only");
-	await expect.poll(held, { timeout: 15_000 }).toBe("p");
 });

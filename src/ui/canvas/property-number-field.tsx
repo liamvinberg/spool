@@ -62,8 +62,9 @@ export function PropertyNumberField({
 	// it stands rather than shown blank beside a unit it never had. The class
 	// literal answers first and the frame's own drawn value second (#323), which
 	// is read faint: a number a stylesheet set is not one this file wrote.
-	const presented = (reading?.authored ?? reading?.native ?? "").trim();
+	const presented = reading?.mixed === true ? "" : (reading?.authored ?? reading?.native ?? "").trim();
 	const drawnOnly = reading?.authored === undefined && reading?.native !== undefined;
+	const mixed = reading?.mixed === true;
 	const initial = numberUnit(presented);
 	const keyword = initial || !presented ? undefined : presented;
 	const unit = initial?.unit ?? "px";
@@ -139,8 +140,8 @@ export function PropertyNumberField({
 			<NumField
 				label={property}
 				value={scrubbed ?? initial?.number ?? ""}
-				readout={keyword ? null : unit}
-				placeholder={keyword}
+				readout={mixed && scrubbed === undefined ? null : keyword ? null : unit}
+				placeholder={mixed ? "Mixed" : keyword}
 				faint={drawnOnly && scrubbed === undefined}
 				ok={ok && reading !== undefined}
 				onBegin={() => {
@@ -167,7 +168,8 @@ export function PropertyNumberField({
 				current={{
 					token: boundToken ?? null,
 					name: binding ? "↗" : "…",
-					value: binding?.name ?? "Custom value",
+					// several elements held that do not agree have no token between them
+					value: binding?.name ?? (mixed ? "Mixed" : "Custom value"),
 				}}
 				options={[
 					{ token: null, name: radius ? `${prefixes[property]}-none` : "unset" },

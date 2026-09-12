@@ -26,8 +26,12 @@ const THEME: CompiledTheme = {
 	step: 4,
 };
 
-function reading(scoped: string, computed: Record<string, string> | null = null): Reading {
-	return { scope: BASE, scoped, theme: THEME, computed };
+function reading(
+	scoped: string,
+	computed: Record<string, string> | null = null,
+	others: Reading["others"] = [],
+): Reading {
+	return { scope: BASE, scoped, theme: THEME, computed, others };
 }
 
 describe("authoredReading", () => {
@@ -69,6 +73,31 @@ describe("authoredReading", () => {
 	it("says nothing for a value that is not one: none, auto, normal", () => {
 		expect(authoredReading(reading("p", { "letter-spacing": "normal" }), "letter-spacing")?.native).toBe(undefined);
 		expect(authoredReading(reading("p", { "box-shadow": "none" }), "box-shadow")?.native).toBe(undefined);
+	});
+
+	it("says nothing where the elements held disagree", () => {
+		const read = authoredReading(
+			reading("text-lg", { "font-size": "18px" }, [{ scoped: "text-sm", computed: { "font-size": "14px" } }]),
+			"font-size",
+		);
+		expect(read).toEqual({ tokens: [], binding: { kind: "page" }, mixed: true });
+	});
+
+	it("shows the one value the elements held share", () => {
+		const read = authoredReading(
+			reading("text-lg", { "font-size": "18px" }, [{ scoped: "text-lg", computed: { "font-size": "18px" } }]),
+			"font-size",
+		);
+		expect(read?.mixed).toBe(undefined);
+		expect(read?.authored).toBe("1.125rem");
+	});
+
+	it("is mixed when the literals agree but the frame draws them differently", () => {
+		const read = authoredReading(
+			reading("byline", { "font-size": "13px" }, [{ scoped: "byline", computed: { "font-size": "18px" } }]),
+			"font-size",
+		);
+		expect(read?.mixed).toBe(true);
 	});
 
 	it("spells a computed number the way a field would take it back", () => {

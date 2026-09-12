@@ -339,8 +339,8 @@ export async function writeText(
 
 export type ClassWritten =
 	| (Extract<TextWritten, { ok: true }> & {
-			/** the literal before and after, which is what the frame swaps on the element */
-			className: { was: string; now: string };
+			/** the literal before and after per stamp, which is what the frame swaps on each element */
+			classNames: readonly { source: string; was: string; now: string }[];
 			/** the stylesheet the frame's document now compiles to; absent when nothing changed */
 			css?: string;
 	  })
@@ -433,12 +433,12 @@ export async function listAssets(project: string, frame: string): Promise<Projec
 export async function writeClass(
 	project: string,
 	frame: string,
-	ask: { source: string; edits: readonly ClassEdit[]; fingerprint: string },
+	ask: { sources: readonly string[]; edits: readonly ClassEdit[]; fingerprint: string },
 ): Promise<ClassWritten | undefined> {
 	try {
 		const res = await client.api.p[":project"].class.$post({
 			param: { project },
-			json: { frame, ...ask, edits: [...ask.edits] },
+			json: { frame, ...ask, sources: [...ask.sources], edits: [...ask.edits] },
 		});
 		if (!res.ok && res.status !== 409) return undefined;
 		return (await res.json()) as ClassWritten;

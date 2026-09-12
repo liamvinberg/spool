@@ -106,6 +106,14 @@ export interface View {
 	 * project's own stylesheet set. Null until the pick's answer has landed.
 	 */
 	computed: Readonly<Record<string, string>> | null;
+	/**
+	 * The other elements held, when several are (#323).
+	 *
+	 * A row reads the anchor and then asks these whether they agree: a value
+	 * they all share is the row's, and one they do not is "Mixed". Empty for a
+	 * single rung, where nothing can disagree.
+	 */
+	others: readonly { scoped: string; computed: Readonly<Record<string, string>> | null }[];
 	compiler: Compiler;
 	/** true when a bare token under this scope is not one the file was written with */
 	fresh: (token: string | null) => boolean;
@@ -146,7 +154,7 @@ function spelled(view: Spelling, property: string, value: PropertyValue): Proper
 type Spelling = Pick<View, "scope" | "scoped" | "theme">;
 
 /** What a reading needs of the view: its two sources, under the scope they are read in. */
-export type Reading = Spelling & Pick<View, "computed">;
+export type Reading = Spelling & Pick<View, "computed" | "others">;
 
 /**
  * The controls the rows write through, over the canvas's own (#315).
@@ -318,13 +326,30 @@ interface Worn<T> {
 	shown: T;
 	/** nothing under this scope sets it: the value shown is the base's */
 	faint: boolean;
+	/** several elements are held and they do not agree here (#323) */
+	mixed: boolean;
 }
 
 function worn<T>(view: View, read: (scoped: string) => T, empty: (value: T) => boolean): Worn<T> {
 	const own = read(view.scoped);
-	if (!empty(own) || view.scope.length === 0) return { own, shown: own, faint: empty(own) };
+	const mixed = view.others.some((other) => !same(read(other.scoped), own));
+	if (!empty(own) || view.scope.length === 0) return { own, shown: own, faint: empty(own), mixed };
 	const base = read(view.base);
-	return { own, shown: base, faint: true };
+	return { own, shown: base, faint: true, mixed };
+}
+
+/** What a control says where the elements held do not agree (#323). */
+const MIXED = "Mixed";
+
+/** Whether two readings say the same thing; a row's reading is a string, a null or a small record. */
+function same(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+	const left = a as Record<string, unknown>;
+	const right = b as Record<string, unknown>;
+	const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+	for (const key of keys) if (!same(left[key], right[key])) return false;
+	return true;
 }
 
 /** The same reading, where only the value matters and not whose it is. */
@@ -395,6 +420,7 @@ function LengthRow({
 			{...(name === undefined ? {} : { name })}
 			value={held.shown ?? ""}
 			faint={held.own === null}
+			mixed={held.mixed}
 			changed={view.fresh(lengthOf(view.scoped, family)?.token ?? null)}
 			placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
 			readout={(shown) => {
@@ -437,10 +463,11 @@ function ClassNumberRow({
 	view,
 	row,
 	name,
-	value,
+	value: written,
 	faint,
 	changed,
-	placeholder,
+	mixed = false,
+	placeholder: absent,
 	readout,
 	typedValue,
 	stepped,
@@ -453,6 +480,8 @@ function ClassNumberRow({
 	/** nothing under this scope sets it: the value shown is the base's */
 	faint: boolean;
 	changed: boolean;
+	/** several elements are held and they do not agree here (#323) */
+	mixed?: boolean;
 	placeholder: string;
 	readout: (shown: string) => string | null;
 	/** what typed text writes, or nothing where this row will not take it */
@@ -462,6 +491,10 @@ function ClassNumberRow({
 	aside?: ReactNode;
 }) {
 	const { ok, reason } = rowAdmission(view, row);
+	// a value the elements held do not share is no value: the field is empty and
+	// says so, and typing into it writes that one value to all of them (#323)
+	const value = mixed ? "" : written;
+	const placeholder = mixed ? MIXED : absent;
 	const control = writableProperty(row) ? view.property : null;
 	const write = (next: RowValue) => writeValue(view, row, next);
 	const stepBy = (units: number) => {
@@ -482,7 +515,7 @@ function ClassNumberRow({
 		>
 			<NumField
 				value={scrub?.value ?? value}
-				readout={readout(scrub?.value ?? value)}
+				readout={mixed && scrub === undefined ? null : readout(scrub?.value ?? value)}
 				ok={ok}
 				faint={faint}
 				changed={changed}
@@ -537,6 +570,7 @@ function BorderWidthRow({
 			{...(name === undefined ? {} : { name })}
 			value={held.shown ?? ""}
 			faint={held.own === null}
+			mixed={held.mixed}
 			changed={view.fresh(readRow(row, view.scoped, view.theme).token)}
 			placeholder="0"
 			readout={(shown) => describe("px", shown || held.shown || "0", false, step) ?? "0px"}
@@ -616,6 +650,14 @@ export function authoredReading(view: Reading, property: string): PropertyReadin
 	if (row === undefined) return undefined;
 	const native = drawnValue(view, property);
 	const read = readRow(row, view.scoped, view.theme);
+	// a reading the elements held do not share is no reading: the control says
+	// so and a value typed into it goes to every one of them (#323)
+	const mixed = view.others.some(
+		(other) =>
+			!same(readRow(row, other.scoped, view.theme), read) ||
+			drawnValue({ ...view, computed: other.computed }, property) !== native,
+	);
+	if (mixed) return { tokens: [], binding: { kind: "page" }, mixed: true };
 	if (read.token === null) {
 		return { tokens: [], binding: { kind: "page" }, ...(native === undefined ? {} : { native }) };
 	}
@@ -904,8 +946,9 @@ function WordRow({ view, property, name }: { view: View; property: string; name?
 			value: option.says === option.name ? "" : option.says,
 		})),
 	];
-	const current =
-		held.shown === null
+	const current = held.mixed
+		? { token: null, name: MIXED }
+		: held.shown === null
 			? { token: null, name: WORDS[word].fallback }
 			: (options.find((option) => option.token === held.shown) ?? { token: held.shown, name: held.shown });
 	return (
@@ -1015,8 +1058,9 @@ function TokenRow({
 				...(option.from === "default" ? { group: "default" } : {}),
 			})),
 	];
-	const current: Option =
-		held.shown.value === null
+	const current: Option = held.mixed
+		? { token: null, name: MIXED }
+		: held.shown.value === null
 			? absent
 			: (options.find((option) => option.token === held.shown.value) ?? {
 					token: held.shown.value,

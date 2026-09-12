@@ -329,9 +329,6 @@ const MIN_FRAME_SIZE = 40;
 const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
-
-/** The platform's own double-click window, which is what makes a press the second of two (#323). */
-const DOUBLE_CLICK_MS = 500;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
 /** how far each fresh copy steps off the frame it was made from (#229) */
@@ -747,11 +744,9 @@ export function ProjectCanvas({
 	>(() => {});
 	// a press on the element already held, acted on at pointer-up (#255)
 	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
-	/** where and when the last press landed, which is how a double-click is known here (#323) */
-	const lastPress = useRef<{ x: number; y: number; at: number; says: string } | null>(null);
 	/** the descent waiting on a frame, and the double-clicks queued behind it (#323) */
-	const descending = useRef<{ frame: string; local: Point; queued: number } | null>(null);
-	const descendAtRef = useRef<(frame: string, local: Point, from?: LadderScope | null) => void>(() => {});
+	const descending = useRef<{ frame: string; at: Point; local: Point; queued: number } | null>(null);
+	const descendAtRef = useRef<(frame: string, local: Point, from?: LadderScope | null, at?: Point) => void>(() => {});
 	const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	/**
@@ -2282,7 +2277,9 @@ export function ProjectCanvas({
 					amend(history.current, way, {
 						...entry,
 						patch: reverted.undo,
-						...(classes === undefined ? {} : { classes: { ...classes, from: classes.to, to: classes.from } }),
+						...(classes === undefined
+							? {}
+							: { classes: classes.map((one) => ({ ...one, from: one.to, to: one.from })) }),
 					}),
 				);
 				const kept = landed(entry.frame, entry.readAt, reverted);
@@ -2302,12 +2299,20 @@ export function ProjectCanvas({
 					return;
 				}
 				if (!kept) return;
-				const change = {
-					was: classes.from,
-					now: classes.to,
-					...(reverted.css === undefined ? {} : { css: reverted.css }),
-				};
-				swapClass(entry.frame, classes.selector, change, held);
+				// one step can be about several elements (#323): each one's literal
+				// is swapped back, and the ring goes on the whole selection once
+				let left = classes.length;
+				for (const one of classes) {
+					const change = {
+						was: one.from,
+						now: one.to,
+						...(reverted.css === undefined ? {} : { css: reverted.css }),
+					};
+					swapClass(entry.frame, one.selector, change, (ok) => {
+						left -= 1;
+						if (left === 0) held(ok);
+					});
+				}
 			});
 		},
 		[
@@ -2402,8 +2407,6 @@ export function ProjectCanvas({
 
 	const cancelPicks = useCallback(() => {
 		pickGen.current++;
-		// a descent waiting on a frame is one of the asks just voided (#323)
-		descending.current = null;
 		// the hover's own ask is one of the ones just voided, and its reply is
 		// what would have cleared this. Left standing it latches the rings — and
 		// the measurement (#261) — off for the rest of the session.
@@ -2438,6 +2441,8 @@ export function ProjectCanvas({
 			request: (id: number) => unknown,
 			apply: (value: T) => void,
 			onSilence?: () => void,
+			/** whether this ask still stands, where the pick generation is not what says so */
+			alive?: () => boolean,
 		) => {
 			const target = iframes.current.get(frame)?.contentWindow;
 			if (target == null) {
@@ -2446,12 +2451,16 @@ export function ProjectCanvas({
 			}
 			const id = ++pickSeq.current;
 			const gen = pickGen.current;
+			// a descent is the one ask a press does not void (#323): its own
+			// double-click is what those presses are, and cancelling it there is
+			// what left the ladder where it was on a frame slow to answer
+			const live = alive ?? (() => pickGen.current === gen);
 			waiters.set(id, (value) => {
-				if (pickGen.current === gen) apply(value);
+				if (live()) apply(value);
 			});
 			target.postMessage(request(id), "*");
 			setTimeout(() => {
-				if (waiters.delete(id) && pickGen.current === gen) onSilence?.();
+				if (waiters.delete(id) && live()) onSilence?.();
 			}, PICK_REPLY_MS);
 		},
 		[],
@@ -2464,8 +2473,9 @@ export function ProjectCanvas({
 			request: (id: number) => unknown,
 			apply: (chain: PickedHit[]) => void,
 			onSilence?: () => void,
+			alive?: () => boolean,
 		) => {
-			askFrame(frame, pickWaiters.current, request, apply, onSilence);
+			askFrame(frame, pickWaiters.current, request, apply, onSilence, alive);
 		},
 		[askFrame],
 	);
@@ -2479,8 +2489,15 @@ export function ProjectCanvas({
 	 * asks for a chain many times a second and draws none of it, so it does not.
 	 */
 	const beginPick = useCallback(
-		(frame: string, local: Point, apply: (chain: PickedHit[]) => void, onSilence?: () => void, selects = true) => {
-			askChain(frame, (id) => pickMessage(local.x, local.y, id, selects), apply, onSilence);
+		(
+			frame: string,
+			local: Point,
+			apply: (chain: PickedHit[]) => void,
+			onSilence?: () => void,
+			selects = true,
+			alive?: () => boolean,
+		) => {
+			askChain(frame, (id) => pickMessage(local.x, local.y, id, selects), apply, onSilence, alive);
 		},
 		[askChain],
 	);
@@ -2563,9 +2580,15 @@ export function ProjectCanvas({
 	const applyPick = useCallback(
 		(frame: string, chain: PickedHit[], hit: PickedHit | undefined) => {
 			if (hit === undefined) return; // frame background: the frame stays the selection
+			const held = [{ frame, ...hit }];
 			holdChain({ frame, chain });
 			setSelected([]);
-			setPicked([{ frame, ...hit }]);
+			setPicked(held);
+			// The ladder reads where it stands off this ref, and the next rung of a
+			// walk is often decided before React has committed the last one — a
+			// second double-click arriving on the heels of the first (#323). The
+			// chain beside it is already written here and now for the same reason.
+			pickedRef.current = held;
 		},
 		[holdChain],
 	);
@@ -2653,7 +2676,7 @@ export function ProjectCanvas({
 	 * higher rather than somewhere wrong.
 	 */
 	const descendAt = useCallback(
-		(frame: string, local: Point, from?: LadderScope | null) => {
+		(frame: string, local: Point, from?: LadderScope | null, at?: Point) => {
 			// A descent already waiting on the frame is not voided by the one
 			// behind it (#323): it is the rung this one has to start from, and
 			// the frame is the only one who knows which rung that is. So the
@@ -2669,12 +2692,12 @@ export function ProjectCanvas({
 			const scope = from === undefined ? scopeIn(frame) : from;
 			const box = frameBox(frame);
 			cancelPicks();
-			const held = { frame, local, queued: 0 };
+			const held = { frame, at: at ?? local, local, queued: 0 };
 			descending.current = held;
 			const drain = (next: LadderScope | null) => {
 				if (descending.current !== held) return;
 				descending.current = null;
-				if (held.queued > 0) descendAtRef.current(frame, held.local, next);
+				if (held.queued > 0) descendAtRef.current(frame, held.local, next, held.at);
 			};
 			beginPick(
 				frame,
@@ -2714,6 +2737,10 @@ export function ProjectCanvas({
 				() => {
 					if (descending.current === held) descending.current = null;
 				},
+				true,
+				// the presses of its own double-click void every other ask; this
+				// one stands until it answers or the pointer goes somewhere else
+				() => descending.current === held,
 			);
 		},
 		[beginPick, applyPick, cancelPicks, frameBox, scopeIn],
@@ -3083,9 +3110,13 @@ export function ProjectCanvas({
 	 * file it points at, and the door to the agent.
 	 */
 	const commitClass = useCallback(
-		(pick: PickedSelection, values: readonly PropertyValue[]) => {
+		(picks: readonly PickedSelection[], values: readonly PropertyValue[]) => {
+			const pick = picks[0];
+			if (pick === undefined) return;
 			const stamp = stampOf(pick);
-			const lift = () => previewStyle(pick.frame, pick.selector, null);
+			const lift = () => {
+				for (const held of picks) previewStyle(held.frame, held.selector, null);
+			};
 			const edits = values.flatMap(classEditsOf);
 			const attempted = edits.map((edit) => `${edit.remove ? "-" : "+"}${edit.scope}${edit.token}`).join(" ");
 			const refuse = (refusal: Refusal) => {
@@ -3113,7 +3144,22 @@ export function ProjectCanvas({
 				lift();
 				return;
 			}
+			// the same tokens go to every element held, as one write: one file,
+			// one fingerprint, one span and one press of undo (#323)
+			const stamps: string[] = [];
+			for (const held of picks) {
+				const one = stampOf(held);
+				if (typeof one !== "string") {
+					refuse(one);
+					return;
+				}
+				stamps.push(one);
+			}
 			const file = stamp.replace(/:\d+:\d+$/, "");
+			if (stamps.some((one) => one.replace(/:\d+:\d+$/, "") !== file)) {
+				refuse({ code: "spread", says: "these are written in different files; change them one at a time" });
+				return;
+			}
 			const own = saved.current.get(pick.frame);
 			const read = ringRef.current.read;
 			const fingerprint =
@@ -3121,7 +3167,9 @@ export function ProjectCanvas({
 					? own.fingerprint
 					: read?.source === stamp
 						? read.fingerprint
-						: undefined;
+						: // a multi-pick has no one rung for the ring to have read, so the
+							// file is found among the rungs the rail did read (#323)
+							fingerprintFor(pick.frame, stamp);
 			if (fingerprint === undefined) {
 				refuse({ code: "unread", says: "the file was never read; select the element again" });
 				return;
@@ -3129,7 +3177,7 @@ export function ProjectCanvas({
 			// a shared definition's readers are held before the write leaves (#318)
 			const readers = read?.source === stamp ? (read.shared?.frames ?? []) : [];
 			holdReaders(pick.frame, readers);
-			void writeClass(project, pick.frame, { source: stamp, edits, fingerprint }).then((written) => {
+			void writeClass(project, pick.frame, { sources: stamps, edits, fingerprint }).then((written) => {
 				const ok = written?.ok === true ? written : undefined;
 				settled(written, {
 					frame: pick.frame,
@@ -3143,11 +3191,12 @@ export function ProjectCanvas({
 						? {}
 						: {
 								entry: {
-									classes: {
-										selector: pick.selector,
-										from: ok.className.now,
-										to: ok.className.was,
-									},
+									classes: ok.classNames.map((change, index) => ({
+										selector: picks[index]?.selector ?? pick.selector,
+										from: change.now,
+										to: change.was,
+									})),
+									...(picks.length === 1 ? {} : { picks: picks.map((held) => held.selector) }),
 								},
 							}),
 					nothing: lift,
@@ -3156,33 +3205,40 @@ export function ProjectCanvas({
 							drawOnce();
 							return;
 						}
-						const change = { ...ok.className, ...(ok.css === undefined ? {} : { css: ok.css }) };
-						swapClass(pick.frame, pick.selector, change, (landedOn) => {
-							// the class is on: one more tick to draw it, then the hold
-							drawOnce();
-							if (landedOn) {
-								// the class this wrote is a size, a gap or a turn as often
-								// as not, so the box the ring is drawn round moved with it
-								// — the same re-read the words get when an edit ends (#321)
-								if (
-									pickedRef.current.some(
-										(held) => held.frame === pick.frame && held.selector === pick.selector,
-									)
-								) {
-									walkKin(pick.frame, pick.selector, "self");
+						let left = ok.classNames.length;
+						for (const [index, change] of ok.classNames.entries()) {
+							const held = picks[index] ?? pick;
+							const swap = { ...change, ...(ok.css === undefined ? {} : { css: ok.css }) };
+							swapClass(pick.frame, held.selector, swap, (landedOn) => {
+								// the class is on: one more tick to draw it, then the hold
+								drawOnce();
+								left -= 1;
+								if (landedOn) {
+									// the class this wrote is a size, a gap or a turn as often
+									// as not, so the box the ring is drawn round moved with it
+									// — the same re-read the words get when an edit ends (#321)
+									if (
+										left === 0 &&
+										picks.length === 1 &&
+										pickedRef.current.some(
+											(one) => one.frame === pick.frame && one.selector === held.selector,
+										)
+									) {
+										walkKin(pick.frame, held.selector, "self");
+									}
+									return;
 								}
-								return;
-							}
-							if (!saved.current.has(pick.frame)) return;
-							saved.current.delete(pick.frame);
-							holdNext.current.add(pick.frame);
-							reloadFrameDocument(pick.frame);
-						});
+								if (!saved.current.has(pick.frame)) return;
+								saved.current.delete(pick.frame);
+								holdNext.current.add(pick.frame);
+								reloadFrameDocument(pick.frame);
+							});
+						}
 					},
 				});
 			});
 		},
-		[drawOnce, holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass, walkKin],
+		[drawOnce, fingerprintFor, holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass, walkKin],
 	);
 
 	/**
@@ -3193,9 +3249,14 @@ export function ProjectCanvas({
 	 * without a gesture.
 	 */
 	const propertyControls = useMemo<PropertyControls | null>(() => {
-		const pick = picked.length === 1 ? picked[0] : undefined;
-		if (pick === undefined || typeof stampOf(pick) !== "string") return null;
-		const { frame, selector } = pick;
+		const pick = picked[0];
+		if (pick === undefined || picked.some((held) => typeof stampOf(held) !== "string")) return null;
+		// a multi-pick previews on every element it holds and writes to all of
+		// them in one go (#323); a selection spread over two frames has no one
+		// write to be, and the lane says so when the gesture ends
+		const onEach = (declarations: Readonly<Record<string, string | null>> | null) => {
+			for (const held of picked) previewStyle(held.frame, held.selector, declarations);
+		};
 		return {
 			begin: (property) => {
 				propertyGesture.current = { property, last: null };
@@ -3205,24 +3266,24 @@ export function ProjectCanvas({
 				gesture.last = value;
 				propertyGesture.current = gesture;
 				const css = sample ?? (value.kind === "custom" ? value.value : value.kind === "remove" ? "" : undefined);
-				if (css !== undefined) previewStyle(frame, selector, { [property]: css });
+				if (css !== undefined) onEach({ [property]: css });
 			},
 			apply: (_property, value) => {
 				propertyGesture.current = null;
-				commitClass(pick, [value]);
+				commitClass(picked, [value]);
 			},
 			applyFields: (changes) => {
 				propertyGesture.current = null;
 				commitClass(
-					pick,
+					picked,
 					changes.map((change) => change.value),
 				);
 			},
 			finish: (commit) => {
 				const held = propertyGesture.current;
 				propertyGesture.current = null;
-				if (commit && held?.last != null) commitClass(pick, [held.last]);
-				else previewStyle(frame, selector, null);
+				if (commit && held?.last != null) commitClass(picked, [held.last]);
+				else onEach(null);
 			},
 		};
 	}, [commitClass, picked, previewStyle]);
@@ -4601,36 +4662,14 @@ export function ProjectCanvas({
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
 		const p = localPoint(event);
-		/**
-		 * Whether this press is the second half of a double-click (#323).
-		 *
-		 * `PointerEvent.detail` is 0, so the count is kept here on the browser's
-		 * own terms: a press within the platform's double-click window of the
-		 * last one and within a few pixels of it is one the `dblclick` that
-		 * follows owns. Its meaning is the descent, and voiding the asks in
-		 * flight here is what threw that descent's answer away — on any page
-		 * whose frame had not answered yet, which is every heavy one.
-		 */
-		const was = lastPress.current;
-		const press = {
-			x: p.x,
-			y: p.y,
-			at: event.timeStamp,
-			// the browser counts a double-click by button and by nothing else
-			// having changed: a ⌘-click and a plain click at one spot are two
-			// clicks, not one double
-			says: `${event.button}${event.shiftKey}${event.altKey}${event.metaKey}${event.ctrlKey}`,
-		};
-		lastPress.current = press;
-		const doubling =
-			was !== null &&
-			was.says === press.says &&
-			press.at - was.at < DOUBLE_CLICK_MS &&
-			Math.abs(p.x - was.x) < 4 &&
-			Math.abs(p.y - was.y) < 4;
-		// a new press voids earlier picks; its own start a fresh generation
-		if (doubling) hoverBusy.current = false;
-		else cancelPicks();
+		// A descent waiting on a frame belongs to the double-click whose own
+		// presses these are, and those land on the very point it was made at
+		// (#323). A press anywhere else is a different gesture and abandons it.
+		const flight = descending.current;
+		if (flight !== null && (Math.abs(flight.at.x - p.x) > 4 || Math.abs(flight.at.y - p.y) > 4)) {
+			descending.current = null;
+		}
+		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		pressOnHeld.current = null;
 		// a press out on the field is the click-away that commits an open edit
@@ -4822,9 +4861,7 @@ export function ProjectCanvas({
 				// a press on the element that was already held is the second click
 				// the text gesture is (#255) — noted here and acted on at pointer-up,
 				// because until then it may yet turn out to be a drag of the frame
-				// the descent the following `dblclick` runs is what a doubling press
-				// means, and it asks the frame itself (#323)
-				if (local !== null && !doubling) {
+				if (local !== null) {
 					const again = secondClick(pickedRef.current, hit, local);
 					pressOnHeld.current = again === undefined ? null : { pick: again, local };
 					scopedSelectAt(hit, local);
@@ -5343,7 +5380,7 @@ export function ProjectCanvas({
 				held.writes,
 			);
 			commitClass(
-				active.pick,
+				[active.pick],
 				fields.map((field) => field.value),
 			);
 			return;
@@ -5353,7 +5390,7 @@ export function ProjectCanvas({
 				lift();
 				return;
 			}
-			commitClass(active.pick, [turnValue(active.live, active.base)]);
+			commitClass([active.pick], [turnValue(active.live, active.base)]);
 			return;
 		}
 		const live = active.live;
@@ -5362,7 +5399,7 @@ export function ProjectCanvas({
 			return;
 		}
 		const at = { scoped: scopedClass(ringRef.current.className, BASE), theme: ringRef.current.theme };
-		commitClass(active.pick, [gapField(active.axis, live, at)]);
+		commitClass([active.pick], [gapField(active.axis, live, at)]);
 	};
 
 	const onPointerUp = () => {

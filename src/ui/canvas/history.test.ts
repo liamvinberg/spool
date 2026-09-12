@@ -459,7 +459,7 @@ describe("class entries", () => {
 		edit: 9,
 		patch: { path: "design/frames/home/frame.tsx", start: 300, end: 305, text: "990", fingerprint: "a" },
 		readAt: "frames/home/frame.tsx:8:5",
-		classes: { selector: "div.veil-art", from: "veil-art w-[700px]", to: "veil-art w-[990px]" },
+		classes: [{ selector: "div.veil-art", from: "veil-art w-[700px]", to: "veil-art w-[990px]" }],
 	};
 
 	it("runs while the frame is there, and is amended with the inverse and the literals the other way round", () => {
@@ -470,7 +470,7 @@ describe("class entries", () => {
 		const back = {
 			...changed,
 			patch: { ...changed.patch, text: "700", fingerprint: "b" },
-			classes: { ...changed.classes, from: changed.classes.to, to: changed.classes.from },
+			classes: changed.classes.map((one) => ({ ...one, from: one.to, to: one.from })),
 		};
 		const amended = amend(undone?.history ?? history, "undo", back);
 		expect(takeRedo(amended, alive("home"))?.entry).toEqual(back);
