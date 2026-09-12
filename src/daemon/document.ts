@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { COVER_DEVICE_SCALE, COVER_QUALITY, LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
+import { collapsedWords } from "./edit-words";
 import { PROJECT_LAYER } from "./tailwind";
 
 /**
@@ -1590,6 +1591,56 @@ const canvasShimJs = `(() => {
 		for (const key of held.keys()) { if (held.size <= EDITS_HELD) break; held.delete(key); }
 	}
 
+	// The properties an open edit must not be allowed to decide (#324).
+	//
+	// Chromium's rule for [contenteditable] hands the element break-word
+	// wrapping, pre-wrap whitespace and a focus outline drawn round whatever
+	// that reflow produced. The element's box is the thing the ring, the
+	// handles and the rail are all measuring, so it is pinned at the values it
+	// was already drawn with and let go again when the edit ends.
+	var EDIT_PINNED = ["overflow-wrap", "word-break", "line-break", "white-space", "outline"];
+
+	function pinLayout(el) {
+		const style = getComputedStyle(el);
+		const held = [];
+		for (let i = 0; i < EDIT_PINNED.length; i++) {
+			const name = EDIT_PINNED[i];
+			held.push({ name: name, value: el.style.getPropertyValue(name), priority: el.style.getPropertyPriority(name) });
+			el.style.setProperty(name, style.getPropertyValue(name), "important");
+		}
+		return held;
+	}
+
+	function unpinLayout(el, held) {
+		if (!held) return;
+		for (let i = 0; i < held.length; i++) {
+			const one = held[i];
+			if (one.value === "") el.style.removeProperty(one.name);
+			else el.style.setProperty(one.name, one.value, one.priority);
+		}
+	}
+
+	// every text node under the element, in document order
+	function textNodesOf(el) {
+		const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+		const nodes = [];
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+		return nodes;
+	}
+
+	// the collapsing rule itself, written and tested once in daemon/edit-words.ts
+	var collapseWords = ${collapsedWords.toString()};
+
+	// the words the element is already drawing, written back as its own, so the
+	// pre-wrap an open edit forces has no source line break left to draw
+	function settleWords(el) {
+		const nodes = textNodesOf(el);
+		const collapsed = collapseWords(nodes.map(function (node) { return node.nodeValue || ""; }));
+		for (let i = 0; i < nodes.length; i++) {
+			if (nodes[i].nodeValue !== collapsed[i]) nodes[i].nodeValue = collapsed[i];
+		}
+	}
+
 	function beginEdit(selector, x, y, id) {
 		endEdit(false);
 		const frame = (window.__SPOOL__ || {}).frame;
@@ -1598,7 +1649,12 @@ const canvasShimJs = `(() => {
 			parent.postMessage({ spool: "edit-open", frame, id, ok: false, text: "" }, "*");
 			return;
 		}
-		editing = { el, id, composing: false, finish: false, text: wordsOf(nodesOf(el)), before: snapshotOf(el), editable: el.getAttribute("contenteditable"), spellcheck: el.getAttribute("spellcheck") };
+		// the snapshot is of the words the file wrote; the collapse and the pin
+		// are what the caret arrives into, and both come off at the end
+		const before = snapshotOf(el);
+		settleWords(el);
+		const pinned = pinLayout(el);
+		editing = { el, id, composing: false, finish: false, text: wordsOf(nodesOf(el)), before: before, pinned: pinned, editable: el.getAttribute("contenteditable"), spellcheck: el.getAttribute("spellcheck") };
 		el.setAttribute("contenteditable", "plaintext-only");
 		el.setAttribute("spellcheck", "false");
 		try { el.focus({ preventScroll: true }); } catch { try { el.focus(); } catch {} }
@@ -1614,6 +1670,7 @@ const canvasShimJs = `(() => {
 		const el = held.el;
 		if (held.editable === null) el.removeAttribute("contenteditable"); else el.setAttribute("contenteditable", held.editable);
 		if (held.spellcheck === null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", held.spellcheck);
+		unpinLayout(el, held.pinned);
 		try { el.blur(); } catch {}
 		// Esc puts the words back; a commit leaves the typed ones standing, because
 		// the DOM is the preview and the file is about to say the same thing
