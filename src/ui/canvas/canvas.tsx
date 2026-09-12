@@ -329,6 +329,9 @@ const MIN_FRAME_SIZE = 40;
 const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
+
+/** The platform's own double-click window, which is what makes a press the second of two (#323). */
+const DOUBLE_CLICK_MS = 500;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
 /** how far each fresh copy steps off the frame it was made from (#229) */
@@ -744,6 +747,11 @@ export function ProjectCanvas({
 	>(() => {});
 	// a press on the element already held, acted on at pointer-up (#255)
 	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
+	/** where and when the last press landed, which is how a double-click is known here (#323) */
+	const lastPress = useRef<{ x: number; y: number; at: number; says: string } | null>(null);
+	/** the descent waiting on a frame, and the double-clicks queued behind it (#323) */
+	const descending = useRef<{ frame: string; local: Point; queued: number } | null>(null);
+	const descendAtRef = useRef<(frame: string, local: Point, from?: LadderScope | null) => void>(() => {});
 	const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	/**
@@ -2386,6 +2394,8 @@ export function ProjectCanvas({
 
 	const cancelPicks = useCallback(() => {
 		pickGen.current++;
+		// a descent waiting on a frame is one of the asks just voided (#323)
+		descending.current = null;
 		// the hover's own ask is one of the ones just voided, and its reply is
 		// what would have cleared this. Left standing it latches the rings — and
 		// the measurement (#261) — off for the rest of the session.
@@ -2635,35 +2645,72 @@ export function ProjectCanvas({
 	 * higher rather than somewhere wrong.
 	 */
 	const descendAt = useCallback(
-		(frame: string, local: Point) => {
-			const scope = scopeIn(frame);
+		(frame: string, local: Point, from?: LadderScope | null) => {
+			// A descent already waiting on the frame is not voided by the one
+			// behind it (#323): it is the rung this one has to start from, and
+			// the frame is the only one who knows which rung that is. So the
+			// second double-click queues, and the answer to the first runs it.
+			// Cancelling instead is what left the ladder where it was and what
+			// made a paragraph on a heavy page impossible to open by clicking.
+			const flight = descending.current;
+			if (from === undefined && flight !== null && flight.frame === frame) {
+				flight.local = local;
+				flight.queued += 1;
+				return;
+			}
+			const scope = from === undefined ? scopeIn(frame) : from;
 			const box = frameBox(frame);
 			cancelPicks();
-			beginPick(frame, local, (chain) => {
-				const target = oneDown(chain, scope, box);
-				if (target !== undefined) {
+			const held = { frame, local, queued: 0 };
+			descending.current = held;
+			const drain = (next: LadderScope | null) => {
+				if (descending.current !== held) return;
+				descending.current = null;
+				if (held.queued > 0) descendAtRef.current(frame, held.local, next);
+			};
+			beginPick(
+				frame,
+				local,
+				(chain) => {
+					const target = oneDown(chain, scope, box);
+					if (target !== undefined) {
+						endEditRef.current(false);
+						applyPick(frame, chain, target);
+						drain({ chain, selector: target.selector });
+						return;
+					}
+					// No rung under this one: the two clicks meant the words (#254,
+					// #255). What they meant them on is the rung the pointer landed
+					// in at the held depth, which on overlapping text boxes is not
+					// always what was held — the slow second click opens the edit on
+					// the held element, and this is where that is put right (#321).
+					const words = atRung(chain, scope, box);
+					// frame background, or a container with no words in it: two clicks
+					// there mean neither a rung nor a caret
+					if (words === undefined || words.words !== true) {
+						drain(scope);
+						return;
+					}
+					const open = editingRef.current;
+					if (open?.frame === frame && open.selector === words.selector) {
+						drain(null);
+						return;
+					}
 					endEditRef.current(false);
-					applyPick(frame, chain, target);
-					return;
-				}
-				// No rung under this one: the two clicks meant the words (#254,
-				// #255). What they meant them on is the rung the pointer landed
-				// in at the held depth, which on overlapping text boxes is not
-				// always what was held — the slow second click opens the edit on
-				// the held element, and this is where that is put right (#321).
-				const words = atRung(chain, scope, box);
-				// frame background, or a container with no words in it: two clicks
-				// there mean neither a rung nor a caret
-				if (words === undefined || words.words !== true) return;
-				const open = editingRef.current;
-				if (open?.frame === frame && open.selector === words.selector) return;
-				endEditRef.current(false);
-				applyPick(frame, chain, words);
-				beginTextEditRef.current({ frame, ...words }, local);
-			});
+					applyPick(frame, chain, words);
+					beginTextEditRef.current({ frame, ...words }, local);
+					// the words are open: a double-click behind this one has
+					// nothing left to descend to
+					descending.current = null;
+				},
+				() => {
+					if (descending.current === held) descending.current = null;
+				},
+			);
 		},
 		[beginPick, applyPick, cancelPicks, frameBox, scopeIn],
 	);
+	descendAtRef.current = descendAt;
 
 	/**
 	 * The keyboard's own rung (#254): kinship instead of position. An empty
@@ -2866,6 +2913,30 @@ export function ProjectCanvas({
 		[setEdit, showRefusal],
 	);
 	beginTextEditRef.current = beginTextEdit;
+
+	/**
+	 * The words of the rung held, opened from the keyboard (#323).
+	 *
+	 * The pointer's way into an element's words is a click on one already held,
+	 * which needs the frame to have answered the pick and the press to land in
+	 * the box it drew. Neither holds often enough on a page heavy enough to be
+	 * worth editing — a descent whose answer had not landed took the press that
+	 * was meant to open the words — so the held rung gets a door that hit-tests
+	 * nothing. `beginTextEdit` wants a frame-local point and the shim's
+	 * `caretAt` falls back to the whole of the words where one resolves to
+	 * nothing, so the middle of the drawn box is a caret that always lands.
+	 *
+	 * It says whether it had anything to open, which is what lets ⏎ go on
+	 * meaning everything else it means when it did not.
+	 */
+	const openWords = useCallback((): boolean => {
+		if (enteredRef.current !== null || editingRef.current !== null) return false;
+		const only = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
+		if (only === undefined || only.words !== true) return false;
+		const { x, y, w, h } = only.rect;
+		beginTextEdit(only, { x: x + w / 2, y: y + h / 2 });
+		return true;
+	}, [beginTextEdit]);
 
 	/**
 	 * The edit has ended (#314). The frame already shows the words, so the
@@ -4438,9 +4509,38 @@ export function ProjectCanvas({
 		setMenu(null);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
-		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
-		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		const p = localPoint(event);
+		/**
+		 * Whether this press is the second half of a double-click (#323).
+		 *
+		 * `PointerEvent.detail` is 0, so the count is kept here on the browser's
+		 * own terms: a press within the platform's double-click window of the
+		 * last one and within a few pixels of it is one the `dblclick` that
+		 * follows owns. Its meaning is the descent, and voiding the asks in
+		 * flight here is what threw that descent's answer away — on any page
+		 * whose frame had not answered yet, which is every heavy one.
+		 */
+		const was = lastPress.current;
+		const press = {
+			x: p.x,
+			y: p.y,
+			at: event.timeStamp,
+			// the browser counts a double-click by button and by nothing else
+			// having changed: a ⌘-click and a plain click at one spot are two
+			// clicks, not one double
+			says: `${event.button}${event.shiftKey}${event.altKey}${event.metaKey}${event.ctrlKey}`,
+		};
+		lastPress.current = press;
+		const doubling =
+			was !== null &&
+			was.says === press.says &&
+			press.at - was.at < DOUBLE_CLICK_MS &&
+			Math.abs(p.x - was.x) < 4 &&
+			Math.abs(p.y - was.y) < 4;
+		// a new press voids earlier picks; its own start a fresh generation
+		if (doubling) hoverBusy.current = false;
+		else cancelPicks();
+		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		pressOnHeld.current = null;
 		// a press out on the field is the click-away that commits an open edit
 		// (#255). While the frame's pointer is still out here, a press over it
@@ -4631,7 +4731,9 @@ export function ProjectCanvas({
 				// a press on the element that was already held is the second click
 				// the text gesture is (#255) — noted here and acted on at pointer-up,
 				// because until then it may yet turn out to be a drag of the frame
-				if (local !== null) {
+				// the descent the following `dblclick` runs is what a doubling press
+				// means, and it asks the frame itself (#323)
+				if (local !== null && !doubling) {
 					const again = secondClick(pickedRef.current, hit, local);
 					pressOnHeld.current = again === undefined ? null : { pick: again, local };
 					scopedSelectAt(hit, local);
@@ -5533,10 +5635,27 @@ export function ProjectCanvas({
 					animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
 				}
 			},
+			/**
+			 * The words of the rung held, from the keyboard (#323).
+			 *
+			 * The pointer's way in is a click on what is already held, which
+			 * depends on the frame answering a pick and on the press landing in
+			 * the box it drew. Neither is true often enough on a page heavy
+			 * enough to be worth editing, so the rung that is held has a door of
+			 * its own: F2, the rename key the sidebar already uses, and ⏎, which
+			 * `canvas.enter` hands over below before it means anything else.
+			 */
+			"canvas.words": () => openWords(),
 			// ⏎ goes inside, from the frame or from a rung within it; the ladder's
 			// own descent is ⌘⏎, and the climb ⇧⏎ (#254). In Edit ⏎ is that
 			// descent itself, because that tool has no way inside at all (#321)
 			"canvas.enter": (event) => {
+				// a rung with words of its own is what ⏎ means before anything
+				// else: the rename idiom, on the element rather than on a row
+				if (openWords()) {
+					event?.preventDefault();
+					return;
+				}
 				if (toolRef.current === "edit") {
 					if (enteredRef.current !== null) return;
 					event?.preventDefault();
@@ -5664,6 +5783,7 @@ export function ProjectCanvas({
 		descendKey,
 		climbRung,
 		walkSibling,
+		openWords,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------

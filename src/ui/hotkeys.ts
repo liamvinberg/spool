@@ -207,6 +207,20 @@ export const HOTKEYS = [
 		label: "Select the next element, or the one before",
 		keys: ["tab", "shift+tab"],
 	},
+	// The words of the rung held (#323). The pointer's way in is a click on what
+	// is already held; this one hit-tests nothing, which is what makes it work
+	// on a page the pointer path cannot be trusted on. F2 is the sidebar's own
+	// rename key; ⏎ is handed over by `canvas.enter` before it means anything
+	// else, so the face says both.
+	{
+		id: "canvas.words",
+		scope: "canvas",
+		group: "Selection",
+		label: "Edit the words of the element held",
+		keys: ["f2"],
+		shown: ["⏎", "F2"],
+		repeats: false,
+	},
 	{ id: "canvas.accel-hold", scope: "canvas", group: "Selection", label: "", keys: ["accel"], listed: false },
 	// the measurement overlay (#261): ⌥ is held, the pointer names a sibling,
 	// and the canvas draws what the distance between them is made of
