@@ -57,6 +57,23 @@ export interface HoverRungs {
 	spacing?: MeasuredSpacing;
 }
 
+/**
+ * How far past its element the ring's furniture reaches, in screen pixels
+ * (#324).
+ *
+ * The overlay is clipped to the frame, which is what keeps a ring on an
+ * element laid out below the frame's height from landing out on the canvas.
+ * Sized exactly to the frame it also cut the ring itself off an element flush
+ * with the frame's edge: the outline sits 2px out and the rotate zones 22px
+ * beyond the corners, so that element lost its line and its whole handle
+ * column on that side. The clip box is padded by the reach instead and its
+ * contents offset back by it, so the furniture has room and content far
+ * outside the frame is still clipped. `ClippedEdges` goes on measuring against
+ * the frame box, so its bar still means the element runs past the frame rather
+ * than that the ring touched the padding.
+ */
+const HANDLE_REACH = 24;
+
 /** A decomposed distance, and the frame whose pixels it is in. */
 export interface MeasuredSpacing extends Spacing {
 	frame: string;
@@ -414,70 +431,80 @@ export function SelectionOverlay({
 						key={`picked-${name}`}
 						data-frame-clip={name}
 						className="absolute overflow-hidden"
-						style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+						style={{
+							left: rect.x - HANDLE_REACH,
+							top: rect.y - HANDLE_REACH,
+							width: rect.w + HANDLE_REACH * 2,
+							height: rect.h + HANDLE_REACH * 2,
+						}}
 					>
-						{drawn.flatMap(({ pick, rects }) => {
-							const key = pickKey(pick.frame, pick.selector);
-							return rects.map((box) => (
-								<ElementOutline
-									key={`${key}\u0000${box.y}\u0000${box.x}`}
-									mark
-									box={localBox(box)}
-									radius={pick.radius * k}
-									lit={lit === key || lit === WHOLE_SELECTION}
+						<div
+							className="absolute"
+							style={{ left: HANDLE_REACH, top: HANDLE_REACH, width: rect.w, height: rect.h }}
+						>
+							{drawn.flatMap(({ pick, rects }) => {
+								const key = pickKey(pick.frame, pick.selector);
+								return rects.map((box) => (
+									<ElementOutline
+										key={`${key}\u0000${box.y}\u0000${box.x}`}
+										mark
+										box={localBox(box)}
+										radius={pick.radius * k}
+										lit={lit === key || lit === WHOLE_SELECTION}
+									/>
+								));
+							})}
+							{group.flatMap((pick) =>
+								(pick.spills ?? []).map((side) => (
+									<SpillMark
+										key={`${pickKey(pick.frame, pick.selector)}\u0000${side}`}
+										box={localBox(pick.rect)}
+										side={side}
+									/>
+								)),
+							)}
+							{own === null
+								? null
+								: (() => {
+										const box = localBox(own.rect);
+										// the ring the outline draws: 2px out, which is where a handle sits
+										const ring = { x: box.x - 2, y: box.y - 2, w: box.w + 4, h: box.h + 4 };
+										return <ElementHandleSet box={box} ring={ring} handles={own} />;
+									})()}
+							{own === null || own.gaps.axis === null
+								? null
+								: own.gaps.bands.map((band, index) => {
+										const axis = own.gaps.axis;
+										if (axis === null) return null;
+										return (
+											<GapBandTarget
+												// biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity, naming one adjacent pair for the whole of one drag
+												key={`gap-${index}`}
+												index={index}
+												box={localBox(band)}
+												axis={axis}
+												held={own.gaps.held === index}
+												says={own.gaps.held === index ? own.gaps.says : null}
+											/>
+										);
+									})}
+							{group.length < 2 ? null : (
+								// what several held elements are, as one box (#323): the ring
+								// says the extent of the selection, and wears no handle,
+								// because a corner on a union would size boxes the file has
+								// nothing in common to write for
+								<div
+									data-element-union=""
+									className="absolute border border-thread border-dashed opacity-60"
+									style={(() => {
+										const union = unionOf(drawn.flatMap((one) => one.rects));
+										const box = localBox(union);
+										return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
+									})()}
 								/>
-							));
-						})}
-						{group.flatMap((pick) =>
-							(pick.spills ?? []).map((side) => (
-								<SpillMark
-									key={`${pickKey(pick.frame, pick.selector)}\u0000${side}`}
-									box={localBox(pick.rect)}
-									side={side}
-								/>
-							)),
-						)}
-						{own === null
-							? null
-							: (() => {
-									const box = localBox(own.rect);
-									// the ring the outline draws: 2px out, which is where a handle sits
-									const ring = { x: box.x - 2, y: box.y - 2, w: box.w + 4, h: box.h + 4 };
-									return <ElementHandleSet box={box} ring={ring} handles={own} />;
-								})()}
-						{own === null || own.gaps.axis === null
-							? null
-							: own.gaps.bands.map((band, index) => {
-									const axis = own.gaps.axis;
-									if (axis === null) return null;
-									return (
-										<GapBandTarget
-											// biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity, naming one adjacent pair for the whole of one drag
-											key={`gap-${index}`}
-											index={index}
-											box={localBox(band)}
-											axis={axis}
-											held={own.gaps.held === index}
-											says={own.gaps.held === index ? own.gaps.says : null}
-										/>
-									);
-								})}
-						{group.length < 2 ? null : (
-							// what several held elements are, as one box (#323): the ring
-							// says the extent of the selection, and wears no handle,
-							// because a corner on a union would size boxes the file has
-							// nothing in common to write for
-							<div
-								data-element-union=""
-								className="absolute border border-thread border-dashed opacity-60"
-								style={(() => {
-									const union = unionOf(drawn.flatMap((one) => one.rects));
-									const box = localBox(union);
-									return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
-								})()}
-							/>
-						)}
-						<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
+							)}
+							<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
+						</div>
 					</div>
 				);
 			})}
@@ -492,17 +519,27 @@ export function SelectionOverlay({
 					<div
 						key={dashed ? "hover-under" : "hover-click"}
 						className="absolute overflow-hidden"
-						style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+						style={{
+							left: rect.x - HANDLE_REACH,
+							top: rect.y - HANDLE_REACH,
+							width: rect.w + HANDLE_REACH * 2,
+							height: rect.h + HANDLE_REACH * 2,
+						}}
 					>
-						{lineBoxes(shown).map((box) => (
-							<ElementOutline
-								key={`${box.y}-${box.x}`}
-								box={localBox(box)}
-								radius={shown.radius * k}
-								faded
-								{...(dashed ? { dashed: true } : {})}
-							/>
-						))}
+						<div
+							className="absolute"
+							style={{ left: HANDLE_REACH, top: HANDLE_REACH, width: rect.w, height: rect.h }}
+						>
+							{lineBoxes(shown).map((box) => (
+								<ElementOutline
+									key={`${box.y}-${box.x}`}
+									box={localBox(box)}
+									radius={shown.radius * k}
+									faded
+									{...(dashed ? { dashed: true } : {})}
+								/>
+							))}
+						</div>
 					</div>
 				);
 			})}
