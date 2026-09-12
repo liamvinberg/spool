@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { COVER_DEVICE_SCALE, COVER_QUALITY, LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
+import { PROJECT_LAYER } from "./tailwind";
 
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
@@ -322,6 +323,72 @@ export function captureWorkerDocument(controlOrigin: string): string {
 <body><canvas></canvas><script>${escapedCaptureWorkerJs}</script></body></html>`;
 }
 
+/**
+ * The project's own stylesheets, in the layer the cascade puts under Tailwind
+ * (#323).
+ *
+ * The frame bundle's CSS is whatever the frame imported, verbatim and
+ * unlayered — and in the cascade an unlayered declaration beats every layered
+ * one regardless of specificity, so `.company-byline { font-size: 13px }` beat
+ * the `text-[20px]` a hand wrote no matter what. Wrapping the block in the
+ * layer `ROOT_CSS` declares first is the whole fix: the project's sheets sit
+ * under Tailwind's utilities, and a project that already writes `@layer` of
+ * its own keeps its order, nested one level in.
+ *
+ * `@charset` and `@import` may not stand inside a layer block, so whatever the
+ * bundle put at its head stays at the head.
+ */
+export function layeredProjectCss(css: string): string {
+	if (css.trim() === "") return css;
+	let at = 0;
+	while (at < css.length) {
+		const rest = css.slice(at);
+		const blank = /^(?:\s+|\/\*[\s\S]*?\*\/)+/.exec(rest);
+		if (blank !== null) {
+			at += blank[0].length;
+			continue;
+		}
+		if (!/^@(?:charset|import)\b/i.test(rest)) break;
+		const end = statementEnd(css, at);
+		if (end === -1) break;
+		at = end;
+	}
+	const head = css.slice(0, at);
+	const body = css.slice(at);
+	if (body.trim() === "") return css;
+	return `${head}@layer ${PROJECT_LAYER} {\n${body}\n}\n`;
+}
+
+/** Where a top-level at-statement ends: the first `;` outside a string, a comment or brackets. */
+function statementEnd(css: string, from: number): number {
+	let depth = 0;
+	let quote: string | null = null;
+	for (let i = from; i < css.length; i += 1) {
+		const char = css[i];
+		if (quote !== null) {
+			if (char === "\\") i += 1;
+			else if (char === quote) quote = null;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === "/" && css[i + 1] === "*") {
+			const close = css.indexOf("*/", i + 2);
+			if (close === -1) return -1;
+			i = close + 1;
+			continue;
+		}
+		if (char === "(") depth += 1;
+		else if (char === ")") depth -= 1;
+		// a block where a statement was expected is not one: leave it to the layer
+		else if (char === "{" && depth === 0) return -1;
+		else if (char === ";" && depth === 0) return i + 1;
+	}
+	return -1;
+}
+
 export function assembleFrameDocument({
 	project,
 	frame,
@@ -335,7 +402,9 @@ export function assembleFrameDocument({
 }: FrameDocumentParts): string {
 	const fontsBlock = fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`;
 	const bundledBlock =
-		bundledCss === undefined ? "" : `<style id="spool-bundled-css">${escapeInlineStyle(bundledCss)}</style>\n`;
+		bundledCss === undefined
+			? ""
+			: `<style id="spool-bundled-css">${escapeInlineStyle(layeredProjectCss(bundledCss))}</style>\n`;
 	// config and shim ride classic scripts so both exist before any module evaluates.
 	// the height chain is baseline (#10): h-full reaches the frame edge in this
 	// document AND inside the player's screen — one dialect for both contexts

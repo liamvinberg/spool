@@ -5,6 +5,7 @@ import {
 	captureWorkerCsp,
 	captureWorkerDocument,
 	errorDocument,
+	layeredProjectCss,
 	mergeImportMap,
 } from "./document";
 
@@ -115,5 +116,37 @@ describe("mergeImportMap", () => {
 
 	it("rejects a non-object imports field with a speakable error", () => {
 		expect(() => mergeImportMap({ imports: [] }, {})).toThrow(/imports/);
+	});
+});
+
+describe("layeredProjectCss", () => {
+	it("puts the project's own stylesheets in the layer Tailwind's utilities outrank", () => {
+		expect(layeredProjectCss(".byline { font-size: 13px }")).toBe(
+			"@layer project {\n.byline { font-size: 13px }\n}\n",
+		);
+	});
+
+	it("keeps a project's own layers, one level in", () => {
+		const wrapped = layeredProjectCss("@layer base, parts;\n@layer parts { .byline { color: red } }");
+		expect(wrapped).toContain("@layer project {\n@layer base, parts;");
+		expect(wrapped.indexOf("@layer project")).toBe(0);
+	});
+
+	it("leaves a charset and the imports the bundle hoisted at the head", () => {
+		const wrapped = layeredProjectCss('@charset "UTF-8";\n@import url("https://x/y.css");\n.byline { color: red }');
+		expect(wrapped).toBe(
+			'@charset "UTF-8";\n@import url("https://x/y.css");\n@layer project {\n.byline { color: red }\n}\n',
+		);
+	});
+
+	it("layers a sheet that is nothing but imports and comments not at all", () => {
+		const only = '/* head */ @import "./a.css";\n';
+		expect(layeredProjectCss(only)).toBe(only);
+		expect(layeredProjectCss("")).toBe("");
+	});
+
+	it("does not read a rule whose selector holds a semicolon as a statement", () => {
+		const wrapped = layeredProjectCss('@media (min-width: 40px) { .byline { content: ";" } }');
+		expect(wrapped.startsWith("@layer project {\n@media")).toBe(true);
 	});
 });

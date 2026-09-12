@@ -19,7 +19,25 @@ function isWithin(base: string, target: string): boolean {
 	return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
-export const ROOT_CSS = `@import "tailwindcss";
+/**
+ * The layer every project stylesheet the frame bundle carries is wrapped in
+ * (#323), and the one the frame document names its bundled block by.
+ *
+ * A plain `.company-byline { font-size: 13px }` arrives unlayered, and an
+ * unlayered declaration outranks every layered one whatever its specificity —
+ * so a `text-[20px]` the hand wrote, which Tailwind emits inside `utilities`,
+ * lost to it unconditionally. Naming a layer for the project's own sheets is
+ * what puts the two in the order a person expects: the agent's stylesheet is
+ * the ground, and a utility written on top of it wins.
+ *
+ * It sits above `base` rather than at the bottom, because `base` is preflight
+ * — `* { margin: 0; padding: 0 }` — and a project's own margins have always
+ * beaten it. Below `components` and `utilities`, which is the whole point.
+ */
+export const PROJECT_LAYER = "project";
+
+export const ROOT_CSS = `@layer theme, base, ${PROJECT_LAYER}, components, utilities;
+@import "tailwindcss";
 @import "./tokens.css";
 `;
 

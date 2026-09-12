@@ -184,3 +184,40 @@ export const VEIL_FILES = {
 	"shared/ui/pages.css": PAGES_CSS,
 	"shared/ui/page-parts.tsx": PAGE_PARTS,
 };
+
+/**
+ * The plain-CSS fixture (#323): the shape of every project whose frames are
+ * styled by class rules in a `.css` file rather than by utilities.
+ *
+ * `olmestudios` is the one the third hand test ran on, and nothing in the veil
+ * page or in spool's own design/ had this shape: a stylesheet with no `@layer`
+ * in it, setting the very properties the rail draws rows for. Unlayered
+ * declarations outrank every layered one, and a row reading only the class
+ * literal has nothing to say about any of them.
+ */
+const PLAIN_CSS = `.byline { font-size: 14px; line-height: 26px; color: #333333; border-radius: 6px; padding: 12px; opacity: 0.5; }
+.art { height: 60px; background: #c96a3c; margin: 0 24px; }
+.intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 20px; }
+.intro h1 { font-size: 48px; max-width: 420px; margin: 0; }
+.intro p { max-width: 220px; font-size: 14px; padding-bottom: 10px; color: #aaa6a1; margin: 0; }
+`;
+
+/** A stylesheet that writes layers of its own, which wrapping must not disturb. */
+const LAYERED_CSS = `@layer parts;
+@layer parts { .note { font-size: 12px; } }
+`;
+
+export const PLAIN_FILES = { "shared/ui/plain.css": PLAIN_CSS, "shared/ui/layered.css": LAYERED_CSS };
+
+export const PLAIN_PAGE = `import '../../shared/ui/plain.css';
+import '../../shared/ui/layered.css';
+
+export default function Page() {
+  return <main id="top">
+    <p className="byline">Brand & marketing.</p>
+    <div className="art"></div>
+    <section className="intro"><h1>Make something<br/>worth feeling.</h1><p>Independent design and digital experiences.<br/>Made with instinct.<br/>Built with intention.</p></section>
+    <p className="note">A layer of its own.</p>
+  </main>;
+}
+`;
