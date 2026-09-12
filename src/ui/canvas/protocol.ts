@@ -43,6 +43,16 @@ export interface PickedHit {
 	 * second there is nothing under the pointer and nothing to type into.
 	 */
 	words?: boolean;
+	/**
+	 * What the element is actually drawn with, for the rows the rail shows
+	 * (#323).
+	 *
+	 * The rail's first source is the class literal parsed at the stamp; this is
+	 * the second, and it is the only one that can answer for a property a
+	 * project's own stylesheet set. Present only where a selection asked for it
+	 * — a hover asks for a chain many times a second and draws none of it.
+	 */
+	computed?: Readonly<Record<string, string>>;
 	/** Nearest data-spool-source stamp, "frames/…/frame.tsx:line:col". */
 	source: string | null;
 	/** True when the stamp sits on an ancestor — JS-created DOM (#6 degrade). */
@@ -572,7 +582,9 @@ export const arriveMessage = (settleMs: number) => ({ spool: "arrive", settleMs 
  */
 export const captureMessage = (id: string, targetWidth: number, settleMs: number) =>
 	({ spool: "capture", id, targetWidth, settleMs }) as const;
-export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
+/** `computed` is a selection asking for the drawn style of each rung it answers with (#323). */
+export const pickMessage = (x: number, y: number, id: number, computed = false) =>
+	({ spool: "pick", x, y, id, computed }) as const;
 /**
  * The keyboard half of the selection ladder (#254): the pointer names a rung
  * by where it is, and ⌘⏎ and Tab have to name one by kinship instead. An empty
@@ -588,8 +600,8 @@ export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick
  * an empty chain is a rung that does not exist.
  */
 export type KinStep = "child" | "next" | "previous" | "self";
-export const kinMessage = (selector: string, step: KinStep, id: number) =>
-	({ spool: "kin", selector, step, id }) as const;
+export const kinMessage = (selector: string, step: KinStep, id: number, computed = false) =>
+	({ spool: "kin", selector, step, id, computed }) as const;
 
 /**
  * One element in a spacing reading (#261): what it is, where it is, and the

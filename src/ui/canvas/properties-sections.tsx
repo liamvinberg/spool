@@ -97,6 +97,15 @@ export interface View {
 	element: RowElement;
 	/** the rung's measured box, which is what `fixed` writes when a mode changes */
 	box: { w: number; h: number };
+	/**
+	 * What the frame draws this rung with (#323): the rail's second source.
+	 *
+	 * The authored column stays the file's own — a token here is a token the
+	 * class literal wrote. This is what a row with no token shows instead of an
+	 * empty field, and it is the only source that can answer for a property the
+	 * project's own stylesheet set. Null until the pick's answer has landed.
+	 */
+	computed: Readonly<Record<string, string>> | null;
 	compiler: Compiler;
 	/** true when a bare token under this scope is not one the file was written with */
 	fresh: (token: string | null) => boolean;
@@ -135,6 +144,9 @@ function spelled(view: Spelling, property: string, value: PropertyValue): Proper
 
 /** What spelling a value needs of the view: the scope it is written under, and the theme. */
 type Spelling = Pick<View, "scope" | "scoped" | "theme">;
+
+/** What a reading needs of the view: its two sources, under the scope they are read in. */
+export type Reading = Spelling & Pick<View, "computed">;
 
 /**
  * The controls the rows write through, over the canvas's own (#315).
@@ -372,6 +384,10 @@ function LengthRow({
 	const step = stepOf(view.theme);
 	const reader = read ?? ((scoped: string) => signedOf(lengthOf(scoped, family)));
 	const held = worn<string | null>(view, reader, (value) => value === null);
+	// what the frame draws is what a row with no token of its own reads (#323);
+	// a caller that already knows the answer — width and height have the
+	// measured box — keeps its own
+	const drawn = fallback ?? drawnLength(view, property);
 	return (
 		<ClassNumberRow
 			view={view}
@@ -383,7 +399,7 @@ function LengthRow({
 			placeholder={placeholder ?? (kind === "spacing" ? "auto" : "–")}
 			readout={(shown) => {
 				const parsed = writtenLength(shown);
-				return parsed === null ? (fallback ?? null) : describe(kind, parsed.value, parsed.negative, step);
+				return parsed === null ? (drawn ?? null) : describe(kind, parsed.value, parsed.negative, step);
 			}}
 			typedValue={(typed) => {
 				if (typed.trim() === "") return null;
@@ -586,27 +602,90 @@ function colourTyped(theme: CompiledTheme | null, typed: string): Option | null 
 }
 
 /**
- * What the class says one property is wearing, as a control draws it.
+ * What one property is wearing, as a control draws it.
  *
- * The token under the live scope, the theme reference it names where it
- * names one, and the value the theme gives that reference. What the frame
- * actually draws is not asked: the reading is the file's own.
+ * Two sources and no third (spool-cloud#149): the token under the live scope
+ * read off the class literal, and what the frame draws, read off the element
+ * when it was picked. The authored column stays the file's own — a theme
+ * reference here is one the literal named. The drawn value is what a row with
+ * no token shows instead of an empty field beside a unit it never had (#323),
+ * and it sits beside the token where the literal has one.
  */
-function authoredReading(view: View, property: string): PropertyReading | undefined {
+export function authoredReading(view: Reading, property: string): PropertyReading | undefined {
 	const row = rowFor(property);
 	if (row === undefined) return undefined;
+	const native = drawnValue(view, property);
 	const read = readRow(row, view.scoped, view.theme);
-	if (read.token === null) return { tokens: [], binding: { kind: "page" } };
+	if (read.token === null) {
+		return { tokens: [], binding: { kind: "page" }, ...(native === undefined ? {} : { native }) };
+	}
 	const reference = themeReference(row, read.value, view.theme);
 	const value = reference?.value ?? read.says ?? undefined;
 	return {
 		tokens: [`${scopeKey(view.scope)}${read.token}`],
-		...(value === undefined ? {} : { authored: value, native: value }),
+		...(value === undefined ? {} : { authored: value }),
+		...(native === undefined ? (value === undefined ? {} : { native: value }) : { native }),
 		binding:
 			reference === undefined
 				? { kind: "custom" }
 				: { kind: "reference", name: reference.name, value: reference.value },
 	};
+}
+
+/**
+ * The drawn property a folded row stands for.
+ *
+ * A fold's first level is one row over four sides, and it is only drawn while
+ * the four agree — so any one of them answers for the whole. Everything not
+ * named here reads the property of its own name.
+ */
+const DRAWN_AS: Readonly<Record<string, string>> = {
+	padding: "padding-top",
+	"padding-inline": "padding-left",
+	"padding-block": "padding-top",
+	margin: "margin-top",
+	"margin-inline": "margin-left",
+	"margin-block": "margin-top",
+	gap: "row-gap",
+	"border-radius": "border-top-left-radius",
+	"border-color": "border-top-color",
+	"border-width": "border-top-width",
+};
+
+/**
+ * One property as the frame draws it, tidied for a field (#323).
+ *
+ * `getComputedStyle` resolves every length to pixels and every number to as
+ * many decimal places as it took, so `13.0000px` and `1` both come back as
+ * they are. A field shows a number a person would type, and a value that says
+ * nothing — `none`, `normal`, `auto`, `0px` on a row whose absence already
+ * reads as none — is left out rather than drawn as a reading.
+ */
+function drawnValue(view: Reading, property: string): string | undefined {
+	const raw = view.computed?.[DRAWN_AS[property] ?? property];
+	if (raw === undefined || raw === "") return undefined;
+	const value = raw.trim();
+	if (value === "none" || value === "auto" || value === "normal") return undefined;
+	const length = /^(-?(?:\d+(?:\.\d+)?|\.\d+))px$/.exec(value);
+	if (length !== null) return `${Number(length[1])}px`;
+	const number = /^-?(?:\d+(?:\.\d+)?|\.\d+)$/.exec(value);
+	if (number !== null) return String(Number(value));
+	return value;
+}
+
+/**
+ * A length row's reading from the frame (#323), in the unit that row speaks.
+ *
+ * Computed style resolves a length to pixels and opacity to a fraction; the
+ * opacity row is a percentage, so that one is spelled the way its own field
+ * would be typed.
+ */
+function drawnLength(view: Reading, property: string): string | undefined {
+	const value = drawnValue(view, property);
+	if (value === undefined) return undefined;
+	if (property !== "opacity") return value;
+	const fraction = Number(value);
+	return Number.isFinite(fraction) ? `${Math.round(fraction * 100)}%` : value;
 }
 
 /** The theme variable a row's value names, where the value is a theme token rather than its own. */
@@ -1829,7 +1908,7 @@ function AppearanceSection({ view }: { view: View }) {
 					/>
 				)}
 			/>
-			<LengthRow view={view} property="opacity" placeholder="100" fallback="100%" />
+			<LengthRow view={view} property="opacity" placeholder="100" />
 			<ColourRow view={view} property="color" absent="inherit" />
 			<ColourRow view={view} property="background-color" absent="transparent" />
 			{/* a shadow nobody had set used to be dead text with no way in: it is a menu */}

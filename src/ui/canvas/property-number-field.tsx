@@ -59,8 +59,11 @@ export function PropertyNumberField({
 				.find((token) => reading?.tokens.includes(token))
 		: undefined;
 	// A known value this field cannot number, `normal` or a calc(), is read out as
-	// it stands rather than shown blank beside a unit it never had.
+	// it stands rather than shown blank beside a unit it never had. The class
+	// literal answers first and the frame's own drawn value second (#323), which
+	// is read faint: a number a stylesheet set is not one this file wrote.
 	const presented = (reading?.authored ?? reading?.native ?? "").trim();
+	const drawnOnly = reading?.authored === undefined && reading?.native !== undefined;
 	const initial = numberUnit(presented);
 	const keyword = initial || !presented ? undefined : presented;
 	const unit = initial?.unit ?? "px";
@@ -138,6 +141,7 @@ export function PropertyNumberField({
 				value={scrubbed ?? initial?.number ?? ""}
 				readout={keyword ? null : unit}
 				placeholder={keyword}
+				faint={drawnOnly && scrubbed === undefined}
 				ok={ok && reading !== undefined}
 				onBegin={() => {
 					customDraft.current = false;

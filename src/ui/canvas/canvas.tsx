@@ -2452,10 +2452,17 @@ export function ProjectCanvas({
 		[askFrame],
 	);
 
-	/** The ancestry at a frame-local point: what every pointer verb asks for. */
+	/**
+	 * The ancestry at a frame-local point: what every pointer verb asks for.
+	 *
+	 * A verb that ends in a selection asks for the drawn style of each rung
+	 * along with it (#323), which is the rail's second source and the only one
+	 * that can answer for a property the project's own stylesheet set. A hover
+	 * asks for a chain many times a second and draws none of it, so it does not.
+	 */
 	const beginPick = useCallback(
-		(frame: string, local: Point, apply: (chain: PickedHit[]) => void, onSilence?: () => void) => {
-			askChain(frame, (id) => pickMessage(local.x, local.y, id), apply, onSilence);
+		(frame: string, local: Point, apply: (chain: PickedHit[]) => void, onSilence?: () => void, selects = true) => {
+			askChain(frame, (id) => pickMessage(local.x, local.y, id, selects), apply, onSilence);
 		},
 		[askChain],
 	);
@@ -2671,7 +2678,7 @@ export function ProjectCanvas({
 			cancelPicks();
 			askChain(
 				frame,
-				(id) => kinMessage(selector, step, id),
+				(id) => kinMessage(selector, step, id, true),
 				(chain) => {
 					const target = chain[chain.length - 1];
 					if (target === undefined) {
@@ -4284,6 +4291,8 @@ export function ProjectCanvas({
 			() => {
 				hoverBusy.current = false;
 			},
+			// a hover draws rings and nothing the drawn style feeds (#323)
+			false,
 		);
 	};
 

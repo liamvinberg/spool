@@ -372,6 +372,8 @@ function Body({
 		...(read?.mapped === true ? { mapped: true } : {}),
 	};
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
+	/** what the frame draws this rung with, which is the rail's second source (#323) */
+	const computed = element === null ? undefined : element.chain[rung]?.computed;
 	// the imports the swap may choose from, asked for only where a rung has a
 	// picture on it at all
 	const assets = useAssets(project, element?.frame ?? null, rowElement.tag === "img", revision);
@@ -388,6 +390,7 @@ function Body({
 		theme,
 		element: rowElement,
 		box: preview === null ? { w: rect?.w ?? 0, h: rect?.h ?? 0 } : preview.box,
+		computed: computed ?? null,
 		compiler,
 		/**
 		 * A token the hands put there rather than the file's author.
