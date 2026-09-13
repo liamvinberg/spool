@@ -25,6 +25,7 @@
 		"typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json --noEmit && tsc -p tsconfig.ui.json --noEmit && tsc -p bench/evidence/tsconfig.json --noEmit",
 		"check": "biome check .",
 		"test": "vitest run",
+		"test:performance": "SPOOL_TEST_PERFORMANCE=1 vitest run src/daemon/hand-class-browser.test.ts src/daemon/hand-text-browser.test.ts src/daemon/flows-budget.test.ts --maxWorkers=1 --retry=0",
 		"build:ui": "vite build"
 	},
 	"devDependencies": {

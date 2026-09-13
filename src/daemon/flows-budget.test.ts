@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { expectTiming } from "../test-performance";
 import type { Flows } from "./flows";
 
 /**
@@ -34,9 +35,10 @@ import type { Flows } from "./flows";
  * Two readings, because they fail differently. The turn count is exact: one turn
  * per frame is the yield itself, and no machine load can take a turn away. The
  * millisecond figure is wall clock, and the suite runs test files in parallel, so
- * a saturated machine stretches gaps that the handler did not cause — contention
- * can only inflate a gap, never shrink one, so the smallest reading across the
- * rounds is the closest measure of what the handler itself holds.
+ * a saturated machine stretches gaps that the handler did not cause. The time
+ * budget therefore runs only with test:performance, which measures these suites
+ * serially. The smallest reading across rounds filters incidental scheduling noise;
+ * the exact turn count and current graph are checked in every run.
  *
  * Sized so the derivation dominates: without the yield each rebuild is one block
  * of about 85 ms, and with it the longest turn is a few — so the test really
@@ -86,7 +88,7 @@ function loopTurn(): Promise<void> {
 const rowTsx = (at: number, step: number) =>
 	`export function Row() {\n\treturn <li data-go="frame-${(at + step) % FRAMES}">row</li>;\n}\n`;
 
-it("never holds the daemon's thread for a hundredth of a second", async () => {
+it("yields between frames while rebuilding the current link graph", async () => {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
 	// one shared component in every frame's graph, so every frame's walk reaches
@@ -149,5 +151,5 @@ export default function Frame() {
 	// the thread came back once per frame, every round — the guarantee itself,
 	// which no amount of machine load can inflate away
 	expect(turns).toBeGreaterThanOrEqual(FRAMES);
-	expect(held).toBeLessThan(BUDGET_MS);
+	expectTiming("flows longest thread hold", held, BUDGET_MS);
 });

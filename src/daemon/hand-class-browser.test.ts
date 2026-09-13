@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { expectTiming } from "../test-performance";
 import { apiRequests, handCanvas, VEIL_FILES, VEIL_PAGE } from "./hand-browser-helpers";
 
 /**
@@ -80,16 +81,17 @@ it("previews a rail value in the frame and saves one class change", { timeout: 2
 	const sameDocument = () => frame.locator("body").evaluate(() => Reflect.get(window, "sameDocument"));
 
 	// width on the art block: `700` typed is 700px on the element before the
-	// next paint, and `w-[700px]` in the file within 300 ms of Enter
+	// file is written, and `w-[700px]` reaches the file on Enter. The isolated
+	// performance command also checks the 16ms preview and 300ms save budgets.
 	await selectRow("div.veil-art", "width");
 	await stamped("div.veil-art");
 	await requests.quiet();
 	await field("width").fill("700");
 	await expect.poll(() => style("div.veil-art", "width")).toBe("700px");
-	expect(await previewLag("div.veil-art")).toBeLessThan(16);
+	expectTiming("div.veil-art preview", await previewLag("div.veil-art"), 16);
 	expect(requests.taken()).toEqual([]);
 	const wrote = await commit();
-	expect(wrote).toBeLessThan(300);
+	expectTiming("width save", wrote, 300);
 	expect(f.bytes()).toContain('<div className="veil-art w-[700px]"></div>');
 	// the frame set the attribute, took the sheet and lifted the preview, with no reload
 	await expect.poll(() => classOf("div.veil-art")).toBe("veil-art w-[700px]");
@@ -114,8 +116,8 @@ it("previews a rail value in the frame and saves one class change", { timeout: 2
 	await stamped("#voice");
 	await field("padding-inline").fill("32");
 	await expect.poll(() => style("#voice", "padding-left")).toBe("32px");
-	expect(await previewLag("#voice")).toBeLessThan(16);
-	expect(await commit()).toBeLessThan(300);
+	expectTiming("#voice preview", await previewLag("#voice"), 16);
+	expectTiming("property save", await commit(), 300);
 	expect(f.bytes()).toContain('tone === "right" && "border-border border-l"');
 	expect(f.bytes()).toMatch(/cn\("flex flex-col gap-3 (py-4 px-\[32px\]|px-\[32px\] py-4)", tone/);
 	await expect.poll(() => classOf("#voice")).toContain("px-[32px]");
@@ -127,8 +129,8 @@ it("previews a rail value in the frame and saves one class change", { timeout: 2
 	await stamped("h1");
 	await field("font-size").fill("44");
 	await expect.poll(() => style("h1", "font-size")).toBe("44px");
-	expect(await previewLag("h1")).toBeLessThan(16);
-	expect(await commit()).toBeLessThan(300);
+	expectTiming("h1 preview", await previewLag("h1"), 16);
+	expectTiming("property save", await commit(), 300);
 	expect(f.bytes()).toContain('<h1 className="text-[44px]">');
 	await expect.poll(() => style("h1", "font-size")).toBe("44px");
 	expect(await inline("h1", "font-size")).toBe("");
@@ -139,8 +141,8 @@ it("previews a rail value in the frame and saves one class change", { timeout: 2
 	// the row reads `rounded-md` in rem, so a bare number would keep that unit; pixels are typed
 	await field("border-radius").fill("12px");
 	await expect.poll(() => style("#cta", "border-radius")).toBe("12px");
-	expect(await previewLag("#cta")).toBeLessThan(16);
-	expect(await commit()).toBeLessThan(300);
+	expectTiming("#cta preview", await previewLag("#cta"), 16);
+	expectTiming("property save", await commit(), 300);
 	expect(f.bytes()).toMatch(/<a id="cta" className="[^"]*rounded-\[12px\][^"]*"/);
 	await expect.poll(() => style("#cta", "border-radius")).toBe("12px");
 	// the colour is a theme reference: unlinking it writes the value it resolves
@@ -160,8 +162,8 @@ it("previews a rail value in the frame and saves one class change", { timeout: 2
 	const colour = page.locator('input[aria-label="color"]');
 	await colour.fill("#123456");
 	await expect.poll(() => style("#cta", "color")).toBe("rgb(18, 52, 86)");
-	expect(await previewLag("#cta")).toBeLessThan(16);
-	expect(await commit()).toBeLessThan(300);
+	expectTiming("#cta preview", await previewLag("#cta"), 16);
+	expectTiming("property save", await commit(), 300);
 	expect(f.bytes()).toMatch(/<a id="cta" className="[^"]*text-\[#123456\][^"]*"/);
 	expect(f.bytes()).not.toContain("text-white");
 	await expect.poll(() => inline("#cta", "color")).toBe("");

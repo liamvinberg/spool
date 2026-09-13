@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { expectTiming } from "../test-performance";
 import { apiRequests, handCanvas } from "./hand-browser-helpers";
 
 /**
@@ -121,7 +122,7 @@ it("edits the veil page's words in place and saves each once", { timeout: 240_00
 	await open("h1", { x: 12, y: 14 });
 	const up = await page.evaluate(() => Reflect.get(window, "__up") as number);
 	const opened = await frame.locator("h1").evaluate(() => Reflect.get(window, "__opened") as number);
-	expect(opened - up).toBeLessThan(50);
+	expectTiming("text editor opens", opened - up, 50);
 	// typing is the frame's alone: once the click's own selection has settled,
 	// no request leaves the canvas until the edit ends
 	await requests.quiet();
