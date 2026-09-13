@@ -403,6 +403,10 @@ export function NumField({
 				// the number is the thing a hand reaches for: a press on it scrubs
 				// the row's own value the moment the pointer travels (#321)
 				{...(scrub === null ? {} : { onPointerDown: scrub })}
+				onDragStart={(event) => {
+					// Native dragging of the selected number cancels the scrub's pointer on Linux.
+					if (scrub !== null) event.preventDefault();
+				}}
 				onChange={(event) => {
 					const held = begin();
 					if (session.current !== held) return;

@@ -187,6 +187,9 @@ it("scrubs the row's value from the number field itself, leaving the press to fo
 	expect(onScrub).not.toHaveBeenCalled();
 
 	await pointer(document, "pointermove", 110, 3);
+	const nativeDrag = new Event("dragstart", { bubbles: true, cancelable: true });
+	await act(() => field.dispatchEvent(nativeDrag));
+	expect(nativeDrag.defaultPrevented).toBe(true);
 	await pointer(document, "pointerup", 110, 3);
 	expect(onScrubStart).toHaveBeenCalledTimes(1);
 	expect(onScrub.mock.calls).toEqual([[2]]);
