@@ -514,6 +514,23 @@ export async function readRungs(
  * rail draws its rows without menus rather than not at all: a broken stylesheet
  * is the project's own answer, not a reason for the surface to disappear.
  */
+/** Whether the daemon can open this workspace in the local ChatGPT app. */
+export async function fetchAgentAppAvailable(project: string): Promise<boolean> {
+	try {
+		const response = await client.api.p[":project"]["agent-app"].$get({ param: { project } });
+		if (!response.ok) return false;
+		const body: unknown = await response.json();
+		return typeof body === "object" && body !== null && "available" in body && body.available === true;
+	} catch {
+		return false;
+	}
+}
+
+export async function openAgentApp(project: string): Promise<void> {
+	const response = await client.api.p[":project"]["agent-app"].$post({ param: { project } });
+	if (!response.ok) throw new Error(await response.text());
+}
+
 /** Every setting with its value and where it came from (#281), for one project or for none. */
 export async function fetchSettings(project?: string): Promise<SettingsSnapshot | undefined> {
 	try {

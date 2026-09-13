@@ -1,5 +1,11 @@
 # Third-party notices
 
+## Agent app marks
+
+The agent picker uses the Claude and ChatGPT desktop template icons and Google's
+Antigravity brand icon (https://antigravity.google/press) to identify those apps.
+The names and marks belong to Anthropic, OpenAI, and Google respectively.
+
 ## xterm.js
 
 Spool includes xterm.js packages and adapts box-drawing geometry from

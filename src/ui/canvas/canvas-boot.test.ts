@@ -147,6 +147,7 @@ function stubFetch(answer: (url: URL) => Promise<Response | undefined>): void {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			const own = await answer(url);
 			if (own !== undefined) return own;
+			if (url.pathname === "/api/settings") return Response.json({ project: null, entries: [] });
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
 				return Response.json({ root: "/project", pages: [], frames, collisions: [] });

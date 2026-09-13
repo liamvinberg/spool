@@ -4,6 +4,7 @@ import type { Page } from "playwright-core";
 import { expect } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { createSettingsStore } from "./settings";
 
 /**
  * The one seam the hand's browser cases test through (spool-cloud#149): a
@@ -20,6 +21,8 @@ export async function handCanvas(
 ) {
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
+	// These gestures use an established canvas, including asking the agent about a refused edit.
+	createSettingsStore(project.spoolDir).write("agent.introductionSeen", true);
 	for (const [path, source] of Object.entries(files)) writeDesignFile(project.root, path, source);
 	writeFrame(project.root, "home", frameSource);
 	writeDesignFile(project.root, "frames/home/frame.json", JSON.stringify({ x: 0, y: 0, ...size }));

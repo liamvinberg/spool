@@ -167,6 +167,9 @@ export async function serveProject(options?: Partial<Parameters<typeof serveDaem
 	const { root, name } = makeProject(spoolDir);
 	// A Claude fixture names the engine this browser test intends to exercise.
 	if (options?.agentExecutor !== undefined) createSettingsStore(spoolDir).write("agent.engine", "claude", root);
+	// Agent fixtures exercise an established chat; the introduction has its own first-use tests.
+	if (options?.agentExecutor !== undefined || options?.agentEngines !== undefined)
+		createSettingsStore(spoolDir).write("agent.introductionSeen", true);
 	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
 	closeAfterTest(daemon);
 	return {

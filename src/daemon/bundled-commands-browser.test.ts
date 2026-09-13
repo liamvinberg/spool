@@ -61,6 +61,10 @@ it.each([false, true])(
 		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 		await page.goto(`${daemon.url}/p/${encodeURIComponent(name)}`);
 		await page.locator('[data-dock-glyph="agent"]').click();
+		await page
+			.getByRole("dialog", { name: "Use your usual agent.", exact: true })
+			.getByRole("button", { name: "Continue in spool", exact: true })
+			.click();
 		const field = page.locator("[data-agent-rail] textarea");
 		const rail = page.locator("[data-agent-rail]");
 		const send = async (command: string, extra: Record<string, unknown> = {}) => {

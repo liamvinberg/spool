@@ -13,14 +13,17 @@
 }
 .project-empty > p {
 	font: var(--type-body);
-	max-width: 340px;
+	max-width: 410px;
+}
+.project-empty > h1 {
+	font: var(--type-heading);
 }
 .project-empty > .spool-empty-actions {
 	flex-direction: column;
 	flex-wrap: nowrap;
 	max-width: 100%;
 	margin-top: 26px;
-	gap: 15px;
+	gap: 12px;
 }
 .project-empty > .spool-empty-actions > code {
 	max-width: 100%;
@@ -36,16 +39,17 @@
 	align-items: center;
 	justify-content: center;
 	gap: 9px;
-	min-height: 34px;
-	padding: 0 13px;
-	border: 1px solid var(--color-border-raised);
-	border-radius: 7px;
-	color: var(--color-text);
+	border-radius: 4px;
+	color: var(--color-muted);
 	font: var(--type-control);
 	pointer-events: auto;
 }
 .project-empty-copy:hover {
-	background: var(--color-control);
+	color: var(--color-text);
+}
+.project-empty button:focus-visible {
+	outline: 2px solid var(--color-thread);
+	outline-offset: 4px;
 }
 .project-empty-copy > svg {
 	width: 14px;

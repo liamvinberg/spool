@@ -9,6 +9,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
+import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
 	FlowEdge,
@@ -483,6 +484,7 @@ export function ProjectCanvas({
 	// read too, and the read has to carry the fingerprint the next write needs
 	const [saves, setSaves] = useState<Record<string, number>>({});
 	const [agentRequest, setAgentRequest] = useState<AgentRequest>();
+	const [agentHandoff, setAgentHandoff] = useState(false);
 	/**
 	 * The element drag in flight (#259), as the ring draws it.
 	 *
@@ -585,18 +587,23 @@ export function ProjectCanvas({
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
 	const [preferredEngine, setPreferredEngine] = useState<AgentEngineId>("spool");
+	const [engineLoaded, setEngineLoaded] = useState(false);
 	const enginePreferenceVersion = useRef(0);
 	useEffect(() => {
 		let live = true;
 		const version = ++enginePreferenceVersion.current;
 		void fetchEnginePreference(project).then((engine) => {
-			if (live && version === enginePreferenceVersion.current) setPreferredEngine(engine);
+			if (live && version === enginePreferenceVersion.current) {
+				setPreferredEngine(engine);
+				setEngineLoaded(true);
+			}
 		});
 		return () => {
 			live = false;
 		};
 	}, [project]);
 	const rememberEngine = (engine: AgentEngineId) => {
+		setEngineLoaded(true);
 		enginePreferenceVersion.current += 1;
 		setPreferredEngine(engine);
 		void putSetting("agent.engine", engine, project);
@@ -6439,6 +6446,7 @@ export function ProjectCanvas({
 				{projectEmpty && (
 					<div data-canvas-empty="" className="pointer-events-none absolute inset-0">
 						<ProjectEmpty
+							onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
 							project={project}
 							root={root}
 							onRename={onRename}
@@ -6509,6 +6517,15 @@ export function ProjectCanvas({
 				agent={(width, shut, active) => (
 					<AgentRail
 						active={active}
+						agentReady={engineLoaded && (model.started || deck.engine === preferredEngine)}
+						onUseAgent={
+							root === undefined
+								? undefined
+								: () => {
+										shut();
+										setAgentHandoff(true);
+									}
+						}
 						request={agentRequest}
 						permissions={permissions}
 						width={width}
@@ -6550,6 +6567,9 @@ export function ProjectCanvas({
 					/>
 				)}
 			/>
+			{agentHandoff && root !== undefined && (
+				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
+			)}
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}

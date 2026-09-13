@@ -1,0 +1,41 @@
+.agent-dialog {
+	width: min(536px, calc(100vw - 32px));
+	max-height: calc(100dvh - 32px);
+	margin: auto;
+	padding: 0;
+	overflow: auto;
+	border: 1px solid var(--color-border-raised);
+	border-radius: 8px;
+	background: var(--color-surface);
+	color: var(--color-text);
+}
+.agent-dialog-wide {
+	width: min(800px, calc(100vw - 32px));
+}
+.agent-dialog::backdrop {
+	background: color-mix(in srgb, var(--color-bg) 75%, transparent);
+}
+.agent-dialog-close {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 4px;
+	color: var(--color-muted);
+}
+.agent-dialog-close:hover {
+	background: var(--color-raised);
+	color: var(--color-text);
+}
+.agent-dialog-close svg {
+	width: 16px;
+	height: 16px;
+}
+.agent-dialog button:focus-visible,
+.agent-dialog summary:focus-visible {
+	outline: 2px solid var(--color-thread);
+	outline-offset: 4px;
+}

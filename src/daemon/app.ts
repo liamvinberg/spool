@@ -20,6 +20,7 @@ import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
+import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
@@ -149,6 +150,7 @@ import {
 import { createWebfonts } from "./webfonts";
 
 export interface DaemonOptions {
+	agentAppLauncher?: AgentAppLauncher;
 	spoolDir: string;
 	version: string;
 	/** Exact control virtual host. Tests use localhost; the bound daemon passes its configured loopback host. */
@@ -360,6 +362,7 @@ function attachTurn(c: Context, held: AgentHeld, from: number) {
  * tripwire between daemon and UI once the canvas exists.
  */
 export function createDaemonApp({
+	agentAppLauncher = createAgentAppLauncher(),
 	spoolDir,
 	version,
 	controlHost,
@@ -1780,6 +1783,21 @@ export function createDaemonApp({
 				}
 			},
 		)
+		.get("/api/p/:project/agent-app", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return c.json({ available: agentAppLauncher.available() });
+		})
+		.post("/api/p/:project/agent-app", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			try {
+				await agentAppLauncher.open(project.root);
+				return c.body(null, 204);
+			} catch (error) {
+				return c.text(error instanceof Error ? error.message : "Could not open ChatGPT.", 409);
+			}
+		})
 		.get(
 			"/api/p/:project/agent/installed",
 			validator("query", (value) =>

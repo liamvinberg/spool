@@ -328,6 +328,10 @@ it("completes a deterministic journey through the clean installed host and deliv
 			);
 	});
 	await page.locator('[data-dock-glyph="agent"]').click();
+	await page
+		.getByRole("dialog", { name: "Use your usual agent.", exact: true })
+		.getByRole("button", { name: "Continue in spool", exact: true })
+		.click();
 	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
 	hostPid = childHost(daemonPid) ?? 0;
 	const runtime = await attachTransport(hostPid);

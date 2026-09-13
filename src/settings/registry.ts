@@ -148,6 +148,14 @@ const themeEntries = Object.fromEntries(
 ) as { readonly [Key in ThemeKey]: SettingEntry<string> };
 
 export const SETTINGS = {
+	"agent.introductionSeen": {
+		scope: "machine",
+		group: "agent",
+		shape: { kind: "boolean" },
+		fallback: false,
+		label: "Agent introduction seen",
+		says: "The first-open recommendation has been dismissed on this installation.",
+	},
 	"agent.engine": {
 		scope: "local",
 		group: "agent",

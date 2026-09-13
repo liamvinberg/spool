@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AGENT_PRIMARY } from "./agent-dialog";
 import { EmptyState } from "./empty-state";
 import { ArrowRightIcon, RibbonMark } from "./icons";
 import "./project-empty.css";
@@ -9,6 +10,7 @@ export function ProjectEmpty({
 	root,
 	onRename,
 	onFolder,
+	onUseAgent,
 	focusName = false,
 	onNameFocused,
 }: {
@@ -18,6 +20,7 @@ export function ProjectEmpty({
 	root?: string | undefined;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
+	onUseAgent?: (() => void) | undefined;
 }) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	useEffect(() => {
@@ -65,10 +68,21 @@ export function ProjectEmpty({
 			heading="h1"
 			icon={<RibbonMark />}
 			title="Your canvas is ready."
-			description="Ask your agent here, or open this project with Claude Code or Codex and tell it what you’d like to design."
+			description="Open this project in your agent. Edits appear here as you work."
 			actions={
 				root === undefined ? undefined : (
 					<>
+						{onUseAgent && (
+							<button
+								type="button"
+								disabled={renaming}
+								className={`${AGENT_PRIMARY} pointer-events-auto mb-3`}
+								onPointerDown={(event) => event.stopPropagation()}
+								onClick={onUseAgent}
+							>
+								Use my agent <ArrowRightIcon className="h-4 w-4 shrink-0" />
+							</button>
+						)}
 						<code onPointerDown={(event) => event.stopPropagation()}>{root}</code>
 						<button
 							type="button"
@@ -76,8 +90,8 @@ export function ProjectEmpty({
 							className="project-empty-copy"
 							onPointerDown={(event) => event.stopPropagation()}
 							onClick={() => {
-								void navigator.clipboard
-									.writeText(root)
+								void Promise.resolve()
+									.then(() => navigator.clipboard.writeText(root))
 									.then(() => {
 										setCopied(true);
 										setCopyFailed(false);
@@ -86,7 +100,6 @@ export function ProjectEmpty({
 							}}
 						>
 							{copied ? "Copied" : "Copy project path"}
-							<ArrowRightIcon />
 						</button>
 						{copyFailed && (
 							<span role="alert" className="text-muted type-label">

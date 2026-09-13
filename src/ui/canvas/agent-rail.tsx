@@ -3,6 +3,7 @@ import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../a
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
+import { AgentRecommendation } from "../agent-recommendation";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
@@ -215,6 +216,8 @@ const PermissionAction = createContext<(() => void) | undefined>(undefined);
 
 export function AgentRail({
 	active = true,
+	agentReady = true,
+	onUseAgent,
 	width,
 	onCollapse,
 	permissions,
@@ -274,6 +277,8 @@ export function AgentRail({
 	handback: AgentHandback;
 	request?: AgentRequest | undefined;
 	active?: boolean;
+	agentReady?: boolean;
+	onUseAgent?: (() => void) | undefined;
 	/** what this thread was left holding and nobody sent, off its own picture (#234) */
 	draft: string;
 	attached: readonly Attachment[];
@@ -521,6 +526,15 @@ export function AgentRail({
 							{/* the strip is measured against the composer's own inner width: the same three
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
 					    rather than one width */}
+							{onUseAgent && (
+								<button
+									type="button"
+									className="mx-4 mb-3 self-start rounded-sm text-muted type-label hover:text-text"
+									onClick={onUseAgent}
+								>
+									Open in my agent <span aria-hidden="true">↗</span>
+								</button>
+							)}
 							<Composer
 								thread={open}
 								permissions={permissions}
@@ -581,6 +595,14 @@ export function AgentRail({
 						</div>
 					)}
 				</section>
+				{onUseAgent && (
+					<AgentRecommendation
+						active={active && agentReady && open !== ""}
+						engine={model.engine}
+						onUseAgent={onUseAgent}
+						onClaude={() => threads.onNew("claude")}
+					/>
+				)}
 			</PermissionAction>
 		</RecoveryActions>
 	);
