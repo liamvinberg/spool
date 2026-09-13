@@ -52,16 +52,15 @@ it("shows the first spool recommendation, hands off from both entry points, and 
 	if (!box) throw new Error("Missing recommendation");
 	expect(Math.abs(box.x + box.width / 2 - 720)).toBeLessThanOrEqual(1);
 	expect(Math.abs(box.y + box.height / 2 - 450)).toBeLessThanOrEqual(1);
-	await notice.getByRole("button", { name: "Continue in spool", exact: true }).click();
+	await notice.getByRole("button", { name: "Use my agent", exact: true }).click();
 	await expect
 		.poll(() => store.read().entries.find((entry) => entry.key === "agent.introductionSeen")?.value)
 		.toBe(true);
-	await page.locator("[data-agent-rail] textarea").fill("Keep my draft");
-	await page.getByRole("button", { name: "Open in my agent", exact: false }).click();
 	await picker.waitFor();
 	await picker.getByRole("button", { name: "Back to canvas" }).click();
 	await page.locator('[data-dock-glyph="agent"]').click();
-	expect(await page.locator("[data-agent-rail] textarea").inputValue()).toBe("Keep my draft");
+	await page.locator("[data-agent-rail] textarea").fill("Keep my draft");
+	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
 	await page.reload();
 	await page.locator('[data-dock-glyph="agent"]').waitFor();
 	if ((await page.locator('[data-dock-glyph="agent"]').getAttribute("aria-pressed")) === "false")
@@ -69,6 +68,7 @@ it("shows the first spool recommendation, hands off from both entry points, and 
 	await page.locator("[data-agent-rail] textarea").waitFor();
 	expect(await notice.count()).toBe(0);
 	expect(await page.locator("[data-agent-rail] textarea").inputValue()).toBe("Keep my draft");
+	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
 	expect(errors).toEqual([]);
 });
 

@@ -3,7 +3,7 @@ import { NoticeStage, Prototype } from "shared/ui/spool/agent-start/stage";
 
 export default function Frame() {
 	return (
-		<Prototype note="after dismissal · closing and reopening chat does not repeat the notice; the guide stays available">
+		<Prototype note="after dismissal · closing and reopening chat does not repeat the notice">
 			<NoticeStage
 				take="ready"
 				onGuide={() => ui.go("agent-start-guide--claude")}

@@ -286,19 +286,8 @@ export function NoticeStage({
 	const rail = (
 		<div className="flex h-full flex-col bg-bg">
 			<RailHeader />
-				<>
-					<div className="flex min-h-0 flex-1 flex-col px-5">
-						<div className="min-h-0 flex-1" />
-						{read ? (
-							<div className="mb-3">
-								<button type="button" className={QUIET} onClick={onGuide}>
-									Open in my agent <span aria-hidden="true">↗</span>
-								</button>
-							</div>
-						) : null}
-					</div>
-					<Composer claude={claude} />
-				</>
+			<div className="min-h-0 flex-1" />
+			<Composer claude={claude} />
 		</div>
 	);
 	return (

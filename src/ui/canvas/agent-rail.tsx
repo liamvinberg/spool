@@ -526,15 +526,6 @@ export function AgentRail({
 							{/* the strip is measured against the composer's own inner width: the same three
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
 					    rather than one width */}
-							{onUseAgent && (
-								<button
-									type="button"
-									className="mx-4 mb-3 self-start rounded-sm text-muted type-label hover:text-text"
-									onClick={onUseAgent}
-								>
-									Open in my agent <span aria-hidden="true">↗</span>
-								</button>
-							)}
 							<Composer
 								thread={open}
 								permissions={permissions}
