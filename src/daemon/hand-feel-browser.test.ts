@@ -183,15 +183,14 @@ it("keeps a small element resizable, its ring on the box, and scrubs unbounded",
 	if (spot === null) throw new Error("the rail drew no width field");
 	const from = { x: spot.x + spot.width / 2, y: spot.y + spot.height / 2 };
 	await requests.quiet();
-	// this browser is a headless shell and grants no pointer lock, so what a
-	// case can see of it is the asking: the field takes the pointer at the
-	// first whole step, and from there the drag is worth what the hand moved
+	// Exercise a denied pointer lock explicitly: headless Chromium grants it
+	// on some platforms. The fallback still tracks the pointer past the field.
 	await page.evaluate(() => {
 		Reflect.set(window, "__lock", []);
-		const real = Element.prototype.requestPointerLock;
-		Element.prototype.requestPointerLock = function asked(this: Element) {
+		Element.prototype.requestPointerLock = function denied(this: Element) {
 			(Reflect.get(window, "__lock") as string[]).push(this.tagName.toLowerCase());
-			return real.call(this);
+			document.dispatchEvent(new Event("pointerlockerror"));
+			return Promise.reject(new DOMException("Pointer lock denied", "NotAllowedError"));
 		};
 	});
 	await page.mouse.move(from.x, from.y);
@@ -200,7 +199,7 @@ it("keeps a small element resizable, its ring on the box, and scrubs unbounded",
 	// the last of these is past the right edge of the window, let alone the field
 	for (const dx of [24, 120, 400, 900]) {
 		await page.mouse.move(from.x + dx, from.y);
-		await expect.poll(() => inline("div.veil-art", "width"), { timeout: 15_000 }).not.toBe("");
+		await expect.poll(() => inline("div.veil-art", "width"), { timeout: 15_000 }).not.toBe(drawn.at(-1) ?? "");
 		drawn.push(await inline("div.veil-art", "width"));
 	}
 	expect(await page.evaluate(() => Reflect.get(window, "__lock"))).toEqual(["input"]);
@@ -340,7 +339,7 @@ it("scrubs every layout number while the lock takes the pointer", { timeout: 240
 		const drawn: string[] = [];
 		for (const dx of [24, 120, 400]) {
 			await page.mouse.move(from.x + dx, from.y);
-			await expect.poll(() => inline(property), { timeout: 15_000 }).not.toBe("");
+			await expect.poll(() => inline(property), { timeout: 15_000 }).not.toBe(drawn.at(-1) ?? "");
 			drawn.push(await inline(property));
 		}
 		const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
@@ -415,8 +414,11 @@ it("puts the ring back on the element a step was about", { timeout: 240_000 }, a
 
 	// and a step that takes the element away leaves nothing to point at, while
 	// the step that brings it back is picked again
+	const deleted = page.waitForResponse((response) => response.url().endsWith("/element"));
 	await page.keyboard.press("Backspace");
+	await (await deleted).finished();
 	await expect.poll(() => frame.locator("div.veil-art").count(), { timeout: 15_000 }).toBe(0);
+	await expect.poll(held, { timeout: 15_000 }).toBe("frame");
 	await f.history();
 	await expect.poll(() => frame.locator("div.veil-art").count(), { timeout: 15_000 }).toBe(1);
 	await expect.poll(held, { timeout: 15_000 }).toBe("div");

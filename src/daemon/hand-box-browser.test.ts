@@ -77,46 +77,60 @@ it("holds the box while the words are open", { timeout: 240_000 }, async () => {
 	expect(await boxOf(f, "#blurb")).toEqual(blurb);
 });
 
-it("will not size a word narrower than the word", { timeout: 240_000 }, async () => {
-	const f = await handCanvas(FILES, PAGE, { w: 600, h: 420 });
-	const { page, frame } = f;
-	const inline = () =>
-		frame
+it.each(["system-ui", "serif"])(
+	"will not size a word narrower than the word in %s",
+	{ timeout: 240_000 },
+	async (font) => {
+		const f = await handCanvas({ "shared/ui/site.css": `${CSS}\n.brand { font-family: ${font}; }` }, PAGE, {
+			w: 600,
+			h: 420,
+		});
+		const { page, frame } = f;
+		const inline = () =>
+			frame
+				.locator("#brand")
+				.first()
+				.evaluate((el) => (el as HTMLElement).style.width);
+
+		// what the word needs, which is wider than the box the file says
+		const needed = await frame
 			.locator("#brand")
 			.first()
-			.evaluate((el) => (el as HTMLElement).style.width);
+			.evaluate((el) => el.scrollWidth);
+		expect(needed).toBeGreaterThan(101);
 
-	// what the word needs, which is wider than the box the file says
-	const needed = await frame
-		.locator("#brand")
-		.first()
-		.evaluate((el) => el.scrollWidth);
-	expect(needed).toBeGreaterThan(101);
+		await f.select("#brand", { x: 8, y: 10 });
+		// the ring says the box is smaller than what is in it, on the side it spills
+		await expect.poll(() => page.locator('[data-ring-spill="right"]').count(), { timeout: 20_000 }).toBe(1);
 
-	await f.select("#brand", { x: 8, y: 10 });
-	// the ring says the box is smaller than what is in it, on the side it spills
-	await expect.poll(() => page.locator('[data-ring-spill="right"]').count(), { timeout: 20_000 }).toBe(1);
-
-	await expect.poll(() => page.locator('[data-element-handle="e"]').count(), { timeout: 20_000 }).toBe(1);
-	const knob = await page.locator('[data-element-handle="e"]').boundingBox();
-	if (knob === null) throw new Error("the ring drew no east handle");
-	const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
-	await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2);
-	await page.mouse.down();
-	// far past the left edge of the element: nothing about the pointer says stop
-	await page.mouse.move(knob.x - 90, knob.y + knob.height / 2);
-	await expect.poll(inline, { timeout: 15_000 }).not.toBe("");
-	const floored = await inline();
-	// the drag asked for 11px and got the width the word needs, not one under it
-	expect(Number.parseInt(floored, 10)).toBeGreaterThanOrEqual(needed - 1);
-	await page.mouse.up();
-	await wrote;
-	// the file says a width, and it is the one the word needs rather than the
-	// eleven pixels the pointer asked for
-	await expect.poll(() => /w-\[(\d+(?:\.\d+)?)px\]/.exec(f.bytes())?.[1] ?? null, { timeout: 15_000 }).not.toBeNull();
-	const written = Number(/w-\[(\d+(?:\.\d+)?)px\]/.exec(f.bytes())?.[1]);
-	expect(written).toBeGreaterThanOrEqual(needed - 1);
-});
+		await expect.poll(() => page.locator('[data-element-handle="e"]').count(), { timeout: 20_000 }).toBe(1);
+		const knob = await page.locator('[data-element-handle="e"]').boundingBox();
+		if (knob === null) throw new Error("the ring drew no east handle");
+		const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
+		await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2);
+		await page.mouse.down();
+		// far past the left edge of the element: nothing about the pointer says stop
+		await page.mouse.move(knob.x - 90, knob.y + knob.height / 2);
+		await expect.poll(inline, { timeout: 15_000 }).not.toBe("");
+		const floored = await inline();
+		// the drag asked for 11px and got the width the word needs, not one under it
+		expect(Number.parseInt(floored, 10)).toBeGreaterThanOrEqual(needed - 1);
+		await page.mouse.up();
+		await wrote;
+		// The persisted class and compiled layout agree, whether the writer chose
+		// an arbitrary value or a spacing token such as w-30 for 120px.
+		await expect.poll(inline).toBe("");
+		const classes = await frame.locator("#brand").first().getAttribute("class");
+		expect(classes).not.toBe("brand");
+		expect(f.bytes()).toBe(PAGE.replace('className="brand"', `className=${JSON.stringify(classes)}`));
+		const width = await frame
+			.locator("#brand")
+			.first()
+			.evaluate((el) => Number.parseFloat(getComputedStyle(el).width));
+		expect(width).toBeGreaterThanOrEqual(needed - 1);
+		expect(Math.abs(width - Number.parseFloat(floored))).toBeLessThan(1);
+	},
+);
 
 it("keeps a small element's corners at a zoom that leaves it no room", { timeout: 240_000 }, async () => {
 	// zoomed out to 0.4, and wide enough that the frame is still a document:

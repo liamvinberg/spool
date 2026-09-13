@@ -80,6 +80,12 @@ const FILES = {
 it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }, async () => {
 	const f = await handCanvas(FILES, STILL, { w: 900, h: 700 });
 	const { page, frame } = f;
+	// File bytes and DOM previews can arrive before the save enters Undo history.
+	const write = async (action: () => Promise<unknown>) => {
+		const response = page.waitForResponse((answer) => answer.url().endsWith("/element"));
+		await action();
+		await (await response).finished();
+	};
 	const requests = apiRequests(page, f.project.name);
 	const says = (snippet: string, there = true) =>
 		expect.poll(() => f.bytes().includes(snippet), { timeout: 15_000 }).toBe(there);
@@ -99,7 +105,7 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	// the paragraph beside the h3: an unkeyed sibling, out of the frame and out
 	// of the line, and back again on ⌘Z
 	await hold("#details p");
-	await page.keyboard.press("Backspace");
+	await write(() => page.keyboard.press("Backspace"));
 	await says("Let your shoulders fall", false);
 	await shows("#details p", 0);
 	await says('<h3>Start with one breath.</h3><a className="computed"');
@@ -111,7 +117,7 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	// so ⌫ refuses, names the file that component is written in, and offers the
 	// call instead — which is the delete that can honestly land
 	await hold("a.solid");
-	await page.keyboard.press("Backspace");
+	await write(() => page.keyboard.press("Backspace"));
 	const instead = page.locator("[data-hand-instead]");
 	await expect.poll(() => instead.count(), { timeout: 15_000 }).toBe(1);
 	expect(await page.locator("[data-hand-refusal] [data-hand-file]").getAttribute("data-hand-file")).toContain(
@@ -119,16 +125,16 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	);
 	await says('<Link className="solid"');
 	await shows("a.solid", 1);
-	await instead.click();
+	await write(() => instead.click());
 	await says('<Link className="solid"', false);
 	await shows("a.solid", 0);
 	expect(f.bytes("shared/ui/page-parts.tsx")).toBe(PAGE_PARTS);
 
 	// the `Shader` call, the same way
 	await hold(".shader-surface");
-	await page.keyboard.press("Backspace");
+	await write(() => page.keyboard.press("Backspace"));
 	await expect.poll(() => instead.count(), { timeout: 15_000 }).toBe(1);
-	await instead.click();
+	await write(() => instead.click());
 	await says("<Shader", false);
 	await shows(".shader-surface", 0);
 	expect(f.bytes("shared/ui/shader.tsx")).toBe(SHADER);
@@ -141,12 +147,13 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	const before = f.bytes();
 	await hold("#details h3");
 	const toggle = page.locator("[data-hidden-toggle]");
+	const changeVisibility = () => write(() => toggle.click());
 	await expect.poll(() => toggle.count(), { timeout: 15_000 }).toBe(1);
-	await toggle.click();
+	await changeVisibility();
 	await says('<h3 className="hidden">Start with one breath.</h3>');
 	await expect.poll(() => frame.locator("#details h3").evaluate((el) => getComputedStyle(el).display)).toBe("none");
 	await expect.poll(() => toggle.getAttribute("data-hidden-toggle")).toBe("hidden");
-	await toggle.click();
+	await changeVisibility();
 	await expect.poll(() => f.bytes(), { timeout: 15_000 }).toBe(before);
 	await expect
 		.poll(() => frame.locator("#details h3").evaluate((el) => getComputedStyle(el).display))
@@ -154,7 +161,7 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 
 	// and a hide undoes like anything else: the token out of the file and the
 	// element drawn again
-	await toggle.click();
+	await changeVisibility();
 	await says('<h3 className="hidden">');
 	await f.history();
 	await expect.poll(() => f.bytes(), { timeout: 15_000 }).toBe(before);
@@ -168,7 +175,7 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	const href = page.locator('[data-properties-row="href"] input');
 	await expect.poll(() => href.count(), { timeout: 15_000 }).toBe(1);
 	await href.fill("#practice");
-	await href.press("Enter");
+	await write(() => href.press("Enter"));
 	await says('<a className="optional" href="#practice">Our philosophy</a>');
 	expect(await frame.locator("a.optional").getAttribute("href")).toBe("#practice");
 	await f.history();
