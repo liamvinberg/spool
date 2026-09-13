@@ -6,6 +6,7 @@ import { AgentIcon, ArrowRightIcon, CloseIcon, FolderIcon } from "shared/ui/spoo
 import { SpoolMark } from "shared/ui/spool/mark";
 import { CoffeeScreen } from "shared/ui/demo/coffee-screens";
 import { AppLogo } from "shared/ui/spool/agent-start/app-logo";
+import { DockHelp } from "shared/ui/spool/dock-help";
 
 export const PROJECT_PATH = "/Users/you/Projects/kaffe";
 export const START_PROMPT =
@@ -95,49 +96,73 @@ export function Backdrop({
 	empty = false,
 	onGuide,
 	onCopy,
+	helpOpen = false,
 }: {
 	rail: ReactNode;
 	empty?: boolean;
 	onGuide?: () => void;
 	onCopy?: (text: string) => Promise<void>;
+	helpOpen?: boolean;
 }) {
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={empty ? "100%" : "60%"}>
-			<CanvasChrome
-				pages={empty ? [] : [{ name: "app", frames: ["menu", "cart"], active: true, open: true }]}
-				rail={rail}
-				railWidth={rail === null ? 0 : 420}
-				railLabel="Agent"
-				tool={empty ? "none" : "select"}
-			>
-				{empty ? (
-					<div className="flex h-full items-center justify-center pb-12">
-						<div className="absolute left-7 top-6">
-							<p className="type-body">kaffe</p>
-							<p className="mt-1 text-muted type-detail">saved on this mac</p>
+		<>
+			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={empty ? "100%" : "60%"}>
+				<CanvasChrome
+					pages={empty ? [] : [{ name: "app", frames: ["menu", "cart"], active: true, open: true }]}
+					rail={rail}
+					railWidth={rail === null ? 0 : 420}
+					railLabel="Agent"
+					tool={empty ? "none" : "select"}
+				>
+					{empty ? (
+						<div className="flex h-full items-center justify-center pb-12">
+							<div className="absolute left-7 top-6">
+								<p className="type-body">kaffe</p>
+								<p className="mt-1 text-muted type-detail">saved on this mac</p>
+							</div>
+							<div className="flex max-w-[410px] flex-col items-center text-center">
+								<SpoolMark className="mb-6 h-10 w-8 text-thread" />
+								<h1 className="type-heading">Your canvas is ready.</h1>
+								<p className="mt-3 text-muted type-body">
+									Open this project in your agent. Edits appear here as you work.
+								</p>
+								<button type="button" onClick={onGuide} className={cn(PRIMARY, "mt-7")}>
+									Use my agent <ArrowRightIcon className="h-4 w-4" />
+								</button>
+								<code className="mt-6 select-text text-muted type-detail">{PROJECT_PATH}</code>
+								{onCopy ? (
+									<div className="mt-3">
+										<CopyButton quiet text={PROJECT_PATH} label="Copy project path" onCopy={onCopy} />
+									</div>
+								) : null}
+							</div>
 						</div>
-						<div className="flex max-w-[410px] flex-col items-center text-center">
-							<SpoolMark className="mb-6 h-10 w-8 text-thread" />
-							<h1 className="type-heading">Your canvas is ready.</h1>
-							<p className="mt-3 text-muted type-body">
-								Open this project in your agent. Edits appear here as you work.
-							</p>
-							<button type="button" onClick={onGuide} className={cn(PRIMARY, "mt-7")}>
-								Use my agent <ArrowRightIcon className="h-4 w-4" />
-							</button>
-							<code className="mt-6 select-text text-muted type-detail">{PROJECT_PATH}</code>
-							{onCopy ? (
-								<div className="mt-3">
-									<CopyButton quiet text={PROJECT_PATH} label="Copy project path" onCopy={onCopy} />
-								</div>
-							) : null}
-						</div>
-					</div>
-				) : (
-					<CanvasFrames />
-				)}
-			</CanvasChrome>
-		</SpoolShell>
+					) : (
+						<CanvasFrames />
+					)}
+				</CanvasChrome>
+			</SpoolShell>
+			{onGuide && (
+				<div className="absolute bottom-1.5 right-[5px] z-20 flex flex-col items-center gap-1">
+					<DockHelp onUseAgent={onGuide} initiallyOpen={helpOpen} />
+					<button
+						type="button"
+						aria-label="Settings"
+						className="flex h-8 w-8 items-center justify-center rounded-sm text-muted/70 hover:text-text"
+					>
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+							<path
+								d="M13.23 6.66 14.93 7.01v1.98l-1.7.35-.58 1.41.95 1.45-1.4 1.4-1.45-.95-1.41.58-.35 1.7H7.01l-.35-1.7-1.41-.58-1.45.95-1.4-1.4.95-1.45-.58-1.41-1.7-.35V7.01l1.7-.35.58-1.41-.95-1.45 1.4-1.4 1.45.95 1.41-.58.35-1.7h1.98l.35 1.7 1.41.58 1.45-.95 1.4 1.4-.95 1.45.58 1.41Z"
+								stroke="currentColor"
+								strokeWidth="1.4"
+								strokeLinejoin="round"
+							/>
+							<circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.4" />
+						</svg>
+					</button>
+				</div>
+			)}
+		</>
 	);
 }
 
@@ -269,12 +294,14 @@ export function NoticeStage({
 	onContinue,
 	onClaude,
 	onCopy,
+	helpOpen = false,
 }: {
 	take: NoticeTake;
 	onGuide: () => void;
 	onContinue: () => void;
 	onClaude: () => void;
 	onCopy: (text: string) => Promise<void>;
+	helpOpen?: boolean;
 }) {
 	const [railOpen, setRailOpen] = useState(take !== "empty");
 	const [read, setRead] = useState(take === "ready" || take === "claude");
@@ -292,7 +319,13 @@ export function NoticeStage({
 	);
 	return (
 		<>
-			<Backdrop rail={railOpen ? rail : null} empty={take === "empty"} onGuide={onGuide} onCopy={onCopy} />
+			<Backdrop
+				rail={railOpen ? rail : null}
+				empty={take === "empty"}
+				onGuide={onGuide}
+				onCopy={onCopy}
+				helpOpen={helpOpen}
+			/>
 			<button
 				type="button"
 				aria-label={railOpen ? "Close agent panel" : "Open agent panel"}

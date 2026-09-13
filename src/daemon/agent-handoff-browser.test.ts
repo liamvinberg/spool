@@ -5,7 +5,7 @@ import { testBrowser } from "../test-browser";
 import { builtUi, fixtureAgentExecutor, serveProject } from "../test-helpers";
 import { createSettingsStore } from "./settings";
 
-it("shows the first spool recommendation, hands off from both entry points, and remembers the choice after reload", {
+it("hands off from the empty canvas, first recommendation, and Help menu without losing the chat", {
 	timeout: 120_000,
 }, async () => {
 	const project = await serveProject({
@@ -61,6 +61,35 @@ it("shows the first spool recommendation, hands off from both entry points, and 
 	await page.locator('[data-dock-glyph="agent"]').click();
 	await page.locator("[data-agent-rail] textarea").fill("Keep my draft");
 	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
+	const help = page.getByRole("button", { name: "Help", exact: true });
+	const menu = page.getByRole("menu", { name: "Help", exact: true });
+	const handoff = menu.getByRole("menuitem", { name: "Open in your agent", exact: false });
+	await help.click();
+	await menu.waitFor();
+	await shot("help");
+	expect(await handoff.evaluate((element) => element === document.activeElement)).toBe(true);
+	await handoff.press("Escape");
+	expect(await menu.count()).toBe(0);
+	expect(await help.evaluate((element) => element === document.activeElement)).toBe(true);
+	await help.press("ArrowDown");
+	await handoff.press("Enter");
+	await picker.waitFor();
+	await picker.getByRole("button", { name: "Back to canvas" }).click();
+	expect(await page.locator("[data-agent-rail] textarea").inputValue()).toBe("Keep my draft");
+	expect(await help.evaluate((element) => element === document.activeElement)).toBe(true);
+	await help.click();
+	await handoff.press("Tab");
+	expect(await menu.count()).toBe(0);
+	expect(
+		await page
+			.getByRole("button", { name: "Settings", exact: true })
+			.evaluate((element) => element === document.activeElement),
+	).toBe(true);
+	await help.click();
+	await page
+		.getByRole("application", { name: `${project.name} canvas`, exact: true })
+		.click({ position: { x: 30, y: 100 } });
+	expect(await menu.count()).toBe(0);
 	await page.reload();
 	await page.locator('[data-dock-glyph="agent"]').waitFor();
 	if ((await page.locator('[data-dock-glyph="agent"]').getAttribute("aria-pressed")) === "false")

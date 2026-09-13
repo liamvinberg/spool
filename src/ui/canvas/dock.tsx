@@ -5,6 +5,7 @@ import { hotkeyKey } from "../hotkeys";
 import { AgentIcon, CogIcon, PropertiesIcon } from "../icons";
 import { useRemembered } from "../remembered";
 import { AGENT_WIDTH } from "./agent-rail";
+import { DockHelp } from "./dock-help";
 import {
 	GRIP_CLASS,
 	GRIP_HAIR,
@@ -70,6 +71,7 @@ export function Dock({
 	agent,
 	agentWorking,
 	onSettings,
+	onUseAgent,
 	request,
 }: {
 	/**
@@ -84,6 +86,7 @@ export function Dock({
 	agentWorking: boolean;
 	/** the cog at the foot of the strip (#282): a door to the settings sheet, not a surface */
 	onSettings?: (() => void) | undefined;
+	onUseAgent?: (() => void) | undefined;
 	request?: string | undefined;
 }) {
 	const [kept, setKept] = useRemembered<DockHeld>("dock.open", "properties", isHeld);
@@ -238,16 +241,19 @@ export function Dock({
 				>
 					<AgentIcon />
 				</Glyph>
-				<button
-					type="button"
-					data-dock-glyph="settings"
-					aria-label="Settings"
-					title={`Settings ${settingsFace()}`}
-					onClick={onSettings}
-					className="relative mt-auto mb-1.5 flex h-8 w-8 items-center justify-center rounded-sm text-muted/70 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-text active:scale-90 motion-reduce:transition-none"
-				>
-					<CogIcon />
-				</button>
+				<div className="mt-auto mb-1.5 flex flex-col items-center gap-1">
+					{onUseAgent && <DockHelp onUseAgent={onUseAgent} />}
+					<button
+						type="button"
+						data-dock-glyph="settings"
+						aria-label="Settings"
+						title={`Settings ${settingsFace()}`}
+						onClick={onSettings}
+						className="relative flex h-8 w-8 items-center justify-center rounded-sm text-muted/70 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-text active:scale-90 motion-reduce:transition-none"
+					>
+						<CogIcon />
+					</button>
+				</div>
 			</div>
 		</aside>
 	);

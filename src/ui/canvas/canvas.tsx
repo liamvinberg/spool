@@ -6490,6 +6490,7 @@ export function ProjectCanvas({
 				request={agentRequest?.id}
 				agentWorking={turn.phase === "playing"}
 				onSettings={onSettings}
+				onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
 				properties={(width, shut) => (
 					<PropertiesRail
 						project={project}
