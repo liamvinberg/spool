@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, w
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { serveDaemon } from "./daemon/server";
@@ -281,6 +282,34 @@ describe("spool cli", { timeout: 30_000 }, () => {
 		expect(result.stderr).toContain("unauthenticated");
 		expect(result.stderr).toContain("cli is v");
 		expect(result.stderr).toMatch(/spool upgrade|restart it to catch it up/);
+	});
+
+	it("prints only shot paths on stdout and content height on stderr", async () => {
+		try {
+			const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+			await browser.close();
+		} catch {
+			return;
+		}
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const { root } = makeProject(spoolDir);
+		writeFrame(
+			root,
+			"tall",
+			"export default function Tall() { return <main style={{ height: 1800 }}>tall</main>; }\n",
+		);
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+		const result = await spoolAsync(["shot", "tall", "--viewport", "160x120"], home, root, {
+			// Keep Playwright's browser cache while isolating all spool state.
+			HOME: process.env.HOME ?? home,
+			SPOOL_DIR: spoolDir,
+		});
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toBe(`${join(root, "design", ".spool", "verify", "tall.png")}\n`);
+		expect(result.stderr).toBe('spool: "tall" content height: 1800px\n');
 	});
 
 	it("says a replayed cache matches current compiled source", async () => {

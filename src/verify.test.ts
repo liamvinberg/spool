@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { writeCaptureError } from "./daemon/thumbs";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
@@ -164,6 +165,71 @@ describe("planShot", () => {
 });
 
 describe("the one boot smoke", () => {
+	it("measures overflowing content after a delayed font loads without resizing the shot", {
+		timeout: 30_000,
+	}, async () => {
+		if (!(await browserAvailable())) return;
+		const font = readFileSync(
+			join(process.cwd(), "node_modules/@fontsource/fragment-mono/files/fragment-mono-latin-400-normal.woff2"),
+		);
+		let requested: (response: ServerResponse) => void = () => {};
+		const fontRequest = new Promise<ServerResponse>((resolve) => {
+			requested = resolve;
+		});
+		const server = createServer((_request, response) => requested(response));
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		onTestFinished(() => {
+			server.closeAllConnections();
+			return new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		});
+		const address = server.address();
+		if (address === null || typeof address === "string") throw new Error("font server has no port");
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(
+			root,
+			"tall",
+			`import { useLayoutEffect } from "react";
+const font = new FontFace("Shot Test", "url(http://127.0.0.1:${address.port}/font.woff2)");
+document.fonts.add(font);
+font.load();
+export default function Tall() {
+	useLayoutEffect(() => {
+		console.log("before-font:" + document.documentElement.scrollHeight);
+		document.fonts.ready.then(() => console.log("after-font:" + document.documentElement.scrollHeight));
+	}, []);
+	return <main style={{ width: 100, fontFamily: '"Shot Test", Arial', fontSize: 40, lineHeight: 1, wordBreak: "break-all" }}>{"i".repeat(300)}</main>;
+}
+`,
+		);
+		const shot = await shotFrame(
+			deps("tall", {
+				viewport: { width: 160, height: 120 },
+				wait: async () => {
+					const response = await fontRequest;
+					// Return while the real font is pending, so measurement must wait for it.
+					setTimeout(() => {
+						response.writeHead(200, { "Content-Type": "font/woff2", "Access-Control-Allow-Origin": "*" });
+						response.end(font);
+					}, 100);
+				},
+			}),
+		);
+		expect(shot.kind).toBe("shot");
+		if (shot.kind !== "shot") throw new Error("shot failed");
+		const logs = await logsFrame(deps("tall"));
+		if (logs.kind !== "logs") throw new Error("logs failed");
+		const before = logs.entries.find((entry) => entry.text.startsWith("before-font:"));
+		const after = logs.entries.find((entry) => entry.text.startsWith("after-font:"));
+		expect(before).toBeDefined();
+		expect(after).toBeDefined();
+		expect(shot.contentHeight).toBe(Number(after?.text.split(":")[1]));
+		expect(shot.contentHeight).toBeGreaterThan(Number(before?.text.split(":")[1]));
+		expect(shot.contentHeight).toBeGreaterThan(120);
+		expect(shot.files).toHaveLength(1);
+		expect(readPngSize(shot.files[0] as string)).toEqual({ width: 320, height: 240 });
+		expect(existsSync(join(root, "design", "frames", "tall", "frame.json"))).toBe(false);
+	});
+
 	it("boots, shoots, logs, replays, refreshes on edit, surfaces boot errors", { timeout: 180_000 }, async () => {
 		if (!(await browserAvailable())) return; // no build on this machine: #27 covers the fetch path
 
@@ -191,7 +257,7 @@ export default function Noisy() {
 					},
 				}),
 			),
-		).resolves.toMatchObject({ kind: "shot" });
+		).resolves.toMatchObject({ kind: "shot", contentHeight: 900 });
 		expect(defaultNarrations).toEqual(['no valid frame.json for "defaulted" — using the 1440×900 default viewport']);
 		expect(defaultWaits).toEqual([300]);
 		expect(existsSync(join(root, "design", "frames", "defaulted", "frame.json"))).toBe(false);

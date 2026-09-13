@@ -225,6 +225,7 @@ program
 			return;
 		}
 		process.stdout.write(`${outcome.files.join("\n")}\n`);
+		narrate(`"${frame}" content height: ${outcome.contentHeight}px`);
 		if (outcome.bootErrors.length > 0) {
 			process.stderr.write(`${outcome.bootErrors.join("\n")}\n`);
 			process.exitCode = 1;

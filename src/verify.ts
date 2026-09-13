@@ -47,7 +47,7 @@ export interface LogEntry {
 export type ShotOutcome =
 	| { kind: "broken"; message: string }
 	| { kind: "missing"; message: string }
-	| { kind: "shot"; files: string[]; bootErrors: string[] };
+	| { kind: "shot"; files: string[]; bootErrors: string[]; contentHeight: number };
 
 export type LogsOutcome =
 	| { kind: "broken"; message: string }
@@ -60,7 +60,7 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	if (probe.kind === "missing") return probe;
 	const boot = await bootFrame(deps, probe.etag);
 	if (boot.kind === "broken") return boot;
-	return { kind: "shot", files: boot.files, bootErrors: boot.errors };
+	return { kind: "shot", files: boot.files, bootErrors: boot.errors, contentHeight: boot.contentHeight };
 }
 
 export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
@@ -195,7 +195,7 @@ async function probeCompile(deps: BootDeps): Promise<Probe> {
 }
 
 type Boot =
-	| { kind: "booted"; files: string[]; entries: LogEntry[]; errors: string[] }
+	| { kind: "booted"; files: string[]; entries: LogEntry[]; errors: string[]; contentHeight: number }
 	| { kind: "broken"; message: string };
 
 async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
@@ -233,6 +233,8 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 			})
 			.catch(() => {});
 		await (deps.wait?.(deps.at ?? DEFAULT_SETTLE_MS) ?? page.waitForTimeout(deps.at ?? DEFAULT_SETTLE_MS));
+		await page.waitForFunction(() => document.fonts.ready.then(() => true), undefined, { timeout: 30_000 });
+		const contentHeight = await page.evaluate(() => document.documentElement.scrollHeight);
 		const files: string[] = [];
 		if (plan.tiles.length === 1) {
 			writeAtomic(shotFile(deps.root, deps.frame), await page.screenshot({ type: "png" }));
@@ -254,7 +256,7 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 			logsFile(deps.root, deps.frame),
 			`${JSON.stringify({ etag, scenario: scenarioName(deps), at: new Date().toISOString(), entries }, null, "\t")}\n`,
 		);
-		return { kind: "booted", files, entries, errors };
+		return { kind: "booted", files, entries, errors, contentHeight };
 	} finally {
 		await browser.close();
 	}
