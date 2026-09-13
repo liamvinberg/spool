@@ -1,5 +1,5 @@
 import { ui } from "spool";
-import { NoticeStage, Prototype } from "shared/ui/explore/agent-start/stage";
+import { NoticeStage, Prototype } from "shared/ui/spool/agent-start/stage";
 
 export default function Frame() {
 	return (

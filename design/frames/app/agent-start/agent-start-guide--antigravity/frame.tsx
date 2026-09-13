@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { ui } from "spool";
-import { GuideStage, Prototype } from "shared/ui/explore/agent-start/stage";
+import { GuideStage, Prototype } from "shared/ui/spool/agent-start/stage";
 
 export default function Frame() {
-	const [note, setNote] = useState("claude · copy uses spool’s clipboard; project path is sample data");
+	const [note, setNote] = useState("antigravity · copy uses spool’s clipboard; project path is sample data");
 	return (
 		<Prototype note={note}>
 			<GuideStage
-				app="claude"
+				app="antigravity"
 				onSelect={{
 					claude: () => ui.go("agent-start-guide--claude"),
 					chatgpt: () => ui.go("agent-start-guide--chatgpt"),

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ui } from "spool";
-import { GuideStage, Prototype } from "shared/ui/explore/agent-start/stage";
+import { GuideStage, Prototype } from "shared/ui/spool/agent-start/stage";
 
 export default function Frame() {
 	const [note, setNote] = useState(

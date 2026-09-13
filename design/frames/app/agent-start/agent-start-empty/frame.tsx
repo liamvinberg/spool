@@ -1,11 +1,11 @@
 import { ui } from "spool";
-import { NoticeStage, Prototype } from "shared/ui/explore/agent-start/stage";
+import { NoticeStage, Prototype } from "shared/ui/spool/agent-start/stage";
 
 export default function Frame() {
 	return (
-		<Prototype note="inline · the notice fills the chat panel on first open">
+		<Prototype note="empty project · the same handoff guide is available before opening chat">
 			<NoticeStage
-				take="inline"
+				take="empty"
 				onGuide={() => ui.go("agent-start-guide--claude")}
 				onContinue={() => ui.go("agent-start-dialog--ready")}
 				onClaude={() => ui.go("agent-start-dialog--claude")}

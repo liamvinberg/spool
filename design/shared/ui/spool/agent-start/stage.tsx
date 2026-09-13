@@ -5,13 +5,13 @@ import { SpoolShell } from "shared/ui/spool/shell";
 import { AgentIcon, ArrowRightIcon, CloseIcon, FolderIcon } from "shared/ui/spool/icons";
 import { SpoolMark } from "shared/ui/spool/mark";
 import { CoffeeScreen } from "shared/ui/demo/coffee-screens";
-import { AppLogo } from "shared/ui/explore/agent-start/app-logo";
+import { AppLogo } from "shared/ui/spool/agent-start/app-logo";
 
 export const PROJECT_PATH = "/Users/you/Projects/kaffe";
 export const START_PROMPT =
 	"Use spool to design in this project's existing design/ folder. Read the project instructions and design/AGENTS.md, then run the project's spool skill command.";
 export type AgentApp = "claude" | "chatgpt" | "antigravity";
-export type NoticeTake = "inline" | "dialog" | "choice" | "ready" | "claude" | "empty";
+export type NoticeTake = "dialog" | "ready" | "claude" | "empty";
 
 const PRIMARY =
 	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm bg-text px-4 text-bg type-control hover:bg-text/90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-thread";
@@ -183,15 +183,6 @@ function RailHeader() {
 	);
 }
 
-function LimitCopy() {
-	return (
-		<p className="text-muted type-body">
-			The spool agent can edit files and run commands. It doesn’t include built-in web search or your app’s connected
-			tools.
-		</p>
-	);
-}
-
 function ClaudeCopy({ onClaude }: { onClaude: () => void }) {
 	return (
 		<p className="text-muted type-label">
@@ -295,46 +286,11 @@ export function NoticeStage({
 	const rail = (
 		<div className="flex h-full flex-col bg-bg">
 			<RailHeader />
-			{take === "inline" && !read ? (
-				<div className="flex min-h-0 flex-1 flex-col px-6 pt-10">
-					<h1 className="max-w-[290px] text-[23px] font-medium leading-[30px] tracking-tight">
-						Use the agent you already know.
-					</h1>
-					<p className="mt-4 text-muted type-body">
-						We recommend your usual coding app for its web search, connected tools and familiar setup.
-					</p>
-					<div className="my-6 border-y border-border py-5">
-						<LimitCopy />
-					</div>
-					<button type="button" className={PRIMARY} onClick={onGuide}>
-						Use my agent <ArrowRightIcon className="h-4 w-4" />
-					</button>
-					<button type="button" className={cn(QUIET, "mt-4 min-h-8")} onClick={closeNotice}>
-						Continue in spool
-					</button>
-					<div className="mt-auto pb-7 pt-8">
-						<ClaudeCopy onClaude={onClaude} />
-					</div>
-				</div>
-			) : (
 				<>
 					<div className="flex min-h-0 flex-1 flex-col px-5">
-						<div className="my-auto py-10">
-							<AgentIcon className="mb-4 h-6 w-6 text-muted" />
-							<h2 className="type-heading">{claude ? "Claude Code, on your canvas." : "Start with an idea."}</h2>
-							<p className="mt-2 text-muted type-body">
-								{claude
-									? "You’re using Claude Code on this Mac. Its tools, including web search, are available here under your project’s permissions."
-									: "Ask for a first screen, a different direction, or a small change to what’s here."}
-							</p>
-							{claude ? (
-								<p className="mt-4 text-muted type-label">
-									Your Claude desktop app may have additional tools and connections.
-								</p>
-							) : null}
-						</div>
+						<div className="min-h-0 flex-1" />
 						{read ? (
-							<div className="mb-5 border-t border-border pt-4">
+							<div className="mb-3">
 								<button type="button" className={QUIET} onClick={onGuide}>
 									Open in my agent <span aria-hidden="true">↗</span>
 								</button>
@@ -343,7 +299,6 @@ export function NoticeStage({
 					</div>
 					<Composer claude={claude} />
 				</>
-			)}
 		</div>
 	);
 	return (
@@ -370,7 +325,7 @@ export function NoticeStage({
 							We recommend your usual app for its web search and connected tools. The spool agent edits files and
 							runs commands, but has no built-in web search.
 						</p>
-						<div className="mt-6 flex gap-3">
+						<div className="mt-6 flex flex-wrap gap-2">
 							<button type="button" onClick={onGuide} className={PRIMARY}>
 								Use my agent <ArrowRightIcon className="h-4 w-4" />
 							</button>
@@ -381,45 +336,6 @@ export function NoticeStage({
 						<div className="mt-6">
 							<ClaudeCopy onClaude={onClaude} />
 						</div>
-					</div>
-				</Modal>
-			) : null}
-			{take === "choice" && !read ? (
-				<Modal onClose={closeNotice} wide title="Choose where your agent works">
-					<div className="px-8 pb-7 pt-9">
-						<h1 className="text-[26px] font-medium leading-[33px] tracking-tight">
-							Where would you like to work?
-						</h1>
-						<p className="mt-3 text-muted type-body">
-							We recommend your usual coding app. Every option edits this same project.
-						</p>
-						<div className="my-7 grid grid-cols-2 divide-x divide-border-raised border-y border-border-raised py-6">
-							<div className="flex flex-col pr-7">
-								<h2 className="type-heading">Your agent app</h2>
-								<p className="mt-3 text-muted type-body">
-									Keep the web search, tools and connections you’ve set up in Claude, ChatGPT or Antigravity.
-								</p>
-								<p className="mb-6 mt-3 text-muted type-body">
-									Changes appear on this canvas as your agent works.
-								</p>
-								<button type="button" className={cn(PRIMARY, "mt-auto self-start")} onClick={onGuide}>
-									Use my agent <ArrowRightIcon className="h-4 w-4" />
-								</button>
-							</div>
-							<div className="flex flex-col pl-7">
-								<h2 className="type-heading">The spool agent</h2>
-								<p className="mt-3 text-muted type-body">
-									Chat beside your canvas. Edit files and run commands with the model you choose.
-								</p>
-								<p className="mb-6 mt-3 text-muted type-body">
-									Built-in web search and your app’s connected tools aren’t included.
-								</p>
-								<button type="button" className={cn(SECONDARY, "mt-auto self-start")} onClick={closeNotice}>
-									Continue in spool
-								</button>
-							</div>
-						</div>
-						<ClaudeCopy onClaude={onClaude} />
 					</div>
 				</Modal>
 			) : null}
@@ -516,11 +432,11 @@ export function GuideStage({
 								) : null}
 								{app === "chatgpt" ? (
 									<>
-										<p>Open this folder locally. You can also launch it from Terminal:</p>
+										<p>Open this folder locally. On macOS, you can also launch it from Terminal with the Codex CLI:</p>
 										<code className="block select-text text-text type-detail">
-											codex app &quot;{PROJECT_PATH}&quot;
+											codex app &apos;{PROJECT_PATH}&apos;
 										</code>
-										<CopyButton text={`codex app "${PROJECT_PATH}"`} label="Copy command" onCopy={onCopy} />
+										<CopyButton text={`codex app '${PROJECT_PATH}'`} label="Copy command" onCopy={onCopy} />
 									</>
 								) : null}
 								<p className="select-text">{START_PROMPT}</p>
