@@ -26,7 +26,7 @@ const pins = [
  * browser suite starting after the rest have finished. Within each group the
  * base order stands: longest first from the local cache, largest first without.
  */
-const heavy = /(-browser|-native|\/bundled-[^/]+|\/cli|\/installed-engine)\.test\.ts$/;
+const heavy = /(-browser|-native|\/bundled-[^/]+|\/cli(?:-[^/]+)?|\/installed-engine)\.test\.ts$/;
 
 class HeavyFirstSequencer extends BaseSequencer {
 	override async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
