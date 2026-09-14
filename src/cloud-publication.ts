@@ -286,7 +286,7 @@ export async function mutatePublicationGrant(
 		let response: unknown;
 		for (let attempt = 1; ; attempt++) {
 			try {
-				response = await requestJson(spoolDir, path, init, cloudOptions);
+				response = await requestJson(spoolDir, path, init, cloudOptions, 1);
 				break;
 			} catch (error) {
 				const retryableTransport = error instanceof CloudRequestFailure;
@@ -307,6 +307,13 @@ export async function mutatePublicationGrant(
 			throw new SpoolError("spool.page returned a different invitation operation");
 		return result;
 	} catch (error) {
+		if (error instanceof CloudRequestFailure) {
+			throw new CloudPublicationFailure(error.message, {
+				code: error.code,
+				retryable: error.retryable,
+				operationId,
+			});
+		}
 		if (error instanceof CloudPublicationFailure) {
 			throw new CloudPublicationFailure(error.message, { ...error.detail, operationId });
 		}
@@ -412,8 +419,14 @@ class CloudApiError extends CloudPublicationFailure {
 		super(message, { code, retryable, ...(retryAfter === undefined ? {} : { retryAfter }) });
 	}
 }
-async function requestJson(spoolDir: string, path: string, init: RequestInit, options: AuthOptions): Promise<unknown> {
-	for (let attempt = 1; attempt <= 3; attempt++) {
+async function requestJson(
+	spoolDir: string,
+	path: string,
+	init: RequestInit,
+	options: AuthOptions,
+	maxAttempts = 3,
+): Promise<unknown> {
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		const response = await authorizedCloudRequest(spoolDir, path, init, options);
 		let value: unknown = {};
 		try {
@@ -428,7 +441,7 @@ async function requestJson(spoolDir: string, path: string, init: RequestInit, op
 		const retryAfter = retrySeconds(body.retryAfter, response.headers.get("retry-after"));
 		if (
 			(response.status === 429 || response.status === 503) &&
-			attempt < 3 &&
+			attempt < maxAttempts &&
 			retryAfter !== undefined &&
 			retryAfter <= 10
 		) {

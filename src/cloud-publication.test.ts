@@ -159,7 +159,12 @@ describe("Cloud publication client", () => {
 			attempts++;
 			const id = new Headers(init?.headers).get("idempotency-key") ?? "";
 			ids.push(id);
-			if (attempts === 1) throw new Error("socket contained a secret");
+			if (attempts === 1)
+				return Response.json(
+					{ error: "service_unavailable", message: "try later", retryable: true },
+					{ status: 503 },
+				);
+			if (attempts === 2) throw new Error("socket contained a secret");
 			const grant = { email: "viewer@example.com", active: false, generation: 1 };
 			return Response.json({
 				operation: {
@@ -178,7 +183,7 @@ describe("Cloud publication client", () => {
 				fetch,
 			}),
 		).resolves.toMatchObject({ operation: { result: { changed: false } } });
-		expect(ids).toHaveLength(2);
+		expect(ids).toHaveLength(3);
 		expect(new Set(ids).size).toBe(1);
 	});
 	it("uploads the exact captured inventory and recovers a lost activation response", async () => {
