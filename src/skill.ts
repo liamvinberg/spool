@@ -31,6 +31,7 @@ Lifecycle (offline, take a path):
   spool open [path]     register an existing project by walk-up and open its tab
   spool remove [path]   forget one exact registered root without deleting its files
   spool check [path]    strictly type-check frames without starting spool
+  spool build <frame> --out <directory> [--scenario <name>]    export a connected website offline
 
 For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source.
 
@@ -127,6 +128,8 @@ Before publishing, run \`spool check --entry <frame-name>\` offline (or \`spool 
   }
 
 Every value must be a literal frame name. The declaration is authoritative, so literal navigation must agree with it; missing targets, invalid declarations and unresolved undeclared navigation make readiness fail. Rendered scenarios and verified walks are evidence, never completeness proof.
+
+\`spool build <frame-name> --out <directory> [--scenario <name>]\` captures and compiles the connected website without a daemon or Cloud login. Serve the output with an ordinary static HTTP server. The output contains compiled code and the selected seed, so treat both as visible to viewers. Missing default seed means empty state; an explicitly named scenario must exist. The exporter carries imported modules, images, CSS and fonts into local resources; use pinned HTTPS import-map URLs and relative CSS resources inside design/. Arbitrary authored external services remain external and are listed in manifest.json. The output directory must be empty or a previous Spool build.
 
 Coded walks carry no transition name — data-transition rides the element, ui.go has no third argument. Walking to a frame that doesn't exist logs an error and stays put on the canvas and in the player, so a typo never eats the session; a bare frame document walks by navigation and lands on the daemon's 404 instead (topic: verbs). ui.state is schemaless and shared by every frame in the session: initialize defensively (ui.state.items ??= [...]) because any frame can be a session's first. Top-level keys are the unit of reasoning; nested writes still react. Writes belong in handlers and effects, never in a render — a write from a component body makes React run that render again, so the value that render read is dropped, and the runtime warns once per site in the frame's console. A one-shot flag a walk hands over is read in render and cleared in an effect, never cleared by the render that reads it.
 

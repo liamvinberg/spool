@@ -10,6 +10,7 @@ export function targets(
 	if (seen.has(path.node)) return;
 	const next = new Set(seen).add(path.node);
 	if (path.isStringLiteral()) return [path.node.value];
+	if (path.isNullLiteral()) return [];
 	if (path.isTemplateLiteral() && path.node.expressions.length === 0) {
 		const value = path.node.quasis[0]?.value.cooked;
 		return value == null ? undefined : [value];
@@ -29,6 +30,7 @@ export function targets(
 	}
 	if (path.isIdentifier()) {
 		const binding = path.scope.getBinding(path.node.name);
+		if (binding === undefined && path.node.name === "undefined") return [];
 		if (binding !== undefined && inputs.values.has(binding.identifier)) return inputs.values.get(binding.identifier);
 		if (binding?.constant !== true || binding.kind !== "const" || !binding.path.isVariableDeclarator()) return;
 		const init = binding.path.get("init");
@@ -40,7 +42,11 @@ export function targets(
 		if (!object.isIdentifier() || !property.isIdentifier()) return;
 		const binding = object.scope.getBinding(object.node.name);
 		if (binding !== undefined && inputs.members.has(binding.identifier))
-			return inputs.members.get(binding.identifier)?.get(property.node.name);
+			return (
+				inputs.members.get(binding.identifier)?.get(property.node.name) ??
+				inputs.members.get(binding.identifier)?.get("*") ??
+				[]
+			);
 		if (binding?.constant !== true || binding.kind !== "const" || !binding.path.isVariableDeclarator()) return;
 		if (
 			binding.referencePaths.some((reference) => {
@@ -97,6 +103,7 @@ export function componentInputs(mounts: { component: NodePath; attributes: NodeP
 		if (parameter === undefined) continue;
 		const props = new Map<string, TargetValues>();
 		const spread = mount.attributes.some((attribute) => attribute.isJSXSpreadAttribute());
+		if (spread) props.set("*", [undefined]);
 		for (const attribute of mount.attributes) {
 			if (!attribute.isJSXAttribute() || !attribute.get("name").isJSXIdentifier()) continue;
 			const name = attribute.node.name.type === "JSXIdentifier" ? attribute.node.name.name : "";
@@ -119,7 +126,7 @@ export function componentInputs(mounts: { component: NodePath; attributes: NodeP
 				if (binding === undefined) continue;
 				inputs.values.set(binding.identifier, [
 					...(inputs.values.get(binding.identifier) ?? []),
-					...(props.get(spelling(property.node.key)) ?? [undefined]),
+					...(props.get(spelling(property.node.key)) ?? (spread ? [undefined] : [])),
 				]);
 			}
 		} else if (parameter.isIdentifier()) {
@@ -129,7 +136,10 @@ export function componentInputs(mounts: { component: NodePath; attributes: NodeP
 			if (known === undefined) inputs.members.set(binding.identifier, props);
 			else {
 				for (const name of new Set([...known.keys(), ...props.keys()]))
-					known.set(name, [...(known.get(name) ?? [undefined]), ...(props.get(name) ?? [undefined])]);
+					known.set(name, [
+						...(known.get(name) ?? known.get("*") ?? []),
+						...(props.get(name) ?? props.get("*") ?? []),
+					]);
 			}
 		}
 	}

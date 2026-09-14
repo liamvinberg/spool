@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import type { NodePath, default as Traverse } from "@babel/traverse";
 import type { Node, Program } from "@babel/types";
+import { ASSET_EXTENSIONS, TEXT_EXTENSIONS } from "./assets";
 import { designRelativePath } from "./design-path";
 import type { FrameGraph } from "./flows";
 import { createSourcePass, type NavSite, resolveFrameDir, type UnreadableSite } from "./nav-sites";
@@ -82,6 +83,14 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 		if (!parent?.isImportDeclaration() || parent.node.importKind === "type") return;
 		if (path.isImportSpecifier() && path.node.importKind === "type") return;
 		const name = parent.node.source.value;
+		const extension = extname(name).toLowerCase();
+		if (
+			ASSET_EXTENSIONS.has(extension) ||
+			TEXT_EXTENSIONS.has(extension) ||
+			extension === ".json" ||
+			extension === ".css"
+		)
+			return;
 		if (name === "spool" || (!name.startsWith(".") && !name.startsWith("shared/"))) return;
 		const target = pass.resolve(file, name);
 		if (target === undefined) {

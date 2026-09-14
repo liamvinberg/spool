@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { spool } from "./cli-test-helpers";
@@ -39,4 +39,20 @@ describe("offline publication checks", () => {
 			],
 		});
 	});
+});
+
+it("builds a portable directory offline and rejects missing explicit scenarios without touching it", () => {
+	const home = makeTempDir();
+	const { root } = makeProject(join(home, ".spool"));
+	writeFrame(root, "start", "export default () => <h1>Exported</h1>");
+	const out = join(home, "website");
+	const built = spool(["build", "start", "--out", out], home, root);
+	expect(built.status, built.stderr).toBe(0);
+	expect(JSON.parse(built.stdout)).toMatchObject({ entry: "start", included: ["start"] });
+	const before = readFileSync(join(out, "manifest.json"), "utf8");
+	const failed = spool(["build", "start", "--out", out, "--scenario", "missing"], home, root);
+	expect(failed.status).toBe(1);
+	expect(failed.stderr).toContain('Scenario "missing"');
+	expect(readFileSync(join(out, "manifest.json"), "utf8")).toBe(before);
+	expect(existsSync(join(home, ".spool", "daemon.json"))).toBe(false);
 });
