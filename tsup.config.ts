@@ -32,6 +32,18 @@ export default defineConfig([
 		splitting: false,
 		target: "es2022",
 		tsconfig: "tsconfig.runtime.json",
+		define: { __SPOOL_PUBLICATION_BUILD__: "false" },
+		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
+	},
+	{
+		entry: { "publication-runtime": "src/runtime/frame-runtime.ts" },
+		format: "esm",
+		platform: "browser",
+		splitting: false,
+		target: "es2022",
+		tsconfig: "tsconfig.runtime.json",
+		minify: true,
+		define: { __SPOOL_PUBLICATION_BUILD__: "true" },
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
 	},
 ]);

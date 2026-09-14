@@ -18,7 +18,11 @@ export interface FrameStyleClosure {
 }
 
 /** Build the exact stylesheet closure a frame receives in its standalone document. */
-export async function buildFrameStyleClosure(designDir: string, ref: FrameStyleRef): Promise<FrameStyleClosure> {
+export async function buildFrameStyleClosure(
+	designDir: string,
+	ref: FrameStyleRef,
+	publication = false,
+): Promise<FrameStyleClosure> {
 	const folder = frameFolder(ref.name, ref.page);
 	const frame = await buildDesignEntry({
 		designDir,
@@ -26,6 +30,7 @@ export async function buildFrameStyleClosure(designDir: string, ref: FrameStyleR
 		sourcefile: STYLESHEET_ENTRY,
 		contents: `import frame from ${JSON.stringify("./frame.tsx")};\nexport default frame;\n`,
 		label: `frame "${ref.name}"`,
+		...(publication ? { publication: true } : {}),
 	});
 	const compiled = await buildFrameCss(designDir, frame.sourceFiles);
 	const project = frame.bundledCss === undefined ? "" : layeredProjectCss(frame.bundledCss);

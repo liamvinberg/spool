@@ -219,6 +219,26 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 	return { getBundle, getChunk, warmed, close };
 }
 
+/** Same split renderer, strict destination compilation and no source stamping. */
+export async function buildPublicationPlayer(
+	designDir: string,
+	frames: PlayerFrameRef[],
+	version: string,
+): Promise<{ bundle: PlayerBundle; inputs: string[] }> {
+	const stamp = frames.map((ref) => frameFolder(ref.name, ref.page)).join("\n");
+	const held: PlayerContext = {
+		stamp,
+		designDir,
+		context: await context(compositionOptions(designDir, playerEntry(frames, new Map()), true)),
+	};
+	try {
+		const result = await compilePlayer(version, designDir, frames, stamp, inertWebfonts(), held, true);
+		return { bundle: result.bundle, inputs: result.inputs };
+	} finally {
+		await held.context.dispose();
+	}
+}
+
 export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;
 
 interface PlayerContext {
@@ -234,19 +254,27 @@ async function compilePlayer(
 	stamp: string,
 	webfonts: Webfonts,
 	context: PlayerContext,
+	publication = false,
 ): Promise<PlayerCacheEntry> {
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
-	const composed = await composePlayer(designDir, frames, context);
+	const composed = publication
+		? {
+				composition: readComposition(designDir, frames, await context.context.rebuild()),
+				broken: new Map<string, string>(),
+			}
+		: await composePlayer(designDir, frames, context);
 	const { sourceFiles } = composed.composition;
 
 	const shared = join(designDir, "shared");
 	const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
 		if (composed.broken.has(ref.name)) return { name: ref.name, css: "", sources: [], stylesheets: [] };
-		return { name: ref.name, ...(await buildFrameStyleClosure(designDir, ref)) };
+		return { name: ref.name, ...(await buildFrameStyleClosure(designDir, ref, publication)) };
 	});
 	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
-	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts);
+	const { css: fonts, files: fontFiles } = publication
+		? { css: resolvedFonts, files: [] }
+		: inlineLocalFonts(designDir, resolvedFonts);
 	const transitions = readIfExists(join(shared, "transitions.css"), designDir);
 	const importMap = mergeImportMap(
 		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
@@ -357,7 +385,7 @@ async function composePlayer(
 }
 
 /** The composition's esbuild options: the design compile, split at every frame. */
-function compositionOptions(designDir: string, contents: string) {
+function compositionOptions(designDir: string, contents: string, publication = false) {
 	return {
 		...designBuildOptions({
 			designDir,
@@ -365,6 +393,7 @@ function compositionOptions(designDir: string, contents: string) {
 			sourcefile: STDIN_NAME,
 			contents,
 			label: "the player",
+			...(publication ? { publication: true } : {}),
 		}),
 		splitting: true as const,
 		entryNames: "play-[hash]",

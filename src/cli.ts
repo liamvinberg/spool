@@ -30,6 +30,7 @@ import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
 import { isSafeName } from "./page-path";
+import { buildWebsite, writeWebsite } from "./publication/build";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
@@ -144,6 +145,31 @@ program
 			);
 		}
 		if (diagnostics.length > 0) process.exitCode = 1;
+	});
+
+program
+	.command("build")
+	.description("export the connected website without starting a daemon")
+	.argument("<frame>", "entry frame", parseScenario)
+	.requiredOption("--out <directory>", "output directory, empty or a previous Spool build")
+	.option("--scenario <name>", "scenario seed", parseScenario)
+	.action(async (entry: string, options: { out: string; scenario?: string }) => {
+		const root = resolveProjectRoot(process.cwd());
+		if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
+		try {
+			const artifact = await buildWebsite({
+				root,
+				entry,
+				version: pkg.version,
+				...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+			});
+			writeWebsite(artifact, options.out, root);
+			process.stdout.write(
+				`${JSON.stringify({ out: options.out, entry, included: artifact.manifest.frames.map((frame) => frame.name), contentIdentity: artifact.manifest.contentIdentity, inputIdentity: artifact.inputIdentity })}\n`,
+			);
+		} catch (error) {
+			throw new SpoolError(error instanceof Error ? error.message : String(error));
+		}
 	});
 
 // --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------

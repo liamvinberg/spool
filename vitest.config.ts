@@ -39,6 +39,7 @@ class HeavyFirstSequencer extends BaseSequencer {
 }
 
 export default defineConfig({
+	define: { __SPOOL_PUBLICATION_BUILD__: "false" },
 	resolve: {
 		alias: pins,
 	},

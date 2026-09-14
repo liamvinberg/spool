@@ -152,6 +152,7 @@ export interface DesignBundle {
 }
 
 export interface DesignEntryOptions {
+	publication?: true;
 	designDir: string;
 	/** Where the entry's relative imports resolve from. */
 	resolveDir: string;
@@ -186,9 +187,13 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		platform: "browser",
 		target: "es2022",
 		jsx: "automatic",
-		jsxDev: true,
-		jsxImportSource: "spool",
-		loader: TEXT_LOADERS,
+		jsxDev: options.publication !== true,
+		jsxImportSource: options.publication === true ? "react" : "spool",
+		...(options.publication === true ? { minify: true, legalComments: "none" as const } : {}),
+		loader:
+			options.publication === true
+				? { ...TEXT_LOADERS, ".woff2": "dataurl", ".woff": "dataurl", ".ttf": "dataurl", ".otf": "dataurl" }
+				: TEXT_LOADERS,
 		packages: "external",
 		define: { "process.env.NODE_ENV": '"production"' },
 		metafile: true,
@@ -198,7 +203,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		plugins: [
 			sharedImportPlugin(designDir),
 			spoolBoundaryPlugin(designDir),
-			spoolAssetPlugin(designDir, label, imageBudget),
+			spoolAssetPlugin(designDir, label, imageBudget, options.publication === true),
 		],
 		logLevel: "silent",
 	};
@@ -406,7 +411,7 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
  * encoding keeps those predicates as tight as they are instead of teaching them
  * a looser shape.
  */
-function spoolAssetPlugin(designDir: string, label: string, budget: number | undefined): Plugin {
+function spoolAssetPlugin(designDir: string, label: string, budget: number | undefined, publication = false): Plugin {
 	let spent = 0;
 	return {
 		name: "spool-assets",
@@ -418,7 +423,7 @@ function spoolAssetPlugin(designDir: string, label: string, budget: number | und
 			// URLs stay the author's business and pass straight through.
 			build.onResolve({ filter: ASSET_FILTER }, (args) => {
 				const local = !args.path.startsWith("/") && !/^[a-z][a-z0-9+.-]*:/i.test(args.path);
-				if (args.kind !== "url-token" || !local) return null;
+				if (args.kind !== "url-token" || !local || publication) return null;
 				return {
 					errors: [
 						{
@@ -438,6 +443,7 @@ function spoolAssetPlugin(designDir: string, label: string, budget: number | und
 					// that must refuse the whole player still recognizes an escape.
 					return { errors: [{ text: describeCompileError(error), detail: error }] };
 				}
+				if (publication) return { contents: bytes, loader: "dataurl" };
 				const url = `data:${type};base64,${bytes.toString("base64")}`;
 				spent += url.length;
 				if (budget !== undefined && spent > budget) {
