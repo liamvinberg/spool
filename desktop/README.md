@@ -68,9 +68,8 @@ is not stretched into a device nobody has.
 its place is drawn by the played page, not by this process, and the traffic
 lights are placed into it. The page learns which shell it is in from
 `src/play-preload.ts`, which is the whole mechanism: a browser tab has no such
-bridge and so keeps the edge bar it has always had, unchanged. The bridge hands
-the bar the three things a page cannot do for itself — raise the canvas, put the
-window back on the authored size, close — and nothing else.
+bridge and so keeps the edge bar it has always had, unchanged. The bridge only
+lets the page put the window back on the authored size.
 
 A window a hand has moved or resized is a preference, so the rect is stored in
 `play-windows.json` in the state directory, keyed per project and per authored

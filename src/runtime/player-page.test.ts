@@ -3,11 +3,11 @@ import { barLayout, DESK_BAR_WIDE_PX, deskWindow } from "./player-page";
 
 describe("barLayout — what a bar this wide can carry (#275)", () => {
 	it("carries everything on a window a desktop frame opened", () => {
-		expect(barLayout(1200)).toEqual({ project: true, size: true, canvasLabel: true });
+		expect(barLayout(1200)).toEqual({ project: true, size: true });
 	});
 
 	it("drops the project prefix and the size on a phone frame's window", () => {
-		expect(barLayout(390)).toEqual({ project: false, size: false, canvasLabel: false });
+		expect(barLayout(390)).toEqual({ project: false, size: false });
 	});
 
 	it("chooses at 520 and not a pixel earlier", () => {
@@ -30,8 +30,6 @@ describe("deskWindow — which shell this document is in", () => {
 	const bridge = (extra: Record<string, unknown> = {}) => ({
 		restored: false,
 		reset: () => {},
-		canvas: () => {},
-		close: () => {},
 		...extra,
 	});
 
@@ -41,7 +39,7 @@ describe("deskWindow — which shell this document is in", () => {
 	});
 
 	it("is nothing when the app is too old to expose the whole bar's controls", () => {
-		vi.stubGlobal("window", { spoolPlayWindow: { restored: true, close: () => {} } });
+		vi.stubGlobal("window", { spoolPlayWindow: { restored: true } });
 		expect(deskWindow()).toBe(null);
 	});
 
@@ -66,14 +64,10 @@ describe("deskWindow — which shell this document is in", () => {
 		vi.stubGlobal("window", {
 			spoolPlayWindow: bridge({
 				reset: () => calls.push("reset"),
-				canvas: () => calls.push("canvas"),
-				close: () => calls.push("close"),
 			}),
 		});
 		const desk = deskWindow();
 		desk?.reset();
-		desk?.canvas();
-		desk?.close();
-		expect(calls).toEqual(["reset", "canvas", "close"]);
+		expect(calls).toEqual(["reset"]);
 	});
 });
