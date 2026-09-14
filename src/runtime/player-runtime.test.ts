@@ -311,10 +311,10 @@ describe("the player session", () => {
 		await waitForText("output", "5");
 
 		click("#external");
-		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+		await vi.waitFor(() => expect(document.querySelector(".spool-external-dialog")).not.toBeNull());
 
 		const open = document.querySelector<HTMLAnchorElement>(
-			'[role="dialog"] a[href="https://github.com/liamvinberg/spool"]',
+			'.spool-external-dialog a[href="https://github.com/liamvinberg/spool"]',
 		);
 		expect(open?.target).toBe("_blank");
 		expect(open?.rel).toBe("noopener noreferrer");
@@ -322,20 +322,20 @@ describe("the player session", () => {
 		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("menu");
 
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+		await vi.waitFor(() => expect(document.querySelector(".spool-external-dialog")).toBeNull());
 		expect(document.querySelector("output")?.textContent).toBe("5");
 		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("menu");
 
 		click("#external-port");
-		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
-		expect(document.querySelector('[role="dialog"]')?.textContent).toContain("http://example.com:8080/docs");
-		expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Open example.com:8080");
-		expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("secret");
+		await vi.waitFor(() => expect(document.querySelector(".spool-external-dialog")).not.toBeNull());
+		expect(document.querySelector(".spool-external-dialog")?.textContent).toContain("http://example.com:8080/docs");
+		expect(document.querySelector(".spool-external-dialog")?.textContent).toContain("Open example.com:8080");
+		expect(document.querySelector(".spool-external-dialog")?.textContent).not.toContain("secret");
 		const portOpen = document.querySelector<HTMLAnchorElement>(
-			'[role="dialog"] a[href="http://example.com:8080/docs"]',
+			'.spool-external-dialog a[href="http://example.com:8080/docs"]',
 		);
 		expect(portOpen?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))).toBe(true);
-		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+		await vi.waitFor(() => expect(document.querySelector(".spool-external-dialog")).toBeNull());
 	});
 
 	it("stacks names through a three-frame walk", async () => {
