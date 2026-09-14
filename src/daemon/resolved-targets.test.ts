@@ -188,6 +188,13 @@ describe("a render that answers with no attribute", () => {
 		const after = await fetchFlows(app, name);
 		expect(after.edges).toEqual([]);
 		expect(after.unreadable).toEqual([]);
+
+		const readiness = await app.request(`/api/p/${name}/readiness?entry=index`);
+		expect(readiness.status).toBe(200);
+		expect(await readiness.json()).toMatchObject({
+			ok: false,
+			diagnostics: [{ code: "navigation-unreadable", frame: "index", path: "shared/ui/rows.tsx", line: 6 }],
+		});
 	});
 
 	it("keeps a dark site nobody has rendered", async () => {
