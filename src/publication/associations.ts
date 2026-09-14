@@ -3,6 +3,7 @@ import {
 	existsSync,
 	linkSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
@@ -89,6 +90,29 @@ export function readAssociation(
 	if (record.key !== identityKey(record.identity) || canonicalJson(record.identity) !== canonicalJson(identity))
 		throw new SpoolError("the local publication association is invalid");
 	return record;
+}
+
+export function findPublicationAssociation(
+	spoolDir: string,
+	authority: string,
+	publisherId: string,
+	publicationId: string,
+): PublicationAssociation | undefined {
+	const directory = dirname(associationPath(spoolDir, "placeholder"));
+	if (!existsSync(directory)) return undefined;
+	for (const name of readdirSync(directory)) {
+		if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
+		const record = readRecord(join(directory, name));
+		if (
+			record.key !== identityKey(record.identity) ||
+			record.identity.authority !== new URL(authority).origin ||
+			record.identity.publisherId !== publisherId ||
+			record.publicationId !== publicationId
+		)
+			continue;
+		return record;
+	}
+	return undefined;
 }
 
 export function claimAssociation(

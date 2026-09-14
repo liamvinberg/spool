@@ -27,6 +27,11 @@ export interface CloudSession {
 	sessionId: string;
 }
 
+export class CloudRequestFailure extends SpoolError {
+	readonly code = "transport_interrupted";
+	readonly retryable = true;
+}
+
 export interface CloudVault {
 	read(): Promise<string | undefined>;
 	write(token: string): Promise<void>;
@@ -252,11 +257,9 @@ export async function authorizedCloudRequest(
 			signal: init.signal == null ? timeout : AbortSignal.any([init.signal, timeout]),
 		});
 	} catch {
-		throw new SpoolError(
-			path === "/auth/publisher/session"
-				? "spool.page could not be reached; local spool is still available"
-				: "spool.page could not be reached; publishing can be resumed safely",
-		);
+		if (path === "/auth/publisher/session")
+			throw new SpoolError("spool.page could not be reached; local spool is still available");
+		throw new CloudRequestFailure("spool.page could not be reached; publishing can be resumed safely");
 	}
 	if (response.status === 401) throw new SpoolError("Cloud sign-in expired or was revoked; run `spool login` again");
 	return response;

@@ -8,7 +8,7 @@ import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
-import { cloudOrigin, login, logout } from "./cloud-auth";
+import { CloudRequestFailure, cloudOrigin, login, logout } from "./cloud-auth";
 import { CloudPublicationFailure, listPublications, publicationStatus, publishWebsite } from "./cloud-publication";
 import { createFlowGraph } from "./daemon/flows";
 import {
@@ -88,7 +88,12 @@ async function cloudJson(action: () => Promise<unknown>): Promise<void> {
 	try {
 		process.stdout.write(`${JSON.stringify(await action())}\n`);
 	} catch (error) {
-		const known = error instanceof CloudPublicationFailure ? error.detail : undefined;
+		const known =
+			error instanceof CloudPublicationFailure
+				? error.detail
+				: error instanceof CloudRequestFailure
+					? { code: error.code, retryable: error.retryable }
+					: undefined;
 		process.stdout.write(
 			`${JSON.stringify({
 				error: {

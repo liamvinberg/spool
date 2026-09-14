@@ -7,7 +7,7 @@ import { makeProject, makeTempDir, writeFrame } from "./test-helpers";
 
 const vault: CloudVault = { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} };
 
-function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boolean } = {}) {
+function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boolean; onActivate?: () => void } = {}) {
 	let manifest: { contentIdentity: string; entry: string; scenario: string; objects: unknown[] } | undefined;
 	let state: "uploading" | "sealed" | "succeeded" | "failed" = "uploading";
 	let missing: number[] = [];
@@ -91,6 +91,7 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 			}
 			if (url.pathname.endsWith("/activate")) {
 				state = "succeeded";
+				options.onActivate?.();
 				if (lost) {
 					lost = false;
 					throw new Error("lost response with a secret");
@@ -150,6 +151,25 @@ describe("Cloud publication client", () => {
 		expect(cloud.calls.filter((call) => call.endsWith("/seal"))).toHaveLength(2);
 	});
 
+	it("does not call source current when it changes during upload", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>Before</h1>");
+		const cloud = service({ onActivate: () => writeFrame(root, "start", "export default () => <h1>After</h1>") });
+		await expect(
+			publishWebsite({
+				spoolDir,
+				root,
+				entry: "start",
+				invitedEmails: ["Alex@example.com"],
+				version: "test",
+				origin: "https://cloud.test",
+				vault,
+				fetch: cloud.fetch,
+			}),
+		).resolves.toMatchObject({ operation: { state: "succeeded" }, localSource: "changed" });
+	});
+
 	it("recovers status before detecting changed source and never creates a replacement", async () => {
 		const spoolDir = makeTempDir();
 		const { root } = makeProject(spoolDir);
@@ -203,6 +223,34 @@ describe("Cloud publication client", () => {
 		await expect(
 			publicationStatus(makeTempDir(), "publication", { origin: "https://cloud.test", vault, fetch: cloud.fetch }),
 		).resolves.toMatchObject({ publication: { id: "publication" } });
+	});
+
+	it("reports unchanged, edited, and missing local source beside the stable operation", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>First</h1>");
+		const cloud = service();
+		const created = await publishWebsite({
+			spoolDir,
+			root,
+			entry: "start",
+			invitedEmails: ["alex@example.com"],
+			version: "test",
+			origin: "https://cloud.test",
+			vault,
+			fetch: cloud.fetch,
+		});
+		await expect(
+			publicationStatus(spoolDir, "publication", { origin: "https://cloud.test", vault, fetch: cloud.fetch }),
+		).resolves.toMatchObject({ operation: { id: created.operation.id }, localSource: "current" });
+		writeFrame(root, "start", "export default () => <h1>Edited</h1>");
+		await expect(
+			publicationStatus(spoolDir, "publication", { origin: "https://cloud.test", vault, fetch: cloud.fetch }),
+		).resolves.toMatchObject({ localSource: "changed" });
+		rmSync(join(root, "design", "frames", "start"), { recursive: true });
+		await expect(
+			publicationStatus(spoolDir, "publication", { origin: "https://cloud.test", vault, fetch: cloud.fetch }),
+		).resolves.toMatchObject({ localSource: "unavailable" });
 	});
 
 	it("keeps a recovered terminal operation in the structured failure", async () => {

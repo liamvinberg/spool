@@ -1,11 +1,12 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { type AuthOptions, authorizedCloudRequest, cloudOrigin, session } from "./cloud-auth";
+import { type AuthOptions, authorizedCloudRequest, CloudRequestFailure, cloudOrigin, session } from "./cloud-auth";
 import { SpoolError } from "./errors";
 import {
 	associationIdentity,
 	claimAssociation,
+	findPublicationAssociation,
 	readAssociation,
 	readCapture,
 	updateAssociation,
@@ -144,7 +145,7 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 	const captured = readCapture(options.spoolDir, association.operationId);
 	let current = recovered ?? (await createOrRecover(options.spoolDir, association, captured, cloudOptions));
 	association = rememberPublication(options.spoolDir, association, current.publication);
-	if (terminal(current.operation)) return { ...finish(current), localSource: "current" };
+	if (terminal(current.operation)) return resultWithLocalSource(finish(current), association, options);
 	if (current.operation.state === "uploading") {
 		for (const index of current.operation.missingObjectIndices) {
 			const metadata = captured.manifest.objects[index];
@@ -188,7 +189,7 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 			cloudOptions,
 		);
 	}
-	return { ...finish(current), localSource: "current" };
+	return resultWithLocalSource(finish(current), association, options);
 }
 
 async function uploadObject(
@@ -202,7 +203,7 @@ async function uploadObject(
 	try {
 		await requestJson(spoolDir, path, init, options);
 	} catch (error) {
-		const recovered = await operationStatusOrMissing(spoolDir, operationId, options);
+		const recovered = await recoverAfterFailure(spoolDir, operationId, options, error);
 		if (error instanceof CloudApiError) throw withOperationId(error, operationId, recovered?.operation);
 		if (recovered !== undefined && !recovered.operation.missingObjectIndices.includes(index)) return;
 		await requestJson(spoolDir, path, init, options);
@@ -223,11 +224,29 @@ export async function publicationStatus(
 	spoolDir: string,
 	id: string,
 	options: AuthOptions = {},
-): Promise<{ publication: CloudPublication }> {
+): Promise<{
+	publication: CloudPublication;
+	operation?: CloudOperation;
+	localSource: "current" | "changed" | "unavailable";
+}> {
 	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
-	await session(spoolDir, cloudOptions);
+	const account = await session(spoolDir, cloudOptions);
 	const response = await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, cloudOptions);
-	return z.strictObject({ publication }).parse(response);
+	const current = z.strictObject({ publication }).parse(response);
+	const association = findPublicationAssociation(
+		spoolDir,
+		cloudOptions.origin,
+		account.publisherId,
+		current.publication.id,
+	);
+	if (association === undefined) return { ...current, localSource: "unavailable" };
+	const operation = await operationStatusOrMissing(spoolDir, association.operationId, cloudOptions);
+	const localSource = await readLocalSource(association);
+	return {
+		...current,
+		...(operation === undefined ? {} : { operation: operation.operation }),
+		localSource,
+	};
 }
 
 async function createOrRecover(
@@ -258,7 +277,7 @@ async function createOrRecover(
 			artifact.manifest.contentIdentity,
 		);
 	} catch (error) {
-		const recovered = await operationStatusOrMissing(spoolDir, association.operationId, options);
+		const recovered = await recoverAfterFailure(spoolDir, association.operationId, options, error);
 		if (recovered !== undefined) return recovered;
 		if (error instanceof CloudApiError) throw withOperationId(error, association.operationId);
 		return readOperation(
@@ -288,7 +307,7 @@ async function mutateAndRecover(
 	try {
 		return readOperation(await requestJson(spoolDir, path, init, options), operationId);
 	} catch (error) {
-		const recovered = await operationStatusOrMissing(spoolDir, operationId, options);
+		const recovered = await recoverAfterFailure(spoolDir, operationId, options, error);
 		if (error instanceof CloudApiError) throw withOperationId(error, operationId, recovered?.operation);
 		if (recovered !== undefined) {
 			const mustRepeat =
@@ -399,6 +418,31 @@ function rememberPublication(
 		url: value.url,
 	});
 }
+async function resultWithLocalSource(
+	result: CloudOperationResponse,
+	association: ReturnType<typeof claimAssociation>,
+	options: PublishOptions,
+): Promise<PublishResult> {
+	return { ...result, localSource: await readLocalSource(association, options.version) };
+}
+async function readLocalSource(
+	association: ReturnType<typeof claimAssociation>,
+	version?: string,
+): Promise<"current" | "changed" | "unavailable"> {
+	try {
+		const producerVersion =
+			version ?? readCapture(association.identity.instance, association.operationId).manifest.producer.version;
+		const artifact = await buildWebsite({
+			root: association.identity.root,
+			entry: association.identity.entry,
+			version: producerVersion,
+			...(association.identity.scenario === "default" ? {} : { scenario: association.identity.scenario }),
+		});
+		return artifact.inputIdentity === association.inputIdentity ? "current" : "changed";
+	} catch {
+		return "unavailable";
+	}
+}
 function terminal(value: CloudOperation): boolean {
 	return ["succeeded", "failed", "conflict", "expired"].includes(value.state);
 }
@@ -421,6 +465,24 @@ function withOperationId(
 		operationId,
 		...(operation === undefined ? {} : { operation }),
 	});
+}
+async function recoverAfterFailure(
+	spoolDir: string,
+	operationId: string,
+	options: AuthOptions,
+	original: unknown,
+): Promise<CloudOperationResponse | undefined> {
+	try {
+		return await operationStatusOrMissing(spoolDir, operationId, options);
+	} catch {
+		if (original instanceof CloudRequestFailure)
+			throw new CloudPublicationFailure(original.message, {
+				operationId,
+				code: original.code,
+				retryable: original.retryable,
+			});
+		throw original;
+	}
 }
 function retrySeconds(body: unknown, header: string | null): number | undefined {
 	if (typeof body === "number" && Number.isFinite(body) && body >= 0) return body;

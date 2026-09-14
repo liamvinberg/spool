@@ -151,6 +151,13 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		const resumed = await spoolAsync(["cloud", "publish", "start"], home, root, env);
 		expect(resumed.status, resumed.stderr).toBe(0);
 		expect(JSON.parse(resumed.stdout)).toMatchObject({ operation: { id: operationId, state: "succeeded" } });
+		const status = await spoolAsync(["cloud", "status", "publication"], home, root, env);
+		expect(status.status, status.stderr).toBe(0);
+		expect(JSON.parse(status.stdout)).toMatchObject({
+			publication: { id: "publication" },
+			operation: { id: operationId, state: "succeeded" },
+			localSource: "current",
+		});
 		expect(wire).not.toContain(root);
 		expect(wire).not.toContain(spoolDir);
 		expect(wire).not.toContain("t".repeat(43));
