@@ -177,4 +177,12 @@ describe("publication source attribution", () => {
 		);
 		expect(missing.diagnostics[0]?.code).toBe("navigation-unreadable");
 	});
+	it("leaves imported image and text validation to the compiler", async () => {
+		const result = await check(
+			'import image from "shared/assets/photo.jpg"; import copy from "shared/copy.txt"; export default () => <main><img src={image}/><p>{copy}</p><a data-go="next"/></main>;',
+			{ "shared/assets/photo.jpg": "image bytes", "shared/copy.txt": "copy" },
+		);
+		expect(result.ok).toBe(true);
+		expect(result.included).toEqual(["start", "next"]);
+	});
 });
