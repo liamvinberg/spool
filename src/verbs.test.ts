@@ -198,14 +198,14 @@ describe("skill", () => {
 	});
 
 	it("prints every listed topic", () => {
-		for (const topic of ["frames", "flows", "scenarios", "styling", "verbs"]) {
+		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "verbs"]) {
 			expect(skillText(topic).length).toBeGreaterThan(100);
 		}
 	});
 
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
-		expect(() => skillText("vibes")).toThrowError(/frames, flows, scenarios, styling, shaders, verbs/);
+		expect(() => skillText("vibes")).toThrowError(/frames, flows, sharing, scenarios, styling, shaders, verbs/);
 	});
 
 	it("opens with the completeness contract and carries the fixed laws verbatim", () => {
@@ -282,7 +282,7 @@ describe("skill", () => {
 	});
 
 	it("indexes every topic as its own overview row", () => {
-		for (const topic of ["frames", "flows", "scenarios", "styling", "verbs"]) {
+		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "verbs"]) {
 			expect(skillText()).toMatch(new RegExp(`^  ${topic} {2,}\\S`, "m"));
 		}
 	});
@@ -321,8 +321,8 @@ describe("skill", () => {
 		const verbs = skillText("verbs");
 		expect(verbs).toContain('page.frameLocator("#spool-player")');
 		expect(verbs).not.toMatch(/^\s*await page\.locator\(/m);
-		expect(verbs).toContain("a top-level locator never resolves there");
-		expect(verbs).toContain("On a --raw URL the frame is the page");
+		expect(verbs).toContain("The local player mounts every frame inside a sandboxed");
+		expect(verbs).toContain("On a --raw URL or portable website the frame is the page");
 		expect(verbs).toContain("The played page is never scaled");
 		expect(verbs).toContain("capped at the frame's authored w");
 	});

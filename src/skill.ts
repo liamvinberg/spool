@@ -24,7 +24,7 @@ This skill is the complete contract: if it isn't here, spool doesn't do it.
 
 The one law: never write app-owned files — design/canvas.json and design/.spool/ are spool's. Everything else under design/ is yours to author, rename, and delete. Frame authoring needs no locks or shared registries: parallel agents stay safe by writing separate frame folders. Lifecycle commands coordinate machine-global state inside spool.
 
-A frame is born by writing design/frames/<name>/frame.tsx default-exporting one React component — no registration, no \`spool new\`. It appears on the canvas live. Variants are \`--\`-named sibling folders (checkout--empty). spool owns the document: pinned React, Tailwind compiled at serve, preflight, tokens, fonts, the flow runtime are all injected — write only the component. Frames render nowhere outside spool.
+A frame is born by writing design/frames/<name>/frame.tsx default-exporting one React component — no registration, no \`spool new\`. It appears on the canvas live. Variants are \`--\`-named sibling folders (checkout--empty). spool owns the document: pinned React, Tailwind compiled at serve, preflight, tokens, fonts, the flow runtime are all injected — write only the component. Use \`spool build\` to compile a connected website that runs on an ordinary static HTTP server.
 
 Lifecycle (offline, take a path):
   spool init [path]     scaffold design/, register the project, and open its tab
@@ -50,6 +50,7 @@ History: where a project's design/canvas.json says \`"history": true\`, the daem
 Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
   flows       data-go, ui.go/back/state/use, sessions, arrows
+  sharing     protected Cloud links, invitations, updates and recovery
   scenarios   named seeds: { state }
   styling     Tailwind, tokens.css, cn(), motion
   shaders     WebGL, WebGPU, Three.js, shader authoring and verification
@@ -141,6 +142,17 @@ Arrows claim what the code says. Every literal data-go target and ui.go(name) ca
 
 The player composes every frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back) plus any data-transition type as View Transitions types, not root attributes: in shared/transitions.css a bare ::view-transition-* rule styles every swap alike, and :active-view-transition-type() picks one out, plain CSS — html:active-view-transition-type(forward)::view-transition-old(root) { animation: 0.2s slide-out; }. A data-transition type is active alongside its direction, so the narrower rule comes later in the file. Reduced motion is respected. Screen components mount fresh on every arrival.`,
 
+	sharing:
+		() => `Cloud sharing is an invite-only beta for approved publishers. Run \`spool login\` to sign in through the system browser; the local session lives in macOS Keychain. \`spool logout\` removes that credential and attempts remote revocation. Local authoring and \`spool build\` work without Cloud login.
+
+From the project, run \`spool cloud publish <entry> --invite <email> [--scenario <name>]\`. It publishes the connected journey from that original entry, including the selected seed. Viewers can inspect delivered code and seed data; keep secrets out of both. Invitations permit access and do not send an invitation email automatically.
+
+Repeat publish from the same checkout, entry and scenario to update its continuing link. Use \`--publication <id>\` only for an explicit association with an owned publication. Edits, reconnects and login never publish automatically. If a request fails, retain its operation ID and retry the same command to recover the recorded outcome. A stopped or suspended link needs fresh publisher authorization and an explicit successful publication before it can serve again.
+
+\`spool cloud list\` and \`spool cloud status <id>\` inspect remote state; status also compares available local source. Unavailable source is not proof that the link is up to date. \`spool cloud invite <id> <email>\`, \`spool cloud revoke <id> <email>\` and \`spool cloud stop <id>\` manage access. These commands return JSON; failures exit nonzero. Revocation blocks new protected requests but cannot recall bytes someone already received.
+
+The local player's Share sheet uses the same publication and daemon-owned job. Closing the player leaves an upload running. Update link publishes the original journey, even after navigating elsewhere within it.`,
+
 	scenarios:
 		() => `shared/scenarios/<name>.json = { "state": { ... } } — one named way the app can be. state seeds ui.state at session start. The key is optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
 
@@ -224,7 +236,7 @@ The drive loop — \`spool url <frame>\` prints the player URL after checking th
 
 The raw document is one frame and nothing else: read its DOM, check its styling, shoot it without chrome in the way. It is sandboxed onto an opaque origin, and that costs it every session guarantee the canvas and the player keep. It has no storage, so a reload starts over. A walk out of it is a real browser navigation, so the next frame boots from the scenario with the state left behind. Its target probe cannot read a cross-origin answer, so every walk logs a CORS error on the frame document URL that the walk itself ignores, and a walk to a name no frame answers lands on the daemon's 404 text instead of staying put. Drive the player for anything that walks or carries state; reach for the raw document only when the player's chrome is what's in the way.
 
-For Playwright, wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. The player mounts every frame inside a sandboxed \`<iframe id="spool-player">\`, so its selectors go through \`page.frameLocator("#spool-player")\` — a top-level locator never resolves there and the wait times out. On a --raw URL the frame is the page, so top-level locators are the right ones. The played page is never scaled: it lays out at the real viewport width, capped at the frame's authored w, and is as tall as its content. So open the page at least w wide or the frame renders at the narrower width its own CSS answers with, exactly as that site would in a narrow browser. To use the dependency belonging to this exact Spool install from a repo script, copy the installed-package anchor printed below verbatim:
+For Playwright, wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. The local player mounts every frame inside a sandboxed \`<iframe id="spool-player">\`, so its selectors go through \`page.frameLocator("#spool-player")\`. On a --raw URL or portable website the frame is the page, so use top-level locators. The played page is never scaled: its viewport width is capped at the frame's authored w, while its viewport height is the window's available height after local player chrome. Content scrolls within that viewport. Percentage heights and viewport units therefore answer to the actual inner viewport, not frame.json's h. Compare surfaces at equal inner dimensions after fonts and images settle. To use the dependency belonging to this exact Spool install from a repo script, copy the installed-package anchor printed below verbatim:
 
   import { createRequire } from "node:module";
   const requireFromSpool = createRequire(${JSON.stringify(spoolPackageJson())});

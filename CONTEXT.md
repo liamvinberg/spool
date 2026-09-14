@@ -124,9 +124,9 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Play session**: One run through the flows: name-stack history, state seeded from the scenario. The session is the page, so reloading the tab starts it over.
 
-**Player**: The surface that plays a flow as one composed document, in its own browser tab. The page lays out at the real viewport width, capped at the frame's authored width, and is as tall as its content — never scaled, never letterboxed. One door for everybody: `/play/<project>?frame=<name>`, which the canvas opens, agents mint, and a phone visits. _Avoid_: preview
+**Player**: The surface that plays a connected journey as one composed document, locally or from an exported website. Its inner viewport uses the available window height and a width capped at the active frame's authored width; content scrolls without scaling. _Avoid_: preview
 
-**Edge bar**: The player's only chrome, and it is summoned: rest the cursor against the top edge of the viewport for ~300ms and a 40px bar peels in with back to canvas, the frame switcher and close. A 40px nub at the edge is its resting trace. Passing through the edge on the way to the browser's own chrome never reveals it, and moving back down into the page hides it at once. Touch gets nothing. _Avoid_: toolbar, HUD, overlay, pill
+**Edge bar**: The local player's 30px strip for switching frames, sharing and window controls. In a browser tab it can be hidden and recalled from the top edge; the Mac app keeps it in the native window. _Avoid_: toolbar, HUD, overlay, pill
 
 **Accel**: The one modifier a platform binds its own commands to: cmd on Apple, ctrl everywhere else, never a hardcoded meta key. Spool's own gestures all live behind it, because spool never takes a plain key from a live frame — every ordinary key belongs to the prototype being used, its own `esc` included.
 
