@@ -1,11 +1,6 @@
-export interface PlayerPublication {
-	id: string;
-	url: string;
-	invitedEmails: string[];
-	state: "staging" | "active" | "stopped" | "suspended";
-	revision: number;
-	accessGeneration: number;
-}
+import { type PlayerPublication, playerPublication } from "./publication-response";
+
+export type { PlayerPublication } from "./publication-response";
 
 export type PlayerPublicationJob =
 	| {
@@ -120,7 +115,7 @@ async function readModel(response: Response): Promise<PlayerPublicationModel> {
 		(value.problem !== undefined && typeof value.problem !== "string")
 	)
 		throw new Error("Sharing could not be checked. Try again.");
-	const publication = value.publication === undefined ? undefined : publicationOf(value.publication);
+	const publication = value.publication === undefined ? undefined : playerPublication(value.publication);
 	const job = value.job === undefined ? undefined : jobOf(value.job);
 	if ((value.publication !== undefined && publication === undefined) || (value.job !== undefined && job === undefined))
 		throw new Error("Sharing could not be checked. Try again.");
@@ -150,7 +145,7 @@ async function readJob(response: Response): Promise<PlayerPublicationJob> {
 }
 async function readPublication(response: Response): Promise<PlayerPublication> {
 	const value = await responseJson(response);
-	const publication = publicationOf(value);
+	const publication = playerPublication(value);
 	if (!response.ok || publication === undefined)
 		throw new Error(messageOf(value, "Sharing could not be completed. Try again."));
 	return publication;
@@ -181,7 +176,7 @@ function jobOf(value: unknown): PlayerPublicationJob | undefined {
 			...(value.email === undefined ? {} : { email: value.email }),
 		};
 	if (value.state === "succeeded") {
-		const publication = publicationOf(value.publication);
+		const publication = playerPublication(value.publication);
 		if (
 			publication === undefined ||
 			!(value.source === "current" || value.source === "changed" || value.source === "unavailable")
@@ -203,33 +198,6 @@ function jobOf(value: unknown): PlayerPublicationJob | undefined {
 			retryable: value.retryable,
 			...(value.email === undefined ? {} : { email: value.email }),
 		};
-}
-function publicationOf(value: unknown): PlayerPublication | undefined {
-	if (
-		!isRecord(value) ||
-		typeof value.id !== "string" ||
-		typeof value.url !== "string" ||
-		!(
-			value.state === "staging" ||
-			value.state === "active" ||
-			value.state === "stopped" ||
-			value.state === "suspended"
-		) ||
-		!Number.isInteger(value.revision) ||
-		!Number.isInteger(value.accessGeneration)
-	)
-		return;
-	const invitedEmails = strings(value.invitedEmails);
-	return invitedEmails === undefined
-		? undefined
-		: {
-				id: value.id,
-				url: value.url,
-				invitedEmails,
-				state: value.state,
-				revision: value.revision as number,
-				accessGeneration: value.accessGeneration as number,
-			};
 }
 function isDiagnostic(value: unknown): value is PlayerPublicationModel["diagnostics"][number] {
 	return (

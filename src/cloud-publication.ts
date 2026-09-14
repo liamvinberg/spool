@@ -26,24 +26,9 @@ import {
 import { type PublicationAuthOptions, publicationAuthority } from "./publication/authority";
 import { buildWebsite, type WebsiteArtifact } from "./publication/build";
 import { withPublicationIntent } from "./publication/intent-lock";
+import { type PublicationResponse, publicationResponseSchema } from "./runtime/publication-response";
 
-const publication = z.strictObject({
-	id: z.string(),
-	projectId: z.string(),
-	ownerId: z.string(),
-	title: z.string(),
-	hostname: z.string(),
-	url: z.string().url(),
-	entry: z.string(),
-	scenario: z.string(),
-	state: z.enum(["staging", "active", "stopped", "suspended"]),
-	revision: z.number().int().nonnegative(),
-	accessGeneration: z.number().int().positive(),
-	currentVersion: z.nullable(z.strictObject({ id: z.string(), contentIdentity: z.string() })),
-	invitedEmails: z.array(z.string()),
-	createdAt: z.number(),
-	updatedAt: z.number(),
-});
+const publication = publicationResponseSchema;
 const operation = z.strictObject({
 	id: z.string(),
 	publicationId: z.string(),
@@ -96,7 +81,7 @@ const publicationOperationSummaries = z.strictObject({
 	latest: operationSummary.nullable(),
 	latestUnsuccessful: operationSummary.nullable(),
 });
-export type CloudPublication = z.infer<typeof publication>;
+export type CloudPublication = PublicationResponse;
 export type CloudOperation = z.infer<typeof operation>;
 export type CloudOperationResponse = z.infer<typeof operationResponse>;
 export type CloudStopResponse = z.infer<typeof stopResponse>;

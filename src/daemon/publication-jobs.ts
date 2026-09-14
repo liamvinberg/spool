@@ -16,6 +16,7 @@ import {
 	readAssociation,
 	readUpdateIntent,
 } from "../publication/associations";
+import { type PlayerPublication, playerPublication } from "../runtime/publication-response";
 import { createFlowGraph } from "./flows";
 import { type PublicationReadiness, publicationReadiness } from "./publication-readiness";
 
@@ -24,11 +25,6 @@ const MAX_RETAINED_JOBS = 64;
 
 export type PublicationAssociationState = "missing" | "incomplete" | "current" | "superseded" | "mismatched";
 export type PublicationSourceState = "current" | "changed" | "unavailable";
-export type PlayerPublication = Pick<
-	CloudPublication,
-	"id" | "url" | "invitedEmails" | "state" | "revision" | "accessGeneration"
->;
-
 export interface PublicationShareModel {
 	available: boolean;
 	title: string;
@@ -558,14 +554,9 @@ function defaultServices(): PublicationJobServices {
 	};
 }
 function pickPublication(publication: CloudPublication): PlayerPublication {
-	return {
-		id: publication.id,
-		url: publication.url,
-		invitedEmails: publication.invitedEmails,
-		state: publication.state,
-		revision: publication.revision,
-		accessGeneration: publication.accessGeneration,
-	};
+	const picked = playerPublication(publication);
+	if (picked === undefined) throw new SpoolError("Cloud returned an invalid publication.");
+	return picked;
 }
 function phaseOf(message: string): PublicationJobPhase {
 	if (message.startsWith("uploading")) return "uploading";
