@@ -322,7 +322,8 @@ describe("skill", () => {
 		expect(verbs).toContain('page.frameLocator("#spool-player")');
 		expect(verbs).not.toMatch(/^\s*await page\.locator\(/m);
 		expect(verbs).toContain("The local player mounts every frame inside a sandboxed");
-		expect(verbs).toContain("On a --raw URL or portable website the frame is the page");
+		expect(verbs).toContain("On a --raw URL the frame is the page");
+		expect(verbs).toContain('page.frameLocator("#website")');
 		expect(verbs).toContain("The played page is never scaled");
 		expect(verbs).toContain("capped at the frame's authored w");
 	});
