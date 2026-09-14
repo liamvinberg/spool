@@ -14,6 +14,7 @@ describe("Cloud account CLI", () => {
 		const certificate = join(home, "cert.pem");
 		const stored = join(home, "stored");
 		const opened = join(home, "opened");
+		const openedBy = join(home, "opened-by");
 		mkdirSync(bin);
 		execFileSync(
 			"openssl",
@@ -34,15 +35,19 @@ describe("Cloud account CLI", () => {
 			],
 			{ stdio: "ignore" },
 		);
-		writeFileSync(
-			join(bin, "open"),
-			`#!/usr/bin/env node
+		for (const opener of ["open", "xdg-open", "cmd"]) {
+			writeFileSync(
+				join(bin, opener),
+				`#!/usr/bin/env node
 const fs = require("node:fs"); const http = require("node:http");
-const start = new URL(process.argv[2]); fs.writeFileSync(${JSON.stringify(opened)}, start.toString());
+const start = new URL(process.argv.at(-1)); fs.writeFileSync(${JSON.stringify(opened)}, start.toString());
+fs.writeFileSync(${JSON.stringify(openedBy)}, ${JSON.stringify(opener)});
 const callback = new URL(start.searchParams.get("return_url")); callback.searchParams.set("code", "c".repeat(43));
 http.get(callback);
 `,
-		);
+			);
+			chmodSync(join(bin, opener), 0o755);
+		}
 		writeFileSync(
 			join(bin, "security"),
 			`#!/bin/sh
@@ -54,7 +59,6 @@ while [ "$#" -gt 0 ]; do case "$1" in -w) if [ "$#" -gt 1 ]; then password="$2";
 case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(stored)};; find-generic-password) [ -f ${JSON.stringify(stored)} ] || exit 44; cat ${JSON.stringify(stored)};; delete-generic-password) rm -f ${JSON.stringify(stored)};; esac
 `,
 		);
-		chmodSync(join(bin, "open"), 0o755);
 		chmodSync(join(bin, "security"), 0o755);
 		let exchange: Record<string, unknown> | undefined;
 		const cloud = createServer(
@@ -93,6 +97,9 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 			expect(result.stderr).toContain("opening your browser to sign in");
 			expect(result.stdout + result.stderr).not.toContain("t".repeat(43));
 			const start = new URL(readFileSync(opened, "utf8"));
+			expect(readFileSync(openedBy, "utf8")).toBe(
+				process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open",
+			);
 			expect(start.origin).toBe(`https://127.0.0.1:${address.port}`);
 			expect(exchange?.returnUrl).toBe(start.searchParams.get("return_url"));
 			expect(exchange?.verifier).toMatch(/^[A-Za-z0-9_-]{43}$/u);
