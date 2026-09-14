@@ -272,34 +272,40 @@ describe("Cloud publication client", () => {
 		).rejects.toMatchObject({ code: "account_changed" });
 		expect(cloud.calls).toEqual(["GET /auth/publisher/session"]);
 	});
-	it("stops after an account switch during upload and preserves the recoverable intent identity", async () => {
-		const spoolDir = makeTempDir();
-		const { root } = makeProject(spoolDir);
-		writeFrame(root, "start", "export default () => <h1>Shared</h1>");
-		const cloud = service();
-		let token = "t".repeat(43);
-		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
-			const response = await cloud.fetch(input, init);
-			if (init?.method === "PUT") token = "s".repeat(43);
-			return response;
-		};
-		await expect(
-			publishWebsite({
-				spoolDir,
-				root,
-				entry: "start",
-				version: "test",
-				origin: "https://cloud.test",
-				vault: { read: async () => token },
-				fetch,
-				invitedEmails: ["alex@example.com"],
-			}),
-		).rejects.toMatchObject({
-			detail: { code: "account_changed", retryable: false, operationId: expect.any(String) },
-		});
-		expect(cloud.calls.some((call) => call.endsWith("/activate"))).toBe(false);
-		expect(cloud.calls.filter((call) => call.startsWith("PUT "))).toHaveLength(1);
-	});
+	it.each([false, true])(
+		"stops after an upload account switch and preserves its intent (interrupted=%s)",
+		async (interrupted) => {
+			const spoolDir = makeTempDir();
+			const { root } = makeProject(spoolDir);
+			writeFrame(root, "start", "export default () => <h1>Shared</h1>");
+			const cloud = service();
+			let token = "t".repeat(43);
+			const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+				const response = await cloud.fetch(input, init);
+				if (init?.method === "PUT") {
+					token = "s".repeat(43);
+					if (interrupted) throw new Error("disconnected");
+				}
+				return response;
+			};
+			await expect(
+				publishWebsite({
+					spoolDir,
+					root,
+					entry: "start",
+					version: "test",
+					origin: "https://cloud.test",
+					vault: { read: async () => token },
+					fetch,
+					invitedEmails: ["alex@example.com"],
+				}),
+			).rejects.toMatchObject({
+				detail: { code: "account_changed", retryable: false, operationId: expect.any(String) },
+			});
+			expect(cloud.calls.some((call) => call.endsWith("/activate"))).toBe(false);
+			expect(cloud.calls.filter((call) => call.startsWith("PUT "))).toHaveLength(1);
+		},
+	);
 	it("binds every publication request to the starting vault identity", async () => {
 		const spoolDir = makeTempDir();
 		const { root } = makeProject(spoolDir);

@@ -268,6 +268,7 @@ export async function authorizedCloudRequest(
 			signal: init.signal == null ? timeout : AbortSignal.any([init.signal, timeout]),
 		});
 	} catch {
+		if ((await vault.read()) !== token) throw new CloudAccountChanged();
 		if (path === "/auth/publisher/session")
 			throw new SpoolError("spool.page could not be reached; local spool is still available");
 		throw new CloudRequestFailure("spool.page could not be reached; publishing can be resumed safely");
