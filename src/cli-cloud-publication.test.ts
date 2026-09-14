@@ -1,13 +1,13 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:https";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { spoolAsync } from "./cli-test-helpers";
+import { cliPath, spoolAsync, tsxBin } from "./cli-test-helpers";
 import { makeProject, makeTempDir, writeFrame } from "./test-helpers";
 
 it("publishes through the actual CLI and resumes without putting credentials or paths on the wire", {
-	timeout: 30_000,
+	timeout: 60_000,
 }, async () => {
 	const home = makeTempDir();
 	const spoolDir = join(home, "state");
@@ -55,6 +55,13 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 	let loseNextStop = false;
 	let stopChanged = false;
 	let wire = "";
+	let invitedEmails = ["Alex@example.com"];
+	let pauseUpload = true;
+	let pauseReady: () => void = () => {};
+	const paused = new Promise<void>((resolve) => {
+		pauseReady = resolve;
+	});
+	let abandonUpload: () => void = () => {};
 	const grantOperations: string[] = [];
 	let failGrantTransport = false;
 	let failedGrantRequests = 0;
@@ -71,7 +78,7 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		revision,
 		accessGeneration,
 		currentVersion: state === "succeeded" ? { id: "version", contentIdentity } : null,
-		invitedEmails: ["Alex@example.com"],
+		invitedEmails,
 		createdAt: 1,
 		updatedAt: 1,
 	});
@@ -131,11 +138,19 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 				response.statusCode = 201;
 				return response.end(JSON.stringify(result()));
 			}
+			if (request.method === "PUT" && request.url?.includes("/objects/") && pauseUpload) {
+				pauseUpload = false;
+				abandonUpload = () => response.destroy();
+				pauseReady();
+				return;
+			}
 			if (request.url === "/api/publications/publication/operations" && request.method === "POST") {
 				operationKind = "update";
 				const body = JSON.parse(raw.toString("utf8")) as {
 					manifest: { contentIdentity: string; objects: unknown[] };
+					invitedEmails?: string[];
 				};
+				invitedEmails = [...new Set([...invitedEmails, ...(body.invitedEmails ?? [])])];
 				contentIdentity = body.manifest.contentIdentity;
 				operationId = String(request.headers["idempotency-key"]);
 				missing = body.manifest.objects.map((_, index) => index);
@@ -226,7 +241,30 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		NODE_TLS_REJECT_UNAUTHORIZED: "0",
 	};
 	try {
-		const first = await spoolAsync(["cloud", "publish", "start", "--invite", "Alex@Example.COM"], home, root, env);
+		const dying = spawn(tsxBin, [cliPath, "cloud", "publish", "start", "--invite", "Alex@Example.COM"], {
+			cwd: root,
+			detached: true,
+			env: { ...process.env, HOME: home, ...env },
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		dying.stderr.resume();
+		const died = new Promise<void>((done, fail) => {
+			dying.on("error", fail);
+			dying.on("close", () => done());
+		});
+		await paused;
+		if (dying.pid === undefined) throw Error("missing child pid");
+		process.kill(-dying.pid, "SIGKILL");
+		await died;
+		abandonUpload();
+		const heldOperation = operationId;
+		const [first, peer] = await Promise.all([
+			spoolAsync(["cloud", "publish", "start"], home, root, env),
+			spoolAsync(["cloud", "publish", "start"], home, root, env),
+		]);
+		expect(peer.status, peer.stderr).toBe(0);
+		expect(JSON.parse(peer.stdout).operation.id).toBe(heldOperation);
+		expect(JSON.parse(first.stdout).operation.id).toBe(heldOperation);
 		expect(first.status, first.stderr).toBe(0);
 		expect(JSON.parse(first.stdout)).toMatchObject({
 			publication: { url: "https://beta-site.onspool.page", invitedEmails: ["Alex@example.com"] },
@@ -234,7 +272,7 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 			localSource: "current",
 		});
 		expect(first.stderr).toContain("capturing website");
-		expect(first.stderr).toContain("activating website");
+		expect(first.stderr + peer.stderr).toContain("activating website");
 		const resumed = await spoolAsync(["cloud", "publish", "start"], home, root, env);
 		expect(resumed.status, resumed.stderr).toBe(0);
 		expect(JSON.parse(resumed.stdout)).toMatchObject({ operation: { id: operationId, state: "succeeded" } });
@@ -246,7 +284,12 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 			localSource: "current",
 		});
 		writeFrame(root, "start", "export default () => <h1>Updated</h1>");
-		const updated = await spoolAsync(["cloud", "publish", "start", "--invite", "New@Example.COM"], home, root, env);
+		const [updated, updatePeer] = await Promise.all([
+			spoolAsync(["cloud", "publish", "start", "--invite", "New@Example.COM"], home, root, env),
+			spoolAsync(["cloud", "publish", "start", "--invite", "New@Example.COM"], home, root, env),
+		]);
+		expect(updatePeer.status, updatePeer.stderr).toBe(0);
+		expect(JSON.parse(updatePeer.stdout).operation.id).toBe(JSON.parse(updated.stdout).operation.id);
 		expect(updated.status, updated.stderr).toBe(0);
 		expect(JSON.parse(updated.stdout)).toMatchObject({
 			publication: { id: "publication", revision: 2 },
@@ -267,6 +310,14 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 			publication: { state: "stopped", accessGeneration: 3 },
 			operation: { kind: "stop", result: { changed: false } },
 		});
+		const parallelStops = await Promise.all([
+			spoolAsync(["cloud", "stop", "publication"], home, root, env),
+			spoolAsync(["cloud", "stop", "publication"], home, root, env),
+		]);
+		for (const stopped of parallelStops) expect(stopped.status, stopped.stderr).toBe(0);
+		const stopOutcomes = parallelStops.map((stopped) => JSON.parse(stopped.stdout));
+		expect(new Set(stopOutcomes.map((outcome) => outcome.operation.id)).size).toBe(2);
+		expect(stopOutcomes.map((outcome) => outcome.publication.accessGeneration).sort()).toEqual([4, 5]);
 		const invited = await spoolAsync(
 			["cloud", "invite", "publication", " Alex+viewer@Example.COM "],
 			home,

@@ -2,12 +2,11 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import {
-	type AuthOptions,
+	type CloudRequestOptions as AuthOptions,
 	authorizedCloudRequest,
+	CloudAccountChanged,
 	CloudRequestFailure,
 	cloudOrigin,
-	keychainVault,
-	session,
 } from "./cloud-auth";
 import { SpoolError } from "./errors";
 import {
@@ -22,8 +21,11 @@ import {
 	findPublicationAssociation,
 	readAssociation,
 	readCapture,
+	readUpdateIntent,
 } from "./publication/associations";
+import { type PublicationAuthOptions, publicationAuthority } from "./publication/authority";
 import { buildWebsite, type WebsiteArtifact } from "./publication/build";
+import { withPublicationIntent } from "./publication/intent-lock";
 
 const publication = z.strictObject({
 	id: z.string(),
@@ -137,7 +139,7 @@ export class CloudPublicationFailure extends SpoolError {
 	}
 }
 
-export interface PublishOptions extends AuthOptions {
+export interface PublishOptions extends PublicationAuthOptions {
 	spoolDir: string;
 	root: string;
 	entry: string;
@@ -150,21 +152,60 @@ export interface PublishOptions extends AuthOptions {
 }
 
 export async function publishWebsite(options: PublishOptions): Promise<PublishResult> {
+	const authority = await publicationAuthority(options.spoolDir, options);
+	const bound = { ...options, ...authority.options };
+	const root = realpathSync(resolve(options.root));
+	return withPublicationIntent(
+		options.spoolDir,
+		authority.origin,
+		authority.account.publisherId,
+		{ root, entry: options.entry },
+		async () => {
+			await authority.assertCurrent();
+			const remote =
+				options.publicationId === undefined
+					? undefined
+					: await readCurrentPublication(options.spoolDir, options.publicationId, bound);
+			const identity = associationIdentity(
+				options.spoolDir,
+				authority.origin,
+				authority.account.publisherId,
+				root,
+				options.entry,
+				options.scenario ?? remote?.scenario ?? "default",
+			);
+			const publicationId = options.publicationId ?? readAssociation(options.spoolDir, identity)?.publicationId;
+			const work = async () => {
+				const result = await publishUnderLock(bound, authority.account, authority.assertCurrent);
+				await authority.assertCurrent();
+				return result;
+			};
+			return publicationId === undefined
+				? work()
+				: withPublicationIntent(
+						options.spoolDir,
+						authority.origin,
+						authority.account.publisherId,
+						{ publicationId },
+						work,
+					);
+		},
+	);
+}
+async function publishUnderLock(
+	options: PublishOptions,
+	account: { publisherId: string },
+	assertCurrent: () => Promise<void>,
+): Promise<PublishResult> {
+	const cloudOptions = options;
 	const origin = options.origin ?? cloudOrigin(process.env);
-	const sourceVault = options.vault ?? keychainVault(options.spoolDir, origin);
-	const token = await sourceVault.read();
-	if (token === undefined) throw new SpoolError("not signed in; run `spool login`");
-	const cloudOptions: AuthOptions = {
-		...options,
-		origin,
-		vault: { read: async () => token, write: async () => {}, delete: async () => {} },
-	};
-	const account = await session(options.spoolDir, cloudOptions);
-	let remote: CloudPublication | undefined;
-	if (options.publicationId !== undefined)
-		remote = await readCurrentPublication(options.spoolDir, options.publicationId, cloudOptions);
-	const scenario = options.scenario ?? remote?.scenario ?? "default";
-	const identity = associationIdentity(
+	await assertCurrent();
+	let remote =
+		options.publicationId === undefined
+			? undefined
+			: await readCurrentPublication(options.spoolDir, options.publicationId, cloudOptions);
+	let scenario = options.scenario ?? remote?.scenario ?? "default";
+	let identity = associationIdentity(
 		options.spoolDir,
 		origin,
 		account.publisherId,
@@ -172,27 +213,100 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 		options.entry,
 		scenario,
 	);
-	let association = readAssociation(options.spoolDir, identity);
+	let binding = readAssociation(options.spoolDir, identity);
+	if (options.publicationId === undefined && binding?.supersededBy !== undefined)
+		throw new SpoolError(
+			"this local publication association was rebound elsewhere; use --publication to target it deliberately",
+		);
+	let pending = readUpdateIntent(
+		options.spoolDir,
+		identity,
+		undefined,
+		options.publicationId === undefined || options.scenario !== undefined,
+	);
+	let recovered =
+		pending === undefined
+			? undefined
+			: await operationStatusOrMissing(options.spoolDir, pending.intent.operationId, cloudOptions);
 	if (
-		association !== undefined &&
+		pending !== undefined &&
 		options.publicationId !== undefined &&
-		association.publicationId !== options.publicationId
-	)
-		association = undefined;
+		pending.publicationId !== options.publicationId
+	) {
+		if (recovered === undefined || !terminal(recovered.operation))
+			throw new SpoolError("another target publication intent is still in progress; recover it before rebinding");
+		if (recovered.operation.state === "succeeded" && pending.binding?.operationId !== recovered.operation.id)
+			rememberPublication(
+				options.spoolDir,
+				pending,
+				recovered.operation.result?.publication ?? recovered.publication,
+				{ state: "succeeded" },
+			);
+		discardAssociationUpdateIntent(options.spoolDir, pending);
+		pending = undefined;
+		recovered = undefined;
+	}
+	if (pending !== undefined) {
+		identity = pending.identity;
+		scenario = identity.scenario;
+		binding = readAssociation(options.spoolDir, identity);
+	}
+	if (options.publicationId !== undefined && binding?.publicationId !== options.publicationId) binding = undefined;
+	let association = pending ?? binding;
 	if (remote === undefined && association?.publicationId !== undefined)
 		remote = await readCurrentPublication(options.spoolDir, association.publicationId, cloudOptions);
+	if (recovered === undefined && association !== undefined)
+		recovered = await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions);
+	if (
+		recovered?.operation.state === "succeeded" &&
+		association !== undefined &&
+		association.binding?.operationId !== recovered.operation.id
+	) {
+		association = rememberPublication(
+			options.spoolDir,
+			association,
+			recovered.operation.result?.publication ?? recovered.publication,
+			{ state: "succeeded" },
+		);
+		binding = association;
+	}
+	if (pending !== undefined && recovered !== undefined && terminal(recovered.operation)) {
+		discardAssociationUpdateIntent(options.spoolDir, pending);
+		if (
+			options.publicationId !== undefined &&
+			options.scenario === undefined &&
+			remote !== undefined &&
+			scenario !== remote.scenario
+		) {
+			scenario = remote.scenario;
+			identity = associationIdentity(
+				options.spoolDir,
+				origin,
+				account.publisherId,
+				options.root,
+				options.entry,
+				scenario,
+			);
+			binding = readAssociation(options.spoolDir, identity);
+			if (binding?.publicationId !== options.publicationId) binding = undefined;
+		}
+	}
 	if (
 		options.publicationId === undefined &&
 		remote !== undefined &&
-		(remote.entry !== association?.identity.entry || remote.scenario !== association.identity.scenario)
+		(remote.entry !== identity.entry || remote.scenario !== identity.scenario)
 	)
 		throw new SpoolError(
 			"this local publication association no longer matches the remote entry or scenario; use --publication to rebind deliberately",
 		);
-	let recovered: CloudOperationResponse | undefined;
-	if (association !== undefined)
-		recovered = await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions);
-
+	if (
+		association !== undefined &&
+		(recovered === undefined || !terminal(recovered.operation)) &&
+		options.invitedEmails !== undefined &&
+		JSON.stringify(normalizeOptionalInvitations(options.invitedEmails)) !==
+			JSON.stringify(association.intent.invitedEmails)
+	)
+		throw new SpoolError("recipient arguments changed while a publication intent is still in progress");
 	options.progress?.("capturing website");
 	let artifact: WebsiteArtifact;
 	try {
@@ -203,114 +317,93 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 			...(options.scenario === undefined && remote === undefined ? {} : { scenario }),
 		});
 	} catch (error) {
-		if (recovered?.operation.state === "succeeded") {
-			if (association !== undefined)
-				rememberPublication(
-					options.spoolDir,
-					association,
-					recovered.operation.result?.publication ?? recovered.publication,
-					true,
-					true,
-				);
-			return { ...recovered, publisherId: account.publisherId, localSource: "unavailable" };
-		}
+		throw new CloudPublicationFailure(error instanceof Error ? error.message : "website capture failed", {
+			code: "capture_failed",
+			retryable: false,
+			...(recovered === undefined ? {} : { operation: recovered.operation, operationId: recovered.operation.id }),
+			...(remote === undefined ? {} : { publication: remote }),
+		});
+	}
+	try {
+		await assertCurrent();
+	} catch (error) {
+		if (error instanceof CloudAccountChanged && association !== undefined)
+			throw new CloudPublicationFailure(error.message, {
+				code: error.code,
+				retryable: false,
+				operationId: association.intent.operationId,
+			});
 		throw error;
 	}
-	if (association !== undefined) {
-		const changed =
-			artifact.manifest.contentIdentity !== association.intent.contentIdentity ||
-			artifact.inputIdentity !== association.intent.inputIdentity;
+	if (association !== undefined && (recovered === undefined || !terminal(recovered.operation))) {
 		if (
-			recovered?.operation.state === "succeeded" &&
-			!changed &&
-			options.invitedEmails === undefined &&
-			remote?.state === "active" &&
-			remote.currentVersion?.contentIdentity === artifact.manifest.contentIdentity
+			artifact.manifest.contentIdentity !== association.intent.contentIdentity ||
+			artifact.inputIdentity !== association.intent.inputIdentity
 		)
-			return { ...recovered, publisherId: account.publisherId, localSource: changed ? "changed" : "current" };
-		if (recovered !== undefined && !terminal(recovered.operation)) {
-			if (changed) throw new SpoolError("local work changed while a publication update is still in progress");
-		} else {
-			if (remote === undefined) throw new SpoolError("the publication could not be read before updating");
-			if (recovered !== undefined && terminal(recovered.operation))
-				discardAssociationUpdateIntent(options.spoolDir, association);
-			association = claimAssociationUpdate(
-				options.spoolDir,
-				association,
-				artifact,
-				remote.revision,
-				remote.accessGeneration,
-				normalizeOptionalInvitations(options.invitedEmails),
-			);
-			recovered = await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions);
-		}
+			throw new SpoolError("local work changed while a publication intent is still in progress");
 	} else {
-		const invitedEmails =
-			remote === undefined
-				? normalizeInvitations(options.invitedEmails ?? [])
-				: normalizeOptionalInvitations(options.invitedEmails);
-		const title = (options.title ?? remote?.title ?? options.entry).trim();
-		if (title.length < 1 || title.length > 200) throw new SpoolError("publication title must be 1 to 200 characters");
-		association =
-			remote === undefined
-				? claimAssociation(options.spoolDir, identity, artifact, title, invitedEmails)
-				: claimExplicitAssociationUpdate(
-						options.spoolDir,
-						identity,
-						{
-							projectId: remote.projectId,
-							publicationId: remote.id,
-							hostname: remote.hostname,
-							url: remote.url,
-							title,
-						},
-						artifact,
-						remote.revision,
-						remote.accessGeneration,
-						invitedEmails,
-					);
-		if (association.intent.contentIdentity !== artifact.manifest.contentIdentity)
-			throw new SpoolError("local work changed while another publish command claimed this project");
-		if (remote !== undefined) {
-			recovered = await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions);
-			if (recovered !== undefined && ["failed", "conflict", "expired"].includes(recovered.operation.state)) {
-				discardAssociationUpdateIntent(options.spoolDir, association);
-				association = claimExplicitAssociationUpdate(
-					options.spoolDir,
-					identity,
-					{
-						projectId: remote.projectId,
-						publicationId: remote.id,
-						hostname: remote.hostname,
-						url: remote.url,
-						title,
-					},
-					artifact,
-					remote.revision,
-					remote.accessGeneration,
-					invitedEmails,
-				);
-				recovered = undefined;
-			}
+		if (recovered?.operation.state === "succeeded" && association !== undefined) {
+			const fresh = await readCurrentPublication(options.spoolDir, recovered.publication.id, cloudOptions);
+			if (
+				fresh.state === "active" &&
+				fresh.currentVersion?.contentIdentity === artifact.manifest.contentIdentity &&
+				normalizeOptionalInvitations(options.invitedEmails).every((email) => fresh.invitedEmails.includes(email))
+			)
+				return resultWithLocalSource({ ...recovered, publication: fresh }, association, options);
 		}
+		if (remote === undefined) {
+			const title = (options.title ?? options.entry).trim();
+			if (title.length < 1 || title.length > 200)
+				throw new SpoolError("publication title must be 1 to 200 characters");
+			association = claimAssociation(
+				options.spoolDir,
+				identity,
+				artifact,
+				title,
+				normalizeInvitations(options.invitedEmails ?? []),
+			);
+		} else {
+			// This snapshot was read before compilation. Never replace it with a newer pair during recovery.
+			association =
+				binding !== undefined
+					? claimAssociationUpdate(
+							options.spoolDir,
+							binding,
+							artifact,
+							remote.revision,
+							remote.accessGeneration,
+							normalizeOptionalInvitations(options.invitedEmails),
+						)
+					: claimExplicitAssociationUpdate(
+							options.spoolDir,
+							identity,
+							{
+								projectId: remote.projectId,
+								publicationId: remote.id,
+								hostname: remote.hostname,
+								url: remote.url,
+								title: remote.title,
+							},
+							artifact,
+							remote.revision,
+							remote.accessGeneration,
+							normalizeOptionalInvitations(options.invitedEmails),
+						);
+		}
+		recovered = undefined;
 	}
+	if (association === undefined) throw new SpoolError("publication intent is missing");
 
 	const captured = readCapture(options.spoolDir, association.intent.operationId);
 	let current = recovered ?? (await createOrRecover(options.spoolDir, association, captured, cloudOptions));
-	association = rememberPublication(
-		options.spoolDir,
-		association,
-		current.publication,
-		options.publicationId === undefined,
-	);
+	association = rememberPublication(options.spoolDir, association, current.publication, { state: "pending" });
 	if (terminal(current.operation)) {
 		const finished = finish(current);
 		association = rememberPublication(
 			options.spoolDir,
 			association,
 			finished.operation.result?.publication ?? finished.publication,
-			true,
-			true,
+			{ state: "succeeded" },
 		);
 		return resultWithLocalSource(finished, association, options);
 	}
@@ -363,8 +456,7 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 		options.spoolDir,
 		association,
 		finished.operation.result?.publication ?? finished.publication,
-		true,
-		true,
+		{ state: "succeeded" },
 	);
 	return resultWithLocalSource(finished, association, options);
 }
@@ -396,8 +488,8 @@ export async function listPublications(
 	operationSummaries: z.infer<typeof publicationOperationSummaries>[];
 	nextCursor: string | null;
 }> {
-	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
-	await session(spoolDir, cloudOptions);
+	const authority = await publicationAuthority(spoolDir, options);
+	const cloudOptions = authority.options;
 	const response = await requestJson(spoolDir, "/api/publications", {}, cloudOptions);
 	return z
 		.strictObject({
@@ -419,19 +511,25 @@ export async function publicationStatus(
 	nextCursor: string | null;
 	localSource: "current" | "changed" | "unavailable";
 }> {
-	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
-	const account = await session(spoolDir, cloudOptions);
+	const authority = await publicationAuthority(spoolDir, options);
+	const cloudOptions = authority.options;
+	const account = authority.account;
 	const response = await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, cloudOptions);
 	const current = z.strictObject({ publication }).parse(response);
 	const history = await publicationOperations(spoolDir, id, { ...cloudOptions, limit: 50 });
 	const association = findPublicationAssociation(
 		spoolDir,
-		cloudOptions.origin,
+		authority.origin,
 		account.publisherId,
 		current.publication.id,
 	);
 	if (association === undefined) return { ...current, ...history, localSource: "unavailable" };
-	const operation = await operationStatusOrMissing(spoolDir, association.intent.operationId, cloudOptions);
+	const pending = readUpdateIntent(spoolDir, association.identity, id);
+	const operation = await operationStatusOrMissing(
+		spoolDir,
+		(pending ?? association).intent.operationId,
+		cloudOptions,
+	);
 	const localSource = await readLocalSource(association, undefined, current.publication);
 	return {
 		...current,
@@ -446,8 +544,8 @@ export async function publicationOperations(
 	id: string,
 	options: AuthOptions & { cursor?: string; limit?: number } = {},
 ): Promise<CloudOperationPage> {
-	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
-	await session(spoolDir, cloudOptions);
+	const authority = await publicationAuthority(spoolDir, options);
+	const cloudOptions = authority.options;
 	const query = new URLSearchParams();
 	if (options.cursor !== undefined) query.set("cursor", options.cursor);
 	if (options.limit !== undefined) query.set("limit", String(options.limit));
@@ -460,12 +558,58 @@ export async function publicationOperations(
 export async function stopPublication(
 	spoolDir: string,
 	id: string,
-	options: AuthOptions = {},
+	options: PublicationAuthOptions = {},
 ): Promise<CloudStopResponse> {
-	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
-	const account = await session(spoolDir, cloudOptions);
-	const operationId = claimStopIntent(spoolDir, cloudOptions.origin, account.publisherId, id);
-	const clearIntent = () => clearStopIntent(spoolDir, cloudOptions.origin, account.publisherId, id, operationId);
+	const authority = await publicationAuthority(spoolDir, options);
+	return withPublicationIntent(
+		spoolDir,
+		authority.origin,
+		authority.account.publisherId,
+		{ publicationId: id },
+		async () => {
+			await authority.assertCurrent();
+			return stopUnderLock(spoolDir, id, authority.options, authority.account.publisherId);
+		},
+	);
+}
+async function stopUnderLock(
+	spoolDir: string,
+	id: string,
+	cloudOptions: AuthOptions,
+	publisherId: string,
+): Promise<CloudStopResponse> {
+	const account = { publisherId };
+	const origin = cloudOptions.origin ?? cloudOrigin(process.env);
+
+	const operationId = claimStopIntent(spoolDir, origin, account.publisherId, id);
+	const clearIntent = () => clearStopIntent(spoolDir, origin, account.publisherId, id, operationId);
+	try {
+		const held = readStop(
+			await requestJson(
+				spoolDir,
+				`/api/publication-operations/${encodeURIComponent(operationId)}`,
+				{},
+				cloudOptions,
+				1,
+			),
+			operationId,
+			id,
+		);
+		clearIntent();
+		return held;
+	} catch (error) {
+		if (!(error instanceof CloudApiError && error.status === 404)) {
+			if (error instanceof CloudPublicationFailure)
+				throw new CloudPublicationFailure(error.message, { ...error.detail, operationId });
+			if (error instanceof CloudRequestFailure || error instanceof CloudAccountChanged)
+				throw new CloudPublicationFailure(error.message, {
+					code: error.code,
+					retryable: error.retryable,
+					operationId,
+				});
+			throw error;
+		}
+	}
 	const path = `/api/publications/${encodeURIComponent(id)}/stop`;
 	const init: RequestInit = {
 		method: "POST",
@@ -473,7 +617,7 @@ export async function stopPublication(
 		body: "{}",
 	};
 	let last: unknown;
-	for (let attempt = 1; attempt <= 3; attempt++) {
+	for (let attempt = 2; attempt <= 3; attempt++) {
 		try {
 			const result = readStop(await requestJson(spoolDir, path, init, cloudOptions, 1), operationId, id);
 			clearIntent();
@@ -503,8 +647,8 @@ export async function stopPublication(
 	}
 	if (last instanceof CloudPublicationFailure)
 		throw new CloudPublicationFailure(last.message, { ...last.detail, operationId });
-	if (last instanceof CloudRequestFailure)
-		throw new CloudPublicationFailure(last.message, { code: last.code, retryable: true, operationId });
+	if (last instanceof CloudRequestFailure || last instanceof CloudAccountChanged)
+		throw new CloudPublicationFailure(last.message, { code: last.code, retryable: last.retryable, operationId });
 	throw last;
 }
 
@@ -513,10 +657,10 @@ export async function mutatePublicationGrant(
 	publicationId: string,
 	email: string,
 	kind: "invite" | "revoke",
-	options: AuthOptions = {},
+	options: PublicationAuthOptions = {},
 ): Promise<GrantMutation> {
-	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
-	await session(spoolDir, cloudOptions);
+	const authority = await publicationAuthority(spoolDir, options);
+	const cloudOptions = authority.options;
 	const normalized = normalizeGrantMailbox(email);
 	const operationId = crypto.randomUUID();
 	const path = `/api/publications/${encodeURIComponent(publicationId)}/${kind}`;
@@ -664,6 +808,14 @@ async function operationStatusOrMissing(
 		);
 	} catch (error) {
 		if (error instanceof CloudApiError && error.status === 404) return undefined;
+		if (error instanceof CloudPublicationFailure)
+			throw new CloudPublicationFailure(error.message, { ...error.detail, operationId });
+		if (error instanceof CloudRequestFailure || error instanceof CloudAccountChanged)
+			throw new CloudPublicationFailure(error.message, {
+				code: error.code,
+				retryable: error.retryable,
+				operationId,
+			});
 		throw error;
 	}
 }
@@ -770,8 +922,7 @@ function rememberPublication(
 	spoolDir: string,
 	association: ReturnType<typeof claimAssociation>,
 	value: CloudPublication,
-	persist = true,
-	successful = false,
+	outcome: { state: "pending" | "succeeded" },
 ) {
 	if (value.ownerId !== association.identity.publisherId || value.projectId !== association.projectId)
 		throw new SpoolError("spool.page returned a publication for a different owner or project");
@@ -780,7 +931,7 @@ function rememberPublication(
 		publicationId: value.id,
 		hostname: value.hostname,
 		url: value.url,
-		...(successful
+		...(outcome.state === "succeeded"
 			? {
 					binding: {
 						operationId: association.intent.operationId,
@@ -790,7 +941,9 @@ function rememberPublication(
 				}
 			: {}),
 	};
-	return persist ? bindAssociation(spoolDir, next) : next;
+	return outcome.state === "succeeded" || association.intent.kind === "create"
+		? bindAssociation(spoolDir, next)
+		: next;
 }
 async function resultWithLocalSource(
 	result: CloudOperationResponse,
@@ -800,7 +953,7 @@ async function resultWithLocalSource(
 	return {
 		...result,
 		publisherId: association.identity.publisherId,
-		localSource: await readLocalSource(association, options.version),
+		localSource: await readLocalSource(association, options.version, result.publication),
 	};
 }
 async function readLocalSource(
@@ -838,6 +991,8 @@ function finish(value: CloudOperationResponse): CloudOperationResponse {
 	const message = value.operation.error?.message ?? `publication operation is ${value.operation.state}`;
 	throw new CloudPublicationFailure(message, {
 		operation: value.operation,
+		publication: value.publication,
+		operationId: value.operation.id,
 		code: value.operation.error?.code ?? value.operation.state,
 		retryable: false,
 	});
@@ -861,10 +1016,12 @@ async function recoverAfterFailure(
 	options: AuthOptions,
 	original: unknown,
 ): Promise<CloudOperationResponse | undefined> {
+	if (original instanceof CloudAccountChanged)
+		throw new CloudPublicationFailure(original.message, { operationId, code: original.code, retryable: false });
 	try {
 		return await operationStatusOrMissing(spoolDir, operationId, options);
 	} catch {
-		if (original instanceof CloudRequestFailure)
+		if (original instanceof CloudRequestFailure || original instanceof CloudAccountChanged)
 			throw new CloudPublicationFailure(original.message, {
 				operationId,
 				code: original.code,

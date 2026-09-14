@@ -43,6 +43,7 @@ export interface PublicationAssociation {
 				expectedAccessGeneration: number;
 				targetPublicationId: string;
 		  };
+	supersededBy?: string;
 	binding?: { operationId: string; contentIdentity: string; inputIdentity: string };
 	publicationId?: string;
 	hostname?: string;
@@ -88,6 +89,10 @@ const associationSchema = z.strictObject({
 			inputIdentity: z.string().min(1),
 		})
 		.optional(),
+	supersededBy: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/u)
+		.optional(),
 	publicationId: z.string().optional(),
 	hostname: z.string().optional(),
 	url: z.string().url().optional(),
@@ -131,19 +136,22 @@ export function findPublicationAssociation(
 ): PublicationAssociation | undefined {
 	const directory = dirname(associationPath(spoolDir, "placeholder"));
 	if (!existsSync(directory)) return undefined;
+	let found: PublicationAssociation | undefined;
 	for (const name of readdirSync(directory)) {
 		if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
 		const record = readRecord(join(directory, name));
 		if (
 			record.key !== identityKey(record.identity) ||
+			record.supersededBy !== undefined ||
 			record.identity.authority !== new URL(authority).origin ||
 			record.identity.publisherId !== publisherId ||
 			record.publicationId !== publicationId
 		)
 			continue;
-		return record;
+		if (found) throw new SpoolError("multiple local associations target this publication; rebind deliberately");
+		found = record;
 	}
-	return undefined;
+	return found;
 }
 
 export function claimAssociation(
@@ -213,7 +221,6 @@ export function claimAssociationUpdate(
 	expectedRevision: number,
 	expectedAccessGeneration: number,
 	invitedEmails: string[],
-	persist = true,
 ): PublicationAssociation {
 	const targetPublicationId = association.publicationId;
 	if (targetPublicationId === undefined) throw new SpoolError("the publication update target is missing");
@@ -260,7 +267,6 @@ export function claimAssociationUpdate(
 		canonicalJson(claimed.intent.invitedEmails) !== canonicalJson(invitedEmails)
 	)
 		throw new SpoolError("another publication update intent is already in progress for this association");
-	if (persist) writeAtomic(associationPath(spoolDir, association.key), `${JSON.stringify(claimed, null, "\t")}\n`);
 	return claimed;
 }
 
@@ -282,35 +288,45 @@ export function claimExplicitAssociationUpdate(
 		hostname: stable.hostname,
 		url: stable.url,
 		intent: {
-			kind: "create",
+			kind: "update",
 			operationId: randomUUID(),
 			contentIdentity: artifact.manifest.contentIdentity,
 			inputIdentity: artifact.inputIdentity,
-			invitedEmails: [],
+			invitedEmails,
+			expectedRevision,
+			expectedAccessGeneration,
+			targetPublicationId: stable.publicationId,
 		},
 	};
-	return claimAssociationUpdate(
-		spoolDir,
-		base,
-		artifact,
-		expectedRevision,
-		expectedAccessGeneration,
-		invitedEmails,
-		false,
-	);
+	return claimAssociationUpdate(spoolDir, base, artifact, expectedRevision, expectedAccessGeneration, invitedEmails);
 }
 
 export function bindAssociation(spoolDir: string, association: PublicationAssociation): PublicationAssociation {
 	const file = associationPath(spoolDir, association.key);
 	mkdirSync(dirname(file), { recursive: true });
-	writeAtomic(file, `${JSON.stringify(association, null, "\t")}\n`);
-	return association;
+	const { supersededBy: _, ...next } = association;
+	writeAtomic(file, `${JSON.stringify(next, null, "\t")}\n`);
+	if (next.binding !== undefined && next.publicationId !== undefined) {
+		for (const name of readdirSync(dirname(file))) {
+			if (!/^[a-f0-9]{64}\.json$/u.test(name) || name === `${next.key}.json`) continue;
+			const otherFile = join(dirname(file), name);
+			const other = readRecord(otherFile);
+			if (
+				other.publicationId === next.publicationId &&
+				other.identity.authority === next.identity.authority &&
+				other.identity.publisherId === next.identity.publisherId
+			)
+				writeAtomic(otherFile, `${JSON.stringify({ ...other, supersededBy: next.key }, null, "\t")}\n`);
+		}
+	}
+	return next;
 }
 
 export function discardAssociationUpdateIntent(spoolDir: string, association: PublicationAssociation): void {
 	if (association.intent.kind !== "update") return;
 	const intentKey = association.key;
-	rmSync(join(resolve(spoolDir), "publications", "intents", `${intentKey}.json`), { force: true });
+	const file = join(resolve(spoolDir), "publications", "intents", `${intentKey}.json`);
+	if (existsSync(file) && readRecord(file).intent.operationId === association.intent.operationId) unlinkSync(file);
 }
 
 export function claimStopIntent(
@@ -444,13 +460,14 @@ function requiredAssociation(spoolDir: string, identity: PublicationAssociationI
 function readRecord(file: string): PublicationAssociation {
 	try {
 		const value = associationSchema.parse(JSON.parse(readFileSync(file, "utf8")));
-		const { publicationId, hostname, url, binding, ...required } = value;
+		const { publicationId, hostname, url, binding, supersededBy, ...required } = value;
 		return {
 			...required,
 			...(publicationId === undefined ? {} : { publicationId }),
 			...(hostname === undefined ? {} : { hostname }),
 			...(url === undefined ? {} : { url }),
 			...(binding === undefined ? {} : { binding }),
+			...(supersededBy === undefined ? {} : { supersededBy }),
 		};
 	} catch {
 		throw new SpoolError("the local publication association is invalid");
@@ -460,4 +477,44 @@ function parseObject(raw: string): Record<string, unknown> {
 	const value: unknown = JSON.parse(raw);
 	if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error();
 	return value as Record<string, unknown>;
+}
+
+export function readUpdateIntent(
+	spoolDir: string,
+	identity: PublicationAssociationIdentity,
+	publicationId?: string,
+	scenarioSpecified = true,
+): PublicationAssociation | undefined {
+	const directory = join(resolve(spoolDir), "publications", "intents");
+	if (!existsSync(directory)) return undefined;
+	let found: PublicationAssociation | undefined;
+	for (const name of readdirSync(directory)) {
+		if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
+		const record = readRecord(join(directory, name));
+		if (
+			record.intent.kind !== "update" ||
+			name !== `${record.key}.json` ||
+			record.key !== createHash("sha256").update(canonicalJson(record.identity)).digest("hex")
+		)
+			throw new SpoolError("the local publication update intent is invalid");
+		const held = record.identity;
+		if (
+			held.authority !== identity.authority ||
+			held.publisherId !== identity.publisherId ||
+			held.instance !== identity.instance ||
+			held.root !== identity.root ||
+			held.entry !== identity.entry ||
+			(scenarioSpecified && held.scenario !== identity.scenario)
+		)
+			continue;
+		if (
+			publicationId !== undefined &&
+			record.intent.kind === "update" &&
+			record.intent.targetPublicationId !== publicationId
+		)
+			continue;
+		if (found) throw new SpoolError("multiple publication update intents need explicit recovery");
+		found = record;
+	}
+	return found;
 }

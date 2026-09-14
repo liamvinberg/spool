@@ -148,6 +148,158 @@ function service(
 }
 
 describe("Cloud publication client", () => {
+	it.each([false, true])(
+		"recovers lost success and persists the binding before returning (explicit=%s)",
+		async (explicit) => {
+			const spoolDir = makeTempDir();
+			const { root } = makeProject(spoolDir);
+			writeFrame(root, "start", "export default () => <h1>Shared</h1>");
+			const cloud = service();
+			let unavailable = false;
+			const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+				const path = new URL(typeof input === "string" || input instanceof URL ? input : input.url).pathname;
+				if (unavailable && path.startsWith("/api/publication-operations/")) throw new Error("offline");
+				const response = await cloud.fetch(input, init);
+				if (path.endsWith("/activate")) {
+					unavailable = true;
+					throw new Error("lost success");
+				}
+				return response;
+			};
+			const options = {
+				spoolDir,
+				root,
+				entry: "start",
+				version: "test",
+				origin: "https://cloud.test",
+				vault,
+				fetch,
+				...(explicit ? { publicationId: "publication" } : { invitedEmails: ["alex@example.com"] }),
+			};
+			await expect(publishWebsite(options)).rejects.toMatchObject({
+				detail: { code: "transport_interrupted", operationId: expect.any(String) },
+			});
+			unavailable = false;
+			const recovered = await publishWebsite(options);
+			expect(recovered.operation.state).toBe("succeeded");
+			expect(cloud.calls.filter((call) => call.endsWith("/activate"))).toHaveLength(1);
+			expect(cloud.calls.filter((call) => call === "POST /api/publications/publication/operations")).toHaveLength(
+				explicit ? 1 : 0,
+			);
+			const status = await publicationStatus(spoolDir, "publication", { origin: options.origin, vault, fetch });
+			expect(status.localSource).toBe("current");
+		},
+	);
+	it("keeps the previous binding on failed rebind, then marks it superseded only after success", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>First</h1>");
+		writeFrame(root, "other", "export default () => <h1>Other</h1>");
+		const cloud = service();
+		const options = {
+			spoolDir,
+			root,
+			entry: "start",
+			version: "test",
+			origin: "https://cloud.test",
+			vault,
+			fetch: cloud.fetch,
+			invitedEmails: ["alex@example.com"],
+		};
+		await publishWebsite(options);
+		const previous = associationIdentity(spoolDir, options.origin, "publisher", root, "start", "default");
+		const saved = readAssociation(spoolDir, previous);
+		await expect(
+			publishWebsite({ ...options, entry: "missing", publicationId: "publication" }),
+		).rejects.toMatchObject({ detail: { code: "capture_failed" } });
+		expect(readAssociation(spoolDir, previous)).toEqual(saved);
+		await publishWebsite({ ...options, entry: "other", publicationId: "publication" });
+		expect(readAssociation(spoolDir, previous)?.supersededBy).toEqual(expect.any(String));
+		expect((await publicationStatus(spoolDir, "publication", options)).localSource).toBe("current");
+		const admitted = cloud.calls.filter((call) => call.startsWith("POST ")).length;
+		await expect(publishWebsite(options)).rejects.toThrow("rebound elsewhere");
+		expect(cloud.calls.filter((call) => call.startsWith("POST "))).toHaveLength(admitted);
+		rmSync(join(root, "design/frames/start/frame.tsx"));
+		await expect(publishWebsite({ ...options, publicationId: "publication" })).rejects.toMatchObject({
+			detail: { code: "capture_failed" },
+		});
+		expect(readAssociation(spoolDir, previous)?.supersededBy).toEqual(expect.any(String));
+		expect((await publicationStatus(spoolDir, "publication", options)).localSource).toBe("current");
+	});
+	it("refuses changed recipients while recovering an admitted upload", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>Shared</h1>");
+		const cloud = service();
+		let offline = false;
+		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+			if (init?.method === "PUT") offline = true;
+			if (offline) throw new Error("offline");
+			return cloud.fetch(input, init);
+		};
+		const options = {
+			spoolDir,
+			root,
+			entry: "start",
+			version: "test",
+			origin: "https://cloud.test",
+			vault,
+			fetch,
+			invitedEmails: ["alex@example.com"],
+		};
+		await expect(publishWebsite(options)).rejects.toMatchObject({ detail: { operationId: expect.any(String) } });
+		offline = false;
+		await expect(publishWebsite({ ...options, invitedEmails: ["new@example.com"] })).rejects.toThrow(
+			"recipient arguments changed",
+		);
+		expect(cloud.calls.filter((call) => call === "POST /api/publications")).toHaveLength(1);
+	});
+	it("rejects a queued job for a different publisher before capture or intent admission", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		const cloud = service();
+		await expect(
+			publishWebsite({
+				spoolDir,
+				root,
+				entry: "missing",
+				version: "test",
+				origin: "https://cloud.test",
+				vault,
+				fetch: cloud.fetch,
+				expectedPublisherId: "previous-publisher",
+			}),
+		).rejects.toMatchObject({ code: "account_changed" });
+		expect(cloud.calls).toEqual(["GET /auth/publisher/session"]);
+	});
+	it("stops after an account switch during upload and preserves the recoverable intent identity", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>Shared</h1>");
+		const cloud = service();
+		let token = "t".repeat(43);
+		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+			const response = await cloud.fetch(input, init);
+			if (init?.method === "PUT") token = "s".repeat(43);
+			return response;
+		};
+		await expect(
+			publishWebsite({
+				spoolDir,
+				root,
+				entry: "start",
+				version: "test",
+				origin: "https://cloud.test",
+				vault: { read: async () => token },
+				fetch,
+				invitedEmails: ["alex@example.com"],
+			}),
+		).rejects.toMatchObject({
+			detail: { code: "account_changed", retryable: false, operationId: expect.any(String) },
+		});
+		expect(cloud.calls.some((call) => call.endsWith("/activate"))).toBe(false);
+		expect(cloud.calls.filter((call) => call.startsWith("PUT "))).toHaveLength(1);
+	});
 	it("binds every publication request to the starting vault identity", async () => {
 		const spoolDir = makeTempDir();
 		const { root } = makeProject(spoolDir);
@@ -159,20 +311,22 @@ describe("Cloud publication client", () => {
 			delete: async () => {},
 		};
 		const cloud = service();
-		const result = await publishWebsite({
-			spoolDir,
-			root,
-			entry: "start",
-			invitedEmails: ["viewer@example.com"],
-			version: "test",
-			origin: "https://cloud.test",
-			vault: mutableVault,
-			fetch: cloud.fetch,
-			progress: (message) => {
-				if (message === "capturing website") held = "u".repeat(43);
-			},
-		});
-		expect(result.publisherId).toBe("publisher");
+		await expect(
+			publishWebsite({
+				spoolDir,
+				root,
+				entry: "start",
+				invitedEmails: ["viewer@example.com"],
+				version: "test",
+				origin: "https://cloud.test",
+				vault: mutableVault,
+				fetch: cloud.fetch,
+				progress: (message) => {
+					if (message === "capturing website") held = "u".repeat(43);
+				},
+			}),
+		).rejects.toThrow(/account changed/u);
+		expect(cloud.calls.some((call) => call.startsWith("POST"))).toBe(false);
 		expect(held).toBe("u".repeat(43));
 	});
 	it("pages bounded operation history without conflating it with current publication state", async () => {
@@ -433,7 +587,7 @@ describe("Cloud publication client", () => {
 				vault,
 				fetch: cloud.fetch,
 			}),
-		).resolves.toMatchObject({ operation: { state: "succeeded" }, localSource: "unavailable" });
+		).rejects.toMatchObject({ detail: { code: "capture_failed", operation: { state: "succeeded" } } });
 	});
 
 	it("lists and reads status through the authenticated client", async () => {

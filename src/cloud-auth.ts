@@ -46,6 +46,17 @@ export interface AuthOptions {
 	timeoutMs?: number;
 }
 
+export type CloudRequestOptions = Omit<AuthOptions, "vault"> & { vault?: CloudVault | Pick<CloudVault, "read"> };
+export class CloudAccountChanged extends SpoolError {
+	readonly code = "account_changed";
+	readonly retryable = false;
+	constructor() {
+		super(
+			"Cloud account changed during this operation; its recorded outcome can be recovered after signing in again",
+		);
+	}
+}
+
 function base64url(bytes: Uint8Array): string {
 	return Buffer.from(bytes).toString("base64url");
 }
@@ -223,7 +234,7 @@ export async function login(spoolDir: string, options: AuthOptions = {}): Promis
 	}
 }
 
-export async function session(spoolDir: string, options: AuthOptions = {}): Promise<CloudSession> {
+export async function session(spoolDir: string, options: CloudRequestOptions = {}): Promise<CloudSession> {
 	const response = await authorizedCloudRequest(spoolDir, "/auth/publisher/session", {}, options);
 	const body = await responseJson(response);
 	if (!response.ok || typeof body.publisherId !== "string" || typeof body.sessionId !== "string")
@@ -235,7 +246,7 @@ export async function authorizedCloudRequest(
 	spoolDir: string,
 	path: string,
 	init: RequestInit = {},
-	options: AuthOptions = {},
+	options: CloudRequestOptions = {},
 ): Promise<Response> {
 	if ((!path.startsWith("/api/") && path !== "/auth/publisher/session") || path.startsWith("//"))
 		throw new SpoolError("invalid Cloud API path");
@@ -261,6 +272,7 @@ export async function authorizedCloudRequest(
 			throw new SpoolError("spool.page could not be reached; local spool is still available");
 		throw new CloudRequestFailure("spool.page could not be reached; publishing can be resumed safely");
 	}
+	if ((await vault.read()) !== token) throw new CloudAccountChanged();
 	if (response.status === 401) throw new SpoolError("Cloud sign-in expired or was revoked; run `spool login` again");
 	return response;
 }
