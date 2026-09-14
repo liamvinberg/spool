@@ -10,6 +10,7 @@ import {
 	frameSource,
 	frameSourceIn,
 	type ImportEdge,
+	type LinksDeclaration,
 	type NavSite,
 	resolveFrameDir,
 	type SourcePass,
@@ -307,6 +308,9 @@ interface FrameEntry {
 	hash: string;
 	sites: NavSite[];
 	unreadable: UnreadableSite[];
+	links?: LinksDeclaration;
+	invalidLinks?: { path: string; line: number };
+	parseFailure?: { path: string; line: number };
 }
 
 /** Names and digests of a graph — same inputs as the source hash, small enough
@@ -387,8 +391,19 @@ export function createFlowGraph() {
 			fingerprintOf(pass, known.files) === known.fingerprint &&
 			sameImports(pass, known.imports)
 		) {
-			const { files, imports, sites, unreadable, hash } = known;
-			return { frame, files, folder, imports, sites, unreadable, hash };
+			const { files, imports, sites, unreadable, hash, links, invalidLinks, parseFailure } = known;
+			return {
+				frame,
+				files,
+				folder,
+				imports,
+				sites,
+				unreadable,
+				hash,
+				...(links === undefined ? {} : { links }),
+				...(invalidLinks === undefined ? {} : { invalidLinks }),
+				...(parseFailure === undefined ? {} : { parseFailure }),
+			};
 		}
 		const source = frameSourceIn(pass, frameDir);
 		const entry: FrameEntry = {
@@ -400,6 +415,9 @@ export function createFlowGraph() {
 			hash: sourceHash(pass, source.files),
 			sites: source.sites,
 			unreadable: source.unreadable,
+			...(source.links === undefined ? {} : { links: source.links }),
+			...(source.invalidLinks === undefined ? {} : { invalidLinks: source.invalidLinks }),
+			...(source.parseFailure === undefined ? {} : { parseFailure: source.parseFailure }),
 		};
 		entries.set(frame, entry);
 		return { frame, ...source, hash: entry.hash };

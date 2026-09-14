@@ -44,6 +44,15 @@ export interface UnreadableSite {
 export interface NavSites {
 	sites: NavSite[];
 	unreadable: UnreadableSite[];
+	links?: LinksDeclaration;
+	invalidLinks?: { path: string; line: number };
+	parseFailure?: { path: string; line: number };
+}
+
+export interface LinksDeclaration {
+	path: string;
+	line: number;
+	values: Readonly<Record<string, string>>;
 }
 
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
@@ -258,6 +267,9 @@ export function frameSourceIn(pass: SourcePass, frameDir: string): FrameSource {
 		if (parsed === undefined) continue;
 		source.sites.push(...parsed.sites);
 		source.unreadable.push(...parsed.unreadable);
+		if (folder.includes(file) && parsed.links !== undefined) source.links = parsed.links;
+		if (folder.includes(file) && parsed.invalidLinks !== undefined) source.invalidLinks = parsed.invalidLinks;
+		if (parsed.parseFailure !== undefined) source.parseFailure ??= parsed.parseFailure;
 	}
 	return source;
 }
@@ -285,8 +297,8 @@ export function frameSource(root: string, frame: string): FrameSource {
 /** Read every navigation site the source declares. Never throws: source that
  * does not parse claims nothing — the compile surface owns reporting it. */
 export function parseNavSites(source: string, path: string): NavSites {
-	const { sites, unreadable } = parseSource(source, path);
-	return { sites, unreadable };
+	const { imports: _imports, ...sites } = parseSource(source, path);
+	return sites;
 }
 
 /** What one file contributes to a frame: the walks it declares and the files
@@ -302,8 +314,13 @@ function parseSource(source: string, path: string): ParsedSource {
 	try {
 		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
 	} catch {
+		out.parseFailure = { path, line: 1 };
 		return out;
 	}
+	const constants = constantsIn(program);
+	const declaration = linksIn(program, path, constants);
+	if (declaration.kind === "valid") out.links = declaration.value;
+	if (declaration.kind === "invalid") out.invalidLinks = declaration.at;
 	walkNodes(program, [], (node, ancestors) => {
 		// static import/export-from and dynamic import(): every way a file names
 		// another file, type-only imports included — they carry no walk of their
@@ -327,14 +344,14 @@ function parseSource(source: string, path: string): ParsedSource {
 					? node.value.expression
 					: node.value;
 			if (value == null) return;
-			pushSites(out, readTargets(value as Node), { via: "data-go", path, line, ancestors });
+			pushSites(out, readTargets(value as Node, constants), { via: "data-go", path, line, ancestors });
 		}
 		if (node.type === "CallExpression") {
 			const via = codedWalk(node.callee as Node);
 			if (via !== undefined) {
 				const line = node.loc?.start.line ?? 0;
 				const arg = node.arguments[0] as Node | undefined;
-				const read = arg === undefined ? { targets: [], unreadable: true } : readTargets(arg);
+				const read = arg === undefined ? { targets: [], unreadable: true } : readTargets(arg, constants);
 				pushSites(out, read, { via, path, line, ancestors });
 			}
 		}
@@ -430,7 +447,7 @@ interface TargetRead {
  * targets; only literals count beyond them (#34 out-of-scope: no concat, no
  * lookups). JSXAttribute string values land here too.
  */
-function readTargets(node: Node): TargetRead {
+function readTargets(node: Node, constants: ReadonlyMap<string, Node>, seen = new Set<string>()): TargetRead {
 	if (node.type === "StringLiteral")
 		return { targets: [{ target: node.value, conditional: false }], unreadable: false };
 	if (node.type === "TemplateLiteral" && node.expressions.length === 0) {
@@ -439,16 +456,104 @@ function readTargets(node: Node): TargetRead {
 		return { targets: [{ target: cooked, conditional: false }], unreadable: false };
 	}
 	if (node.type === "ConditionalExpression") {
-		return branchRead(readTargets(node.consequent as Node), readTargets(node.alternate as Node));
+		return branchRead(
+			readTargets(node.consequent as Node, constants, seen),
+			readTargets(node.alternate as Node, constants, seen),
+		);
 	}
 	if (node.type === "LogicalExpression") {
 		// `x && "go"`: the left side is the guard, never a destination;
 		// `x || "go"` / `??`: either side may be where the session lands
-		const right = readTargets(node.right as Node);
+		const right = readTargets(node.right as Node, constants, seen);
 		if (node.operator === "&&") return branchRead(right);
-		return branchRead(readTargets(node.left as Node), right);
+		return branchRead(readTargets(node.left as Node, constants, seen), right);
+	}
+	if (node.type === "Identifier") {
+		if (seen.has(node.name)) return { targets: [], unreadable: true };
+		const value = constants.get(node.name);
+		return value === undefined
+			? { targets: [], unreadable: true }
+			: readTargets(value, constants, new Set(seen).add(node.name));
+	}
+	if (
+		node.type === "MemberExpression" &&
+		!node.computed &&
+		node.object.type === "Identifier" &&
+		node.property.type === "Identifier"
+	) {
+		const object = constants.get(node.object.name);
+		const propertyName = node.property.name;
+		if (object?.type !== "ObjectExpression") return { targets: [], unreadable: true };
+		const property = object.properties.find(
+			(candidate) =>
+				candidate.type === "ObjectProperty" &&
+				!candidate.computed &&
+				((candidate.key.type === "Identifier" && candidate.key.name === propertyName) ||
+					(candidate.key.type === "StringLiteral" && candidate.key.value === propertyName)),
+		);
+		return property?.type === "ObjectProperty"
+			? readTargets(property.value as Node, constants, seen)
+			: { targets: [], unreadable: true };
 	}
 	return { targets: [], unreadable: true };
+}
+
+function constantsIn(program: Node): Map<string, Node> {
+	const constants = new Map<string, Node>();
+	if (program.type !== "Program") return constants;
+	for (const statement of program.body) {
+		const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+		if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
+		for (const item of declaration.declarations) {
+			if (item.id.type === "Identifier" && item.init != null) constants.set(item.id.name, unwrap(item.init as Node));
+		}
+	}
+	return constants;
+}
+
+function unwrap(node: Node): Node {
+	return node.type === "TSAsExpression" || node.type === "TSSatisfiesExpression" || node.type === "TypeCastExpression"
+		? unwrap(node.expression as Node)
+		: node;
+}
+
+function linksIn(
+	program: Node,
+	path: string,
+	constants: ReadonlyMap<string, Node>,
+):
+	| { kind: "none" }
+	| { kind: "invalid"; at: { path: string; line: number } }
+	| { kind: "valid"; value: LinksDeclaration } {
+	if (program.type !== "Program") return { kind: "none" };
+	for (const statement of program.body) {
+		if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
+		const declaration = statement.declaration;
+		if (declaration?.type !== "VariableDeclaration") continue;
+		for (const item of declaration.declarations) {
+			if (item.id.type !== "Identifier" || item.id.name !== "links") continue;
+			const at = { path, line: item.loc?.start.line ?? 0 };
+			const object = item.init == null ? undefined : unwrap(item.init as Node);
+			if (declaration.kind !== "const" || object?.type !== "ObjectExpression") return { kind: "invalid", at };
+			const values: Record<string, string> = {};
+			for (const property of object.properties) {
+				if (property.type !== "ObjectProperty" || property.computed || property.key.type === "PrivateName")
+					return { kind: "invalid", at };
+				const key =
+					property.key.type === "Identifier"
+						? property.key.name
+						: property.key.type === "StringLiteral"
+							? property.key.value
+							: undefined;
+				const read = readTargets(property.value as Node, constants);
+				const target = read.targets.length === 1 && !read.unreadable ? read.targets[0]?.target : undefined;
+				if (key === undefined || target === undefined) return { kind: "invalid", at };
+				values[key] = target;
+			}
+			return { kind: "valid", value: { path, line: at.line, values } };
+		}
+	}
+	return { kind: "none" };
 }
 
 /** Merge branch arms: every target turns conditional, any dark arm stays named. */
