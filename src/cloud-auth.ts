@@ -27,17 +27,17 @@ export interface CloudSession {
 	sessionId: string;
 }
 
-interface Vault {
+export interface CloudVault {
 	read(): Promise<string | undefined>;
 	write(token: string): Promise<void>;
 	delete(): Promise<void>;
 }
 
-interface AuthOptions {
+export interface AuthOptions {
 	origin?: string;
 	fetch?: typeof fetch;
 	open?: (url: string) => void;
-	vault?: Vault;
+	vault?: CloudVault;
 	timeoutMs?: number;
 }
 
@@ -82,7 +82,7 @@ async function security(
 	});
 }
 
-export function keychainVault(spoolDir: string, origin = CLOUD_ORIGIN): Vault {
+export function keychainVault(spoolDir: string, origin = CLOUD_ORIGIN): CloudVault {
 	const { account, service } = keychainIdentity(spoolDir, origin);
 	const unavailable = () =>
 		new SpoolError("macOS Keychain is unavailable; local spool still works, but Cloud sharing is signed out");
@@ -219,23 +219,45 @@ export async function login(spoolDir: string, options: AuthOptions = {}): Promis
 }
 
 export async function session(spoolDir: string, options: AuthOptions = {}): Promise<CloudSession> {
-	const origin = options.origin ?? CLOUD_ORIGIN;
-	const vault = options.vault ?? keychainVault(spoolDir, origin);
-	const token = await vault.read();
-	if (!token) throw new SpoolError("not signed in; run `spool login`");
-	let response: Response;
-	try {
-		response = await (options.fetch ?? fetch)(new URL("/auth/publisher/session", origin), {
-			headers: { authorization: `Bearer ${token}` },
-			signal: AbortSignal.timeout(10_000),
-		});
-	} catch {
-		throw new SpoolError("spool.page could not be reached; local spool is still available");
-	}
+	const response = await authorizedCloudRequest(spoolDir, "/auth/publisher/session", {}, options);
 	const body = await responseJson(response);
 	if (!response.ok || typeof body.publisherId !== "string" || typeof body.sessionId !== "string")
 		throw new SpoolError("Cloud sign-in expired or was revoked; run `spool login` again");
 	return { publisherId: body.publisherId, sessionId: body.sessionId };
+}
+
+export async function authorizedCloudRequest(
+	spoolDir: string,
+	path: string,
+	init: RequestInit = {},
+	options: AuthOptions = {},
+): Promise<Response> {
+	if ((!path.startsWith("/api/") && path !== "/auth/publisher/session") || path.startsWith("//"))
+		throw new SpoolError("invalid Cloud API path");
+	const origin = options.origin ?? CLOUD_ORIGIN;
+	const vault = options.vault ?? keychainVault(spoolDir, origin);
+	const token = await vault.read();
+	if (!token) throw new SpoolError("not signed in; run `spool login`");
+	const headers = new Headers(init.headers);
+	headers.set("authorization", `Bearer ${token}`);
+	headers.delete("cookie");
+	headers.delete("origin");
+	let response: Response;
+	try {
+		response = await (options.fetch ?? fetch)(new URL(path, origin), {
+			...init,
+			headers,
+			signal: init.signal ?? AbortSignal.timeout(options.timeoutMs ?? 10_000),
+		});
+	} catch {
+		throw new SpoolError(
+			path === "/auth/publisher/session"
+				? "spool.page could not be reached; local spool is still available"
+				: "spool.page could not be reached; publishing can be resumed safely",
+		);
+	}
+	if (response.status === 401) throw new SpoolError("Cloud sign-in expired or was revoked; run `spool login` again");
+	return response;
 }
 
 export async function logout(

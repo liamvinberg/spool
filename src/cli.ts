@@ -9,6 +9,7 @@ import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
 import { cloudOrigin, login, logout } from "./cloud-auth";
+import { listPublications, publicationStatus, publishWebsite } from "./cloud-publication";
 import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
@@ -79,6 +80,49 @@ program
 			);
 			process.exitCode = 1;
 		}
+	});
+
+const cloud = program.command("cloud").description("publish and inspect protected websites");
+
+cloud
+	.command("publish")
+	.description("publish a connected website")
+	.argument("<frame>", "original entry frame", parseScenario)
+	.requiredOption("--invite <email...>", "person allowed to open the new website")
+	.option("--scenario <name>", "scenario seed", parseScenario)
+	.action(async (entry: string, options: { invite: string[]; scenario?: string }) => {
+		const root = resolveProjectRoot(process.cwd());
+		if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
+		const result = await publishWebsite({
+			spoolDir,
+			root,
+			entry,
+			invitedEmails: options.invite,
+			version: pkg.version,
+			origin: cloudOrigin(process.env),
+			...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+			progress: (message) => process.stderr.write(`spool: ${message}\n`),
+		});
+		process.stdout.write(`${JSON.stringify(result)}\n`);
+	});
+
+cloud
+	.command("list")
+	.description("list your Cloud publications")
+	.action(async () => {
+		process.stdout.write(
+			`${JSON.stringify(await listPublications(spoolDir, { origin: cloudOrigin(process.env) }))}\n`,
+		);
+	});
+
+cloud
+	.command("status")
+	.description("read one Cloud publication")
+	.argument("<publication>", "publication id")
+	.action(async (publication: string) => {
+		process.stdout.write(
+			`${JSON.stringify(await publicationStatus(spoolDir, publication, { origin: cloudOrigin(process.env) }))}\n`,
+		);
 	});
 
 program
