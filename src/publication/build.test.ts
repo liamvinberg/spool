@@ -94,6 +94,24 @@ describe("portable website build", { timeout: 30000 }, () => {
 		expect(emitted).toContain("NEW_CHOICE");
 		expect(emitted).not.toContain("OLD_CHOICE");
 	});
+	it("rechecks resolution changes that land before directory inventories are captured", async () => {
+		const options = project();
+		writeFrame(options.root, "start", 'import {View} from "./view"; export default () => <View/>');
+		writeDesignFile(options.root, "frames/start/view.ts", 'export const View=()=>"OLD_RESOLUTION";');
+		let reads = 0;
+		const artifact = await buildWebsite({
+			...options,
+			afterDiscovery(attempt) {
+				reads++;
+				if (attempt === 1)
+					writeDesignFile(options.root, "frames/start/view.tsx", "export const View=()=> <p>NEW_RESOLUTION</p>");
+			},
+		});
+		expect(reads).toBe(2);
+		const emitted = [...artifact.objects.values()].map(({ bytes }) => Buffer.from(bytes).toString()).join("");
+		expect(emitted).toContain("NEW_RESOLUTION");
+		expect(emitted).not.toContain("OLD_RESOLUTION");
+	});
 	it("bounds unstable capture and never retries a consumer failure", async () => {
 		const options = project();
 		let reads = 0;

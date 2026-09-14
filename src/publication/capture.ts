@@ -17,6 +17,8 @@ export interface CaptureOptions {
 	scenario?: string;
 	/** Test/operation boundary: all candidate bytes are captured, before validation. */
 	afterRead?: (attempt: number) => void | Promise<void>;
+	/** Test/operation boundary before the candidate closure is read. */
+	afterDiscovery?: (attempt: number) => void | Promise<void>;
 }
 export interface CapturedWebsite {
 	root: string;
@@ -70,6 +72,7 @@ export async function withCapturedWebsite<T>(
 			if (seedResult.kind !== "ok") throw new Error(seedResult.message);
 			const seed = (JSON.parse(seedResult.json) as { state?: Record<string, unknown> }).state ?? {};
 			const discovered = await buildPublicationPlayer(sourceDir, frames, options.version);
+			await options.afterDiscovery?.(attempt);
 			const files = new Set([...discovered.inputs, scenarioFile]);
 			for (const ref of frames) {
 				const found = lookupFrame(options.root, ref.name);
@@ -99,6 +102,12 @@ export async function withCapturedWebsite<T>(
 				writeFileSync(target, content);
 			}
 			await options.afterRead?.(attempt);
+			const resolvedAgain = await buildPublicationPlayer(sourceDir, frames, options.version);
+			if (
+				canonicalJson([...new Set(discovered.inputs)].sort()) !==
+				canonicalJson([...new Set(resolvedAgain.inputs)].sort())
+			)
+				throw new Error("The resolved import set changed during capture.");
 			if (realDesignDir(options.root) !== sourceDir || inventoryBefore !== frameInventory(options.root))
 				throw new Error("Frame inventory changed during capture.");
 			for (const [directory, inventory] of directories)
