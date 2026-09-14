@@ -47,21 +47,32 @@ const operationResponse = z.strictObject({ publication, operation });
 export type CloudPublication = z.infer<typeof publication>;
 export type CloudOperation = z.infer<typeof operation>;
 export type CloudOperationResponse = z.infer<typeof operationResponse>;
+export type PublishResult = CloudOperationResponse & { localSource: "current" | "changed" | "unavailable" };
+
+export class CloudPublicationFailure extends SpoolError {
+	constructor(
+		message: string,
+		readonly detail: { operation?: CloudOperation; code: string; retryable: boolean; retryAfter?: number },
+	) {
+		super(message);
+	}
+}
 
 export interface PublishOptions extends AuthOptions {
 	spoolDir: string;
 	root: string;
 	entry: string;
 	scenario?: string;
-	invitedEmails: string[];
+	invitedEmails?: string[];
 	version: string;
 	title?: string;
 	progress?: (message: string) => void;
 }
 
-export async function publishWebsite(options: PublishOptions): Promise<CloudOperationResponse> {
+export async function publishWebsite(options: PublishOptions): Promise<PublishResult> {
 	const origin = options.origin ?? cloudOrigin(process.env);
-	const account = await session(options.spoolDir, { ...options, origin });
+	const cloudOptions: AuthOptions = { ...options, origin };
+	const account = await session(options.spoolDir, cloudOptions);
 	const scenario = options.scenario ?? "default";
 	const identity = associationIdentity(
 		options.spoolDir,
@@ -74,20 +85,38 @@ export async function publishWebsite(options: PublishOptions): Promise<CloudOper
 	let association = readAssociation(options.spoolDir, identity);
 	let recovered: CloudOperationResponse | undefined;
 	if (association !== undefined)
-		recovered = await operationStatusOrMissing(options.spoolDir, association.operationId, options);
+		recovered = await operationStatusOrMissing(options.spoolDir, association.operationId, cloudOptions);
+	if (recovered !== undefined && ["failed", "conflict", "expired"].includes(recovered.operation.state))
+		finish(recovered);
 
 	options.progress?.("capturing website");
-	const artifact = await buildWebsite({
-		root: realpathSync(resolve(options.root)),
-		entry: options.entry,
-		scenario,
-		version: options.version,
-	});
+	let artifact: WebsiteArtifact;
+	try {
+		artifact = await buildWebsite({
+			root: realpathSync(resolve(options.root)),
+			entry: options.entry,
+			version: options.version,
+			...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+		});
+	} catch (error) {
+		if (recovered?.operation.state === "succeeded") return { ...recovered, localSource: "unavailable" };
+		throw error;
+	}
 	if (association !== undefined) {
 		if (
-			artifact.manifest.contentIdentity !== association.contentIdentity ||
-			artifact.inputIdentity !== association.inputIdentity
+			options.invitedEmails !== undefined &&
+			options.invitedEmails.length > 0 &&
+			canonicalInvitations(options.invitedEmails) !== canonicalInvitations(association.invitedEmails)
 		)
+			throw new SpoolError(
+				"this publication was created with a different invitation set; access changes are not available yet",
+			);
+		const changed =
+			artifact.manifest.contentIdentity !== association.contentIdentity ||
+			artifact.inputIdentity !== association.inputIdentity;
+		if (recovered?.operation.state === "succeeded")
+			return { ...recovered, localSource: changed ? "changed" : "current" };
+		if (changed)
 			throw new SpoolError(
 				"local work changed after this publication was captured; updating an existing link is not available yet",
 			);
@@ -97,9 +126,8 @@ export async function publishWebsite(options: PublishOptions): Promise<CloudOper
 			captured.inputIdentity !== association.inputIdentity
 		)
 			throw new SpoolError("the captured publication bytes no longer match the existing operation");
-		if (recovered?.operation.state === "succeeded") return recovered;
 	} else {
-		const invitedEmails = normalizeInvitations(options.invitedEmails);
+		const invitedEmails = normalizeInvitations(options.invitedEmails ?? []);
 		const title = (options.title ?? options.entry).trim();
 		if (title.length < 1 || title.length > 200) throw new SpoolError("publication title must be 1 to 200 characters");
 		association = claimAssociation(options.spoolDir, identity, artifact, title, invitedEmails);
@@ -108,9 +136,9 @@ export async function publishWebsite(options: PublishOptions): Promise<CloudOper
 	}
 
 	const captured = readCapture(options.spoolDir, association.operationId);
-	let current = recovered ?? (await createOrRecover(options.spoolDir, association, captured, options));
+	let current = recovered ?? (await createOrRecover(options.spoolDir, association, captured, cloudOptions));
 	association = rememberPublication(options.spoolDir, association, current.publication);
-	if (terminal(current.operation)) return finish(current);
+	if (terminal(current.operation)) return { ...finish(current), localSource: "current" };
 	if (current.operation.state === "uploading") {
 		for (const index of current.operation.missingObjectIndices) {
 			const metadata = captured.manifest.objects[index];
@@ -124,17 +152,17 @@ export async function publishWebsite(options: PublishOptions): Promise<CloudOper
 				index,
 				`/api/publication-operations/${encodeURIComponent(association.operationId)}/objects/${index}`,
 				{ method: "PUT", headers: { "content-type": "application/octet-stream" }, body: Buffer.from(object.bytes) },
-				options,
+				cloudOptions,
 			);
 		}
-		current = (await operationStatusOrMissing(options.spoolDir, association.operationId, options)) ?? current;
+		current = (await operationStatusOrMissing(options.spoolDir, association.operationId, cloudOptions)) ?? current;
 		options.progress?.("sealing website");
 		current = await mutateAndRecover(
 			options.spoolDir,
 			association.operationId,
 			`/api/publication-operations/${encodeURIComponent(association.operationId)}/seal`,
 			{ method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-			options,
+			cloudOptions,
 		);
 	}
 	if (current.operation.state === "sealed") {
@@ -151,10 +179,10 @@ export async function publishWebsite(options: PublishOptions): Promise<CloudOper
 					expectedAccessGeneration: current.operation.expectedAccessGeneration,
 				}),
 			},
-			options,
+			cloudOptions,
 		);
 	}
-	return finish(current);
+	return { ...finish(current), localSource: "current" };
 }
 
 async function uploadObject(
@@ -179,8 +207,9 @@ export async function listPublications(
 	spoolDir: string,
 	options: AuthOptions = {},
 ): Promise<{ publications: CloudPublication[]; nextCursor: string | null }> {
-	await session(spoolDir, options);
-	const response = await requestJson(spoolDir, "/api/publications", {}, options);
+	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
+	await session(spoolDir, cloudOptions);
+	const response = await requestJson(spoolDir, "/api/publications", {}, cloudOptions);
 	return z.strictObject({ publications: z.array(publication), nextCursor: z.string().nullable() }).parse(response);
 }
 
@@ -189,8 +218,9 @@ export async function publicationStatus(
 	id: string,
 	options: AuthOptions = {},
 ): Promise<{ publication: CloudPublication }> {
-	await session(spoolDir, options);
-	const response = await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, options);
+	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
+	await session(spoolDir, cloudOptions);
+	const response = await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, cloudOptions);
 	return z.strictObject({ publication }).parse(response);
 }
 
@@ -275,12 +305,15 @@ async function operationStatusOrMissing(
 	}
 }
 
-class CloudApiError extends SpoolError {
+class CloudApiError extends CloudPublicationFailure {
 	constructor(
 		readonly status: number,
 		message: string,
+		code: string,
+		retryable: boolean,
+		retryAfter?: number,
 	) {
-		super(message);
+		super(message, { code, retryable, ...(retryAfter === undefined ? {} : { retryAfter }) });
 	}
 }
 async function requestJson(spoolDir: string, path: string, init: RequestInit, options: AuthOptions): Promise<unknown> {
@@ -296,21 +329,39 @@ async function requestJson(spoolDir: string, path: string, init: RequestInit, op
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 		const message =
 			typeof body.message === "string" ? body.message : "spool.page could not complete the publication request";
-		if ((response.status === 429 || response.status === 503) && attempt < 3) {
-			const seconds =
-				typeof body.retryAfter === "number" ? body.retryAfter : Number(response.headers.get("retry-after") ?? 0);
-			if (seconds > 0 && seconds <= 10) await new Promise((done) => setTimeout(done, seconds * 1000));
+		const retryAfter = retrySeconds(body.retryAfter, response.headers.get("retry-after"));
+		if (
+			(response.status === 429 || response.status === 503) &&
+			attempt < 3 &&
+			retryAfter !== undefined &&
+			retryAfter <= 10
+		) {
+			if (retryAfter > 0) await new Promise((done) => setTimeout(done, retryAfter * 1000));
 			continue;
 		}
-		throw new CloudApiError(response.status, message);
+		throw new CloudApiError(
+			response.status,
+			message,
+			typeof body.error === "string" ? body.error : "service_error",
+			body.retryable === true,
+			retryAfter,
+		);
 	}
 	throw new SpoolError("spool.page could not complete the publication request");
 }
 function normalizeInvitations(values: string[]): string[] {
-	const emails = [...new Set(values.map((value) => value.trim().toLowerCase()))];
+	const emails = [...new Set(values.map(normalizeMailbox))];
 	if (emails.length < 1 || emails.length > 100 || emails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)))
 		throw new SpoolError("add between 1 and 100 valid recipient email addresses with --invite");
 	return emails;
+}
+function canonicalInvitations(values: string[]): string {
+	return normalizeInvitations(values).sort().join("\n");
+}
+function normalizeMailbox(value: string): string {
+	const trimmed = value.trim();
+	const at = trimmed.lastIndexOf("@");
+	return at < 1 ? trimmed : `${trimmed.slice(0, at)}@${trimmed.slice(at + 1).toLowerCase()}`;
 }
 function readOperation(value: unknown, operationId: string, contentIdentity?: string): CloudOperationResponse {
 	const parsed = operationResponse.parse(value);
@@ -342,5 +393,16 @@ function terminal(value: CloudOperation): boolean {
 function finish(value: CloudOperationResponse): CloudOperationResponse {
 	if (value.operation.state === "succeeded") return value;
 	const message = value.operation.error?.message ?? `publication operation is ${value.operation.state}`;
-	throw new SpoolError(message);
+	throw new CloudPublicationFailure(message, {
+		operation: value.operation,
+		code: value.operation.error?.code ?? value.operation.state,
+		retryable: false,
+	});
+}
+function retrySeconds(body: unknown, header: string | null): number | undefined {
+	if (typeof body === "number" && Number.isFinite(body) && body >= 0) return body;
+	if (header === null) return undefined;
+	if (/^\d+$/u.test(header)) return Number(header);
+	const at = Date.parse(header);
+	return Number.isNaN(at) ? undefined : Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }

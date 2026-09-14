@@ -136,7 +136,7 @@ async function responseJson(response: Response): Promise<Record<string, unknown>
 }
 
 export async function login(spoolDir: string, options: AuthOptions = {}): Promise<CloudSession> {
-	const origin = options.origin ?? CLOUD_ORIGIN;
+	const origin = options.origin ?? cloudOrigin(process.env);
 	const request = options.fetch ?? fetch;
 	const vault = options.vault ?? keychainVault(spoolDir, origin);
 	const verifier = base64url(randomBytes(32));
@@ -234,7 +234,7 @@ export async function authorizedCloudRequest(
 ): Promise<Response> {
 	if ((!path.startsWith("/api/") && path !== "/auth/publisher/session") || path.startsWith("//"))
 		throw new SpoolError("invalid Cloud API path");
-	const origin = options.origin ?? CLOUD_ORIGIN;
+	const origin = options.origin ?? cloudOrigin(process.env);
 	const vault = options.vault ?? keychainVault(spoolDir, origin);
 	const token = await vault.read();
 	if (!token) throw new SpoolError("not signed in; run `spool login`");
@@ -244,10 +244,12 @@ export async function authorizedCloudRequest(
 	headers.delete("origin");
 	let response: Response;
 	try {
+		const timeout = AbortSignal.timeout(options.timeoutMs ?? 10_000);
 		response = await (options.fetch ?? fetch)(new URL(path, origin), {
 			...init,
 			headers,
-			signal: init.signal ?? AbortSignal.timeout(options.timeoutMs ?? 10_000),
+			redirect: "error",
+			signal: init.signal == null ? timeout : AbortSignal.any([init.signal, timeout]),
 		});
 	} catch {
 		throw new SpoolError(

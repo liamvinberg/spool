@@ -85,7 +85,10 @@ export function readAssociation(
 ): PublicationAssociation | undefined {
 	const file = associationPath(spoolDir, identityKey(identity));
 	if (!existsSync(file)) return undefined;
-	return readRecord(file);
+	const record = readRecord(file);
+	if (record.key !== identityKey(record.identity) || canonicalJson(record.identity) !== canonicalJson(identity))
+		throw new SpoolError("the local publication association is invalid");
+	return record;
 }
 
 export function claimAssociation(
@@ -97,7 +100,7 @@ export function claimAssociation(
 ): PublicationAssociation {
 	const key = identityKey(identity);
 	const file = associationPath(spoolDir, key);
-	if (existsSync(file)) return readRecord(file);
+	if (existsSync(file)) return requiredAssociation(spoolDir, identity);
 	const record: PublicationAssociation = {
 		key,
 		identity,
@@ -118,7 +121,7 @@ export function claimAssociation(
 	} catch (error) {
 		if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
 		rmSync(captureDirectory(spoolDir, record.operationId), { recursive: true, force: true });
-		return readRecord(file);
+		return requiredAssociation(spoolDir, identity);
 	} finally {
 		unlinkSync(candidate);
 	}
@@ -132,7 +135,10 @@ export function updateAssociation(
 	if (!/^[a-f0-9]{64}$/u.test(key)) throw new SpoolError("the local publication association is invalid");
 	const file = associationPath(spoolDir, key);
 	if (!existsSync(file)) throw new SpoolError("the local publication association is missing");
-	const next = { ...readRecord(file), ...patch };
+	const held = readRecord(file);
+	if (held.key !== key || identityKey(held.identity) !== key)
+		throw new SpoolError("the local publication association is invalid");
+	const next = { ...held, ...patch };
 	writeAtomic(file, `${JSON.stringify(next, null, "\t")}\n`);
 	return next;
 }
@@ -171,6 +177,19 @@ export function readCapture(spoolDir: string, operationId: string): WebsiteArtif
 function writeCapture(spoolDir: string, operationId: string, artifact: WebsiteArtifact): void {
 	const directory = captureDirectory(spoolDir, operationId);
 	if (existsSync(directory)) return;
+	validateManifest(artifact.manifest);
+	if (artifact.objects.size !== artifact.manifest.objects.length)
+		throw new SpoolError("the captured publication inventory is incomplete");
+	for (const object of artifact.manifest.objects) {
+		const held = artifact.objects.get(object.path);
+		if (
+			held === undefined ||
+			held.mediaType !== object.mediaType ||
+			held.bytes.byteLength !== object.byteLength ||
+			sha256(held.bytes) !== object.sha256
+		)
+			throw new SpoolError("the captured publication bytes do not match the manifest");
+	}
 	for (const [path, object] of artifact.objects) {
 		const target = join(directory, "objects", path);
 		mkdirSync(dirname(target), { recursive: true });
@@ -188,6 +207,11 @@ function identityKey(identity: PublicationAssociationIdentity): string {
 }
 function associationPath(spoolDir: string, key: string): string {
 	return join(resolve(spoolDir), "publications", "associations", `${key}.json`);
+}
+function requiredAssociation(spoolDir: string, identity: PublicationAssociationIdentity): PublicationAssociation {
+	const record = readAssociation(spoolDir, identity);
+	if (record === undefined) throw new SpoolError("the local publication association disappeared during creation");
+	return record;
 }
 function readRecord(file: string): PublicationAssociation {
 	try {

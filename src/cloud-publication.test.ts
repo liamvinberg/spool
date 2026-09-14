@@ -1,17 +1,20 @@
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CloudVault } from "./cloud-auth";
-import { listPublications, publicationStatus, publishWebsite } from "./cloud-publication";
+import { CloudPublicationFailure, listPublications, publicationStatus, publishWebsite } from "./cloud-publication";
 import { makeProject, makeTempDir, writeFrame } from "./test-helpers";
 
 const vault: CloudVault = { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} };
 
 function service(options: { loseActivation?: boolean } = {}) {
 	let manifest: { contentIdentity: string; entry: string; scenario: string; objects: unknown[] } | undefined;
-	let state: "uploading" | "sealed" | "succeeded" = "uploading";
+	let state: "uploading" | "sealed" | "succeeded" | "failed" = "uploading";
 	let missing: number[] = [];
 	let lost = options.loseActivation === true;
 	let operationId = "operation";
 	let projectId = "project";
+	let invitedEmails = ["alex@example.com"];
 	const calls: string[] = [];
 	const publication = () => ({
 		id: "publication",
@@ -27,7 +30,7 @@ function service(options: { loseActivation?: boolean } = {}) {
 		accessGeneration: 1,
 		currentVersion:
 			state === "succeeded" ? { id: "version", contentIdentity: manifest?.contentIdentity ?? "" } : null,
-		invitedEmails: ["alex@example.com"],
+		invitedEmails,
 		createdAt: 1,
 		updatedAt: 1,
 	});
@@ -50,6 +53,9 @@ function service(options: { loseActivation?: boolean } = {}) {
 	});
 	return {
 		calls,
+		fail: () => {
+			state = "failed";
+		},
 		fetch: async (input: string | URL | Request, init?: RequestInit) => {
 			const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
 			calls.push(`${init?.method ?? "GET"} ${url.pathname}`);
@@ -58,8 +64,13 @@ function service(options: { loseActivation?: boolean } = {}) {
 				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "session" });
 			if (url.pathname === "/api/publications" && init?.method === "POST") {
 				operationId = new Headers(init.headers).get("idempotency-key") ?? "operation";
-				const body = JSON.parse(String(init.body)) as { manifest: typeof manifest; projectId: string };
+				const body = JSON.parse(String(init.body)) as {
+					manifest: typeof manifest;
+					projectId: string;
+					invitedEmails: string[];
+				};
 				projectId = body.projectId;
+				invitedEmails = body.invitedEmails;
 				manifest = body.manifest;
 				missing = manifest?.objects.map((_, index) => index) ?? [];
 				return Response.json(response(), { status: 201 });
@@ -108,6 +119,8 @@ describe("Cloud publication client", () => {
 		});
 		expect(result.operation.state).toBe("succeeded");
 		expect(result.publication.url).toBe("https://beta-site.onspool.page");
+		expect(result.publication.invitedEmails).toEqual(["Alex@example.com"]);
+		expect(result.localSource).toBe("current");
 		expect(cloud.calls.filter((call) => call.includes("/objects/")).length).toBeGreaterThan(5);
 		expect(cloud.calls.at(-1)).toMatch(/^GET \/api\/publication-operations\//u);
 	});
@@ -140,9 +153,21 @@ describe("Cloud publication client", () => {
 				vault,
 				fetch: cloud.fetch,
 			}),
-		).rejects.toThrow(/updating an existing link/u);
+		).resolves.toMatchObject({ operation: { state: "succeeded" }, localSource: "changed" });
 		expect(cloud.calls[1]).toMatch(/^GET \/api\/publication-operations\//u);
 		expect(cloud.calls.some((call) => call === "POST /api/publications")).toBe(false);
+		rmSync(join(root, "design", "frames", "start"), { recursive: true });
+		await expect(
+			publishWebsite({
+				spoolDir,
+				root,
+				entry: "start",
+				version: "test",
+				origin: "https://cloud.test",
+				vault,
+				fetch: cloud.fetch,
+			}),
+		).resolves.toMatchObject({ operation: { state: "succeeded" }, localSource: "unavailable" });
 	});
 
 	it("lists and reads status through the authenticated client", async () => {
@@ -153,5 +178,64 @@ describe("Cloud publication client", () => {
 		await expect(
 			publicationStatus(makeTempDir(), "publication", { origin: "https://cloud.test", vault, fetch: cloud.fetch }),
 		).resolves.toMatchObject({ publication: { id: "publication" } });
+	});
+
+	it("keeps a recovered terminal operation in the structured failure", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>First</h1>");
+		const cloud = service();
+		const first = await publishWebsite({
+			spoolDir,
+			root,
+			entry: "start",
+			invitedEmails: ["alex@example.com"],
+			version: "test",
+			origin: "https://cloud.test",
+			vault,
+			fetch: cloud.fetch,
+		});
+		cloud.fail();
+		const failure = await publishWebsite({
+			spoolDir,
+			root,
+			entry: "start",
+			version: "test",
+			origin: "https://cloud.test",
+			vault,
+			fetch: cloud.fetch,
+		}).catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(CloudPublicationFailure);
+		if (!(failure instanceof CloudPublicationFailure)) throw new Error("expected structured failure");
+		expect(failure.detail).toMatchObject({
+			code: "failed",
+			retryable: false,
+			operation: { id: first.operation.id, state: "failed" },
+		});
+	});
+
+	it("returns a long HTTP-date retry delay without shortening it", async () => {
+		let requests = 0;
+		const retryAt = new Date(Date.now() + 60_000).toUTCString();
+		const request = async (input: string | URL | Request) => {
+			const path = new URL(typeof input === "string" || input instanceof URL ? input : input.url).pathname;
+			if (path === "/auth/publisher/session")
+				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "session" });
+			requests += 1;
+			return Response.json(
+				{ error: "service_unavailable", message: "try later", retryable: true },
+				{ status: 503, headers: { "retry-after": retryAt } },
+			);
+		};
+		const failure = await listPublications(makeTempDir(), {
+			origin: "https://cloud.test",
+			vault,
+			fetch: request,
+		}).catch((error: unknown) => error);
+		expect(requests).toBe(1);
+		expect(failure).toBeInstanceOf(CloudPublicationFailure);
+		if (!(failure instanceof CloudPublicationFailure)) throw new Error("expected structured failure");
+		expect(failure.detail).toMatchObject({ code: "service_unavailable", retryable: true });
+		expect(failure.detail.retryAfter).toBeGreaterThan(10);
 	});
 });
