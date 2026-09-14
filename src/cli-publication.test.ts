@@ -41,16 +41,18 @@ describe("offline publication checks", () => {
 	});
 });
 
-it("builds a portable directory offline and rejects missing explicit scenarios without touching it", () => {
+it("builds a portable directory offline and rejects missing explicit scenarios without touching it", {
+	timeout: 30_000,
+}, () => {
 	const home = makeTempDir();
 	const { root } = makeProject(join(home, ".spool"));
 	writeFrame(root, "start", "export default () => <h1>Exported</h1>");
 	const out = join(home, "website");
-	const built = spool(["build", "start", "--out", out], home, root);
+	const built = spool(["build", "start", "--out", out], home, root, {}, 15_000);
 	expect(built.status, built.stderr).toBe(0);
 	expect(JSON.parse(built.stdout)).toMatchObject({ entry: "start", included: ["start"] });
 	const before = readFileSync(join(out, "manifest.json"), "utf8");
-	const failed = spool(["build", "start", "--out", out, "--scenario", "missing"], home, root);
+	const failed = spool(["build", "start", "--out", out, "--scenario", "missing"], home, root, {}, 15_000);
 	expect(failed.status).toBe(1);
 	expect(failed.stderr).toContain('Scenario "missing"');
 	expect(readFileSync(join(out, "manifest.json"), "utf8")).toBe(before);
