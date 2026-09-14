@@ -1,9 +1,12 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Page, Route } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { PublishResult } from "../cloud-publication";
 import { initProject } from "../init";
+import { associationIdentity, type PublicationAssociation } from "../publication/associations";
+import { canonicalJson } from "../publication/manifest";
 import { testBrowser } from "../test-browser";
 import { makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import type { PublicationJobServices } from "./publication-jobs";
@@ -340,6 +343,41 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await workflow.close();
 	rejectFirstPublish(new Error("The connection ended before the link was ready. Try again."));
 
+	// A failed first activation has a remote staging ID but no successful local binding.
+	const identity = associationIdentity(spoolDir, "https://cloud.test", "owner", root, "menu", "default");
+	const association: PublicationAssociation = {
+		key: createHash("sha256").update(canonicalJson(identity)).digest("hex"),
+		identity,
+		projectId: "11111111-1111-4111-8111-111111111111",
+		title: "Kaffe",
+		publicationId: "publication",
+		intent: {
+			kind: "create",
+			operationId: "22222222-2222-4222-8222-222222222222",
+			contentIdentity: "a".repeat(64),
+			inputIdentity: "input",
+			invitedEmails: ["alex@example.com"],
+		},
+	};
+	const associationFile = join(spoolDir, "publications", "associations", `${association.key}.json`);
+	mkdirSync(dirname(associationFile), { recursive: true });
+	writeFileSync(associationFile, JSON.stringify(association));
+	services.status = async () => {
+		const current = result("owner");
+		return {
+			publication: { ...current.publication, state: "staging", revision: 0, currentVersion: null },
+			operation: {
+				...current.operation,
+				id: association.intent.operationId,
+				state: "failed",
+				result: null,
+				error: { code: "interrupted", message: "The connection ended before the link was ready. Try again." },
+			},
+			operations: [],
+			nextCursor: null,
+			localSource: "unavailable",
+		};
+	};
 	const recovered = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await recovered.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await recovered.getByRole("button", { name: "Share", exact: true }).waitFor();

@@ -150,7 +150,9 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 						!current.available ||
 						current.association === "superseded" ||
 						current.association === "mismatched" ||
-						(next.kind === "update" && current.association !== "current") ||
+						(next.kind === "update" &&
+							current.association !== "current" &&
+							!(current.association === "incomplete" && current.job?.id === next.id)) ||
 						(current.publication !== undefined && current.publication.id !== next.publication.id)
 							? current
 							: {
