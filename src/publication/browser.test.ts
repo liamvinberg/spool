@@ -7,88 +7,111 @@ import { testBrowser } from "../test-browser";
 import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { buildWebsite } from "./build";
 
-it("runs cold destination modules, shared state, history, remounts, reload and visible failures statically", async () => {
-	const { root } = makeProject(join(makeTempDir(), ".spool"));
-	writeDesignFile(root, "shared/scenarios/default.json", '{"state":{"count":4}}');
-	writeDesignFile(root, "shared/store.ts", "export const store={count:0};");
-	writeFrame(
-		root,
-		"start",
-		`import {useState} from 'react'; import {ui} from 'spool'; import {store} from '../../shared/store'; export const links={next:'next'} as const; export default function Start(){const [local,setLocal]=useState(0);return <main><h1>Start {String(ui.state.count)} shared {store.count} local {local}</h1><button onClick={()=>{store.count++;ui.state.count=Number(ui.state.count)+1;setLocal(local+1)}}>Increment</button><button data-go={links.next}>Next</button><button onClick={()=>ui.go(String(ui.state.unknown))}>Unknown</button><button onClick={()=>ui.copy("export proof").catch(()=>setLocal(99))}>Copy</button><a href="https://example.com">External</a></main>}`,
-	);
-	writeFrame(
-		root,
-		"next",
-		`import {ui} from 'spool';import {store} from '../../shared/store';export default ()=> <main><h1>Next {String(ui.state.count)} shared {store.count}</h1><button onClick={()=>ui.back()}>Back</button></main>`,
-	);
-	writeDesignFile(root, "frames/next/frame.json", '{"w":390,"h":844}');
-	const artifact = await buildWebsite({ root, entry: "start", version: "test" });
-	const requests: string[] = [];
-	let deny: string | undefined;
-	const server = createServer((req, res) => {
-		const path = new URL(req.url ?? "/", "http://test").pathname.slice(1) || "index.html";
-		requests.push(path);
-		const object = path === deny ? undefined : artifact.objects.get(path);
-		res.writeHead(object === undefined ? 404 : 200, { "Content-Type": object?.mediaType ?? "text/plain" });
-		res.end(object?.bytes ?? "missing");
-	});
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	onTestFinished(() => {
-		server.closeAllConnections();
-		return new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
-	});
-	const address = server.address();
-	if (address === null || typeof address === "string") throw new Error("no server");
-	const origin = `http://127.0.0.1:${address.port}`;
-	const browser = await testBrowser();
-	const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
-	await page.goto(origin);
-	await expect.poll(() => page.locator("h1").textContent()).toBe("Start 4 shared 0 local 0");
-	await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
-	await page.getByText("Copy", { exact: true }).click();
-	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("export proof");
-	await page.evaluate(() =>
-		Object.defineProperty(navigator.clipboard, "writeText", {
-			value: () => Promise.reject(new DOMException("Denied", "NotAllowedError")),
-		}),
-	);
-	await page.getByText("Copy", { exact: true }).click();
-	await expect.poll(() => page.locator("h1").textContent()).toContain("local 99");
-	await page.route("https://example.com/", (route) =>
-		route.fulfill({ body: "External page", contentType: "text/html" }),
-	);
-	await page.getByText("External", { exact: true }).click();
-	await page.waitForURL("https://example.com/");
-	await page.goto(origin);
-	const next = artifact.manifest.frames.find((frame) => frame.name === "next");
-	if (next === undefined) throw new Error("no next");
-	expect(requests).not.toContain(next.module);
-	await page.getByText("Increment", { exact: true }).click();
-	await page.getByText("Next", { exact: true }).click();
-	await expect.poll(() => page.locator("h1").textContent()).toBe("Next 5 shared 1");
-	expect(requests).toContain(next.module);
-	await page.getByText("Back", { exact: true }).click();
-	await expect.poll(() => page.locator("h1").textContent()).toBe("Start 5 shared 1 local 0");
-	await page.goForward();
-	await expect.poll(() => page.locator("h1").textContent()).toBe("Next 5 shared 1");
-	await page.reload();
-	await expect.poll(() => page.locator("h1").textContent()).toBe("Next 4 shared 0");
-	await page.goto(origin);
-	await page.getByText("Unknown", { exact: true }).click();
-	await expect.poll(() => page.getByRole("alert").textContent()).toContain("not included");
-	expect(await page.locator("h1").textContent()).toBe("Start 4 shared 0 local 0");
-	await page.goto(`${origin}/?frame=missing`);
-	await expect.poll(() => page.getByRole("alert").textContent()).toContain("not available");
-	await page.goto(origin);
-	deny = next.module;
-	await page.getByText("Next", { exact: true }).click();
-	await expect.poll(() => page.getByRole("alert").count()).toBe(1);
-	expect(await page.locator("h1").textContent()).toBe("Start 4 shared 0 local 0");
-	const entry = artifact.manifest.frames.find((frame) => frame.name === "start");
-	deny = entry?.module;
-	await page.goto(origin);
-	await expect.poll(() => page.locator("body").textContent()).toContain("could not");
-}, 30000);
+it.each([false, true])(
+	"runs cold modules, state, history, remounts, reload and failures (version base: %s)",
+	async (versioned) => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, "shared/scenarios/default.json", '{"state":{"count":4}}');
+		writeDesignFile(root, "shared/store.ts", "export const store={count:0};");
+		writeFrame(
+			root,
+			"start",
+			`import {useState} from 'react'; import {ui} from 'spool'; import {store} from '../../shared/store'; export const links={next:'next'} as const; export default function Start(){const [local,setLocal]=useState(0);return <main><h1>Start {String(ui.state.count)} shared {store.count} local {local}</h1><button onClick={()=>{store.count++;ui.state.count=Number(ui.state.count)+1;setLocal(local+1)}}>Increment</button><button data-go={links.next}>Next</button><button onClick={()=>ui.go(String(ui.state.unknown))}>Unknown</button><button onClick={()=>ui.copy("export proof").catch(()=>setLocal(99))}>Copy</button><a href="https://example.com">External</a></main>}`,
+		);
+		writeFrame(
+			root,
+			"next",
+			`import {ui} from 'spool';import {store} from '../../shared/store';export default ()=> <main><h1>Next {String(ui.state.count)} shared {store.count}</h1><button onClick={()=>ui.back()}>Back</button></main>`,
+		);
+		writeDesignFile(root, "frames/next/frame.json", '{"w":390,"h":844}');
+		const artifact = await buildWebsite({ root, entry: "start", version: "test" });
+		const requests: string[] = [];
+		let deny: string | undefined;
+		const server = createServer((req, res) => {
+			let path = new URL(req.url ?? "/", "http://test").pathname.slice(1) || "index.html";
+			if (versioned && path === "index.html") {
+				res.writeHead(200, { "Content-Type": "text/html" });
+				res.end(
+					Buffer.from(artifact.objects.get("index.html")?.bytes ?? [])
+						.toString()
+						.replace("<head>", '<head><base href="/held/version/">'),
+				);
+				return;
+			}
+			if (versioned) {
+				if (!path.startsWith("held/version/")) {
+					res.writeHead(404);
+					res.end();
+					return;
+				}
+				path = path.slice("held/version/".length);
+			}
+			requests.push(path);
+			const object = path === deny ? undefined : artifact.objects.get(path);
+			res.writeHead(object === undefined ? 404 : 200, { "Content-Type": object?.mediaType ?? "text/plain" });
+			res.end(object?.bytes ?? "missing");
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		onTestFinished(() => {
+			server.closeAllConnections();
+			return new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		});
+		const address = server.address();
+		if (address === null || typeof address === "string") throw new Error("no server");
+		const origin = `http://127.0.0.1:${address.port}`;
+		const browser = await testBrowser();
+		const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+		page.setDefaultTimeout(3000);
+		const surface = page.frameLocator("#website");
+		await page.goto(origin);
+		await expect.poll(() => surface.locator("h1").textContent()).toBe("Start 4 shared 0 local 0");
+		await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+		await surface.getByText("Copy", { exact: true }).click();
+		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("export proof");
+		await surface.locator("body").evaluate(() =>
+			Object.defineProperty(navigator.clipboard, "writeText", {
+				value: () => Promise.reject(new DOMException("Denied", "NotAllowedError")),
+			}),
+		);
+		await surface.getByText("Copy", { exact: true }).click();
+		await expect.poll(() => surface.locator("h1").textContent()).toContain("local 99");
+		await page.route("https://example.com/", (route) =>
+			route.fulfill({ body: "External page", contentType: "text/html" }),
+		);
+		await surface.getByText("External", { exact: true }).click();
+		await page.waitForURL("https://example.com/");
+		await page.goto(origin);
+		const next = artifact.manifest.frames.find((frame) => frame.name === "next");
+		if (next === undefined) throw new Error("no next");
+		expect(requests).not.toContain(next.module);
+		await surface.getByText("Increment", { exact: true }).click();
+		await surface.getByText("Next", { exact: true }).click();
+		await expect.poll(() => surface.locator("h1").textContent()).toBe("Next 5 shared 1");
+		expect(requests).toContain(next.module);
+		await surface.getByText("Back", { exact: true }).click();
+		await expect.poll(() => surface.locator("h1").textContent()).toBe("Start 5 shared 1 local 0");
+		await page.goForward();
+		await expect.poll(() => surface.locator("h1").textContent()).toBe("Next 5 shared 1");
+		await page.reload();
+		await expect.poll(() => surface.locator("h1").textContent()).toBe("Next 4 shared 0");
+		await page.goto(origin);
+		await surface.getByText("Unknown", { exact: true }).click();
+		await expect.poll(() => surface.getByRole("alert").textContent()).toContain("not included");
+		expect(await surface.locator("h1").textContent()).toBe("Start 4 shared 0 local 0");
+		await page.goto(`${origin}/?frame=missing`);
+		await expect.poll(() => surface.getByRole("alert").textContent()).toContain("not available");
+		await page.goto(origin);
+		deny = next.module;
+		await surface.getByText("Next", { exact: true }).click();
+		await expect.poll(() => surface.getByRole("alert").count()).toBe(1);
+		expect(await surface.locator("h1").textContent()).toBe("Start 4 shared 0 local 0");
+		const entry = artifact.manifest.frames.find((frame) => frame.name === "start");
+		deny = entry?.module;
+		await page.goto(origin);
+		await expect.poll(() => surface.locator("body").textContent()).toContain("could not");
+	},
+	30000,
+);
 
 it("matches standalone and local-player pixels at equal viewports with fonts, images and frame styles", async () => {
 	const project = await serveProject();
@@ -142,6 +165,10 @@ it("matches standalone and local-player pixels at equal viewports with fonts, im
 	const context = await browser.newContext({ viewport: { width: 800, height: 600 }, reducedMotion: "reduce" });
 	const published = await context.newPage();
 	await published.goto(`http://127.0.0.1:${address.port}`);
+	const publishedSurface = published.frameLocator("#website");
+	await publishedSurface.locator("#probe").waitFor();
+	const publishedFrame = published.frames().find((frame) => frame !== published.mainFrame());
+	if (!publishedFrame) throw new Error("no published document");
 	const measure = async (frame: Frame) => {
 		await frame.locator("#probe").waitFor();
 		await frame.evaluate(() => document.fonts.ready);
@@ -160,15 +187,18 @@ it("matches standalone and local-player pixels at equal viewports with fonts, im
 		});
 	};
 	for (const name of ["start", "next"]) {
-		if (name === "next") await published.getByText("Walk", { exact: true }).click();
+		if (name === "next") await publishedSurface.getByText("Walk", { exact: true }).click();
 		await expect
-			.poll(() => published.locator("#probe").evaluate((element) => getComputedStyle(element).backgroundColor))
+			.poll(() =>
+				publishedSurface.locator("#probe").evaluate((element) => getComputedStyle(element).backgroundColor),
+			)
 			.toBe(name === "start" ? "rgb(221, 238, 204)" : "rgb(204, 221, 238)");
-		const actual = await measure(published.mainFrame());
+		const actual = await measure(publishedFrame);
 		expect(actual.image).toBe(24);
 		expect(actual.font).toBe("Fixture");
-		expect(actual.viewport).toEqual([800, 600]);
+		expect(actual.viewport).toEqual([name === "start" ? 800 : 390, 600]);
 		const bare = await context.newPage();
+		await bare.setViewportSize({ width: name === "start" ? 800 : 390, height: 600 });
 		await bare.goto(`${project.renderUrl}/p/${encodeURIComponent(project.name)}/frames/${name}`);
 		expect(await measure(bare.mainFrame())).toEqual(actual);
 		await published.mouse.move(799, 599);
@@ -176,7 +206,7 @@ it("matches standalone and local-player pixels at equal viewports with fonts, im
 			if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 		});
 		const barePixels = await bare.locator("#probe").screenshot();
-		const publicPixels = await published.locator("#probe").screenshot();
+		const publicPixels = await publishedSurface.locator("#probe").screenshot();
 		const pixels = (bytes: Buffer) =>
 			published.evaluate(async (encoded) => {
 				const image = new Image();
@@ -200,9 +230,15 @@ it("matches standalone and local-player pixels at equal viewports with fonts, im
 		await player.frameLocator("#spool-player").locator("#probe").waitFor();
 		const inner = player.frames().find((frame) => frame !== player.mainFrame());
 		if (!inner) throw new Error("missing player");
-		await player.locator("#spool-player").evaluate((element) => {
-			element.setAttribute("style", "width:800px;height:600px;position:fixed;inset:0;border:0;transform:none");
-		});
+		await player.locator("#spool-player").evaluate(
+			(element, width) => {
+				element.setAttribute(
+					"style",
+					`width:${width}px;height:600px;position:fixed;inset:0;border:0;transform:none`,
+				);
+			},
+			name === "start" ? 800 : 390,
+		);
 		expect(await measure(inner)).toEqual(actual);
 		await bare.close();
 		await player.close();

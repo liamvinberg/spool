@@ -84,8 +84,9 @@ export async function buildWebsite(options: WebsiteBuildOptions): Promise<Websit
 			outgoing: Object.fromEntries(capture.readiness.outgoing.map(({ frame, targets }) => [frame, targets])),
 		};
 		const bootstrap = "bootstrap.js";
+		const playerBootstrap = "player-bootstrap.js";
 		resources.add(
-			bootstrap,
+			playerBootstrap,
 			`const seed = await fetch(new URL("./${seed}", import.meta.url)).then(response => { if (!response.ok) throw new Error("The website seed could not be loaded."); return response.json(); });\nwindow.__SPOOL_PUBLICATION__ = { ...${JSON.stringify(config)}, seed };\nawait import(${JSON.stringify(`./${capture.bundle.entry}`)});\n`,
 			"application/javascript",
 		);
@@ -114,8 +115,18 @@ export async function buildWebsite(options: WebsiteBuildOptions): Promise<Websit
 		const preloads = closure([entry.module, "vendor/spool.js"], resources.objects, false).filter(
 			(path) => resources.objects.get(path)?.mediaType === "application/javascript",
 		);
-		const document = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(options.entry)}</title><style>html,body,#root{height:100%}body{margin:0}</style><link rel="stylesheet" href="./${fonts}"><link rel="stylesheet" href="./${transitions}"><link rel="stylesheet" data-spool-frame-style="${escapeHtml(options.entry)}" data-spool-style-resource="${entry.stylesheet}" href="./${entry.stylesheet}">${preloads.map((path) => `<link rel="modulepreload" href="./${path}">`).join("")}</head><body><div id="root">Loading…</div><script>addEventListener("error",function(event){if(event.target && event.target.tagName === "LINK") document.getElementById("root").textContent="A website stylesheet could not be loaded. Reload to try again."},true);addEventListener("unhandledrejection",function(){document.getElementById("root").textContent="The website could not be loaded. Reload to try again."});</script><script type="module" src="./${bootstrap}"></script></body></html>\n`;
-		resources.add("index.html", document, "text/html");
+		const document = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(options.entry)}</title><style>html,body,#root{height:100%}body{margin:0}</style><link rel="stylesheet" href="./${fonts}"><link rel="stylesheet" href="./${transitions}"><link rel="stylesheet" data-spool-frame-style="${escapeHtml(options.entry)}" data-spool-style-resource="${entry.stylesheet}" href="./${entry.stylesheet}">${preloads.map((path) => `<link rel="modulepreload" href="./${path}">`).join("")}</head><body><div id="root">Loading…</div><script>addEventListener("error",function(event){if(event.target && ["LINK","SCRIPT"].includes(event.target.tagName)) document.getElementById("root").textContent="A website stylesheet could not be loaded. Reload to try again."},true);addEventListener("unhandledrejection",function(){document.getElementById("root").textContent="The website could not be loaded. Reload to try again."});</script><script type="module" src="./${playerBootstrap}"></script></body></html>\n`;
+		resources.add("player.html", document, "text/html");
+		resources.add(
+			bootstrap,
+			`const frames=${JSON.stringify(config.frames)};const requested=new URL(location.href).searchParams.get("frame");const start=Object.hasOwn(frames,requested)?requested:${JSON.stringify(options.entry)};const surface=document.getElementById("website");surface.style.maxWidth=frames[start].w+"px";surface.addEventListener("load",()=>{if(!surface.contentDocument?.getElementById("root"))document.getElementById("loading").textContent="The website could not be loaded. Reload to try again.";else document.getElementById("loading").remove();});surface.src=new URL("./player.html"+location.search,import.meta.url).href;`,
+			"application/javascript",
+		);
+		resources.add(
+			"index.html",
+			`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>${escapeHtml(options.entry)}</title><style>html,body{margin:0;height:100%;overflow:hidden}#website{display:block;width:100%;height:100%;height:100dvh;margin:auto;border:0}#loading{position:fixed;inset:16px;pointer-events:none}</style></head><body><div id="loading">Loading…</div><iframe id="website" title="Website" allow="clipboard-write"></iframe><script>addEventListener("error",function(){document.getElementById("loading").textContent="The website could not be loaded. Reload to try again."},true)</script><script type="module" src="./${bootstrap}"></script></body></html>`,
+			"text/html",
+		);
 		const manifest = sealManifest({
 			format: 1,
 			producer: { name: "spool.page", version: options.version, runtimeVersion: options.version },
@@ -123,6 +134,8 @@ export async function buildWebsite(options: WebsiteBuildOptions): Promise<Websit
 			scenario: capture.scenario,
 			document: "index.html",
 			bootstrap,
+			player: "player.html",
+			playerBootstrap,
 			seed,
 			frames,
 			objects: [...resources.objects]

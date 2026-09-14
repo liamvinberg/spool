@@ -889,8 +889,20 @@ function bindDataGo(): void {
 
 /** Plain web anchors leave through the owning Spool surface, never through a screen. */
 function bindExternalLinks(): void {
-	if (__SPOOL_PUBLICATION_BUILD__) return;
-	else {
+	if (__SPOOL_PUBLICATION_BUILD__) {
+		document.addEventListener("click", (event) => {
+			if (event.defaultPrevented || !(event.target instanceof Element)) return;
+			const anchor = event.target.closest("a[href]");
+			if (
+				anchor instanceof HTMLAnchorElement &&
+				anchor.target === "" &&
+				/^https?:$/.test(anchor.protocol) &&
+				anchor.origin !== location.origin
+			)
+				anchor.target = "_top";
+		});
+		return;
+	} else {
 		window.document.addEventListener("click", (event) => {
 			if (event.defaultPrevented) return;
 			if (!(event.target instanceof Element)) return;
@@ -1064,7 +1076,8 @@ function replayDeferredPlayerActions(): void {
 function requestScreenSwap(fromFrame: string, direction: SwapDirection, transition?: string): void {
 	if (__SPOOL_PUBLICATION_BUILD__) {
 		mountedFrame = currentFrame;
-		swapScreen(direction, transition);
+		const resized = publication?.resize(mountedFrame) === true;
+		swapScreen(direction, transition, undefined, resized);
 		return;
 	} else {
 		if (pendingMount?.mounted === true) pendingMount = undefined;
@@ -1106,7 +1119,14 @@ function requestScreenSwap(fromFrame: string, direction: SwapDirection, transiti
  * motion off: the swap lands bare — reduce-motion means never starting a
  * transition at all.
  */
-function swapScreen(direction: SwapDirection, transition?: string, committed?: () => void): void {
+function settlePublicationTransition(value: unknown): void {
+	if (typeof value !== "object" || value === null) return;
+	// Resize, overlap and reduced-motion changes can skip a transition without failing the screen update.
+	if ("ready" in value) void Promise.resolve(value.ready).catch(() => {});
+	if ("finished" in value) void Promise.resolve(value.finished).catch(() => {});
+}
+
+function swapScreen(direction: SwapDirection, transition?: string, committed?: () => void, immediate = false): void {
 	arrival++;
 	externalHref = null;
 	const update = () => {
@@ -1121,18 +1141,20 @@ function swapScreen(direction: SwapDirection, transition?: string, committed?: (
 	).startViewTransition?.bind(window.document);
 	// A startup auto-walk can land before the shell has ever revealed the
 	// source. Commit it directly: there are no visible old pixels to film.
-	if (!motionOn || !playerReady || startViewTransition === undefined) {
+	if (immediate || !motionOn || !playerReady || startViewTransition === undefined) {
 		update();
 		return;
 	}
 	const types = transition === undefined ? [direction] : [direction, transition];
 	try {
-		startViewTransition({ update, types });
+		const result = startViewTransition({ update, types });
+		if (__SPOOL_PUBLICATION_BUILD__) settlePublicationTransition(result);
 	} catch {
 		// a View Transitions v1 engine: plain callback, default crossfade —
 		// and whatever the engine does, the swap itself must always land
 		try {
-			startViewTransition(update);
+			const result = startViewTransition(update);
+			if (__SPOOL_PUBLICATION_BUILD__) settlePublicationTransition(result);
 		} catch {
 			update();
 		}

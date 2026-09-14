@@ -46,6 +46,8 @@ const body = z.strictObject({
 	scenario: name,
 	document: z.literal("index.html"),
 	bootstrap: path,
+	player: path,
+	playerBootstrap: path,
 	seed: path,
 	frames: z.array(frame).min(1).max(2000),
 	objects: z.array(object).min(1).max(MAX_OBJECTS),
@@ -92,6 +94,8 @@ export function validateManifest(value: unknown): ArtifactManifest {
 	for (const required of [
 		parsed.document,
 		parsed.bootstrap,
+		parsed.player,
+		parsed.playerBootstrap,
 		parsed.seed,
 		...parsed.frames.flatMap((entry) => [entry.module, entry.stylesheet, ...entry.dependencies]),
 	])

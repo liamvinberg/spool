@@ -17,13 +17,14 @@ declare global {
 
 /** The static/hosted adapter holds no local authoring authority. */
 export function publicationEnvironment() {
+	const host = window.parent === window ? window : window.parent;
 	const supplied = window.__SPOOL_PUBLICATION__;
 	if (supplied === undefined) throw new Error("Publication configuration is missing.");
 	const value = structuredClone(supplied);
 	const included = new Set(Object.keys(value.frames));
 	const allowed = new Map(Object.entries(value.outgoing).map(([frame, targets]) => [frame, new Set(targets)]));
-	const base = new URL("./", window.location.href);
-	const requested = new URL(window.location.href).searchParams.get("frame") ?? value.entry;
+	const base = new URL("./", document.baseURI);
+	const requested = new URL(host.location.href).searchParams.get("frame") ?? value.entry;
 	const start = included.has(requested) ? requested : value.entry;
 	const config: PlayerConfig = {
 		project: "publication",
@@ -69,20 +70,27 @@ export function publicationEnvironment() {
 	const entries = [start];
 	let cursor = 0;
 	const urlFor = (frame: string) => {
-		const url = new URL(window.location.href);
+		const url = new URL(host.location.href);
 		url.searchParams.set("frame", frame);
 		return url;
 	};
-	history.replaceState({ publicationVisit: visit, index: 0 }, "", urlFor(start));
+	host.history.replaceState({ publicationVisit: visit, index: 0 }, "", urlFor(start));
 	if (requested !== start) {
 		error(`Frame "${requested}" is not available in this version. Open the entry to start again.`);
 		const open = document.createElement("button");
 		open.textContent = "Open entry";
-		open.onclick = () => location.assign(urlFor(value.entry));
+		open.onclick = () => host.location.assign(urlFor(value.entry));
 		message?.append(open);
 	}
 	return {
 		config,
+		resize(frame: string) {
+			const width = value.frames[frame]?.w;
+			if (width === undefined || window.frameElement === null) return false;
+			const changed = window.innerWidth !== Math.min(host.innerWidth, width);
+			window.frameElement.setAttribute("style", `max-width:${width}px`);
+			return changed;
+		},
 		seed: value.seed,
 		resource: (name: string) => new URL(name, base).href,
 		allowed: (from: string, to: string) => included.has(to) && allowed.get(from)?.has(to) === true,
@@ -93,13 +101,13 @@ export function publicationEnvironment() {
 			entries.splice(cursor + 1);
 			entries.push(frame);
 			cursor++;
-			history.pushState({ publicationVisit: visit, index: cursor }, "", urlFor(frame));
+			host.history.pushState({ publicationVisit: visit, index: cursor }, "", urlFor(frame));
 		},
 		back() {
-			if (cursor > 0) history.back();
+			if (cursor > 0) host.history.back();
 		},
 		follow(walk: (frame: string, back: boolean) => Promise<void>) {
-			addEventListener("popstate", (event) => {
+			host.addEventListener("popstate", (event) => {
 				const state: unknown = event.state;
 				if (
 					typeof state !== "object" ||
