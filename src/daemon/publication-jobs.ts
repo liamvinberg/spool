@@ -130,27 +130,25 @@ export function createPublicationJobs({
 		jobs.delete(id);
 		if (latest.get(job.key) === id) latest.delete(job.key);
 	}
-	function prune(): void {
-		const cutoff = now() - TERMINAL_RETENTION_MS;
-		for (const [id, job] of jobs) if (job.view.state !== "running" && job.updatedAt < cutoff) remove(id, job);
-		if (jobs.size <= MAX_RETAINED_JOBS) return;
+	function evictTerminalJobs(olderThan: number, targetSize?: number): void {
 		const terminal = [...jobs.entries()]
-			.filter(([, job]) => job.view.state !== "running")
+			.filter(([, job]) => job.view.state !== "running" && job.updatedAt < olderThan)
 			.sort((left, right) => left[1].updatedAt - right[1].updatedAt);
 		for (const [id, job] of terminal) {
-			if (jobs.size <= MAX_RETAINED_JOBS) break;
+			if (targetSize !== undefined && jobs.size <= targetSize) break;
 			remove(id, job);
 		}
 	}
+	function prune(): void {
+		const cutoff = now() - TERMINAL_RETENTION_MS;
+		evictTerminalJobs(cutoff);
+		if (jobs.size <= MAX_RETAINED_JOBS) return;
+		evictTerminalJobs(Number.POSITIVE_INFINITY, MAX_RETAINED_JOBS);
+	}
 	function reserveSlot(): void {
 		if (jobs.size < MAX_RETAINED_JOBS) return;
-		const terminal = [...jobs.entries()]
-			.filter(([, job]) => job.view.state !== "running")
-			.sort((left, right) => left[1].updatedAt - right[1].updatedAt);
-		for (const [id, job] of terminal) {
-			remove(id, job);
-			if (jobs.size < MAX_RETAINED_JOBS) return;
-		}
+		evictTerminalJobs(Number.POSITIVE_INFINITY, MAX_RETAINED_JOBS - 1);
+		if (jobs.size < MAX_RETAINED_JOBS) return;
 		throw new SpoolError("Too many links are being published. Try again when one finishes.");
 	}
 	function recent(root: string, entry: string, scenario: string, publisherId: string): RetainedJob | undefined {
