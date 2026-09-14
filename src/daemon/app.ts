@@ -103,6 +103,7 @@ import {
 	type ProjectCard,
 	summarizeProject,
 } from "./projection";
+import { publicationReadiness } from "./publication-readiness";
 import { createResolvePass } from "./resolve-pass";
 import {
 	CAPTURE_HOST,
@@ -1638,6 +1639,13 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			return c.json(await flowGraph.flows(project.root));
+		})
+		.get("/api/p/:project/readiness", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const entry = c.req.query("entry");
+			if (entry === undefined || !isSafeName(entry)) return c.text("entry must be a frame name", 400);
+			return c.json(await publicationReadiness(flowGraph, project.root, entry));
 		})
 		.post("/api/p/:project/flows/resolve", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
