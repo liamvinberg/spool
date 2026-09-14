@@ -387,6 +387,101 @@ const cross = `export default function Cross() {
 }
 `;
 
+const isolatedGuide = `import "./guide.css";
+export default function Guide() {
+	return <main id="guide" className="guide"><div role="dialog"><div id="dialog-content">guide content</div></div><button id="to-landing" data-go="landing">landing</button></main>;
+}
+`;
+
+const isolatedLanding = `import "./landing.css";
+export default function Landing() {
+	return <main id="landing"><button id="to-guide" data-go="guide">guide</button><div id="landing-end">end</div></main>;
+}
+`;
+
+it("isolates global frame styles while walking a full-height guide and tall landing", {
+	timeout: 180_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir });
+	writeFrame(project.root, "guide", isolatedGuide);
+	writeFrame(project.root, "landing", isolatedLanding);
+	writeDesignFile(
+		project.root,
+		"frames/guide/guide.css",
+		"html, body, #root { height: 100%; } .guide { box-sizing: border-box; height: 100%; overflow: hidden; } [role=dialog] { max-height: 100%; overflow: auto; } #dialog-content { height: 700px; }\n",
+	);
+	writeDesignFile(
+		project.root,
+		"frames/landing/landing.css",
+		"html, body, #root { height: auto; min-height: 100%; } #landing { min-height: 4000px; width: 100%; }\n",
+	);
+	writeDesignFile(project.root, "frames/guide/frame.json", '{ "x": 0, "y": 0, "w": 1440, "h": 900 }\n');
+	writeDesignFile(project.root, "frames/landing/frame.json", '{ "x": 0, "y": 0, "w": 1440, "h": 4000 }\n');
+
+	const context = await browser.newContext({ viewport: { width: 1440, height: 930 } });
+	onTestFinished(() => context.close());
+	const standalone = await context.newPage();
+	await standalone.setViewportSize({ width: 1440, height: 900 });
+	await standalone.goto(`${project.renderUrl}/p/${encodeURIComponent(project.name)}/frames/guide`);
+	await standalone.locator("#guide").waitFor();
+	const standaloneGuide = await standalone.locator("#guide").evaluate((element) => ({
+		height: element.getBoundingClientRect().height,
+		dialogVisible: document.querySelector<HTMLElement>("[role=dialog]")?.clientHeight,
+		dialogContent: document.querySelector<HTMLElement>("[role=dialog]")?.scrollHeight,
+	}));
+
+	const player = await context.newPage();
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=guide`);
+	const inner = player.frameLocator("#spool-player");
+	await inner.locator("#guide").waitFor();
+	await player.waitForFunction(
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
+	);
+	const live = player.frames().find((frame) => frame !== player.mainFrame()) as Frame;
+	const playedGuide = await inner.locator("#guide").evaluate((element) => ({
+		height: element.getBoundingClientRect().height,
+		dialogVisible: document.querySelector<HTMLElement>("[role=dialog]")?.clientHeight,
+		dialogContent: document.querySelector<HTMLElement>("[role=dialog]")?.scrollHeight,
+		viewport: { width: innerWidth, height: innerHeight },
+	}));
+	expect(playedGuide).toEqual({ ...standaloneGuide, viewport: { width: 1440, height: 900 } });
+	expect(playedGuide.height).toBe(900);
+	expect(playedGuide.dialogVisible).toBe(700);
+	expect(playedGuide.dialogContent).toBe(700);
+	expect(await live.locator('[data-spool-frame-style="guide"]').getAttribute("media")).toBeNull();
+	expect(await live.locator('[data-spool-frame-style="landing"]').count()).toBe(0);
+
+	await inner.locator("#to-landing").click();
+	await inner.locator("#landing-end").waitFor();
+	await expect
+		.poll(() =>
+			inner.locator("#landing").evaluate((element) => ({
+				height: element.getBoundingClientRect().height,
+				styles: [...document.querySelectorAll<HTMLElement>("[data-spool-frame-style]")].map((style) => ({
+					frame: style.dataset.spoolFrameStyle,
+					media: style.getAttribute("media") ?? "",
+					landing: style.textContent?.includes("#landing"),
+				})),
+			})),
+		)
+		.toEqual({
+			height: 4000,
+			styles: [
+				{ frame: "guide", media: "not all", landing: false },
+				{ frame: "landing", media: "", landing: true },
+			],
+		});
+	expect(await live.locator('[data-spool-frame-style="guide"]').getAttribute("media")).toBe("not all");
+	expect(await live.locator('[data-spool-frame-style="landing"]').getAttribute("media")).toBe("");
+	await inner.locator("#to-guide").click();
+	await inner.locator("#guide").waitFor();
+	expect(await inner.locator("#guide").evaluate((element) => element.getBoundingClientRect().height)).toBe(900);
+	expect(await live.locator('[data-spool-frame-style="guide"]').getAttribute("media")).toBe("");
+	expect(await live.locator('[data-spool-frame-style="landing"]').getAttribute("media")).toBe("not all");
+});
+
 it("keeps frame measurements native through canvas and player walks", { timeout: 180_000 }, async () => {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();

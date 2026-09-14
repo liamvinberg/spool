@@ -94,8 +94,10 @@ describe("serving the player", () => {
 		expect(composed.modules.get(startModule ?? "")).toContain("cart-screen");
 		expect(composed.preloads.some((url) => url.includes("/frames/menu/"))).toBe(false);
 
-		// the frame baseline rides along: compiled utilities, not raw classes
-		expect(doc).toContain(".p-4");
+		// the opening closure rides as its own immutable stylesheet resource
+		const styles = (config as typeof config & { styles: Record<string, string> }).styles;
+		const css = await app.request(`/play/${name}/-/${styles.cart}`);
+		expect(await css.text()).toContain(".p-4");
 	});
 
 	it("serves the composition's modules by name, immutable, and 404s the rest", async () => {
@@ -173,6 +175,47 @@ describe("serving the player", () => {
 
 		expect(doc).toContain("::view-transition-old(root)");
 		expect(doc).toContain("https://fonts.test/inter.css");
+	});
+
+	it("ships one standalone-layered stylesheet closure per frame", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/tokens.css", "@theme { --color-ink: #123456; }\n");
+		writeDesignFile(
+			root,
+			"frames/guide/guide.css",
+			"html, body, #root { height: 100%; } .guide-only { color: red; }\n",
+		);
+		writeFrame(
+			root,
+			"guide",
+			'import "./guide.css"; export default () => <main className="guide-only text-ink">guide</main>;\n',
+		);
+		writeDesignFile(
+			root,
+			"frames/landing/landing.css",
+			"html, body, #root { height: auto; min-height: 100%; } .landing-only { color: blue; }\n",
+		);
+		writeFrame(
+			root,
+			"landing",
+			'import "./landing.css"; export default () => <main className="landing-only p-7">landing</main>;\n',
+		);
+		const app = makeApp(spoolDir);
+
+		const doc = await (await app.request(`/play/${name}?frame=guide`)).text();
+		const config = configOf(doc) as ReturnType<typeof configOf> & { styles: Record<string, string> };
+		expect(doc).toContain('data-spool-frame-style="guide"');
+		expect(doc).not.toContain('data-spool-frame-style="landing"');
+		const guide = await app.request(`/play/${name}/-/${config.styles.guide}`);
+		const landing = await app.request(`/play/${name}/-/${config.styles.landing}`);
+		expect(guide.headers.get("content-type")).toContain("text/css");
+		expect(await guide.text()).toContain(".guide-only");
+		const landingCss = await landing.text();
+		expect(landingCss).toContain(".landing-only");
+		expect(landingCss).toContain(".p-7");
+		expect(landingCss).not.toContain(".guide-only");
+		expect(landingCss).toContain("@layer project");
 	});
 
 	it("starts at ?frame= and 404s a frame that is not there, loudly", async () => {

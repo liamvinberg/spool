@@ -15,9 +15,9 @@ import {
 } from "./compile";
 import { realDesignDir } from "./design-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript, mergeImportMap } from "./document";
+import { buildFrameStyleClosure } from "./frame-styles";
 import { readIfExists } from "./project-files";
 import { frameFolder } from "./projection";
-import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
 
@@ -65,10 +65,9 @@ export interface PlayerBundle {
 	 * sooner.
 	 */
 	screens: ReadonlyMap<string, readonly string[]>;
-	/** Compiled Tailwind for the union of every frame's source closure. */
-	css: string;
+	/** Each frame's standalone stylesheet module, by frame name. */
+	styles: ReadonlyMap<string, string>;
 	fonts?: string | undefined;
-	bundledCss?: string | undefined;
 	/** shared/transitions.css verbatim — crossfades, morphs, direction types. */
 	transitions?: string | undefined;
 	importMap: object;
@@ -239,10 +238,13 @@ async function compilePlayer(
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
 	const composed = await composePlayer(designDir, frames, context);
-	const { sourceFiles, bundledCss } = composed.composition;
+	const { sourceFiles } = composed.composition;
 
 	const shared = join(designDir, "shared");
-	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
+	const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
+		if (composed.broken.has(ref.name)) return { name: ref.name, css: "", sources: [], stylesheets: [] };
+		return { name: ref.name, ...(await buildFrameStyleClosure(designDir, ref)) };
+	});
 	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
 	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts);
 	const transitions = readIfExists(join(shared, "transitions.css"), designDir);
@@ -253,7 +255,7 @@ async function compilePlayer(
 
 	const inputs = [
 		...sourceFiles,
-		...stylesheets,
+		...frameStyles.flatMap((frame) => [...frame.sources, ...frame.stylesheets]),
 		...fontFiles,
 		join(shared, "fonts.css"),
 		join(shared, "transitions.css"),
@@ -262,20 +264,53 @@ async function compilePlayer(
 	const hash = hashInputs(version, stamp, inputs, designDir);
 	const names = frames.map((ref) => ref.name);
 	const { entry, chunks, screens } = composed.composition;
+	const styles = new Map<string, string>();
+	for (const frame of frameStyles) {
+		const name = `styles/frame-${createHash("sha256").update(frame.css).digest("hex").slice(0, 16)}.css`;
+		styles.set(frame.name, name);
+		chunks.set(name, frame.css);
+	}
 	return {
 		stamp,
 		inputs,
 		hash,
 		fonts: webfonts.revision(),
 		broken: [...composed.broken.keys()],
-		bundle: { entry, chunks, screens, css, fonts, bundledCss, transitions, importMap, names, hash },
+		bundle: {
+			entry,
+			chunks,
+			screens,
+			styles,
+			fonts,
+			transitions,
+			importMap,
+			names,
+			hash,
+		},
 	};
+}
+
+/** Keep large canvases from opening hundreds of esbuild and Tailwind compiles at once. */
+async function mapConcurrent<Input, Output>(
+	inputs: readonly Input[],
+	limit: number,
+	work: (input: Input) => Promise<Output>,
+): Promise<Output[]> {
+	const outputs = new Array<Output>(inputs.length);
+	let next = 0;
+	const worker = async () => {
+		while (next < inputs.length) {
+			const index = next++;
+			outputs[index] = await work(inputs[index] as Input);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, inputs.length) }, worker));
+	return outputs;
 }
 
 /** The split build of the composition: modules by served name, and what each screen needs. */
 interface Composition {
 	sourceFiles: string[];
-	bundledCss?: string | undefined;
 	entry: string;
 	chunks: Map<string, string>;
 	screens: Map<string, string[]>;
@@ -352,13 +387,9 @@ function readComposition(designDir: string, frames: PlayerFrameRef[], result: Bu
 		.filter((input) => input !== entryKey)
 		.map((input) => resolve(designDir, input));
 	const chunks = new Map<string, string>();
-	let bundledCss: string | undefined;
 	for (const file of outputFiles) {
 		const name = designOutputName(designDir, file.path);
-		if (name.endsWith(".css")) {
-			bundledCss = bundledCss === undefined ? file.text : `${bundledCss}\n${file.text}`;
-			continue;
-		}
+		if (name.endsWith(".css")) continue;
 		chunks.set(name, file.text);
 	}
 	// metafile paths are relative to absWorkingDir; served names hang off the outdir
@@ -394,7 +425,7 @@ function readComposition(designDir: string, frames: PlayerFrameRef[], result: Bu
 		// a stubbed frame has no module of its own: its screen is in the entry
 		screens.set(ref.name, module === undefined ? [] : closure(module));
 	}
-	return { sourceFiles, bundledCss, entry, chunks, screens };
+	return { sourceFiles, entry, chunks, screens };
 }
 
 /** Compiles each frame alone to find the ones that cannot build, with their errors. */
@@ -450,11 +481,15 @@ export function playerEtag(bundle: PlayerBundle, config: PlayerConfig): string {
 
 export function assemblePlayerDocument(config: PlayerConfig, bundle: PlayerBundle): string {
 	const fontsBlock = bundle.fonts === undefined ? "" : `<style>${escapeInlineStyle(bundle.fonts)}</style>\n`;
-	const bundledBlock =
-		bundle.bundledCss === undefined ? "" : `<style>${escapeInlineStyle(bundle.bundledCss)}</style>\n`;
 	const transitionsBlock =
 		bundle.transitions === undefined ? "" : `<style>${escapeInlineStyle(bundle.transitions)}</style>\n`;
 	const base = playerChunkBase(config.project);
+	const startStyle = bundle.styles.get(config.start);
+	const styleBlock =
+		startStyle === undefined
+			? ""
+			: `<link rel="stylesheet" data-spool-frame-style="${escapeHtml(config.start)}" data-spool-style-resource="${escapeHtml(startStyle)}" href="${escapeHtml(base + startStyle)}">\n`;
+	const playConfig = { ...config, styles: Object.fromEntries(bundle.styles) };
 	// The entry and the first screen's modules are asked for before the parser
 	// reaches the script that imports them: one round of fetches, all in flight
 	// at once, instead of the waterfall a dynamic import would discover.
@@ -469,10 +504,9 @@ export function assemblePlayerDocument(config: PlayerConfig, bundle: PlayerBundl
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${escapeHtml(config.start)} · ${escapeHtml(config.project)}</title>
-<script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(config))})</script>
+<script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(playConfig))})</script>
 <style>html, body, #root { height: 100%; }</style>
-<style>${escapeInlineStyle(bundle.css)}</style>
-${fontsBlock}${bundledBlock}
+${fontsBlock}${styleBlock}
 ${config.shell === true ? "" : `<style>${escapeInlineStyle(CHROME_CSS)}</style>`}
 ${transitionsBlock}<script type="importmap">${escapeJsonScript(bundle.importMap)}</script>
 ${preload}

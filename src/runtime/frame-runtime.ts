@@ -52,6 +52,7 @@ export interface PlayerConfig {
 	start: string;
 	scenario: string;
 	frames: Record<string, { w: number; h: number }>;
+	styles?: Record<string, string>;
 	shell?: true;
 }
 
@@ -746,7 +747,7 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 		// A screen not yet in the document is fetched first and the walk retaken
 		// whole once it is: the patch above lands twice and means the same both
 		// times, and nothing below it happens until the screen can mount.
-		if (!screenLoaded(target)) {
+		if (!screenLoaded(target) || !frameStyleLoaded(target)) {
 			void loadScreen(target).then(() => navigate(target, patch, transition));
 			return;
 		}
@@ -782,7 +783,7 @@ function back(): void {
 	const target = stack.at(-1);
 	if (target === undefined) return;
 	if (play !== undefined) {
-		if (!screenLoaded(target)) {
+		if (!screenLoaded(target) || !frameStyleLoaded(target)) {
 			void loadScreen(target).then(back);
 			return;
 		}
@@ -823,7 +824,7 @@ function jump(target: string, back: boolean): void {
 		console.error(`spool: no frame "${target}" to walk to`);
 		return;
 	}
-	if (!screenLoaded(target)) {
+	if (!screenLoaded(target) || !frameStyleLoaded(target)) {
 		void loadScreen(target).then(() => jump(target, back));
 		return;
 	}
@@ -899,6 +900,59 @@ function notifyPlay(): void {
 	playVersion++;
 	for (const listener of playListeners) listener();
 	if (play?.shell === true) postPlayerState();
+}
+
+/** Activate exactly the stylesheet closure owned by the screen React is about to commit. */
+function activateFrameStyles(frame: string): void {
+	const resource = play?.styles?.[frame];
+	for (const style of document.querySelectorAll<HTMLStyleElement | HTMLLinkElement>("[data-spool-frame-style]")) {
+		style.media =
+			resource === undefined
+				? style.dataset.spoolFrameStyle === frame
+					? ""
+					: "not all"
+				: style.dataset.spoolStyleResource === resource
+					? ""
+					: "not all";
+	}
+}
+
+function frameStyleLoaded(frame: string): boolean {
+	const resource = play?.styles?.[frame];
+	return (
+		resource === undefined ||
+		[...document.querySelectorAll<HTMLElement>("[data-spool-frame-style]")].some(
+			(style) => style.dataset.spoolStyleResource === resource,
+		)
+	);
+}
+
+/** Fetch a destination's closure before its component can be committed. */
+const frameStyleLoads = new Map<string, Promise<void>>();
+
+async function loadFrameStyle(frame: string): Promise<void> {
+	if (play === undefined || play.styles === undefined) return Promise.resolve();
+	if (frameStyleLoaded(frame)) return;
+	const pending = frameStyleLoads.get(frame);
+	if (pending !== undefined) return pending;
+	const name = play.styles[frame];
+	if (name === undefined) return;
+	const load = (async () => {
+		const response = await nativeFetch(`/play/${encodeURIComponent(play.project)}/-/${name}`);
+		if (!response.ok) throw new Error(`the stylesheet for frame "${frame}" could not be loaded`);
+		const style = document.createElement("style");
+		style.media = "not all";
+		style.dataset.spoolFrameStyle = frame;
+		style.dataset.spoolStyleResource = name;
+		style.textContent = await response.text();
+		document.head.append(style);
+	})();
+	frameStyleLoads.set(frame, load);
+	try {
+		await load;
+	} finally {
+		frameStyleLoads.delete(frame);
+	}
 }
 
 function postPlayerState(): void {
@@ -995,6 +1049,7 @@ function swapScreen(direction: SwapDirection, transition?: string, committed?: (
 	arrival++;
 	externalHref = null;
 	const update = () => {
+		activateFrameStyles(mountedFrame);
 		flushSync(notifyPlay);
 		committed?.();
 	};
@@ -1410,6 +1465,7 @@ function followGeometry(): void {
 					mountedFrame = mount.to;
 					arrival++;
 					externalHref = null;
+					activateFrameStyles(mountedFrame);
 					flushSync(notifyPlay);
 				} else if (mountedFrame !== mount.to) {
 					return;
@@ -1573,7 +1629,8 @@ function screenLoaded(frame: string): boolean {
  * stood in for the way a frame that would not compile is: its own place says
  * so, and every other screen keeps working.
  */
-function loadScreen(frame: string): Promise<void> {
+function loadScreen(frame: string, withStyle = true): Promise<void> {
+	if (withStyle) return loadFrameStyle(frame).then(() => loadScreen(frame, false));
 	if (screenLoaded(frame)) return Promise.resolve();
 	const running = screenLoads.get(frame);
 	if (running !== undefined) return running;
@@ -1617,7 +1674,7 @@ function warmScreens(order: string[]): void {
 	const step = () => {
 		const batch = pending.splice(0, 3);
 		if (batch.length === 0) return;
-		void Promise.all(batch.map((frame) => loadScreen(frame))).then(() => idle(step));
+		void Promise.all(batch.map((frame) => loadScreen(frame, false))).then(() => idle(step));
 	};
 	idle(step);
 }

@@ -2962,7 +2962,7 @@ export function createDaemonApp({
 			if (chunk === undefined) return c.text("not found", 404);
 			c.header("access-control-allow-origin", "*");
 			c.header("cache-control", "public, max-age=31536000, immutable");
-			c.header("content-type", "text/javascript; charset=utf-8");
+			c.header("content-type", name.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8");
 			return c.body(chunk);
 		})
 		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
