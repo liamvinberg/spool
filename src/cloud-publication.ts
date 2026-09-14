@@ -1,15 +1,27 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { type AuthOptions, authorizedCloudRequest, CloudRequestFailure, cloudOrigin, session } from "./cloud-auth";
+import {
+	type AuthOptions,
+	authorizedCloudRequest,
+	CloudRequestFailure,
+	cloudOrigin,
+	keychainVault,
+	session,
+} from "./cloud-auth";
 import { SpoolError } from "./errors";
 import {
 	associationIdentity,
+	bindAssociation,
 	claimAssociation,
+	claimAssociationUpdate,
+	claimExplicitAssociationUpdate,
+	claimStopIntent,
+	clearStopIntent,
+	discardAssociationUpdateIntent,
 	findPublicationAssociation,
 	readAssociation,
 	readCapture,
-	updateAssociation,
 } from "./publication/associations";
 import { buildWebsite, type WebsiteArtifact } from "./publication/build";
 
@@ -33,7 +45,7 @@ const publication = z.strictObject({
 const operation = z.strictObject({
 	id: z.string(),
 	publicationId: z.string(),
-	kind: z.literal("create"),
+	kind: z.enum(["create", "update"]),
 	state: z.enum(["uploading", "sealed", "succeeded", "failed", "conflict", "expired"]),
 	contentIdentity: z.string(),
 	expectedRevision: z.number().int().nonnegative(),
@@ -45,10 +57,53 @@ const operation = z.strictObject({
 	error: z.nullable(z.strictObject({ code: z.string(), message: z.string() })),
 });
 const operationResponse = z.strictObject({ publication, operation });
+const stopOperation = z.strictObject({
+	id: z.string().uuid(),
+	publicationId: z.string(),
+	kind: z.literal("stop"),
+	state: z.literal("succeeded"),
+	createdAt: z.number(),
+	result: z.strictObject({ publication, changed: z.boolean() }),
+	error: z.null(),
+});
+const stopResponse = z.strictObject({ publication, operation: stopOperation });
+const operationSummary = z.strictObject({
+	id: z.string().uuid(),
+	publicationId: z.string(),
+	kind: z.enum(["create", "update", "stop"]),
+	state: z.enum(["uploading", "sealed", "succeeded", "failed", "conflict", "expired"]),
+	contentIdentity: z.string().nullable(),
+	expectedRevision: z.number().int().nonnegative().nullable(),
+	expectedAccessGeneration: z.number().int().positive().nullable(),
+	createdAt: z.number(),
+	expiresAt: z.number().nullable(),
+	result: z
+		.strictObject({
+			versionId: z.string().nullable(),
+			revision: z.number().int().nonnegative(),
+			accessGeneration: z.number().int().positive(),
+			state: z.enum(["staging", "active", "stopped", "suspended"]),
+		})
+		.nullable(),
+	error: z.strictObject({ code: z.string(), message: z.string() }).nullable(),
+});
+const operationPage = z.strictObject({ operations: z.array(operationSummary), nextCursor: z.string().nullable() });
+const publicationOperationSummaries = z.strictObject({
+	publicationId: z.string(),
+	pending: z.array(operationSummary),
+	latest: operationSummary.nullable(),
+	latestUnsuccessful: operationSummary.nullable(),
+});
 export type CloudPublication = z.infer<typeof publication>;
 export type CloudOperation = z.infer<typeof operation>;
 export type CloudOperationResponse = z.infer<typeof operationResponse>;
-export type PublishResult = CloudOperationResponse & { localSource: "current" | "changed" | "unavailable" };
+export type CloudStopResponse = z.infer<typeof stopResponse>;
+export type CloudOperationSummary = z.infer<typeof operationSummary>;
+export type CloudOperationPage = z.infer<typeof operationPage>;
+export type PublishResult = CloudOperationResponse & {
+	publisherId: string;
+	localSource: "current" | "changed" | "unavailable";
+};
 
 const grant = z.strictObject({ email: z.string(), active: z.boolean(), generation: z.number().int().positive() });
 const grantMutation = z.strictObject({
@@ -71,6 +126,7 @@ export class CloudPublicationFailure extends SpoolError {
 		message: string,
 		readonly detail: {
 			operation?: CloudOperation;
+			publication?: CloudPublication;
 			operationId?: string;
 			code: string;
 			retryable: boolean;
@@ -89,14 +145,25 @@ export interface PublishOptions extends AuthOptions {
 	invitedEmails?: string[];
 	version: string;
 	title?: string;
+	publicationId?: string;
 	progress?: (message: string) => void;
 }
 
 export async function publishWebsite(options: PublishOptions): Promise<PublishResult> {
 	const origin = options.origin ?? cloudOrigin(process.env);
-	const cloudOptions: AuthOptions = { ...options, origin };
+	const sourceVault = options.vault ?? keychainVault(options.spoolDir, origin);
+	const token = await sourceVault.read();
+	if (token === undefined) throw new SpoolError("not signed in; run `spool login`");
+	const cloudOptions: AuthOptions = {
+		...options,
+		origin,
+		vault: { read: async () => token, write: async () => {}, delete: async () => {} },
+	};
 	const account = await session(options.spoolDir, cloudOptions);
-	const scenario = options.scenario ?? "default";
+	let remote: CloudPublication | undefined;
+	if (options.publicationId !== undefined)
+		remote = await readCurrentPublication(options.spoolDir, options.publicationId, cloudOptions);
+	const scenario = options.scenario ?? remote?.scenario ?? "default";
 	const identity = associationIdentity(
 		options.spoolDir,
 		origin,
@@ -106,11 +173,25 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 		scenario,
 	);
 	let association = readAssociation(options.spoolDir, identity);
+	if (
+		association !== undefined &&
+		options.publicationId !== undefined &&
+		association.publicationId !== options.publicationId
+	)
+		association = undefined;
+	if (remote === undefined && association?.publicationId !== undefined)
+		remote = await readCurrentPublication(options.spoolDir, association.publicationId, cloudOptions);
+	if (
+		options.publicationId === undefined &&
+		remote !== undefined &&
+		(remote.entry !== association?.identity.entry || remote.scenario !== association.identity.scenario)
+	)
+		throw new SpoolError(
+			"this local publication association no longer matches the remote entry or scenario; use --publication to rebind deliberately",
+		);
 	let recovered: CloudOperationResponse | undefined;
 	if (association !== undefined)
-		recovered = await operationStatusOrMissing(options.spoolDir, association.operationId, cloudOptions);
-	if (recovered !== undefined && ["failed", "conflict", "expired"].includes(recovered.operation.state))
-		finish(recovered);
+		recovered = await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions);
 
 	options.progress?.("capturing website");
 	let artifact: WebsiteArtifact;
@@ -119,49 +200,120 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 			root: realpathSync(resolve(options.root)),
 			entry: options.entry,
 			version: options.version,
-			...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+			...(options.scenario === undefined && remote === undefined ? {} : { scenario }),
 		});
 	} catch (error) {
-		if (recovered?.operation.state === "succeeded") return { ...recovered, localSource: "unavailable" };
+		if (recovered?.operation.state === "succeeded") {
+			if (association !== undefined)
+				rememberPublication(
+					options.spoolDir,
+					association,
+					recovered.operation.result?.publication ?? recovered.publication,
+					true,
+					true,
+				);
+			return { ...recovered, publisherId: account.publisherId, localSource: "unavailable" };
+		}
 		throw error;
 	}
 	if (association !== undefined) {
-		if (
-			options.invitedEmails !== undefined &&
-			options.invitedEmails.length > 0 &&
-			canonicalInvitations(options.invitedEmails) !== canonicalInvitations(association.invitedEmails)
-		)
-			throw new SpoolError(
-				"this publication was created with a different invitation set; access changes are not available yet",
-			);
 		const changed =
-			artifact.manifest.contentIdentity !== association.contentIdentity ||
-			artifact.inputIdentity !== association.inputIdentity;
-		if (recovered?.operation.state === "succeeded")
-			return { ...recovered, localSource: changed ? "changed" : "current" };
-		if (changed)
-			throw new SpoolError(
-				"local work changed after this publication was captured; updating an existing link is not available yet",
-			);
-		const captured = readCapture(options.spoolDir, association.operationId);
+			artifact.manifest.contentIdentity !== association.intent.contentIdentity ||
+			artifact.inputIdentity !== association.intent.inputIdentity;
 		if (
-			captured.manifest.contentIdentity !== association.contentIdentity ||
-			captured.inputIdentity !== association.inputIdentity
+			recovered?.operation.state === "succeeded" &&
+			!changed &&
+			options.invitedEmails === undefined &&
+			remote?.state === "active" &&
+			remote.currentVersion?.contentIdentity === artifact.manifest.contentIdentity
 		)
-			throw new SpoolError("the captured publication bytes no longer match the existing operation");
+			return { ...recovered, publisherId: account.publisherId, localSource: changed ? "changed" : "current" };
+		if (recovered !== undefined && !terminal(recovered.operation)) {
+			if (changed) throw new SpoolError("local work changed while a publication update is still in progress");
+		} else {
+			if (remote === undefined) throw new SpoolError("the publication could not be read before updating");
+			if (recovered !== undefined && terminal(recovered.operation))
+				discardAssociationUpdateIntent(options.spoolDir, association);
+			association = claimAssociationUpdate(
+				options.spoolDir,
+				association,
+				artifact,
+				remote.revision,
+				remote.accessGeneration,
+				normalizeOptionalInvitations(options.invitedEmails),
+			);
+			recovered = await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions);
+		}
 	} else {
-		const invitedEmails = normalizeInvitations(options.invitedEmails ?? []);
-		const title = (options.title ?? options.entry).trim();
+		const invitedEmails =
+			remote === undefined
+				? normalizeInvitations(options.invitedEmails ?? [])
+				: normalizeOptionalInvitations(options.invitedEmails);
+		const title = (options.title ?? remote?.title ?? options.entry).trim();
 		if (title.length < 1 || title.length > 200) throw new SpoolError("publication title must be 1 to 200 characters");
-		association = claimAssociation(options.spoolDir, identity, artifact, title, invitedEmails);
-		if (association.contentIdentity !== artifact.manifest.contentIdentity)
+		association =
+			remote === undefined
+				? claimAssociation(options.spoolDir, identity, artifact, title, invitedEmails)
+				: claimExplicitAssociationUpdate(
+						options.spoolDir,
+						identity,
+						{
+							projectId: remote.projectId,
+							publicationId: remote.id,
+							hostname: remote.hostname,
+							url: remote.url,
+							title,
+						},
+						artifact,
+						remote.revision,
+						remote.accessGeneration,
+						invitedEmails,
+					);
+		if (association.intent.contentIdentity !== artifact.manifest.contentIdentity)
 			throw new SpoolError("local work changed while another publish command claimed this project");
+		if (remote !== undefined) {
+			recovered = await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions);
+			if (recovered !== undefined && ["failed", "conflict", "expired"].includes(recovered.operation.state)) {
+				discardAssociationUpdateIntent(options.spoolDir, association);
+				association = claimExplicitAssociationUpdate(
+					options.spoolDir,
+					identity,
+					{
+						projectId: remote.projectId,
+						publicationId: remote.id,
+						hostname: remote.hostname,
+						url: remote.url,
+						title,
+					},
+					artifact,
+					remote.revision,
+					remote.accessGeneration,
+					invitedEmails,
+				);
+				recovered = undefined;
+			}
+		}
 	}
 
-	const captured = readCapture(options.spoolDir, association.operationId);
+	const captured = readCapture(options.spoolDir, association.intent.operationId);
 	let current = recovered ?? (await createOrRecover(options.spoolDir, association, captured, cloudOptions));
-	association = rememberPublication(options.spoolDir, association, current.publication);
-	if (terminal(current.operation)) return resultWithLocalSource(finish(current), association, options);
+	association = rememberPublication(
+		options.spoolDir,
+		association,
+		current.publication,
+		options.publicationId === undefined,
+	);
+	if (terminal(current.operation)) {
+		const finished = finish(current);
+		association = rememberPublication(
+			options.spoolDir,
+			association,
+			finished.operation.result?.publication ?? finished.publication,
+			true,
+			true,
+		);
+		return resultWithLocalSource(finished, association, options);
+	}
 	if (current.operation.state === "uploading") {
 		for (const index of current.operation.missingObjectIndices) {
 			const metadata = captured.manifest.objects[index];
@@ -171,19 +323,20 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 			options.progress?.(`uploading ${index + 1}/${captured.manifest.objects.length}`);
 			await uploadObject(
 				options.spoolDir,
-				association.operationId,
+				association.intent.operationId,
 				index,
-				`/api/publication-operations/${encodeURIComponent(association.operationId)}/objects/${index}`,
+				`/api/publication-operations/${encodeURIComponent(association.intent.operationId)}/objects/${index}`,
 				{ method: "PUT", headers: { "content-type": "application/octet-stream" }, body: Buffer.from(object.bytes) },
 				cloudOptions,
 			);
 		}
-		current = (await operationStatusOrMissing(options.spoolDir, association.operationId, cloudOptions)) ?? current;
+		current =
+			(await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions)) ?? current;
 		options.progress?.("sealing website");
 		current = await mutateAndRecover(
 			options.spoolDir,
-			association.operationId,
-			`/api/publication-operations/${encodeURIComponent(association.operationId)}/seal`,
+			association.intent.operationId,
+			`/api/publication-operations/${encodeURIComponent(association.intent.operationId)}/seal`,
 			{ method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
 			cloudOptions,
 		);
@@ -192,8 +345,8 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 		options.progress?.("activating website");
 		current = await mutateAndRecover(
 			options.spoolDir,
-			association.operationId,
-			`/api/publication-operations/${encodeURIComponent(association.operationId)}/activate`,
+			association.intent.operationId,
+			`/api/publication-operations/${encodeURIComponent(association.intent.operationId)}/activate`,
 			{
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -205,7 +358,15 @@ export async function publishWebsite(options: PublishOptions): Promise<PublishRe
 			cloudOptions,
 		);
 	}
-	return resultWithLocalSource(finish(current), association, options);
+	const finished = finish(current);
+	association = rememberPublication(
+		options.spoolDir,
+		association,
+		finished.operation.result?.publication ?? finished.publication,
+		true,
+		true,
+	);
+	return resultWithLocalSource(finished, association, options);
 }
 
 async function uploadObject(
@@ -220,7 +381,8 @@ async function uploadObject(
 		await requestJson(spoolDir, path, init, options);
 	} catch (error) {
 		const recovered = await recoverAfterFailure(spoolDir, operationId, options, error);
-		if (error instanceof CloudApiError) throw withOperationId(error, operationId, recovered?.operation);
+		if (error instanceof CloudApiError)
+			throw withOperationId(error, operationId, recovered?.operation, recovered?.publication);
 		if (recovered !== undefined && !recovered.operation.missingObjectIndices.includes(index)) return;
 		await requestJson(spoolDir, path, init, options);
 	}
@@ -229,11 +391,21 @@ async function uploadObject(
 export async function listPublications(
 	spoolDir: string,
 	options: AuthOptions = {},
-): Promise<{ publications: CloudPublication[]; nextCursor: string | null }> {
+): Promise<{
+	publications: CloudPublication[];
+	operationSummaries: z.infer<typeof publicationOperationSummaries>[];
+	nextCursor: string | null;
+}> {
 	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
 	await session(spoolDir, cloudOptions);
 	const response = await requestJson(spoolDir, "/api/publications", {}, cloudOptions);
-	return z.strictObject({ publications: z.array(publication), nextCursor: z.string().nullable() }).parse(response);
+	return z
+		.strictObject({
+			publications: z.array(publication),
+			operationSummaries: z.array(publicationOperationSummaries),
+			nextCursor: z.string().nullable(),
+		})
+		.parse(response);
 }
 
 export async function publicationStatus(
@@ -243,26 +415,97 @@ export async function publicationStatus(
 ): Promise<{
 	publication: CloudPublication;
 	operation?: CloudOperation;
+	operations: CloudOperationSummary[];
+	nextCursor: string | null;
 	localSource: "current" | "changed" | "unavailable";
 }> {
 	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
 	const account = await session(spoolDir, cloudOptions);
 	const response = await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, cloudOptions);
 	const current = z.strictObject({ publication }).parse(response);
+	const history = await publicationOperations(spoolDir, id, { ...cloudOptions, limit: 50 });
 	const association = findPublicationAssociation(
 		spoolDir,
 		cloudOptions.origin,
 		account.publisherId,
 		current.publication.id,
 	);
-	if (association === undefined) return { ...current, localSource: "unavailable" };
-	const operation = await operationStatusOrMissing(spoolDir, association.operationId, cloudOptions);
-	const localSource = await readLocalSource(association);
+	if (association === undefined) return { ...current, ...history, localSource: "unavailable" };
+	const operation = await operationStatusOrMissing(spoolDir, association.intent.operationId, cloudOptions);
+	const localSource = await readLocalSource(association, undefined, current.publication);
 	return {
 		...current,
+		...history,
 		...(operation === undefined ? {} : { operation: operation.operation }),
 		localSource,
 	};
+}
+
+export async function publicationOperations(
+	spoolDir: string,
+	id: string,
+	options: AuthOptions & { cursor?: string; limit?: number } = {},
+): Promise<CloudOperationPage> {
+	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
+	await session(spoolDir, cloudOptions);
+	const query = new URLSearchParams();
+	if (options.cursor !== undefined) query.set("cursor", options.cursor);
+	if (options.limit !== undefined) query.set("limit", String(options.limit));
+	const suffix = query.size === 0 ? "" : `?${query}`;
+	return operationPage.parse(
+		await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}/operations${suffix}`, {}, cloudOptions),
+	);
+}
+
+export async function stopPublication(
+	spoolDir: string,
+	id: string,
+	options: AuthOptions = {},
+): Promise<CloudStopResponse> {
+	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
+	const account = await session(spoolDir, cloudOptions);
+	const operationId = claimStopIntent(spoolDir, cloudOptions.origin, account.publisherId, id);
+	const clearIntent = () => clearStopIntent(spoolDir, cloudOptions.origin, account.publisherId, id, operationId);
+	const path = `/api/publications/${encodeURIComponent(id)}/stop`;
+	const init: RequestInit = {
+		method: "POST",
+		headers: { "content-type": "application/json", "idempotency-key": operationId },
+		body: "{}",
+	};
+	let last: unknown;
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		try {
+			const result = readStop(await requestJson(spoolDir, path, init, cloudOptions, 1), operationId, id);
+			clearIntent();
+			return result;
+		} catch (error) {
+			last = error;
+		}
+		if (++attempt > 3) break;
+		try {
+			const result = readStop(
+				await requestJson(
+					spoolDir,
+					`/api/publication-operations/${encodeURIComponent(operationId)}`,
+					{},
+					cloudOptions,
+					1,
+				),
+				operationId,
+				id,
+			);
+			clearIntent();
+			return result;
+		} catch (error) {
+			last = error;
+			if (!(error instanceof CloudApiError && error.status === 404) && attempt >= 3) break;
+		}
+	}
+	if (last instanceof CloudPublicationFailure)
+		throw new CloudPublicationFailure(last.message, { ...last.detail, operationId });
+	if (last instanceof CloudRequestFailure)
+		throw new CloudPublicationFailure(last.message, { code: last.code, retryable: true, operationId });
+	throw last;
 }
 
 export async function mutatePublicationGrant(
@@ -327,43 +570,59 @@ async function createOrRecover(
 	artifact: WebsiteArtifact,
 	options: AuthOptions,
 ): Promise<CloudOperationResponse> {
-	const body = JSON.stringify({
-		projectId: association.projectId,
-		title: association.title,
-		invitedEmails: association.invitedEmails,
-		manifest: artifact.manifest,
-	});
+	const intent = association.intent;
+	const update = intent.kind === "update";
+	if (update && association.publicationId === undefined)
+		throw new SpoolError("the local publication update intent is incomplete");
+	const body = JSON.stringify(
+		update
+			? {
+					manifest: artifact.manifest,
+					expectedRevision: intent.expectedRevision,
+					expectedAccessGeneration: intent.expectedAccessGeneration,
+					...(intent.invitedEmails.length === 0 ? {} : { invitedEmails: intent.invitedEmails }),
+				}
+			: {
+					projectId: association.projectId,
+					title: association.title,
+					invitedEmails: intent.invitedEmails,
+					manifest: artifact.manifest,
+				},
+	);
+	const path = update
+		? `/api/publications/${encodeURIComponent(association.publicationId ?? "")}/operations`
+		: "/api/publications";
 	try {
 		return readOperation(
 			await requestJson(
 				spoolDir,
-				"/api/publications",
+				path,
 				{
 					method: "POST",
-					headers: { "content-type": "application/json", "idempotency-key": association.operationId },
+					headers: { "content-type": "application/json", "idempotency-key": association.intent.operationId },
 					body,
 				},
 				options,
 			),
-			association.operationId,
+			association.intent.operationId,
 			artifact.manifest.contentIdentity,
 		);
 	} catch (error) {
-		const recovered = await recoverAfterFailure(spoolDir, association.operationId, options, error);
+		const recovered = await recoverAfterFailure(spoolDir, association.intent.operationId, options, error);
 		if (recovered !== undefined) return recovered;
-		if (error instanceof CloudApiError) throw withOperationId(error, association.operationId);
+		if (error instanceof CloudApiError) throw withOperationId(error, association.intent.operationId);
 		return readOperation(
 			await requestJson(
 				spoolDir,
-				"/api/publications",
+				path,
 				{
 					method: "POST",
-					headers: { "content-type": "application/json", "idempotency-key": association.operationId },
+					headers: { "content-type": "application/json", "idempotency-key": association.intent.operationId },
 					body,
 				},
 				options,
 			),
-			association.operationId,
+			association.intent.operationId,
 			artifact.manifest.contentIdentity,
 		);
 	}
@@ -380,7 +639,8 @@ async function mutateAndRecover(
 		return readOperation(await requestJson(spoolDir, path, init, options), operationId);
 	} catch (error) {
 		const recovered = await recoverAfterFailure(spoolDir, operationId, options, error);
-		if (error instanceof CloudApiError) throw withOperationId(error, operationId, recovered?.operation);
+		if (error instanceof CloudApiError)
+			throw withOperationId(error, operationId, recovered?.operation, recovered?.publication);
 		if (recovered !== undefined) {
 			const mustRepeat =
 				(path.endsWith("/seal") && recovered.operation.state === "uploading") ||
@@ -464,8 +724,9 @@ function normalizeInvitations(values: string[]): string[] {
 		throw new SpoolError("add between 1 and 100 valid recipient email addresses with --invite");
 	return emails;
 }
-function canonicalInvitations(values: string[]): string {
-	return normalizeInvitations(values).sort().join("\n");
+function normalizeOptionalInvitations(values: string[] | undefined): string[] {
+	if (values === undefined || values.length === 0) return [];
+	return normalizeInvitations(values);
 }
 function normalizeMailbox(value: string): string {
 	const trimmed = value.trim();
@@ -489,40 +750,82 @@ function readOperation(value: unknown, operationId: string, contentIdentity?: st
 		throw new SpoolError("spool.page returned an inconsistent publication operation");
 	return parsed;
 }
+function readStop(value: unknown, operationId: string, publicationId: string): CloudStopResponse {
+	const parsed = stopResponse.parse(value);
+	if (
+		parsed.operation.id !== operationId ||
+		parsed.operation.publicationId !== publicationId ||
+		parsed.publication.id !== publicationId ||
+		parsed.operation.result.publication.id !== publicationId
+	)
+		throw new SpoolError("spool.page returned a different stop operation");
+	return parsed;
+}
+async function readCurrentPublication(spoolDir: string, id: string, options: AuthOptions): Promise<CloudPublication> {
+	return z
+		.strictObject({ publication })
+		.parse(await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, options)).publication;
+}
 function rememberPublication(
 	spoolDir: string,
 	association: ReturnType<typeof claimAssociation>,
 	value: CloudPublication,
+	persist = true,
+	successful = false,
 ) {
 	if (value.ownerId !== association.identity.publisherId || value.projectId !== association.projectId)
 		throw new SpoolError("spool.page returned a publication for a different owner or project");
-	return updateAssociation(spoolDir, association.key, {
+	const next = {
+		...association,
 		publicationId: value.id,
 		hostname: value.hostname,
 		url: value.url,
-	});
+		...(successful
+			? {
+					binding: {
+						operationId: association.intent.operationId,
+						contentIdentity: association.intent.contentIdentity,
+						inputIdentity: association.intent.inputIdentity,
+					},
+				}
+			: {}),
+	};
+	return persist ? bindAssociation(spoolDir, next) : next;
 }
 async function resultWithLocalSource(
 	result: CloudOperationResponse,
 	association: ReturnType<typeof claimAssociation>,
 	options: PublishOptions,
 ): Promise<PublishResult> {
-	return { ...result, localSource: await readLocalSource(association, options.version) };
+	return {
+		...result,
+		publisherId: association.identity.publisherId,
+		localSource: await readLocalSource(association, options.version),
+	};
 }
 async function readLocalSource(
 	association: ReturnType<typeof claimAssociation>,
 	version?: string,
+	current?: CloudPublication,
 ): Promise<"current" | "changed" | "unavailable"> {
+	const binding = association.binding;
+	if (binding === undefined) return "unavailable";
 	try {
 		const producerVersion =
-			version ?? readCapture(association.identity.instance, association.operationId).manifest.producer.version;
+			version ?? readCapture(association.identity.instance, binding.operationId).manifest.producer.version;
 		const artifact = await buildWebsite({
 			root: association.identity.root,
 			entry: association.identity.entry,
 			version: producerVersion,
 			...(association.identity.scenario === "default" ? {} : { scenario: association.identity.scenario }),
 		});
-		return artifact.inputIdentity === association.inputIdentity ? "current" : "changed";
+		return current?.currentVersion !== undefined
+			? artifact.manifest.contentIdentity === current.currentVersion?.contentIdentity
+				? "current"
+				: "changed"
+			: artifact.inputIdentity === binding.inputIdentity
+				? "current"
+				: "changed";
 	} catch {
 		return "unavailable";
 	}
@@ -543,11 +846,13 @@ function withOperationId(
 	error: CloudApiError,
 	operationId: string,
 	operation?: CloudOperation,
+	publicationValue?: CloudPublication,
 ): CloudPublicationFailure {
 	return new CloudPublicationFailure(error.message, {
 		...error.detail,
 		operationId,
 		...(operation === undefined ? {} : { operation }),
+		...(publicationValue === undefined ? {} : { publication: publicationValue }),
 	});
 }
 async function recoverAfterFailure(

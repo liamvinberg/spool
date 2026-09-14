@@ -48,6 +48,12 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 	let contentIdentity = "";
 	let missing: number[] = [];
 	let state: "uploading" | "sealed" | "succeeded" = "uploading";
+	let operationKind: "create" | "update" | "stop" = "create";
+	let revision = 0;
+	let publicationState: "staging" | "active" | "stopped" = "staging";
+	let accessGeneration = 1;
+	let loseNextStop = false;
+	let stopChanged = false;
 	let wire = "";
 	const grantOperations: string[] = [];
 	let failGrantTransport = false;
@@ -61,9 +67,9 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		url: "https://beta-site.onspool.page",
 		entry: "start",
 		scenario: "default",
-		state: state === "succeeded" ? "active" : "staging",
-		revision: state === "succeeded" ? 1 : 0,
-		accessGeneration: 1,
+		state: publicationState,
+		revision,
+		accessGeneration,
 		currentVersion: state === "succeeded" ? { id: "version", contentIdentity } : null,
 		invitedEmails: ["Alex@example.com"],
 		createdAt: 1,
@@ -74,7 +80,7 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		operation: {
 			id: operationId,
 			publicationId: "publication",
-			kind: "create",
+			kind: operationKind,
 			state,
 			contentIdentity,
 			expectedRevision: 0,
@@ -86,6 +92,21 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 			error: null,
 		},
 	});
+	const stopResult = (changed: boolean) => {
+		const stopped = publication();
+		return {
+			publication: stopped,
+			operation: {
+				id: operationId,
+				publicationId: "publication",
+				kind: "stop" as const,
+				state: "succeeded" as const,
+				createdAt: 1,
+				result: { publication: stopped, changed },
+				error: null,
+			},
+		};
+	};
 	const server = createServer(
 		{ key: readFileSync(key), cert: readFileSync(certificate) },
 		async (request, response) => {
@@ -98,6 +119,7 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 					JSON.stringify({ authenticated: true, publisherId: "publisher", sessionId: "session" }),
 				);
 			if (request.url === "/api/publications" && request.method === "POST") {
+				operationKind = "create";
 				const body = JSON.parse(raw.toString("utf8")) as {
 					projectId: string;
 					manifest: { contentIdentity: string; objects: unknown[] };
@@ -106,6 +128,18 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 				contentIdentity = body.manifest.contentIdentity;
 				operationId = String(request.headers["idempotency-key"]);
 				missing = body.manifest.objects.map((_, index) => index);
+				response.statusCode = 201;
+				return response.end(JSON.stringify(result()));
+			}
+			if (request.url === "/api/publications/publication/operations" && request.method === "POST") {
+				operationKind = "update";
+				const body = JSON.parse(raw.toString("utf8")) as {
+					manifest: { contentIdentity: string; objects: unknown[] };
+				};
+				contentIdentity = body.manifest.contentIdentity;
+				operationId = String(request.headers["idempotency-key"]);
+				missing = body.manifest.objects.map((_, index) => index);
+				state = "uploading";
 				response.statusCode = 201;
 				return response.end(JSON.stringify(result()));
 			}
@@ -120,14 +154,35 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 			}
 			if (request.url?.endsWith("/activate")) {
 				state = "succeeded";
+				publicationState = "active";
+				revision++;
 				return response.end(JSON.stringify(result()));
 			}
+			if (request.url === "/api/publications/publication/stop" && request.method === "POST") {
+				operationKind = "stop";
+				operationId = String(request.headers["idempotency-key"]);
+				const changed = publicationState !== "stopped";
+				stopChanged = changed;
+				publicationState = "stopped";
+				accessGeneration++;
+				const stopped = stopResult(changed);
+				if (loseNextStop) {
+					loseNextStop = false;
+					request.socket.destroy();
+					return;
+				}
+				return response.end(JSON.stringify(stopped));
+			}
 			if (request.url === `/api/publication-operations/${operationId}`)
-				return response.end(JSON.stringify(result()));
+				return response.end(JSON.stringify(operationKind === "stop" ? stopResult(stopChanged) : result()));
 			if (request.url === "/api/publications")
-				return response.end(JSON.stringify({ publications: [publication()], nextCursor: null }));
+				return response.end(
+					JSON.stringify({ publications: [publication()], operationSummaries: [], nextCursor: null }),
+				);
 			if (request.url === "/api/publications/publication")
 				return response.end(JSON.stringify({ publication: publication() }));
+			if (request.url?.startsWith("/api/publications/publication/operations"))
+				return response.end(JSON.stringify({ operations: [], nextCursor: null }));
 			if (
 				/^\/api\/publications\/publication\/(invite|revoke)$/u.test(request.url ?? "") &&
 				request.method === "POST"
@@ -189,6 +244,28 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 			publication: { id: "publication" },
 			operation: { id: operationId, state: "succeeded" },
 			localSource: "current",
+		});
+		writeFrame(root, "start", "export default () => <h1>Updated</h1>");
+		const updated = await spoolAsync(["cloud", "publish", "start", "--invite", "New@Example.COM"], home, root, env);
+		expect(updated.status, updated.stderr).toBe(0);
+		expect(JSON.parse(updated.stdout)).toMatchObject({
+			publication: { id: "publication", revision: 2 },
+			operation: { kind: "update", state: "succeeded" },
+			localSource: "current",
+		});
+		expect(wire).toContain('"invitedEmails":["New@example.com"]');
+		const stopped = await spoolAsync(["cloud", "stop", "publication"], home, root, env);
+		expect(stopped.status, stopped.stderr).toBe(0);
+		expect(JSON.parse(stopped.stdout)).toMatchObject({
+			publication: { id: "publication", state: "stopped" },
+			operation: { kind: "stop", state: "succeeded", result: { changed: true } },
+		});
+		loseNextStop = true;
+		const recoveredStop = await spoolAsync(["cloud", "stop", "publication"], home, root, env);
+		expect(recoveredStop.status, recoveredStop.stderr).toBe(0);
+		expect(JSON.parse(recoveredStop.stdout)).toMatchObject({
+			publication: { state: "stopped", accessGeneration: 3 },
+			operation: { kind: "stop", result: { changed: false } },
 		});
 		const invited = await spoolAsync(
 			["cloud", "invite", "publication", " Alex+viewer@Example.COM "],

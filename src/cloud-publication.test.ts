@@ -6,21 +6,33 @@ import {
 	CloudPublicationFailure,
 	listPublications,
 	mutatePublicationGrant,
+	publicationOperations,
 	publicationStatus,
 	publishWebsite,
 } from "./cloud-publication";
-import { makeProject, makeTempDir, writeFrame } from "./test-helpers";
+import { associationIdentity, readAssociation } from "./publication/associations";
+import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "./test-helpers";
 
 const vault: CloudVault = { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} };
 
-function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boolean; onActivate?: () => void } = {}) {
+function service(
+	options: {
+		loseActivation?: boolean;
+		loseSealBeforeCommit?: boolean;
+		onActivate?: () => void;
+		scenario?: string;
+		rejectUpdate?: boolean;
+	} = {},
+) {
 	let manifest: { contentIdentity: string; entry: string; scenario: string; objects: unknown[] } | undefined;
 	let state: "uploading" | "sealed" | "succeeded" | "failed" = "uploading";
 	let missing: number[] = [];
 	let lost = options.loseActivation === true;
 	let lostSeal = options.loseSealBeforeCommit === true;
 	let operationId = "operation";
-	let projectId = "project";
+	let kind: "create" | "update" = "create";
+	let projectId = "00000000-0000-4000-8000-000000000001";
+	let revision = 0;
 	let invitedEmails = ["alex@example.com"];
 	const calls: string[] = [];
 	const publication = () => ({
@@ -31,9 +43,9 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 		hostname: "beta-site.onspool.page",
 		url: "https://beta-site.onspool.page",
 		entry: manifest?.entry ?? "start",
-		scenario: manifest?.scenario ?? "default",
+		scenario: manifest?.scenario ?? options.scenario ?? "default",
 		state: state === "succeeded" ? "active" : "staging",
-		revision: state === "succeeded" ? 1 : 0,
+		revision,
 		accessGeneration: 1,
 		currentVersion:
 			state === "succeeded" ? { id: "version", contentIdentity: manifest?.contentIdentity ?? "" } : null,
@@ -46,7 +58,7 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 		operation: {
 			id: operationId,
 			publicationId: "publication",
-			kind: "create",
+			kind,
 			state,
 			contentIdentity: manifest?.contentIdentity ?? "",
 			expectedRevision: 0,
@@ -70,6 +82,7 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 			if (url.pathname === "/auth/publisher/session")
 				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "session" });
 			if (url.pathname === "/api/publications" && init?.method === "POST") {
+				kind = "create";
 				operationId = new Headers(init.headers).get("idempotency-key") ?? "operation";
 				const body = JSON.parse(String(init.body)) as {
 					manifest: typeof manifest;
@@ -79,6 +92,20 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 				projectId = body.projectId;
 				invitedEmails = body.invitedEmails;
 				manifest = body.manifest;
+				missing = manifest?.objects.map((_, index) => index) ?? [];
+				return Response.json(response(), { status: 201 });
+			}
+			if (url.pathname === "/api/publications/publication/operations" && init?.method === "POST") {
+				kind = "update";
+				operationId = new Headers(init.headers).get("idempotency-key") ?? "operation";
+				if (options.rejectUpdate)
+					return Response.json(
+						{ error: "revision_conflict", message: "stale", retryable: false, operationId },
+						{ status: 409 },
+					);
+				const body = JSON.parse(String(init.body)) as { manifest: typeof manifest };
+				manifest = body.manifest;
+				state = "uploading";
 				missing = manifest?.objects.map((_, index) => index) ?? [];
 				return Response.json(response(), { status: 201 });
 			}
@@ -97,6 +124,7 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 			}
 			if (url.pathname.endsWith("/activate")) {
 				state = "succeeded";
+				revision++;
 				options.onActivate?.();
 				if (lost) {
 					lost = false;
@@ -104,16 +132,130 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 				}
 				return Response.json(response());
 			}
-			if (url.pathname === `/api/publication-operations/${operationId}`) return Response.json(response());
+			if (url.pathname === `/api/publication-operations/${operationId}`) {
+				if (options.rejectUpdate)
+					return Response.json({ error: "not_found", message: "not found", retryable: false }, { status: 404 });
+				return Response.json(response());
+			}
 			if (url.pathname === "/api/publications")
-				return Response.json({ publications: [publication()], nextCursor: null });
+				return Response.json({ publications: [publication()], operationSummaries: [], nextCursor: null });
 			if (url.pathname === "/api/publications/publication") return Response.json({ publication: publication() });
+			if (url.pathname === "/api/publications/publication/operations")
+				return Response.json({ operations: [], nextCursor: null });
 			return Response.json({ error: "not_found", message: "not found", retryable: false }, { status: 404 });
 		},
 	};
 }
 
 describe("Cloud publication client", () => {
+	it("binds every publication request to the starting vault identity", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>Shared</h1>");
+		let held = "t".repeat(43);
+		const mutableVault: CloudVault = {
+			read: async () => held,
+			write: async () => {},
+			delete: async () => {},
+		};
+		const cloud = service();
+		const result = await publishWebsite({
+			spoolDir,
+			root,
+			entry: "start",
+			invitedEmails: ["viewer@example.com"],
+			version: "test",
+			origin: "https://cloud.test",
+			vault: mutableVault,
+			fetch: cloud.fetch,
+			progress: (message) => {
+				if (message === "capturing website") held = "u".repeat(43);
+			},
+		});
+		expect(result.publisherId).toBe("publisher");
+		expect(held).toBe("u".repeat(43));
+	});
+	it("pages bounded operation history without conflating it with current publication state", async () => {
+		let requested = "";
+		const fetch = async (input: string | URL | Request) => {
+			const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+			if (url.pathname === "/auth/publisher/session")
+				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "session" });
+			requested = `${url.pathname}${url.search}`;
+			return Response.json({
+				operations: [
+					{
+						id: "00000000-0000-4000-8000-000000000002",
+						publicationId: "publication",
+						kind: "update",
+						state: "conflict",
+						contentIdentity: "a".repeat(64),
+						expectedRevision: 2,
+						expectedAccessGeneration: 1,
+						createdAt: 10,
+						expiresAt: 20,
+						result: null,
+						error: { code: "revision_conflict", message: "stale" },
+					},
+				],
+				nextCursor: "next",
+			});
+		};
+		await expect(
+			publicationOperations(makeTempDir(), "publication", {
+				cursor: "held",
+				limit: 1,
+				origin: "https://cloud.test",
+				vault,
+				fetch,
+			}),
+		).resolves.toMatchObject({ operations: [{ state: "conflict" }], nextCursor: "next" });
+		expect(requested).toBe("/api/publications/publication/operations?cursor=held&limit=1");
+	});
+	it("uses the remote scenario for an explicit rebind and binds only after success", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>Shared</h1>");
+		writeDesignFile(root, "shared/scenarios/review.json", '{"state":{"mode":"review"}}');
+		const cloud = service({ scenario: "review" });
+		const result = await publishWebsite({
+			spoolDir,
+			root,
+			entry: "start",
+			publicationId: "publication",
+			version: "test",
+			origin: "https://cloud.test",
+			vault,
+			fetch: cloud.fetch,
+		});
+		expect(result).toMatchObject({ publication: { scenario: "review" }, operation: { kind: "update" } });
+		const identity = associationIdentity(spoolDir, "https://cloud.test", "publisher", root, "start", "review");
+		expect(readAssociation(spoolDir, identity)?.publicationId).toBe("publication");
+
+		const otherSpoolDir = makeTempDir();
+		const rejected = service({ scenario: "review", rejectUpdate: true });
+		await expect(
+			publishWebsite({
+				spoolDir: otherSpoolDir,
+				root,
+				entry: "start",
+				publicationId: "publication",
+				version: "test",
+				origin: "https://cloud.test",
+				vault,
+				fetch: rejected.fetch,
+			}),
+		).rejects.toBeInstanceOf(CloudPublicationFailure);
+		const rejectedIdentity = associationIdentity(
+			otherSpoolDir,
+			"https://cloud.test",
+			"publisher",
+			root,
+			"start",
+			"review",
+		);
+		expect(readAssociation(otherSpoolDir, rejectedIdentity)).toBeUndefined();
+	});
 	it("mutates an exact mailbox with a stable operation identity", async () => {
 		const calls: { path: string; body: string; operation: string }[] = [];
 		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
@@ -248,7 +390,7 @@ describe("Cloud publication client", () => {
 		).resolves.toMatchObject({ operation: { state: "succeeded" }, localSource: "changed" });
 	});
 
-	it("recovers status before detecting changed source and never creates a replacement", async () => {
+	it("reads status before explicitly updating changed source on the same publication", async () => {
 		const spoolDir = makeTempDir();
 		const { root } = makeProject(spoolDir);
 		writeFrame(root, "start", "export default () => <h1>First</h1>");
@@ -276,9 +418,10 @@ describe("Cloud publication client", () => {
 				vault,
 				fetch: cloud.fetch,
 			}),
-		).resolves.toMatchObject({ operation: { state: "succeeded" }, localSource: "changed" });
-		expect(cloud.calls[1]).toMatch(/^GET \/api\/publication-operations\//u);
-		expect(cloud.calls.some((call) => call === "POST /api/publications")).toBe(false);
+		).resolves.toMatchObject({ operation: { kind: "update", state: "succeeded" }, localSource: "current" });
+		expect(cloud.calls[1]).toBe("GET /api/publications/publication");
+		expect(cloud.calls[2]).toMatch(/^GET \/api\/publication-operations\//u);
+		expect(cloud.calls.some((call) => call === "POST /api/publications/publication/operations")).toBe(true);
 		rmSync(join(root, "design", "frames", "start"), { recursive: true });
 		await expect(
 			publishWebsite({
@@ -331,7 +474,7 @@ describe("Cloud publication client", () => {
 		).resolves.toMatchObject({ localSource: "unavailable" });
 	});
 
-	it("keeps a recovered terminal operation in the structured failure", async () => {
+	it("starts a fresh explicit update after a recovered terminal failure", async () => {
 		const spoolDir = makeTempDir();
 		const { root } = makeProject(spoolDir);
 		writeFrame(root, "start", "export default () => <h1>First</h1>");
@@ -347,7 +490,7 @@ describe("Cloud publication client", () => {
 			fetch: cloud.fetch,
 		});
 		cloud.fail();
-		const failure = await publishWebsite({
+		const result = await publishWebsite({
 			spoolDir,
 			root,
 			entry: "start",
@@ -355,14 +498,9 @@ describe("Cloud publication client", () => {
 			origin: "https://cloud.test",
 			vault,
 			fetch: cloud.fetch,
-		}).catch((error: unknown) => error);
-		expect(failure).toBeInstanceOf(CloudPublicationFailure);
-		if (!(failure instanceof CloudPublicationFailure)) throw new Error("expected structured failure");
-		expect(failure.detail).toMatchObject({
-			code: "failed",
-			retryable: false,
-			operation: { id: first.operation.id, state: "failed" },
 		});
+		expect(result).toMatchObject({ operation: { kind: "update", state: "succeeded" }, localSource: "current" });
+		expect(result.operation.id).not.toBe(first.operation.id);
 	});
 
 	it("returns a long HTTP-date retry delay without shortening it", async () => {

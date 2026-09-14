@@ -30,11 +30,20 @@ export interface PublicationAssociation {
 	key: string;
 	identity: PublicationAssociationIdentity;
 	projectId: string;
-	operationId: string;
-	contentIdentity: string;
-	inputIdentity: string;
 	title: string;
-	invitedEmails: string[];
+	intent:
+		| { kind: "create"; operationId: string; contentIdentity: string; inputIdentity: string; invitedEmails: string[] }
+		| {
+				kind: "update";
+				operationId: string;
+				contentIdentity: string;
+				inputIdentity: string;
+				invitedEmails: string[];
+				expectedRevision: number;
+				expectedAccessGeneration: number;
+				targetPublicationId: string;
+		  };
+	binding?: { operationId: string; contentIdentity: string; inputIdentity: string };
 	publicationId?: string;
 	hostname?: string;
 	url?: string;
@@ -52,11 +61,33 @@ const associationSchema = z.strictObject({
 	key: z.string().regex(/^[a-f0-9]{64}$/u),
 	identity: identitySchema,
 	projectId: z.string().uuid(),
-	operationId: z.string().uuid(),
-	contentIdentity: z.string().regex(/^[a-f0-9]{64}$/u),
-	inputIdentity: z.string().min(1),
 	title: z.string().min(1).max(200),
-	invitedEmails: z.array(z.string().email()).min(1).max(100),
+	intent: z.discriminatedUnion("kind", [
+		z.strictObject({
+			kind: z.literal("create"),
+			operationId: z.string().uuid(),
+			contentIdentity: z.string().regex(/^[a-f0-9]{64}$/u),
+			inputIdentity: z.string().min(1),
+			invitedEmails: z.array(z.string().email()).min(1).max(100),
+		}),
+		z.strictObject({
+			kind: z.literal("update"),
+			operationId: z.string().uuid(),
+			contentIdentity: z.string().regex(/^[a-f0-9]{64}$/u),
+			inputIdentity: z.string().min(1),
+			invitedEmails: z.array(z.string().email()).max(100),
+			expectedRevision: z.number().int().nonnegative(),
+			expectedAccessGeneration: z.number().int().positive(),
+			targetPublicationId: z.string().min(1),
+		}),
+	]),
+	binding: z
+		.strictObject({
+			operationId: z.string().uuid(),
+			contentIdentity: z.string().regex(/^[a-f0-9]{64}$/u),
+			inputIdentity: z.string().min(1),
+		})
+		.optional(),
 	publicationId: z.string().optional(),
 	hostname: z.string().optional(),
 	url: z.string().url().optional(),
@@ -121,6 +152,7 @@ export function claimAssociation(
 	artifact: WebsiteArtifact,
 	title: string,
 	invitedEmails: string[],
+	stable?: Pick<PublicationAssociation, "projectId" | "publicationId" | "hostname" | "url">,
 ): PublicationAssociation {
 	const key = identityKey(identity);
 	const file = associationPath(spoolDir, key);
@@ -128,23 +160,29 @@ export function claimAssociation(
 	const record: PublicationAssociation = {
 		key,
 		identity,
-		projectId: randomUUID(),
-		operationId: randomUUID(),
-		contentIdentity: artifact.manifest.contentIdentity,
-		inputIdentity: artifact.inputIdentity,
+		projectId: stable?.projectId ?? randomUUID(),
 		title,
-		invitedEmails,
+		intent: {
+			kind: "create",
+			operationId: randomUUID(),
+			contentIdentity: artifact.manifest.contentIdentity,
+			inputIdentity: artifact.inputIdentity,
+			invitedEmails,
+		},
+		...(stable?.publicationId === undefined ? {} : { publicationId: stable.publicationId }),
+		...(stable?.hostname === undefined ? {} : { hostname: stable.hostname }),
+		...(stable?.url === undefined ? {} : { url: stable.url }),
 	};
-	writeCapture(spoolDir, record.operationId, artifact);
+	writeCapture(spoolDir, record.intent.operationId, artifact);
 	mkdirSync(dirname(file), { recursive: true });
-	const candidate = `${file}.${record.operationId}.candidate`;
+	const candidate = `${file}.${record.intent.operationId}.candidate`;
 	writeFileSync(candidate, `${JSON.stringify(record, null, "\t")}\n`, { flag: "wx" });
 	try {
 		linkSync(candidate, file);
 		return record;
 	} catch (error) {
 		if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-		rmSync(captureDirectory(spoolDir, record.operationId), { recursive: true, force: true });
+		rmSync(captureDirectory(spoolDir, record.intent.operationId), { recursive: true, force: true });
 		return requiredAssociation(spoolDir, identity);
 	} finally {
 		unlinkSync(candidate);
@@ -165,6 +203,172 @@ export function updateAssociation(
 	const next = { ...held, ...patch };
 	writeAtomic(file, `${JSON.stringify(next, null, "\t")}\n`);
 	return next;
+}
+
+/** Claim one persisted update intent per exact association and captured input. */
+export function claimAssociationUpdate(
+	spoolDir: string,
+	association: PublicationAssociation,
+	artifact: WebsiteArtifact,
+	expectedRevision: number,
+	expectedAccessGeneration: number,
+	invitedEmails: string[],
+	persist = true,
+): PublicationAssociation {
+	const targetPublicationId = association.publicationId;
+	if (targetPublicationId === undefined) throw new SpoolError("the publication update target is missing");
+	const intentKey = association.key;
+	const directory = join(resolve(spoolDir), "publications", "intents");
+	const file = join(directory, `${intentKey}.json`);
+	mkdirSync(directory, { recursive: true });
+	if (!existsSync(file)) {
+		const operationId = randomUUID();
+		const next: PublicationAssociation = {
+			...association,
+			intent: {
+				kind: "update",
+				operationId,
+				contentIdentity: artifact.manifest.contentIdentity,
+				inputIdentity: artifact.inputIdentity,
+				invitedEmails,
+				expectedRevision,
+				expectedAccessGeneration,
+				targetPublicationId,
+			},
+		};
+		writeCapture(spoolDir, operationId, artifact);
+		const candidate = `${file}.${operationId}.candidate`;
+		writeFileSync(candidate, `${JSON.stringify(next, null, "\t")}\n`, { flag: "wx" });
+		try {
+			linkSync(candidate, file);
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+			rmSync(captureDirectory(spoolDir, operationId), { recursive: true, force: true });
+		} finally {
+			unlinkSync(candidate);
+		}
+	}
+	const claimed = readRecord(file);
+	if (
+		claimed.key !== association.key ||
+		claimed.intent.inputIdentity !== artifact.inputIdentity ||
+		claimed.intent.contentIdentity !== artifact.manifest.contentIdentity ||
+		claimed.intent.kind !== "update" ||
+		claimed.intent.targetPublicationId !== targetPublicationId ||
+		claimed.intent.expectedRevision !== expectedRevision ||
+		claimed.intent.expectedAccessGeneration !== expectedAccessGeneration ||
+		canonicalJson(claimed.intent.invitedEmails) !== canonicalJson(invitedEmails)
+	)
+		throw new SpoolError("another publication update intent is already in progress for this association");
+	if (persist) writeAtomic(associationPath(spoolDir, association.key), `${JSON.stringify(claimed, null, "\t")}\n`);
+	return claimed;
+}
+
+export function claimExplicitAssociationUpdate(
+	spoolDir: string,
+	identity: PublicationAssociationIdentity,
+	stable: { projectId: string; publicationId: string; hostname: string; url: string; title: string },
+	artifact: WebsiteArtifact,
+	expectedRevision: number,
+	expectedAccessGeneration: number,
+	invitedEmails: string[],
+): PublicationAssociation {
+	const base: PublicationAssociation = {
+		key: identityKey(identity),
+		identity,
+		projectId: stable.projectId,
+		title: stable.title,
+		publicationId: stable.publicationId,
+		hostname: stable.hostname,
+		url: stable.url,
+		intent: {
+			kind: "create",
+			operationId: randomUUID(),
+			contentIdentity: artifact.manifest.contentIdentity,
+			inputIdentity: artifact.inputIdentity,
+			invitedEmails: [],
+		},
+	};
+	return claimAssociationUpdate(
+		spoolDir,
+		base,
+		artifact,
+		expectedRevision,
+		expectedAccessGeneration,
+		invitedEmails,
+		false,
+	);
+}
+
+export function bindAssociation(spoolDir: string, association: PublicationAssociation): PublicationAssociation {
+	const file = associationPath(spoolDir, association.key);
+	mkdirSync(dirname(file), { recursive: true });
+	writeAtomic(file, `${JSON.stringify(association, null, "\t")}\n`);
+	return association;
+}
+
+export function discardAssociationUpdateIntent(spoolDir: string, association: PublicationAssociation): void {
+	if (association.intent.kind !== "update") return;
+	const intentKey = association.key;
+	rmSync(join(resolve(spoolDir), "publications", "intents", `${intentKey}.json`), { force: true });
+}
+
+export function claimStopIntent(
+	spoolDir: string,
+	authority: string,
+	publisherId: string,
+	publicationId: string,
+): string {
+	if (publicationId.length < 1) throw new SpoolError("publication id is required");
+	const identity = {
+		authority: new URL(authority).origin,
+		publisherId,
+		instance: realpathSync(resolve(spoolDir)),
+		publicationId,
+	};
+	const key = createHash("sha256").update(canonicalJson(identity)).digest("hex");
+	const file = join(resolve(spoolDir), "publications", "stop-intents", `${key}.json`);
+	if (existsSync(file)) {
+		const held = parseObject(readFileSync(file, "utf8"));
+		if (held.identity !== canonicalJson(identity) || typeof held.operationId !== "string")
+			throw new SpoolError("the local stop intent is invalid");
+		return z.string().uuid().parse(held.operationId);
+	}
+	const operationId = randomUUID();
+	mkdirSync(dirname(file), { recursive: true });
+	const candidate = `${file}.${operationId}.candidate`;
+	writeFileSync(candidate, `${JSON.stringify({ identity: canonicalJson(identity), operationId })}\n`, { flag: "wx" });
+	try {
+		linkSync(candidate, file);
+	} catch (error) {
+		if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+	} finally {
+		unlinkSync(candidate);
+	}
+	const held = parseObject(readFileSync(file, "utf8"));
+	if (held.identity !== canonicalJson(identity) || typeof held.operationId !== "string")
+		throw new SpoolError("the local stop intent is invalid");
+	return z.string().uuid().parse(held.operationId);
+}
+
+export function clearStopIntent(
+	spoolDir: string,
+	authority: string,
+	publisherId: string,
+	publicationId: string,
+	operationId: string,
+): void {
+	const identity = {
+		authority: new URL(authority).origin,
+		publisherId,
+		instance: realpathSync(resolve(spoolDir)),
+		publicationId,
+	};
+	const key = createHash("sha256").update(canonicalJson(identity)).digest("hex");
+	const file = join(resolve(spoolDir), "publications", "stop-intents", `${key}.json`);
+	if (!existsSync(file)) return;
+	const held = parseObject(readFileSync(file, "utf8"));
+	if (held.identity === canonicalJson(identity) && held.operationId === operationId) unlinkSync(file);
 }
 
 export function readCapture(spoolDir: string, operationId: string): WebsiteArtifact {
@@ -240,12 +444,13 @@ function requiredAssociation(spoolDir: string, identity: PublicationAssociationI
 function readRecord(file: string): PublicationAssociation {
 	try {
 		const value = associationSchema.parse(JSON.parse(readFileSync(file, "utf8")));
-		const { publicationId, hostname, url, ...required } = value;
+		const { publicationId, hostname, url, binding, ...required } = value;
 		return {
 			...required,
 			...(publicationId === undefined ? {} : { publicationId }),
 			...(hostname === undefined ? {} : { hostname }),
 			...(url === undefined ? {} : { url }),
+			...(binding === undefined ? {} : { binding }),
 		};
 	} catch {
 		throw new SpoolError("the local publication association is invalid");

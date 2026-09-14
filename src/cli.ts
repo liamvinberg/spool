@@ -15,6 +15,7 @@ import {
 	mutatePublicationGrant,
 	publicationStatus,
 	publishWebsite,
+	stopPublication,
 } from "./cloud-publication";
 import { createFlowGraph } from "./daemon/flows";
 import {
@@ -111,6 +112,7 @@ async function cloudJson(action: () => Promise<unknown>): Promise<void> {
 					...(known?.operationId === undefined && known?.operation === undefined
 						? {}
 						: { operationId: known.operation?.id ?? known.operationId }),
+					...(known?.publication === undefined ? {} : { publication: known.publication }),
 				},
 			})}\n`,
 		);
@@ -124,7 +126,8 @@ cloud
 	.argument("<frame>", "original entry frame", parseScenario)
 	.option("--invite <email...>", "person allowed to open the new website")
 	.option("--scenario <name>", "scenario seed", parseScenario)
-	.action(async (entry: string, options: { invite?: string[]; scenario?: string }) => {
+	.option("--publication <id>", "owned publication to update")
+	.action(async (entry: string, options: { invite?: string[]; scenario?: string; publication?: string }) => {
 		await cloudJson(async () => {
 			const root = resolveProjectRoot(process.cwd());
 			if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
@@ -136,9 +139,18 @@ cloud
 				version: pkg.version,
 				origin: cloudOrigin(process.env),
 				...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+				...(options.publication === undefined ? {} : { publicationId: options.publication }),
 				progress: (message) => process.stderr.write(`spool: ${message}\n`),
 			});
 		});
+	});
+
+cloud
+	.command("stop")
+	.description("stop sharing a publication")
+	.argument("<publication>", "publication id")
+	.action(async (publication: string) => {
+		await cloudJson(() => stopPublication(spoolDir, publication, { origin: cloudOrigin(process.env) }));
 	});
 
 cloud
