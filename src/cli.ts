@@ -32,7 +32,7 @@ import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
-import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
+import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
 import { logsFrame, shotFrame } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -202,9 +202,12 @@ program
 program
 	.command("flows")
 	.description("print the link graph: read from source, verified by sessions")
-	.action(async () => {
+	.option("--entry <frame>", "check the connected set for publication", parseScenario)
+	.action(async (options: { entry?: string }) => {
 		const { name, daemonUrl, controlToken } = await verbContext();
-		process.stdout.write(`${await readFlows(daemonUrl, name, controlToken)}\n`);
+		process.stdout.write(
+			`${options.entry === undefined ? await readFlows(daemonUrl, name, controlToken) : await readReadiness(daemonUrl, name, options.entry, controlToken)}\n`,
+		);
 	});
 
 program
