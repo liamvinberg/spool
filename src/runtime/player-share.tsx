@@ -32,7 +32,11 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 
 	const apply = useCallback((next: PlayerPublicationModel) => {
 		setModel(next);
-		setJob(next.job);
+		setJob((current) => {
+			if (next.available && next.association === "current" && next.job === undefined && current?.state === "running")
+				return current;
+			return next.job;
+		});
 		if (next.job !== undefined && "email" in next.job && next.job.email !== undefined) setEmail(next.job.email);
 		setProblem(next.job?.state === "failed" ? next.job.message : (next.problem ?? ""));
 		if (!next.available) {
@@ -136,7 +140,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const active = model?.association === "current" && model.publication?.state === "active";
 	const updating = job?.kind === "update" && job.state === "running";
 	const retrying = job?.kind === "update" && job.state === "failed";
-	const changed = active && (model.source !== "current" || retrying);
+	const changed = active && (updating || model.source !== "current" || retrying);
 	const continuingUnavailable = model?.association === "current" && model.publication === undefined;
 
 	async function publish(): Promise<void> {

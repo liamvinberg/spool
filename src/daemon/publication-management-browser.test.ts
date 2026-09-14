@@ -174,16 +174,16 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	});
 	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
 	await expect.poll(() => updateRefreshes).toBe(1);
+	heldRefresh.resolve({ publication: current, operations: [], nextCursor: null, localSource: "current" });
+	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
 	current = {
 		...current,
 		revision: 2,
 		currentVersion: { id: "version-2", contentIdentity: "b".repeat(64) },
 	};
 	publishes[0]?.resolve(publishResult(current, "changed"));
-	await page.waitForTimeout(350);
-	heldRefresh.resolve({ publication: current, operations: [], nextCursor: null, localSource: "current" });
 	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
-	expect(updateRefreshes).toBe(2);
+	expect(updateRefreshes).toBe(1);
 	services.status = vi.fn(async () => ({
 		publication: current,
 		operations: [],
