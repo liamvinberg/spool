@@ -14,7 +14,7 @@ it("runs cold destination modules, shared state, history, remounts, reload and v
 	writeFrame(
 		root,
 		"start",
-		`import {useState} from 'react'; import {ui} from 'spool'; import {store} from '../../shared/store'; export const links={next:'next'} as const; export default function Start(){const [local,setLocal]=useState(0);return <main><h1>Start {String(ui.state.count)} shared {store.count} local {local}</h1><button onClick={()=>{store.count++;ui.state.count=Number(ui.state.count)+1;setLocal(local+1)}}>Increment</button><button data-go={links.next}>Next</button><button onClick={()=>ui.go(String(ui.state.unknown))}>Unknown</button><a href="https://example.com">External</a></main>}`,
+		`import {useState} from 'react'; import {ui} from 'spool'; import {store} from '../../shared/store'; export const links={next:'next'} as const; export default function Start(){const [local,setLocal]=useState(0);return <main><h1>Start {String(ui.state.count)} shared {store.count} local {local}</h1><button onClick={()=>{store.count++;ui.state.count=Number(ui.state.count)+1;setLocal(local+1)}}>Increment</button><button data-go={links.next}>Next</button><button onClick={()=>ui.go(String(ui.state.unknown))}>Unknown</button><button onClick={()=>ui.copy("export proof").catch(()=>setLocal(99))}>Copy</button><a href="https://example.com">External</a></main>}`,
 	);
 	writeFrame(
 		root,
@@ -44,6 +44,22 @@ it("runs cold destination modules, shared state, history, remounts, reload and v
 	const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
 	await page.goto(origin);
 	await expect.poll(() => page.locator("h1").textContent()).toBe("Start 4 shared 0 local 0");
+	await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+	await page.getByText("Copy", { exact: true }).click();
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("export proof");
+	await page.evaluate(() =>
+		Object.defineProperty(navigator.clipboard, "writeText", {
+			value: () => Promise.reject(new DOMException("Denied", "NotAllowedError")),
+		}),
+	);
+	await page.getByText("Copy", { exact: true }).click();
+	await expect.poll(() => page.locator("h1").textContent()).toContain("local 99");
+	await page.route("https://example.com/", (route) =>
+		route.fulfill({ body: "External page", contentType: "text/html" }),
+	);
+	await page.getByText("External", { exact: true }).click();
+	await page.waitForURL("https://example.com/");
+	await page.goto(origin);
 	const next = artifact.manifest.frames.find((frame) => frame.name === "next");
 	if (next === undefined) throw new Error("no next");
 	expect(requests).not.toContain(next.module);
