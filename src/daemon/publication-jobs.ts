@@ -361,6 +361,7 @@ export function createPublicationJobs({
 		const association = checked.association;
 		const status = checked.status;
 		if (association === undefined || status === undefined) return;
+		if (status.operation?.state === "succeeded" && association.binding?.operationId === status.operation.id) return;
 		const pending = readUpdateIntent(spoolDir, checked.identity, association.publicationId);
 		const intent = pending ?? (association.binding === undefined ? association : undefined);
 		if (intent === undefined || status.operation?.id !== intent.intent.operationId) return;

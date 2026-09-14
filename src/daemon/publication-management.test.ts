@@ -206,6 +206,23 @@ it("never borrows a superseded binding and projects only a relevant persisted re
 		job: { id: pending.intent.operationId, kind: "update", state: "failed", retryable: true },
 	});
 
+	writeAssociation(spoolDir, project.root, {
+		binding: {
+			operationId: pending.intent.operationId,
+			contentIdentity: pending.intent.contentIdentity,
+			inputIdentity: pending.intent.inputIdentity,
+		},
+	});
+	boundary.status = async () => ({
+		publication: publication("owner"),
+		operation: operation(publication("owner"), pending.intent.operationId, "succeeded"),
+		operations: [],
+		nextCursor: null,
+		localSource: "changed",
+	});
+	expect(await jobs.model(request)).toMatchObject({ source: "changed" });
+	expect(await jobs.model(request)).not.toHaveProperty("job");
+
 	rmSync(intentFile);
 	boundary.status = async () => ({
 		publication: publication("owner"),
