@@ -165,7 +165,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 								},
 					);
 				}
-				if (refreshing.current !== undefined) void refresh();
+				void refresh();
 			} catch {
 				if (!cancelled) {
 					await refresh(true);
