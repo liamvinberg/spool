@@ -226,7 +226,12 @@ const publicationParams = z.strictObject({
 });
 
 const publicationCreate = publicationParams.extend({
+	email: z.string().trim().email().max(320).optional(),
+});
+
+const publicationGrant = publicationParams.extend({
 	email: z.string().trim().email().max(320),
+	kind: z.enum(["invite", "revoke"]),
 });
 
 const PLAYER_HANDOFF_TTL_MS = 30_000;
@@ -3039,7 +3044,13 @@ export function createDaemonApp({
 				if ("response" in project) return project.response;
 				const { entry, scenario, email } = c.req.valid("json");
 				return c.json(
-					await publicationJobs.start({ root: project.root, project: name, entry, scenario, email }),
+					await publicationJobs.start({
+						root: project.root,
+						project: name,
+						entry,
+						scenario,
+						...(email === undefined ? {} : { email }),
+					}),
 					202,
 				);
 			},
@@ -3050,6 +3061,36 @@ export function createDaemonApp({
 			const job = await publicationJobs.read(project.root, c.req.param("job"));
 			return job === undefined ? c.text("publication job not found", 404) : c.json(job);
 		})
+		.post(
+			"/api/p/:project/publication/grants",
+			validator("json", (value, c) => {
+				const parsed = publicationGrant.safeParse(value);
+				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
+			}),
+			async (c) => {
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const { entry, scenario, email, kind } = c.req.valid("json");
+				return c.json(
+					await publicationJobs.grant({ root: project.root, project: name, entry, scenario, email, kind }),
+				);
+			},
+		)
+		.post(
+			"/api/p/:project/publication/stop",
+			validator("json", (value, c) => {
+				const parsed = publicationParams.safeParse(value);
+				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
+			}),
+			async (c) => {
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const { entry, scenario } = c.req.valid("json");
+				return c.json(await publicationJobs.stop({ root: project.root, project: name, entry, scenario }));
+			},
+		)
 		.get("/vendor/react.js", async (c) => {
 			// sandboxed srcdoc frames fetch this from a null origin — CORS must be open
 			c.header("access-control-allow-origin", "*");
@@ -3236,6 +3277,7 @@ export function createDaemonApp({
 	let geometryRevision = 0;
 	let geometryRequest = 0;
 	let geometrySubscribed = false;
+	let publicationConnected = false;
 	function retainedGeometry() {
 		return Object.entries(config.frames).map(([name, geometry]) => ({ name, w: geometry.w, h: geometry.h }));
 	}
@@ -3307,9 +3349,16 @@ export function createDaemonApp({
 				for (const block of blocks) {
 					const raw = block.match(/^data: (.*)$/m)?.[1];
 					if (!raw) continue;
+					if (/^event: hello$/m.test(block)) {
+						if (publicationConnected) window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
+						publicationConnected = true;
+					}
 					try {
 						const change = JSON.parse(raw);
 						if (change.kind === "geometry") void sendGeometry();
+						if (change.kind === "frame" || change.kind === "shared" || change.kind === "geometry") {
+							window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
+						}
 					} catch {}
 				}
 			}

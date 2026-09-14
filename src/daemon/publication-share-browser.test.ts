@@ -108,6 +108,8 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 			if (publishCount === 1) return firstPublish;
 			return result("owner");
 		}),
+		grant: async () => {},
+		stop: async () => {},
 		origin: () => "https://cloud.test",
 	};
 	const daemon = await serveDaemon({
@@ -300,6 +302,17 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	publisher = "owner";
 	await expiringForm.waitForTimeout(300);
 	expect(services.publish).not.toHaveBeenCalled();
+
+	const signedOut = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	publisher = undefined;
+	await signedOut.goto(`${daemon.url}/play/Kaffe?frame=menu`);
+	await signedOut.waitForTimeout(200);
+	expect(await signedOut.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
+	publisher = "owner";
+	await signedOut.evaluate(() => window.dispatchEvent(new Event("focus")));
+	await signedOut.getByRole("button", { name: "Share", exact: true }).waitFor();
+	expect(services.publish).not.toHaveBeenCalled();
+	await signedOut.close();
 
 	const workflow = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await workflow.goto(`${daemon.url}/play/Kaffe?frame=menu`);

@@ -63,6 +63,8 @@ it("keeps publication status and jobs behind control origin and current Cloud ow
 			const owner = publisher ?? "none";
 			return new Promise<PublishResult>((resolve) => pending.push(() => resolve(publicationResult(owner))));
 		}),
+		grant: async () => {},
+		stop: async () => {},
 		origin: () => "https://cloud.test",
 	};
 	const daemon = createDaemonApp({
@@ -76,8 +78,26 @@ it("keeps publication status and jobs behind control origin and current Cloud ow
 	const path = `/api/p/${encodeURIComponent(project.name)}/publication`;
 	const query = "?entry=menu&scenario=default";
 	const control = { "x-spool-control": "control-secret", origin: "http://localhost" };
+	const mutations = [
+		{
+			path: `${path}/grants`,
+			body: { entry: "menu", scenario: "default", email: "alex@example.com", kind: "revoke" },
+		},
+		{ path: `${path}/stop`, body: { entry: "menu", scenario: "default" } },
+	];
 
 	expect((await daemon.app.request(`http://localhost${path}${query}`)).status).toBe(401);
+	for (const mutation of mutations) {
+		expect(
+			(
+				await daemon.app.request(`http://localhost${mutation.path}`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(mutation.body),
+				})
+			).status,
+		).toBe(401);
+	}
 	expect(
 		(
 			await daemon.app.request(`http://localhost${path}${query}`, {
@@ -85,6 +105,20 @@ it("keeps publication status and jobs behind control origin and current Cloud ow
 			})
 		).status,
 	).toBe(401);
+	for (const mutation of mutations) {
+		expect(
+			(
+				await daemon.app.request(`http://localhost${mutation.path}`, {
+					method: "POST",
+					headers: {
+						"x-spool-project": daemon.projectCapability(project.root),
+						"content-type": "application/json",
+					},
+					body: JSON.stringify(mutation.body),
+				})
+			).status,
+		).toBe(401);
+	}
 	expect(
 		(
 			await daemon.app.request(`http://${RENDER_HOST}${path}${query}`, {
@@ -100,6 +134,17 @@ it("keeps publication status and jobs behind control origin and current Cloud ow
 				})
 			).status,
 		).toBe(403);
+		for (const mutation of mutations) {
+			expect(
+				(
+					await daemon.app.request(`http://localhost${mutation.path}`, {
+						method: "POST",
+						headers: { "x-spool-control": "control-secret", origin, "content-type": "application/json" },
+						body: JSON.stringify(mutation.body),
+					})
+				).status,
+			).toBe(403);
+		}
 	}
 	const model = await daemon.app.request(`http://localhost${path}${query}`, { headers: control });
 	expect(await model.json()).toMatchObject({ available: true, entry: "menu", included: ["menu"] });

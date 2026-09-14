@@ -4,16 +4,30 @@ import { cloudOrigin, session } from "../cloud-auth";
 import {
 	type CloudPublication,
 	CloudPublicationFailure,
+	mutatePublicationGrant,
 	publicationStatus,
 	publishWebsite,
+	stopPublication,
 } from "../cloud-publication";
 import { SpoolError } from "../errors";
-import { associationIdentity, readAssociation } from "../publication/associations";
+import {
+	associationIdentity,
+	type PublicationAssociation,
+	readAssociation,
+	readUpdateIntent,
+} from "../publication/associations";
 import { createFlowGraph } from "./flows";
 import { type PublicationReadiness, publicationReadiness } from "./publication-readiness";
 
 const TERMINAL_RETENTION_MS = 30 * 60_000;
 const MAX_RETAINED_JOBS = 64;
+
+export type PublicationAssociationState = "missing" | "incomplete" | "current" | "superseded" | "mismatched";
+export type PublicationSourceState = "current" | "changed" | "unavailable";
+export type PlayerPublication = Pick<
+	CloudPublication,
+	"id" | "url" | "invitedEmails" | "state" | "revision" | "accessGeneration"
+>;
 
 export interface PublicationShareModel {
 	available: boolean;
@@ -23,44 +37,60 @@ export interface PublicationShareModel {
 	included: string[];
 	ready: boolean;
 	diagnostics: PublicationReadiness["diagnostics"];
-	publication?: Pick<CloudPublication, "id" | "url" | "invitedEmails">;
+	association: PublicationAssociationState;
+	source: PublicationSourceState;
+	recipients: string[];
+	publication?: PlayerPublication;
+	problem?: string;
 	job?: PublicationJobView;
 }
 
+export type PublicationJobKind = "create" | "update";
 export type PublicationJobPhase = "capturing" | "uploading" | "sealing" | "activating";
-
 export type PublicationJobView =
-	| { id: string; state: "running"; phase: PublicationJobPhase; email: string }
+	| { id: string; kind: PublicationJobKind; state: "running"; phase: PublicationJobPhase; email?: string }
 	| {
 			id: string;
+			kind: PublicationJobKind;
 			state: "succeeded";
-			publication: Pick<CloudPublication, "id" | "url" | "invitedEmails">;
+			publication: PlayerPublication;
+			source: PublicationSourceState;
 	  }
-	| { id: string; state: "failed"; message: string; retryable: boolean; email: string };
+	| { id: string; kind: PublicationJobKind; state: "failed"; message: string; retryable: boolean; email?: string };
 
 export interface PublicationJobRequest {
 	root: string;
 	project: string;
 	entry: string;
 	scenario: string;
-	email: string;
+	email?: string;
 }
 
+type PublicationStatus = Awaited<ReturnType<typeof publicationStatus>>;
 export interface PublicationJobServices {
 	account(spoolDir: string): Promise<{ publisherId: string }>;
 	readiness(root: string, entry: string): Promise<PublicationReadiness>;
-	status(spoolDir: string, publicationId: string): Promise<Awaited<ReturnType<typeof publicationStatus>>>;
+	status(spoolDir: string, publicationId: string): Promise<PublicationStatus>;
 	publish(options: {
 		spoolDir: string;
 		expectedPublisherId: string;
 		root: string;
 		entry: string;
 		scenario: string;
-		invitedEmails: string[];
+		invitedEmails?: string[];
 		title: string;
 		version: string;
+		publicationId?: string;
 		progress(message: string): void;
 	}): Promise<Awaited<ReturnType<typeof publishWebsite>>>;
+	grant(
+		spoolDir: string,
+		publicationId: string,
+		email: string,
+		kind: "invite" | "revoke",
+		expectedPublisherId: string,
+	): Promise<unknown>;
+	stop(spoolDir: string, publicationId: string, expectedPublisherId: string): Promise<unknown>;
 	origin(): string;
 }
 
@@ -68,9 +98,19 @@ interface RetainedJob {
 	key: string;
 	root: string;
 	publisherId: string;
+	publicationId?: string;
 	view: PublicationJobView;
 	updatedAt: number;
 	running?: Promise<void>;
+}
+interface Inspection {
+	account: { publisherId: string };
+	readiness: PublicationReadiness;
+	identity: ReturnType<typeof associationIdentity>;
+	association?: PublicationAssociation;
+	status?: PublicationStatus;
+	associationState: PublicationAssociationState;
+	problem?: string;
 }
 
 export function createPublicationJobs({
@@ -86,16 +126,17 @@ export function createPublicationJobs({
 }) {
 	const jobs = new Map<string, RetainedJob>();
 	const latest = new Map<string, string>();
+	const statusReads = new Map<string, Promise<PublicationStatus>>();
+	const key = (root: string, entry: string, scenario: string, publisherId: string) =>
+		`${services.origin()}\0${publisherId}\0${realpathSync(resolve(root))}\0${entry}\0${scenario}`;
 
-	function key(root: string, entry: string, scenario: string, publisherId: string): string {
-		return `${services.origin()}\0${publisherId}\0${realpathSync(resolve(root))}\0${entry}\0${scenario}`;
+	function remove(id: string, job: RetainedJob): void {
+		jobs.delete(id);
+		if (latest.get(job.key) === id) latest.delete(job.key);
 	}
-
 	function prune(): void {
 		const cutoff = now() - TERMINAL_RETENTION_MS;
-		for (const [id, job] of jobs) {
-			if (job.view.state !== "running" && job.updatedAt < cutoff) remove(id, job);
-		}
+		for (const [id, job] of jobs) if (job.view.state !== "running" && job.updatedAt < cutoff) remove(id, job);
 		if (jobs.size <= MAX_RETAINED_JOBS) return;
 		const terminal = [...jobs.entries()]
 			.filter(([, job]) => job.view.state !== "running")
@@ -105,7 +146,6 @@ export function createPublicationJobs({
 			remove(id, job);
 		}
 	}
-
 	function reserveSlot(): void {
 		if (jobs.size < MAX_RETAINED_JOBS) return;
 		const terminal = [...jobs.entries()]
@@ -115,22 +155,27 @@ export function createPublicationJobs({
 			remove(id, job);
 			if (jobs.size < MAX_RETAINED_JOBS) return;
 		}
-		throw new SpoolError("Too many links are being created. Try again when one finishes.");
+		throw new SpoolError("Too many links are being published. Try again when one finishes.");
 	}
-
-	function remove(id: string, job: RetainedJob): void {
-		jobs.delete(id);
-		if (latest.get(job.key) === id) latest.delete(job.key);
-	}
-
-	function recent(root: string, entry: string, scenario: string, publisherId: string): PublicationJobView | undefined {
+	function recent(root: string, entry: string, scenario: string, publisherId: string): RetainedJob | undefined {
 		prune();
 		const id = latest.get(key(root, entry, scenario, publisherId));
-		return id === undefined ? undefined : jobs.get(id)?.view;
+		return id === undefined ? undefined : jobs.get(id);
 	}
-
-	async function model(request: Omit<PublicationJobRequest, "email">): Promise<PublicationShareModel> {
-		const unavailable = {
+	async function readStatus(identityKey: string, publicationId: string): Promise<PublicationStatus> {
+		const statusKey = `${identityKey}\0${publicationId}`;
+		const current = statusReads.get(statusKey);
+		if (current !== undefined) return current;
+		const pending = services.status(spoolDir, publicationId);
+		statusReads.set(statusKey, pending);
+		try {
+			return await pending;
+		} finally {
+			if (statusReads.get(statusKey) === pending) statusReads.delete(statusKey);
+		}
+	}
+	function unavailable(request: Omit<PublicationJobRequest, "email">): PublicationShareModel {
+		return {
 			available: false,
 			title: request.project,
 			entry: request.entry,
@@ -138,75 +183,11 @@ export function createPublicationJobs({
 			included: [],
 			ready: false,
 			diagnostics: [],
+			association: "missing",
+			source: "unavailable",
+			recipients: [],
 		};
-		let account: { publisherId: string };
-		try {
-			account = await services.account(spoolDir);
-		} catch {
-			return unavailable;
-		}
-		const readiness = await services.readiness(request.root, request.entry);
-		if (!(await isCurrentPublisher(account.publisherId))) return unavailable;
-		const observed = recent(request.root, request.entry, request.scenario, account.publisherId);
-		const base = {
-			...unavailable,
-			included: readiness.included,
-			ready: readiness.ok,
-			diagnostics: readiness.diagnostics,
-			...(observed === undefined ? {} : { job: observed }),
-		};
-		const association = readAssociation(
-			spoolDir,
-			associationIdentity(
-				spoolDir,
-				services.origin(),
-				account.publisherId,
-				request.root,
-				request.entry,
-				request.scenario,
-			),
-		);
-		if (association?.publicationId === undefined) return { ...base, available: true };
-		try {
-			const current = await services.status(spoolDir, association.publicationId);
-			if (!(await isCurrentPublisher(account.publisherId))) return unavailable;
-			return {
-				...base,
-				available: true,
-				publication: pickPublication(current.publication),
-			};
-		} catch {
-			return (await isCurrentPublisher(account.publisherId)) ? { ...base, available: true } : unavailable;
-		}
 	}
-
-	async function start(request: PublicationJobRequest): Promise<PublicationJobView> {
-		prune();
-		const account = await services.account(spoolDir);
-		const readiness = await services.readiness(request.root, request.entry);
-		if (!(await isCurrentPublisher(account.publisherId)))
-			throw new SpoolError("Cloud account changed before the link could be created. Try again.");
-		if (!readiness.ok) throw new SpoolError("This prototype is not ready to share.");
-		const jobKey = key(request.root, request.entry, request.scenario, account.publisherId);
-		const existingId = latest.get(jobKey);
-		const existing = existingId === undefined ? undefined : jobs.get(existingId);
-		if (existing?.view.state === "running") return existing.view;
-		reserveSlot();
-
-		const id = crypto.randomUUID();
-		const job: RetainedJob = {
-			key: jobKey,
-			root: realpathSync(resolve(request.root)),
-			publisherId: account.publisherId,
-			view: { id, state: "running", phase: "capturing", email: request.email },
-			updatedAt: now(),
-		};
-		jobs.set(id, job);
-		latest.set(jobKey, id);
-		job.running = run(job, request);
-		return job.view;
-	}
-
 	async function isCurrentPublisher(expected: string): Promise<boolean> {
 		try {
 			return (await services.account(spoolDir)).publisherId === expected;
@@ -214,8 +195,192 @@ export function createPublicationJobs({
 			return false;
 		}
 	}
+	async function inspect(
+		request: Omit<PublicationJobRequest, "email">,
+		account?: { publisherId: string },
+	): Promise<Inspection | undefined> {
+		let current = account;
+		try {
+			current ??= await services.account(spoolDir);
+		} catch {
+			return;
+		}
+		const readiness = await services.readiness(request.root, request.entry);
+		if (!(await isCurrentPublisher(current.publisherId))) return;
+		const identity = associationIdentity(
+			spoolDir,
+			services.origin(),
+			current.publisherId,
+			request.root,
+			request.entry,
+			request.scenario,
+		);
+		const association = readAssociation(spoolDir, identity);
+		if (association === undefined) return { account: current, readiness, identity, associationState: "missing" };
+		if (association.supersededBy !== undefined)
+			return {
+				account: current,
+				readiness,
+				identity,
+				association,
+				associationState: "superseded",
+				problem: "This local publication association was rebound elsewhere. Use the CLI to target it deliberately.",
+			};
+		if (association.publicationId === undefined)
+			return { account: current, readiness, identity, association, associationState: "incomplete" };
+		let status: PublicationStatus;
+		try {
+			status = await readStatus(
+				key(request.root, request.entry, request.scenario, current.publisherId),
+				association.publicationId,
+			);
+		} catch {
+			if (!(await isCurrentPublisher(current.publisherId))) return;
+			return {
+				account: current,
+				readiness,
+				identity,
+				association,
+				associationState: association.binding === undefined ? "incomplete" : "current",
+				problem: "Sharing could not be checked. Try again.",
+			};
+		}
+		if (!(await isCurrentPublisher(current.publisherId))) return;
+		if (
+			status.publication.id !== association.publicationId ||
+			status.publication.ownerId !== current.publisherId ||
+			status.publication.entry !== identity.entry ||
+			status.publication.scenario !== identity.scenario
+		)
+			return {
+				account: current,
+				readiness,
+				identity,
+				association,
+				status,
+				associationState: "mismatched",
+				problem:
+					"This local publication association no longer matches the remote entry or scenario. Use the CLI to rebind it deliberately.",
+			};
+		return {
+			account: current,
+			readiness,
+			identity,
+			association,
+			status,
+			associationState: association.binding === undefined ? "incomplete" : "current",
+		};
+	}
 
-	async function run(job: RetainedJob, request: PublicationJobRequest): Promise<void> {
+	async function model(request: Omit<PublicationJobRequest, "email">): Promise<PublicationShareModel> {
+		const checked = await inspect(request);
+		if (checked === undefined) return unavailable(request);
+		const observed = recent(request.root, request.entry, request.scenario, checked.account.publisherId);
+		const remote = checked.status?.publication;
+		const source =
+			checked.associationState === "current" ? (checked.status?.localSource ?? "unavailable") : "unavailable";
+		const recipients = remote?.invitedEmails ?? checked.association?.intent.invitedEmails ?? [];
+		const relevant = relevantJob(checked, observed, source);
+		return {
+			available: true,
+			title: request.project,
+			entry: request.entry,
+			scenario: request.scenario,
+			included: checked.readiness.included,
+			ready: checked.readiness.ok,
+			diagnostics: checked.readiness.diagnostics,
+			association: checked.associationState,
+			source,
+			recipients,
+			...(remote === undefined ? {} : { publication: pickPublication(remote) }),
+			...(checked.problem === undefined ? {} : { problem: checked.problem }),
+			...(relevant === undefined ? {} : { job: relevant }),
+		};
+	}
+	function relevantJob(
+		checked: Inspection,
+		observed: RetainedJob | undefined,
+		source: PublicationSourceState,
+	): PublicationJobView | undefined {
+		const view = observed?.view;
+		if (view?.state === "running") return view;
+		if (
+			view?.state === "failed" &&
+			((view.kind === "create" && checked.status === undefined && checked.associationState !== "current") ||
+				(view.kind === "update" &&
+					checked.status?.publication.state === "active" &&
+					source !== "current" &&
+					observed?.publicationId === checked.association?.publicationId))
+		)
+			return view;
+		const association = checked.association;
+		const status = checked.status;
+		if (association === undefined || status === undefined) return;
+		const pending = readUpdateIntent(spoolDir, checked.identity, association.publicationId);
+		const intent = pending ?? (association.binding === undefined ? association : undefined);
+		if (intent === undefined || status.operation?.id !== intent.intent.operationId) return;
+		const kind: PublicationJobKind = intent.intent.kind;
+		const label = kind === "update" ? "update" : "link";
+		const message =
+			status.operation.error?.message ??
+			(status.operation.state === "succeeded"
+				? `The ${label} needs to be finished. Try again.`
+				: `The ${label} was interrupted. Try again.`);
+		return {
+			id: status.operation.id,
+			kind,
+			state: "failed",
+			message,
+			retryable: true,
+			...(intent.intent.invitedEmails[0] === undefined ? {} : { email: intent.intent.invitedEmails[0] }),
+		};
+	}
+
+	async function start(request: PublicationJobRequest): Promise<PublicationJobView> {
+		prune();
+		const checked = await inspect(request);
+		if (checked === undefined)
+			throw new SpoolError("Cloud account changed before the link could be published. Try again.");
+		if (!checked.readiness.ok) throw new SpoolError("This prototype is not ready to share.");
+		if (checked.associationState === "superseded" || checked.associationState === "mismatched")
+			throw new SpoolError(checked.problem ?? "This publication must be reconnected deliberately.");
+		if (checked.association?.publicationId !== undefined && checked.status === undefined)
+			throw new SpoolError(checked.problem ?? "Sharing could not be checked. Try again.");
+		const remote = checked.status?.publication;
+		const publicationId = remote?.id ?? checked.association?.publicationId;
+		const kind: PublicationJobKind = publicationId === undefined ? "create" : "update";
+		const email = request.email?.trim();
+		const recipients = remote?.invitedEmails ?? checked.association?.intent.invitedEmails ?? [];
+		if (kind === "create" && recipients.length === 0 && !validEmail(email))
+			throw new SpoolError("Enter the person’s email address.");
+		if (email !== undefined && email !== "" && !validEmail(email))
+			throw new SpoolError("Enter the person’s email address.");
+		const jobKey = key(request.root, request.entry, request.scenario, checked.account.publisherId);
+		const existingId = latest.get(jobKey);
+		const existing = existingId === undefined ? undefined : jobs.get(existingId);
+		if (existing?.view.state === "running") return existing.view;
+		reserveSlot();
+		const id = crypto.randomUUID();
+		const job: RetainedJob = {
+			key: jobKey,
+			root: realpathSync(resolve(request.root)),
+			publisherId: checked.account.publisherId,
+			...(publicationId === undefined ? {} : { publicationId }),
+			view: {
+				id,
+				kind,
+				state: "running",
+				phase: "capturing",
+				...(email === undefined || email === "" ? {} : { email }),
+			},
+			updatedAt: now(),
+		};
+		jobs.set(id, job);
+		latest.set(jobKey, id);
+		job.running = run(job, request, email);
+		return job.view;
+	}
+	async function run(job: RetainedJob, request: PublicationJobRequest, email: string | undefined): Promise<void> {
 		try {
 			const result = await services.publish({
 				spoolDir,
@@ -223,25 +388,43 @@ export function createPublicationJobs({
 				root: request.root,
 				entry: request.entry,
 				scenario: request.scenario,
-				invitedEmails: [request.email],
+				...(email === undefined || email === "" ? {} : { invitedEmails: [email] }),
 				title: request.project,
 				version,
+				...(job.publicationId === undefined ? {} : { publicationId: job.publicationId }),
 				progress: (message) => {
 					if (job.view.state !== "running") return;
-					job.view = { id: job.view.id, state: "running", phase: phaseOf(message), email: job.view.email };
+					job.view = {
+						id: job.view.id,
+						kind: job.view.kind,
+						state: "running",
+						phase: phaseOf(message),
+						...(job.view.email === undefined ? {} : { email: job.view.email }),
+					};
 					job.updatedAt = now();
 				},
 			});
-			if (result.publication.ownerId !== job.publisherId)
-				throw new SpoolError("Cloud account changed while the link was being created. Try again.");
-			job.view = { id: job.view.id, state: "succeeded", publication: pickPublication(result.publication) };
-		} catch (error) {
+			if (result.publisherId !== job.publisherId || result.publication.ownerId !== job.publisherId)
+				throw new SpoolError("Cloud account changed while the link was being published. Try again.");
+			if (job.publicationId !== undefined && result.publication.id !== job.publicationId)
+				throw new SpoolError("The publication changed while the link was being published. Try again.");
 			job.view = {
 				id: job.view.id,
+				kind: job.view.kind,
+				state: "succeeded",
+				publication: pickPublication(result.publication),
+				source: result.localSource,
+			};
+		} catch (error) {
+			const kind = job.view.kind;
+			const heldEmail = "email" in job.view ? job.view.email : undefined;
+			job.view = {
+				id: job.view.id,
+				kind,
 				state: "failed",
-				message: error instanceof Error ? error.message : "The link could not be created. Try again.",
-				retryable: !(error instanceof CloudPublicationFailure) || error.detail.retryable,
-				email: request.email,
+				message: error instanceof Error ? error.message : "The link could not be published. Try again.",
+				retryable: kind === "update" || !(error instanceof CloudPublicationFailure) || error.detail.retryable,
+				...(heldEmail === undefined ? {} : { email: heldEmail }),
 			};
 		} finally {
 			job.updatedAt = now();
@@ -250,21 +433,65 @@ export function createPublicationJobs({
 		}
 	}
 
+	async function mutablePublication(
+		request: Omit<PublicationJobRequest, "email">,
+		requireActive: boolean,
+	): Promise<Inspection & { status: PublicationStatus }> {
+		const checked = await inspect(request);
+		if (checked === undefined) throw new SpoolError("Cloud account changed. Try again.");
+		if (checked.associationState !== "current" || checked.status === undefined)
+			throw new SpoolError(checked.problem ?? "This publication must be reconnected deliberately.");
+		if (requireActive && checked.status.publication.state !== "active")
+			throw new SpoolError("This link is not currently shared.");
+		if (!(await isCurrentPublisher(checked.account.publisherId)))
+			throw new SpoolError("Cloud account changed. Try again.");
+		return { ...checked, status: checked.status };
+	}
+	async function freshPublication(
+		request: Omit<PublicationJobRequest, "email">,
+		publisherId: string,
+		publicationId: string,
+	): Promise<PlayerPublication> {
+		const current = await readStatus(key(request.root, request.entry, request.scenario, publisherId), publicationId);
+		if (!(await isCurrentPublisher(publisherId)) || current.publication.ownerId !== publisherId)
+			throw new SpoolError("Cloud account changed. Try again.");
+		if (current.publication.entry !== request.entry || current.publication.scenario !== request.scenario)
+			throw new SpoolError("This publication must be reconnected deliberately.");
+		return pickPublication(current.publication);
+	}
+	async function grant(
+		request: Omit<PublicationJobRequest, "email"> & { email: string; kind: "invite" | "revoke" },
+	): Promise<PlayerPublication> {
+		const checked = await mutablePublication(request, request.kind === "invite");
+		if (!validEmail(request.email)) throw new SpoolError("Enter the person’s email address.");
+		await services.grant(
+			spoolDir,
+			checked.status.publication.id,
+			request.email,
+			request.kind,
+			checked.account.publisherId,
+		);
+		return freshPublication(request, checked.account.publisherId, checked.status.publication.id);
+	}
+	async function stop(request: Omit<PublicationJobRequest, "email">): Promise<PlayerPublication> {
+		const checked = await mutablePublication(request, true);
+		await services.stop(spoolDir, checked.status.publication.id, checked.account.publisherId);
+		return freshPublication(request, checked.account.publisherId, checked.status.publication.id);
+	}
 	async function read(root: string, id: string): Promise<PublicationJobView | undefined> {
 		prune();
 		let account: { publisherId: string };
 		try {
 			account = await services.account(spoolDir);
 		} catch {
-			return undefined;
+			return;
 		}
 		const job = jobs.get(id);
 		return job !== undefined && job.root === realpathSync(resolve(root)) && job.publisherId === account.publisherId
 			? job.view
 			: undefined;
 	}
-
-	return { model, start, read };
+	return { model, start, read, grant, stop };
 }
 
 function defaultServices(): PublicationJobServices {
@@ -274,17 +501,29 @@ function defaultServices(): PublicationJobServices {
 		readiness: (root, entry) => publicationReadiness(createFlowGraph(), root, entry),
 		status: (spoolDir, publicationId) => publicationStatus(spoolDir, publicationId, { origin: origin() }),
 		publish: (options) => publishWebsite({ ...options, origin: origin() }),
+		grant: (spoolDir, publicationId, email, kind, expectedPublisherId) =>
+			mutatePublicationGrant(spoolDir, publicationId, email, kind, { origin: origin(), expectedPublisherId }),
+		stop: (spoolDir, publicationId, expectedPublisherId) =>
+			stopPublication(spoolDir, publicationId, { origin: origin(), expectedPublisherId }),
 		origin,
 	};
 }
-
-function pickPublication(publication: CloudPublication): Pick<CloudPublication, "id" | "url" | "invitedEmails"> {
-	return { id: publication.id, url: publication.url, invitedEmails: publication.invitedEmails };
+function pickPublication(publication: CloudPublication): PlayerPublication {
+	return {
+		id: publication.id,
+		url: publication.url,
+		invitedEmails: publication.invitedEmails,
+		state: publication.state,
+		revision: publication.revision,
+		accessGeneration: publication.accessGeneration,
+	};
 }
-
 function phaseOf(message: string): PublicationJobPhase {
 	if (message.startsWith("uploading")) return "uploading";
 	if (message.startsWith("sealing")) return "sealing";
 	if (message.startsWith("activating")) return "activating";
 	return "capturing";
+}
+function validEmail(value: string | undefined): value is string {
+	return value !== undefined && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value);
 }

@@ -76,6 +76,8 @@ describe("daemon publication jobs", () => {
 				throw new Error("not reached");
 			},
 			publish: async () => publishResult("owner-a"),
+			grant: async () => {},
+			stop: async () => {},
 			origin: () => "https://cloud.test",
 		};
 		const jobs = createPublicationJobs({ spoolDir, version: "test", services });
@@ -119,6 +121,8 @@ describe("daemon publication jobs", () => {
 				publishes.set(owner, pending);
 				return pending.promise;
 			}),
+			grant: async () => {},
+			stop: async () => {},
 			origin: () => "https://cloud.test",
 		};
 		const jobs = createPublicationJobs({ spoolDir, version: "test", services });
@@ -165,6 +169,8 @@ describe("daemon publication jobs", () => {
 				throw new Error("no publication");
 			},
 			publish: async () => publishResult("owner"),
+			grant: async () => {},
+			stop: async () => {},
 			origin: () => "https://cloud.test",
 		};
 		const jobs = createPublicationJobs({ spoolDir, version: "test", services, now: () => now });
