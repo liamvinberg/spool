@@ -29,3 +29,19 @@ export function bundledCli(resourcesPath: string): string | undefined {
 export function bundledShim(resourcesPath: string): string {
 	return join(resourcesPath, "shim", "electron-argv.js");
 }
+
+export function cloudCommand(
+	execPath: string,
+	resourcesPath: string,
+	directory: string,
+	command: "login" | "logout",
+	env: NodeJS.ProcessEnv,
+): { command: string; args: string[]; env: NodeJS.ProcessEnv } | undefined {
+	const cli = bundledCli(resourcesPath);
+	if (cli === undefined) return undefined;
+	return {
+		command: execPath,
+		args: ["-r", bundledShim(resourcesPath), cli, command],
+		env: { ...env, ELECTRON_RUN_AS_NODE: "1", SPOOL_DIR: directory },
+	};
+}

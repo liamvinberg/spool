@@ -29,7 +29,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
-import { bundledCli, bundledShim } from "./runtime";
+import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import {
 	CHECK_INTERVAL_MS,
 	checkCachePath,
@@ -1133,14 +1133,14 @@ function tell(message: string, detail: string, type: "info" | "warning" | "error
 }
 
 async function cloudAccount(command: "login" | "logout"): Promise<void> {
-	const cli = bundledCli(process.resourcesPath);
-	if (cli === undefined) {
+	const spec = cloudCommand(process.execPath, process.resourcesPath, DIRECTORY, command, process.env);
+	if (spec === undefined) {
 		tell("This copy of Spool cannot open its account.", "Download Spool again from the releases page.", "error");
 		return;
 	}
 	const result = await new Promise<{ code: number; stderr: string }>((done) => {
-		const child = spawn(process.execPath, ["-r", bundledShim(process.resourcesPath), cli, command], {
-			env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SPOOL_DIR: DIRECTORY },
+		const child = spawn(spec.command, spec.args, {
+			env: spec.env,
 			stdio: ["ignore", "ignore", "pipe"],
 		});
 		let stderr = "";
