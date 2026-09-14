@@ -100,7 +100,10 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 		const timer = window.setTimeout(() => {
 			void client.job(job.id).then(
 				(next) => {
-					if (request !== freshness.current) return;
+					if (request !== freshness.current) {
+						if (next.state !== "running") void refresh();
+						return;
+					}
 					setJob(next);
 					if (next.state === "failed") setProblem(next.message);
 					if (next.state === "succeeded") {

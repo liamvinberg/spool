@@ -160,13 +160,36 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	}
 	await page.getByRole("button", { name: "Update link", exact: true }).click();
 	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
+	const heldRefresh = deferred<{
+		publication: CloudPublication;
+		operations: [];
+		nextCursor: null;
+		localSource: "current";
+	}>();
+	let updateRefreshes = 0;
+	services.status = vi.fn(async () => {
+		updateRefreshes += 1;
+		if (updateRefreshes === 1) return heldRefresh.promise;
+		return { publication: current, operations: [], nextCursor: null, localSource: "changed" as const };
+	});
+	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
+	await expect.poll(() => updateRefreshes).toBe(1);
 	current = {
 		...current,
 		revision: 2,
 		currentVersion: { id: "version-2", contentIdentity: "b".repeat(64) },
 	};
 	publishes[0]?.resolve(publishResult(current, "changed"));
+	await page.waitForTimeout(350);
+	heldRefresh.resolve({ publication: current, operations: [], nextCursor: null, localSource: "current" });
 	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
+	expect(updateRefreshes).toBe(2);
+	services.status = vi.fn(async () => ({
+		publication: current,
+		operations: [],
+		nextCursor: null,
+		localSource: source,
+	}));
 	await page.getByRole("button", { name: "Update link", exact: true }).click();
 	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
 	current = {
