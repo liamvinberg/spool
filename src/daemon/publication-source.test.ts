@@ -163,7 +163,7 @@ describe("publication source attribution", () => {
 		);
 		expect(declared.diagnostics).toMatchObject([{ code: "links-disagree", frame: "start" }]);
 	});
-	it("supports props object reads and keeps missing or complex forwarding unknown", async () => {
+	it("supports props object reads and recognizes directly omitted destinations", async () => {
 		const shared = { "shared/ui/nav.tsx": "export function Nav(props) { return <a data-go={props.target}/>; }" };
 		const inferred = await check(
 			'import { Nav } from "shared/ui/nav"; export default () => <Nav target="next"/>;',
@@ -175,7 +175,8 @@ describe("publication source attribution", () => {
 			'import { Nav } from "shared/ui/nav"; export default () => <><Nav target="next"/><Nav/></>;',
 			shared,
 		);
-		expect(missing.diagnostics[0]?.code).toBe("navigation-unreadable");
+		expect(missing.ok).toBe(true);
+		expect(missing.included).toEqual(["start", "next"]);
 	});
 	it("leaves imported image and text validation to the compiler", async () => {
 		const result = await check(
