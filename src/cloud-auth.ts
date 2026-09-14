@@ -78,7 +78,7 @@ async function security(
 		child.stderr.on("data", (part: string) => (stderr += part));
 		child.on("error", fail);
 		child.on("close", (code) => done({ code: code ?? 1, stdout, stderr }));
-		if (input !== undefined) child.stdin?.end(`${input}\n`);
+		if (input !== undefined) child.stdin?.end(input);
 	});
 }
 
@@ -111,6 +111,8 @@ export function keychainVault(spoolDir: string, origin = CLOUD_ORIGIN): Vault {
 				throw unavailable();
 			}
 			if (result.code !== 0) throw unavailable();
+			const stored = await security(["find-generic-password", "-a", account, "-s", service, "-w"]);
+			if (stored.code !== 0 || stored.stdout.trim() !== token) throw unavailable();
 		},
 		async delete() {
 			let result: Awaited<ReturnType<typeof security>>;
@@ -225,6 +227,7 @@ export async function session(spoolDir: string, options: AuthOptions = {}): Prom
 	try {
 		response = await (options.fetch ?? fetch)(new URL("/auth/publisher/session", origin), {
 			headers: { authorization: `Bearer ${token}` },
+			signal: AbortSignal.timeout(10_000),
 		});
 	} catch {
 		throw new SpoolError("spool.page could not be reached; local spool is still available");
@@ -248,6 +251,7 @@ export async function logout(
 			const response = await (options.fetch ?? fetch)(new URL("/auth/publisher/logout", origin), {
 				method: "POST",
 				headers: { authorization: `Bearer ${token}` },
+				signal: AbortSignal.timeout(10_000),
 			});
 			if (response.ok) remote = "revoked";
 		}
