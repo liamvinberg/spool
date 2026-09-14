@@ -50,6 +50,22 @@ export type CloudOperation = z.infer<typeof operation>;
 export type CloudOperationResponse = z.infer<typeof operationResponse>;
 export type PublishResult = CloudOperationResponse & { localSource: "current" | "changed" | "unavailable" };
 
+const grant = z.strictObject({ email: z.string(), active: z.boolean(), generation: z.number().int().positive() });
+const grantMutation = z.strictObject({
+	operation: z.strictObject({
+		id: z.string().uuid(),
+		kind: z.enum(["invite", "revoke"]),
+		state: z.literal("succeeded"),
+		result: z.strictObject({
+			publicationId: z.string(),
+			grant,
+			changed: z.boolean(),
+		}),
+	}),
+	currentGrant: grant,
+});
+export type GrantMutation = z.infer<typeof grantMutation>;
+
 export class CloudPublicationFailure extends SpoolError {
 	constructor(
 		message: string,
@@ -249,6 +265,62 @@ export async function publicationStatus(
 	};
 }
 
+export async function mutatePublicationGrant(
+	spoolDir: string,
+	publicationId: string,
+	email: string,
+	kind: "invite" | "revoke",
+	options: AuthOptions = {},
+): Promise<GrantMutation> {
+	const cloudOptions = { ...options, origin: options.origin ?? cloudOrigin(process.env) };
+	await session(spoolDir, cloudOptions);
+	const normalized = normalizeGrantMailbox(email);
+	const operationId = crypto.randomUUID();
+	const path = `/api/publications/${encodeURIComponent(publicationId)}/${kind}`;
+	const init: RequestInit = {
+		method: "POST",
+		headers: { "content-type": "application/json", "idempotency-key": operationId },
+		body: JSON.stringify({ email: normalized }),
+	};
+	try {
+		let response: unknown;
+		for (let attempt = 1; ; attempt++) {
+			try {
+				response = await requestJson(spoolDir, path, init, cloudOptions, 1);
+				break;
+			} catch (error) {
+				const retryableTransport = error instanceof CloudRequestFailure;
+				const retryableService =
+					error instanceof CloudPublicationFailure &&
+					error.detail.retryable &&
+					error.detail.retryAfter === undefined;
+				if (attempt >= 3 || (!retryableTransport && !retryableService)) throw error;
+			}
+		}
+		const result = grantMutation.parse(response);
+		if (
+			result.operation.id !== operationId ||
+			result.operation.kind !== kind ||
+			result.operation.result.publicationId !== publicationId ||
+			result.operation.result.grant.email !== normalized
+		)
+			throw new SpoolError("spool.page returned a different invitation operation");
+		return result;
+	} catch (error) {
+		if (error instanceof CloudRequestFailure) {
+			throw new CloudPublicationFailure(error.message, {
+				code: error.code,
+				retryable: error.retryable,
+				operationId,
+			});
+		}
+		if (error instanceof CloudPublicationFailure) {
+			throw new CloudPublicationFailure(error.message, { ...error.detail, operationId });
+		}
+		throw error;
+	}
+}
+
 async function createOrRecover(
 	spoolDir: string,
 	association: ReturnType<typeof claimAssociation>,
@@ -347,8 +419,14 @@ class CloudApiError extends CloudPublicationFailure {
 		super(message, { code, retryable, ...(retryAfter === undefined ? {} : { retryAfter }) });
 	}
 }
-async function requestJson(spoolDir: string, path: string, init: RequestInit, options: AuthOptions): Promise<unknown> {
-	for (let attempt = 1; attempt <= 3; attempt++) {
+async function requestJson(
+	spoolDir: string,
+	path: string,
+	init: RequestInit,
+	options: AuthOptions,
+	maxAttempts = 3,
+): Promise<unknown> {
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		const response = await authorizedCloudRequest(spoolDir, path, init, options);
 		let value: unknown = {};
 		try {
@@ -363,7 +441,7 @@ async function requestJson(spoolDir: string, path: string, init: RequestInit, op
 		const retryAfter = retrySeconds(body.retryAfter, response.headers.get("retry-after"));
 		if (
 			(response.status === 429 || response.status === 503) &&
-			attempt < 3 &&
+			attempt < maxAttempts &&
 			retryAfter !== undefined &&
 			retryAfter <= 10
 		) {
@@ -393,6 +471,12 @@ function normalizeMailbox(value: string): string {
 	const trimmed = value.trim();
 	const at = trimmed.lastIndexOf("@");
 	return at < 1 ? trimmed : `${trimmed.slice(0, at)}@${trimmed.slice(at + 1).toLowerCase()}`;
+}
+function normalizeGrantMailbox(value: string): string {
+	const normalized = normalizeMailbox(value);
+	if (normalized.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized))
+		throw new SpoolError("recipient must be a valid email address");
+	return normalized;
 }
 function readOperation(value: unknown, operationId: string, contentIdentity?: string): CloudOperationResponse {
 	const parsed = operationResponse.parse(value);

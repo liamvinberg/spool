@@ -9,7 +9,13 @@ import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
 import { CloudRequestFailure, cloudOrigin, login, logout } from "./cloud-auth";
-import { CloudPublicationFailure, listPublications, publicationStatus, publishWebsite } from "./cloud-publication";
+import {
+	CloudPublicationFailure,
+	listPublications,
+	mutatePublicationGrant,
+	publicationStatus,
+	publishWebsite,
+} from "./cloud-publication";
 import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
@@ -149,6 +155,19 @@ cloud
 	.action(async (publication: string) => {
 		await cloudJson(() => publicationStatus(spoolDir, publication, { origin: cloudOrigin(process.env) }));
 	});
+
+for (const kind of ["invite", "revoke"] as const) {
+	cloud
+		.command(kind)
+		.description(`${kind} a publication recipient`)
+		.argument("<publication>", "publication id")
+		.argument("<email>", "recipient email")
+		.action(async (publication: string, email: string) => {
+			await cloudJson(() =>
+				mutatePublicationGrant(spoolDir, publication, email, kind, { origin: cloudOrigin(process.env) }),
+			);
+		});
+}
 
 program
 	.command("init")

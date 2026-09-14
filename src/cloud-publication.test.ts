@@ -2,7 +2,13 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CloudVault } from "./cloud-auth";
-import { CloudPublicationFailure, listPublications, publicationStatus, publishWebsite } from "./cloud-publication";
+import {
+	CloudPublicationFailure,
+	listPublications,
+	mutatePublicationGrant,
+	publicationStatus,
+	publishWebsite,
+} from "./cloud-publication";
 import { makeProject, makeTempDir, writeFrame } from "./test-helpers";
 
 const vault: CloudVault = { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} };
@@ -108,6 +114,78 @@ function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boo
 }
 
 describe("Cloud publication client", () => {
+	it("mutates an exact mailbox with a stable operation identity", async () => {
+		const calls: { path: string; body: string; operation: string }[] = [];
+		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+			const path = new URL(typeof input === "string" || input instanceof URL ? input : input.url).pathname;
+			if (path === "/auth/publisher/session")
+				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "session" });
+			const operation = new Headers(init?.headers).get("idempotency-key") ?? "";
+			calls.push({ path, body: String(init?.body), operation });
+			return Response.json({
+				operation: {
+					id: operation,
+					kind: "invite",
+					state: "succeeded",
+					result: {
+						publicationId: "publication",
+						grant: { email: "Alex+demo@example.com", active: true, generation: 2 },
+						changed: true,
+					},
+				},
+				currentGrant: { email: "Alex+demo@example.com", active: true, generation: 2 },
+			});
+		};
+		await expect(
+			mutatePublicationGrant(makeTempDir(), "publication", "  Alex+demo@Example.COM ", "invite", {
+				origin: "https://cloud.test",
+				vault,
+				fetch,
+			}),
+		).resolves.toMatchObject({ operation: { kind: "invite", result: { changed: true } } });
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.path).toBe("/api/publications/publication/invite");
+		expect(calls[0]?.body).toBe('{"email":"Alex+demo@example.com"}');
+		expect(calls[0]?.operation).toMatch(/^[0-9a-f-]{36}$/u);
+	});
+
+	it("retries interrupted grant transport with the same operation id", async () => {
+		let attempts = 0;
+		const ids: string[] = [];
+		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+			const path = new URL(typeof input === "string" || input instanceof URL ? input : input.url).pathname;
+			if (path === "/auth/publisher/session")
+				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "session" });
+			attempts++;
+			const id = new Headers(init?.headers).get("idempotency-key") ?? "";
+			ids.push(id);
+			if (attempts === 1)
+				return Response.json(
+					{ error: "service_unavailable", message: "try later", retryable: true },
+					{ status: 503 },
+				);
+			if (attempts === 2) throw new Error("socket contained a secret");
+			const grant = { email: "viewer@example.com", active: false, generation: 1 };
+			return Response.json({
+				operation: {
+					id,
+					kind: "revoke",
+					state: "succeeded",
+					result: { publicationId: "publication", grant, changed: false },
+				},
+				currentGrant: grant,
+			});
+		};
+		await expect(
+			mutatePublicationGrant(makeTempDir(), "publication", "viewer@example.com", "revoke", {
+				origin: "https://cloud.test",
+				vault,
+				fetch,
+			}),
+		).resolves.toMatchObject({ operation: { result: { changed: false } } });
+		expect(ids).toHaveLength(3);
+		expect(new Set(ids).size).toBe(1);
+	});
 	it("uploads the exact captured inventory and recovers a lost activation response", async () => {
 		const spoolDir = makeTempDir();
 		const { root } = makeProject(spoolDir);

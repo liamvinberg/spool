@@ -49,6 +49,9 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 	let missing: number[] = [];
 	let state: "uploading" | "sealed" | "succeeded" = "uploading";
 	let wire = "";
+	const grantOperations: string[] = [];
+	let failGrantTransport = false;
+	let failedGrantRequests = 0;
 	const publication = () => ({
 		id: "publication",
 		projectId,
@@ -125,6 +128,35 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 				return response.end(JSON.stringify({ publications: [publication()], nextCursor: null }));
 			if (request.url === "/api/publications/publication")
 				return response.end(JSON.stringify({ publication: publication() }));
+			if (
+				/^\/api\/publications\/publication\/(invite|revoke)$/u.test(request.url ?? "") &&
+				request.method === "POST"
+			) {
+				const id = String(request.headers["idempotency-key"]);
+				grantOperations.push(id);
+				if (failGrantTransport) {
+					failedGrantRequests++;
+					request.socket.destroy();
+					return;
+				}
+				const kind = request.url?.endsWith("/invite") ? "invite" : "revoke";
+				const grant = {
+					email: "Alex+viewer@example.com",
+					active: kind === "invite",
+					generation: kind === "invite" ? 2 : 3,
+				};
+				return response.end(
+					JSON.stringify({
+						operation: {
+							id,
+							kind,
+							state: "succeeded",
+							result: { publicationId: "publication", grant, changed: true },
+						},
+						currentGrant: grant,
+					}),
+				);
+			}
 			response.statusCode = 404;
 			response.end(JSON.stringify({ error: "not_found", message: "not found", retryable: false }));
 		},
@@ -158,6 +190,35 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 			operation: { id: operationId, state: "succeeded" },
 			localSource: "current",
 		});
+		const invited = await spoolAsync(
+			["cloud", "invite", "publication", " Alex+viewer@Example.COM "],
+			home,
+			root,
+			env,
+		);
+		expect(invited.status, invited.stderr).toBe(0);
+		expect(JSON.parse(invited.stdout)).toMatchObject({
+			operation: { id: grantOperations[0], kind: "invite", result: { changed: true } },
+			currentGrant: { email: "Alex+viewer@example.com", active: true },
+		});
+		const revoked = await spoolAsync(["cloud", "revoke", "publication", "Alex+viewer@example.com"], home, root, env);
+		expect(revoked.status, revoked.stderr).toBe(0);
+		expect(JSON.parse(revoked.stdout)).toMatchObject({
+			operation: { id: grantOperations[1], kind: "revoke", result: { changed: true } },
+			currentGrant: { active: false, generation: 3 },
+		});
+		failGrantTransport = true;
+		const interrupted = await spoolAsync(["cloud", "invite", "publication", "other@example.com"], home, root, env);
+		expect(interrupted.status).toBe(1);
+		expect(JSON.parse(interrupted.stdout)).toMatchObject({
+			error: {
+				code: "transport_interrupted",
+				retryable: true,
+				operationId: grantOperations[2],
+			},
+		});
+		expect(failedGrantRequests).toBe(3);
+		expect(new Set(grantOperations.slice(2)).size).toBe(1);
 		expect(wire).not.toContain(root);
 		expect(wire).not.toContain(spoolDir);
 		expect(wire).not.toContain("t".repeat(43));
