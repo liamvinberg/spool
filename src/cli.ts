@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
+import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
 	ensureDaemon,
@@ -20,6 +21,7 @@ import {
 	statusDaemon,
 	stopDaemon,
 } from "./daemon/lifecycle";
+import { publicationReadiness } from "./daemon/publication-readiness";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
@@ -32,7 +34,7 @@ import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
-import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
+import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
 import { logsFrame, shotFrame } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -119,14 +121,21 @@ program
 
 program
 	.command("check")
-	.description("check every HTML frame offline without starting spool")
+	.description("check frames or connected publication navigation offline")
 	.argument("[path]", "where the walk-up starts", ".")
-	.action(async (path: string) => {
+	.option("--entry <frame>", "check navigation only, without typechecking", parseScenario)
+	.action(async (path: string, options: { entry?: string }) => {
 		const root = resolveProjectRoot(path);
 		if (root === undefined) {
 			throw new SpoolError(
 				`not inside a spool project — no design/canvas.json here or above; \`spool init\` starts one`,
 			);
+		}
+		if (options.entry !== undefined) {
+			const readiness = await publicationReadiness(createFlowGraph(), root, options.entry);
+			process.stdout.write(`${JSON.stringify(readiness)}\n`);
+			if (!readiness.ok) process.exitCode = 1;
+			return;
 		}
 		const diagnostics = await checkDesign(root);
 		for (const diagnostic of diagnostics) {
@@ -202,9 +211,12 @@ program
 program
 	.command("flows")
 	.description("print the link graph: read from source, verified by sessions")
-	.action(async () => {
+	.option("--entry <frame>", "check the connected set for publication", parseScenario)
+	.action(async (options: { entry?: string }) => {
 		const { name, daemonUrl, controlToken } = await verbContext();
-		process.stdout.write(`${await readFlows(daemonUrl, name, controlToken)}\n`);
+		process.stdout.write(
+			`${options.entry === undefined ? await readFlows(daemonUrl, name, controlToken) : await readReadiness(daemonUrl, name, options.entry, controlToken)}\n`,
+		);
 	});
 
 program

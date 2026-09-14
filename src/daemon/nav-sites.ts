@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { parse } from "@babel/parser";
-import type { Node } from "@babel/types";
+import type { Node, Program } from "@babel/types";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { walkNodes } from "./jsx-walk";
 import { lookupFrame } from "./projection";
@@ -44,6 +44,15 @@ export interface UnreadableSite {
 export interface NavSites {
 	sites: NavSite[];
 	unreadable: UnreadableSite[];
+	links?: LinksDeclaration;
+	invalidLinks?: { path: string; line: number };
+	parseFailure?: { path: string; line: number };
+}
+
+export interface LinksDeclaration {
+	path: string;
+	line: number;
+	values: Readonly<Record<string, string>>;
 }
 
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
@@ -258,6 +267,9 @@ export function frameSourceIn(pass: SourcePass, frameDir: string): FrameSource {
 		if (parsed === undefined) continue;
 		source.sites.push(...parsed.sites);
 		source.unreadable.push(...parsed.unreadable);
+		if (folder.includes(file) && parsed.links !== undefined) source.links = parsed.links;
+		if (folder.includes(file) && parsed.invalidLinks !== undefined) source.invalidLinks = parsed.invalidLinks;
+		if (parsed.parseFailure !== undefined) source.parseFailure ??= parsed.parseFailure;
 	}
 	return source;
 }
@@ -285,13 +297,14 @@ export function frameSource(root: string, frame: string): FrameSource {
 /** Read every navigation site the source declares. Never throws: source that
  * does not parse claims nothing — the compile surface owns reporting it. */
 export function parseNavSites(source: string, path: string): NavSites {
-	const { sites, unreadable } = parseSource(source, path);
-	return { sites, unreadable };
+	const { imports: _imports, program: _program, ...sites } = parseSource(source, path);
+	return sites;
 }
 
 /** What one file contributes to a frame: the walks it declares and the files
  * it pulls in. Both come out of the single parse. */
 interface ParsedSource extends NavSites {
+	program?: Program;
 	/** Every specifier the file imports, raw — resolution happens per importer. */
 	imports: string[];
 }
@@ -302,8 +315,13 @@ function parseSource(source: string, path: string): ParsedSource {
 	try {
 		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
 	} catch {
+		out.parseFailure = { path, line: 1 };
 		return out;
 	}
+	out.program = program as Program;
+	const declaration = linksIn(program, path);
+	if (declaration.kind === "valid") out.links = declaration.value;
+	if (declaration.kind === "invalid") out.invalidLinks = declaration.at;
 	walkNodes(program, [], (node, ancestors) => {
 		// static import/export-from and dynamic import(): every way a file names
 		// another file, type-only imports included — they carry no walk of their
@@ -449,6 +467,70 @@ function readTargets(node: Node): TargetRead {
 		return branchRead(readTargets(node.left as Node), right);
 	}
 	return { targets: [], unreadable: true };
+}
+
+function unwrap(node: Node): Node {
+	return node.type === "TSAsExpression" || node.type === "TSSatisfiesExpression" || node.type === "TypeCastExpression"
+		? unwrap(node.expression as Node)
+		: node;
+}
+
+function linksIn(
+	program: Node,
+	path: string,
+):
+	| { kind: "none" }
+	| { kind: "invalid"; at: { path: string; line: number } }
+	| { kind: "valid"; value: LinksDeclaration } {
+	if (program.type !== "Program") return { kind: "none" };
+	for (const statement of program.body) {
+		if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
+		const declaration = statement.declaration;
+		if (declaration?.type !== "VariableDeclaration") {
+			if (
+				statement.specifiers.some(
+					(item) =>
+						item.type === "ExportSpecifier" &&
+						((item.exported.type === "Identifier" && item.exported.name === "links") ||
+							(item.exported.type === "StringLiteral" && item.exported.value === "links")),
+				) ||
+				((declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") &&
+					declaration.id?.name === "links")
+			)
+				return { kind: "invalid", at: { path, line: statement.loc?.start.line ?? 1 } };
+			continue;
+		}
+		for (const item of declaration.declarations) {
+			if (item.id.type !== "Identifier" || item.id.name !== "links") continue;
+			const at = { path, line: item.loc?.start.line ?? 0 };
+			const object = item.init == null ? undefined : unwrap(item.init as Node);
+			if (
+				declaration.kind !== "const" ||
+				object?.type !== "ObjectExpression" ||
+				item.init?.type !== "TSAsExpression" ||
+				item.init.typeAnnotation.type !== "TSTypeReference" ||
+				item.init.typeAnnotation.typeName.type !== "Identifier" ||
+				item.init.typeAnnotation.typeName.name !== "const"
+			)
+				return { kind: "invalid", at };
+			const values: Record<string, string> = {};
+			for (const property of object.properties) {
+				if (property.type !== "ObjectProperty" || property.computed || property.key.type === "PrivateName")
+					return { kind: "invalid", at };
+				const key =
+					property.key.type === "Identifier"
+						? property.key.name
+						: property.key.type === "StringLiteral"
+							? property.key.value
+							: undefined;
+				const target = property.value.type === "StringLiteral" ? property.value.value : undefined;
+				if (key === undefined || target === undefined) return { kind: "invalid", at };
+				values[key] = target;
+			}
+			return { kind: "valid", value: { path, line: at.line, values } };
+		}
+	}
+	return { kind: "none" };
 }
 
 /** Merge branch arms: every target turns conditional, any dark arm stays named. */

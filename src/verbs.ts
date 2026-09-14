@@ -50,6 +50,21 @@ export async function readFlows(daemonUrl: string, name: string, controlToken: s
 	return pretty(await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/flows`, controlToken));
 }
 
+/** Publication's closed connected set, starting from the author's explicit entry. */
+export async function readReadiness(
+	daemonUrl: string,
+	name: string,
+	entry: string,
+	controlToken: string,
+): Promise<string> {
+	return pretty(
+		await apiJson(
+			`${daemonUrl}/api/p/${encodeURIComponent(name)}/readiness?entry=${encodeURIComponent(entry)}`,
+			controlToken,
+		),
+	);
+}
+
 /**
  * A player-session URL the agent drives in its own browser (#25) — walks in
  * that session are witnessed as dashed edges. The frame is checked first so

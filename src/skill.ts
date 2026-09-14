@@ -109,7 +109,24 @@ data-go="<frame-name>" on any element walks there on click — nearest data-go a
   ui.use()              hook — subscribe the calling component to ui.state changes
   ui.copy(text)         write text to the clipboard through the trusted canvas or player
 
-For a shared component, keep the literal ui.go("target") call or data-go navigation in the frame-owned file and pass a callback or prop into shared UI. Spool does not traverse imports to guess a flow claim.
+Shared components may own data-go attributes or invoke callbacks passed by the frame. Publication readiness follows the local value imports and component exports the frame actually uses. Keep shared UI free of imports from "spool"; pass a callback or destination prop across that boundary.
+
+Before publishing, run \`spool check --entry <frame-name>\` offline (or \`spool flows --entry <frame-name>\` with the daemon). This checks navigation only; plain \`spool check\` separately checks TypeScript. It follows every possible destination from that explicit entry, stops at cycles, and prints the exact included set plus repair diagnostics. Literals, simple consts and finite ternary/logical branches are readable. For computed choices, declare the complete set beside the frame and use its values in the navigation code:
+
+  import { ui } from "spool";
+  import { SharedButton } from "shared/ui/button";
+  export const links = { receipt: "receipt", retry: "retry" } as const;
+  export default function Frame() {
+    const key = ui.state.retry ? "retry" : "receipt";
+    return <SharedButton target={links[key]} />;
+  }
+
+  // shared/ui/button.tsx owns no Spool import:
+  export function SharedButton({ target }: { target: string }) {
+    return <button data-go={target}>Continue</button>;
+  }
+
+Every value must be a literal frame name. The declaration is authoritative, so literal navigation must agree with it; missing targets, invalid declarations and unresolved undeclared navigation make readiness fail. Rendered scenarios and verified walks are evidence, never completeness proof.
 
 Coded walks carry no transition name — data-transition rides the element, ui.go has no third argument. Walking to a frame that doesn't exist logs an error and stays put on the canvas and in the player, so a typo never eats the session; a bare frame document walks by navigation and lands on the daemon's 404 instead (topic: verbs). ui.state is schemaless and shared by every frame in the session: initialize defensively (ui.state.items ??= [...]) because any frame can be a session's first. Top-level keys are the unit of reasoning; nested writes still react. Writes belong in handlers and effects, never in a render — a write from a component body makes React run that render again, so the value that render read is dropped, and the runtime warns once per site in the frame's console. A one-shot flag a walk hands over is read in render and cleared in an effect, never cleared by the render that reads it.
 
@@ -229,7 +246,7 @@ Walks you take in the player flip verified marks on the map's derived edges — 
 
 A frame is its name, its source path and its size. An element is its frame, what the source calls it, and its path with the line range the stamp spans; the line under it is the JSX excerpt, capped at 240 characters. Every entry always contributes that pointer — read the path when you need more — and only excerpts are ever dropped, which the block says out loud when it happens. A runtime-created element takes its name and excerpt from the live DOM and its lines from the nearest stamped ancestor.
 
-\`spool flows\` prints { frames, edges, unreadable } — every edge { from, to, certainty: "will" | "might", sites: [{ path, line, conditional? }] }, "verified": true once a real session took it, "missing": true on targets no frame answers (typo'd ui.go literals included), and unreadable entries { frame, path, line } for navigation whose destination cannot be read: together, the todo list when wiring a flow.`,
+\`spool flows\` prints { frames, edges, unreadable } — every edge { from, to, certainty: "will" | "might", sites: [{ path, line, conditional? }] }, "verified": true once a real session took it, "missing": true on targets no frame answers (typo'd ui.go literals included), and unreadable entries { frame, path, line } for navigation whose destination cannot be read: together, the todo list when wiring a flow. \`spool flows --entry <frame-name>\` prints the stricter publication-readiness result.`,
 };
 
 export function skillText(topic?: string): string {

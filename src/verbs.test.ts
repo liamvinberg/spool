@@ -231,9 +231,9 @@ describe("skill", () => {
 		expect(frames).toContain("min-h-full does not give flex-1 a definite height");
 
 		const flows = skillText("flows");
-		expect(flows).toContain('literal ui.go("target")');
-		expect(flows).toContain("data-go navigation");
-		expect(flows).toContain("frame-owned file");
+		expect(flows).toContain("Shared components may own data-go attributes");
+		expect(flows).toContain("spool flows --entry <frame-name>");
+		expect(flows).toContain("export const links");
 		expect(flows).toContain("pass a callback");
 	});
 
