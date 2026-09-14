@@ -52,7 +52,13 @@ export type PublishResult = CloudOperationResponse & { localSource: "current" | 
 export class CloudPublicationFailure extends SpoolError {
 	constructor(
 		message: string,
-		readonly detail: { operation?: CloudOperation; code: string; retryable: boolean; retryAfter?: number },
+		readonly detail: {
+			operation?: CloudOperation;
+			operationId?: string;
+			code: string;
+			retryable: boolean;
+			retryAfter?: number;
+		},
 	) {
 		super(message);
 	}
@@ -196,8 +202,8 @@ async function uploadObject(
 	try {
 		await requestJson(spoolDir, path, init, options);
 	} catch (error) {
-		if (error instanceof CloudApiError) throw error;
 		const recovered = await operationStatusOrMissing(spoolDir, operationId, options);
+		if (error instanceof CloudApiError) throw withOperationId(error, operationId, recovered?.operation);
 		if (recovered !== undefined && !recovered.operation.missingObjectIndices.includes(index)) return;
 		await requestJson(spoolDir, path, init, options);
 	}
@@ -254,7 +260,7 @@ async function createOrRecover(
 	} catch (error) {
 		const recovered = await operationStatusOrMissing(spoolDir, association.operationId, options);
 		if (recovered !== undefined) return recovered;
-		if (error instanceof CloudApiError) throw error;
+		if (error instanceof CloudApiError) throw withOperationId(error, association.operationId);
 		return readOperation(
 			await requestJson(
 				spoolDir,
@@ -282,9 +288,15 @@ async function mutateAndRecover(
 	try {
 		return readOperation(await requestJson(spoolDir, path, init, options), operationId);
 	} catch (error) {
-		if (error instanceof CloudApiError) throw error;
 		const recovered = await operationStatusOrMissing(spoolDir, operationId, options);
-		if (recovered !== undefined) return recovered;
+		if (error instanceof CloudApiError) throw withOperationId(error, operationId, recovered?.operation);
+		if (recovered !== undefined) {
+			const mustRepeat =
+				(path.endsWith("/seal") && recovered.operation.state === "uploading") ||
+				(path.endsWith("/activate") && recovered.operation.state === "sealed");
+			if (mustRepeat) return readOperation(await requestJson(spoolDir, path, init, options), operationId);
+			return recovered;
+		}
 		throw error;
 	}
 }
@@ -397,6 +409,17 @@ function finish(value: CloudOperationResponse): CloudOperationResponse {
 		operation: value.operation,
 		code: value.operation.error?.code ?? value.operation.state,
 		retryable: false,
+	});
+}
+function withOperationId(
+	error: CloudApiError,
+	operationId: string,
+	operation?: CloudOperation,
+): CloudPublicationFailure {
+	return new CloudPublicationFailure(error.message, {
+		...error.detail,
+		operationId,
+		...(operation === undefined ? {} : { operation }),
 	});
 }
 function retrySeconds(body: unknown, header: string | null): number | undefined {

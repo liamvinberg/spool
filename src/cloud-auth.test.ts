@@ -192,16 +192,21 @@ esac
 
 	it("pins authenticated API requests against redirects and bounds caller signals", async () => {
 		const held = new AbortController();
-		await authorizedCloudRequest("/tmp/spool-one", "/api/publications", { signal: held.signal }, {
-			origin: "https://cloud.test",
-			vault: { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} },
-			fetch: async (input, init) => {
-				expect(String(input)).toBe("https://cloud.test/api/publications");
-				expect(init?.redirect).toBe("error");
-				expect(init?.signal).not.toBe(held.signal);
-				expect(init?.signal).toBeInstanceOf(AbortSignal);
-				return Response.json({});
+		await authorizedCloudRequest(
+			"/tmp/spool-one",
+			"/api/publications",
+			{ signal: held.signal },
+			{
+				origin: "https://cloud.test",
+				vault: { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} },
+				fetch: async (input, init) => {
+					expect(String(input)).toBe("https://cloud.test/api/publications");
+					expect(init?.redirect).toBe("error");
+					expect(init?.signal).not.toBe(held.signal);
+					expect(init?.signal).toBeInstanceOf(AbortSignal);
+					return Response.json({});
+				},
 			},
-		});
+		);
 	});
 });

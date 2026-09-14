@@ -7,11 +7,12 @@ import { makeProject, makeTempDir, writeFrame } from "./test-helpers";
 
 const vault: CloudVault = { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} };
 
-function service(options: { loseActivation?: boolean } = {}) {
+function service(options: { loseActivation?: boolean; loseSealBeforeCommit?: boolean } = {}) {
 	let manifest: { contentIdentity: string; entry: string; scenario: string; objects: unknown[] } | undefined;
 	let state: "uploading" | "sealed" | "succeeded" | "failed" = "uploading";
 	let missing: number[] = [];
 	let lost = options.loseActivation === true;
+	let lostSeal = options.loseSealBeforeCommit === true;
 	let operationId = "operation";
 	let projectId = "project";
 	let invitedEmails = ["alex@example.com"];
@@ -81,6 +82,10 @@ function service(options: { loseActivation?: boolean } = {}) {
 				return Response.json({ operationId, objectIndex: index, state: "verified" });
 			}
 			if (url.pathname.endsWith("/seal")) {
+				if (lostSeal) {
+					lostSeal = false;
+					throw new Error("lost before seal");
+				}
 				state = "sealed";
 				return Response.json(response());
 			}
@@ -123,6 +128,26 @@ describe("Cloud publication client", () => {
 		expect(result.localSource).toBe("current");
 		expect(cloud.calls.filter((call) => call.includes("/objects/")).length).toBeGreaterThan(5);
 		expect(cloud.calls.at(-1)).toMatch(/^GET \/api\/publication-operations\//u);
+	});
+
+	it("recovers then repeats the same seal when an uncertain request did not commit", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", "export default () => <h1>Shared</h1>");
+		const cloud = service({ loseSealBeforeCommit: true });
+		await expect(
+			publishWebsite({
+				spoolDir,
+				root,
+				entry: "start",
+				invitedEmails: ["Alex@example.com"],
+				version: "test",
+				origin: "https://cloud.test",
+				vault,
+				fetch: cloud.fetch,
+			}),
+		).resolves.toMatchObject({ operation: { state: "succeeded" } });
+		expect(cloud.calls.filter((call) => call.endsWith("/seal"))).toHaveLength(2);
 	});
 
 	it("recovers status before detecting changed source and never creates a replacement", async () => {

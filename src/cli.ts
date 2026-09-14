@@ -96,9 +96,10 @@ async function cloudJson(action: () => Promise<unknown>): Promise<void> {
 					message: error instanceof Error ? error.message : "Cloud publication failed",
 					retryable: known?.retryable ?? false,
 					...(known?.retryAfter === undefined ? {} : { retryAfter: known.retryAfter }),
-					...(known?.operation === undefined
+					...(known?.operation === undefined ? {} : { state: known.operation.state, operation: known.operation }),
+					...(known?.operationId === undefined && known?.operation === undefined
 						? {}
-						: { operationId: known.operation.id, state: known.operation.state, operation: known.operation }),
+						: { operationId: known.operation?.id ?? known.operationId }),
 				},
 			})}\n`,
 		);
@@ -113,10 +114,10 @@ cloud
 	.option("--invite <email...>", "person allowed to open the new website")
 	.option("--scenario <name>", "scenario seed", parseScenario)
 	.action(async (entry: string, options: { invite?: string[]; scenario?: string }) => {
-		const root = resolveProjectRoot(process.cwd());
-		if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
-		await cloudJson(() =>
-			publishWebsite({
+		await cloudJson(async () => {
+			const root = resolveProjectRoot(process.cwd());
+			if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
+			return publishWebsite({
 				spoolDir,
 				root,
 				entry,
@@ -125,8 +126,8 @@ cloud
 				origin: cloudOrigin(process.env),
 				...(options.scenario === undefined ? {} : { scenario: options.scenario }),
 				progress: (message) => process.stderr.write(`spool: ${message}\n`),
-			}),
-		);
+			});
+		});
 	});
 
 cloud
