@@ -103,6 +103,7 @@ import {
 	type ProjectCard,
 	summarizeProject,
 } from "./projection";
+import { createPublicationJobs, type PublicationJobServices } from "./publication-jobs";
 import { publicationReadiness } from "./publication-readiness";
 import { createResolvePass } from "./resolve-pass";
 import {
@@ -204,6 +205,8 @@ export interface DaemonOptions {
 	onHistoryNotice?: (message: string) => void;
 	/** Machine-state observation failures stay visible without escaping a watcher callback. */
 	onMachineStateWatchError?: (error: Error) => void;
+	/** Controlled Cloud boundary for daemon publication route tests. */
+	publicationServices?: PublicationJobServices;
 }
 
 /** The player page's params (#24): Zod-validated, path-safe names only. */
@@ -215,6 +218,15 @@ const playParams = z.object({
 		.string()
 		.regex(/^[A-Za-z0-9_-]{43}$/, { message: "not a shell handoff" })
 		.optional(),
+});
+
+const publicationParams = z.strictObject({
+	entry: z.string().refine(isSafeName, { message: "not a frame name" }),
+	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }),
+});
+
+const publicationCreate = publicationParams.extend({
+	email: z.string().trim().email().max(320),
 });
 
 const PLAYER_HANDOFF_TTL_MS = 30_000;
@@ -384,6 +396,7 @@ export function createDaemonApp({
 	historyClock,
 	onHistoryNotice,
 	home,
+	publicationServices,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -392,6 +405,11 @@ export function createDaemonApp({
 	let captureOrigin = captureOriginFor(controlOrigin);
 	const projectCapabilities = new Map<string, string>();
 	const playerHandoffs = new Map<string, { project: string; frame: string; scenario: string; expiresAt: number }>();
+	const publicationJobs = createPublicationJobs({
+		spoolDir,
+		version,
+		...(publicationServices === undefined ? {} : { services: publicationServices }),
+	});
 
 	function projectCapability(root: string): string {
 		let capability = projectCapabilities.get(root);
@@ -2929,6 +2947,7 @@ export function createDaemonApp({
 						assemblePlayerShell({
 							project: name,
 							start,
+							scenario: playScenario,
 							frames,
 							controlToken,
 							innerUrl: `${renderOrigin}${requestUrl.pathname}${requestUrl.search}`,
@@ -2993,6 +3012,43 @@ export function createDaemonApp({
 				stream.onAbort(unsubscribe);
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
+		})
+		.get(
+			"/api/p/:project/publication",
+			validator("query", (value, c) => {
+				const parsed = publicationParams.safeParse(value);
+				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
+			}),
+			async (c) => {
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const { entry, scenario } = c.req.valid("query");
+				return c.json(await publicationJobs.model({ root: project.root, project: name, entry, scenario }));
+			},
+		)
+		.post(
+			"/api/p/:project/publication/jobs",
+			validator("json", (value, c) => {
+				const parsed = publicationCreate.safeParse(value);
+				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
+			}),
+			async (c) => {
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const { entry, scenario, email } = c.req.valid("json");
+				return c.json(
+					await publicationJobs.start({ root: project.root, project: name, entry, scenario, email }),
+					202,
+				);
+			},
+		)
+		.get("/api/p/:project/publication/jobs/:job", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const job = await publicationJobs.read(project.root, c.req.param("job"));
+			return job === undefined ? c.text("publication job not found", 404) : c.json(job);
 		})
 		.get("/vendor/react.js", async (c) => {
 			// sandboxed srcdoc frames fetch this from a null origin — CORS must be open
@@ -3153,17 +3209,27 @@ export function createDaemonApp({
 	function assemblePlayerShell({
 		project,
 		start,
+		scenario,
 		frames,
 		controlToken: shellToken,
 		innerUrl,
 	}: {
 		project: string;
 		start: string;
+		scenario: string;
 		frames: Record<string, { w: number; h: number }>;
 		controlToken: string;
 		innerUrl: string;
 	}): string {
-		const config = escapeJsonScript({ project, start, frames, innerUrl, controlToken: shellToken });
+		const config = escapeJsonScript({
+			project,
+			start,
+			scenario,
+			frames,
+			innerUrl,
+			controlToken: shellToken,
+			publicationPath: `/api/p/${encodeURIComponent(project)}/publication`,
+		});
 		const bridge = `(() => {
 	const config = window.__SPOOL_SHELL__;
 	const headers = { "${CONTROL_HEADER}": config.controlToken };

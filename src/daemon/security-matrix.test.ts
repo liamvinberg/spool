@@ -37,7 +37,14 @@ function makeSecurityHarness() {
 	return { spoolDir, project, daemon, request, control, render, capture };
 }
 
-function shellConfigOf(document: string): { innerUrl: string } {
+function shellConfigOf(document: string): {
+	project: string;
+	start: string;
+	scenario: string;
+	innerUrl: string;
+	controlToken: string;
+	publicationPath: string;
+} {
 	const serialized = document.match(/window\.__SPOOL_SHELL__\s*=\s*JSON\.parse\(("(?:\\.|[^"\\])*")\)/)?.[1];
 	expect(serialized, "player shell config").toBeDefined();
 	return JSON.parse(JSON.parse(serialized ?? '"{}"'));
@@ -341,7 +348,15 @@ describe("daemon authority matrix", () => {
 		expect(shell.status).toBe(200);
 		expect(shell.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
 		expect(shell.headers.get("x-frame-options")).toBe("DENY");
-		const shellInner = new URL(shellConfigOf(shellHtml).innerUrl);
+		const shellConfig = shellConfigOf(shellHtml);
+		expect(shellConfig).toMatchObject({
+			project: project.name,
+			start: "home",
+			scenario: "default",
+			controlToken: CONTROL_TOKEN,
+			publicationPath: `/api/p/${encodeURIComponent(project.name)}/publication`,
+		});
+		const shellInner = new URL(shellConfig.innerUrl);
 		expect(`${shellInner.origin}${shellInner.pathname}`).toBe(`http://${RENDER_HOST}${playPath.split("?")[0]}`);
 		expect(shellInner.searchParams.get("frame")).toBe("home");
 		expect(shellInner.searchParams.get("scenario")).toBe("default");
@@ -359,6 +374,8 @@ describe("daemon authority matrix", () => {
 		expect(inner.status).toBe(200);
 		expect(inner.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
 		expect(innerHtml).toContain("window.__SPOOL_PLAY__");
+		expect(innerHtml).not.toContain(CONTROL_TOKEN);
+		expect(innerHtml).not.toContain(shellConfig.publicationPath);
 	});
 
 	it("pins the resolved start frame into the render-origin player request", async () => {

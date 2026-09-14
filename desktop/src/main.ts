@@ -374,8 +374,8 @@ function fallback(heading: string, detail: string): void {
  *   - and the rect a hand puts it at outlives the window, per project and per
  *     authored width.
  *
- * The bar is the page's, not this process's: the preload hands it the three
- * things a page cannot do for itself, and the page having that bridge is also
+ * The bar is the page's, not this process's: the preload hands it the reset
+ * operation a page cannot do for itself, and the page having that bridge is also
  * how it knows to draw a bar at all. A tab has no bridge and so keeps its edge
  * bar exactly.
  */
@@ -525,15 +525,6 @@ function installPlayChannels(): void {
 		writeRect(DIRECTORY, state.key, undefined);
 		const fit = fitRect(state.authored, areaOf(window_));
 		window_.setBounds({ x: fit.x, y: fit.y, width: fit.w, height: fit.h });
-	});
-	ipcMain.on("spool:play-window-canvas", (event) => {
-		if (!played.has(event.sender.id)) return;
-		void openCanvas();
-		BrowserWindow.fromWebContents(event.sender)?.close();
-	});
-	ipcMain.on("spool:play-window-close", (event) => {
-		if (!played.has(event.sender.id)) return;
-		BrowserWindow.fromWebContents(event.sender)?.close();
 	});
 }
 

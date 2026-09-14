@@ -752,7 +752,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	);
 	expect((await read(live)).viewport).toEqual({ width: 600, height: 870 });
 	expect(await player.locator(".spool-bar-name").textContent()).toBe("cross");
-	expect(await player.locator('[role="dialog"]').count()).toBe(0);
+	expect(await player.locator(".spool-external-dialog").count()).toBe(0);
 });
 
 it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_000 }, async () => {
@@ -3465,8 +3465,8 @@ export default function Next() {
 	expect(await inner.locator("#count").innerText()).toBe("5");
 
 	await inner.locator("#external").click();
-	await page.locator('[role="dialog"]').waitFor();
-	expect(await page.locator('[role="dialog"]').innerText()).toContain("example.com");
+	await page.locator(".spool-external-dialog").waitFor();
+	expect(await page.locator(".spool-external-dialog").innerText()).toContain("example.com");
 	await page.getByRole("button", { name: "Stay here", exact: true }).click();
 
 	await inner.locator("#back").click();

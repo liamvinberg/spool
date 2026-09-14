@@ -121,9 +121,6 @@ export interface DeskWindow {
 	restored: boolean;
 	/** Forget that rect and put the window back on the authored size. */
 	reset(): void;
-	/** Raise the canvas window and leave. */
-	canvas(): void;
-	close(): void;
 }
 
 /**
@@ -136,20 +133,18 @@ export function deskWindow(): DeskWindow | null {
 	const bridge = (window as { spoolPlayWindow?: unknown }).spoolPlayWindow;
 	if (typeof bridge !== "object" || bridge === null) return null;
 	const candidate = bridge as Partial<DeskWindow>;
-	const { reset, canvas, close } = candidate;
-	if (typeof reset !== "function" || typeof canvas !== "function" || typeof close !== "function") return null;
+	const { reset } = candidate;
+	if (typeof reset !== "function") return null;
 	return {
 		restored: candidate.restored === true,
 		reset: () => reset.call(bridge),
-		canvas: () => canvas.call(bridge),
-		close: () => close.call(bridge),
 	};
 }
 
 /** What a bar this wide carries. The frame's name is never one of the answers. */
-export function barLayout(width: number): { project: boolean; size: boolean; canvasLabel: boolean } {
+export function barLayout(width: number): { project: boolean; size: boolean } {
 	const wide = width >= DESK_BAR_WIDE_PX;
-	return { project: wide, size: wide, canvasLabel: wide };
+	return { project: wide, size: wide };
 }
 
 /** How long the restore says so for before it fades, toast-length. */

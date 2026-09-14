@@ -7,6 +7,7 @@ import type { AgentExecutor } from "./agent-exec";
 import type { Look } from "./agent-preflight";
 import { createDaemonApp } from "./app";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
+import type { PublicationJobServices } from "./publication-jobs";
 
 export interface ServeDaemonOptions {
 	spoolDir: string;
@@ -26,6 +27,8 @@ export interface ServeDaemonOptions {
 	agentEngines?: readonly AgentEngine[] | undefined;
 	/** A stand-in for the `which` behind the install wall, so that turn has a composer. */
 	agentLook?: Look | undefined;
+	/** Controlled Cloud boundary for publication browser tests. */
+	publicationServices?: PublicationJobServices | undefined;
 }
 
 export interface RunningDaemon {
@@ -56,6 +59,7 @@ export function serveDaemon({
 	agentExecutor,
 	agentEngines,
 	agentLook,
+	publicationServices,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
 	assertLoopbackHost(host);
 	const daemon = createDaemonApp({
@@ -70,6 +74,7 @@ export function serveDaemon({
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentEngines === undefined ? {} : { agentEngines }),
 		...(agentLook === undefined ? {} : { agentLook }),
+		...(publicationServices === undefined ? {} : { publicationServices }),
 	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {

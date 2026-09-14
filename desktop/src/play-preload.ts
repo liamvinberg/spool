@@ -3,9 +3,9 @@ import { contextBridge, ipcRenderer } from "electron";
 // The play window's bridge (#275).
 //
 // This window has no title bar of its own, so the page draws the bar — and a
-// bar drawn by the page needs the three things only the window's owner can do:
-// raise the canvas standing behind it, put the window back on the frame's
-// authored size, and close. They arrive as four fields on `window` and nothing
+// bar drawn by the page keeps one action only the window's owner can do: put
+// the window back on the frame's authored size. It arrives beside the initial
+// restore reading on `window` and nothing
 // more; no ipcRenderer, no channel names, nothing a played frame could reach
 // through to reach the main process.
 //
@@ -16,8 +16,6 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const RESTORED = "spool:play-window-restored";
 const RESET = "spool:play-window-reset";
-const CANVAS = "spool:play-window-canvas";
-const CLOSE = "spool:play-window-close";
 
 // Asked once, before the page loads, because the bar wants it at first paint: a
 // restore that announces itself a beat late reads as the window twitching.
@@ -27,6 +25,4 @@ const restored = ipcRenderer.sendSync(RESTORED) === true;
 contextBridge.exposeInMainWorld("spoolPlayWindow", {
 	restored,
 	reset: () => ipcRenderer.send(RESET),
-	canvas: () => ipcRenderer.send(CANVAS),
-	close: () => ipcRenderer.send(CLOSE),
 });
