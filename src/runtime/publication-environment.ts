@@ -1,4 +1,5 @@
 import type { PlayerConfig } from "./frame-runtime";
+import { hostedAccess } from "./hosted-access";
 
 interface PublicationConfig {
 	entry: string;
@@ -26,6 +27,7 @@ export function publicationEnvironment() {
 	const base = new URL("./", document.baseURI);
 	const requested = new URL(host.location.href).searchParams.get("frame") ?? value.entry;
 	const start = included.has(requested) ? requested : value.entry;
+	const access = hostedAccess(host, requested === value.entry ? undefined : requested);
 	const config: PlayerConfig = {
 		project: "publication",
 		projectCapability: "",
@@ -93,22 +95,29 @@ export function publicationEnvironment() {
 		},
 		seed: value.seed,
 		resource: (name: string) => new URL(name, base).href,
-		allowed: (from: string, to: string) => included.has(to) && allowed.get(from)?.has(to) === true,
+		allowed: (from: string, to: string) => {
+			access.check();
+			return !access.blocked() && included.has(to) && allowed.get(from)?.has(to) === true;
+		},
 		error,
 		clearError: () => message?.remove(),
 		copy: (text: string) => navigator.clipboard.writeText(text),
 		push(frame: string) {
+			if (access.blocked()) return;
 			entries.splice(cursor + 1);
 			entries.push(frame);
 			cursor++;
 			host.history.pushState({ publicationVisit: visit, index: cursor }, "", urlFor(frame));
 		},
 		back() {
-			if (cursor > 0) host.history.back();
+			access.check();
+			if (!access.blocked() && cursor > 0) host.history.back();
 		},
 		follow(walk: (frame: string, back: boolean) => Promise<void>) {
 			host.addEventListener("popstate", (event) => {
 				const state: unknown = event.state;
+				access.check();
+				if (access.blocked()) return;
 				if (
 					typeof state !== "object" ||
 					state === null ||
