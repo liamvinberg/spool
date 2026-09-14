@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -623,6 +624,13 @@ export function buildAppMenu(): Menu {
 				{ role: "about" },
 				{ type: "separator" },
 				{ label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => sendCanvasCommand("app.settings") },
+				{
+					label: "Cloud Account",
+					submenu: [
+						{ label: "Sign In…", click: () => void cloudAccount("login") },
+						{ label: "Sign Out", click: () => void cloudAccount("logout") },
+					],
+				},
 				{ type: "separator" },
 				{ label: "Check for Updates…", click: () => void checkForUpdates() },
 				{ type: "separator" },
@@ -1122,6 +1130,34 @@ const RELAUNCH_DEADLINE_MS = 15_000;
  */
 function tell(message: string, detail: string, type: "info" | "warning" | "error"): void {
 	void dialog.showMessageBox({ type, message, detail, buttons: ["OK"] });
+}
+
+async function cloudAccount(command: "login" | "logout"): Promise<void> {
+	const cli = bundledCli(process.resourcesPath);
+	if (cli === undefined) {
+		tell("This copy of Spool cannot open its account.", "Download Spool again from the releases page.", "error");
+		return;
+	}
+	const result = await new Promise<{ code: number; stderr: string }>((done) => {
+		const child = spawn(process.execPath, ["-r", bundledShim(process.resourcesPath), cli, command], {
+			env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SPOOL_DIR: DIRECTORY },
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		let stderr = "";
+		if (child.stderr === null) return done({ code: 1, stderr: "Spool could not start its account command." });
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (part: string) => (stderr += part));
+		child.on("error", (error) => done({ code: 1, stderr: error.message }));
+		child.on("close", (code) => done({ code: code ?? 1, stderr }));
+	});
+	if (result.code === 0) {
+		tell(command === "login" ? "Signed in to spool Cloud." : "Signed out of spool Cloud.", "", "info");
+		return;
+	}
+	const detail = result.stderr.trim().split("\n").at(-1) || "Try again.";
+	log("cloud account", "FAIL", `command=${command}`, `code=${result.code}`);
+	// The CLI owns redaction. This process never receives its stdout or credential.
+	tell(command === "login" ? "Spool could not sign in." : "Spool could not sign out.", detail, "error");
 }
 
 // MARK: - Lifecycle
