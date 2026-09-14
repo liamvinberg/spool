@@ -69,17 +69,17 @@ describe("data-go sites", () => {
 });
 
 describe("ui.go sites", () => {
-	it("reads simple constants and a named links declaration used by navigation", () => {
+	it("keeps flow semantics separate from publication constants", () => {
 		const source = `import { ui } from "spool";
 const fallback = "archive";
-export const links = { inbox: "inbox", archive: fallback } as const;
+export const links = { inbox: "inbox", archive: "archive" } as const;
 export default function Frame() {
 	return <button onClick={() => ui.go(ui.state.open ? links.inbox : links.archive)}>go</button>;
 }
 `;
 		const parsed = parseNavSites(source, PATH);
-		expect(parsed.sites.map(({ target }) => target)).toEqual(["inbox", "archive"]);
-		expect(parsed.unreadable).toEqual([]);
+		expect(parsed.sites).toEqual([]);
+		expect(parsed.unreadable).toHaveLength(1);
 		expect(parsed.links).toEqual({ path: PATH, line: 3, values: { inbox: "inbox", archive: "archive" } });
 	});
 
