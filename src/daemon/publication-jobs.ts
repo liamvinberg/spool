@@ -146,6 +146,7 @@ export function createPublicationJobs({
 			return unavailable;
 		}
 		const readiness = await services.readiness(request.root, request.entry);
+		if (!(await isCurrentPublisher(account.publisherId))) return unavailable;
 		const observed = recent(request.root, request.entry, request.scenario, account.publisherId);
 		const base = {
 			...unavailable,
@@ -168,13 +169,14 @@ export function createPublicationJobs({
 		if (association?.publicationId === undefined) return { ...base, available: true };
 		try {
 			const current = await services.status(spoolDir, association.publicationId);
+			if (!(await isCurrentPublisher(account.publisherId))) return unavailable;
 			return {
 				...base,
 				available: true,
 				publication: pickPublication(current.publication),
 			};
 		} catch {
-			return base;
+			return (await isCurrentPublisher(account.publisherId)) ? { ...base, available: true } : unavailable;
 		}
 	}
 
@@ -182,6 +184,8 @@ export function createPublicationJobs({
 		prune();
 		const account = await services.account(spoolDir);
 		const readiness = await services.readiness(request.root, request.entry);
+		if (!(await isCurrentPublisher(account.publisherId)))
+			throw new SpoolError("Cloud account changed before the link could be created. Try again.");
 		if (!readiness.ok) throw new SpoolError("This prototype is not ready to share.");
 		const jobKey = key(request.root, request.entry, request.scenario, account.publisherId);
 		const existingId = latest.get(jobKey);
@@ -201,6 +205,14 @@ export function createPublicationJobs({
 		latest.set(jobKey, id);
 		job.running = run(job, request);
 		return job.view;
+	}
+
+	async function isCurrentPublisher(expected: string): Promise<boolean> {
+		try {
+			return (await services.account(spoolDir)).publisherId === expected;
+		} catch {
+			return false;
+		}
 	}
 
 	async function run(job: RetainedJob, request: PublicationJobRequest): Promise<void> {

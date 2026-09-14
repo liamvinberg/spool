@@ -60,6 +60,43 @@ function publishResult(ownerId: string): PublishResult {
 }
 
 describe("daemon publication jobs", () => {
+	it("drops a model when the approved publisher changes during its source read", async () => {
+		const spoolDir = makeTempDir();
+		const project = makeProject(spoolDir);
+		let publisher: string | undefined = "owner-a";
+		const source = deferred<typeof ready>();
+		const services: PublicationJobServices = {
+			account: async () => {
+				if (publisher === undefined) throw new Error("signed out");
+				return { publisherId: publisher };
+			},
+			readiness: () => source.promise,
+			status: async () => {
+				throw new Error("not reached");
+			},
+			publish: async () => publishResult("owner-a"),
+			origin: () => "https://cloud.test",
+		};
+		const jobs = createPublicationJobs({ spoolDir, version: "test", services });
+		const reading = jobs.model({
+			root: project.root,
+			project: "Kaffe",
+			entry: "menu",
+			scenario: "default",
+		});
+		publisher = undefined;
+		source.resolve(ready);
+		expect(await reading).toMatchObject({ available: false, included: [], ready: false });
+
+		publisher = "owner-b";
+		const nextSource = deferred<typeof ready>();
+		services.readiness = () => nextSource.promise;
+		const switched = jobs.model({ root: project.root, project: "Kaffe", entry: "menu", scenario: "default" });
+		publisher = "owner-a";
+		nextSource.resolve(ready);
+		expect(await switched).toMatchObject({ available: false, included: [], ready: false });
+	});
+
 	it("serializes one publisher's create while isolating account switches and logout", async () => {
 		const spoolDir = makeTempDir();
 		const project = makeProject(spoolDir);
