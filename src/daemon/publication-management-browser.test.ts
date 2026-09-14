@@ -160,6 +160,22 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	}
 	await page.getByRole("button", { name: "Update link", exact: true }).click();
 	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
+	services.status = vi.fn(async () => {
+		throw new Error("status temporarily unavailable");
+	});
+	const transient = page.waitForResponse(
+		(response) => response.url().includes("/publication?") && response.status() === 200,
+	);
+	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
+	expect(await (await transient).json()).toMatchObject({
+		association: "current",
+		source: "unavailable",
+		job: { state: "running" },
+	});
+	await page.evaluate(
+		() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+	);
+	expect(await page.getByRole("button", { name: "Updating…", exact: true }).count()).toBe(1);
 	const heldRefresh = deferred<{
 		publication: CloudPublication;
 		operations: [];
@@ -172,18 +188,44 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		if (updateRefreshes === 1) return heldRefresh.promise;
 		return { publication: current, operations: [], nextCursor: null, localSource: "changed" as const };
 	});
+	const modelResponse = deferred<void>();
+	const modelCaptured = deferred<void>();
+	const modelDelivered = deferred<void>();
+	await page.route("**/publication?*", async (route) => {
+		const response = await route.fetch();
+		modelCaptured.resolve();
+		await modelResponse.promise;
+		await route.fulfill({ response });
+		modelDelivered.resolve();
+	});
 	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
 	await expect.poll(() => updateRefreshes).toBe(1);
-	heldRefresh.resolve({ publication: current, operations: [], nextCursor: null, localSource: "current" });
-	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
+	const captured = current;
 	current = {
 		...current,
 		revision: 2,
 		currentVersion: { id: "version-2", contentIdentity: "b".repeat(64) },
 	};
+	writeFileSync(
+		associationFile,
+		JSON.stringify({
+			...association,
+			binding: {
+				...association.binding,
+				operationId: "33333333-3333-4333-8333-333333333333",
+				contentIdentity: "b".repeat(64),
+			},
+		}),
+	);
 	publishes[0]?.resolve(publishResult(current, "changed"));
+	heldRefresh.resolve({ publication: captured, operations: [], nextCursor: null, localSource: "current" });
+	await modelCaptured.promise;
 	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
-	expect(updateRefreshes).toBe(1);
+	modelResponse.resolve();
+	await modelDelivered.promise;
+	await page.unroute("**/publication?*");
+	await expect.poll(() => updateRefreshes).toBe(2);
+	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
 	services.status = vi.fn(async () => ({
 		publication: current,
 		operations: [],

@@ -31,7 +31,17 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const trailing = useRef(false);
 
 	const apply = useCallback((next: PlayerPublicationModel) => {
-		setModel(next);
+		setModel((current) => {
+			const sameRunningJob =
+				next.available &&
+				next.association === "current" &&
+				next.job?.state === "running" &&
+				current?.job?.state === "running" &&
+				next.job.id === current.job.id;
+			return sameRunningJob && next.publication === undefined && current?.publication !== undefined
+				? { ...next, publication: current.publication, source: "unavailable" }
+				: next;
+		});
 		setJob((current) => {
 			if (next.available && next.association === "current" && next.job === undefined && current?.state === "running")
 				return current;
@@ -46,36 +56,44 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	}, []);
 
 	const refresh = useCallback(
-		async (force = false): Promise<PlayerPublicationModel | undefined> => {
-			if (client === undefined) return;
-			if (!force && refreshing.current !== undefined) {
+		(force = false): Promise<PlayerPublicationModel | undefined> => {
+			if (client === undefined) return Promise.resolve(undefined);
+			if (refreshing.current !== undefined) {
+				if (force) freshness.current++;
 				trailing.current = true;
 				return refreshing.current;
 			}
-			const request = ++freshness.current;
-			const run = (async (): Promise<PlayerPublicationModel | undefined> => {
-				try {
-					const next = await client.model();
-					if (request !== freshness.current) return;
-					apply(next);
-					return next;
-				} catch {
-					if (request !== freshness.current) return;
-					setModel(undefined);
-					setOpen(false);
-					return undefined;
-				}
-			})();
+			const run = Promise.resolve()
+				.then(async () => {
+					let result: PlayerPublicationModel | undefined;
+					do {
+						trailing.current = false;
+						const request = ++freshness.current;
+						try {
+							const next = await client.model();
+							if (request === freshness.current) {
+								apply(next);
+								result = next;
+							}
+						} catch {
+							if (request === freshness.current) {
+								setModel(undefined);
+								setOpen(false);
+								result = undefined;
+							}
+						}
+					} while (trailing.current);
+					return result;
+				})
+				.finally(() => {
+					if (refreshing.current === run) refreshing.current = undefined;
+					if (trailing.current) {
+						trailing.current = false;
+						void refresh();
+					}
+				});
 			refreshing.current = run;
-			try {
-				return await run;
-			} finally {
-				if (refreshing.current === run) refreshing.current = undefined;
-				if (trailing.current) {
-					trailing.current = false;
-					void refresh();
-				}
-			}
+			return run;
 		},
 		[client, apply],
 	);
@@ -98,39 +116,67 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 			unsubscribe();
 		};
 	}, [client, refresh]);
+	const runningJobId = job?.state === "running" ? job.id : undefined;
 	useEffect(() => {
-		if (client === undefined || job?.state !== "running") return;
-		const request = freshness.current;
-		const timer = window.setTimeout(() => {
-			void client.job(job.id).then(
-				(next) => {
-					if (request !== freshness.current) {
-						if (next.state !== "running") void refresh();
-						return;
-					}
-					setJob(next);
-					if (next.state === "failed") setProblem(next.message);
-					if (next.state === "succeeded") {
-						setProblem("");
-						setModel((current) =>
-							current === undefined
-								? current
-								: {
-										...current,
-										association: "current",
-										source: next.source,
-										recipients: next.publication.invitedEmails,
-										publication: next.publication,
-										job: next,
-									},
-						);
-					}
-				},
-				() => void refresh(true),
-			);
-		}, 250);
-		return () => window.clearTimeout(timer);
-	}, [client, job, refresh]);
+		if (client === undefined || runningJobId === undefined) return;
+		let cancelled = false;
+		let timer: number;
+		const schedule = () => {
+			if (!cancelled) timer = window.setTimeout(() => void observe(), 250);
+		};
+		async function observe(): Promise<void> {
+			if (client === undefined || runningJobId === undefined) return;
+			const request = freshness.current;
+			try {
+				const next = await client.job(runningJobId);
+				if (cancelled) return;
+				if (request !== freshness.current) {
+					if (next.state !== "running") void refresh();
+					schedule();
+					return;
+				}
+				setJob(next);
+				if (next.state === "running") {
+					schedule();
+					return;
+				}
+				// A model captured before completion cannot replace the completed publication.
+				freshness.current++;
+				if (next.state === "failed") setProblem(next.message);
+				if (next.state === "succeeded") {
+					setProblem("");
+					setModel((current) =>
+						current === undefined ||
+						!current.available ||
+						current.association === "superseded" ||
+						current.association === "mismatched" ||
+						(next.kind === "update" && current.association !== "current") ||
+						(current.publication !== undefined && current.publication.id !== next.publication.id)
+							? current
+							: {
+									...current,
+									association: "current",
+									source: next.source,
+									recipients: next.publication.invitedEmails,
+									publication: next.publication,
+									job: next,
+								},
+					);
+				}
+				if (refreshing.current !== undefined) void refresh();
+			} catch {
+				if (!cancelled) {
+					await refresh(true);
+					schedule();
+				}
+			}
+		}
+		schedule();
+		return () => {
+			cancelled = true;
+			window.clearTimeout(timer);
+		};
+	}, [client, runningJobId, refresh]);
 
 	const close = (immediate: boolean) => {
 		setInstant(immediate);
@@ -156,7 +202,10 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 		const request = freshness.current;
 		try {
 			const started = await client.start(invited === "" ? undefined : invited);
-			if (request === freshness.current) setJob(started);
+			if (request === freshness.current) {
+				setJob(started);
+				setModel((current) => (current === undefined ? current : { ...current, job: started }));
+			} else void refresh();
 		} catch (error) {
 			if (request !== freshness.current) return;
 			const current = await refresh(true);

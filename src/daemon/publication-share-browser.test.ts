@@ -266,13 +266,16 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 				included: [],
 				ready: false,
 				diagnostics: [],
+				association: "missing",
+				source: "unavailable",
+				recipients: [],
 			}),
 		});
 	});
 	await expired.getByRole("button", { name: "Share", exact: true }).click();
 	await expect.poll(() => heldModel).toBeDefined();
 	await expired.getByRole("button", { name: "Share", exact: true }).click();
-	await expect.poll(() => expired.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
+	expect(modelRequests).toBe(1);
 	expect(await expired.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
 	await heldModel?.fulfill({
 		contentType: "application/json",
@@ -284,9 +287,13 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 			included: ["menu", "cart", "rewards"],
 			ready: true,
 			diagnostics: [],
+			association: "missing",
+			source: "unavailable",
+			recipients: [],
 		}),
 	});
-	await expired.waitForTimeout(300);
+	await expect.poll(() => modelRequests).toBe(2);
+	await expect.poll(() => expired.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
 	expect(await expired.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
 	expect(services.publish).not.toHaveBeenCalled();
 
