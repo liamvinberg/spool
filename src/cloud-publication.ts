@@ -304,7 +304,7 @@ async function publishUnderLock(
 	} catch (error) {
 		throw new CloudPublicationFailure(error instanceof Error ? error.message : "website capture failed", {
 			code: "capture_failed",
-			retryable: false,
+			retryable: true,
 			...(recovered === undefined ? {} : { operation: recovered.operation, operationId: recovered.operation.id }),
 			...(remote === undefined ? {} : { publication: remote }),
 		});

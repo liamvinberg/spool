@@ -16,6 +16,7 @@ export interface PlayerShareView {
 
 export function usePlayerShare(client: PlayerPublicationClient | undefined): PlayerShareView {
 	const [model, setModel] = useState<PlayerPublicationModel>();
+	const [title, setTitle] = useState("prototype");
 	const [open, setOpen] = useState(false);
 	const [instant, setInstant] = useState(false);
 	const [details, setDetails] = useState(false);
@@ -24,13 +25,31 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const [problem, setProblem] = useState("");
 	const [copied, setCopied] = useState(false);
 	const [stopping, setStopping] = useState(false);
+	const [authorityUncertain, setAuthorityUncertain] = useState(false);
 	const [mutation, setMutation] = useState<"grant" | "stop">();
 	const trigger = useRef<HTMLButtonElement>(null);
 	const freshness = useRef(0);
 	const refreshing = useRef<Promise<PlayerPublicationModel | undefined> | undefined>(undefined);
 	const trailing = useRef(false);
+	const uncertainStop = useRef<string | undefined>(undefined);
 
 	const apply = useCallback((next: PlayerPublicationModel) => {
+		const uncertainPublicationId = uncertainStop.current;
+		uncertainStop.current = undefined;
+		setAuthorityUncertain(false);
+		setTitle(next.title);
+		if (!next.available || next.association !== "current") {
+			setEmail("");
+			setCopied(false);
+			setDetails(false);
+		}
+		if (
+			uncertainPublicationId !== undefined &&
+			(next.publication?.id !== uncertainPublicationId || next.publication.state !== "active")
+		) {
+			setOpen(false);
+			setStopping(false);
+		}
 		setModel((current) => {
 			const sameRunningJob =
 				next.available &&
@@ -77,8 +96,19 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 							}
 						} catch {
 							if (request === freshness.current) {
-								setModel(undefined);
-								setOpen(false);
+								if (uncertainStop.current !== undefined) {
+									setAuthorityUncertain(true);
+									setModel(undefined);
+									setJob(undefined);
+									setEmail("");
+									setCopied(false);
+									setDetails(false);
+									setOpen(true);
+									setStopping(true);
+								} else {
+									setModel(undefined);
+									setOpen(false);
+								}
 								result = undefined;
 							}
 						}
@@ -238,16 +268,27 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	}
 	async function stop(): Promise<void> {
 		if (client === undefined || mutation !== undefined) return;
+		const publicationId = model?.publication?.id;
+		if (publicationId === undefined) return;
 		setProblem("");
 		setMutation("stop");
 		try {
 			await client.stop();
-			setStopping(false);
-			close(false);
-			await refresh(true);
-		} catch (error) {
+			uncertainStop.current = publicationId;
 			const current = await refresh(true);
-			if (current?.available === true)
+			if (current?.available === true && current.publication?.state === "stopped") {
+				setStopping(false);
+				close(false);
+			} else if (current?.available === true && current.publication?.id !== publicationId) {
+				close(true);
+			} else if (current === undefined || current.available) {
+				setProblem("Sharing may have stopped, but it could not be confirmed. Try again.");
+			}
+		} catch (error) {
+			uncertainStop.current = publicationId;
+			const current = await refresh(true);
+			if (current?.available === true && current.publication?.id !== publicationId) close(true);
+			else if (current === undefined || current.available)
 				setProblem(error instanceof Error ? error.message : "Sharing could not be stopped. Try again.");
 		} finally {
 			setMutation(undefined);
@@ -266,7 +307,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	}
 
 	const available = model?.available === true;
-	const blocked = model?.association === "superseded" || model?.association === "mismatched";
+	const blocked = authorityUncertain || model?.association === "superseded" || model?.association === "mismatched";
 	return {
 		available,
 		connected: available ? model.included : undefined,
@@ -311,6 +352,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 				open={open}
 				instant={instant}
 				model={model}
+				title={title}
 				job={job}
 				active={active}
 				changed={changed}
@@ -321,6 +363,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 				stopping={stopping}
 				mutation={mutation}
 				continuingUnavailable={continuingUnavailable}
+				blocked={blocked}
 				trigger={trigger}
 				onDetails={setDetails}
 				onEmail={setEmail}
@@ -330,6 +373,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 				onGrant={(person, kind) => void grant(person, kind)}
 				onStopping={setStopping}
 				onStop={() => void stop()}
+				onCheck={() => void refresh(true)}
 			/>
 		),
 	};
@@ -339,6 +383,7 @@ function ShareSurface({
 	open,
 	instant,
 	model,
+	title,
 	job,
 	active,
 	changed,
@@ -349,6 +394,7 @@ function ShareSurface({
 	stopping,
 	mutation,
 	continuingUnavailable,
+	blocked,
 	trigger,
 	onDetails,
 	onEmail,
@@ -358,10 +404,12 @@ function ShareSurface({
 	onGrant,
 	onStopping,
 	onStop,
+	onCheck,
 }: {
 	open: boolean;
 	instant: boolean;
 	model: PlayerPublicationModel | undefined;
+	title: string;
 	job: PlayerPublicationJob | undefined;
 	active: boolean;
 	changed: boolean;
@@ -372,6 +420,7 @@ function ShareSurface({
 	stopping: boolean;
 	mutation: "grant" | "stop" | undefined;
 	continuingUnavailable: boolean;
+	blocked: boolean;
 	trigger: RefObject<HTMLButtonElement | null>;
 	onDetails(value: boolean): void;
 	onEmail(value: string): void;
@@ -381,6 +430,7 @@ function ShareSurface({
 	onGrant(email: string, kind: "invite" | "revoke"): void;
 	onStopping(value: boolean): void;
 	onStop(): void;
+	onCheck(): void;
 }) {
 	const panel = useRef<HTMLElement>(null);
 	const close = useRef(onClose);
@@ -421,9 +471,7 @@ function ShareSurface({
 	const running = job?.state === "running";
 	const updateRunning = running && job.kind === "update";
 	const createRetry = job?.state === "failed" && job.kind === "create" && job.retryable;
-	const blocked = model?.association === "superseded" || model?.association === "mismatched";
 	const publication = model?.publication;
-	const title = model?.title ?? "prototype";
 	return (
 		<div className="spool-sharing-surface" data-open={open} data-instant={instant} inert={!open} aria-hidden={!open}>
 			<button
@@ -573,6 +621,16 @@ function ShareSurface({
 						<p role="status" className="spool-sharing-problem">
 							{problem}
 						</p>
+					)}
+					{blocked && model === undefined && (
+						<button
+							type="button"
+							className="spool-button is-primary"
+							disabled={mutation !== undefined}
+							onClick={onCheck}
+						>
+							Check status
+						</button>
 					)}
 					{!active && (
 						<button

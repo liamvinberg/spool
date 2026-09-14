@@ -463,7 +463,11 @@ export function createPublicationJobs({
 				kind,
 				state: "failed",
 				message: error instanceof Error ? error.message : "The link could not be published. Try again.",
-				retryable: kind === "update" || !(error instanceof CloudPublicationFailure) || error.detail.retryable,
+				retryable:
+					kind === "update" ||
+					!(error instanceof CloudPublicationFailure) ||
+					error.detail.retryable ||
+					error.detail.code === "capture_failed",
 				...(heldEmail === undefined ? {} : { email: heldEmail }),
 			};
 		} finally {

@@ -78,8 +78,12 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	};
 	let source: PublishResult["localSource"] = "changed";
 	const publishes: ReturnType<typeof deferred<PublishResult>>[] = [];
+	let publisher: string | undefined = "owner";
 	const services: PublicationJobServices = {
-		account: async () => ({ publisherId: "owner" }),
+		account: async () => {
+			if (publisher === undefined) throw new Error("signed out");
+			return { publisherId: publisher };
+		},
 		readiness: async () => ({ entry: "menu", ok: true, included: ["menu", "cart"], outgoing: [], diagnostics: [] }),
 		status: vi.fn(async () => ({
 			publication: current,
@@ -282,6 +286,49 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	await expect
 		.poll(() => page.getByText("Stop this link from opening? Your local work stays here.", { exact: true }).count())
 		.toBe(0);
+	await page.getByRole("button", { name: "Stop sharing…", exact: true }).click();
+	services.stop = vi.fn(async () => {
+		throw new Error("Stopping could not be confirmed. Try again.");
+	});
+	const failedRead = deferred<void>();
+	let failedReads = 0;
+	await page.route("**/publication?*", async (route) => {
+		failedReads += 1;
+		await failedRead.promise;
+		await route.abort("connectionfailed");
+	});
+	const uncertainStop = page.getByRole("button", { name: "Stop sharing", exact: true }).click();
+	await expect.poll(() => failedReads).toBe(1);
+	publisher = undefined;
+	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
+	await page.waitForTimeout(120);
+	failedRead.resolve();
+	await uncertainStop;
+	await page.getByText("Sharing could not be completed. Try again.", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Check status", exact: true }).waitFor();
+	expect(await page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(1);
+	expect(failedReads).toBe(2);
+	expect(await page.getByRole("textbox", { name: "Shared link" }).count()).toBe(0);
+	expect(await page.getByText("sam@example.com", { exact: true }).count()).toBe(0);
+	await page.unroute("**/publication?*");
+	await page.getByRole("button", { name: "Check status", exact: true }).click();
+	await expect.poll(() => page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
+	await expect.poll(() => page.getByRole("button", { name: "Share ↗", exact: true }).count()).toBe(0);
+	publisher = "owner";
+	services.status = vi.fn(async () => ({
+		publication: current,
+		operations: [],
+		nextCursor: null,
+		localSource: source,
+	}));
+	services.stop = vi.fn(async (_spoolDir, publicationId, publisherId) => {
+		expect({ publicationId, publisherId }).toEqual({ publicationId: "publication", publisherId: "owner" });
+		current = { ...current, state: "stopped", accessGeneration: current.accessGeneration + 1 };
+	});
+	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
+	await page.getByRole("button", { name: "Share ↗", exact: true }).waitFor();
+	await page.getByRole("button", { name: "Share ↗", exact: true }).click();
+	await page.getByRole("button", { name: /What they can see/ }).click();
 	await page.getByRole("button", { name: "Stop sharing…", exact: true }).click();
 	await page.getByRole("button", { name: "Stop sharing", exact: true }).click();
 	await expect.poll(() => page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);

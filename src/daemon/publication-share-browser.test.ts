@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Page, Route } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
-import type { PublishResult } from "../cloud-publication";
+import { CloudPublicationFailure, type PublishResult } from "../cloud-publication";
 import { initProject } from "../init";
 import { associationIdentity, type PublicationAssociation, readAssociation } from "../publication/associations";
 import { canonicalJson } from "../publication/manifest";
@@ -356,7 +356,12 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await workflow.waitForTimeout(300);
 	expect(services.publish).toHaveBeenCalledTimes(1);
 	await workflow.close();
-	rejectFirstPublish(new Error("The connection ended before the link was ready. Try again."));
+	rejectFirstPublish(
+		new CloudPublicationFailure("The website could not be captured. Repair it and try again.", {
+			code: "capture_failed",
+			retryable: false,
+		}),
+	);
 
 	// A failed first activation has a remote staging ID but no successful local binding.
 	const identity = associationIdentity(spoolDir, "https://cloud.test", "owner", root, "menu", "default");
@@ -393,7 +398,7 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 				id: association.intent.operationId,
 				state: "failed",
 				result: null,
-				error: { code: "interrupted", message: "The connection ended before the link was ready. Try again." },
+				error: { code: "capture_failed", message: "The website could not be captured. Repair it and try again." },
 			},
 			operations: [],
 			nextCursor: null,
@@ -404,7 +409,7 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await recovered.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await recovered.getByRole("button", { name: "Share", exact: true }).waitFor();
 	await openShare(recovered);
-	await recovered.getByText("The connection ended before the link was ready. Try again.").waitFor();
+	await recovered.getByText("The website could not be captured. Repair it and try again.").waitFor();
 	expect(await recovered.locator("#spool-share-email").inputValue()).toBe("alex@example.com");
 	writeFileSync(associationFile, JSON.stringify(association));
 	await recovered.getByRole("button", { name: "Retry" }).click();
