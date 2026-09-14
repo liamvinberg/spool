@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
+import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
 	ensureDaemon,
@@ -20,6 +21,7 @@ import {
 	statusDaemon,
 	stopDaemon,
 } from "./daemon/lifecycle";
+import { publicationReadiness } from "./daemon/publication-readiness";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
@@ -119,14 +121,21 @@ program
 
 program
 	.command("check")
-	.description("check every HTML frame offline without starting spool")
+	.description("check frames or connected publication navigation offline")
 	.argument("[path]", "where the walk-up starts", ".")
-	.action(async (path: string) => {
+	.option("--entry <frame>", "check navigation only, without typechecking", parseScenario)
+	.action(async (path: string, options: { entry?: string }) => {
 		const root = resolveProjectRoot(path);
 		if (root === undefined) {
 			throw new SpoolError(
 				`not inside a spool project — no design/canvas.json here or above; \`spool init\` starts one`,
 			);
+		}
+		if (options.entry !== undefined) {
+			const readiness = await publicationReadiness(createFlowGraph(), root, options.entry);
+			process.stdout.write(`${JSON.stringify(readiness)}\n`);
+			if (!readiness.ok) process.exitCode = 1;
+			return;
 		}
 		const diagnostics = await checkDesign(root);
 		for (const diagnostic of diagnostics) {

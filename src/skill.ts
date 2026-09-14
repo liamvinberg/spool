@@ -109,12 +109,22 @@ data-go="<frame-name>" on any element walks there on click — nearest data-go a
   ui.use()              hook — subscribe the calling component to ui.state changes
   ui.copy(text)         write text to the clipboard through the trusted canvas or player
 
-Shared components may own data-go or ui.go calls: Spool follows the local imports the frame actually uses and attributes those sites back to that frame. Keep shared UI free of imports from "spool"; pass a callback or destination prop across that boundary.
+Shared components may own data-go attributes or invoke callbacks passed by the frame. Publication readiness follows the local value imports and component exports the frame actually uses. Keep shared UI free of imports from "spool"; pass a callback or destination prop across that boundary.
 
-Before publishing, run \`spool flows --entry <frame-name>\`. It follows every possible destination from that explicit entry, stops at cycles, and prints the exact included set plus repair diagnostics. Literals, simple consts and finite ternary/logical branches are readable. For computed choices, declare the complete set beside the frame and use its values in the navigation code:
+Before publishing, run \`spool check --entry <frame-name>\` offline (or \`spool flows --entry <frame-name>\` with the daemon). This checks navigation only; plain \`spool check\` separately checks TypeScript. It follows every possible destination from that explicit entry, stops at cycles, and prints the exact included set plus repair diagnostics. Literals, simple consts and finite ternary/logical branches are readable. For computed choices, declare the complete set beside the frame and use its values in the navigation code:
 
+  import { ui } from "spool";
+  import { SharedButton } from "shared/ui/button";
   export const links = { receipt: "receipt", retry: "retry" } as const;
-  ui.go(ok ? links.receipt : links.retry);
+  export default function Frame() {
+    const key = ui.state.retry ? "retry" : "receipt";
+    return <SharedButton target={links[key]} />;
+  }
+
+  // shared/ui/button.tsx owns no Spool import:
+  export function SharedButton({ target }: { target: string }) {
+    return <button data-go={target}>Continue</button>;
+  }
 
 Every value must be a literal frame name. The declaration is authoritative, so literal navigation must agree with it; missing targets, invalid declarations and unresolved undeclared navigation make readiness fail. Rendered scenarios and verified walks are evidence, never completeness proof.
 
