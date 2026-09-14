@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
+import { cloudOrigin, login, logout } from "./cloud-auth";
 import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
@@ -55,6 +56,29 @@ const program = new Command("spool")
 	.description("the live prototyping canvas")
 	.version(pkg.version, "-v, --version")
 	.option(NO_OPEN, "print the canvas url without opening a browser");
+
+program
+	.command("login")
+	.description("sign in to Cloud sharing in the system browser")
+	.action(async () => {
+		process.stderr.write("spool: opening your browser to sign in…\n");
+		await login(spoolDir, { origin: cloudOrigin(process.env) });
+		process.stdout.write("signed in to spool Cloud\n");
+	});
+
+program
+	.command("logout")
+	.description("revoke this Cloud session and remove it from Keychain")
+	.action(async () => {
+		const result = await logout(spoolDir, { origin: cloudOrigin(process.env) });
+		process.stdout.write("signed out of spool Cloud\n");
+		if (result.remote === "unavailable") {
+			process.stderr.write(
+				"spool: the local credential was removed, but remote revocation could not be confirmed\n",
+			);
+			process.exitCode = 1;
+		}
+	});
 
 program
 	.command("init")
