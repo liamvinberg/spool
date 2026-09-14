@@ -162,17 +162,32 @@ export function createPublicationJobs({
 		const id = latest.get(key(root, entry, scenario, publisherId));
 		return id === undefined ? undefined : jobs.get(id);
 	}
-	async function readStatus(identityKey: string, publicationId: string): Promise<PublicationStatus> {
+	function readStatus(identityKey: string, publicationId: string): Promise<PublicationStatus> {
 		const statusKey = `${identityKey}\0${publicationId}`;
 		const current = statusReads.get(statusKey);
 		if (current !== undefined) return current;
 		const pending = services.status(spoolDir, publicationId);
 		statusReads.set(statusKey, pending);
-		try {
-			return await pending;
-		} finally {
-			if (statusReads.get(statusKey) === pending) statusReads.delete(statusKey);
+		void pending.then(
+			() => {
+				if (statusReads.get(statusKey) === pending) statusReads.delete(statusKey);
+			},
+			() => {
+				if (statusReads.get(statusKey) === pending) statusReads.delete(statusKey);
+			},
+		);
+		return pending;
+	}
+	async function readFreshStatus(identityKey: string, publicationId: string): Promise<PublicationStatus> {
+		const statusKey = `${identityKey}\0${publicationId}`;
+		for (;;) {
+			const earlier = statusReads.get(statusKey);
+			if (earlier === undefined) break;
+			try {
+				await earlier;
+			} catch {}
 		}
+		return readStatus(identityKey, publicationId);
 	}
 	function unavailable(request: Omit<PublicationJobRequest, "email">): PublicationShareModel {
 		return {
@@ -215,7 +230,7 @@ export function createPublicationJobs({
 			request.entry,
 			request.scenario,
 		);
-		const association = readAssociation(spoolDir, identity);
+		let association = readAssociation(spoolDir, identity);
 		if (association === undefined) return { account: current, readiness, identity, associationState: "missing" };
 		if (association.supersededBy !== undefined)
 			return {
@@ -246,6 +261,36 @@ export function createPublicationJobs({
 			};
 		}
 		if (!(await isCurrentPublisher(current.publisherId))) return;
+		const latest = readAssociation(spoolDir, identity);
+		if (latest === undefined) return { account: current, readiness, identity, associationState: "missing" };
+		if (latest.supersededBy !== undefined)
+			return {
+				account: current,
+				readiness,
+				identity,
+				association: latest,
+				associationState: "superseded",
+				problem: "This local publication association was rebound elsewhere. Use the CLI to target it deliberately.",
+			};
+		if (latest.publicationId !== association.publicationId)
+			return {
+				account: current,
+				readiness,
+				identity,
+				association: latest,
+				associationState: "mismatched",
+				problem: "This local publication association changed while sharing was checked. Try again.",
+			};
+		if (!sameAssociationVersion(association, latest))
+			return {
+				account: current,
+				readiness,
+				identity,
+				association: latest,
+				associationState: latest.binding === undefined ? "incomplete" : "current",
+				problem: "Sharing changed while it was checked. Try again.",
+			};
+		association = latest;
 		if (
 			status.publication.id !== association.publicationId ||
 			status.publication.ownerId !== current.publisherId ||
@@ -452,7 +497,10 @@ export function createPublicationJobs({
 		publisherId: string,
 		publicationId: string,
 	): Promise<PlayerPublication> {
-		const current = await readStatus(key(request.root, request.entry, request.scenario, publisherId), publicationId);
+		const current = await readFreshStatus(
+			key(request.root, request.entry, request.scenario, publisherId),
+			publicationId,
+		);
 		if (!(await isCurrentPublisher(publisherId)) || current.publication.ownerId !== publisherId)
 			throw new SpoolError("Cloud account changed. Try again.");
 		if (current.publication.entry !== request.entry || current.publication.scenario !== request.scenario)
@@ -526,4 +574,18 @@ function phaseOf(message: string): PublicationJobPhase {
 }
 function validEmail(value: string | undefined): value is string {
 	return value !== undefined && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value);
+}
+
+function sameAssociationVersion(left: PublicationAssociation, right: PublicationAssociation): boolean {
+	return (
+		left.key === right.key &&
+		left.publicationId === right.publicationId &&
+		left.supersededBy === right.supersededBy &&
+		left.intent.operationId === right.intent.operationId &&
+		left.intent.contentIdentity === right.intent.contentIdentity &&
+		left.intent.inputIdentity === right.intent.inputIdentity &&
+		left.binding?.operationId === right.binding?.operationId &&
+		left.binding?.contentIdentity === right.binding?.contentIdentity &&
+		left.binding?.inputIdentity === right.binding?.inputIdentity
+	);
 }

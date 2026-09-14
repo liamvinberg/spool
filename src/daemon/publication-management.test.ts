@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 import type { CloudOperation, CloudPublication, PublishResult } from "../cloud-publication";
-import { associationIdentity, type PublicationAssociation } from "../publication/associations";
+import { associationIdentity, bindAssociation, type PublicationAssociation } from "../publication/associations";
 import { canonicalJson } from "../publication/manifest";
 import { makeProject, makeTempDir } from "../test-helpers";
 import { createPublicationJobs, type PublicationJobServices } from "./publication-jobs";
@@ -307,4 +307,72 @@ it("does not publish an existing binding while its fresh status is unavailable",
 	});
 	await expect(jobs.start(request)).rejects.toThrow("Sharing could not be checked");
 	expect(boundary.publish).not.toHaveBeenCalled();
+});
+
+it("discards a held status when the exact association is rebound to another checkout", async () => {
+	const spoolDir = makeTempDir();
+	const firstProject = makeProject(spoolDir);
+	const secondProject = makeProject(spoolDir);
+	writeAssociation(spoolDir, firstProject.root);
+	const second = writeAssociation(spoolDir, secondProject.root);
+	const held = deferred<{
+		publication: CloudPublication;
+		operations: [];
+		nextCursor: null;
+		localSource: "current";
+	}>();
+	const boundary = services(publication("owner"));
+	boundary.status = vi.fn(() => held.promise);
+	const jobs = createPublicationJobs({ spoolDir, version: "test", services: boundary });
+	const request = { root: firstProject.root, project: "First", entry: "menu", scenario: "default" };
+
+	const reading = jobs.model(request);
+	await vi.waitFor(() => expect(boundary.status).toHaveBeenCalledTimes(1));
+	bindAssociation(spoolDir, second);
+	held.resolve({
+		publication: publication("owner"),
+		operations: [],
+		nextCursor: null,
+		localSource: "current",
+	});
+	const model = await reading;
+	expect(model).toMatchObject({ association: "superseded", source: "unavailable" });
+	expect(model).not.toHaveProperty("publication");
+});
+
+it("waits out a pre-mutation status read before projecting acknowledged grant state", async () => {
+	const spoolDir = makeTempDir();
+	const project = makeProject(spoolDir);
+	writeAssociation(spoolDir, project.root);
+	const before = publication("owner");
+	const after = { ...before, invitedEmails: ["alex@example.com", "sam@example.com"] };
+	const stale = deferred<{
+		publication: CloudPublication;
+		operations: [];
+		nextCursor: null;
+		localSource: "current";
+	}>();
+	const releaseGrant = deferred<void>();
+	let statusCalls = 0;
+	const boundary = services(before);
+	boundary.status = vi.fn(async () => {
+		statusCalls += 1;
+		if (statusCalls === 1)
+			return { publication: before, operations: [], nextCursor: null, localSource: "current" as const };
+		if (statusCalls === 2) return stale.promise;
+		return { publication: after, operations: [], nextCursor: null, localSource: "current" as const };
+	});
+	boundary.grant = vi.fn(async () => releaseGrant.promise);
+	const jobs = createPublicationJobs({ spoolDir, version: "test", services: boundary });
+	const request = { root: project.root, project: "Kaffe", entry: "menu", scenario: "default" };
+
+	const granting = jobs.grant({ ...request, kind: "invite", email: "sam@example.com" });
+	await vi.waitFor(() => expect(boundary.grant).toHaveBeenCalledTimes(1));
+	const staleModel = jobs.model(request);
+	await vi.waitFor(() => expect(boundary.status).toHaveBeenCalledTimes(2));
+	releaseGrant.resolve();
+	stale.resolve({ publication: before, operations: [], nextCursor: null, localSource: "current" });
+	expect(await staleModel).toMatchObject({ publication: { invitedEmails: ["alex@example.com"] } });
+	expect(await granting).toMatchObject({ invitedEmails: ["alex@example.com", "sam@example.com"] });
+	expect(boundary.status).toHaveBeenCalledTimes(3);
 });
