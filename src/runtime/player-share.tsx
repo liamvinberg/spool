@@ -1,7 +1,6 @@
 import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-	PlayerPublication,
 	PlayerPublicationClient,
 	PlayerPublicationJob,
 	PlayerPublicationModel,
@@ -22,67 +21,181 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const [details, setDetails] = useState(false);
 	const [email, setEmail] = useState("");
 	const [job, setJob] = useState<PlayerPublicationJob>();
-	const [publication, setPublication] = useState<PlayerPublication>();
 	const [problem, setProblem] = useState("");
 	const [copied, setCopied] = useState(false);
+	const [stopping, setStopping] = useState(false);
+	const [mutation, setMutation] = useState<"grant" | "stop">();
 	const trigger = useRef<HTMLButtonElement>(null);
 	const freshness = useRef(0);
+	const refreshing = useRef<Promise<PlayerPublicationModel | undefined> | undefined>(undefined);
+	const trailing = useRef(false);
 
 	const apply = useCallback((next: PlayerPublicationModel) => {
-		setModel(next);
-		setJob(next.job);
-		if (next.job?.state === "running" || next.job?.state === "failed") setEmail(next.job.email);
-		setProblem(next.job?.state === "failed" ? next.job.message : "");
-		setPublication(next.publication ?? (next.job?.state === "succeeded" ? next.job.publication : undefined));
-		if (!next.available) setOpen(false);
+		setModel((current) => {
+			const sameRunningJob =
+				next.available &&
+				next.association === "current" &&
+				next.job?.state === "running" &&
+				current?.job?.state === "running" &&
+				next.job.id === current.job.id;
+			return sameRunningJob && next.publication === undefined && current?.publication !== undefined
+				? { ...next, publication: current.publication, source: "unavailable" }
+				: next;
+		});
+		setJob((current) => {
+			if (next.available && next.association === "current" && next.job === undefined && current?.state === "running")
+				return current;
+			return next.job;
+		});
+		if (next.job !== undefined && "email" in next.job && next.job.email !== undefined) setEmail(next.job.email);
+		setProblem(next.job?.state === "failed" ? next.job.message : (next.problem ?? ""));
+		if (!next.available) {
+			setOpen(false);
+			setStopping(false);
+		}
 	}, []);
 
-	const refresh = useCallback(async () => {
-		if (client === undefined) return undefined;
-		const request = ++freshness.current;
-		try {
-			const next = await client.model();
-			if (request !== freshness.current) return undefined;
-			apply(next);
-			return next;
-		} catch {
-			if (request !== freshness.current) return undefined;
-			setModel(undefined);
-			setOpen(false);
-			return undefined;
-		}
-	}, [client, apply]);
+	const refresh = useCallback(
+		(force = false): Promise<PlayerPublicationModel | undefined> => {
+			if (client === undefined) return Promise.resolve(undefined);
+			if (refreshing.current !== undefined) {
+				if (force) freshness.current++;
+				trailing.current = true;
+				return refreshing.current;
+			}
+			const run = Promise.resolve()
+				.then(async () => {
+					let result: PlayerPublicationModel | undefined;
+					do {
+						trailing.current = false;
+						const request = ++freshness.current;
+						try {
+							const next = await client.model();
+							if (request === freshness.current) {
+								apply(next);
+								result = next;
+							}
+						} catch {
+							if (request === freshness.current) {
+								setModel(undefined);
+								setOpen(false);
+								result = undefined;
+							}
+						}
+					} while (trailing.current);
+					return result;
+				})
+				.finally(() => {
+					if (refreshing.current === run) refreshing.current = undefined;
+					if (trailing.current) {
+						trailing.current = false;
+						void refresh();
+					}
+				});
+			refreshing.current = run;
+			return run;
+		},
+		[client, apply],
+	);
 
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
-
 	useEffect(() => {
-		if (client === undefined || job?.state !== "running") return;
-		const request = freshness.current;
-		const timer = window.setTimeout(() => {
-			void client.job(job.id).then(
-				(next) => {
-					if (request !== freshness.current) return;
-					setJob(next);
-					if (next.state === "succeeded") setPublication(next.publication);
-					if (next.state === "failed") setProblem(next.message);
-				},
-				() => void refresh(),
-			);
-		}, 250);
-		return () => window.clearTimeout(timer);
-	}, [client, job, refresh]);
+		if (client === undefined) return;
+		let timer: number | undefined;
+		const unsubscribe = client.subscribe(() => {
+			if (timer !== undefined) window.clearTimeout(timer);
+			timer = window.setTimeout(() => {
+				timer = undefined;
+				void refresh();
+			}, 80);
+		});
+		return () => {
+			if (timer !== undefined) window.clearTimeout(timer);
+			unsubscribe();
+		};
+	}, [client, refresh]);
+	const runningJobId = job?.state === "running" ? job.id : undefined;
+	useEffect(() => {
+		if (client === undefined || runningJobId === undefined) return;
+		let cancelled = false;
+		let timer: number;
+		const schedule = () => {
+			if (!cancelled) timer = window.setTimeout(() => void observe(), 250);
+		};
+		async function observe(): Promise<void> {
+			if (client === undefined || runningJobId === undefined) return;
+			const request = freshness.current;
+			try {
+				const next = await client.job(runningJobId);
+				if (cancelled) return;
+				if (request !== freshness.current) {
+					if (next.state !== "running") void refresh();
+					schedule();
+					return;
+				}
+				setJob(next);
+				if (next.state === "running") {
+					schedule();
+					return;
+				}
+				// A model captured before completion cannot replace the completed publication.
+				freshness.current++;
+				if (next.state === "failed") setProblem(next.message);
+				if (next.state === "succeeded") {
+					setProblem("");
+					setModel((current) =>
+						current === undefined ||
+						!current.available ||
+						current.association === "superseded" ||
+						current.association === "mismatched" ||
+						(next.kind === "update" &&
+							current.association !== "current" &&
+							!(current.association === "incomplete" && current.job?.id === next.id)) ||
+						(current.publication !== undefined && current.publication.id !== next.publication.id)
+							? current
+							: {
+									...current,
+									association: "current",
+									source: next.source,
+									recipients: next.publication.invitedEmails,
+									publication: next.publication,
+									job: next,
+								},
+					);
+				}
+				void refresh();
+			} catch {
+				if (!cancelled) {
+					await refresh(true);
+					schedule();
+				}
+			}
+		}
+		schedule();
+		return () => {
+			cancelled = true;
+			window.clearTimeout(timer);
+		};
+	}, [client, runningJobId, refresh]);
 
 	const close = (immediate: boolean) => {
 		setInstant(immediate);
 		setOpen(false);
+		setStopping(false);
 	};
+	const active = model?.association === "current" && model.publication?.state === "active";
+	const updating = job?.kind === "update" && job.state === "running";
+	const retrying = job?.kind === "update" && job.state === "failed";
+	const changed = active && (updating || model.source !== "current" || retrying);
+	const continuingUnavailable = model?.association === "current" && model.publication === undefined;
 
-	async function create(): Promise<void> {
-		if (client === undefined) return;
+	async function publish(): Promise<void> {
+		if (client === undefined || model === undefined) return;
 		const invited = email.trim();
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(invited)) {
+		const needsInvitation = !active && !continuingUnavailable && model.recipients.length === 0;
+		if ((needsInvitation || invited !== "") && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(invited)) {
 			setProblem("Enter the person’s email address.");
 			return;
 		}
@@ -90,17 +203,58 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 		setCopied(false);
 		const request = freshness.current;
 		try {
-			const started = await client.start(invited);
-			if (request === freshness.current) setJob(started);
+			const started = await client.start(invited === "" ? undefined : invited);
+			if (request === freshness.current) {
+				setJob(started);
+				setModel((current) => (current === undefined ? current : { ...current, job: started }));
+			} else void refresh();
 		} catch (error) {
 			if (request !== freshness.current) return;
-			const current = await refresh();
+			const current = await refresh(true);
 			if (current?.available === true)
-				setProblem(error instanceof Error ? error.message : "The link could not be created. Try again.");
+				setProblem(error instanceof Error ? error.message : "The link could not be published. Try again.");
 		}
 	}
-
+	async function grant(person: string, kind: "invite" | "revoke"): Promise<void> {
+		if (client === undefined || mutation !== undefined) return;
+		const mailbox = person.trim();
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(mailbox)) {
+			setProblem("Enter the person’s email address.");
+			return;
+		}
+		setProblem("");
+		setMutation("grant");
+		try {
+			await client.grant(mailbox, kind);
+			if (kind === "invite") setEmail("");
+			await refresh(true);
+		} catch (error) {
+			const current = await refresh(true);
+			if (current?.available === true)
+				setProblem(error instanceof Error ? error.message : "Access could not be changed. Try again.");
+		} finally {
+			setMutation(undefined);
+		}
+	}
+	async function stop(): Promise<void> {
+		if (client === undefined || mutation !== undefined) return;
+		setProblem("");
+		setMutation("stop");
+		try {
+			await client.stop();
+			setStopping(false);
+			close(false);
+			await refresh(true);
+		} catch (error) {
+			const current = await refresh(true);
+			if (current?.available === true)
+				setProblem(error instanceof Error ? error.message : "Sharing could not be stopped. Try again.");
+		} finally {
+			setMutation(undefined);
+		}
+	}
 	async function copyLink(): Promise<void> {
+		const publication = active ? model?.publication : undefined;
 		if (publication === undefined) return;
 		try {
 			await navigator.clipboard.writeText(publication.url);
@@ -112,27 +266,45 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	}
 
 	const available = model?.available === true;
+	const blocked = model?.association === "superseded" || model?.association === "mismatched";
 	return {
 		available,
 		connected: available ? model.included : undefined,
 		open,
 		trigger: available ? (
-			<button
-				type="button"
-				ref={trigger}
-				className="spool-bar-share"
-				aria-label={publication === undefined ? "Share" : "Share ↗"}
-				aria-expanded={open}
-				aria-haspopup="dialog"
-				onClick={(event) => {
-					setInstant(event.detail === 0);
-					void refresh().then((next) => {
-						if (next?.available === true) setOpen(true);
-					});
-				}}
-			>
-				Share
-			</button>
+			<>
+				{active &&
+					(changed ? (
+						<button
+							type="button"
+							className="spool-bar-share spool-bar-update"
+							disabled={updating || blocked}
+							onClick={() => void publish()}
+						>
+							{updating ? "Updating…" : retrying ? "Retry update" : "Update link"}
+						</button>
+					) : (
+						<span className="spool-bar-status" role="status">
+							Up to date
+						</span>
+					))}
+				<button
+					type="button"
+					ref={trigger}
+					className="spool-bar-share"
+					aria-label={active ? (changed ? "Share · changes" : "Share ↗") : "Share"}
+					aria-expanded={open}
+					aria-haspopup="dialog"
+					onClick={(event) => {
+						setInstant(event.detail === 0);
+						void refresh(true).then((next) => {
+							if (next?.available === true) setOpen(true);
+						});
+					}}
+				>
+					Share
+				</button>
+			</>
 		) : null,
 		surface: (
 			<ShareSurface
@@ -140,17 +312,24 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 				instant={instant}
 				model={model}
 				job={job}
-				publication={publication}
+				active={active}
+				changed={changed}
 				details={details}
 				email={email}
 				problem={problem}
 				copied={copied}
+				stopping={stopping}
+				mutation={mutation}
+				continuingUnavailable={continuingUnavailable}
 				trigger={trigger}
 				onDetails={setDetails}
 				onEmail={setEmail}
 				onClose={close}
-				onCreate={() => void create()}
+				onPublish={() => void publish()}
 				onCopy={() => void copyLink()}
+				onGrant={(person, kind) => void grant(person, kind)}
+				onStopping={setStopping}
+				onStop={() => void stop()}
 			/>
 		),
 	};
@@ -161,33 +340,47 @@ function ShareSurface({
 	instant,
 	model,
 	job,
-	publication,
+	active,
+	changed,
 	details,
 	email,
 	problem,
 	copied,
+	stopping,
+	mutation,
+	continuingUnavailable,
 	trigger,
 	onDetails,
 	onEmail,
 	onClose,
-	onCreate,
+	onPublish,
 	onCopy,
+	onGrant,
+	onStopping,
+	onStop,
 }: {
 	open: boolean;
 	instant: boolean;
 	model: PlayerPublicationModel | undefined;
 	job: PlayerPublicationJob | undefined;
-	publication: PlayerPublication | undefined;
+	active: boolean;
+	changed: boolean;
 	details: boolean;
 	email: string;
 	problem: string;
 	copied: boolean;
+	stopping: boolean;
+	mutation: "grant" | "stop" | undefined;
+	continuingUnavailable: boolean;
 	trigger: RefObject<HTMLButtonElement | null>;
 	onDetails(value: boolean): void;
 	onEmail(value: string): void;
 	onClose(immediate: boolean): void;
-	onCreate(): void;
+	onPublish(): void;
 	onCopy(): void;
+	onGrant(email: string, kind: "invite" | "revoke"): void;
+	onStopping(value: boolean): void;
+	onStop(): void;
 }) {
 	const panel = useRef<HTMLElement>(null);
 	const close = useRef(onClose);
@@ -226,7 +419,10 @@ function ShareSurface({
 	}, [open, trigger]);
 
 	const running = job?.state === "running";
-	const retry = job?.state === "failed" && job.retryable;
+	const updateRunning = running && job.kind === "update";
+	const createRetry = job?.state === "failed" && job.kind === "create" && job.retryable;
+	const blocked = model?.association === "superseded" || model?.association === "mismatched";
+	const publication = model?.publication;
 	const title = model?.title ?? "prototype";
 	return (
 		<div className="spool-sharing-surface" data-open={open} data-instant={instant} inert={!open} aria-hidden={!open}>
@@ -254,14 +450,14 @@ function ShareSurface({
 					</div>
 				</header>
 				<div className="spool-sharing-body">
-					{publication === undefined ? (
+					{!active ? (
 						<>
 							<p className="spool-sharing-muted">Let someone try what you made.</p>
 							<form
 								className="spool-sharing-form"
 								onSubmit={(event) => {
 									event.preventDefault();
-									onCreate();
+									onPublish();
 								}}
 							>
 								<label htmlFor="spool-share-email">Who should see it?</label>
@@ -270,7 +466,7 @@ function ShareSurface({
 									type="email"
 									placeholder="Email address"
 									value={email}
-									disabled={running}
+									disabled={running || blocked}
 									onChange={(event) => onEmail(event.target.value)}
 								/>
 								<p>Only people you add can open this link.</p>
@@ -278,24 +474,52 @@ function ShareSurface({
 						</>
 					) : (
 						<>
-							<input aria-label="Shared link" readOnly value={publication.url} className="spool-sharing-link" />
+							<input aria-label="Shared link" readOnly value={publication?.url} className="spool-sharing-link" />
 							<div className="spool-sharing-actions">
 								<button type="button" className="spool-button is-primary" onClick={onCopy}>
 									{copied ? "Copied" : "Copy link"}
 								</button>
-								<a className="spool-button" href={publication.url} target="_blank" rel="noopener noreferrer">
+								<a className="spool-button" href={publication?.url} target="_blank" rel="noopener noreferrer">
 									Open link ↗
 								</a>
 							</div>
-							{publication.invitedEmails.map((person) => (
-								<div className="spool-sharing-person" key={person}>
-									<span>{person.slice(0, 1).toUpperCase()}</span>
-									<strong>{person}</strong>
-									<small>can view</small>
+							{changed && (
+								<div className="spool-sharing-update">
+									<p>Your edits aren’t on the shared link yet.</p>
+									<button
+										type="button"
+										className="spool-button is-primary"
+										disabled={updateRunning || blocked}
+										onClick={onPublish}
+									>
+										{updateRunning
+											? "Updating…"
+											: job?.state === "failed" && job.kind === "update"
+												? "Retry update"
+												: "Update link"}
+									</button>
+									<p>Update the same link. No need to send it again.</p>
 								</div>
-							))}
+							)}
 						</>
 					)}
+					{model?.recipients.map((person) => (
+						<div className="spool-sharing-person" key={person}>
+							<span>{person.slice(0, 1).toUpperCase()}</span>
+							<strong>{person}</strong>
+							<small>can view</small>
+							{details && (
+								<button
+									type="button"
+									aria-label={`Remove ${person}`}
+									disabled={mutation !== undefined || blocked}
+									onClick={() => onGrant(person, "revoke")}
+								>
+									×
+								</button>
+							)}
+						</div>
+					))}
 					<div className="spool-sharing-details">
 						<button type="button" onClick={() => onDetails(!details)} aria-expanded={details}>
 							<span>What they can see</span>
@@ -312,6 +536,31 @@ function ShareSurface({
 									))}
 								</section>
 								<p>Other drafts stay local. Viewers navigate with the website’s own links.</p>
+								{active && (
+									<>
+										<form
+											className="spool-sharing-add"
+											onSubmit={(event) => {
+												event.preventDefault();
+												onGrant(email, "invite");
+											}}
+										>
+											<input
+												aria-label="Add another person"
+												placeholder="Add another person"
+												value={email}
+												disabled={mutation !== undefined}
+												onChange={(event) => onEmail(event.target.value)}
+											/>
+											<button type="submit" className="spool-button" disabled={mutation !== undefined}>
+												Add
+											</button>
+										</form>
+										<button type="button" className="spool-sharing-stop" onClick={() => onStopping(true)}>
+											Stop sharing…
+										</button>
+									</>
+								)}
 							</div>
 						)}
 					</div>
@@ -325,15 +574,48 @@ function ShareSurface({
 							{problem}
 						</p>
 					)}
-					{publication === undefined && (
+					{!active && (
 						<button
 							type="button"
 							className="spool-button is-primary"
-							disabled={running || model?.ready === false || (job?.state === "failed" && !retry)}
-							onClick={onCreate}
+							disabled={
+								running || model?.ready === false || blocked || (job?.state === "failed" && !createRetry)
+							}
+							onClick={onPublish}
 						>
-							{running ? "Creating link…" : retry ? "Retry" : "Create link"}
+							{running
+								? continuingUnavailable
+									? "Updating…"
+									: "Creating link…"
+								: createRetry
+									? "Retry"
+									: continuingUnavailable
+										? "Update link"
+										: "Create link"}
 						</button>
+					)}
+					{stopping && (
+						<div className="spool-sharing-confirm">
+							<p>Stop this link from opening? Your local work stays here.</p>
+							<div>
+								<button
+									type="button"
+									className="spool-button"
+									disabled={mutation !== undefined}
+									onClick={() => onStopping(false)}
+								>
+									Keep sharing
+								</button>
+								<button
+									type="button"
+									className="spool-button is-primary"
+									disabled={mutation !== undefined}
+									onClick={onStop}
+								>
+									Stop sharing
+								</button>
+							</div>
+						</div>
 					)}
 				</div>
 			</section>

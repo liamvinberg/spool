@@ -1,9 +1,12 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Page, Route } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { PublishResult } from "../cloud-publication";
 import { initProject } from "../init";
+import { associationIdentity, type PublicationAssociation, readAssociation } from "../publication/associations";
+import { canonicalJson } from "../publication/manifest";
 import { testBrowser } from "../test-browser";
 import { makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import type { PublicationJobServices } from "./publication-jobs";
@@ -106,8 +109,25 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 			options.progress("uploading 1/1");
 			publishCount += 1;
 			if (publishCount === 1) return firstPublish;
+			expect(options.publicationId).toBe("publication");
+			const identity = associationIdentity(spoolDir, "https://cloud.test", "owner", root, "menu", "default");
+			const saved = readAssociation(spoolDir, identity);
+			if (saved === undefined) throw new Error("missing recovery fixture association");
+			writeFileSync(
+				join(spoolDir, "publications", "associations", `${saved.key}.json`),
+				JSON.stringify({
+					...saved,
+					binding: {
+						operationId: saved.intent.operationId,
+						contentIdentity: saved.intent.contentIdentity,
+						inputIdentity: saved.intent.inputIdentity,
+					},
+				}),
+			);
 			return result("owner");
 		}),
+		grant: async () => {},
+		stop: async () => {},
 		origin: () => "https://cloud.test",
 	};
 	const daemon = await serveDaemon({
@@ -264,13 +284,16 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 				included: [],
 				ready: false,
 				diagnostics: [],
+				association: "missing",
+				source: "unavailable",
+				recipients: [],
 			}),
 		});
 	});
 	await expired.getByRole("button", { name: "Share", exact: true }).click();
 	await expect.poll(() => heldModel).toBeDefined();
 	await expired.getByRole("button", { name: "Share", exact: true }).click();
-	await expect.poll(() => expired.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
+	expect(modelRequests).toBe(1);
 	expect(await expired.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
 	await heldModel?.fulfill({
 		contentType: "application/json",
@@ -282,9 +305,13 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 			included: ["menu", "cart", "rewards"],
 			ready: true,
 			diagnostics: [],
+			association: "missing",
+			source: "unavailable",
+			recipients: [],
 		}),
 	});
-	await expired.waitForTimeout(300);
+	await expect.poll(() => modelRequests).toBe(2);
+	await expect.poll(() => expired.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
 	expect(await expired.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
 	expect(services.publish).not.toHaveBeenCalled();
 
@@ -300,6 +327,17 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	publisher = "owner";
 	await expiringForm.waitForTimeout(300);
 	expect(services.publish).not.toHaveBeenCalled();
+
+	const signedOut = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+	publisher = undefined;
+	await signedOut.goto(`${daemon.url}/play/Kaffe?frame=menu`);
+	await signedOut.waitForTimeout(200);
+	expect(await signedOut.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
+	publisher = "owner";
+	await signedOut.evaluate(() => window.dispatchEvent(new Event("focus")));
+	await signedOut.getByRole("button", { name: "Share", exact: true }).waitFor();
+	expect(services.publish).not.toHaveBeenCalled();
+	await signedOut.close();
 
 	const workflow = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await workflow.goto(`${daemon.url}/play/Kaffe?frame=menu`);
@@ -320,12 +358,55 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await workflow.close();
 	rejectFirstPublish(new Error("The connection ended before the link was ready. Try again."));
 
+	// A failed first activation has a remote staging ID but no successful local binding.
+	const identity = associationIdentity(spoolDir, "https://cloud.test", "owner", root, "menu", "default");
+	const association: PublicationAssociation = {
+		key: createHash("sha256").update(canonicalJson(identity)).digest("hex"),
+		identity,
+		projectId: "11111111-1111-4111-8111-111111111111",
+		title: "Kaffe",
+		publicationId: "publication",
+		intent: {
+			kind: "create",
+			operationId: "22222222-2222-4222-8222-222222222222",
+			contentIdentity: "a".repeat(64),
+			inputIdentity: "input",
+			invitedEmails: ["alex@example.com"],
+		},
+	};
+	const associationFile = join(spoolDir, "publications", "associations", `${association.key}.json`);
+	mkdirSync(dirname(associationFile), { recursive: true });
+	services.status = async () => {
+		const current = result("owner");
+		if (publishCount > 1)
+			return {
+				publication: current.publication,
+				operation: { ...current.operation, id: association.intent.operationId },
+				operations: [],
+				nextCursor: null,
+				localSource: current.localSource,
+			};
+		return {
+			publication: { ...current.publication, state: "staging", revision: 0, currentVersion: null },
+			operation: {
+				...current.operation,
+				id: association.intent.operationId,
+				state: "failed",
+				result: null,
+				error: { code: "interrupted", message: "The connection ended before the link was ready. Try again." },
+			},
+			operations: [],
+			nextCursor: null,
+			localSource: "unavailable",
+		};
+	};
 	const recovered = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await recovered.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await recovered.getByRole("button", { name: "Share", exact: true }).waitFor();
 	await openShare(recovered);
 	await recovered.getByText("The connection ended before the link was ready. Try again.").waitFor();
 	expect(await recovered.locator("#spool-share-email").inputValue()).toBe("alex@example.com");
+	writeFileSync(associationFile, JSON.stringify(association));
 	await recovered.getByRole("button", { name: "Retry" }).click();
 	await recovered.getByRole("button", { name: "Copy link" }).waitFor();
 	expect(await recovered.getByLabel("Shared link").inputValue()).toBe("https://p.test.beta.onspool.page");
