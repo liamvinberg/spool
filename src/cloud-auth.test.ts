@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cloudOrigin, keychainVault, login, logout, session } from "./cloud-auth";
+import { authorizedCloudRequest, cloudOrigin, keychainVault, login, logout, session } from "./cloud-auth";
 import { makeTempDir } from "./test-helpers";
 
 const originalPath = process.env.PATH;
@@ -188,5 +188,25 @@ esac
 				fetch: async () => Promise.reject(new Error("token ttt secret host detail")),
 			}),
 		).rejects.toThrow("spool.page could not be reached; local spool is still available");
+	});
+
+	it("pins authenticated API requests against redirects and bounds caller signals", async () => {
+		const held = new AbortController();
+		await authorizedCloudRequest(
+			"/tmp/spool-one",
+			"/api/publications",
+			{ signal: held.signal },
+			{
+				origin: "https://cloud.test",
+				vault: { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} },
+				fetch: async (input, init) => {
+					expect(String(input)).toBe("https://cloud.test/api/publications");
+					expect(init?.redirect).toBe("error");
+					expect(init?.signal).not.toBe(held.signal);
+					expect(init?.signal).toBeInstanceOf(AbortSignal);
+					return Response.json({});
+				},
+			},
+		);
 	});
 });

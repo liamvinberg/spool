@@ -8,7 +8,8 @@ import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
-import { cloudOrigin, login, logout } from "./cloud-auth";
+import { CloudRequestFailure, cloudOrigin, login, logout } from "./cloud-auth";
+import { CloudPublicationFailure, listPublications, publicationStatus, publishWebsite } from "./cloud-publication";
 import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
@@ -79,6 +80,74 @@ program
 			);
 			process.exitCode = 1;
 		}
+	});
+
+const cloud = program.command("cloud").description("publish and inspect protected websites");
+
+async function cloudJson(action: () => Promise<unknown>): Promise<void> {
+	try {
+		process.stdout.write(`${JSON.stringify(await action())}\n`);
+	} catch (error) {
+		const known =
+			error instanceof CloudPublicationFailure
+				? error.detail
+				: error instanceof CloudRequestFailure
+					? { code: error.code, retryable: error.retryable }
+					: undefined;
+		process.stdout.write(
+			`${JSON.stringify({
+				error: {
+					code: known?.code ?? "client_error",
+					message: error instanceof Error ? error.message : "Cloud publication failed",
+					retryable: known?.retryable ?? false,
+					...(known?.retryAfter === undefined ? {} : { retryAfter: known.retryAfter }),
+					...(known?.operation === undefined ? {} : { state: known.operation.state, operation: known.operation }),
+					...(known?.operationId === undefined && known?.operation === undefined
+						? {}
+						: { operationId: known.operation?.id ?? known.operationId }),
+				},
+			})}\n`,
+		);
+		process.exitCode = 1;
+	}
+}
+
+cloud
+	.command("publish")
+	.description("publish a connected website")
+	.argument("<frame>", "original entry frame", parseScenario)
+	.option("--invite <email...>", "person allowed to open the new website")
+	.option("--scenario <name>", "scenario seed", parseScenario)
+	.action(async (entry: string, options: { invite?: string[]; scenario?: string }) => {
+		await cloudJson(async () => {
+			const root = resolveProjectRoot(process.cwd());
+			if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
+			return publishWebsite({
+				spoolDir,
+				root,
+				entry,
+				...(options.invite === undefined ? {} : { invitedEmails: options.invite }),
+				version: pkg.version,
+				origin: cloudOrigin(process.env),
+				...(options.scenario === undefined ? {} : { scenario: options.scenario }),
+				progress: (message) => process.stderr.write(`spool: ${message}\n`),
+			});
+		});
+	});
+
+cloud
+	.command("list")
+	.description("list your Cloud publications")
+	.action(async () => {
+		await cloudJson(() => listPublications(spoolDir, { origin: cloudOrigin(process.env) }));
+	});
+
+cloud
+	.command("status")
+	.description("read one Cloud publication")
+	.argument("<publication>", "publication id")
+	.action(async (publication: string) => {
+		await cloudJson(() => publicationStatus(spoolDir, publication, { origin: cloudOrigin(process.env) }));
 	});
 
 program
