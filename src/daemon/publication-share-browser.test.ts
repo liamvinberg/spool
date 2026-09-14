@@ -28,6 +28,7 @@ function result(ownerId: string): PublishResult {
 		updatedAt: 1,
 	};
 	return {
+		publisherId: ownerId,
 		publication,
 		operation: {
 			id: "operation",
@@ -89,7 +90,16 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 			outgoing: [],
 			diagnostics: [],
 		}),
-		status: async () => result("owner"),
+		status: async () => {
+			const current = result("owner");
+			return {
+				publication: current.publication,
+				operation: current.operation,
+				operations: [],
+				nextCursor: null,
+				localSource: current.localSource,
+			};
+		},
 		publish: vi.fn(async (options) => {
 			expect(options.expectedPublisherId).toBe("owner");
 			options.progress("capturing website");

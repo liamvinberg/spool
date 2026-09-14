@@ -24,6 +24,7 @@ function publicationResult(ownerId: string): PublishResult {
 		updatedAt: 1,
 	};
 	return {
+		publisherId: ownerId,
 		publication,
 		operation: {
 			id: "operation",

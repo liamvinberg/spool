@@ -40,6 +40,7 @@ function publication(ownerId: string) {
 function publishResult(ownerId: string): PublishResult {
 	const value = publication(ownerId);
 	return {
+		publisherId: ownerId,
 		publication: value,
 		operation: {
 			id: `operation-${ownerId}`,
