@@ -22,10 +22,12 @@ function fixture(availableOnAttempt: number): {
 	const directory = mkdtempSync(join(tmpdir(), "spool-bundle-cli-"));
 	const attempts = join(directory, "attempts");
 	const packLog = join(directory, "pack.log");
-	const npm = executable(
+	executable(
 		directory,
 		"npm",
 		`if [ "$1" = view ]; then
+	[ "$4" = --fetch-retries=0 ] || exit 90
+	[ "$5" = --fetch-timeout=5000 ] || exit 90
 	attempt=0
 	[ ! -f "$ATTEMPTS_FILE" ] || attempt=$(<"$ATTEMPTS_FILE")
 	attempt=$((attempt + 1))
@@ -42,9 +44,9 @@ mkdir -p "$prefix/node_modules/spool.page/dist"
 touch "$prefix/node_modules/spool.page/dist/cli.js"
 `,
 	);
-	const sleep = executable(directory, "sleep", 'echo "$1" >> "$SLEEP_LOG"\n');
-	const pnpm = executable(directory, "pnpm", 'echo "$*" >> "$PACK_LOG"\nexit 99\n');
-	const node = executable(directory, "node", 'echo "$VERSION"\n');
+	executable(directory, "sleep", 'echo "$1" >> "$SLEEP_LOG"\n');
+	executable(directory, "pnpm", 'echo "$*" >> "$PACK_LOG"\nexit 99\n');
+	executable(directory, "node", 'echo "$VERSION"\n');
 	return {
 		directory,
 		packLog,
@@ -57,12 +59,7 @@ touch "$prefix/node_modules/spool.page/dist/cli.js"
 			VERSION: "9.8.7",
 			CLI_OUT: join(directory, "stage"),
 			SPOOL_RELEASE_BUILD: "1",
-			SPOOL_REGISTRY_ATTEMPTS: "3",
-			SPOOL_REGISTRY_RETRY_SECONDS: "0",
-			SPOOL_NPM_COMMAND: npm,
-			SPOOL_PNPM_COMMAND: pnpm,
-			SPOOL_NODE_COMMAND: node,
-			SPOOL_SLEEP_COMMAND: sleep,
+			PATH: `${directory}:${process.env.PATH ?? ""}`,
 		},
 	};
 }
@@ -72,7 +69,7 @@ test("a release waits for the exact npm version instead of packing the checkout"
 	try {
 		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
 		assert.equal(result.status, 0, result.stderr);
-		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/3\)/);
+		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/30\)/);
 		assert.match(result.stdout, /installing spool\.page@9\.8\.7 from the registry/);
 		assert.throws(() => readFileSync(setup.packLog));
 	} finally {
@@ -81,7 +78,7 @@ test("a release waits for the exact npm version instead of packing the checkout"
 });
 
 test("a release fails clearly when npm never serves the exact version", () => {
-	const setup = fixture(4);
+	const setup = fixture(31);
 	try {
 		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
 		assert.equal(result.status, 1);

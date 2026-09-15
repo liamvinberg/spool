@@ -20,9 +20,9 @@ set -euo pipefail
 #
 # The spool package comes from the registry by version. The dmg job runs after
 # npm publish on the same tag, but a newly accepted version can take minutes to
-# become readable. A release waits for it and refuses any other source. A local
-# build of an unreleased version falls back to packing this checkout, which is
-# also what you want when you are changing the CLI and the app together.
+# become readable. A registry-based release waits and never falls back to the
+# checkout. A local build of an unreleased version does, which is also what you
+# want when you are changing the CLI and the app together.
 #
 #   VERSION   the spool version to bundle (default: scripts/version.sh)
 #   OUT       where it is staged (default: build/cli)
@@ -37,17 +37,17 @@ REPO="$(cd "$ROOT/.." && pwd)"
 CLI_OUT="${CLI_OUT:-$ROOT/build/cli}"
 VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 RELEASE_BUILD="${SPOOL_RELEASE_BUILD:-0}"
-NPM_COMMAND="${SPOOL_NPM_COMMAND:-npm}"
-PNPM_COMMAND="${SPOOL_PNPM_COMMAND:-pnpm}"
-NODE_COMMAND="${SPOOL_NODE_COMMAND:-node}"
-SLEEP_COMMAND="${SPOOL_SLEEP_COMMAND:-sleep}"
 
 if [ "$RELEASE_BUILD" = 1 ]; then
-	REGISTRY_ATTEMPTS="${SPOOL_REGISTRY_ATTEMPTS:-60}"
-	REGISTRY_RETRY_SECONDS="${SPOOL_REGISTRY_RETRY_SECONDS:-10}"
+	REGISTRY_ATTEMPTS=30
+	REGISTRY_RETRY_SECONDS=10
+	# npm otherwise retries a failed fetch itself, outside the loop this script
+	# bounds. A release gets one five-second fetch per visible attempt.
+	VIEW_OPTIONS=(--fetch-retries=0 --fetch-timeout=5000)
 else
-	REGISTRY_ATTEMPTS="${SPOOL_REGISTRY_ATTEMPTS:-5}"
-	REGISTRY_RETRY_SECONDS="${SPOOL_REGISTRY_RETRY_SECONDS:-5}"
+	REGISTRY_ATTEMPTS=5
+	REGISTRY_RETRY_SECONDS=5
+	VIEW_OPTIONS=()
 fi
 
 STAMP="spool.page $VERSION"
@@ -63,11 +63,11 @@ published() {
 	local attempt=1
 	local found
 	while [ "$attempt" -le "$REGISTRY_ATTEMPTS" ]; do
-		found="$("$NPM_COMMAND" view "spool.page@$VERSION" version 2>/dev/null || true)"
+		found="$(npm view "spool.page@$VERSION" version "${VIEW_OPTIONS[@]}" 2>/dev/null || true)"
 		if [ "$found" = "$VERSION" ]; then return 0; fi
 		if [ "$attempt" -lt "$REGISTRY_ATTEMPTS" ]; then
 			echo "waiting for npm to serve spool.page@$VERSION ($attempt/$REGISTRY_ATTEMPTS)"
-			"$SLEEP_COMMAND" "$REGISTRY_RETRY_SECONDS"
+			sleep "$REGISTRY_RETRY_SECONDS"
 		fi
 		attempt=$((attempt + 1))
 	done
@@ -81,8 +81,7 @@ if [ -n "${SPOOL_TARBALL:-}" ]; then
 elif published; then
 	echo "installing $SPEC from the registry"
 elif [ "$RELEASE_BUILD" = 1 ]; then
-	WAIT_SECONDS=$(((REGISTRY_ATTEMPTS - 1) * REGISTRY_RETRY_SECONDS))
-	echo "npm did not serve the exact version spool.page@$VERSION after waiting up to ${WAIT_SECONDS}s; refusing to build a release from the checkout." >&2
+	echo "npm did not serve the exact version spool.page@$VERSION after $REGISTRY_ATTEMPTS checks; refusing to build a release from the checkout." >&2
 	exit 1
 else
 	echo "npm has no spool.page@$VERSION yet, packing this checkout instead"
@@ -90,7 +89,7 @@ else
 	# CLI change together, and testing the app against last week's published
 	# daemon would test the wrong thing. This path needs the checkout's dev
 	# dependencies installed, because pnpm pack runs the build.
-	(cd "$REPO" && "$PNPM_COMMAND" pack --pack-destination "$WORK" > /dev/null)
+	(cd "$REPO" && pnpm pack --pack-destination "$WORK" > /dev/null)
 	SPEC="$(ls "$WORK"/spool.page-*.tgz | head -n 1)"
 	echo "using $SPEC"
 fi
@@ -109,7 +108,7 @@ cat > "$CLI_OUT/spool/package.json" <<JSON
 }
 JSON
 
-"$NPM_COMMAND" install --prefix "$CLI_OUT/spool" --omit=dev --no-audit --no-fund --loglevel=error "$SPEC"
+npm install --prefix "$CLI_OUT/spool" --omit=dev --no-audit --no-fund --loglevel=error "$SPEC"
 
 CLI="$CLI_OUT/spool/node_modules/spool.page/dist/cli.js"
 if [ ! -f "$CLI" ]; then
@@ -119,7 +118,7 @@ fi
 
 # The bundled daemon says its own version, which is the check that the npm
 # artifact, the plist and the tag are one number rather than three.
-INSTALLED="$("$NODE_COMMAND" "$CLI" --version)"
+INSTALLED="$(node "$CLI" --version)"
 if [ "$INSTALLED" != "$VERSION" ]; then
 	echo "the bundled cli reports $INSTALLED, not $VERSION." >&2
 	exit 1
