@@ -18,8 +18,8 @@ function result(ownerId: string): PublishResult {
 		projectId: "project",
 		ownerId,
 		title: "Kaffe",
-		hostname: "p.test.beta.onspool.page",
-		url: "https://p.test.beta.onspool.page",
+		hostname: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+		url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 		entry: "menu",
 		scenario: "default",
 		state: "active" as const,
@@ -414,15 +414,19 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	writeFileSync(associationFile, JSON.stringify(association));
 	await recovered.getByRole("button", { name: "Retry" }).click();
 	await recovered.getByRole("button", { name: "Copy link" }).waitFor();
-	expect(await recovered.getByLabel("Shared link").inputValue()).toBe("https://p.test.beta.onspool.page");
+	expect(await recovered.getByLabel("Shared link").inputValue()).toBe(
+		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+	);
 	expect(await recovered.getByText("alex@example.com").count()).toBeGreaterThan(0);
 	const openLink = recovered.getByRole("link", { name: "Open link ↗" });
-	expect(await openLink.getAttribute("href")).toBe("https://p.test.beta.onspool.page");
+	expect(await openLink.getAttribute("href")).toBe("https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page");
 	expect(await openLink.getAttribute("target")).toBe("_blank");
 	await recovered.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: daemon.url });
 	await recovered.getByRole("button", { name: "Copy link" }).click();
 	await recovered.getByRole("button", { name: "Copied" }).waitFor();
-	expect(await recovered.evaluate(() => navigator.clipboard.readText())).toBe("https://p.test.beta.onspool.page");
+	expect(await recovered.evaluate(() => navigator.clipboard.readText())).toBe(
+		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+	);
 	await recovered.evaluate(() => {
 		Object.defineProperty(navigator.clipboard, "writeText", {
 			configurable: true,

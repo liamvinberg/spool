@@ -133,8 +133,8 @@ it("converges concurrent update processes and rejects a different pending reques
 	const associated = {
 		...initial,
 		publicationId: "publication",
-		hostname: "site.onspool.page",
-		url: "https://site.onspool.page",
+		hostname: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onspool.page",
+		url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onspool.page",
 	};
 	const payload = join(spoolDir, "update-payload.json");
 	const script = join(spoolDir, "update.ts");

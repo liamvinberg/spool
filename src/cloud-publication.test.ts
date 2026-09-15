@@ -22,6 +22,7 @@ function service(
 		onActivate?: () => void;
 		scenario?: string;
 		rejectUpdate?: boolean;
+		productionHost?: boolean;
 	} = {},
 ) {
 	let manifest: { contentIdentity: string; entry: string; scenario: string; objects: unknown[] } | undefined;
@@ -35,13 +36,16 @@ function service(
 	let revision = 0;
 	let invitedEmails = ["alex@example.com"];
 	const calls: string[] = [];
+	const hostname = options.productionHost
+		? "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onspool.page"
+		: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page";
 	const publication = () => ({
 		id: "publication",
 		projectId,
 		ownerId: "publisher",
 		title: "start",
-		hostname: "beta-site.onspool.page",
-		url: "https://beta-site.onspool.page",
+		hostname,
+		url: `https://${hostname}`,
 		entry: manifest?.entry ?? "start",
 		scenario: manifest?.scenario ?? options.scenario ?? "default",
 		state: state === "succeeded" ? "active" : "staging",
@@ -504,7 +508,7 @@ describe("Cloud publication client", () => {
 			fetch: cloud.fetch,
 		});
 		expect(result.operation.state).toBe("succeeded");
-		expect(result.publication.url).toBe("https://beta-site.onspool.page");
+		expect(result.publication.url).toBe("https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page");
 		expect(result.publication.invitedEmails).toEqual(["Alex@example.com"]);
 		expect(result.localSource).toBe("current");
 		expect(cloud.calls.filter((call) => call.includes("/objects/")).length).toBeGreaterThan(5);
@@ -604,6 +608,23 @@ describe("Cloud publication client", () => {
 		await expect(
 			publicationStatus(makeTempDir(), "publication", { origin: "https://cloud.test", vault, fetch: cloud.fetch }),
 		).resolves.toMatchObject({ publication: { id: "publication" } });
+	});
+
+	it("rejects publication hosts from the opposite cloud environment", async () => {
+		await expect(
+			listPublications(makeTempDir(), {
+				origin: "https://spool.page",
+				vault,
+				fetch: service().fetch,
+			}),
+		).rejects.toBeDefined();
+		await expect(
+			listPublications(makeTempDir(), {
+				origin: "https://beta.spool.page",
+				vault,
+				fetch: service({ productionHost: true }).fetch,
+			}),
+		).rejects.toBeDefined();
 	});
 
 	it("reports unchanged, edited, and missing local source beside the stable operation", async () => {

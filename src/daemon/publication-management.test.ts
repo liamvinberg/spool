@@ -24,8 +24,8 @@ function publication(ownerId: string, state: CloudPublication["state"] = "active
 		projectId: "project",
 		ownerId,
 		title: "Kaffe",
-		hostname: "p.test.beta.onspool.page",
-		url: "https://p.test.beta.onspool.page",
+		hostname: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+		url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 		entry: "menu",
 		scenario: "default",
 		state,
@@ -89,8 +89,8 @@ function writeAssociation(
 			inputIdentity: "input",
 		},
 		publicationId: "publication",
-		hostname: "p.test.beta.onspool.page",
-		url: "https://p.test.beta.onspool.page",
+		hostname: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+		url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 		...patch,
 	};
 	const file = join(spoolDir, "publications", "associations", `${key}.json`);

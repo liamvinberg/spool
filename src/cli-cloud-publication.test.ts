@@ -70,8 +70,8 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		projectId,
 		ownerId: "publisher",
 		title: "start",
-		hostname: "beta-site.onspool.page",
-		url: "https://beta-site.onspool.page",
+		hostname: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+		url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 		entry: "start",
 		scenario: "default",
 		state: publicationState,
@@ -267,7 +267,10 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		expect(JSON.parse(first.stdout).operation.id).toBe(heldOperation);
 		expect(first.status, first.stderr).toBe(0);
 		expect(JSON.parse(first.stdout)).toMatchObject({
-			publication: { url: "https://beta-site.onspool.page", invitedEmails: ["Alex@example.com"] },
+			publication: {
+				url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+				invitedEmails: ["Alex@example.com"],
+			},
 			operation: { id: operationId, state: "succeeded" },
 			localSource: "current",
 		});

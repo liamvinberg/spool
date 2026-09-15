@@ -52,8 +52,8 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 			inputIdentity: "input",
 		},
 		publicationId: "publication",
-		hostname: "p.test.beta.onspool.page",
-		url: "https://p.test.beta.onspool.page",
+		hostname: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+		url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 	};
 	const associationFile = join(spoolDir, "publications", "associations", `${key}.json`);
 	mkdirSync(dirname(associationFile), { recursive: true });
@@ -64,8 +64,8 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		projectId: "project",
 		ownerId: "owner",
 		title: "Kaffe",
-		hostname: "p.test.beta.onspool.page",
-		url: "https://p.test.beta.onspool.page",
+		hostname: "paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+		url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 		entry: "menu",
 		scenario: "default",
 		state: "active",
@@ -350,7 +350,7 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	publishes[4]?.resolve(publishResult(current, "current"));
 	await page.getByRole("button", { name: "Copy link", exact: true }).waitFor();
 	expect(await page.getByRole("textbox", { name: "Shared link" }).inputValue()).toBe(
-		"https://p.test.beta.onspool.page",
+		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 	);
 	expect(services.publish).toHaveBeenCalledTimes(5);
 	expect(vi.mocked(services.publish).mock.calls[4]?.[0]).not.toHaveProperty("invitedEmails");

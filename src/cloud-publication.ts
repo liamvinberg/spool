@@ -26,7 +26,11 @@ import {
 import { type PublicationAuthOptions, publicationAuthority } from "./publication/authority";
 import { buildWebsite, type WebsiteArtifact } from "./publication/build";
 import { withPublicationIntent } from "./publication/intent-lock";
-import { type PublicationResponse, publicationResponseSchema } from "./runtime/publication-response";
+import {
+	type PublicationResponse,
+	publicationResponseSchema,
+	publicationResponseSchemaForOrigin,
+} from "./runtime/publication-response";
 
 const publication = publicationResponseSchema;
 const operation = z.strictObject({
@@ -476,13 +480,15 @@ export async function listPublications(
 	const authority = await publicationAuthority(spoolDir, options);
 	const cloudOptions = authority.options;
 	const response = await requestJson(spoolDir, "/api/publications", {}, cloudOptions);
-	return z
+	const result = z
 		.strictObject({
 			publications: z.array(publication),
 			operationSummaries: z.array(publicationOperationSummaries),
 			nextCursor: z.string().nullable(),
 		})
 		.parse(response);
+	for (const value of result.publications) checkPublicationEnvironment(value, cloudOptions);
+	return result;
 }
 
 export async function publicationStatus(
@@ -501,6 +507,7 @@ export async function publicationStatus(
 	const account = authority.account;
 	const response = await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, cloudOptions);
 	const current = z.strictObject({ publication }).parse(response);
+	checkPublicationEnvironment(current.publication, cloudOptions);
 	const history = await publicationOperations(spoolDir, id, { ...cloudOptions, limit: 50 });
 	const association = findPublicationAssociation(
 		spoolDir,
@@ -579,6 +586,7 @@ async function stopUnderLock(
 			),
 			operationId,
 			id,
+			cloudOptions,
 		);
 		clearIntent();
 		return held;
@@ -604,7 +612,12 @@ async function stopUnderLock(
 	let last: unknown;
 	for (let attempt = 2; attempt <= 3; attempt++) {
 		try {
-			const result = readStop(await requestJson(spoolDir, path, init, cloudOptions, 1), operationId, id);
+			const result = readStop(
+				await requestJson(spoolDir, path, init, cloudOptions, 1),
+				operationId,
+				id,
+				cloudOptions,
+			);
 			clearIntent();
 			return result;
 		} catch (error) {
@@ -622,6 +635,7 @@ async function stopUnderLock(
 				),
 				operationId,
 				id,
+				cloudOptions,
 			);
 			clearIntent();
 			return result;
@@ -734,6 +748,7 @@ async function createOrRecover(
 				options,
 			),
 			association.intent.operationId,
+			options,
 			artifact.manifest.contentIdentity,
 		);
 	} catch (error) {
@@ -752,6 +767,7 @@ async function createOrRecover(
 				options,
 			),
 			association.intent.operationId,
+			options,
 			artifact.manifest.contentIdentity,
 		);
 	}
@@ -765,7 +781,7 @@ async function mutateAndRecover(
 	options: AuthOptions,
 ): Promise<CloudOperationResponse> {
 	try {
-		return readOperation(await requestJson(spoolDir, path, init, options), operationId);
+		return readOperation(await requestJson(spoolDir, path, init, options), operationId, options);
 	} catch (error) {
 		const recovered = await recoverAfterFailure(spoolDir, operationId, options, error);
 		if (error instanceof CloudApiError)
@@ -774,7 +790,7 @@ async function mutateAndRecover(
 			const mustRepeat =
 				(path.endsWith("/seal") && recovered.operation.state === "uploading") ||
 				(path.endsWith("/activate") && recovered.operation.state === "sealed");
-			if (mustRepeat) return readOperation(await requestJson(spoolDir, path, init, options), operationId);
+			if (mustRepeat) return readOperation(await requestJson(spoolDir, path, init, options), operationId, options);
 			return recovered;
 		}
 		throw error;
@@ -790,6 +806,7 @@ async function operationStatusOrMissing(
 		return readOperation(
 			await requestJson(spoolDir, `/api/publication-operations/${encodeURIComponent(operationId)}`, {}, options),
 			operationId,
+			options,
 		);
 	} catch (error) {
 		if (error instanceof CloudApiError && error.status === 404) return undefined;
@@ -876,8 +893,18 @@ function normalizeGrantMailbox(value: string): string {
 		throw new SpoolError("recipient must be a valid email address");
 	return normalized;
 }
-function readOperation(value: unknown, operationId: string, contentIdentity?: string): CloudOperationResponse {
+function checkPublicationEnvironment(value: CloudPublication, options: AuthOptions): void {
+	publicationResponseSchemaForOrigin(options.origin ?? cloudOrigin(process.env)).parse(value);
+}
+function readOperation(
+	value: unknown,
+	operationId: string,
+	options: AuthOptions,
+	contentIdentity?: string,
+): CloudOperationResponse {
 	const parsed = operationResponse.parse(value);
+	checkPublicationEnvironment(parsed.publication, options);
+	if (parsed.operation.result !== null) checkPublicationEnvironment(parsed.operation.result.publication, options);
 	if (
 		parsed.operation.id !== operationId ||
 		(contentIdentity !== undefined && parsed.operation.contentIdentity !== contentIdentity)
@@ -887,8 +914,10 @@ function readOperation(value: unknown, operationId: string, contentIdentity?: st
 		throw new SpoolError("spool.page returned an inconsistent publication operation");
 	return parsed;
 }
-function readStop(value: unknown, operationId: string, publicationId: string): CloudStopResponse {
+function readStop(value: unknown, operationId: string, publicationId: string, options: AuthOptions): CloudStopResponse {
 	const parsed = stopResponse.parse(value);
+	checkPublicationEnvironment(parsed.publication, options);
+	checkPublicationEnvironment(parsed.operation.result.publication, options);
 	if (
 		parsed.operation.id !== operationId ||
 		parsed.operation.publicationId !== publicationId ||
@@ -899,9 +928,11 @@ function readStop(value: unknown, operationId: string, publicationId: string): C
 	return parsed;
 }
 async function readCurrentPublication(spoolDir: string, id: string, options: AuthOptions): Promise<CloudPublication> {
-	return z
+	const value = z
 		.strictObject({ publication })
 		.parse(await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, options)).publication;
+	checkPublicationEnvironment(value, options);
+	return value;
 }
 function rememberPublication(
 	spoolDir: string,
