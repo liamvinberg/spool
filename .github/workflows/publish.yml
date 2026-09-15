@@ -223,6 +223,7 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY }}
+          SPOOL_RELEASE_BUILD: "1"
         run: |
           if [ -z "$NOTARY_KEY_P8" ]; then
             echo "NOTARY_KEY is not set, so this would build a dmg Gatekeeper refuses. See desktop/README.md." >&2
