@@ -80,7 +80,7 @@
 	transition: opacity 260ms var(--ease);
 }
 .fold-store[data-light="true"] .fold-night {
-	opacity: 0.15;
+	opacity: 0.92;
 }
 .fold-header {
 	height: 105px;
@@ -583,8 +583,8 @@
 }
 .fold-bag-bottom .fold-primary {
 	margin-top: 25px;
-	background: #293b2e !important;
-	color: #eef0dc !important;
+	background: #362e37 !important;
+	color: #efe5ce !important;
 }
 .fold-bag-bottom small {
 	display: block;
@@ -608,8 +608,8 @@
 	margin-bottom: 35px;
 }
 .fold-empty .fold-primary {
-	background: #293b2e !important;
-	color: #eef0dc !important;
+	background: #362e37 !important;
+	color: #efe5ce !important;
 }
 @keyframes fold-bag-in {
 	from {
@@ -820,4 +820,28 @@
 	.fold-object-wrap {
 		transition: none !important;
 	}
+}
+
+.fold-metal {
+	position: absolute;
+	inset: 0;
+	opacity: 1;
+	transition: opacity 260ms var(--ease);
+}
+.fold-store[data-light="true"] .fold-metal {
+	opacity: 0.48;
+}
+.fold-beam {
+	position: absolute;
+	inset: 0;
+	transition: opacity 260ms var(--ease);
+	pointer-events: none;
+}
+.fold-beam-fallback,
+.fold-beam-canvas {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	display: block;
 }

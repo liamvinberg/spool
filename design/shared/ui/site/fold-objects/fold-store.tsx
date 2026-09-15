@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import aluminium from "./assets/aluminium.webp";
 import oxblood from "./assets/oxblood.webp";
+import { LampBeam } from "./lamp-beam";
 import "./fold-store.css";
 import "./type-studies.css";
 
@@ -142,21 +143,23 @@ export function FoldStore({ palette, treatment = "original" }: { palette: Palett
 				</div>
 				<div className="fold-object-wrap">
 					<div className="fold-object">
-						<div className="fold-pool" style={{ opacity: light ? 0.65 : 0 }} aria-hidden="true" />
-						<img
-							src={aluminium}
-							alt={finish === "aluminium" ? "Fold 01 portable lamp in brushed aluminium" : ""}
-							className="fold-photo"
-							style={{ opacity: finish === "aluminium" ? 1 : 0 }}
-							draggable={false}
-						/>
-						<img
-							src={oxblood}
-							alt={finish === "oxblood" ? "Fold 01 portable lamp in oxblood" : ""}
-							className="fold-photo"
-							style={{ opacity: finish === "oxblood" ? 1 : 0 }}
-							draggable={false}
-						/>
+						<LampBeam active={light} />
+						<div className="fold-metal">
+							<img
+								src={aluminium}
+								alt={finish === "aluminium" ? "Fold 01 portable lamp in brushed aluminium" : ""}
+								className="fold-photo"
+								style={{ opacity: finish === "aluminium" ? 1 : 0 }}
+								draggable={false}
+							/>
+							<img
+								src={oxblood}
+								alt={finish === "oxblood" ? "Fold 01 portable lamp in oxblood" : ""}
+								className="fold-photo"
+								style={{ opacity: finish === "oxblood" ? 1 : 0 }}
+								draggable={false}
+							/>
+						</div>
 						<svg
 							className="fold-diffuser"
 							viewBox="0 0 1254 1254"

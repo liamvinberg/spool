@@ -336,3 +336,9 @@
 		font-size: 47px;
 	}
 }
+
+@media (max-width: 700px) {
+	.fold-refined[data-choosing="false"][data-detail="false"] .fold-object-wrap {
+		transform: translateY(50px);
+	}
+}
