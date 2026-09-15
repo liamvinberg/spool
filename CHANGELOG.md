@@ -5,7 +5,7 @@
 ### Minor Changes
 
 - e12763f: Add a one-time introduction explaining the spool agent's web search limitation, with a choice to continue in spool or use Claude Code. Open the agent app picker from the Help menu above settings, an empty canvas, or the introduction to use Claude, ChatGPT, or Antigravity with the same project folder.
-- e0e0b0e: Sign in to Cloud sharing with `spool login` and sign out with `spool logout`. Sign-in opens the system browser, returns through a request-bound local handoff, and stores the publisher session in macOS Keychain separately for each installed or checkout instance. The Mac app exposes the same actions from its application menu. Local projects remain available when Cloud authentication expires, is revoked, or Keychain is unavailable.
+- e0e0b0e: Cloud sharing in this release is an invite-only beta. The CLI requires `SPOOL_CLOUD_ORIGIN=https://beta.spool.page` when you sign in with `spool login`, sign out with `spool logout`, or use other Cloud commands. The Mac app can use the same beta when launched with that environment variable and exposes sign-in and sign-out from its application menu. Sign-in opens the system browser, returns through a request-bound local handoff, and stores the publisher session in macOS Keychain separately for each installed or checkout instance. Local projects remain available when Cloud authentication expires, is revoked, or Keychain is unavailable.
 - 062a84d: Publish a protected connected website and inspect its Cloud status from the CLI.
 - 1ab0f0b: Update and stop continuing Cloud publication links with recoverable operation status.
 - 0d964b3: Add recipient invite and revoke commands and live access checks for Cloud-hosted websites.
