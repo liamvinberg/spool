@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.1
+
+### Patch Changes
+
+- f255b9f: The Mac app and CLI now connect to the invite-only Cloud beta by default, so sign-in works without a separate launcher. You may need to sign in again because Cloud sessions are stored separately for each local instance and Cloud address.
+
 ## 0.20.0
 
 ### Minor Changes
