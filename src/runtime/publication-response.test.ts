@@ -61,5 +61,8 @@ describe("publication response host", () => {
 		};
 		expect(publicationResponseSchemaForOrigin("https://spool.page").safeParse(production).success).toBe(true);
 		expect(publicationResponseSchemaForOrigin("https://beta.spool.page").safeParse(production).success).toBe(false);
+		expect(publicationResponseSchemaForOrigin("https://spool.page:443").safeParse(production).success).toBe(true);
+		expect(publicationResponseSchemaForOrigin("https://spool.page:8443").safeParse(production).success).toBe(false);
+		expect(publicationResponseSchemaForOrigin("https://spool.page:8443").safeParse(publication).success).toBe(true);
 	});
 });

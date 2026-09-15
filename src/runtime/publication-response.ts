@@ -54,7 +54,7 @@ export const publicationResponseSchema = publicationResponseFields.refine(
 );
 
 export function publicationResponseSchemaForOrigin(origin: string) {
-	const expectedIsolated = new URL(origin).hostname !== "spool.page";
+	const expectedIsolated = new URL(origin).origin !== "https://spool.page";
 	return publicationResponseSchema.refine((value) => value.hostname.includes("-beta.") === expectedIsolated, {
 		path: ["hostname"],
 	});
