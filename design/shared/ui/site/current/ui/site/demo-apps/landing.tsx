@@ -4,7 +4,7 @@ import { FollowUpdates } from "../sleeve-guide/follow-updates";
 import { GuideIcon } from "../sleeve-guide/icons";
 import { ModernStart } from "../sleeve-guide/modern-start";
 import { useLandingArrival } from "./landing-arrival";
-import { OffprintSurface } from "./landing-canvas";
+import { FoldSurface } from "./landing-canvas";
 import { DEMO_NAMES, DEMO_TAKES, DemoProduct, type DemoTake } from "./landing-product";
 import "../sleeve-guide/guide.css";
 import "../sleeve-guide/modern.css";
@@ -58,11 +58,11 @@ function Source() {
 	return (
 		<figure className="sg-source-pair">
 			<div className="sg-source-snippet">
-				<p>offprint-workshops/frame.tsx</p>
+				<p>fold-campaign/frame.tsx</p>
 				<pre>
 					<code>
 						<span>export default function</span>
-						{` Frame() {\n  return (\n    <DemoProduct\n      take="workshops"\n    />\n  );\n}`}
+						{` Frame() {\n  return (\n    <DemoProduct\n      take="campaign"\n    />\n  );\n}`}
 					</code>
 				</pre>
 				<small>The component in your project.</small>
@@ -71,7 +71,7 @@ function Source() {
 				<GuideIcon name="right" />
 			</div>
 			<div className="sg-source-result">
-				<Product take="workshops" />
+				<Product take="campaign" />
 				<p>The frame on your canvas.</p>
 			</div>
 			<figcaption>Edit the file. See the result.</figcaption>
@@ -79,13 +79,13 @@ function Source() {
 	);
 }
 
-// Ported from spool’s demo-offprint--landing frame.
+// Ported from spool’s demo-fold--landing frame.
 export function OffprintLanding({ footerExtra }: { footerExtra?: ReactNode }) {
 	const root = useRef<HTMLDivElement>(null);
 	useLandingArrival(root);
 	const dialog = useRef<HTMLDialogElement>(null);
 	const [active, setActive] = useState("try");
-	const [playing, setPlaying] = useState<Example>("workshops");
+	const [playing, setPlaying] = useState<Example>("campaign");
 	const [session, setSession] = useState(0);
 	const pointer = useRef(false);
 	const playerAnimation = useRef<Animation | null>(null);
@@ -195,10 +195,10 @@ export function OffprintLanding({ footerExtra }: { footerExtra?: ReactNode }) {
 						</button>
 					</div>
 				</section>
-				<section className="sg-hero-app sg-width" aria-label="Offprint on the spool canvas">
-					<OffprintSurface view="canvas" />
+				<section className="sg-hero-app sg-width" aria-label="Fold Objects on the spool canvas">
+					<FoldSurface view="canvas" />
 					<div className="sg-caption">
-						<p>This is Offprint, a workshop app we’re making in spool. Have a look around.</p>
+						<p>This is Fold Objects, a lamp shop we’re making in spool. Have a look around.</p>
 						<span>Interactive preview · changes stay here</span>
 					</div>
 				</section>
@@ -224,21 +224,21 @@ export function OffprintLanding({ footerExtra }: { footerExtra?: ReactNode }) {
 							<br />
 							Press something.
 						</h2>
-						<p>Find a workshop. Bring a friend. Get your ticket.</p>
+						<p>Try the light. Choose a finish. Make it yours.</p>
 						<p>
 							Frames are live. Click through a flow, test an interaction, or step through a presentation as you
 							design.
 						</p>
-						<p>Start with “Find your seat”.</p>
-						<button className="sg-text-button" type="button" onClick={() => open("workshops")}>
-							Open Offprint larger <GuideIcon name="arrow" />
+						<p>Start with “Choose yours”.</p>
+						<button className="sg-text-button" type="button" onClick={() => open("campaign")}>
+							Open Fold Objects larger <GuideIcon name="arrow" />
 						</button>
 					</div>
 					<div className="sg-live-example">
-						<Product take="workshops" live />
+						<Product take="campaign" live />
 						<div className="sg-caption">
-							<span>Offprint / Your Saturday starts here</span>
-							<span>Interactive demo · no booking is made</span>
+							<span>Fold Objects / A portable table light</span>
+							<span>Interactive demo · no purchase is made</span>
 						</div>
 					</div>
 				</section>
@@ -251,15 +251,15 @@ export function OffprintLanding({ footerExtra }: { footerExtra?: ReactNode }) {
 						</h2>
 						<div>
 							<p>Lay out a short flow. Open any screen and try it from there.</p>
-							<p>The time you choose on one screen appears on your ticket in the next.</p>
+							<p>The finish you choose on one screen appears in your bag in the next.</p>
 						</div>
 					</div>
 					<div className="sg-variants">
 						{DEMO_TAKES.map((take, index) => (
 							<article key={take}>
 								<div className="sg-variant-top">
-									<span>offprint-{take}</span>
-									<span>1200 × 800</span>
+									<span>fold-{take}</span>
+									<span>1200 × 820</span>
 								</div>
 								<div className="sg-variant-open">
 									<Product take={take} />
@@ -302,7 +302,7 @@ export function OffprintLanding({ footerExtra }: { footerExtra?: ReactNode }) {
 							<p>A different headline. More room for the artwork. See each change on the canvas.</p>
 						</div>
 					</div>
-					<OffprintSurface view="agent" />
+					<FoldSurface view="agent" />
 					<div className="sg-caption">
 						<p>Try selecting another screen. Its name appears above the composer.</p>
 						<span>Example conversation · no agent is running</span>

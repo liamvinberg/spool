@@ -1,6 +1,5 @@
 import "./landing-fit.css";
-import { usePreviewScale } from "./use-preview-scale";
-import { type ReactNode, type PointerEvent, memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, type PointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { CAPTURED, type ModelState, useModels } from "../../../lib/spool/agent-model";
 import { cn } from "../../../lib/utils";
 import { CanvasChrome } from "../../spool/canvas-chrome";
@@ -8,8 +7,9 @@ import { type CanvasTool, CanvasTools } from "../../spool/canvas-tools";
 import { FrameLabel } from "../../spool/frame-label";
 import { AgentIcon, ChevronIcon, CloseIcon, PanelCaret, PlusIcon, PropertiesIcon } from "../../spool/icons";
 import { TabStrip } from "../../spool/tab-strip";
+import { usePreviewScale } from "./use-preview-scale";
 import "../../spool/app-header.css";
-import { Offprint } from "./offprint";
+import { type FoldSession, FoldStore } from "../../../../fold-objects/fold-store";
 import { type Camera, centerOn, entryCamera, fitCamera, zoomAt } from "./canvas-camera";
 import "./canvas-motion.css";
 import "./mobile-product.css";
@@ -20,19 +20,20 @@ import "../sleeve-real/app.css";
 
 export type AppView = "canvas" | "agent" | "properties";
 const NAMES: Record<DemoTake, string> = {
-	workshops: "offprint-workshops",
-	booking: "offprint-booking",
-	ticket: "offprint-ticket",
+	campaign: "fold-campaign",
+	finish: "fold-finish",
+	bag: "fold-bag",
 };
 const PAGES = [{ name: "app", frames: DEMO_TAKES.map((take) => NAMES[take]), active: true, open: true }];
 const POSITIONS: Record<DemoTake, { x: number; y: number }> = {
-	workshops: { x: 0, y: 0 },
-	booking: { x: 1320, y: 0 },
-	ticket: { x: 660, y: 1060 },
+	campaign: { x: 0, y: 0 },
+	finish: { x: 1320, y: 0 },
+	bag: { x: 660, y: 1060 },
 };
-const CanvasProduct = memo(Offprint);
-const MOBILE_QUERY = "(max-width: 760px), (pointer: coarse)";
-const ASK = "Prototype a workshop booking app. Show finding a workshop, choosing a time, and the ticket.";
+const CanvasProduct = memo(FoldStore);
+const MOBILE_QUERY = "(max-width: 760px)";
+const PHONE_POSITIONS = { campaign: { x: 0, y: 0 }, finish: { x: 480, y: 0 }, bag: { x: 960, y: 0 } };
+const ASK = "Prototype a portable lamp shop. Show the light, finish selection, and a bag that keeps my choices.";
 
 function LandingShell({
 	children,
@@ -49,7 +50,7 @@ function LandingShell({
 	onOpen: () => void;
 	onFit: () => void;
 }) {
-	const [tabs, setTabs] = useState([{ root: "offprint", name: "offprint" }]);
+	const [tabs, setTabs] = useState([{ root: "fold", name: "fold" }]);
 	return (
 		<div className="flex h-full w-full flex-col overflow-hidden bg-bg font-sans text-text antialiased">
 			<header className="app-header relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
@@ -75,7 +76,7 @@ function LandingShell({
 					</div>
 					<TabStrip
 						tabs={tabs}
-						focused={home ? null : "offprint"}
+						focused={home ? null : "fold"}
 						onFocus={onOpen}
 						onClose={() => {
 							setTabs([]);
@@ -104,14 +105,14 @@ function LandingShell({
 						<button
 							type="button"
 							onClick={() => {
-								setTabs([{ root: "offprint", name: "offprint" }]);
+								setTabs([{ root: "fold", name: "fold" }]);
 								onOpen();
 							}}
 						>
-							<span>offprint</span>
+							<span>fold</span>
 							<span>3 frames</span>
 						</button>
-						<p>Open Offprint to try the canvas.</p>
+						<p>Open Fold Objects to try the canvas.</p>
 					</div>
 				) : (
 					children
@@ -122,11 +123,11 @@ function LandingShell({
 }
 
 /** Shared local demo. Tabs mirror the app; camera and flow use its spatial rules. */
-export function OffprintSurface({ view = "agent", className = "" }: { view?: AppView; className?: string }) {
+export function FoldSurface({ view = "agent", className = "" }: { view?: AppView; className?: string }) {
 	const surface = usePreviewScale(1600);
 	const preview = usePreviewScale(1200);
 	const [dock, setDock] = useState<AppView>(view);
-	const [selected, setSelected] = useState<DemoTake | null>("workshops");
+	const [selected, setSelected] = useState<DemoTake | null>("campaign");
 	const [entered, setEntered] = useState<DemoTake | null>(null);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [geometry, setGeometry] = useState(POSITIONS);
@@ -134,7 +135,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 		// Match the fixed 1600 × 900 stage, 248px page rail and 44px header/strip
 		// in prerendered HTML too. Hydration must not zoom already-visible frames.
 		fitCamera(
-			{ x: 0, y: 0, w: 2520, h: 1860 },
+			{ x: 0, y: 0, w: 2520, h: 1880 },
 			1600 - 248 - 44 - (view === "agent" ? 420 : view === "properties" ? 300 : 0),
 			900 - 44,
 		),
@@ -154,20 +155,21 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 		position: { x: number; y: number };
 	} | null>(null);
 	const [home, setHome] = useState(false);
-	const [session, setSession] = useState({ time: "10:00", seats: 1 });
+	const [session, setSession] = useState<FoldSession>({
+		finish: "aluminium",
+		light: false,
+		bag: { aluminium: 0, oxblood: 0 },
+	});
 	const settings = useRef<HTMLDialogElement>(null);
 	const player = useRef<HTMLDialogElement>(null);
 	const playerReturn = useRef<HTMLElement | null>(null);
-	const [playing, setPlaying] = useState<DemoTake>("workshops");
+	const [playing, setPlaying] = useState<DemoTake>("campaign");
 	const [quiet, setQuiet] = useState(false);
 	const [mobile, setMobile] = useState(false);
 	const navigation = useRef<(take: DemoTake) => void>(() => {});
-	const openWorkshop = useCallback(() => navigation.current("booking"), []);
-	const backToWorkshops = useCallback(() => navigation.current("workshops"), []);
-	const bookWorkshop = useCallback((time: string, seats: number) => {
-		setSession({ time, seats });
-		navigation.current("ticket");
-	}, []);
+	const navigate = useCallback((take: DemoTake) => navigation.current(take), []);
+	const frameWidth = mobile ? 390 : 1200;
+	const frameHeight = mobile ? 844 : 820;
 	useEffect(() => {
 		const media = window.matchMedia(MOBILE_QUERY);
 		const update = () => setMobile(media.matches);
@@ -200,7 +202,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 		};
 		flight.current = requestAnimationFrame(step);
 	};
-	const box = (take: DemoTake) => ({ ...geometry[take], w: 1200, h: 800 });
+	const box = (take: DemoTake) => ({ ...geometry[take], w: frameWidth, h: frameHeight });
 	const fitAll = () => {
 		const node = viewport.current;
 		if (!node) return;
@@ -212,8 +214,8 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 				{
 					x: Math.min(...xs),
 					y: Math.min(...ys),
-					w: Math.max(...xs) - Math.min(...xs) + 1200,
-					h: Math.max(...ys) - Math.min(...ys) + 800,
+					w: Math.max(...xs) - Math.min(...xs) + frameWidth,
+					h: Math.max(...ys) - Math.min(...ys) + frameHeight,
 				},
 				node.clientWidth,
 				node.clientHeight,
@@ -223,9 +225,17 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 	useEffect(() => {
 		const node = viewport.current;
 		if (!node) return;
-		put(fitCamera({ x: 0, y: 0, w: 2520, h: 1860 }, node.clientWidth, node.clientHeight));
+		setGeometry(mobile ? PHONE_POSITIONS : POSITIONS);
+		setEntered(null);
+		put(
+			fitCamera(
+				{ x: 0, y: 0, w: mobile ? 1350 : 2520, h: mobile ? 844 : 1880 },
+				node.clientWidth,
+				node.clientHeight,
+			),
+		);
 		return () => cancelAnimationFrame(flight.current);
-	}, [put]);
+	}, [put, mobile]);
 	useEffect(() => {
 		if (home) return;
 		const node = viewport.current;
@@ -397,7 +407,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 									// biome-ignore lint/a11y/noNoninteractiveTabindex: The canvas owns keyboard navigation and Escape focus.
 									tabIndex={0}
 									role="application"
-									aria-label="Offprint canvas"
+									aria-label="Fold Objects canvas"
 									data-tool={tool}
 									onPointerDown={startDrag}
 									onPointerMove={moveDrag}
@@ -422,11 +432,16 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 												key={take}
 												className="sc-frame"
 												data-demo-frame={take}
-												style={{ left: geometry[take].x, top: geometry[take].y }}
+												style={{
+													left: geometry[take].x,
+													top: geometry[take].y,
+													width: frameWidth,
+													height: frameHeight,
+												}}
 											>
 												<FrameLabel
 													name={NAMES[take]}
-													frameWidth={1200}
+													frameWidth={frameWidth}
 													k={camera.k}
 													entered={entered === take}
 													selected={selected === take}
@@ -437,15 +452,23 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 														player.current?.showModal();
 													}}
 												/>
-												<div className="sc-document" inert={entered !== take}>
+												<div
+													className="sc-document"
+													style={{ width: frameWidth, height: frameHeight }}
+													inert={entered !== take}
+												>
 													<CanvasProduct
-														key={`${take}:${session.time}:${session.seats}`}
 														screen={take}
-														time={session.time}
-														seats={session.seats}
-														onOpen={openWorkshop}
-														onBook={bookWorkshop}
-														onBack={backToWorkshops}
+														session={
+															take === "bag" &&
+															entered !== "bag" &&
+															session.bag.aluminium + session.bag.oxblood === 0
+																? { ...session, bag: { aluminium: 1, oxblood: 0 } }
+																: session
+														}
+														onSessionChange={setSession}
+														onNavigate={navigate}
+														reduceMotion={quiet}
 													/>
 												</div>
 												{entered !== take && (
@@ -465,7 +488,9 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 														<i />
 														<i />
 														<i />
-														<span>1200 × 800</span>
+														<span>
+															{frameWidth} × {frameHeight}
+														</span>
 													</div>
 												)}
 											</div>
@@ -508,6 +533,8 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 									<FrameProperties
 										selected={selected}
 										geometry={geometry}
+										frameWidth={frameWidth}
+										frameHeight={frameHeight}
 										onCollapse={() => setDock("canvas")}
 										onPosition={(axis, value) => {
 											if (selected)
@@ -558,7 +585,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 				className="sc-mobile-open"
 				onClick={(event) => {
 					playerReturn.current = event.currentTarget;
-					setPlaying("workshops");
+					setPlaying("campaign");
 					player.current?.showModal();
 				}}
 			>
@@ -600,6 +627,8 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 }
 
 function FrameProperties({
+	frameWidth,
+	frameHeight,
 	selected,
 	geometry,
 	onPosition,
@@ -607,6 +636,8 @@ function FrameProperties({
 }: {
 	selected: DemoTake | null;
 	geometry: typeof POSITIONS;
+	frameWidth: number;
+	frameHeight: number;
 	onPosition: (axis: "x" | "y", value: number) => void;
 	onCollapse: () => void;
 }) {
@@ -644,10 +675,10 @@ function FrameProperties({
 					</Section>
 					<Section name="size" reason="frame.json">
 						<Row name="w">
-							<NumField value="1200" readout="px" ok onCommit={() => {}} />
+							<NumField value={String(frameWidth)} readout="px" ok onCommit={() => {}} />
 						</Row>
 						<Row name="h">
-							<NumField value="800" readout="px" ok onCommit={() => {}} />
+							<NumField value={String(frameHeight)} readout="px" ok onCommit={() => {}} />
 						</Row>
 					</Section>
 				</>
@@ -714,7 +745,7 @@ function SettledAgent({
 						>
 							{ASK}
 							<span className="mt-1 block font-mono text-2xs text-muted">
-								offprint-workshops · offprint-booking · offprint-ticket
+								fold-campaign · fold-finish · fold-bag
 							</span>
 						</button>
 					</div>
@@ -726,11 +757,11 @@ function SettledAgent({
 							<p className="whitespace-pre-wrap text-base text-text leading-base">{ASK}</p>
 						</div>
 						<p className="text-base text-text leading-base">
-							I’ll build three connected screens. You can pick a time, add a friend, and see those choices on the
-							ticket.
+							I’ll build a product page, a finish selector, and a bag. Your chosen finish and quantity carry
+							through.
 						</p>
 						<div>
-							<ToolRow verb="read" subject="shared/ui/offprint" detail="shared/ui/offprint.tsx" />
+							<ToolRow verb="read" subject="shared/ui/fold" detail="shared/ui/fold.tsx" />
 							{DEMO_TAKES.map((take) => (
 								<ToolRow
 									key={take}
@@ -743,8 +774,7 @@ function SettledAgent({
 							<ToolRow verb="check" subject="3 frames" detail="Type check passed." />
 						</div>
 						<p className="text-base text-text leading-base">
-							The workshop, booking, and ticket are on the canvas. The poster carries through the flow, and your
-							chosen time and seats stay with you.
+							The light, finish selector, and bag are on the canvas. Switch on the lamp and try both finishes.
 						</p>
 						<p className="text-base text-text leading-base">
 							Select a frame to compare it, or press play to try it.

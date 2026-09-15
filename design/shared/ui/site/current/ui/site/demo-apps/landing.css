@@ -1,6 +1,6 @@
 .dl-product-session {
-	width: 1200px;
-	height: 800px;
+	width: 100%;
+	height: 100%;
 }
 
 /* Each visible copy is independent. Only the copy being played supplies transition names. */
@@ -40,4 +40,28 @@ html:active-view-transition-type(offprint-demo)::view-transition-new(root) {
 	animation: none;
 	height: 100%;
 	object-fit: fill;
+}
+
+.sg-product > .sg-product-inner {
+	height: 820px;
+}
+@media (max-width: 760px) {
+	.sc-mobile-product.sg-product {
+		aspect-ratio: auto !important;
+	}
+	.sc-mobile-product.sg-product > .sg-product-inner {
+		height: auto;
+		width: 100%;
+		transform: none;
+	}
+}
+
+@media (max-width: 760px), (pointer: coarse) {
+	.sc-mobile-product .fold-frame {
+		max-width: 390px;
+		margin-inline: auto;
+	}
+	.sc-mobile-product .sg-product-inner {
+		background: #362e37;
+	}
 }

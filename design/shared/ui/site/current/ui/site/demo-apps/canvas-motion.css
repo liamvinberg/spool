@@ -193,7 +193,7 @@
 }
 .sc-player .sg-product {
 	container-type: inline-size;
-	aspect-ratio: 3 / 2;
+	aspect-ratio: 60 / 41;
 }
 .sc-player .sg-product-inner {
 	transform: scale(var(--preview-scale, tan(atan2(100cqw, 1200px))));

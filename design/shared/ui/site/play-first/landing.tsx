@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createBloomRenderer } from "shared/ui/site/current/ui/site/bloom/renderer";
-import { OffprintSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
+import { FoldSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
 import { SpoolMark } from "shared/ui/site/current/ui/spool/mark";
 import { CopyCommand, DOWNLOAD, INSTALL_COMMAND } from "shared/ui/site/current/install";
 import "shared/ui/site/current/ui/site/bloom/page.css";
@@ -96,9 +96,9 @@ export function PlayLanding({ take }: { take: "enter" | "threshold" }) {
 									Go on. Press something.<span>↘</span>
 								</button>
 								<p>
-									This is Offprint, a workshop app made in spool.
+									This is Fold Objects, a lamp shop made in spool.
 									<br />
-									Double-click a frame and try booking a seat.
+									Double-click a frame and try choosing a finish.
 								</p>
 							</div>
 						) : (
@@ -112,7 +112,7 @@ export function PlayLanding({ take }: { take: "enter" | "threshold" }) {
 								<span>offprint / 3 live frames</span>
 							</div>
 						)}
-						<OffprintSurface view="canvas" />
+						<FoldSurface view="canvas" />
 						<div className="pf-preview-foot">
 							<p>
 								{take === "enter"

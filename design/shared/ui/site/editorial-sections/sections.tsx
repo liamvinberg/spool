@@ -1,7 +1,7 @@
 import { usePreviewScale } from "shared/ui/site/current/ui/site/demo-apps/use-preview-scale";
 import { LandingEnding, type EndingTake } from "shared/ui/site/editorial-endings/ending";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { OffprintSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
+import { FoldSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
 import {
 	DemoProduct,
 	type DemoTake,
@@ -25,7 +25,7 @@ import "./entrance.css";
 export type SectionName = "try" | "flow" | "agent" | "files" | "start" | "footer";
 export type SectionTake = "spread" | "stage" | "paper";
 const REPO = "https://github.com/liamvinberg/spool";
-function Product({ take = "workshops" }: { take?: DemoTake }) {
+function Product({ take = "campaign" }: { take?: DemoTake }) {
 	const preview = usePreviewScale(1200);
 	return (
 		<div ref={preview} className="sg-product sc-mobile-product">
@@ -51,18 +51,18 @@ function Source({ tree = false }: { tree?: boolean }) {
 					<span>design/</span>
 					<span> frames/</span>
 					<span> app/</span>
-					<strong> offprint-workshops/</strong>
+					<strong> fold-campaign/</strong>
 					<span> frame.tsx</span>
 					<span> frame.json</span>
 					<span> shared/</span>
 				</div>
 			)}
 			<div>
-				<p>offprint-workshops/frame.tsx</p>
+				<p>fold-campaign/frame.tsx</p>
 				<pre>
 					<code>
 						<span>export default function</span>
-						{' Frame() {\n  return (\n    <DemoProduct\n      take="workshops"\n    />\n  );\n}'}
+						{' Frame() {\n  return (\n    <DemoProduct\n      take="campaign"\n    />\n  );\n}'}
 					</code>
 				</pre>
 				<small>The component in your project.</small>
@@ -118,12 +118,12 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 							)
 						}
 					>
-						<p>Find a workshop. Bring a friend. Get your ticket.</p>
-						<p>This is a live prototype. Try “Find your seat” and follow it through.</p>
+						<p>Switch on the lamp. Choose a finish and add it to your bag.</p>
+						<p>This is a live prototype. Tap the lamp or try “Choose yours”.</p>
 					</Heading>
 					<div className="es-visual">
 						<Product />
-						<p className="es-caption">Offprint, a workshop app made in spool. No booking is made.</p>
+						<p className="es-caption">Fold Objects, a fictional shop made in spool. No purchase is made.</p>
 					</div>
 				</>
 			)}
@@ -152,12 +152,12 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 						<p>
 							{take === "stage"
 								? "Your choices carry through to the next screen."
-								: "Follow a workshop from the first look to the final ticket."}
+								: "Follow the lamp from the first look to your bag."}
 						</p>
 					</Heading>
 					{take === "stage" ? (
 						<div className="es-visual">
-							<OffprintSurface view="canvas" />
+							<FoldSurface view="canvas" />
 							<p className="es-caption">
 								<span className="es-desktop-copy">
 									Double-click to enter. Follow the flow. Esc leaves the frame.
@@ -177,9 +177,9 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 										<p>
 											{
 												[
-													"Find something worth a Saturday.",
-													"Pick a time. Bring someone along.",
-													"See your choices become a plan.",
+													"Meet the portable lamp.",
+													"Compare aluminium and oxblood.",
+													"Your finish and quantity stay with you.",
 												][i]
 											}
 										</p>
@@ -204,7 +204,7 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 						<p>The selection gives it context. The canvas shows you what changed.</p>
 					</Heading>
 					<div className="es-visual">
-						<OffprintSurface view="agent" />
+						<FoldSurface view="agent" />
 						<p className="es-caption">
 							Select another frame to change the context. This conversation is an example.
 						</p>
@@ -229,7 +229,7 @@ export function SectionPart({ section, take }: { section: SectionName; take: Sec
 					<div className="es-source">
 						<Source tree={take === "paper"} />
 						<div className="es-source-result">
-							<OffprintSurface view="canvas" />
+							<FoldSurface view="canvas" />
 							<p className="es-caption">The frames on your canvas.</p>
 						</div>
 						<p className="es-source-foot">Edit the file. See the result.</p>

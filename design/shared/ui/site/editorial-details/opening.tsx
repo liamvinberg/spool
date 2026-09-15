@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SpoolMark } from "shared/ui/site/current/ui/spool/mark";
-import { OffprintSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
+import { FoldSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
 import { DOWNLOAD, INSTALL_COMMAND } from "shared/ui/site/current/install";
 
 export type DetailTake = "quiet" | "fine" | "long" | "circle" | "tray" | "red" | "small" | "inline" | "aside" | "warm" | "strip" | "margin";
@@ -65,14 +65,14 @@ export function EditorialOpening({ take }: { take: DetailTake }) {
     </div>
    </div>
   </section>
-  <section className="ef-preview sg-width" aria-label="Offprint on the spool canvas">
+  <section className="ef-preview sg-width" aria-label="Fold Objects on the spool canvas">
    <div className="ef-invitation">
     <h2>{invitations[take]}</h2>
-    <p>{take === "small" || take === "inline" || take === "strip" ? "Open a frame. Try the flow." : "Offprint is a workshop app made in spool. Open a frame and have a look around."}</p>
+    <p>{take === "small" || take === "inline" || take === "strip" ? "Open a frame. Try the flow." : "Fold Objects is a lamp shop made in spool. Open a frame and have a look around."}</p>
     {(take === "long" || take === "circle" || take === "fine") && <a className="ef-demo-link" href="#ef-canvas" aria-label="Explore the canvas"><Icon kind="down" /></a>}
    </div>
-   <div id="ef-canvas" className="ef-canvas"><OffprintSurface view="canvas" /></div>
-   <div className="sg-caption"><p>Offprint, on the canvas.</p><span>Interactive preview · changes stay here</span></div>
+   <div id="ef-canvas" className="ef-canvas"><FoldSurface view="canvas" /></div>
+   <div className="sg-caption"><p>Fold Objects, on the canvas.</p><span>Interactive preview · changes stay here</span></div>
   </section>
  </>;
 }
