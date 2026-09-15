@@ -1,0 +1,823 @@
+.fold-store {
+	--ground: #dedccd;
+	--ink: #2c3026;
+	--muted: #616452;
+	--action: #293b2e;
+	--action-ink: #eef0dc;
+	--line: #3b403733;
+	--ease: cubic-bezier(0.22, 0.8, 0.2, 1);
+	position: relative;
+	isolation: isolate;
+	min-height: 820px;
+	height: 100%;
+	overflow: hidden;
+	background: var(--ground);
+	color: var(--ink);
+	font-family: "Helvetica Neue", Arial, sans-serif;
+	font-weight: 400;
+	font-size: 14px;
+	box-sizing: border-box;
+}
+.fold-blue {
+	--ground: #bdcddd;
+	--ink: #172b40;
+	--muted: #4c6278;
+	--action: #203b9a;
+	--action-ink: #f0f2e9;
+	--line: #172b4033;
+}
+.fold-plum {
+	--ground: #362e37;
+	--ink: #efe5ce;
+	--muted: #c3b5be;
+	--action: #e2dfa7;
+	--action-ink: #302932;
+	--line: #efe5ce33;
+}
+.fold-store * {
+	box-sizing: border-box;
+}
+.fold-store h1,
+.fold-store h2,
+.fold-store h3,
+.fold-store p {
+	margin: 0;
+}
+.fold-store button {
+	font: inherit;
+	border: 0;
+	background: none;
+	color: inherit;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.fold-store button:focus-visible {
+	outline: 2px solid currentColor;
+	outline-offset: 5px;
+}
+.fold-store button:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+.fold-store button svg {
+	width: 23px;
+	height: 23px;
+	flex-shrink: 0;
+}
+.fold-store button {
+	transition: transform 160ms var(--ease);
+}
+.fold-store button:active {
+	transform: scale(0.975);
+	transition-duration: 70ms;
+}
+.fold-night {
+	position: absolute;
+	inset: 0;
+	background: #0d1119;
+	opacity: 0;
+	z-index: -1;
+	transition: opacity 260ms var(--ease);
+}
+.fold-store[data-light="true"] .fold-night {
+	opacity: 0.15;
+}
+.fold-header {
+	height: 105px;
+	padding: 30px 38px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	position: relative;
+	z-index: 4;
+}
+.fold-brand {
+	display: flex;
+	gap: 12px;
+	align-items: center;
+	text-align: left;
+	padding: 0;
+}
+.fold-brand svg {
+	width: 35px !important;
+	height: 40px !important;
+}
+.fold-brand span {
+	font-size: 22px;
+	font-weight: 500;
+	line-height: 0.94;
+	letter-spacing: -1.1px;
+}
+.fold-header nav {
+	display: flex;
+	gap: 40px;
+	font-size: 12px;
+}
+.fold-header nav button {
+	min-height: 44px;
+}
+.fold-bag-trigger {
+	display: flex;
+	align-items: center;
+	gap: 15px;
+	min-height: 44px;
+	font-size: 12px !important;
+}
+.fold-bag-trigger span {
+	border: 1px solid var(--line);
+	padding: 6px;
+	min-width: 30px;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+.fold-main {
+	height: calc(100% - 172px);
+	min-height: 648px;
+	position: relative;
+}
+.fold-campaign {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	transition:
+		opacity 200ms var(--ease),
+		transform 260ms var(--ease);
+	pointer-events: none;
+}
+.fold-campaign button {
+	pointer-events: auto;
+}
+.fold-intro {
+	position: absolute;
+	left: 40px;
+	top: 58px;
+	font-size: 16px;
+	line-height: 1.45;
+	letter-spacing: -0.2px;
+}
+.fold-campaign h1 {
+	position: absolute;
+	left: 34px;
+	bottom: 204px;
+	font-family: Georgia, "Times New Roman", serif;
+	font-size: clamp(96px, 11vw, 154px);
+	font-weight: 400;
+	line-height: 1;
+	letter-spacing: -9px;
+}
+.fold-campaign h1 span {
+	font-family: inherit;
+}
+.fold-launch {
+	position: absolute;
+	left: 40px;
+	bottom: 48px;
+	width: 325px;
+}
+.fold-launch p {
+	font-size: 14px;
+	line-height: 1.45;
+	margin-bottom: 25px;
+	color: var(--muted);
+}
+.fold-primary {
+	background: var(--action) !important;
+	color: var(--action-ink) !important;
+	width: 100%;
+	min-height: 57px;
+	padding: 16px 20px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	border-radius: 1px;
+	font-size: 13px !important;
+}
+.fold-primary > span {
+	display: flex;
+	align-items: center;
+	gap: 22px;
+}
+.fold-primary svg {
+	transition: transform 200ms var(--ease);
+}
+/* The large product moves between campaign and configuration positions. Its longer
+   transition preserves that spatial relationship; everyday controls stay under 300ms. */
+.fold-object-wrap {
+	overflow: hidden;
+	position: absolute;
+	top: -55px;
+	left: 42%;
+	width: 54%;
+	max-width: 850px;
+	aspect-ratio: 1;
+	pointer-events: none;
+	transition: transform 640ms var(--ease);
+	transform-origin: 50% 50%;
+	z-index: 1;
+}
+.fold-object {
+	width: 100%;
+	height: 100%;
+	position: relative;
+	transition: transform 640ms var(--ease);
+	transform-origin: 55% 22%;
+}
+.fold-photo,
+.fold-diffuser {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	transition: opacity 220ms var(--ease);
+	user-select: none;
+}
+.fold-diffuser {
+	mix-blend-mode: screen;
+}
+.fold-pool {
+	position: absolute;
+	left: 24%;
+	top: 79%;
+	width: 65%;
+	height: 14%;
+	border-radius: 50%;
+	background: radial-gradient(ellipse, #ffde9855, transparent 70%);
+	transition: opacity 250ms var(--ease);
+}
+.fold-tools {
+	position: absolute;
+	bottom: 5px;
+	left: 50%;
+	right: 45px;
+	z-index: 3;
+	display: flex;
+	justify-content: space-between;
+	gap: 20px;
+	align-items: center;
+}
+.fold-tools button {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	font-size: 12px;
+	min-height: 44px;
+}
+.fold-switch > span {
+	width: 34px;
+	height: 20px;
+	border: 1px solid currentColor;
+	border-radius: 20px;
+	padding: 3px;
+}
+.fold-switch i {
+	display: block;
+	background: currentColor;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	transition: transform 180ms var(--ease);
+}
+.fold-switch[aria-pressed="true"] i {
+	transform: translateX(13px);
+}
+.fold-switch[aria-pressed="true"] > span {
+	color: var(--action-ink);
+	background: var(--action);
+}
+.fold-product {
+	position: absolute;
+	right: 44px;
+	top: 42px;
+	width: 310px;
+	z-index: 3;
+	opacity: 0;
+	transform: translateX(32px);
+	transition:
+		opacity 180ms var(--ease),
+		transform 260ms var(--ease);
+	pointer-events: none;
+}
+.fold-back {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	font-size: 11px !important;
+	min-height: 44px;
+	margin-bottom: 28px;
+}
+.fold-product h2 {
+	font:
+		400 42px / 1.06 Georgia,
+		serif;
+	letter-spacing: -1.5px;
+	margin-bottom: 12px;
+}
+.fold-product > p {
+	font-size: 13px;
+	color: var(--muted);
+}
+.fold-product fieldset {
+	border: 0;
+	margin: 36px 0 22px;
+	padding: 0;
+	min-width: 0;
+}
+.fold-product legend {
+	font-size: 12px;
+	width: 100%;
+	margin-bottom: 16px;
+}
+.fold-product legend span {
+	float: right;
+	color: var(--muted);
+}
+.fold-finishes {
+	display: flex;
+	gap: 12px;
+}
+.fold-finish {
+	width: 60px;
+	height: 48px;
+	border: 1px solid var(--line) !important;
+	padding: 7px;
+	position: relative;
+}
+.fold-finish > span {
+	display: block;
+	width: 100%;
+	height: 100%;
+	background: #b9b9b5;
+}
+.fold-finish-oxblood > span {
+	background: #642d32;
+}
+.fold-finish[aria-pressed="true"] {
+	border-color: var(--ink) !important;
+}
+.fold-finish svg {
+	position: absolute;
+	left: 20px;
+	top: 15px;
+	width: 18px !important;
+	height: 18px !important;
+	color: #232723;
+	opacity: 0;
+}
+.fold-finish-oxblood svg {
+	color: #f0e3d7;
+}
+.fold-finish[aria-pressed="true"] svg {
+	opacity: 1;
+}
+.fold-product dl {
+	margin: 0 0 28px;
+}
+.fold-product dl > div {
+	border-bottom: 1px solid var(--line);
+	display: flex;
+	justify-content: space-between;
+	padding: 12px 0;
+	font-size: 12px;
+}
+.fold-product dd {
+	margin: 0;
+	color: var(--muted);
+}
+.fold-product .fold-shipping {
+	font-size: 11px;
+	margin-top: 14px;
+	text-align: center;
+}
+.fold-store[data-choosing="true"] .fold-campaign {
+	opacity: 0;
+	transform: translateX(-24px);
+	pointer-events: none;
+}
+.fold-store[data-choosing="true"] .fold-campaign button {
+	pointer-events: none;
+}
+.fold-store[data-choosing="true"] .fold-object-wrap {
+	transform: translateX(-40%) scale(0.9);
+}
+.fold-store[data-choosing="true"] .fold-product {
+	opacity: 1;
+	transform: translateX(0);
+	pointer-events: auto;
+	transition-delay: 100ms;
+}
+.fold-store[data-choosing="true"] .fold-tools {
+	left: 13%;
+	right: 43%;
+}
+.fold-inspect {
+	position: absolute;
+	left: 40px;
+	bottom: 48px;
+	width: 320px;
+	z-index: 3;
+	opacity: 0;
+	transform: translateY(12px);
+	transition:
+		opacity 180ms var(--ease),
+		transform 260ms var(--ease);
+	pointer-events: none;
+}
+.fold-inspect h2 {
+	font:
+		400 36px / 1.08 Georgia,
+		serif;
+	letter-spacing: -1px;
+	margin-bottom: 18px;
+}
+.fold-inspect p {
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--muted);
+	max-width: 290px;
+}
+.fold-inspect button {
+	display: flex;
+	gap: 24px;
+	align-items: center;
+	margin-top: 24px;
+	min-height: 44px;
+	font-size: 12px;
+	border-bottom: 1px solid var(--line);
+}
+.fold-store[data-detail="true"] .fold-object {
+	transform: translateY(18%) scale(1.48);
+}
+.fold-store[data-detail="true"] .fold-campaign {
+	opacity: 0;
+	transform: translateX(-24px);
+}
+.fold-store[data-detail="true"] .fold-campaign button {
+	pointer-events: none;
+}
+.fold-inspect[data-show="true"] {
+	opacity: 1;
+	transform: translateY(0);
+	pointer-events: auto;
+}
+.fold-footer {
+	position: relative;
+	z-index: 3;
+	height: 67px;
+	margin: 0 40px;
+	border-top: 1px solid var(--line);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: 11px;
+}
+.fold-bag {
+	position: fixed;
+	inset: 0 0 0 auto;
+	margin: 0;
+	border: 0;
+	width: 455px;
+	max-width: 100%;
+	height: 100%;
+	max-height: 100%;
+	padding: 28px;
+	background: #f0eee3;
+	color: #2c3026;
+	overflow: auto;
+}
+.fold-bag::backdrop {
+	background: #15151a55;
+}
+.fold-bag[open] {
+	display: flex;
+	flex-direction: column;
+	animation: fold-bag-in 260ms var(--ease) both;
+}
+.fold-bag-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding-bottom: 26px;
+	border-bottom: 1px solid #2c302633;
+}
+.fold-bag-heading h2 {
+	font:
+		400 31px Georgia,
+		serif;
+	letter-spacing: -1px;
+}
+.fold-bag-heading h2 span {
+	font:
+		12px Arial,
+		sans-serif;
+	letter-spacing: 0;
+	margin-left: 8px;
+}
+.fold-bag-heading button {
+	min-width: 44px;
+	min-height: 44px;
+	display: grid;
+	place-items: center;
+}
+.fold-bag-item {
+	display: grid;
+	grid-template-columns: 110px 1fr auto;
+	gap: 12px;
+	align-items: start;
+	padding: 25px 0;
+	border-bottom: 1px solid #2c302625;
+}
+.fold-bag-item img {
+	width: 110px;
+	height: 135px;
+	object-fit: contain;
+	background: #dedccd;
+}
+.fold-bag-item h3 {
+	font-weight: 400;
+	font-size: 18px;
+	margin-top: 5px;
+}
+.fold-bag-item p {
+	font-size: 11px;
+	margin-top: 9px;
+	color: #616452;
+}
+.fold-bag-item > span {
+	font-size: 12px;
+	margin-top: 9px;
+}
+.fold-quantity {
+	display: flex;
+	align-items: center;
+	width: 103px;
+	border: 1px solid #2c302633;
+	margin-top: 24px;
+}
+.fold-quantity button {
+	width: 34px;
+	height: 34px;
+	flex: 1;
+}
+.fold-quantity output {
+	text-align: center;
+	min-width: 25px;
+	font-size: 12px;
+}
+.fold-bag-bottom {
+	margin-top: auto;
+	padding-top: 40px;
+}
+.fold-bag-bottom > p:first-child {
+	display: flex;
+	justify-content: space-between;
+	font-size: 19px;
+}
+.fold-bag-bottom strong {
+	font-weight: 400;
+}
+.fold-bag-bottom > p:nth-child(2) {
+	font-size: 12px;
+	margin-top: 12px;
+	color: #616452;
+}
+.fold-bag-bottom .fold-primary {
+	margin-top: 25px;
+	background: #293b2e !important;
+	color: #eef0dc !important;
+}
+.fold-bag-bottom small {
+	display: block;
+	font-size: 10px;
+	line-height: 1.5;
+	margin-top: 16px;
+	color: #616452;
+}
+.fold-empty {
+	margin: auto 0;
+}
+.fold-empty > svg {
+	width: 46px;
+	height: 48px;
+	margin-bottom: 20px;
+}
+.fold-empty h3 {
+	font:
+		400 30px Georgia,
+		serif;
+	margin-bottom: 35px;
+}
+.fold-empty .fold-primary {
+	background: #293b2e !important;
+	color: #eef0dc !important;
+}
+@keyframes fold-bag-in {
+	from {
+		opacity: 0;
+		transform: translateX(36px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+@media (hover: hover) and (pointer: fine) {
+	.fold-primary:hover svg {
+		transform: translateX(4px);
+	}
+	.fold-back:hover svg {
+		transform: translateX(-3px) rotate(180deg) !important;
+	}
+	.fold-header nav button:hover {
+		text-decoration: underline;
+		text-underline-offset: 5px;
+	}
+}
+@media (max-width: 700px) {
+	.fold-store {
+		height: auto;
+		min-height: 844px;
+	}
+	.fold-header {
+		height: 84px;
+		padding: 21px 20px;
+	}
+	.fold-brand span {
+		font-size: 19px;
+	}
+	.fold-brand svg {
+		width: 29px !important;
+		height: 34px !important;
+	}
+	.fold-header nav {
+		display: none;
+	}
+	.fold-main {
+		height: 700px;
+		min-height: 0;
+	}
+	.fold-intro {
+		left: 21px;
+		top: 14px;
+		font-size: 12px;
+		line-height: 1.4;
+	}
+	.fold-object-wrap {
+		left: 11%;
+		top: 90px;
+		width: 92%;
+		max-width: none;
+	}
+	.fold-campaign h1 {
+		left: 17px;
+		top: 53px;
+		bottom: auto;
+		font-size: 79px;
+		letter-spacing: -5px;
+		z-index: 2;
+		pointer-events: none;
+	}
+	.fold-launch {
+		left: 20px;
+		bottom: 25px;
+		width: calc(100% - 40px);
+	}
+	.fold-launch p {
+		font-size: 12px;
+		margin-bottom: 19px;
+		max-width: 240px;
+	}
+	.fold-primary {
+		min-height: 54px;
+	}
+	.fold-tools {
+		left: 20px;
+		right: 20px;
+		bottom: 161px;
+		gap: 12px;
+	}
+	.fold-tools button {
+		font-size: 11px;
+		gap: 9px;
+	}
+	.fold-footer {
+		height: 60px;
+		margin: 0 20px;
+		font-size: 9px;
+		gap: 10px;
+	}
+	.fold-footer > span:nth-child(2) {
+		display: none;
+	}
+	.fold-store[data-choosing="true"] .fold-main {
+		height: 885px;
+	}
+	.fold-store[data-choosing="true"] .fold-object-wrap {
+		transform: translate(-15%, -30%) scale(0.67);
+	}
+	.fold-product {
+		left: 20px;
+		right: 20px;
+		top: 340px;
+		width: auto;
+		transform: translateY(20px);
+	}
+	.fold-back {
+		margin-bottom: 15px;
+	}
+	.fold-product h2 {
+		font-size: 37px;
+	}
+	.fold-product fieldset {
+		margin-top: 28px;
+	}
+	.fold-product dl {
+		margin-bottom: 22px;
+	}
+	.fold-store[data-choosing="true"] .fold-product {
+		transform: translateY(0);
+	}
+	.fold-store[data-choosing="true"] .fold-tools {
+		left: 20px;
+		right: 20px;
+		bottom: auto;
+		top: 286px;
+	}
+	.fold-inspect {
+		left: 20px;
+		bottom: 30px;
+		width: calc(100% - 40px);
+	}
+	.fold-inspect h2 {
+		font-size: 32px;
+	}
+	.fold-inspect p {
+		font-size: 13px;
+		max-width: 270px;
+	}
+	.fold-inspect button {
+		margin-top: 12px;
+	}
+	.fold-store[data-detail="true"] .fold-object {
+		transform: translate(-10%, 18%) scale(1.55);
+	}
+	.fold-store[data-detail="true"] .fold-tools {
+		bottom: 227px;
+	}
+	.fold-store[data-detail="true"] .fold-inspect-trigger {
+		visibility: hidden;
+	}
+	.fold-bag {
+		padding: 22px;
+		max-width: 100%;
+		width: 100%;
+	}
+	.fold-bag-item {
+		grid-template-columns: 92px 1fr auto;
+		gap: 10px;
+	}
+	.fold-bag-item img {
+		width: 92px;
+		height: 125px;
+	}
+	.fold-bag-heading h2 {
+		font-size: 29px;
+	}
+}
+@media (max-width: 360px) {
+	.fold-main {
+		height: 700px;
+	}
+	.fold-campaign h1 {
+		font-size: 70px;
+	}
+	.fold-object-wrap {
+		top: 117px;
+		width: 99%;
+		left: 4%;
+	}
+	.fold-bag {
+		padding: 18px;
+	}
+	.fold-bag-item {
+		grid-template-columns: 78px 1fr auto;
+	}
+	.fold-bag-item img {
+		width: 78px;
+		height: 115px;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.fold-store * {
+		animation: none !important;
+		transition-property: opacity, color, background-color !important;
+		transition-duration: 120ms !important;
+	}
+	.fold-store button:active {
+		transform: none;
+	}
+	.fold-object,
+	.fold-object-wrap {
+		transition: none !important;
+	}
+}
