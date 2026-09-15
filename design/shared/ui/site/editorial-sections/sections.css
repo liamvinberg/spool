@@ -58,7 +58,7 @@
 	container-type: inline-size;
 }
 .es-section .sg-product-inner {
-	transform: scale(tan(atan2(100cqw, 1200px)));
+	transform: scale(var(--preview-scale, tan(atan2(100cqw, 1200px))));
 }
 .es-section .sr-app {
 	border-radius: 5px;

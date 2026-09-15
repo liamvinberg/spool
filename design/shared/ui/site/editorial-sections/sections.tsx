@@ -1,3 +1,4 @@
+import { usePreviewScale } from "shared/ui/site/current/ui/site/demo-apps/use-preview-scale";
 import { LandingEnding, type EndingTake } from "shared/ui/site/editorial-endings/ending";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { OffprintSurface } from "shared/ui/site/current/ui/site/demo-apps/landing-canvas";
@@ -25,8 +26,9 @@ export type SectionName = "try" | "flow" | "agent" | "files" | "start" | "footer
 export type SectionTake = "spread" | "stage" | "paper";
 const REPO = "https://github.com/liamvinberg/spool";
 function Product({ take = "workshops" }: { take?: DemoTake }) {
+	const preview = usePreviewScale(1200);
 	return (
-		<div className="sg-product sc-mobile-product">
+		<div ref={preview} className="sg-product sc-mobile-product">
 			<div className="sg-product-inner">
 				<DemoProduct take={take} />
 			</div>

@@ -1,4 +1,5 @@
 import "./landing-fit.css";
+import { usePreviewScale } from "./use-preview-scale";
 import { type ReactNode, type PointerEvent, memo, useCallback, useEffect, useRef, useState } from "react";
 import { CAPTURED, type ModelState, useModels } from "../../../lib/spool/agent-model";
 import { cn } from "../../../lib/utils";
@@ -122,6 +123,8 @@ function LandingShell({
 
 /** Shared local demo. Tabs mirror the app; camera and flow use its spatial rules. */
 export function OffprintSurface({ view = "agent", className = "" }: { view?: AppView; className?: string }) {
+	const surface = usePreviewScale(1600);
+	const preview = usePreviewScale(1200);
 	const [dock, setDock] = useState<AppView>(view);
 	const [selected, setSelected] = useState<DemoTake | null>("workshops");
 	const [entered, setEntered] = useState<DemoTake | null>(null);
@@ -317,6 +320,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 	const panelWidth = dock === "agent" ? 420 : dock === "properties" ? 300 : 0;
 	return (
 		<div
+			ref={surface}
 			className={cn("sr-app sc-current", className)}
 			data-app-surface=""
 			data-view={dock}
@@ -585,7 +589,7 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 						Close preview
 					</button>
 				</div>
-				<div className="sg-product sc-mobile-product">
+				<div ref={preview} className="sg-product sc-mobile-product">
 					<div className="sg-product-inner">
 						<DemoProduct key={playing} take={playing} reduceMotion={quiet} />
 					</div>

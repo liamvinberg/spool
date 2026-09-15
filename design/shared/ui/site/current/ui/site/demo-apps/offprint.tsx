@@ -2,6 +2,29 @@ import { useState } from "react";
 import { cn } from "../../../lib/utils";
 import "./offprint.css";
 
+function OffprintIcon({ name }: { name: "mark" | "arrow" | "check" }) {
+	return (
+		<svg
+			className="op-icon"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth={name === "mark" ? 2.5 : 1.6}
+			aria-hidden="true"
+		>
+			<path
+				d={
+					name === "mark"
+						? "M12 2v20M2 12h20M5 5l14 14M5 19 19 5"
+						: name === "arrow"
+							? "M5 19 19 5M5 5h14v14"
+							: "m4 12 5 5L20 6"
+				}
+			/>
+		</svg>
+	);
+}
+
 function Print({ small = false }: { small?: boolean }) {
 	return (
 		<div className={cn("op-print", small && "op-print-small")}>
@@ -46,7 +69,9 @@ export function Offprint({
 			<header className="op-header">
 				<button type="button" className="op-brand" onClick={onBack}>
 					<span>offprint</span>
-					<i>✳</i>
+					<i>
+						<OffprintIcon name="mark" />
+					</i>
 				</button>
 				<nav aria-label="Workshop navigation">
 					<button type="button" aria-current={screen !== "ticket" ? "page" : undefined} onClick={onBack}>
@@ -61,7 +86,10 @@ export function Offprint({
 					</button>
 				</nav>
 				<span className="op-city">
-					Stockholm <span>↙</span>
+					Stockholm{" "}
+					<span className="op-arrow-back">
+						<OffprintIcon name="arrow" />
+					</span>
 				</span>
 				<span className="op-avatar">J</span>
 			</header>
@@ -86,7 +114,9 @@ export function Offprint({
 							aria-label="Explore the screen printing workshop"
 						>
 							<Print />
-							<span className="op-poster-arrow">↗</span>
+							<span className="op-poster-arrow">
+								<OffprintIcon name="arrow" />
+							</span>
 						</button>
 						<section className="op-workshop-copy">
 							<div className="op-workshop-date">
@@ -107,12 +137,17 @@ export function Offprint({
 								</p>
 							</div>
 							<div className="op-details-line">
-								<span>↗ Södermalm</span>
+								<span>
+									<OffprintIcon name="arrow" /> Södermalm
+								</span>
 								<span>2.5 hours</span>
 								<span>All levels</span>
 							</div>
 							<button type="button" className="op-primary" onClick={onOpen}>
-								Find your seat <span>↗</span>
+								Find your seat{" "}
+								<span>
+									<OffprintIcon name="arrow" />
+								</span>
 							</button>
 							<div className="op-seats-note">
 								<span>
@@ -126,7 +161,9 @@ export function Offprint({
 					</div>
 					<footer className="op-workshops-footer">
 						<span>Come curious. Leave with something you made.</span>
-						<span>All materials included ↗</span>
+						<span>
+							All materials included <OffprintIcon name="arrow" />
+						</span>
 					</footer>
 				</main>
 			) : screen === "booking" ? (
@@ -145,7 +182,9 @@ export function Offprint({
 									<strong>Spend a morning with Bea.</strong>
 									<p>Printmaker. Patient teacher. Believer in happy accidents.</p>
 								</div>
-								<span>↗</span>
+								<span>
+									<OffprintIcon name="arrow" />
+								</span>
 							</div>
 						</section>
 						<section className="op-booking-form">
@@ -207,7 +246,10 @@ export function Offprint({
 								</strong>
 							</div>
 							<button type="button" className="op-primary" onClick={() => onBook(chosenTime, people)}>
-								Count me in <span>↗</span>
+								Count me in{" "}
+								<span>
+									<OffprintIcon name="arrow" />
+								</span>
 							</button>
 							<small className="op-booking-foot">Ink, paper, coffee. Just bring yourself.</small>
 						</section>
@@ -216,7 +258,9 @@ export function Offprint({
 			) : (
 				<main className="op-confirmation">
 					<section className="op-confirmation-copy">
-						<span className="op-check">✓</span>
+						<span className="op-check">
+							<OffprintIcon name="check" />
+						</span>
 						<h1>
 							Your Saturday
 							<br />
@@ -233,15 +277,23 @@ export function Offprint({
 							aria-pressed={reminder}
 							onClick={() => setReminder(!reminder)}
 						>
-							{reminder ? "✓ Reminder is set" : "+ Remind me the day before"}
+							{reminder ? (
+								<>
+									<OffprintIcon name="check" /> Reminder is set
+								</>
+							) : (
+								"+ Remind me the day before"
+							)}
 						</button>
 						<button type="button" className="op-back" onClick={onBack}>
-							Back to workshops ↗
+							Back to workshops <OffprintIcon name="arrow" />
 						</button>
 					</section>
 					<section className="op-ticket" aria-label="Workshop booking">
 						<div className="op-ticket-top">
-							<span>offprint ✳</span>
+							<span>
+								offprint <OffprintIcon name="mark" />
+							</span>
 							<span>You’re in.</span>
 						</div>
 						<div className="op-ticket-poster">

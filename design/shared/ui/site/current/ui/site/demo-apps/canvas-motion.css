@@ -196,7 +196,7 @@
 	aspect-ratio: 3 / 2;
 }
 .sc-player .sg-product-inner {
-	transform: scale(tan(atan2(100cqw, 1200px)));
+	transform: scale(var(--preview-scale, tan(atan2(100cqw, 1200px))));
 }
 .sc-current[data-quiet="true"] .sc-dock-panel,
 .sc-current[data-quiet="true"] .sc-dock-face,

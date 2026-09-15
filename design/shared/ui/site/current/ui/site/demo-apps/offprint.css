@@ -648,3 +648,14 @@
 		transform: none;
 	}
 }
+
+.op-icon {
+	width: 1em;
+	height: 1em;
+	display: inline-block;
+	vertical-align: -0.125em;
+	flex-shrink: 0;
+}
+.op-arrow-back .op-icon {
+	transform: rotate(180deg);
+}
