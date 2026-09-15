@@ -59,16 +59,21 @@ export function FoldStore({ palette, treatment = "original" }: { palette: Palett
 			setBagOpen(false);
 			return;
 		}
+		const current = getComputedStyle(node);
+		const from = { transform: current.transform, opacity: current.opacity };
 		node.getAnimations().forEach((a) => a.cancel());
-		node
-			.animate(
-				[
-					{ transform: "translateX(0)", opacity: 1 },
-					{ transform: "translateX(32px)", opacity: 0 },
-				],
-				{ duration: 150, easing: "cubic-bezier(.2,.8,.2,1)" },
-			)
-			.finished.then(() => setBagOpen(false))
+		const exit = node.animate([from, { transform: "translateX(32px)", opacity: 0 }], {
+			duration: 150,
+			easing: "cubic-bezier(.2,.8,.2,1)",
+			fill: "forwards",
+		});
+		exit.finished
+			.then(() => {
+				// Close while the exit still holds its transparent final frame.
+				node.close();
+				exit.cancel();
+				setBagOpen(false);
+			})
 			.catch(() => {});
 	}
 	function choose(next: boolean) {
