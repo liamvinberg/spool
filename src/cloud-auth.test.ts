@@ -6,8 +6,11 @@ import { authorizedCloudRequest, cloudOrigin, keychainVault, login, logout, sess
 import { makeTempDir } from "./test-helpers";
 
 const originalPath = process.env.PATH;
+const originalCloudOrigin = process.env.SPOOL_CLOUD_ORIGIN;
 afterEach(() => {
 	process.env.PATH = originalPath;
+	if (originalCloudOrigin === undefined) delete process.env.SPOOL_CLOUD_ORIGIN;
+	else process.env.SPOOL_CLOUD_ORIGIN = originalCloudOrigin;
 });
 
 function memoryVault() {
@@ -90,6 +93,36 @@ describe("Cloud publisher authentication", () => {
 		}
 	});
 
+	it("uses the invite-only beta for login and its session probe by default", async () => {
+		delete process.env.SPOOL_CLOUD_ORIGIN;
+		const vault = memoryVault();
+		const requested: string[] = [];
+		let opened = "";
+		const authenticated = await login("/tmp/spool-one", {
+			vault,
+			open: (url) => {
+				opened = url;
+				const callback = new URL(new URL(url).searchParams.get("return_url") ?? "");
+				callback.searchParams.set("code", "c".repeat(43));
+				void fetch(callback);
+			},
+			fetch: async (input) => {
+				const url = String(input);
+				requested.push(url);
+				if (url.endsWith("/auth/publisher/exchange"))
+					return Response.json({ token: "t".repeat(43), expiresAt: 2_000_000_000 });
+				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "device" });
+			},
+		});
+
+		expect(authenticated).toEqual({ publisherId: "publisher", sessionId: "device" });
+		expect(new URL(opened).origin).toBe("https://beta.spool.page");
+		expect(requested).toEqual([
+			"https://beta.spool.page/auth/publisher/exchange",
+			"https://beta.spool.page/auth/publisher/session",
+		]);
+	});
+
 	it("times out without exchanging or storing authority", async () => {
 		const vault = memoryVault();
 		await expect(
@@ -111,8 +144,9 @@ describe("Cloud publisher authentication", () => {
 	});
 
 	it("accepts only a canonical HTTPS authority from machine configuration", () => {
-		expect(cloudOrigin({})).toBe("https://spool.page");
+		expect(cloudOrigin({})).toBe("https://beta.spool.page");
 		expect(cloudOrigin({ SPOOL_CLOUD_ORIGIN: "https://beta.spool.page" })).toBe("https://beta.spool.page");
+		expect(cloudOrigin({ SPOOL_CLOUD_ORIGIN: "https://spool.page" })).toBe("https://spool.page");
 		for (const origin of ["http://spool.page", "https://spool.page/path", "https://user@spool.page"])
 			expect(() => cloudOrigin({ SPOOL_CLOUD_ORIGIN: origin })).toThrow(/HTTPS origin/u);
 	});

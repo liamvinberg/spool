@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { openInBrowser } from "./browser";
 import { SpoolError } from "./errors";
 
-export const CLOUD_ORIGIN = "https://spool.page";
+export const CLOUD_ORIGIN = "https://beta.spool.page";
 const HANDOFF_MS = 5 * 60_000;
 const SERVICE = "spool.publisher-session";
 
