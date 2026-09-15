@@ -3,17 +3,20 @@ import fragment from "./lamp-beam.glsl";
 
 const vertex = `attribute vec2 position; varying vec2 v_uv; void main() { v_uv = position * .5 + .5; gl_Position = vec4(position, 0., 1.); }`;
 
-export function LampBeam({ active }: { active: boolean }) {
+export function LampBeam({ active, reduced: forceReduced = false }: { active: boolean; reduced?: boolean }) {
 	const canvas = useRef<HTMLCanvasElement>(null);
 	const start = useRef<(() => void) | null>(null);
 	const activeRef = useRef(active);
+	const [enabled, setEnabled] = useState(active);
 	const [ready, setReady] = useState(false);
 	const id = useId().replace(/:/g, "");
 	useEffect(() => {
 		activeRef.current = active;
+		if (active) setEnabled(true);
 		start.current?.();
 	}, [active]);
 	useEffect(() => {
+		if (!enabled) return;
 		const node = canvas.current;
 		if (!node) return;
 		const gl = (() => {
@@ -30,7 +33,7 @@ export function LampBeam({ active }: { active: boolean }) {
 		function dispose() {
 			if (buffer) gl?.deleteBuffer(buffer);
 			if (program) gl?.deleteProgram(program);
-			shaders.forEach((shader) => gl?.deleteShader(shader));
+			for (const shader of shaders) gl?.deleteShader(shader);
 		}
 		try {
 			program = gl.createProgram();
@@ -49,6 +52,7 @@ export function LampBeam({ active }: { active: boolean }) {
 			}
 			gl.linkProgram(program);
 			if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error("Lamp shader link failed");
+			// biome-ignore lint/correctness/useHookAtTopLevel: WebGL method, not a React hook.
 			gl.useProgram(program);
 			buffer = gl.createBuffer();
 			if (!buffer) throw new Error("No WebGL buffer");
@@ -70,11 +74,12 @@ export function LampBeam({ active }: { active: boolean }) {
 		function draw(timestamp: number) {
 			frame = 0;
 			if (lost || !gl || !node) return;
-			if (previous && !reduced.matches) elapsed += Math.min(timestamp - previous, 50) / 1000;
+			if (previous && !(reduced.matches || forceReduced)) elapsed += Math.min(timestamp - previous, 50) / 1000;
 			previous = timestamp;
-			gl.uniform1f(time, reduced.matches ? 0 : elapsed);
+			gl.uniform1f(time, reduced.matches || forceReduced ? 0 : elapsed);
 			gl.drawArrays(gl.TRIANGLES, 0, 6);
-			if (activeRef.current && !reduced.matches && !document.hidden) frame = requestAnimationFrame(draw);
+			if (activeRef.current && !(reduced.matches || forceReduced) && !document.hidden)
+				frame = requestAnimationFrame(draw);
 		}
 		function wake() {
 			if (frame) cancelAnimationFrame(frame);
@@ -113,7 +118,7 @@ export function LampBeam({ active }: { active: boolean }) {
 			node.removeEventListener("webglcontextlost", contextLost);
 			dispose();
 		};
-	}, []);
+	}, [enabled, forceReduced]);
 	return (
 		<div
 			className="fold-beam"
@@ -121,7 +126,12 @@ export function LampBeam({ active }: { active: boolean }) {
 			aria-hidden="true"
 			data-renderer={ready ? "webgl" : "fallback"}
 		>
-			<svg viewBox="0 0 1000 1000" className="fold-beam-fallback" style={{ opacity: ready ? 0 : 1 }}>
+			<svg
+				aria-hidden="true"
+				viewBox="0 0 1000 1000"
+				className="fold-beam-fallback"
+				style={{ opacity: ready ? 0 : 1 }}
+			>
 				<defs>
 					<filter id={`${id}-soft`} x="-30%" y="-30%" width="160%" height="160%">
 						<feGaussianBlur stdDeviation="24" />

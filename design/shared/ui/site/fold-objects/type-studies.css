@@ -253,7 +253,7 @@
 	font-size: 16px;
 }
 
-@media (max-width: 700px) {
+@container fold (max-width: 700px) {
 	.fold-type-plain .fold-campaign h1 {
 		font-size: 72px;
 		letter-spacing: -4.8px;
@@ -322,7 +322,7 @@
 		font-size: 12px;
 	}
 }
-@media (max-width: 360px) {
+@container fold (max-width: 360px) {
 	.fold-type-plain .fold-campaign h1 {
 		font-size: 65px;
 	}
@@ -337,8 +337,23 @@
 	}
 }
 
-@media (max-width: 700px) {
+@container fold (max-width: 700px) {
 	.fold-refined[data-choosing="false"][data-detail="false"] .fold-object-wrap {
 		transform: translateY(50px);
+	}
+}
+
+@container fold (max-width: 700px) {
+	.fold-refined[data-choosing="true"] .fold-product {
+		top: 278px;
+	}
+	.fold-refined[data-choosing="true"] .fold-main {
+		height: 830px;
+	}
+	.fold-refined[data-screen="bag"] .fold-main {
+		height: 700px;
+	}
+	.fold-refined .fold-product .fold-back {
+		margin-bottom: 10px;
 	}
 }
