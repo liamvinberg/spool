@@ -26,8 +26,10 @@ function fixture(availableOnAttempt: number): {
 		directory,
 		"npm",
 		`if [ "$1" = view ]; then
-	[ "$4" = --fetch-retries=0 ] || exit 90
-	[ "$5" = --fetch-timeout=5000 ] || exit 90
+	if [ "$SPOOL_RELEASE_BUILD" = 1 ]; then
+		[ "$4" = --fetch-retries=0 ] || exit 90
+		[ "$5" = --fetch-timeout=5000 ] || exit 90
+	fi
 	attempt=0
 	[ ! -f "$ATTEMPTS_FILE" ] || attempt=$(<"$ATTEMPTS_FILE")
 	attempt=$((attempt + 1))
@@ -84,6 +86,19 @@ test("a release fails clearly when npm never serves the exact version", () => {
 		assert.equal(result.status, 1);
 		assert.match(result.stderr, /npm did not serve the exact version spool\.page@9\.8\.7/);
 		assert.match(result.stderr, /refusing to build a release from the checkout/);
+		assert.throws(() => readFileSync(setup.packLog));
+	} finally {
+		rmSync(setup.directory, { recursive: true, force: true });
+	}
+});
+
+test("a local build can still bundle a published version", () => {
+	const setup = fixture(1);
+	setup.env.SPOOL_RELEASE_BUILD = "0";
+	try {
+		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /installing spool\.page@9\.8\.7 from the registry/);
 		assert.throws(() => readFileSync(setup.packLog));
 	} finally {
 		rmSync(setup.directory, { recursive: true, force: true });

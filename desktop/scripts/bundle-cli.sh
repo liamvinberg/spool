@@ -63,7 +63,8 @@ published() {
 	local attempt=1
 	local found
 	while [ "$attempt" -le "$REGISTRY_ATTEMPTS" ]; do
-		found="$(npm view "spool.page@$VERSION" version "${VIEW_OPTIONS[@]}" 2>/dev/null || true)"
+		# macOS Bash 3 treats an empty array as unset under `set -u`.
+		found="$(npm view "spool.page@$VERSION" version ${VIEW_OPTIONS[@]+"${VIEW_OPTIONS[@]}"} 2>/dev/null || true)"
 		if [ "$found" = "$VERSION" ]; then return 0; fi
 		if [ "$attempt" -lt "$REGISTRY_ATTEMPTS" ]; then
 			echo "waiting for npm to serve spool.page@$VERSION ($attempt/$REGISTRY_ATTEMPTS)"
