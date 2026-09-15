@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import aluminium from "./assets/aluminium.webp";
 import oxblood from "./assets/oxblood.webp";
 import "./fold-store.css";
+import "./type-studies.css";
 
 type Finish = "aluminium" | "oxblood";
 type Palette = "chalk" | "blue" | "plum";
@@ -29,7 +30,8 @@ function Mark() {
 		</svg>
 	);
 }
-export function FoldStore({ palette }: { palette: Palette }) {
+type Treatment = "original" | "plain" | "condensed" | "soft" | "technical";
+export function FoldStore({ palette, treatment = "original" }: { palette: Palette; treatment?: Treatment }) {
 	const [choosing, setChoosing] = useState(false);
 	const [finish, setFinish] = useState<Finish>("aluminium");
 	const [light, setLight] = useState(false);
@@ -79,7 +81,12 @@ export function FoldStore({ palette }: { palette: Palette }) {
 		setBagOpen(true);
 	}
 	return (
-		<div className={`fold-store fold-${palette}`} data-choosing={choosing} data-light={light} data-detail={detail}>
+		<div
+			className={`fold-store fold-${palette} fold-type-${treatment} ${treatment === "original" ? "" : "fold-refined"}`}
+			data-choosing={choosing}
+			data-light={light}
+			data-detail={detail}
+		>
 			<div className="fold-night" aria-hidden="true" />
 			<header className="fold-header">
 				<button className="fold-brand" aria-label="Fold Objects home" onClick={() => choose(false)}>
@@ -182,7 +189,8 @@ export function FoldStore({ palette }: { palette: Palette }) {
 									aria-pressed={finish === f}
 									onClick={() => setFinish(f)}
 								>
-									<span />
+									<span className="fold-finish-swatch" />
+									{treatment !== "original" && <span className="fold-finish-name">{finishes[f].name}</span>}
 									<svg viewBox="0 0 20 20" aria-hidden="true">
 										<path d="m4 10 4 4 8-8" fill="none" stroke="currentColor" strokeWidth="1.5" />
 									</svg>

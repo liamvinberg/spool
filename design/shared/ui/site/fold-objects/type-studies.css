@@ -1,0 +1,338 @@
+/* Barlow Condensed, Google Fonts. This pinned font source is cached by spool. */
+@font-face {
+	font-family: "Barlow Condensed";
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src: url(https://fonts.gstatic.com/s/barlowcondensed/v13/HTxwL3I-JCGChYJ8VI-L6OO_au7B4-Lw_3E.ttf) format("truetype");
+}
+.fold-refined .fold-campaign h1 span {
+	display: none;
+}
+.fold-refined .fold-bag-trigger {
+	gap: 6px;
+}
+.fold-refined .fold-bag-trigger > span {
+	border: 0;
+	padding: 0;
+	min-width: 0;
+	font-size: inherit;
+}
+.fold-refined .fold-bag-trigger > span::before {
+	content: "(";
+}
+.fold-refined .fold-bag-trigger > span::after {
+	content: ")";
+}
+.fold-refined .fold-primary {
+	min-height: 54px;
+	padding: 16px 18px;
+}
+.fold-refined .fold-primary > span {
+	gap: 15px;
+}
+.fold-refined .fold-tools {
+	justify-content: flex-end;
+	gap: 23px;
+}
+.fold-refined .fold-inspect-trigger {
+	border-left: 1px solid var(--line);
+	padding-left: 23px;
+}
+.fold-refined .fold-product fieldset {
+	margin-top: 25px;
+	margin-bottom: 16px;
+}
+.fold-refined .fold-product legend {
+	margin-bottom: 5px;
+}
+.fold-refined .fold-product legend > span {
+	display: none;
+}
+.fold-refined .fold-finishes {
+	display: block;
+}
+.fold-refined .fold-finish {
+	width: 100%;
+	height: 47px;
+	display: flex;
+	gap: 12px;
+	align-items: center;
+	padding: 8px 0;
+	border: 0 !important;
+	border-bottom: 1px solid var(--line) !important;
+	text-align: left;
+}
+.fold-refined .fold-finish > .fold-finish-swatch {
+	width: 23px;
+	height: 27px;
+	flex-shrink: 0;
+}
+.fold-refined .fold-finish > .fold-finish-name {
+	height: auto;
+	width: auto;
+	background: none;
+	font-size: 12px;
+}
+.fold-refined .fold-finish > svg {
+	position: static;
+	margin-left: auto;
+	color: var(--ink);
+}
+.fold-refined .fold-product dl > div {
+	padding: 10px 0;
+}
+.fold-refined .fold-product .fold-back {
+	margin-bottom: 20px;
+}
+.fold-refined .fold-product h2 {
+	margin-bottom: 8px;
+}
+.fold-refined .fold-product dl {
+	margin-bottom: 24px;
+}
+.fold-refined .fold-quantity {
+	border: 0;
+	border-bottom: 1px solid #2c302633;
+}
+.fold-refined .fold-quantity button {
+	width: 36px;
+	height: 36px;
+}
+
+.fold-type-plain {
+	font-family: "Helvetica Neue", Arial, sans-serif;
+}
+.fold-type-plain .fold-campaign h1 {
+	font-family: "Helvetica Neue", Arial, sans-serif;
+	font-size: 119px;
+	font-weight: 500;
+	letter-spacing: -8px;
+	line-height: 0.95;
+	bottom: 213px;
+}
+.fold-type-plain .fold-product h2,
+.fold-type-plain .fold-inspect h2,
+.fold-type-plain .fold-bag-heading h2,
+.fold-type-plain .fold-empty h3 {
+	font-family: "Helvetica Neue", Arial, sans-serif;
+	font-weight: 500;
+	letter-spacing: -1.7px;
+}
+.fold-type-plain .fold-brand span {
+	font-weight: 500;
+	letter-spacing: -0.9px;
+}
+
+.fold-type-condensed .fold-campaign h1 {
+	font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+	font-size: 178px;
+	font-weight: 500;
+	letter-spacing: -5px;
+	text-transform: uppercase;
+	line-height: 0.91;
+	bottom: 200px;
+}
+.fold-type-condensed .fold-product h2,
+.fold-type-condensed .fold-inspect h2,
+.fold-type-condensed .fold-bag-heading h2,
+.fold-type-condensed .fold-empty h3 {
+	font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+	font-weight: 500;
+	letter-spacing: -0.6px;
+	text-transform: uppercase;
+}
+.fold-type-condensed .fold-product h2 {
+	font-size: 53px;
+}
+.fold-type-condensed .fold-inspect h2 {
+	font-size: 44px;
+}
+.fold-type-condensed .fold-brand span {
+	font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+	text-transform: uppercase;
+	font-weight: 500;
+	font-size: 26px;
+	letter-spacing: -0.1px;
+	line-height: 0.83;
+}
+.fold-type-condensed .fold-primary {
+	font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+	font-size: 19px !important;
+	padding-top: 12px;
+	padding-bottom: 12px;
+}
+.fold-type-condensed .fold-bag-heading h2 {
+	font-size: 37px;
+}
+
+.fold-type-soft {
+	font-family: "Familjen Grotesk", Arial, sans-serif;
+}
+.fold-type-soft .fold-campaign h1 {
+	font-family: inherit;
+	font-size: 124px;
+	font-weight: 500;
+	letter-spacing: -7px;
+	line-height: 1;
+	bottom: 207px;
+}
+.fold-type-soft .fold-product h2,
+.fold-type-soft .fold-inspect h2,
+.fold-type-soft .fold-bag-heading h2,
+.fold-type-soft .fold-empty h3 {
+	font-family: inherit;
+	font-weight: 500;
+	letter-spacing: -1.5px;
+}
+.fold-type-soft .fold-brand span {
+	font-size: 24px;
+	letter-spacing: -0.7px;
+	line-height: 0.89;
+}
+.fold-type-soft .fold-intro {
+	font-size: 18px;
+	line-height: 1.35;
+	letter-spacing: -0.3px;
+}
+.fold-type-soft .fold-primary {
+	font-size: 15px !important;
+}
+.fold-type-soft .fold-header nav {
+	font-size: 14px;
+}
+.fold-type-soft .fold-tools button {
+	font-size: 14px;
+}
+
+.fold-type-technical .fold-campaign h1 {
+	font-family: "Fragment Mono", monospace;
+	font-size: 86px;
+	font-weight: 400;
+	letter-spacing: -6.5px;
+	line-height: 1.1;
+	bottom: 212px;
+}
+.fold-type-technical .fold-product h2,
+.fold-type-technical .fold-inspect h2,
+.fold-type-technical .fold-bag-heading h2,
+.fold-type-technical .fold-empty h3 {
+	font-family: "Fragment Mono", monospace;
+	font-weight: 400;
+	font-size: 27px;
+	letter-spacing: -1.8px;
+	line-height: 1.2;
+}
+.fold-type-technical .fold-brand span {
+	font-family: "Fragment Mono", monospace;
+	font-size: 17px;
+	letter-spacing: -1px;
+	line-height: 1.05;
+}
+.fold-type-technical .fold-intro {
+	font-family: "Fragment Mono", monospace;
+	font-size: 12px;
+	letter-spacing: -0.35px;
+	line-height: 1.6;
+}
+.fold-type-technical .fold-footer,
+.fold-type-technical .fold-product dl {
+	font-family: "Fragment Mono", monospace;
+	font-size: 10px;
+}
+.fold-type-technical .fold-primary {
+	font-family: "Fragment Mono", monospace;
+	font-size: 11px !important;
+}
+.fold-type-technical .fold-tools button {
+	font-family: "Fragment Mono", monospace;
+	font-size: 10px;
+}
+.fold-type-technical .fold-bag-item h3 {
+	font-family: "Fragment Mono", monospace;
+	font-size: 16px;
+}
+
+@media (max-width: 700px) {
+	.fold-type-plain .fold-campaign h1 {
+		font-size: 72px;
+		letter-spacing: -4.8px;
+		top: 65px;
+		bottom: auto;
+	}
+	.fold-type-condensed .fold-campaign h1 {
+		font-size: 111px;
+		letter-spacing: -2px;
+		top: 48px;
+		bottom: auto;
+	}
+	.fold-type-soft .fold-campaign h1 {
+		font-size: 76px;
+		letter-spacing: -4px;
+		top: 58px;
+		bottom: auto;
+	}
+	.fold-type-technical .fold-campaign h1 {
+		font-size: 54px;
+		letter-spacing: -4px;
+		top: 73px;
+		bottom: auto;
+	}
+	.fold-type-soft .fold-intro {
+		font-size: 14px;
+	}
+	.fold-type-technical .fold-intro {
+		font-size: 10px;
+	}
+	.fold-refined .fold-tools {
+		justify-content: space-between;
+		gap: 14px;
+	}
+	.fold-refined .fold-inspect-trigger {
+		padding-left: 14px;
+	}
+	.fold-refined .fold-product {
+		top: 337px;
+	}
+	.fold-refined .fold-product h2 {
+		margin-bottom: 6px;
+	}
+	.fold-refined .fold-product fieldset {
+		margin-top: 25px;
+	}
+	.fold-refined .fold-product .fold-back {
+		margin-bottom: 17px;
+	}
+	.fold-refined[data-choosing="true"] .fold-main {
+		height: 900px;
+	}
+	.fold-type-condensed .fold-product h2 {
+		font-size: 46px;
+	}
+	.fold-type-condensed .fold-inspect h2 {
+		font-size: 38px;
+	}
+	.fold-type-technical .fold-inspect h2 {
+		font-size: 25px;
+	}
+	.fold-type-technical .fold-bag-heading h2 {
+		font-size: 24px;
+	}
+	.fold-type-soft .fold-tools button {
+		font-size: 12px;
+	}
+}
+@media (max-width: 360px) {
+	.fold-type-plain .fold-campaign h1 {
+		font-size: 65px;
+	}
+	.fold-type-condensed .fold-campaign h1 {
+		font-size: 100px;
+	}
+	.fold-type-soft .fold-campaign h1 {
+		font-size: 68px;
+	}
+	.fold-type-technical .fold-campaign h1 {
+		font-size: 47px;
+	}
+}
