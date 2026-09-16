@@ -35,6 +35,7 @@ import {
 	checkCachePath,
 	checkForUpdate,
 	DOWNLOAD_URL,
+	FIRST_CHECK_DELAY_MS,
 	type InstallProgress,
 	installUpdate,
 	lastUpdaterError,
@@ -306,7 +307,18 @@ function point(
 	// Reopening from the Dock should give back the canvas as it was left, not
 	// reload it out from under whatever was on screen.
 	if (isDaemonUrl(showing.webContents.getURL())) return;
-	void showing.loadURL(url);
+	const loadingAt = performance.now();
+	void showing.loadURL(url).then(
+		() => {
+			log(
+				"canvas",
+				"loaded",
+				`load=${Math.round(performance.now() - loadingAt)}ms`,
+				`process=${Math.round(process.uptime() * 1000)}ms`,
+			);
+		},
+		(error: unknown) => log("canvas", "FAIL load", String(error)),
+	);
 }
 
 async function startBundled(): Promise<
@@ -741,16 +753,14 @@ export function buildTrayMenu(): Menu {
 	]);
 }
 
-/** The update as one tray line: an offer to take, a download to watch, a failure to read. */
+/** Preparation, restart and recovery stay available from the menu bar. */
 function updateItem(): MenuItemConstructorOptions {
 	if (update === null) return { label: "Check for Updates…", click: () => void checkForUpdates() };
 	switch (update.kind) {
-		case "offer": {
-			const { version: target } = update;
-			return { label: `Update to ${target}…`, click: () => void downloadAndRelaunch(target) };
-		}
+		case "ready":
+			return { label: "Restart Spool to Update…", click: () => void offerRestart() };
 		case "downloading":
-			return { label: `Downloading ${update.version}… ${update.percent}%`, enabled: false };
+			return { label: "Downloading Update…", enabled: false };
 		case "checking":
 			return { label: "Checking for updates…", enabled: false };
 		case "preparing":
@@ -760,7 +770,7 @@ function updateItem(): MenuItemConstructorOptions {
 		case "failed":
 			if (update.retryable) {
 				const { version: target } = update;
-				return { label: `Retry update to ${target}…`, click: () => void downloadAndRelaunch(target) };
+				return { label: `Retry update to ${target}…`, click: () => void prepareUpdate(target) };
 			}
 			return { label: `Download Spool ${update.version}…`, click: () => void shell.openExternal(DOWNLOAD_URL) };
 	}
@@ -777,11 +787,10 @@ function installTray(): void {
 // MARK: - Updates
 
 /**
- * What the app knows about its own next version, as one value the tray, the
- * Dock and the canvas all draw from. null is nothing to say.
+ * The update state shown by the native menus. null is nothing to say.
  */
 type AppUpdate =
-	| { kind: "offer"; version: string }
+	| { kind: "ready"; version: string }
 	| { kind: "checking"; version: string }
 	| InstallProgress
 	| { kind: "restarting"; version: string }
@@ -793,61 +802,29 @@ let busy = false;
 /** The next automatic check, so a manual one can push it out a day. */
 let nextCheck: NodeJS.Timeout | undefined;
 
-/** Every surface at once: the pill in the canvas, the tray, the Dock. */
+/** Update activity belongs to the native menus, never the canvas or Dock. */
 function setUpdate(next: AppUpdate | null): void {
 	update = next;
-	window?.webContents.send("spool:app-update-changed", next);
-	window?.setProgressBar(
-		next?.kind === "downloading"
-			? next.percent / 100
-			: next?.kind === "checking" || next?.kind === "preparing"
-				? 2
-				: -1,
-	);
 	tray?.setContextMenu(buildTrayMenu());
 }
 
-/**
- * The page's side of the bridge. The state is answered synchronously because
- * the preload asks before the page runs; the two verbs are refused from any
- * window that is not the canvas, which is the only one carrying the preload.
- */
 function installUpdateChannels(): void {
 	ipcMain.on("spool:app-version", (event) => {
 		event.returnValue = version();
 	});
 	ipcMain.on("spool:app-update-state", (event) => {
-		event.returnValue = update;
-	});
-	ipcMain.on("spool:app-update-install", (event) => {
-		if (window === undefined || event.sender.id !== window.webContents.id) return;
-		if (update?.kind !== "offer" && !(update?.kind === "failed" && update.retryable)) return;
-		void downloadAndRelaunch(update.version);
-	});
-	ipcMain.on("spool:app-update-dismiss", (event) => {
-		if (window === undefined || event.sender.id !== window.webContents.id) return;
-		if (busy) return;
-		setUpdate(null);
+		event.returnValue = null;
 	});
 }
 
-/**
- * The clock. A packaged app asks the feed ten seconds after launch, unless it
- * asked within the day, and daily after that. A newer release becomes an offer
- * and nothing more: no dialog, no download, a pill in the canvas and a line in
- * the tray until somebody says yes.
- */
+/** Check daily; a cached newer release should be prepared on this launch. */
 function scheduleChecks(): void {
 	if (!updaterAvailable()) return;
 	const cache = readCheckCache(DIRECTORY);
 	const installed = parseVersion(version());
-	// A cached answer that is already newer than this copy is an offer that
-	// costs no network at all.
 	const cached = cache === undefined ? undefined : parseVersion(cache.latest);
-	if (installed !== undefined && cached !== undefined && compareVersions(cached, installed) > 0 && update === null) {
-		setUpdate({ kind: "offer", version: formatVersion(cached) });
-	}
-	scheduleCheckIn(nextCheckDelay(cache));
+	const newer = installed !== undefined && cached !== undefined && compareVersions(cached, installed) > 0;
+	scheduleCheckIn(newer ? FIRST_CHECK_DELAY_MS : nextCheckDelay(cache));
 }
 
 function scheduleCheckIn(delay: number): void {
@@ -860,19 +837,22 @@ function scheduleCheckIn(delay: number): void {
 }
 
 async function automaticCheck(): Promise<void> {
-	if (busy || update !== null) return;
+	if (busy || shuttingDown || update?.kind === "ready" || update?.kind === "restarting") return;
 	busy = true;
+	let found: Awaited<ReturnType<typeof checkForUpdate>>;
 	try {
-		const found = await checkForUpdate((line) => log("updates", line));
+		found = await checkForUpdate((line) => log("updates", line));
 		rememberCheck(found.latest);
-		log("updates", "OK", `installed=${version()}`, `latest=${found.latest}`, found.newer ? "offer" : "current");
-		if (found.newer) setUpdate({ kind: "offer", version: found.latest });
+		log("updates", "OK", `installed=${version()}`, `latest=${found.latest}`, found.newer ? "available" : "current");
 	} catch (error) {
-		// Offline is a normal day. The check can only ever add a pill.
+		// Offline is a normal day; automatic failures stay in the menu and log.
 		log("updates", "skip", error instanceof UpdateCheckError ? error.message : String(error));
+		return;
 	} finally {
 		busy = false;
 	}
+	if (found.newer) await prepareUpdate(found.latest, false);
+	else setUpdate(null);
 }
 
 function rememberCheck(latest: string): void {
@@ -888,7 +868,16 @@ function rememberCheck(latest: string): void {
 
 /** The menu item: the same check, with an answer either way. */
 async function checkForUpdates(): Promise<void> {
-	if (busy) return;
+	if (shuttingDown) return;
+	if (update?.kind === "ready") return offerRestart();
+	if (busy) {
+		tell(
+			"Spool is checking or preparing an update.",
+			"You can keep working. Spool will let you know when it is ready.",
+			"info",
+		);
+		return;
+	}
 	const installed = parseVersion(version());
 	if (installed === undefined) {
 		log("updates", "FAIL", "no version in bundle");
@@ -961,23 +950,12 @@ async function checkForUpdates(): Promise<void> {
 		found.newer ? "offer" : "current",
 	);
 	if (!found.newer) {
+		setUpdate(null);
 		tell("Spool is up to date.", `You have ${formatVersion(installed)}, which is the latest release.`, "info");
 		return;
 	}
 
-	const answer = await dialog.showMessageBox({
-		type: "info",
-		message: `Spool ${found.latest} is available.`,
-		detail: `You have ${formatVersion(installed)}. Update downloads in the background and Spool relaunches into it. A daemon this app started is stopped and started again; one the CLI runs is left alone.`,
-		buttons: ["Update and Relaunch", "Later"],
-		defaultId: 0,
-		cancelId: 1,
-	});
-	if (answer.response !== 0) {
-		setUpdate({ kind: "offer", version: found.latest });
-		return;
-	}
-	await downloadAndRelaunch(found.latest);
+	await prepareUpdate(found.latest);
 }
 
 /**
@@ -1031,30 +1009,19 @@ async function offerApplicationsFolder(): Promise<void> {
 	if (!app.moveToApplicationsFolder()) log("boot", "the move was declined");
 }
 
-/**
- * The download, and the exit that swaps the bundle.
- *
- * Nothing here blocks the window, so the progress has to be somewhere a person
- * can see it without a panel in the way: the pill in the canvas counts, the
- * Dock icon fills, and the tray item says the same. A hundred megabytes with no
- * sign of movement is the same as a button that did nothing.
- *
- * The daemon is stopped and the window blanked only once Squirrel has said the
- * bundle is verified and ready. Everything that can go wrong with the download
- * or the bundle arrives before that as a rejection, and the person is still
- * looking at a working canvas when it does.
- */
-async function downloadAndRelaunch(target: string): Promise<void> {
-	if (busy) return;
+/** Prepare while the canvas remains usable; only a verified bundle earns a restart offer. */
+async function prepareUpdate(target: string, manual = true): Promise<void> {
+	if (busy || shuttingDown) return;
 	const refusal = whyNotInstallable();
 	if (refusal !== undefined) {
 		log("updates", "FAIL", refusal);
 		setUpdate({ kind: "failed", version: target, message: refusal, retryable: false });
-		tell(
-			"Spool cannot update itself from here.",
-			`${refusal}\n\nDownload starts the dmg, which is the other way onto ${target}.`,
-			"warning",
-		);
+		if (manual)
+			tell(
+				"Spool cannot update itself from here.",
+				`${refusal}\n\nDownload starts the dmg, which is the other way onto ${target}.`,
+				"warning",
+			);
 		return;
 	}
 	busy = true;
@@ -1077,8 +1044,39 @@ async function downloadAndRelaunch(target: string): Promise<void> {
 			message: detail,
 			retryable: error instanceof UpdateCheckError && error.retryable,
 		});
+		if (manual) tell("Spool could not prepare the update.", detail, "warning");
 		return;
 	}
+	busy = false;
+	if (shuttingDown) return;
+	setUpdate({ kind: "ready", version: target });
+	await offerRestart();
+}
+
+let restartDialogOpen = false;
+
+async function offerRestart(): Promise<void> {
+	if (restartDialogOpen || shuttingDown || update?.kind !== "ready") return;
+	restartDialogOpen = true;
+	try {
+		const answer = await dialog.showMessageBox({
+			type: "info",
+			message: "A Spool update is ready.",
+			detail: `Restart to use Spool ${update.version}. If you choose Later, the update will finish when you quit Spool.`,
+			buttons: ["Restart Spool", "Later"],
+			defaultId: 0,
+			cancelId: 1,
+		});
+		if (answer.response === 0) await restartUpdate();
+	} finally {
+		restartDialogOpen = false;
+	}
+}
+
+async function restartUpdate(): Promise<void> {
+	if (busy || shuttingDown || update?.kind !== "ready") return;
+	const target = update.version;
+	busy = true;
 	// Squirrel replaces the app on quit and relaunches it. The daemon this app
 	// started is stopped here, on purpose, before the updater owns the exit:
 	// will-quit's own preventDefault path would fight it.
@@ -1160,6 +1158,7 @@ async function cloudAccount(command: "login" | "logout"): Promise<void> {
  * app started, and stopping it would be a stranger killing a process.
  */
 export async function shutdown(): Promise<void> {
+	const started = performance.now();
 	if (startedPid === undefined) {
 		log("quit", "left the daemon running");
 		return;
@@ -1170,7 +1169,12 @@ export async function shutdown(): Promise<void> {
 		return;
 	}
 	const stopped = await daemon.stop(current.pid);
-	log("quit", stopped ? "stopped" : "FAIL did not exit", `pid=${current.pid}`);
+	log(
+		"quit",
+		stopped ? "stopped" : "FAIL did not exit",
+		`pid=${current.pid}`,
+		`elapsed=${Math.round(performance.now() - started)}ms`,
+	);
 }
 
 export function boot(): void {
@@ -1208,7 +1212,7 @@ export function boot(): void {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		event.preventDefault();
-		void shutdown().then(() => app.exit(0));
+		void shutdown().then(() => app.quit());
 	});
 
 	void app.whenReady().then(async () => {

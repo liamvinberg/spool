@@ -4,24 +4,15 @@ import type { CanvasCommand } from "./main";
 
 // The canvas window's bridge.
 //
-// The daemon's page already has an update toast, for the npm package the daemon
-// runs. Inside this app there is a second thing that can be out of date, the app
-// itself, and it is this process that knows, downloads and relaunches. So the
-// page is told, through the same kind of bridge the play window has, and draws
-// the app's update in the pill it already owns rather than this process drawing
-// a second one beside the canvas.
-//
-// Native window commands have their own bridge below. A newer daemon can be
-// adopted by an older app, so extending the window must not invalidate that
-// app's update bridge.
+// The desktop marker also suppresses the daemon's npm update offer. App updates
+// now use native menus and dialogs; the update state returned here is null.
 
 const STATE = "spool:app-update-state";
 const CHANGED = "spool:app-update-changed";
 const INSTALL = "spool:app-update-install";
 const DISMISS = "spool:app-update-dismiss";
 
-// Asked once, before the page runs, so a page loaded while a download is under
-// way does not paint without the pill and then twitch it in.
+// Read before the page runs so the desktop bridge is available at first paint.
 const state: unknown = ipcRenderer.sendSync(STATE);
 let fullscreen = ipcRenderer.sendSync("spool:canvas-fullscreen") === true;
 const markWindow = () => {

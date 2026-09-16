@@ -196,14 +196,13 @@ rerun, with `gh workflow run publish.yml -f tag=vX.Y.Z`.
 The app checks for a release by itself, ten seconds after launch unless it
 checked within the day, and daily after that; Check for Updates is the same
 check by hand. The source is the release's own `latest-mac.yml`, read by
-electron-updater, so a version it names is one it can install. A newer one is
-an offer and nothing more: the canvas shows it in the update pill it already has
-for the npm package, fed over `src/canvas-preload.ts` the way the play window's
-bar is, and the tray says the same. Update downloads in place, the pill counts,
-and Squirrel.Mac verifies the new bundle's signature against the running one's
-and swaps it on quit. The feed is the release itself — `app-update.yml` inside
-the bundle names this repo, `latest-mac.yml` beside the dmg names the zip — so
-there is no update server.
+electron-updater, so a version it names is one it can install. New releases
+download and prepare in the background while the canvas stays usable. Once Squirrel.Mac has verified the
+bundle, a native dialog offers Restart Spool or Later. Later leaves the update
+ready in the menu bar and installs it on normal quit. Check for Updates gives
+an explicit answer and offers the same restart dialog when an update is ready.
+The feed is the release itself: `app-update.yml` inside the bundle names this
+repo and `latest-mac.yml` beside the dmg names the zip. No update server is needed.
 
 Three things about that path cost a release each to find out, and
 `src/updates.ts` says all of them at length. Squirrel cannot be handed a file,
