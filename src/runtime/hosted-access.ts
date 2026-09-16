@@ -121,16 +121,26 @@ function parseConfig(text: string | null): HostedAccessConfig | undefined {
 			check.username !== "" ||
 			check.password !== "" ||
 			check.hash !== "" ||
-			check.pathname !== "/_spool/access" ||
-			[...check.searchParams.keys()].length !== 1 ||
-			[...check.searchParams.keys()][0] !== "visit" ||
-			!/^[-_A-Za-z0-9]{16,512}$/u.test(check.searchParams.get("visit") ?? "")
+			!validCheckPath(check)
 		)
 			return;
 		return { version: 1, checkPath: `${check.pathname}${check.search}`, reopenPath: "/" };
 	} catch {
 		return;
 	}
+}
+
+function validCheckPath(check: URL): boolean {
+	const keys = [...check.searchParams.keys()].sort().join(",");
+	if (check.pathname === "/_spool/access")
+		return keys === "visit" && /^[-_A-Za-z0-9]{16,512}$/u.test(check.searchParams.get("visit") ?? "");
+	if (check.pathname !== "/_spool/public-access" || keys !== "generation,version") return false;
+	const generation = check.searchParams.get("generation") ?? "";
+	return (
+		/^[1-9][0-9]*$/u.test(generation) &&
+		Number.isSafeInteger(Number(generation)) &&
+		/^[a-f0-9]{64}$/u.test(check.searchParams.get("version") ?? "")
+	);
 }
 
 function invalidAccess(host: Window, frame: string | undefined): HostedAccess {

@@ -7,70 +7,77 @@ import { testBrowser } from "../test-browser";
 import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { buildWebsite } from "./build";
 
-it("checks hosted access on mount, navigation and foreground without changing static artifacts", async () => {
-	const { root } = makeProject(join(makeTempDir(), ".spool"));
-	writeFrame(root, "start", 'export default ()=> <main><h1>Start</h1><button data-go="next">Next</button></main>');
-	writeFrame(root, "next", 'export default ()=> <main><h1>Next</h1><button data-go="start">Again</button></main>');
-	const artifact = await buildWebsite({ root, entry: "start", version: "test" });
-	expect(Buffer.from(artifact.objects.get("player.html")?.bytes ?? []).toString()).not.toContain(
-		"spool-hosted-access",
-	);
-	let access: "active" | "network" | "removed" = "active";
-	let checks = 0;
-	const server = createServer((req, res) => {
-		const path = new URL(req.url ?? "/", "http://test").pathname.slice(1) || "index.html";
-		if (path === "_spool/access") {
-			checks++;
-			res.setHeader("content-type", "application/json");
-			if (access === "active") return res.end(JSON.stringify({ active: true, expiresAt: 2_000_000_000 }));
-			res.statusCode = access === "removed" ? 403 : 503;
-			return res.end(JSON.stringify({ error: access === "removed" ? "access_removed" : "service_unavailable" }));
-		}
-		const object = artifact.objects.get(path);
-		res.writeHead(object === undefined ? 404 : 200, { "Content-Type": object?.mediaType ?? "text/plain" });
-		const bytes = object?.bytes ?? Buffer.from("missing");
-		res.end(
-			path === "player.html"
-				? Buffer.from(bytes)
-						.toString()
-						.replace(
-							"<head>",
-							'<head><script id="spool-hosted-access" type="application/json">{"version":1,"checkPath":"/_spool/access?visit=visit_abcdefghijkl","reopenPath":"/"}</script>',
-						)
-				: bytes,
+it.each(["invited", "public"])(
+	"checks %s hosted access on mount, navigation and foreground without changing static artifacts",
+	async (mode) => {
+		const checkPath =
+			mode === "public"
+				? `/_spool/public-access?generation=1&version=${"a".repeat(64)}`
+				: "/_spool/access?visit=visit_abcdefghijkl";
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "start", 'export default ()=> <main><h1>Start</h1><button data-go="next">Next</button></main>');
+		writeFrame(root, "next", 'export default ()=> <main><h1>Next</h1><button data-go="start">Again</button></main>');
+		const artifact = await buildWebsite({ root, entry: "start", version: "test" });
+		expect(Buffer.from(artifact.objects.get("player.html")?.bytes ?? []).toString()).not.toContain(
+			"spool-hosted-access",
 		);
-	});
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	onTestFinished(() => {
-		server.closeAllConnections();
-		return new Promise<void>((resolve) => server.close(() => resolve()));
-	});
-	const address = server.address();
-	if (address === null || typeof address === "string") throw new Error("no server");
-	const browser = await testBrowser();
-	const context = await browser.newContext();
-	const page = await context.newPage();
-	await page.goto(`http://127.0.0.1:${address.port}`);
-	const surface = page.frameLocator("#website");
-	await surface.getByText("Start", { exact: true }).waitFor();
-	await expect.poll(() => checks).toBe(1);
-	await surface.getByText("Next", { exact: true }).click();
-	await expect.poll(() => checks).toBe(2);
-	access = "network";
-	await surface.locator("body").evaluate(() => {
-		Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
-		document.dispatchEvent(new Event("visibilitychange"));
-	});
-	await expect.poll(() => surface.locator('[data-publication-access="unavailable"]').count()).toBe(1);
-	access = "active";
-	await surface.locator("body").evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-	await expect.poll(() => surface.locator("[data-publication-access]").count()).toBe(0);
-	access = "removed";
-	await surface.getByText("Again", { exact: true }).click();
-	await expect.poll(() => surface.getByText("Access removed", { exact: true }).count()).toBe(1);
-	await surface.getByText("Next", { exact: true }).click({ force: true });
-	await expect.poll(() => surface.getByText("Start", { exact: true }).count()).toBe(1);
-});
+		let access: "active" | "network" | "removed" = "active";
+		let checks = 0;
+		const server = createServer((req, res) => {
+			const path = new URL(req.url ?? "/", "http://test").pathname.slice(1) || "index.html";
+			if (`/${path}` === checkPath.split("?")[0]) {
+				checks++;
+				res.setHeader("content-type", "application/json");
+				if (access === "active") return res.end(JSON.stringify({ active: true, expiresAt: 2_000_000_000 }));
+				res.statusCode = access === "removed" ? 403 : 503;
+				return res.end(JSON.stringify({ error: access === "removed" ? "access_removed" : "service_unavailable" }));
+			}
+			const object = artifact.objects.get(path);
+			res.writeHead(object === undefined ? 404 : 200, { "Content-Type": object?.mediaType ?? "text/plain" });
+			const bytes = object?.bytes ?? Buffer.from("missing");
+			res.end(
+				path === "player.html"
+					? Buffer.from(bytes)
+							.toString()
+							.replace(
+								"<head>",
+								`<head><script id="spool-hosted-access" type="application/json">${JSON.stringify({ version: 1, checkPath, reopenPath: "/" })}</script>`,
+							)
+					: bytes,
+			);
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		onTestFinished(() => {
+			server.closeAllConnections();
+			return new Promise<void>((resolve) => server.close(() => resolve()));
+		});
+		const address = server.address();
+		if (address === null || typeof address === "string") throw new Error("no server");
+		const browser = await testBrowser();
+		const context = await browser.newContext();
+		const page = await context.newPage();
+		await page.goto(`http://127.0.0.1:${address.port}`);
+		const surface = page.frameLocator("#website");
+		await surface.getByText("Start", { exact: true }).waitFor();
+		await expect.poll(() => checks).toBe(1);
+		await surface.getByText("Next", { exact: true }).click();
+		await expect.poll(() => checks).toBe(2);
+		access = "network";
+		await surface.locator("body").evaluate(() => {
+			Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+			document.dispatchEvent(new Event("visibilitychange"));
+		});
+		await expect.poll(() => surface.locator('[data-publication-access="unavailable"]').count()).toBe(1);
+		access = "active";
+		await surface.locator("body").evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+		await expect.poll(() => surface.locator("[data-publication-access]").count()).toBe(0);
+		access = "removed";
+		await surface.getByText("Again", { exact: true }).click();
+		await expect.poll(() => surface.getByText("Access removed", { exact: true }).count()).toBe(1);
+		await surface.getByText("Next", { exact: true }).click({ force: true });
+		await expect.poll(() => surface.getByText("Start", { exact: true }).count()).toBe(1);
+	},
+);
 
 it.each([false, true])(
 	"runs cold modules, state, history, remounts, reload and failures (version base: %s)",
