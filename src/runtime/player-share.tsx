@@ -41,6 +41,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const trailing = useRef(false);
 	const uncertainStop = useRef<string | undefined>(undefined);
 	const draftIdentity = useRef("");
+	const wasAvailable = useRef(false);
 
 	const apply = useCallback((next: PlayerPublicationModel) => {
 		const uncertainPublicationId = uncertainStop.current;
@@ -88,9 +89,10 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 		});
 		if (next.job !== undefined && "email" in next.job && next.job.email !== undefined) setEmail(next.job.email);
 		setProblem(next.job?.state === "failed" ? next.job.message : (next.problem ?? ""));
-		if (!next.available) {
+		if (!next.available && wasAvailable.current) {
 			setOpen(false);
 		}
+		wasAvailable.current = next.available;
 	}, []);
 
 	const refresh = useCallback(

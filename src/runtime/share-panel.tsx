@@ -126,6 +126,20 @@ export function SharingPanel({
 	const access = model?.access;
 	const publication = model?.publication;
 	const view = running ? "progress" : editing || !active ? `access-${mode}` : "ready";
+	if (model?.available === false)
+		return (
+			<div className="spool-share-content">
+				<strong>Spool Cloud isn’t connected.</strong>
+				<p className="spool-share-muted">In the Mac app, choose Spool → Cloud Account → Sign In.</p>
+				<p className="spool-share-muted">
+					From a terminal, run <code>spool login</code>.
+				</p>
+				<p className="spool-share-muted">Already signed in? Check your connection.</p>
+				<button type="button" className="spool-share-primary" onClick={onCheck}>
+					Check again
+				</button>
+			</div>
+		);
 	return (
 		<motion.div
 			layout={false}
@@ -186,7 +200,6 @@ export function SharingPanel({
 									mutation ||
 									model?.ready === false ||
 									model === undefined ||
-									model.available === false ||
 									(job?.state === "failed" && !job.retryable)
 								}
 								existing={editing}
@@ -292,7 +305,6 @@ export function SharingPanel({
 					</button>
 				</>
 			)}
-			{model?.available === false && <p role="status">Sign in through Cloud Account to share this prototype.</p>}
 			{stopping && (
 				<div className="spool-share-confirm">
 					<p>Stop this link from opening? Your local work stays here.</p>
