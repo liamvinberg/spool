@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.21.0
+
+### Minor Changes
+
+- e278102: Share a frame from its right-click menu, invite several people, or let anyone with the link open it without signing in. Manage access without uploading again.
+
+  Sharing starts with immediate feedback and continues in the background, with upload progress, recovery after interruptions, and smoother motion. Independent files upload concurrently to reduce waiting.
+
+### Patch Changes
+
+- 8b625f6: The Mac app now downloads and prepares updates in the background. A native dialog offers Restart Spool or Later once the update is ready. Later installs on quit, and update progress no longer appears over the canvas or in the Dock.
+
 ## 0.20.1
 
 ### Patch Changes
