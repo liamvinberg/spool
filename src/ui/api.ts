@@ -23,6 +23,7 @@ import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
+import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 
 declare global {
@@ -1601,4 +1602,13 @@ export async function agentPermissions(
 	} catch {
 		return { reason: "Could not reach the engine." };
 	}
+}
+
+export function canvasPublicationClient(project: string, entry: string) {
+	return createPlayerPublicationClient({
+		path: `/api/p/${encodeURIComponent(project)}/publication`,
+		entry,
+		scenario: "default",
+		controlToken,
+	});
 }

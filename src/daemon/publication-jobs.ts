@@ -7,7 +7,10 @@ import {
 	mutatePublicationGrant,
 	publicationStatus,
 	publishWebsite,
+	type SharingAccess,
+	setSharingAccess,
 	stopPublication,
+	type UploadProgress,
 } from "../cloud-publication";
 import { SpoolError } from "../errors";
 import {
@@ -36,6 +39,7 @@ export interface PublicationShareModel {
 	association: PublicationAssociationState;
 	source: PublicationSourceState;
 	recipients: string[];
+	access?: SharingAccess;
 	publication?: PlayerPublication;
 	problem?: string;
 	job?: PublicationJobView;
@@ -44,7 +48,14 @@ export interface PublicationShareModel {
 export type PublicationJobKind = "create" | "update";
 export type PublicationJobPhase = "capturing" | "uploading" | "sealing" | "activating";
 export type PublicationJobView =
-	| { id: string; kind: PublicationJobKind; state: "running"; phase: PublicationJobPhase; email?: string }
+	| {
+			id: string;
+			kind: PublicationJobKind;
+			state: "running";
+			phase: PublicationJobPhase;
+			upload?: UploadProgress;
+			email?: string;
+	  }
 	| {
 			id: string;
 			kind: PublicationJobKind;
@@ -55,6 +66,8 @@ export type PublicationJobView =
 	| { id: string; kind: PublicationJobKind; state: "failed"; message: string; retryable: boolean; email?: string };
 
 export interface PublicationJobRequest {
+	emails?: string[];
+	accessMode?: "invited" | "public";
 	root: string;
 	project: string;
 	entry: string;
@@ -64,6 +77,13 @@ export interface PublicationJobRequest {
 
 type PublicationStatus = Awaited<ReturnType<typeof publicationStatus>>;
 export interface PublicationJobServices {
+	access?(spoolDir: string, id: string): Promise<SharingAccess>;
+	setAccess?(
+		spoolDir: string,
+		id: string,
+		input: { mode: "invited" | "public"; emails: string[]; expectedGeneration: number },
+		expectedPublisherId: string,
+	): Promise<SharingAccess>;
 	account(spoolDir: string): Promise<{ publisherId: string }>;
 	readiness(root: string, entry: string): Promise<PublicationReadiness>;
 	status(spoolDir: string, publicationId: string): Promise<PublicationStatus>;
@@ -74,10 +94,11 @@ export interface PublicationJobServices {
 		entry: string;
 		scenario: string;
 		invitedEmails?: string[];
+		accessMode?: "invited" | "public";
 		title: string;
 		version: string;
 		publicationId?: string;
-		progress(message: string): void;
+		progress(message: string, upload?: UploadProgress): void;
 	}): Promise<Awaited<ReturnType<typeof publishWebsite>>>;
 	grant(
 		spoolDir: string,
@@ -320,6 +341,13 @@ export function createPublicationJobs({
 			checked.associationState === "current" ? (checked.status?.localSource ?? "unavailable") : "unavailable";
 		const recipients = remote?.invitedEmails ?? checked.association?.intent.invitedEmails ?? [];
 		const relevant = relevantJob(checked, observed, source);
+		const access =
+			remote === undefined
+				? checked.association?.intent.kind === "create" && checked.association.intent.accessMode !== undefined
+					? { mode: checked.association.intent.accessMode, emails: recipients, generation: 1 }
+					: undefined
+				: (checked.status?.access ?? (await services.access?.(spoolDir, remote.id)));
+		if (services.access && !(await isCurrentPublisher(checked.account.publisherId))) return unavailable(request);
 		return {
 			available: true,
 			title: request.project,
@@ -331,6 +359,7 @@ export function createPublicationJobs({
 			association: checked.associationState,
 			source,
 			recipients,
+			...(access === undefined ? {} : { access }),
 			...(remote === undefined ? {} : { publication: pickPublication(remote) }),
 			...(checked.problem === undefined ? {} : { problem: checked.problem }),
 			...(relevant === undefined ? {} : { job: relevant }),
@@ -372,7 +401,7 @@ export function createPublicationJobs({
 			state: "failed",
 			message,
 			retryable: true,
-			...(intent.intent.invitedEmails[0] === undefined ? {} : { email: intent.intent.invitedEmails[0] }),
+			...(intent.intent.invitedEmails[0] === undefined ? {} : { email: intent.intent.invitedEmails.join(", ") }),
 		};
 	}
 
@@ -389,11 +418,14 @@ export function createPublicationJobs({
 		const remote = checked.status?.publication;
 		const publicationId = remote?.id ?? checked.association?.publicationId;
 		const kind: PublicationJobKind = publicationId === undefined ? "create" : "update";
-		const email = request.email?.trim();
+		const email = request.emails?.join(", ") ?? request.email?.trim();
+		const emails = request.emails ?? (request.email ? [request.email] : []);
+		if (emails.length > 100 || emails.some((value) => !validEmail(value)))
+			throw new SpoolError("Enter valid email addresses.");
 		const recipients = remote?.invitedEmails ?? checked.association?.intent.invitedEmails ?? [];
-		if (kind === "create" && recipients.length === 0 && !validEmail(email))
+		if (kind === "create" && recipients.length === 0 && emails.length === 0 && request.accessMode !== "public")
 			throw new SpoolError("Enter the person’s email address.");
-		if (email !== undefined && email !== "" && !validEmail(email))
+		if (request.emails === undefined && email !== undefined && email !== "" && !validEmail(email))
 			throw new SpoolError("Enter the person’s email address.");
 		const jobKey = key(request.root, request.entry, request.scenario, checked.account.publisherId);
 		const existingId = latest.get(jobKey);
@@ -428,17 +460,19 @@ export function createPublicationJobs({
 				root: request.root,
 				entry: request.entry,
 				scenario: request.scenario,
-				...(email === undefined || email === "" ? {} : { invitedEmails: [email] }),
+				...(email === undefined || email === "" ? {} : { invitedEmails: request.emails ?? [email] }),
+				...(request.accessMode === undefined ? {} : { accessMode: request.accessMode }),
 				title: request.project,
 				version,
 				...(job.publicationId === undefined ? {} : { publicationId: job.publicationId }),
-				progress: (message) => {
+				progress: (message, upload) => {
 					if (job.view.state !== "running") return;
 					job.view = {
 						id: job.view.id,
 						kind: job.view.kind,
 						state: "running",
 						phase: phaseOf(message),
+						...(upload === undefined ? {} : { upload }),
 						...(job.view.email === undefined ? {} : { email: job.view.email }),
 					};
 					job.updatedAt = now();
@@ -538,15 +572,30 @@ export function createPublicationJobs({
 			? job.view
 			: undefined;
 	}
-	return { model, start, read, grant, stop };
+	async function access(
+		request: PublicationJobRequest & { mode: "invited" | "public"; emails: string[]; expectedGeneration: number },
+	) {
+		const checked = await mutablePublication(request, true);
+		if (!services.setAccess) throw new SpoolError("Access management is unavailable.");
+		return services.setAccess(
+			spoolDir,
+			checked.status.publication.id,
+			{ mode: request.mode, emails: request.emails, expectedGeneration: request.expectedGeneration },
+			checked.account.publisherId,
+		);
+	}
+	return { model, start, read, grant, stop, access };
 }
 
 function defaultServices(): PublicationJobServices {
 	const origin = () => cloudOrigin(process.env);
 	return {
+		setAccess: (spoolDir, id, input, expectedPublisherId) =>
+			setSharingAccess(spoolDir, id, input, { origin: origin(), expectedPublisherId }),
 		account: (spoolDir) => session(spoolDir, { origin: origin() }),
 		readiness: (root, entry) => publicationReadiness(createFlowGraph(), root, entry),
-		status: (spoolDir, publicationId) => publicationStatus(spoolDir, publicationId, { origin: origin() }),
+		status: (spoolDir, publicationId) =>
+			publicationStatus(spoolDir, publicationId, { origin: origin(), includeHistory: false, includeAccess: true }),
 		publish: (options) => publishWebsite({ ...options, origin: origin() }),
 		grant: (spoolDir, publicationId, email, kind, expectedPublisherId) =>
 			mutatePublicationGrant(spoolDir, publicationId, email, kind, { origin: origin(), expectedPublisherId }),

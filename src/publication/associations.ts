@@ -32,7 +32,14 @@ export interface PublicationAssociation {
 	projectId: string;
 	title: string;
 	intent:
-		| { kind: "create"; operationId: string; contentIdentity: string; inputIdentity: string; invitedEmails: string[] }
+		| {
+				kind: "create";
+				accessMode?: "invited" | "public" | undefined;
+				operationId: string;
+				contentIdentity: string;
+				inputIdentity: string;
+				invitedEmails: string[];
+		  }
 		| {
 				kind: "update";
 				operationId: string;
@@ -64,13 +71,16 @@ const associationSchema = z.strictObject({
 	projectId: z.string().uuid(),
 	title: z.string().min(1).max(200),
 	intent: z.discriminatedUnion("kind", [
-		z.strictObject({
-			kind: z.literal("create"),
-			operationId: z.string().uuid(),
-			contentIdentity: z.string().regex(/^[a-f0-9]{64}$/u),
-			inputIdentity: z.string().min(1),
-			invitedEmails: z.array(z.string().email()).min(1).max(100),
-		}),
+		z
+			.strictObject({
+				kind: z.literal("create"),
+				operationId: z.string().uuid(),
+				contentIdentity: z.string().regex(/^[a-f0-9]{64}$/u),
+				inputIdentity: z.string().min(1),
+				invitedEmails: z.array(z.string().email()).max(100),
+				accessMode: z.enum(["invited", "public"]).optional(),
+			})
+			.refine((value) => value.accessMode === "public" || value.invitedEmails.length > 0),
 		z.strictObject({
 			kind: z.literal("update"),
 			operationId: z.string().uuid(),
@@ -161,6 +171,7 @@ export function claimAssociation(
 	title: string,
 	invitedEmails: string[],
 	stable?: Pick<PublicationAssociation, "projectId" | "publicationId" | "hostname" | "url">,
+	accessMode?: "invited" | "public",
 ): PublicationAssociation {
 	const key = identityKey(identity);
 	const file = associationPath(spoolDir, key);
@@ -172,6 +183,7 @@ export function claimAssociation(
 		title,
 		intent: {
 			kind: "create",
+			...(accessMode === undefined ? {} : { accessMode }),
 			operationId: randomUUID(),
 			contentIdentity: artifact.manifest.contentIdentity,
 			inputIdentity: artifact.inputIdentity,

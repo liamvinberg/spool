@@ -177,6 +177,7 @@ export function Player({
 				/>
 			)}
 			{share.surface}
+			{share.tray}
 			{desk === null && hidden ? (
 				// The strip the put-away bar left behind. The bar is inside it, so the
 				// browser's own hover says when the hand is on either: nothing crosses

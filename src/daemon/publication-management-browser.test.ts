@@ -116,6 +116,16 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		}),
 		origin: () => "https://cloud.test",
 	};
+	services.access = async () => ({
+		mode: "invited",
+		emails: current.invitedEmails,
+		generation: current.accessGeneration,
+	});
+	services.setAccess = async (_dir, _id, input) => {
+		current = { ...current, invitedEmails: input.emails, accessGeneration: current.accessGeneration + 1 };
+		return { mode: input.mode, emails: input.emails, generation: current.accessGeneration };
+	};
+
 	const daemon = await serveDaemon({
 		spoolDir,
 		version: "test",
@@ -138,13 +148,13 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
 		await page.evaluate(() => document.fonts.ready);
 		await page.waitForTimeout(220);
-		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 480, width: 480 });
+		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1008, width: 410 });
 		await page.screenshot({ path: join(evidence, "update-open-1440.png") });
 		await page.getByRole("button", { name: "Close sharing" }).click();
 		await page.setViewportSize({ width: 2322, height: 1191 });
 		await page.getByRole("button", { name: "Share · changes", exact: true }).click();
 		await page.waitForTimeout(220);
-		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 921, width: 480 });
+		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1890, width: 410 });
 		await page.screenshot({ path: join(evidence, "update-open-2322.png") });
 		await page.getByRole("button", { name: "Close sharing" }).click();
 		await page.setViewportSize({ width: 1440, height: 900 });
@@ -273,12 +283,14 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 
 	await page.getByRole("button", { name: "Share ↗", exact: true }).click();
 	await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
-	await page.getByRole("button", { name: /What they can see/ }).click();
-	await page.getByRole("textbox", { name: "Add another person" }).fill("sam@example.com");
+	await page.getByRole("button", { name: "Manage access" }).click();
+	await page.getByRole("textbox", { name: "Email addresses" }).fill("sam@example.com");
 	await page.getByRole("button", { name: "Add", exact: true }).click();
-	await page.getByText("sam@example.com", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Remove sam@example.com" }).waitFor();
 	await page.getByRole("button", { name: "Remove alex@example.com", exact: true }).click();
 	await expect.poll(() => page.getByText("alex@example.com", { exact: true }).count()).toBe(0);
+	await page.getByRole("button", { name: "Save access" }).click();
+	await page.getByRole("button", { name: "Manage access" }).waitFor();
 
 	await page.getByRole("button", { name: "Stop sharing…", exact: true }).click();
 	await page.getByText("Stop this link from opening? Your local work stays here.", { exact: true }).waitFor();
@@ -309,7 +321,7 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	expect(await page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(1);
 	expect(failedReads).toBe(2);
 	expect(await page.getByRole("textbox", { name: "Shared link" }).count()).toBe(0);
-	expect(await page.getByText("sam@example.com", { exact: true }).count()).toBe(0);
+	expect(await page.getByRole("button", { name: "Remove sam@example.com" }).count()).toBe(0);
 	await page.unroute("**/publication?*");
 	await page.getByRole("button", { name: "Check status", exact: true }).click();
 	await expect.poll(() => page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
@@ -338,9 +350,9 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	await page.getByRole("button", { name: "Share", exact: true }).click();
 	await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
 	expect(await page.getByRole("textbox", { name: "Shared link" }).count()).toBe(0);
-	expect(await page.getByText("sam@example.com", { exact: true }).count()).toBe(1);
+	expect(await page.getByRole("button", { name: "Remove sam@example.com" }).count()).toBe(1);
 	await page.getByRole("button", { name: "Create link", exact: true }).click();
-	await page.getByRole("button", { name: "Creating link…", exact: true }).waitFor();
+	await page.getByText("uploading", { exact: true }).waitFor();
 	current = {
 		...current,
 		state: "active",
@@ -353,7 +365,7 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 	);
 	expect(services.publish).toHaveBeenCalledTimes(5);
-	expect(vi.mocked(services.publish).mock.calls[4]?.[0]).not.toHaveProperty("invitedEmails");
+	expect(vi.mocked(services.publish).mock.calls[4]?.[0].invitedEmails).toEqual(["sam@example.com"]);
 
 	const firstRefresh = deferred<{
 		publication: CloudPublication;

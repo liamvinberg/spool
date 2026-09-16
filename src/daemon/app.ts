@@ -226,6 +226,8 @@ const publicationParams = z.strictObject({
 });
 
 const publicationCreate = publicationParams.extend({
+	emails: z.array(z.string().trim().email().max(254)).max(100).optional(),
+	accessMode: z.enum(["invited", "public"]).optional(),
 	email: z.string().trim().email().max(320).optional(),
 });
 
@@ -3042,7 +3044,7 @@ export function createDaemonApp({
 				const name = c.req.param("project");
 				const project = resolveProject(c, name);
 				if ("response" in project) return project.response;
-				const { entry, scenario, email } = c.req.valid("json");
+				const { entry, scenario, email, emails, accessMode } = c.req.valid("json");
 				return c.json(
 					await publicationJobs.start({
 						root: project.root,
@@ -3050,11 +3052,33 @@ export function createDaemonApp({
 						entry,
 						scenario,
 						...(email === undefined ? {} : { email }),
+						...(emails === undefined ? {} : { emails }),
+						...(accessMode === undefined ? {} : { accessMode }),
 					}),
 					202,
 				);
 			},
 		)
+		.put(
+			"/api/p/:project/publication/access",
+			validator("json", (value, c) => {
+				const parsed = publicationParams
+					.extend({
+						mode: z.enum(["invited", "public"]),
+						emails: z.array(z.string().email().max(254)).max(100),
+						expectedGeneration: z.number().int().positive(),
+					})
+					.safeParse(value);
+				return parsed.success ? parsed.data : c.text("invalid access request", 400);
+			}),
+			async (c) => {
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				return c.json(await publicationJobs.access({ root: project.root, project: name, ...c.req.valid("json") }));
+			},
+		)
+
 		.get("/api/p/:project/publication/jobs/:job", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;

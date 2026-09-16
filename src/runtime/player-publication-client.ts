@@ -1,6 +1,23 @@
+import { z } from "zod";
 import { type PlayerPublication, playerPublication } from "./publication-response";
 
 export type { PlayerPublication } from "./publication-response";
+
+const uploadSchema = z
+	.object({
+		completedBytes: z.number().nonnegative(),
+		totalBytes: z.number().nonnegative(),
+		completedObjects: z.number().int().nonnegative(),
+		totalObjects: z.number().int().nonnegative(),
+	})
+	.refine((v) => v.completedBytes <= v.totalBytes && v.completedObjects <= v.totalObjects);
+const accessSchema = z.object({
+	mode: z.enum(["invited", "public"]),
+	emails: z.array(z.string()),
+	generation: z.number().int().positive(),
+});
+export type PlayerAccess = z.infer<typeof accessSchema>;
+export type PlayerUpload = z.infer<typeof uploadSchema>;
 
 export type PlayerPublicationJob =
 	| {
@@ -8,6 +25,7 @@ export type PlayerPublicationJob =
 			kind: "create" | "update";
 			state: "running";
 			phase: "capturing" | "uploading" | "sealing" | "activating";
+			upload?: PlayerUpload;
 			email?: string;
 	  }
 	| {
@@ -27,6 +45,7 @@ export type PlayerPublicationJob =
 	  };
 
 export interface PlayerPublicationModel {
+	access?: PlayerAccess;
 	available: boolean;
 	title: string;
 	entry: string;
@@ -44,7 +63,12 @@ export interface PlayerPublicationModel {
 
 export interface PlayerPublicationClient {
 	model(): Promise<PlayerPublicationModel>;
-	start(email?: string): Promise<PlayerPublicationJob>;
+	start(email?: string, accessMode?: "invited" | "public"): Promise<PlayerPublicationJob>;
+	setAccess?(input: {
+		mode: "invited" | "public";
+		emails: string[];
+		expectedGeneration: number;
+	}): Promise<PlayerAccess>;
 	job(id: string): Promise<PlayerPublicationJob>;
 	grant(email: string, kind: "invite" | "revoke"): Promise<PlayerPublication>;
 	stop(): Promise<PlayerPublication>;
@@ -68,8 +92,24 @@ export function createPlayerPublicationClient(config: {
 		});
 	return {
 		model: async () => readModel(await fetch(`${config.path}?${params}`, { headers })),
-		start: async (email) =>
-			readJob(await post(`${config.path}/jobs`, { ...fields, ...(email === undefined ? {} : { email }) })),
+		start: async (email, accessMode) =>
+			readJob(
+				await post(`${config.path}/jobs`, {
+					...fields,
+					...(email === undefined ? {} : { emails: email.split(/[\s,;]+/u).filter(Boolean) }),
+					...(accessMode === undefined ? {} : { accessMode }),
+				}),
+			),
+		setAccess: async (input) => {
+			const response = await fetch(`${config.path}/access`, {
+				method: "PUT",
+				headers: { ...headers, "content-type": "application/json" },
+				body: JSON.stringify({ ...fields, ...input }),
+			});
+			const value = await responseJson(response);
+			if (!response.ok) throw new Error(messageOf(value, "Access could not be saved. Try again."));
+			return accessSchema.parse(value);
+		},
 		job: async (id) => readJob(await fetch(`${config.path}/jobs/${encodeURIComponent(id)}`, { headers })),
 		grant: async (email, kind) => readPublication(await post(`${config.path}/grants`, { ...fields, email, kind })),
 		stop: async () => readPublication(await post(`${config.path}/stop`, fields)),
@@ -115,6 +155,7 @@ async function readModel(response: Response): Promise<PlayerPublicationModel> {
 		(value.problem !== undefined && typeof value.problem !== "string")
 	)
 		throw new Error("Sharing could not be checked. Try again.");
+	const access = value.access === undefined ? undefined : accessSchema.parse(value.access);
 	const publication = value.publication === undefined ? undefined : playerPublication(value.publication);
 	const job = value.job === undefined ? undefined : jobOf(value.job);
 	if ((value.publication !== undefined && publication === undefined) || (value.job !== undefined && job === undefined))
@@ -131,6 +172,7 @@ async function readModel(response: Response): Promise<PlayerPublicationModel> {
 		source: value.source,
 		recipients,
 		...(publication === undefined ? {} : { publication }),
+		...(access === undefined ? {} : { access }),
 		...(value.problem === undefined ? {} : { problem: value.problem }),
 		...(job === undefined ? {} : { job }),
 	};
@@ -173,6 +215,7 @@ function jobOf(value: unknown): PlayerPublicationJob | undefined {
 			kind: value.kind,
 			state: value.state,
 			phase: value.phase,
+			...(value.upload === undefined ? {} : { upload: uploadSchema.parse(value.upload) }),
 			...(value.email === undefined ? {} : { email: value.email }),
 		};
 	if (value.state === "succeeded") {

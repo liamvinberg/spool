@@ -128,16 +128,24 @@ export class CloudPublicationFailure extends SpoolError {
 	}
 }
 
+export interface UploadProgress {
+	completedBytes: number;
+	totalBytes: number;
+	completedObjects: number;
+	totalObjects: number;
+}
+
 export interface PublishOptions extends PublicationAuthOptions {
 	spoolDir: string;
 	root: string;
 	entry: string;
 	scenario?: string;
 	invitedEmails?: string[];
+	accessMode?: "invited" | "public";
 	version: string;
 	title?: string;
 	publicationId?: string;
-	progress?: (message: string) => void;
+	progress?: (message: string, upload?: UploadProgress) => void;
 }
 
 export async function publishWebsite(options: PublishOptions): Promise<PublishResult> {
@@ -296,6 +304,12 @@ async function publishUnderLock(
 			JSON.stringify(association.intent.invitedEmails)
 	)
 		throw new SpoolError("recipient arguments changed while a publication intent is still in progress");
+	if (
+		association?.intent.kind === "create" &&
+		options.accessMode !== undefined &&
+		(association.intent.accessMode ?? "invited") !== options.accessMode
+	)
+		throw new SpoolError("access changed while a publication intent is still in progress");
 	options.progress?.("capturing website");
 	let artifact: WebsiteArtifact;
 	try {
@@ -349,7 +363,11 @@ async function publishUnderLock(
 				identity,
 				artifact,
 				title,
-				normalizeInvitations(options.invitedEmails ?? []),
+				options.accessMode === "public"
+					? normalizeOptionalInvitations(options.invitedEmails)
+					: normalizeInvitations(options.invitedEmails ?? []),
+				undefined,
+				options.accessMode,
 			);
 		} else {
 			// This snapshot was read before compilation. Never replace it with a newer pair during recovery.
@@ -397,21 +415,56 @@ async function publishUnderLock(
 		return resultWithLocalSource(finished, association, options);
 	}
 	if (current.operation.state === "uploading") {
-		for (const index of current.operation.missingObjectIndices) {
-			const metadata = captured.manifest.objects[index];
-			const object = metadata === undefined ? undefined : captured.objects.get(metadata.path);
-			if (metadata === undefined || object === undefined)
-				throw new SpoolError("the captured publication object is missing");
-			options.progress?.(`uploading ${index + 1}/${captured.manifest.objects.length}`);
-			await uploadObject(
-				options.spoolDir,
-				association.intent.operationId,
-				index,
-				`/api/publication-operations/${encodeURIComponent(association.intent.operationId)}/objects/${index}`,
-				{ method: "PUT", headers: { "content-type": "application/octet-stream" }, body: Buffer.from(object.bytes) },
-				cloudOptions,
-			);
-		}
+		const operationId = association.intent.operationId;
+		const pending = [...current.operation.missingObjectIndices];
+		const totalBytes = captured.manifest.objects.reduce((sum, object) => sum + object.byteLength, 0);
+		let completedBytes =
+			totalBytes - pending.reduce((sum, index) => sum + (captured.manifest.objects[index]?.byteLength ?? 0), 0);
+		let completedObjects = captured.manifest.objects.length - pending.length;
+		const report = () =>
+			options.progress?.(`uploading ${completedObjects}/${captured.manifest.objects.length}`, {
+				completedBytes,
+				totalBytes,
+				completedObjects,
+				totalObjects: captured.manifest.objects.length,
+			});
+		report();
+		let failed = false;
+		const workers = await Promise.allSettled(
+			Array.from({ length: Math.min(4, pending.length) }, async () => {
+				while (!failed) {
+					const index = pending.shift();
+					if (index === undefined) return;
+					try {
+						const metadata = captured.manifest.objects[index];
+						const object = metadata === undefined ? undefined : captured.objects.get(metadata.path);
+						if (metadata === undefined || object === undefined)
+							throw new SpoolError("the captured publication object is missing");
+						await uploadObject(
+							options.spoolDir,
+							operationId,
+							index,
+							`/api/publication-operations/${encodeURIComponent(operationId)}/objects/${index}`,
+							{
+								method: "PUT",
+								headers: { "content-type": "application/octet-stream" },
+								body: Buffer.from(object.bytes),
+							},
+							cloudOptions,
+						);
+						completedBytes += metadata.byteLength;
+						completedObjects++;
+						report();
+					} catch (error) {
+						failed = true;
+						throw error;
+					}
+				}
+			}),
+		);
+		// Drain in-flight writes before releasing the publication lock or offering retry.
+		for (const worker of workers) if (worker.status === "rejected") throw worker.reason;
+
 		current =
 			(await operationStatusOrMissing(options.spoolDir, association.intent.operationId, cloudOptions)) ?? current;
 		options.progress?.("sealing website");
@@ -494,9 +547,10 @@ export async function listPublications(
 export async function publicationStatus(
 	spoolDir: string,
 	id: string,
-	options: AuthOptions = {},
+	options: AuthOptions & { includeHistory?: boolean; includeAccess?: boolean } = {},
 ): Promise<{
 	publication: CloudPublication;
+	access?: SharingAccess;
 	operation?: CloudOperation;
 	operations: CloudOperationSummary[];
 	nextCursor: string | null;
@@ -505,10 +559,20 @@ export async function publicationStatus(
 	const authority = await publicationAuthority(spoolDir, options);
 	const cloudOptions = authority.options;
 	const account = authority.account;
-	const response = await requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, cloudOptions);
-	const current = z.strictObject({ publication }).parse(response);
+	const [response, access] = await Promise.all([
+		requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}`, {}, cloudOptions),
+		options.includeAccess
+			? requestJson(spoolDir, `/api/publications/${encodeURIComponent(id)}/access`, {}, cloudOptions).then((value) =>
+					sharingAccessSchema.parse(value),
+				)
+			: undefined,
+	]);
+	const current = { ...z.strictObject({ publication }).parse(response), ...(access === undefined ? {} : { access }) };
 	checkPublicationEnvironment(current.publication, cloudOptions);
-	const history = await publicationOperations(spoolDir, id, { ...cloudOptions, limit: 50 });
+	const history =
+		options.includeHistory === false
+			? { operations: [], nextCursor: null }
+			: await publicationOperations(spoolDir, id, { ...cloudOptions, limit: 50 });
 	const association = findPublicationAssociation(
 		spoolDir,
 		authority.origin,
@@ -729,6 +793,7 @@ async function createOrRecover(
 					projectId: association.projectId,
 					title: association.title,
 					invitedEmails: intent.invitedEmails,
+					...(intent.accessMode === undefined ? {} : { accessMode: intent.accessMode }),
 					manifest: artifact.manifest,
 				},
 	);
@@ -1052,4 +1117,28 @@ function retrySeconds(body: unknown, header: string | null): number | undefined 
 	if (/^\d+$/u.test(header)) return Number(header);
 	const at = Date.parse(header);
 	return Number.isNaN(at) ? undefined : Math.max(0, Math.ceil((at - Date.now()) / 1000));
+}
+
+const sharingAccessSchema = z.strictObject({
+	mode: z.enum(["invited", "public"]),
+	emails: z.array(z.string()),
+	generation: z.number().int().positive(),
+});
+export type SharingAccess = z.infer<typeof sharingAccessSchema>;
+export async function setSharingAccess(
+	spoolDir: string,
+	id: string,
+	input: { mode: "invited" | "public"; emails: string[]; expectedGeneration: number },
+	options: PublicationAuthOptions = {},
+): Promise<SharingAccess> {
+	const authority = await publicationAuthority(spoolDir, options);
+	const value = await requestJson(
+		spoolDir,
+		`/api/publications/${encodeURIComponent(id)}/access`,
+		{ method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
+		authority.options,
+		1,
+	);
+	await authority.assertCurrent();
+	return sharingAccessSchema.parse(value);
 }

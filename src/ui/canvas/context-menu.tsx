@@ -20,8 +20,8 @@ export interface MenuPlacement {
 }
 
 const MENU_WIDTH = 200;
-const MENU_HEIGHT_WITH_EXPORT = 192;
-const MENU_HEIGHT_WITHOUT_EXPORT = 162;
+const MENU_HEIGHT_WITH_EXPORT = 222;
+const MENU_HEIGHT_WITHOUT_EXPORT = 192;
 
 export function contextMenuSize(canExport: boolean): { w: number; h: number } {
 	return { w: MENU_WIDTH, h: canExport ? MENU_HEIGHT_WITH_EXPORT : MENU_HEIGHT_WITHOUT_EXPORT };
@@ -72,6 +72,7 @@ export function ContextMenu({
 	tidyLabel,
 	onTidy,
 	onPlay,
+	onShare,
 	onCopyPath,
 	onReload,
 	onTrash,
@@ -81,6 +82,7 @@ export function ContextMenu({
 	tidyLabel: string;
 	onTidy: () => void;
 	onPlay: () => void;
+	onShare?: (() => void) | undefined;
 	onCopyPath: () => void;
 	onReload: () => void;
 	onTrash: () => void;
@@ -94,6 +96,7 @@ export function ContextMenu({
 			onContextMenu={(event) => event.preventDefault()}
 		>
 			<MenuItem label="Play from here" keys={hotkeyKey("canvas.play")} onClick={onPlay} />
+			{onShare && <MenuItem label="Share link…" onClick={onShare} />}
 			<MenuItem label="Copy path" onClick={onCopyPath} />
 			<MenuItem label="Reload frame" keys={hotkeyKey("canvas.reload")} onClick={onReload} />
 			<MenuRule />

@@ -228,6 +228,7 @@ import {
 	styleMessage,
 	walkRejectionReason,
 } from "./protocol";
+import { CanvasSharing } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
@@ -417,6 +418,9 @@ export function ProjectCanvas({
 	/** the dock's cog (#282): the sheet is the shell's, so the door only asks */
 	onSettings?: (() => void) | undefined;
 }) {
+	const [shareEntry, setShareEntry] = useState<{ entry: string; request: number } | null>(null);
+	const [shareStatus, setShareStatus] = useState<string | undefined>();
+	const openShare = (entry: string) => setShareEntry((current) => ({ entry, request: (current?.request ?? 0) + 1 }));
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
@@ -3886,6 +3890,7 @@ export function ProjectCanvas({
 	 * still whether or not anyone has looked at it yet.
 	 */
 	const resync = useCallback(() => {
+		window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
 		void refetchFrames();
 		void refetchFlows();
 		for (const frame of allFramesRef.current) reloadFrameDocument(frame.name);
@@ -3898,6 +3903,8 @@ export function ProjectCanvas({
 			{
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
+					if (["frame", "shared", "geometry"].includes(event.kind))
+						window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
 						const own = saved.current.get(frame);
@@ -6304,6 +6311,11 @@ export function ProjectCanvas({
 										selected={isSelected}
 										hovered={isHovered}
 										unseen={unseen.get(frame.name)}
+										sharing={
+											shareEntry?.entry === frame.name && shareStatus
+												? { status: shareStatus, open: () => openShare(frame.name) }
+												: undefined
+										}
 										onPlay={() => playFrame(frame.name)}
 									/>
 								</div>
@@ -6399,6 +6411,10 @@ export function ProjectCanvas({
 										},
 									}
 						}
+						onShare={() => {
+							openShare(menu.frame);
+							setMenu(null);
+						}}
 						onPlay={() => {
 							const frame = menu.frame;
 							setMenu(null);
@@ -6568,6 +6584,15 @@ export function ProjectCanvas({
 					/>
 				)}
 			/>
+			{shareEntry && (
+				<CanvasSharing
+					key={shareEntry.entry}
+					project={project}
+					entry={shareEntry.entry}
+					request={shareEntry.request}
+					onStatus={setShareStatus}
+				/>
+			)}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

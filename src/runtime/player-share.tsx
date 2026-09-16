@@ -1,3 +1,4 @@
+import { motion, useReducedMotion } from "motion/react";
 import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
@@ -5,8 +6,13 @@ import type {
 	PlayerPublicationJob,
 	PlayerPublicationModel,
 } from "./player-publication-client";
+import { ShareProgress, SharingPanel } from "./share-panel";
+import { shareStyles } from "./share-styles";
 
 export interface PlayerShareView {
+	show(): void;
+	status: string | undefined;
+	tray: ReactNode;
 	available: boolean;
 	connected: string[] | undefined;
 	open: boolean;
@@ -15,16 +21,18 @@ export interface PlayerShareView {
 }
 
 export function usePlayerShare(client: PlayerPublicationClient | undefined): PlayerShareView {
+	const [mode, setMode] = useState<"invited" | "public">("invited");
+	const [starting, setStarting] = useState(false);
+	const pendingStart = useRef(false);
 	const [model, setModel] = useState<PlayerPublicationModel>();
 	const [title, setTitle] = useState("prototype");
 	const [open, setOpen] = useState(false);
 	const [instant, setInstant] = useState(false);
-	const [details, setDetails] = useState(false);
 	const [email, setEmail] = useState("");
 	const [job, setJob] = useState<PlayerPublicationJob>();
 	const [problem, setProblem] = useState("");
 	const [copied, setCopied] = useState(false);
-	const [stopping, setStopping] = useState(false);
+	const [dismissedJob, setDismissedJob] = useState<string>();
 	const [authorityUncertain, setAuthorityUncertain] = useState(false);
 	const [mutation, setMutation] = useState<"grant" | "stop">();
 	const trigger = useRef<HTMLButtonElement>(null);
@@ -32,23 +40,28 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const refreshing = useRef<Promise<PlayerPublicationModel | undefined> | undefined>(undefined);
 	const trailing = useRef(false);
 	const uncertainStop = useRef<string | undefined>(undefined);
+	const draftIdentity = useRef("");
 
 	const apply = useCallback((next: PlayerPublicationModel) => {
 		const uncertainPublicationId = uncertainStop.current;
 		uncertainStop.current = undefined;
 		setAuthorityUncertain(false);
 		setTitle(next.title);
-		if (!next.available || next.association !== "current") {
+		const identity = `${next.available}:${next.publication?.id ?? next.association}:${next.publication?.state ?? ""}`;
+		if (draftIdentity.current !== identity) {
+			draftIdentity.current = identity;
+			setEmail(next.recipients.join(", "));
+			setMode(next.access?.mode ?? "invited");
+		}
+		if (!next.available || next.association === "mismatched" || next.association === "superseded") {
 			setEmail("");
 			setCopied(false);
-			setDetails(false);
 		}
 		if (
 			uncertainPublicationId !== undefined &&
 			(next.publication?.id !== uncertainPublicationId || next.publication.state !== "active")
 		) {
 			setOpen(false);
-			setStopping(false);
 		}
 		setModel((current) => {
 			const sameRunningJob =
@@ -64,13 +77,19 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 		setJob((current) => {
 			if (next.available && next.association === "current" && next.job === undefined && current?.state === "running")
 				return current;
+			if (
+				next.available &&
+				current?.state === "succeeded" &&
+				next.publication?.id === current.publication.id &&
+				next.publication.state === "active"
+			)
+				return current;
 			return next.job;
 		});
 		if (next.job !== undefined && "email" in next.job && next.job.email !== undefined) setEmail(next.job.email);
 		setProblem(next.job?.state === "failed" ? next.job.message : (next.problem ?? ""));
 		if (!next.available) {
 			setOpen(false);
-			setStopping(false);
 		}
 	}, []);
 
@@ -102,9 +121,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 									setJob(undefined);
 									setEmail("");
 									setCopied(false);
-									setDetails(false);
 									setOpen(true);
-									setStopping(true);
 								} else {
 									setModel(undefined);
 									setOpen(false);
@@ -213,7 +230,6 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const close = (immediate: boolean) => {
 		setInstant(immediate);
 		setOpen(false);
-		setStopping(false);
 	};
 	const active = model?.association === "current" && model.publication?.state === "active";
 	const updating = job?.kind === "update" && job.state === "running";
@@ -221,19 +237,25 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 	const changed = active && (updating || model.source !== "current" || retrying);
 	const continuingUnavailable = model?.association === "current" && model.publication === undefined;
 
-	async function publish(): Promise<void> {
-		if (client === undefined || model === undefined) return;
-		const invited = email.trim();
+	async function publish(recipients?: string[]): Promise<void> {
+		if (client === undefined || model === undefined || pendingStart.current) return;
+		const invited = recipients?.join(", ") ?? email.trim();
 		const needsInvitation = !active && !continuingUnavailable && model.recipients.length === 0;
-		if ((needsInvitation || invited !== "") && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(invited)) {
-			setProblem("Enter the person’s email address.");
+		const addresses = invited.split(/[\s,;]+/u).filter(Boolean);
+		if (
+			(needsInvitation && mode !== "public" && addresses.length === 0) ||
+			addresses.some((value) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value))
+		) {
+			setProblem("Enter valid email addresses.");
 			return;
 		}
+		pendingStart.current = true;
+		setStarting(true);
 		setProblem("");
 		setCopied(false);
 		const request = freshness.current;
 		try {
-			const started = await client.start(invited === "" ? undefined : invited);
+			const started = await client.start(invited === "" ? undefined : invited, active ? undefined : mode);
 			if (request === freshness.current) {
 				setJob(started);
 				setModel((current) => (current === undefined ? current : { ...current, job: started }));
@@ -243,27 +265,9 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 			const current = await refresh(true);
 			if (current?.available === true)
 				setProblem(error instanceof Error ? error.message : "The link could not be published. Try again.");
-		}
-	}
-	async function grant(person: string, kind: "invite" | "revoke"): Promise<void> {
-		if (client === undefined || mutation !== undefined) return;
-		const mailbox = person.trim();
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(mailbox)) {
-			setProblem("Enter the person’s email address.");
-			return;
-		}
-		setProblem("");
-		setMutation("grant");
-		try {
-			await client.grant(mailbox, kind);
-			if (kind === "invite") setEmail("");
-			await refresh(true);
-		} catch (error) {
-			const current = await refresh(true);
-			if (current?.available === true)
-				setProblem(error instanceof Error ? error.message : "Access could not be changed. Try again.");
 		} finally {
-			setMutation(undefined);
+			pendingStart.current = false;
+			setStarting(false);
 		}
 	}
 	async function stop(): Promise<void> {
@@ -277,7 +281,6 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 			uncertainStop.current = publicationId;
 			const current = await refresh(true);
 			if (current?.available === true && current.publication?.state === "stopped") {
-				setStopping(false);
 				close(false);
 			} else if (current?.available === true && current.publication?.id !== publicationId) {
 				close(true);
@@ -306,9 +309,74 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 		}
 	}
 
+	const show = useCallback(() => {
+		setOpen(true);
+		void refresh(true);
+	}, [refresh]);
 	const available = model?.available === true;
 	const blocked = authorityUncertain || model?.association === "superseded" || model?.association === "mismatched";
 	return {
+		show,
+		status: starting
+			? "starting share"
+			: job?.state === "running"
+				? job.phase === "uploading"
+					? `uploading${job.upload && job.upload.totalBytes > 0 ? ` · ${Math.floor((job.upload.completedBytes / job.upload.totalBytes) * 100)}%` : ""}`
+					: job.phase === "capturing"
+						? "preparing frames"
+						: "making link ready"
+				: job?.state === "failed"
+					? "share interrupted"
+					: active
+						? changed
+							? "unpublished changes"
+							: "shared"
+						: undefined,
+		tray:
+			!open && (starting || (job !== undefined && job.id !== dismissedJob)) ? (
+				<aside className="spool-share-tray" aria-label="Share progress">
+					<div className="spool-share-between spool-share-tray-title">
+						<span>{model?.entry ?? title}</span>
+						<button type="button" className="spool-share-text" onClick={() => setOpen(true)}>
+							Details
+						</button>
+					</div>
+					{starting || job?.state === "running" ? (
+						<>
+							<ShareProgress job={job} starting={starting} />
+							<p className="spool-share-muted">Keep working. Sharing continues in the background.</p>
+						</>
+					) : job?.state === "failed" ? (
+						<>
+							<strong>Sharing was interrupted.</strong>
+							<p role="status">{job.message}</p>
+							<button type="button" className="spool-share-primary" onClick={() => setOpen(true)}>
+								Review and retry
+							</button>
+						</>
+					) : (
+						<>
+							<strong>Your link is ready</strong>
+							<p className="spool-share-muted">
+								{model?.access?.mode === "public"
+									? "Anyone with the link can open it."
+									: "Send the link to the people you added."}
+							</p>
+							<button
+								type="button"
+								className="spool-share-primary"
+								disabled={!active}
+								onClick={() => void copyLink()}
+							>
+								{copied ? "Copied" : "Copy link"}
+							</button>
+							<button type="button" className="spool-share-text" onClick={() => setDismissedJob(job?.id)}>
+								Dismiss
+							</button>
+						</>
+					)}
+				</aside>
+			) : null,
 		available,
 		connected: available ? model.included : undefined,
 		open,
@@ -338,9 +406,8 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 					aria-haspopup="dialog"
 					onClick={(event) => {
 						setInstant(event.detail === 0);
-						void refresh(true).then((next) => {
-							if (next?.available === true) setOpen(true);
-						});
+						setOpen(true);
+						void refresh(true);
 					}}
 				>
 					Share
@@ -348,38 +415,58 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 			</>
 		) : null,
 		surface: (
-			<ShareSurface
-				open={open}
-				instant={instant}
-				model={model}
-				title={title}
-				job={job}
-				active={active}
-				changed={changed}
-				details={details}
-				email={email}
-				problem={problem}
-				copied={copied}
-				stopping={stopping}
-				mutation={mutation}
-				continuingUnavailable={continuingUnavailable}
-				blocked={blocked}
-				trigger={trigger}
-				onDetails={setDetails}
-				onEmail={setEmail}
-				onClose={close}
-				onPublish={() => void publish()}
-				onCopy={() => void copyLink()}
-				onGrant={(person, kind) => void grant(person, kind)}
-				onStopping={setStopping}
-				onStop={() => void stop()}
-				onCheck={() => void refresh(true)}
-			/>
+			<>
+				<style>{shareStyles}</style>
+				<ShareSurface
+					starting={starting}
+					mode={mode}
+					onMode={setMode}
+					onAccess={async (input) => {
+						if (!client?.setAccess || mutation !== undefined) return false;
+						setMutation("grant");
+						setProblem("");
+						try {
+							await client.setAccess(input);
+							await refresh(true);
+							return true;
+						} catch (error) {
+							await refresh(true);
+							setProblem(error instanceof Error ? error.message : "Access could not be saved.");
+							return false;
+						} finally {
+							setMutation(undefined);
+						}
+					}}
+					open={open}
+					instant={instant}
+					model={model}
+					title={title}
+					job={job}
+					active={active}
+					changed={changed}
+					email={email}
+					problem={problem}
+					copied={copied}
+					mutation={mutation}
+					blocked={blocked}
+					trigger={trigger}
+					onEmail={setEmail}
+					onClose={close}
+					onPublish={(recipients) => void publish(recipients)}
+					onCopy={() => void copyLink()}
+					onStop={() => void stop()}
+					onCheck={() => void refresh(true)}
+				/>
+			</>
 		),
 	};
 }
 
 function ShareSurface({
+	starting,
+	mode,
+	onMode,
+	onAccess,
 	open,
 	instant,
 	model,
@@ -387,25 +474,23 @@ function ShareSurface({
 	job,
 	active,
 	changed,
-	details,
 	email,
 	problem,
 	copied,
-	stopping,
 	mutation,
-	continuingUnavailable,
 	blocked,
 	trigger,
-	onDetails,
 	onEmail,
 	onClose,
 	onPublish,
 	onCopy,
-	onGrant,
-	onStopping,
 	onStop,
 	onCheck,
 }: {
+	starting: boolean;
+	mode: "invited" | "public";
+	onMode: (mode: "invited" | "public") => void;
+	onAccess: (input: { mode: "invited" | "public"; emails: string[]; expectedGeneration: number }) => Promise<boolean>;
 	open: boolean;
 	instant: boolean;
 	model: PlayerPublicationModel | undefined;
@@ -413,26 +498,32 @@ function ShareSurface({
 	job: PlayerPublicationJob | undefined;
 	active: boolean;
 	changed: boolean;
-	details: boolean;
 	email: string;
 	problem: string;
 	copied: boolean;
-	stopping: boolean;
 	mutation: "grant" | "stop" | undefined;
-	continuingUnavailable: boolean;
 	blocked: boolean;
 	trigger: RefObject<HTMLButtonElement | null>;
-	onDetails(value: boolean): void;
 	onEmail(value: string): void;
 	onClose(immediate: boolean): void;
-	onPublish(): void;
+	onPublish(recipients?: string[]): void;
 	onCopy(): void;
-	onGrant(email: string, kind: "invite" | "revoke"): void;
-	onStopping(value: boolean): void;
 	onStop(): void;
 	onCheck(): void;
 }) {
 	const panel = useRef<HTMLElement>(null);
+	const body = useRef<HTMLDivElement>(null);
+	const [height, setHeight] = useState<number>();
+	const reduced = useReducedMotion();
+	useEffect(() => {
+		const node = body.current;
+		if (!node) return;
+		const measure = () => setHeight(node.getBoundingClientRect().height + 2);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, []);
 	const close = useRef(onClose);
 	close.current = onClose;
 	useEffect(() => {
@@ -449,8 +540,10 @@ function ShareSurface({
 			}
 			if (event.key !== "Tab" || node === null) return;
 			const items = Array.from(
-				node.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),a[href],[tabindex="0"]'),
-			).filter((item) => item.getClientRects().length > 0);
+				node.querySelectorAll<HTMLElement>(
+					'button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]',
+				),
+			).filter((item) => item.getClientRects().length > 0 && !item.closest("[inert]"));
 			const first = items[0];
 			const last = items.at(-1);
 			if (event.shiftKey && (document.activeElement === first || !node.contains(document.activeElement))) {
@@ -468,10 +561,6 @@ function ShareSurface({
 		};
 	}, [open, trigger]);
 
-	const running = job?.state === "running";
-	const updateRunning = running && job.kind === "update";
-	const createRetry = job?.state === "failed" && job.kind === "create" && job.retryable;
-	const publication = model?.publication;
 	return (
 		<div className="spool-sharing-surface" data-open={open} data-instant={instant} inert={!open} aria-hidden={!open}>
 			<button
@@ -481,202 +570,50 @@ function ShareSurface({
 				tabIndex={-1}
 				onClick={(event) => onClose(event.detail === 0)}
 			/>
-			<section
+			<motion.section
+				initial={false}
+				animate={{ height: height ?? "auto" }}
+				transition={{ duration: instant || reduced ? 0 : 0.18, ease: [0.23, 1, 0.32, 1] }}
 				ref={panel}
 				className="spool-sharing-panel"
 				role="dialog"
 				aria-modal="true"
 				aria-label={`Share ${title}`}
 			>
-				<header className="spool-sharing-header">
-					<h1>Share {title}</h1>
-					<div>
-						<span>esc closes</span>
-						<button type="button" aria-label="Close sharing" onClick={(event) => onClose(event.detail === 0)}>
-							<CloseIcon />
-						</button>
-					</div>
-				</header>
-				<div className="spool-sharing-body">
-					{!active ? (
-						<>
-							<p className="spool-sharing-muted">Let someone try what you made.</p>
-							<form
-								className="spool-sharing-form"
-								onSubmit={(event) => {
-									event.preventDefault();
-									onPublish();
-								}}
-							>
-								<label htmlFor="spool-share-email">Who should see it?</label>
-								<input
-									id="spool-share-email"
-									type="email"
-									placeholder="Email address"
-									value={email}
-									disabled={running || blocked}
-									onChange={(event) => onEmail(event.target.value)}
-								/>
-								<p>Only people you add can open this link.</p>
-							</form>
-						</>
-					) : (
-						<>
-							<input aria-label="Shared link" readOnly value={publication?.url} className="spool-sharing-link" />
-							<div className="spool-sharing-actions">
-								<button type="button" className="spool-button is-primary" onClick={onCopy}>
-									{copied ? "Copied" : "Copy link"}
-								</button>
-								<a className="spool-button" href={publication?.url} target="_blank" rel="noopener noreferrer">
-									Open link ↗
-								</a>
-							</div>
-							{changed && (
-								<div className="spool-sharing-update">
-									<p>Your edits aren’t on the shared link yet.</p>
-									<button
-										type="button"
-										className="spool-button is-primary"
-										disabled={updateRunning || blocked}
-										onClick={onPublish}
-									>
-										{updateRunning
-											? "Updating…"
-											: job?.state === "failed" && job.kind === "update"
-												? "Retry update"
-												: "Update link"}
-									</button>
-									<p>Update the same link. No need to send it again.</p>
-								</div>
-							)}
-						</>
-					)}
-					{model?.recipients.map((person) => (
-						<div className="spool-sharing-person" key={person}>
-							<span>{person.slice(0, 1).toUpperCase()}</span>
-							<strong>{person}</strong>
-							<small>can view</small>
-							{details && (
-								<button
-									type="button"
-									aria-label={`Remove ${person}`}
-									disabled={mutation !== undefined || blocked}
-									onClick={() => onGrant(person, "revoke")}
-								>
-									×
-								</button>
-							)}
+				<div ref={body} className="spool-sharing-measure">
+					<header className="spool-sharing-header">
+						<h1>Share {title}</h1>
+						<div>
+							<span>esc closes</span>
+							<button type="button" aria-label="Close sharing" onClick={(event) => onClose(event.detail === 0)}>
+								<CloseIcon />
+							</button>
 						</div>
-					))}
-					<div className="spool-sharing-details">
-						<button type="button" onClick={() => onDetails(!details)} aria-expanded={details}>
-							<span>What they can see</span>
-							<span>{details ? "−" : "+"}</span>
-						</button>
-						{details && (
-							<div>
-								<p>
-									Opens at {model?.entry}. Includes screens reachable through links, even across canvas pages.
-								</p>
-								<section aria-label="Included frames">
-									{model?.included.map((frame) => (
-										<code key={frame}>{frame}</code>
-									))}
-								</section>
-								<p>Other drafts stay local. Viewers navigate with the website’s own links.</p>
-								{active && (
-									<>
-										<form
-											className="spool-sharing-add"
-											onSubmit={(event) => {
-												event.preventDefault();
-												onGrant(email, "invite");
-											}}
-										>
-											<input
-												aria-label="Add another person"
-												placeholder="Add another person"
-												value={email}
-												disabled={mutation !== undefined}
-												onChange={(event) => onEmail(event.target.value)}
-											/>
-											<button type="submit" className="spool-button" disabled={mutation !== undefined}>
-												Add
-											</button>
-										</form>
-										<button type="button" className="spool-sharing-stop" onClick={() => onStopping(true)}>
-											Stop sharing…
-										</button>
-									</>
-								)}
-							</div>
-						)}
-					</div>
-					{model?.ready === false && model.diagnostics[0] !== undefined && (
-						<p role="status" className="spool-sharing-problem">
-							{model.diagnostics[0].message}
-						</p>
-					)}
-					{problem && (
-						<p role="status" className="spool-sharing-problem">
-							{problem}
-						</p>
-					)}
-					{blocked && model === undefined && (
-						<button
-							type="button"
-							className="spool-button is-primary"
-							disabled={mutation !== undefined}
-							onClick={onCheck}
-						>
-							Check status
-						</button>
-					)}
-					{!active && (
-						<button
-							type="button"
-							className="spool-button is-primary"
-							disabled={
-								running || model?.ready === false || blocked || (job?.state === "failed" && !createRetry)
-							}
-							onClick={onPublish}
-						>
-							{running
-								? continuingUnavailable
-									? "Updating…"
-									: "Creating link…"
-								: createRetry
-									? "Retry"
-									: continuingUnavailable
-										? "Update link"
-										: "Create link"}
-						</button>
-					)}
-					{stopping && (
-						<div className="spool-sharing-confirm">
-							<p>Stop this link from opening? Your local work stays here.</p>
-							<div>
-								<button
-									type="button"
-									className="spool-button"
-									disabled={mutation !== undefined}
-									onClick={() => onStopping(false)}
-								>
-									Keep sharing
-								</button>
-								<button
-									type="button"
-									className="spool-button is-primary"
-									disabled={mutation !== undefined}
-									onClick={onStop}
-								>
-									Stop sharing
-								</button>
-							</div>
-						</div>
-					)}
+					</header>
+					<SharingPanel
+						model={model}
+						job={job}
+						starting={starting}
+						active={active}
+						changed={changed}
+						email={email}
+						onEmail={onEmail}
+						mode={mode}
+						onMode={onMode}
+						copied={copied}
+						problem={problem}
+						blocked={blocked}
+						mutation={mutation !== undefined}
+						onPublish={onPublish}
+						onCopy={onCopy}
+						onClose={() => onClose(false)}
+						onAccess={onAccess}
+						onStop={onStop}
+						onCheck={onCheck}
+						instant={instant}
+					/>
 				</div>
-			</section>
+			</motion.section>
 		</div>
 	);
 }

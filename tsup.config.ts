@@ -34,7 +34,7 @@ export default defineConfig([
 		tsconfig: "tsconfig.runtime.json",
 		define: { __SPOOL_PUBLICATION_BUILD__: "false" },
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
-		noExternal: ["zod"],
+		noExternal: ["zod", "motion"],
 	},
 	{
 		entry: { "publication-runtime": "src/runtime/frame-runtime.ts" },

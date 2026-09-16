@@ -10,8 +10,10 @@ export function FrameLabel({
 	hovered,
 	unseen,
 	onPlay,
+	sharing,
 }: {
 	name: string;
+	sharing?: { status: string; open: () => void } | undefined;
 	frameWidth: number;
 	k: number;
 	entered: boolean;
@@ -56,6 +58,19 @@ export function FrameLabel({
 					{/* the selection's own verb, at the far end of its own row: no
 					    travelling to a corner of the chrome to act on what is right
 					    here. Ghost until wanted — the label is not a toolbar. */}
+					{sharing && (
+						<button
+							type="button"
+							className="text-muted type-detail"
+							onPointerDown={(event) => event.stopPropagation()}
+							onClick={(event) => {
+								event.stopPropagation();
+								sharing.open();
+							}}
+						>
+							{sharing.status}
+						</button>
+					)}
 					{selected && onPlay !== undefined && (
 						<button
 							type="button"

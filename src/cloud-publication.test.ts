@@ -9,6 +9,7 @@ import {
 	publicationOperations,
 	publicationStatus,
 	publishWebsite,
+	type UploadProgress,
 } from "./cloud-publication";
 import { associationIdentity, readAssociation } from "./publication/associations";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "./test-helpers";
@@ -152,6 +153,59 @@ function service(
 }
 
 describe("Cloud publication client", () => {
+	it("uploads independent objects concurrently within a bounded window", async () => {
+		const spoolDir = makeTempDir();
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "start", 'export default () => <button data-go="next">Next</button>');
+		writeFrame(root, "next", "export default () => <h1>Next</h1>");
+		const cloud = service();
+		const progress: UploadProgress[] = [];
+		let active = 0;
+		let peak = 0;
+		let count = 0;
+		let uploadStarted = 0;
+		let uploadFinished = 0;
+		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+			if (init?.method !== "PUT") return cloud.fetch(input, init);
+			if (count++ === 0) uploadStarted = performance.now();
+			active++;
+			peak = Math.max(peak, active);
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			try {
+				return await cloud.fetch(input, init);
+			} finally {
+				active--;
+				uploadFinished = performance.now();
+			}
+		};
+		await publishWebsite({
+			spoolDir,
+			root,
+			entry: "start",
+			version: "test",
+			origin: "https://cloud.test",
+			vault,
+			fetch,
+			invitedEmails: ["alex@example.com"],
+			progress: (_message, value) => {
+				if (value) progress.push(value);
+			},
+		});
+		expect(progress.at(0)?.completedBytes).toBe(0);
+		const final = progress.at(-1);
+		expect(final?.completedBytes).toBe(final?.totalBytes);
+		expect(final?.completedObjects).toBe(count);
+		for (let index = 1; index < progress.length; index++)
+			expect(progress[index]?.completedBytes).toBeGreaterThanOrEqual(progress[index - 1]?.completedBytes ?? 0);
+		if (process.env.SPOOL_SHARE_BENCH)
+			process.stdout.write(
+				`${JSON.stringify({ objects: count, peak, uploadMs: Math.round(uploadFinished - uploadStarted) })}\n`,
+			);
+		expect(peak).toBeGreaterThan(1);
+		expect(peak).toBeLessThanOrEqual(4);
+		expect(active).toBe(0);
+	});
+
 	it.each([false, true])(
 		"recovers lost success and persists the binding before returning (explicit=%s)",
 		async (explicit) => {
@@ -307,7 +361,7 @@ describe("Cloud publication client", () => {
 				detail: { code: "account_changed", retryable: false, operationId: expect.any(String) },
 			});
 			expect(cloud.calls.some((call) => call.endsWith("/activate"))).toBe(false);
-			expect(cloud.calls.filter((call) => call.startsWith("PUT "))).toHaveLength(1);
+			expect(cloud.calls.filter((call) => call.startsWith("PUT ")).length).toBeLessThanOrEqual(4);
 		},
 	);
 	it("binds every publication request to the starting vault identity", async () => {

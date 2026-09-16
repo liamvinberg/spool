@@ -153,13 +153,13 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await openShare(page);
 	await page.evaluate(() => document.fonts.ready);
 	await page.waitForTimeout(220);
-	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 480, width: 480, height: 345 });
+	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1008, width: 410 });
 	expect(
 		await page.locator(".spool-sharing-panel").evaluate((node) => {
 			const style = getComputedStyle(node);
 			return { opacity: style.opacity, background: style.backgroundColor, color: style.color };
 		}),
-	).toEqual({ opacity: "1", background: "rgb(28, 28, 28)", color: "rgb(240, 239, 237)" });
+	).toEqual({ opacity: "1", background: "rgb(40, 40, 40)", color: "rgb(240, 239, 237)" });
 	expect(await page.locator(".spool-top").evaluate((node) => getComputedStyle(node).height)).toBe("30px");
 	expect(await page.locator(".spool-top").evaluate((node) => getComputedStyle(node).backgroundColor)).toBe(
 		"rgb(40, 40, 40)",
@@ -167,23 +167,21 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	expect(await page.locator(".spool-sharing-panel").evaluate((node) => getComputedStyle(node).fontFamily)).toContain(
 		"Instrument Sans Variable",
 	);
-	expect(await page.locator("#spool-share-email").evaluate((node) => node === document.activeElement)).toBe(true);
+	expect(
+		await page.getByRole("textbox", { name: "Email addresses" }).evaluate((node) => node === document.activeElement),
+	).toBe(true);
 	expect(await page.locator(".spool-screen").getAttribute("inert")).not.toBeNull();
 	expect(await page.locator(".spool-top").getAttribute("inert")).not.toBeNull();
+
 	await page.keyboard.press("Shift+Tab");
-	expect(
-		await page.getByRole("button", { name: "Close sharing" }).evaluate((node) => node === document.activeElement),
-	).toBe(true);
-	await page.keyboard.press("Shift+Tab");
-	expect(
-		await page.getByRole("button", { name: "Create link" }).evaluate((node) => node === document.activeElement),
-	).toBe(true);
+	expect(await page.getByLabel("Who can open this link?").evaluate((node) => node === document.activeElement)).toBe(
+		true,
+	);
+	await page.getByRole("button", { name: "Create link", exact: true }).focus();
 	await page.keyboard.press("Tab");
 	expect(
 		await page.getByRole("button", { name: "Close sharing" }).evaluate((node) => node === document.activeElement),
 	).toBe(true);
-	await page.keyboard.press("Tab");
-	expect(await page.locator("#spool-share-email").evaluate((node) => node === document.activeElement)).toBe(true);
 
 	if (evidence !== undefined) {
 		await page.screenshot({ path: join(evidence, "share-open-1440.png") });
@@ -191,9 +189,11 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 
 	await page.getByRole("button", { name: "What they can see" }).click();
 	const included = page.getByRole("region", { name: "Included frames" });
-	await expect.poll(() => included.locator("code").allTextContents()).toEqual(["menu", "cart", "rewards"]);
+	await expect
+		.poll(() => included.locator("code").evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim())))
+		.toEqual(["menu", "cart", "rewards"]);
 	expect(await included.textContent()).not.toContain("draft");
-	expect(await page.getByText("Opens at menu.").textContent()).toContain("menu");
+	expect(await page.getByText("A playable journey, starting from menu.").textContent()).toContain("menu");
 
 	if (evidence !== undefined) {
 		await page.screenshot({ path: join(evidence, "share-open-details-1440.png") });
@@ -225,17 +225,17 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await openShare(page);
 	expect(
 		await page.locator(".spool-sharing-panel").evaluate((node) => getComputedStyle(node).transitionDuration),
-	).toBe("0.18s, 0.18s");
+	).toBe("0.1s, 0.18s");
 	expect(
 		await page.locator(".spool-sharing-scrim").evaluate((node) => getComputedStyle(node).transitionDuration),
-	).toBe("0.14s");
+	).toBe("0.12s");
 	await page.waitForTimeout(220);
-	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 921, width: 480, height: 345 });
+	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1890, width: 410 });
 	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "share-open-2322.png") });
 	await page.getByRole("button", { name: "Close sharing" }).click();
 	expect(
 		await page.locator(".spool-sharing-panel").evaluate((node) => getComputedStyle(node).transitionDuration),
-	).toBe("0.12s, 0.12s");
+	).toBe("0.1s, 0.18s");
 	await page.getByRole("button", { name: "Share", exact: true }).click();
 	await page.getByRole("button", { name: "Dismiss sharing" }).click({ position: { x: 8, y: 8 } });
 	await page.getByRole("button", { name: "Share", exact: true }).click();
@@ -292,9 +292,9 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	});
 	await expired.getByRole("button", { name: "Share", exact: true }).click();
 	await expect.poll(() => heldModel).toBeDefined();
-	await expired.getByRole("button", { name: "Share", exact: true }).click();
+	await expired.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
 	expect(modelRequests).toBe(1);
-	expect(await expired.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
+	expect(await expired.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(1);
 	await heldModel?.fulfill({
 		contentType: "application/json",
 		body: JSON.stringify({
@@ -319,7 +319,7 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await expiringForm.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await expiringForm.getByRole("button", { name: "Share", exact: true }).waitFor();
 	await openShare(expiringForm);
-	await expiringForm.locator("#spool-share-email").fill("alex@example.com");
+	await expiringForm.getByRole("textbox", { name: "Email addresses" }).fill("alex@example.com");
 	publisher = undefined;
 	await expiringForm.getByRole("button", { name: "Create link" }).click();
 	await expect.poll(() => expiringForm.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
@@ -344,10 +344,10 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await workflow.getByRole("button", { name: "Share", exact: true }).waitFor();
 	await openShare(workflow);
 	await workflow.getByRole("button", { name: "Create link" }).click();
-	await workflow.getByText("Enter the person’s email address.").waitFor();
-	await workflow.locator("#spool-share-email").fill("alex@example.com");
+	await workflow.getByText("Add at least one email address.").waitFor();
+	await workflow.getByRole("textbox", { name: "Email addresses" }).fill("alex@example.com");
 	await workflow.getByRole("button", { name: "Create link" }).click();
-	await workflow.getByRole("button", { name: "Creating link…" }).waitFor();
+	await workflow.getByText("uploading", { exact: true }).waitFor();
 	expect(services.publish).toHaveBeenCalledTimes(1);
 	publisher = undefined;
 	await expect.poll(() => workflow.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
@@ -410,15 +410,15 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await recovered.getByRole("button", { name: "Share", exact: true }).waitFor();
 	await openShare(recovered);
 	await recovered.getByText("The website could not be captured. Repair it and try again.").waitFor();
-	expect(await recovered.locator("#spool-share-email").inputValue()).toBe("alex@example.com");
+	await recovered.getByRole("button", { name: "Remove alex@example.com" }).waitFor();
 	writeFileSync(associationFile, JSON.stringify(association));
 	await recovered.getByRole("button", { name: "Retry" }).click();
 	await recovered.getByRole("button", { name: "Copy link" }).waitFor();
 	expect(await recovered.getByLabel("Shared link").inputValue()).toBe(
 		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 	);
-	expect(await recovered.getByText("alex@example.com").count()).toBeGreaterThan(0);
-	const openLink = recovered.getByRole("link", { name: "Open link ↗" });
+	await recovered.getByText("1 person has access.", { exact: true }).waitFor();
+	const openLink = recovered.getByRole("link", { name: "Open link" });
 	expect(await openLink.getAttribute("href")).toBe("https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page");
 	expect(await openLink.getAttribute("target")).toBe("_blank");
 	await recovered.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: daemon.url });
