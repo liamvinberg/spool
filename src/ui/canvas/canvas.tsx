@@ -1143,11 +1143,13 @@ export function ProjectCanvas({
 			if (ordered.length === 1) setNotice({ kind: "progress", message: `Exporting ${first.name}…` });
 			try {
 				const captured: CapturedFrame[] = [];
-				for (const frame of ordered) captured.push(await capturePng(frame));
+				for (const frame of ordered) {
+					const image = await capturePng(frame);
+					if (format === "png") downloadBytes(image.png, "image/png", `${image.name}.png`);
+					else captured.push(image);
+				}
 
-				if (format === "png") {
-					for (const frame of captured) downloadBytes(frame.png, "image/png", `${frame.name}.png`);
-				} else {
+				if (format === "pdf") {
 					downloadBytes(await buildFramePdf(captured), "application/pdf", `${project}.pdf`);
 				}
 
@@ -1158,9 +1160,9 @@ export function ProjectCanvas({
 					message:
 						format === "pdf"
 							? `Exported ${project}.pdf`
-							: captured.length === 1
+							: ordered.length === 1
 								? `Exported ${first.name}.png`
-								: `Exported ${captured.length} PNG images`,
+								: `Exported ${ordered.length} PNG images`,
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "Export failed. Try again.";

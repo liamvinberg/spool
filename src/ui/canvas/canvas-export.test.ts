@@ -172,6 +172,8 @@ describe("multi-frame canvas export", () => {
 			expect(heldB.contentWindow).toBe(heldBWindow);
 			releaseDownload?.();
 		}
+		await until(() => downloads.length === 1);
+		expect(downloads).toEqual(["a.png"]);
 		await completeMountedCapture(host, "b", "22222222222222222222222222222222", heldBPost);
 		await until(() => host.textContent?.includes("Exported 2 PNG images") === true);
 

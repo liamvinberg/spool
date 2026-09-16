@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
-import { LIVE_MIN_CSS_PX } from "../cover";
+import { LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { assembleFrameDocument, captureWorkerCsp, captureWorkerDocument } from "./document";
 import { CAPTURE_HOST, RENDER_HOST } from "./security";
 
@@ -421,6 +421,74 @@ async function requestCapture(page: Page, captureOrigin: string, targetWidth: nu
 		{ captureOrigin, targetWidth },
 	);
 }
+
+it("exports a long frame within the raster budget instead of rejecting its 2x size", async () => {
+	const served = await serveCapture();
+	onTestFinished(() => served.close());
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const page = await browser.newPage({ deviceScaleFactor: 2 });
+	await page.goto(served.url);
+	await page.locator("#frame").evaluate((element) => {
+		element.setAttribute("width", "1440");
+		element.setAttribute("height", "7900");
+	});
+	const origin = new URL(served.controlOrigin);
+	origin.hostname = CAPTURE_HOST;
+	const exported = await requestCapture(page, origin.origin, 0);
+	expect(exported.image.width).toBeGreaterThan(1440);
+	expect(exported.image.height).toBeGreaterThan(7900);
+	expect(exported.image.width * exported.image.height).toBeLessThanOrEqual(MAX_CAPTURE_OUTPUT_PIXELS);
+	const image = await readImage(exported.image.url, page);
+	expect(image.type).toBe("image/png");
+	expect(image.center).toEqual([245, 57, 26, 255]);
+});
+
+it.each(["css", "web", "pseudo", "canvas"])("exports the visible state of a %s animation", async (kind) => {
+	const served = await serveCapture(`
+		main { background: #18a957; }
+		${kind === "css" ? "main { animation: enter 100ms both; }" : ""}
+		${kind === "pseudo" ? "main::after { content: ''; position: absolute; inset: 0; z-index: 2; background: #f5391a; animation: enter 100ms both; } .capture-style-probe { display: none; }" : ""}
+		${kind === "canvas" ? "canvas { animation: enter 100ms both; }" : ""}
+		@keyframes enter { from { opacity: 0; transform: translateY(50px); } to { opacity: 1; transform: translateY(0); } }
+	`);
+	onTestFinished(() => served.close());
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const page = await browser.newPage();
+	await page.goto(served.url);
+	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
+	if (authored === undefined) throw new Error("frame missing");
+	await authored.locator("main").waitFor();
+	await authored.evaluate(async (kind) => {
+		if (kind === "web") {
+			const main = document.querySelector("main");
+			if (!main) throw new Error("main missing");
+			main.style.opacity = "0";
+			main.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 100, fill: "both" });
+		}
+		await Promise.all(document.getAnimations().map((animation) => animation.finished));
+	}, kind);
+	const origin = new URL(served.controlOrigin);
+	origin.hostname = CAPTURE_HOST;
+	const exported = await requestCapture(page, origin.origin, 0);
+	expect((await readImage(exported.image.url, page)).center).toEqual([245, 57, 26, 255]);
+	if (kind === "canvas") {
+		const pixel = await page.evaluate(async (url) => {
+			const image = new Image();
+			image.src = url;
+			await image.decode();
+			const canvas = document.createElement("canvas");
+			canvas.width = 800;
+			canvas.height = 600;
+			const context = canvas.getContext("2d");
+			if (!context) throw new Error("context missing");
+			context.drawImage(image, 0, 0, 800, 600);
+			return Array.from(context.getImageData(55, 23, 1, 1).data);
+		}, exported.image.url);
+		expect(pixel).toEqual([0, 0, 0, 255]);
+	}
+});
 
 async function directWorkerRequest(
 	page: Page,

@@ -47,6 +47,8 @@ describe("trusted capture source protocol", () => {
 		expect(parseFrameMessage({ ...source, dpr: 2.1 })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, targetWidth: 401 })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, width: 32768, height: 32768, dpr: 2, targetWidth: 0 })).toBeUndefined();
+		const longExport = { ...source, width: 1440, height: 7900, targetWidth: 0 };
+		expect(parseFrameMessage(longExport)).toEqual(longExport);
 		expect(parseFrameMessage({ ...source, width: 40, height: 1000 })).toEqual({
 			...source,
 			width: 40,

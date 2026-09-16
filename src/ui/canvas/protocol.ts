@@ -398,7 +398,9 @@ function captureSourceMessage(message: Record<string, unknown>): boolean {
 	) {
 		return false;
 	}
-	const scale = message.targetWidth > 0 ? coverCaptureScale(message.width) : message.dpr;
+	// Exports that fit at native size may reduce their pixel density in the
+	// worker. The source bounds and the worker's output budget still apply.
+	const scale = message.targetWidth > 0 ? coverCaptureScale(message.width) : Math.min(message.dpr, 1);
 	return captureRasterSize(message.width, message.height, scale) !== undefined;
 }
 

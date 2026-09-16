@@ -170,8 +170,15 @@ const captureWorkerJs = `(() => {
 			throw new Error("invalid capture SVG");
 		}
 		const scale = targetWidth > 0 ? (targetWidth * ${COVER_DEVICE_SCALE}) / width : dpr;
-		const outputWidth = Math.max(1, Math.round(width * scale));
-		const outputHeight = Math.max(1, Math.round(height * scale));
+		let outputWidth = Math.max(1, Math.round(width * scale));
+		let outputHeight = Math.max(1, Math.round(height * scale));
+		// A long frame may fit at native size but exceed the budget at 2x.
+		// Keep its whole layout and spend only the available raster pixels.
+		if (targetWidth === 0 && width * height <= MAX_CAPTURE_OUTPUT_PIXELS && outputWidth * outputHeight > MAX_CAPTURE_OUTPUT_PIXELS) {
+			const fittedScale = Math.sqrt(MAX_CAPTURE_OUTPUT_PIXELS / (width * height));
+			outputWidth = Math.max(1, Math.floor(width * fittedScale));
+			outputHeight = Math.max(1, Math.floor(height * fittedScale));
+		}
 		if (
 			!Number.isSafeInteger(outputWidth) ||
 			!Number.isSafeInteger(outputHeight) ||
@@ -906,7 +913,45 @@ const canvasShimJs = `(() => {
 		return /@import/i.test(normalized) || hasUnsafeCaptureUrl(normalized);
 	}
 
-	// The live threshold asks for a still; zero asks for a full-resolution export.
+	// A copied DOM has no animation timeline. Preserve its current painted values.
+	function snapshotAnimations(clone) {
+		const animations = document.getAnimations();
+		if (animations.length === 0) return;
+		const originals = [document.documentElement, ...document.documentElement.querySelectorAll("*")];
+		const copies = [clone, ...clone.querySelectorAll("*")];
+		const indices = new Map(originals.map((element, index) => [element, index]));
+		const pseudoRules = [];
+		for (const animation of animations) {
+			const effect = animation.effect;
+			if (!(effect instanceof KeyframeEffect) || !effect.target) continue;
+			const index = indices.get(effect.target);
+			const copy = copies[index];
+			if (!copy) continue;
+			const pseudo = effect.pseudoElement;
+			const computed = getComputedStyle(effect.target, pseudo);
+			const style = pseudo ? document.createElement("span").style : copy.style;
+			if (!style) continue;
+			for (const keyframe of effect.getKeyframes()) {
+				for (const key of Object.keys(keyframe)) {
+					if (["offset", "computedOffset", "easing", "composite"].includes(key)) continue;
+					const property = key.startsWith("--") ? key : key.replace(/[A-Z]/g, (letter) => "-" + letter.toLowerCase());
+					style.setProperty(property, computed.getPropertyValue(property), "important");
+				}
+			}
+			style.setProperty("animation", "none", "important");
+			style.setProperty("transition", "none", "important");
+			if (pseudo) {
+				copy.setAttribute("data-spool-capture-animation", String(index));
+				pseudoRules.push('[data-spool-capture-animation="' + index + '"]' + pseudo + "{" + style.cssText + "}");
+			}
+		}
+		if (pseudoRules.length > 0) {
+			const style = document.createElement("style");
+			style.textContent = pseudoRules.join("\\n");
+			clone.appendChild(style);
+		}
+	}
+
 	async function captureSource(targetWidth, settleMs) {
 		await settle(settleMs);
 		const W = document.documentElement.clientWidth || innerWidth;
@@ -945,13 +990,15 @@ const canvasShimJs = `(() => {
 			}, "image/png");
 		});
 		const canvasSnapshots = Array.from(srcCanvas, (canvas) => ({
-			style: canvas.getAttribute("style") || "",
 			width: canvas.clientWidth,
 			height: canvas.clientHeight,
 		}));
 		const canvasUrlsPromise = Promise.all(Array.from(srcCanvas, (canvas) => canvasDataUrl(canvas)));
 		const clone = document.documentElement.cloneNode(true);
 		clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+		// Animation timelines are not cloned. Bake only their affected properties
+		// into the snapshot before any await can advance the live document.
+		snapshotAnimations(clone);
 		const srcInputs = document.querySelectorAll("input, textarea");
 		const dstInputs = clone.querySelectorAll("input, textarea");
 		srcInputs.forEach((el, i) => { const d = dstInputs[i]; if (d) d.setAttribute("value", el.value); });
@@ -975,7 +1022,7 @@ const canvasShimJs = `(() => {
 			}
 			img.setAttribute(
 				"style",
-				snapshot.style + ";width:" + snapshot.width + "px;height:" + snapshot.height + "px"
+				(d.getAttribute("style") || "") + ";width:" + snapshot.width + "px;height:" + snapshot.height + "px"
 			);
 			d.parentNode.replaceChild(img, d);
 		}

@@ -1,5 +1,3 @@
-const PDF_POINTS_PER_CSS_PIXEL = 72 / 96;
-
 export interface CanvasOrderFrame {
 	name: string;
 	x: number;
@@ -23,17 +21,30 @@ export function framesInCanvasOrder<T extends CanvasOrderFrame>(
 		.sort((a, b) => a.x - b.x || a.y - b.y || a.name.localeCompare(b.name));
 }
 
-export async function buildFramePdf(frames: readonly CapturedFrame[]): Promise<Uint8Array> {
-	const { PDFDocument } = await import("pdf-lib");
-	const pdf = await PDFDocument.create();
-	for (const frame of frames) {
-		const image = await pdf.embedPng(frame.png);
-		const width = frame.width * PDF_POINTS_PER_CSS_PIXEL;
-		const height = frame.height * PDF_POINTS_PER_CSS_PIXEL;
-		const page = pdf.addPage([width, height]);
-		page.drawImage(image, { x: 0, y: 0, width, height });
-	}
-	return pdf.save();
+/** PDF decoding and compression belong off the canvas thread. */
+export function buildFramePdf(frames: readonly CapturedFrame[]): Promise<Uint8Array> {
+	return new Promise((resolve, reject) => {
+		const worker = new Worker(new URL("./frame-pdf-worker.ts", import.meta.url), { type: "module" });
+		const finish = (result: { bytes: Uint8Array } | { error: string }) => {
+			clearTimeout(timeout);
+			worker.terminate();
+			if ("bytes" in result) resolve(result.bytes);
+			else reject(new Error(result.error));
+		};
+		const timeout = setTimeout(() => finish({ error: "PDF export timed out. Try fewer frames." }), 120_000);
+		worker.onmessage = (event: MessageEvent<{ bytes: Uint8Array } | { error: string }>) => finish(event.data);
+		worker.onerror = () => finish({ error: "PDF export failed. Try again." });
+		worker.onmessageerror = () => finish({ error: "PDF export could not be read. Try again." });
+		try {
+			// Transfer ownership instead of copying every full-resolution PNG.
+			const buffers = [...new Set(frames.map((frame) => frame.png.buffer))].filter(
+				(buffer): buffer is ArrayBuffer => buffer instanceof ArrayBuffer,
+			);
+			worker.postMessage(frames, buffers);
+		} catch (error) {
+			finish({ error: error instanceof Error ? error.message : "PDF export failed. Try again." });
+		}
+	});
 }
 
 export async function pngBytesFromImageBlob(blob: Blob, width: number, height: number): Promise<Uint8Array> {

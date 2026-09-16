@@ -1,6 +1,8 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { buildFramePdf, framesInCanvasOrder, pngBytesFromImageBlob } from "./frame-export";
+import { framesInCanvasOrder, pngBytesFromImageBlob } from "./frame-export";
+
+import { buildFramePdf } from "./frame-pdf";
 
 const PNG_BYTES = Uint8Array.from(
 	Buffer.from(
