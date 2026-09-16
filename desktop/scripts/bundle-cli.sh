@@ -39,10 +39,10 @@ VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 RELEASE_BUILD="${SPOOL_RELEASE_BUILD:-0}"
 
 if [ "$RELEASE_BUILD" = 1 ]; then
-	REGISTRY_ATTEMPTS=30
+	REGISTRY_ATTEMPTS=60
 	REGISTRY_RETRY_SECONDS=10
 	# npm otherwise retries a failed fetch itself, outside the loop this script
-	# bounds. A release gets one five-second fetch per visible attempt.
+	# bounds. Limit each registry fetch so availability retries remain visible.
 	VIEW_OPTIONS=(--fetch-retries=0 --fetch-timeout=5000)
 else
 	REGISTRY_ATTEMPTS=5
@@ -65,7 +65,11 @@ published() {
 	while [ "$attempt" -le "$REGISTRY_ATTEMPTS" ]; do
 		# macOS Bash 3 treats an empty array as unset under `set -u`.
 		found="$(npm view "spool.page@$VERSION" version ${VIEW_OPTIONS[@]+"${VIEW_OPTIONS[@]}"} 2>/dev/null || true)"
-		if [ "$found" = "$VERSION" ]; then return 0; fi
+		# The version listing can appear before its CDN download. Fetch and verify
+		# the actual tarball here, then install that same file without another race.
+		if [ "$found" = "$VERSION" ] && npm pack "spool.page@$VERSION" --ignore-scripts --pack-destination "$WORK" ${VIEW_OPTIONS[@]+"${VIEW_OPTIONS[@]}"} > /dev/null 2>&1 && [ -f "$WORK/spool.page-$VERSION.tgz" ]; then
+			return 0
+		fi
 		if [ "$attempt" -lt "$REGISTRY_ATTEMPTS" ]; then
 			echo "waiting for npm to serve spool.page@$VERSION ($attempt/$REGISTRY_ATTEMPTS)"
 			sleep "$REGISTRY_RETRY_SECONDS"
@@ -81,6 +85,7 @@ if [ -n "${SPOOL_TARBALL:-}" ]; then
 	echo "using $SPEC"
 elif published; then
 	echo "installing $SPEC from the registry"
+	SPEC="$WORK/spool.page-$VERSION.tgz"
 elif [ "$RELEASE_BUILD" = 1 ]; then
 	echo "npm did not serve the exact version spool.page@$VERSION after $REGISTRY_ATTEMPTS checks; refusing to build a release from the checkout." >&2
 	exit 1

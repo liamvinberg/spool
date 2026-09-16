@@ -14,7 +14,10 @@ function executable(directory: string, name: string, body: string): string {
 	return path;
 }
 
-function fixture(availableOnAttempt: number): {
+function fixture(
+	availableOnAttempt: number,
+	tarballOnAttempt = 1,
+): {
 	directory: string;
 	env: NodeJS.ProcessEnv;
 	packLog: string;
@@ -38,7 +41,19 @@ function fixture(availableOnAttempt: number): {
 	echo "$VERSION"
 	exit 0
 fi
+if [ "$1" = pack ]; then
+	attempt=0
+	[ ! -f "$TARBALL_ATTEMPTS_FILE" ] || attempt=$(<"$TARBALL_ATTEMPTS_FILE")
+	attempt=$((attempt + 1))
+	echo "$attempt" > "$TARBALL_ATTEMPTS_FILE"
+	[ "$attempt" -ge "$TARBALL_ON_ATTEMPT" ] || exit 1
+	[ "$3" = --ignore-scripts ] || exit 90
+	[ "$4" = --pack-destination ] || exit 90
+	touch "$5/spool.page-$VERSION.tgz"
+	exit 0
+fi
 prefix=""
+[[ "\${!#}" = */spool.page-$VERSION.tgz ]] || exit 91
 while [ "$#" -gt 0 ]; do
 	if [ "$1" = --prefix ]; then prefix="$2"; shift 2; else shift; fi
 done
@@ -56,6 +71,8 @@ touch "$prefix/node_modules/spool.page/dist/cli.js"
 			...process.env,
 			ATTEMPTS_FILE: attempts,
 			AVAILABLE_ON_ATTEMPT: String(availableOnAttempt),
+			TARBALL_ON_ATTEMPT: String(tarballOnAttempt),
+			TARBALL_ATTEMPTS_FILE: join(directory, "tarball-attempts"),
 			PACK_LOG: packLog,
 			SLEEP_LOG: join(directory, "sleep.log"),
 			VERSION: "9.8.7",
@@ -71,7 +88,7 @@ test("a release waits for the exact npm version instead of packing the checkout"
 	try {
 		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
 		assert.equal(result.status, 0, result.stderr);
-		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/30\)/);
+		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/60\)/);
 		assert.match(result.stdout, /installing spool\.page@9\.8\.7 from the registry/);
 		assert.throws(() => readFileSync(setup.packLog));
 	} finally {
@@ -80,12 +97,25 @@ test("a release waits for the exact npm version instead of packing the checkout"
 });
 
 test("a release fails clearly when npm never serves the exact version", () => {
-	const setup = fixture(31);
+	const setup = fixture(61);
 	try {
 		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
 		assert.equal(result.status, 1);
 		assert.match(result.stderr, /npm did not serve the exact version spool\.page@9\.8\.7/);
 		assert.match(result.stderr, /refusing to build a release from the checkout/);
+		assert.throws(() => readFileSync(setup.packLog));
+	} finally {
+		rmSync(setup.directory, { recursive: true, force: true });
+	}
+});
+
+test("a release waits for the tarball even when npm lists the version", () => {
+	const setup = fixture(1, 3);
+	try {
+		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/60\)/);
+		assert.equal(readFileSync(join(setup.directory, "tarball-attempts"), "utf8").trim(), "3");
 		assert.throws(() => readFileSync(setup.packLog));
 	} finally {
 		rmSync(setup.directory, { recursive: true, force: true });
