@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.1
+
+### Patch Changes
+
+- 704b064: Sharing from a frame’s right-click menu now explains how to connect when Spool Cloud is unavailable, instead of silently closing the panel.
+
 ## 0.21.0
 
 ### Minor Changes
