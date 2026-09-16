@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.2
+
+### Patch Changes
+
+- c21d9c0: Sharing now opens in a centered dialog. Journey errors no longer disable the recipient and access settings, and explain what needs fixing before creating the link.
+
 ## 0.21.1
 
 ### Patch Changes
