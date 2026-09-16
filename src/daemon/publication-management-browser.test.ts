@@ -148,13 +148,13 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
 		await page.evaluate(() => document.fonts.ready);
 		await page.waitForTimeout(220);
-		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1008, width: 410 });
+		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 515, width: 410 });
 		await page.screenshot({ path: join(evidence, "update-open-1440.png") });
 		await page.getByRole("button", { name: "Close sharing" }).click();
 		await page.setViewportSize({ width: 2322, height: 1191 });
 		await page.getByRole("button", { name: "Share · changes", exact: true }).click();
 		await page.waitForTimeout(220);
-		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1890, width: 410 });
+		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 956, width: 410 });
 		await page.screenshot({ path: join(evidence, "update-open-2322.png") });
 		await page.getByRole("button", { name: "Close sharing" }).click();
 		await page.setViewportSize({ width: 1440, height: 900 });

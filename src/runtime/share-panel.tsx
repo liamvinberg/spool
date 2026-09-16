@@ -128,7 +128,7 @@ export function SharingPanel({
 	const view = running ? "progress" : editing || !active ? `access-${mode}` : "ready";
 	if (model?.available === false)
 		return (
-			<div className="spool-share-content">
+			<div className="spool-share-content spool-share-unavailable">
 				<strong>Spool Cloud isn’t connected.</strong>
 				<p className="spool-share-muted">In the Mac app, choose Spool → Cloud Account → Sign In.</p>
 				<p className="spool-share-muted">
@@ -195,12 +195,9 @@ export function SharingPanel({
 								onMode={onMode}
 								emails={email}
 								onEmails={onEmail}
-								disabled={
-									blocked ||
-									mutation ||
-									model?.ready === false ||
-									model === undefined ||
-									(job?.state === "failed" && !job.retryable)
+								disabled={blocked || mutation || model === undefined}
+								saveDisabled={
+									!editing && (model?.ready === false || (job?.state === "failed" && !job.retryable))
 								}
 								existing={editing}
 								onSave={async (values) => {
@@ -296,7 +293,14 @@ export function SharingPanel({
 					{problem}
 				</p>
 			)}
-			{model?.ready === false && model.diagnostics[0] && <p role="status">{model.diagnostics[0].message}</p>}
+			{model?.ready === false && model.diagnostics[0] && (
+				<div role="status">
+					<p>This journey isn’t ready to share.</p>
+					<p className="spool-share-muted">
+						{model.diagnostics[0].frame}: {model.diagnostics[0].message} {model.diagnostics[0].remedy}
+					</p>
+				</div>
+			)}
 			{model === undefined && (
 				<>
 					<p role="status">Checking sharing…</p>
@@ -333,6 +337,7 @@ function ShareAccessEditor({
 	emails,
 	onEmails,
 	disabled,
+	saveDisabled,
 	existing,
 	onSave,
 	retry,
@@ -342,6 +347,7 @@ function ShareAccessEditor({
 	emails: string;
 	onEmails: (value: string) => void;
 	disabled: boolean;
+	saveDisabled: boolean;
 	existing: boolean;
 	onSave: (emails: string[]) => void;
 	retry: boolean;
@@ -426,7 +432,7 @@ function ShareAccessEditor({
 			<button
 				type="button"
 				className="spool-share-primary spool-share-full"
-				disabled={disabled}
+				disabled={disabled || saveDisabled}
 				onClick={() => {
 					const list = mode === "public" ? selected : collect();
 					if (!list) return;

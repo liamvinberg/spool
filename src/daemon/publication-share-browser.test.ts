@@ -153,7 +153,7 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await openShare(page);
 	await page.evaluate(() => document.fonts.ready);
 	await page.waitForTimeout(220);
-	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1008, width: 410 });
+	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 515, width: 410 });
 	expect(
 		await page.locator(".spool-sharing-panel").evaluate((node) => {
 			const style = getComputedStyle(node);
@@ -230,7 +230,7 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 		await page.locator(".spool-sharing-scrim").evaluate((node) => getComputedStyle(node).transitionDuration),
 	).toBe("0.12s");
 	await page.waitForTimeout(220);
-	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 1890, width: 410 });
+	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 956, width: 410 });
 	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "share-open-2322.png") });
 	await page.getByRole("button", { name: "Close sharing" }).click();
 	expect(
