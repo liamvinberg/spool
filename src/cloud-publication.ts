@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { Agent } from "undici";
 import { z } from "zod";
 import {
 	type CloudRequestOptions as AuthOptions,
@@ -503,6 +504,10 @@ async function publishUnderLock(
 	return resultWithLocalSource(finished, association, options);
 }
 
+// Node 26's HTTP/2 dispatcher serializes these PUTs. Keep a bounded HTTP/1.1
+// pool so the upload window remains concurrent across supported Node versions.
+const uploadDispatcher = new Agent({ connections: 4, allowH2: false });
+
 async function uploadObject(
 	spoolDir: string,
 	operationId: string,
@@ -511,14 +516,21 @@ async function uploadObject(
 	init: RequestInit,
 	options: AuthOptions,
 ): Promise<void> {
+	const uploadOptions: AuthOptions = {
+		...options,
+		fetch: (input, request) => {
+			const dispatched = { ...request, dispatcher: uploadDispatcher };
+			return (options.fetch ?? fetch)(input, dispatched);
+		},
+	};
 	try {
-		await requestJson(spoolDir, path, init, options);
+		await requestJson(spoolDir, path, init, uploadOptions);
 	} catch (error) {
 		const recovered = await recoverAfterFailure(spoolDir, operationId, options, error);
 		if (error instanceof CloudApiError)
 			throw withOperationId(error, operationId, recovered?.operation, recovered?.publication);
 		if (recovered !== undefined && !recovered.operation.missingObjectIndices.includes(index)) return;
-		await requestJson(spoolDir, path, init, options);
+		await requestJson(spoolDir, path, init, uploadOptions);
 	}
 }
 
