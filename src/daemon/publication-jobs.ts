@@ -584,7 +584,15 @@ export function createPublicationJobs({
 			checked.account.publisherId,
 		);
 	}
-	return { model, start, read, grant, stop, access };
+	async function available(): Promise<boolean> {
+		try {
+			await services.account(spoolDir);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+	return { model, start, read, grant, stop, access, available };
 }
 
 function defaultServices(): PublicationJobServices {

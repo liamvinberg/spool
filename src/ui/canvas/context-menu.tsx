@@ -23,8 +23,11 @@ const MENU_WIDTH = 200;
 const MENU_HEIGHT_WITH_EXPORT = 222;
 const MENU_HEIGHT_WITHOUT_EXPORT = 192;
 
-export function contextMenuSize(canExport: boolean): { w: number; h: number } {
-	return { w: MENU_WIDTH, h: canExport ? MENU_HEIGHT_WITH_EXPORT : MENU_HEIGHT_WITHOUT_EXPORT };
+export function contextMenuSize(canExport: boolean, canShare = false): { w: number; h: number } {
+	return {
+		w: MENU_WIDTH,
+		h: (canExport ? MENU_HEIGHT_WITH_EXPORT : MENU_HEIGHT_WITHOUT_EXPORT) + (canShare ? 30 : 0),
+	};
 }
 
 /**

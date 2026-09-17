@@ -1163,6 +1163,7 @@ export function createDaemonApp({
 			if (!outcome.ok) return c.json({ error: outcome.error }, 409);
 			return c.json({ started: true }, 202);
 		})
+		.get("/api/cloud/session", async (c) => c.json({ available: await publicationJobs.available() }))
 		.get("/api/session", (c) => c.json(readSession(spoolDir)))
 		.put(
 			"/api/session",

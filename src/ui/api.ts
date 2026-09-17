@@ -1612,3 +1612,12 @@ export function canvasPublicationClient(project: string, entry: string) {
 		controlToken,
 	});
 }
+
+export async function fetchSharingAvailable(): Promise<boolean> {
+	try {
+		const response = await client.api.cloud.session.$get();
+		return response.ok && (await response.json()).available === true;
+	} catch {
+		return false;
+	}
+}

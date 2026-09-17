@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePlayerShare } from "../../runtime/player-share";
-import { canvasPublicationClient } from "../api";
+import { canvasPublicationClient, fetchSharingAvailable } from "../api";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 
 export function CanvasSharing({
@@ -32,4 +32,29 @@ export function CanvasSharing({
 			{share.tray}
 		</>
 	);
+}
+
+export function useSharingAvailable(): boolean {
+	const [available, setAvailable] = useState(false);
+	useEffect(() => {
+		let revision = 0;
+		const refresh = () => {
+			const request = ++revision;
+			void fetchSharingAvailable().then((next) => {
+				if (request === revision) setAvailable(next);
+			});
+		};
+		const foreground = () => {
+			if (document.visibilityState === "visible") refresh();
+		};
+		refresh();
+		window.addEventListener("focus", refresh);
+		document.addEventListener("visibilitychange", foreground);
+		return () => {
+			revision++;
+			window.removeEventListener("focus", refresh);
+			document.removeEventListener("visibilitychange", foreground);
+		};
+	}, []);
+	return available;
 }

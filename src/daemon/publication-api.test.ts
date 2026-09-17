@@ -78,6 +78,12 @@ it("keeps publication status and jobs behind control origin and current Cloud ow
 	const path = `/api/p/${encodeURIComponent(project.name)}/publication`;
 	const query = "?entry=menu&scenario=default";
 	const control = { "x-spool-control": "control-secret", origin: "http://localhost" };
+	expect((await daemon.app.request("http://localhost/api/cloud/session")).status).toBe(401);
+	const sharingAvailable = () => daemon.app.request("http://localhost/api/cloud/session", { headers: control });
+	expect(await (await sharingAvailable()).json()).toEqual({ available: true });
+	publisher = undefined;
+	expect(await (await sharingAvailable()).json()).toEqual({ available: false });
+	publisher = "owner-a";
 	const mutations = [
 		{
 			path: `${path}/grants`,
