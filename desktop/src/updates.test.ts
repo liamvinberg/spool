@@ -358,3 +358,15 @@ test("an unreadable check cache is absent", (t) => {
 	writeFileSync(join(directory, "app-update.json"), JSON.stringify(cache));
 	assert.deepEqual(api.readCheckCache(directory), cache);
 });
+
+test("preparing a discovered release does not repeat its network check", async () => {
+	let checks = 0;
+	fake.check = async () => {
+		checks++;
+		return fake.found;
+	};
+	await api.checkForUpdate(silent);
+	await api.installUpdate(silent, silent, options);
+	assert.equal(checks, 1);
+	assert.equal(fake.downloaded, 1);
+});

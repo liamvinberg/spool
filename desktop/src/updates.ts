@@ -176,6 +176,7 @@ let configured: Updater | undefined;
 let configuring: Promise<Updater> | undefined;
 /** The last thing the updater said went wrong, for the message a person reads. */
 let lastError: string | undefined;
+let checkedUpdate: Awaited<ReturnType<Updater["checkForUpdates"]>> | undefined;
 
 /**
  * The one updater, wired once. Listeners are attached here rather than per call
@@ -225,6 +226,8 @@ export async function checkForUpdate(
 	timeoutMs = 30_000,
 ): Promise<{ latest: string; newer: boolean }> {
 	lastError = undefined;
+	checkedUpdate = undefined;
+	const started = performance.now();
 	const instance = await updater(report);
 	let found: Awaited<ReturnType<Updater["checkForUpdates"]>>;
 	try {
@@ -235,6 +238,8 @@ export async function checkForUpdate(
 	if (found === null) {
 		throw new UpdateCheckError("This copy of Spool cannot update itself: it was not packaged as a release.");
 	}
+	checkedUpdate = found;
+	report(`check finished version=${found.updateInfo.version} elapsed=${Math.round(performance.now() - started)}ms`);
 	return { latest: found.updateInfo.version, newer: found.isUpdateAvailable };
 }
 
@@ -315,11 +320,13 @@ async function downloadAndPrepare(
 	const started = performance.now();
 	const elapsed = () => `${Math.round(performance.now() - started)}ms`;
 	report("checking for update");
-	const found = await withDeadline(
-		instance.checkForUpdates(),
-		options.checkTimeoutMs ?? 30_000,
-		"Checking for updates timed out. Try again.",
-	);
+	const found =
+		checkedUpdate ??
+		(await withDeadline(
+			instance.checkForUpdates(),
+			options.checkTimeoutMs ?? 30_000,
+			"Checking for updates timed out. Try again.",
+		));
 	if (found === null) {
 		throw new UpdateCheckError("This copy of Spool was not packaged as a release.", false);
 	}

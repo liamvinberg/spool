@@ -30,6 +30,7 @@ import {
 	writeRect,
 } from "./play-window";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
+import { beginUpdateRestart, clearUpdateRestart, updateRestartState } from "./update-restart";
 import {
 	CHECK_INTERVAL_MS,
 	checkCachePath,
@@ -248,12 +249,14 @@ function isDaemonUrl(candidate: string): boolean {
 
 /** Bring the canvas up: adopt or start a daemon, then point the window at it. */
 export async function openCanvas(): Promise<void> {
+	if (shuttingDown) return;
 	if (window === undefined) window = createWindow();
 	const showing = window;
 	showing.show();
 	showing.focus();
 
 	const current = await daemon.status(DIRECTORY);
+	if (shuttingDown) return;
 	if (current.running && (current.pid === startedPid || !daemon.behind(current.version, version()))) {
 		point(
 			showing,
@@ -286,8 +289,9 @@ export async function openCanvas(): Promise<void> {
 	} else {
 		void showing.loadURL(holdingPage("Starting Spool", "The canvas opens as soon as the daemon answers."));
 	}
+	if (shuttingDown) return;
 	const started = await startBundled();
-	if (started === undefined) return;
+	if (started === undefined || shuttingDown) return;
 	point(showing, started.url, started.pid, "started", started.version, started.controlToken);
 }
 
@@ -801,11 +805,74 @@ let update: AppUpdate | null = null;
 let busy = false;
 /** The next automatic check, so a manual one can push it out a day. */
 let nextCheck: NodeJS.Timeout | undefined;
+let updateWindow: BrowserWindow | undefined;
+let updateWindowLoaded = false;
 
-/** Update activity belongs to the native menus, never the canvas or Dock. */
+function showUpdateProgress(): void {
+	if (updateWindow === undefined) {
+		const panel = new BrowserWindow({
+			width: 420,
+			height: 180,
+			resizable: false,
+			minimizable: false,
+			maximizable: false,
+			title: "Spool update",
+			backgroundColor: "#0e0e0e",
+			webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+		});
+		updateWindow = panel;
+		updateWindowLoaded = false;
+		panel.on("closed", () => {
+			if (updateWindow === panel) {
+				updateWindow = undefined;
+				updateWindowLoaded = false;
+			}
+		});
+		void panel
+			.loadURL(holdingPage("Checking for updates…", "You can keep working while Spool updates."))
+			.then(() => {
+				if (updateWindow !== panel) return;
+				updateWindowLoaded = true;
+				renderUpdateProgress();
+			})
+			.catch(() => {});
+	}
+	updateWindow.show();
+	updateWindow.focus();
+}
+
+function closeUpdateProgress(): void {
+	updateWindow?.close();
+	updateWindow = undefined;
+	updateWindowLoaded = false;
+}
+
+function renderUpdateProgress(): void {
+	if (updateWindow === undefined || !updateWindowLoaded || update === null) return;
+	let heading: string;
+	switch (update.kind) {
+		case "checking":
+			heading = "Checking for updates…";
+			break;
+		case "downloading":
+			heading = `Downloading Spool ${update.version}: ${update.percent}%`;
+			break;
+		case "preparing":
+			heading = `Preparing Spool ${update.version}…`;
+			break;
+		default:
+			return;
+	}
+	void updateWindow.webContents
+		.executeJavaScript(`document.querySelector('h1').textContent = ${JSON.stringify(heading)}`)
+		.catch(() => {});
+}
+
+/** Manual progress has its own window; background work stays in the menu. */
 function setUpdate(next: AppUpdate | null): void {
 	update = next;
 	tray?.setContextMenu(buildTrayMenu());
+	renderUpdateProgress();
 }
 
 function installUpdateChannels(): void {
@@ -831,7 +898,9 @@ function scheduleCheckIn(delay: number): void {
 	if (nextCheck !== undefined) clearTimeout(nextCheck);
 	nextCheck = setTimeout(() => {
 		nextCheck = undefined;
-		void automaticCheck().finally(() => scheduleCheckIn(CHECK_INTERVAL_MS));
+		void automaticCheck().finally(() =>
+			scheduleCheckIn(update?.kind === "failed" && update.retryable ? 5 * 60_000 : CHECK_INTERVAL_MS),
+		);
 	}, delay);
 	nextCheck.unref();
 }
@@ -839,6 +908,7 @@ function scheduleCheckIn(delay: number): void {
 async function automaticCheck(): Promise<void> {
 	if (busy || shuttingDown || update?.kind === "ready" || update?.kind === "restarting") return;
 	busy = true;
+	setUpdate({ kind: "checking", version: version() });
 	let found: Awaited<ReturnType<typeof checkForUpdate>>;
 	try {
 		found = await checkForUpdate((line) => log("updates", line));
@@ -846,13 +916,19 @@ async function automaticCheck(): Promise<void> {
 		log("updates", "OK", `installed=${version()}`, `latest=${found.latest}`, found.newer ? "available" : "current");
 	} catch (error) {
 		// Offline is a normal day; automatic failures stay in the menu and log.
-		log("updates", "skip", error instanceof UpdateCheckError ? error.message : String(error));
+		const detail = error instanceof UpdateCheckError ? error.message : String(error);
+		log("updates", "skip", detail);
+		setUpdate({ kind: "failed", version: version(), message: detail, retryable: true });
+		closeUpdateProgress();
 		return;
 	} finally {
 		busy = false;
 	}
 	if (found.newer) await prepareUpdate(found.latest, false);
-	else setUpdate(null);
+	else {
+		closeUpdateProgress();
+		setUpdate(null);
+	}
 }
 
 function rememberCheck(latest: string): void {
@@ -871,11 +947,7 @@ async function checkForUpdates(): Promise<void> {
 	if (shuttingDown) return;
 	if (update?.kind === "ready") return offerRestart();
 	if (busy) {
-		tell(
-			"Spool is checking or preparing an update.",
-			"You can keep working. Spool will let you know when it is ready.",
-			"info",
-		);
+		showUpdateProgress();
 		return;
 	}
 	const installed = parseVersion(version());
@@ -928,11 +1000,15 @@ async function checkForUpdates(): Promise<void> {
 	}
 
 	busy = true;
+	setUpdate({ kind: "checking", version: version() });
+	showUpdateProgress();
 	let found: Awaited<ReturnType<typeof checkForUpdate>>;
 	try {
 		found = await checkForUpdate((line) => log("updates", line));
 	} catch (error) {
 		busy = false;
+		closeUpdateProgress();
+		setUpdate(null);
 		const detail = error instanceof UpdateCheckError ? error.message : String(error);
 		log("updates", "FAIL", detail);
 		tell("Spool could not check for updates.", `${detail}\n\nYou have ${formatVersion(installed)}.`, "warning");
@@ -950,6 +1026,7 @@ async function checkForUpdates(): Promise<void> {
 		found.newer ? "offer" : "current",
 	);
 	if (!found.newer) {
+		closeUpdateProgress();
 		setUpdate(null);
 		tell("Spool is up to date.", `You have ${formatVersion(installed)}, which is the latest release.`, "info");
 		return;
@@ -1014,6 +1091,7 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 	if (busy || shuttingDown) return;
 	const refusal = whyNotInstallable();
 	if (refusal !== undefined) {
+		closeUpdateProgress();
 		log("updates", "FAIL", refusal);
 		setUpdate({ kind: "failed", version: target, message: refusal, retryable: false });
 		if (manual)
@@ -1026,6 +1104,7 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 	}
 	busy = true;
 	setUpdate({ kind: "checking", version: target });
+	if (manual) showUpdateProgress();
 	try {
 		target = await installUpdate(
 			(line) => log("updates", line),
@@ -1044,11 +1123,14 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 			message: detail,
 			retryable: error instanceof UpdateCheckError && error.retryable,
 		});
+		closeUpdateProgress();
+		if (update?.kind === "failed" && update.retryable) scheduleCheckIn(5 * 60_000);
 		if (manual) tell("Spool could not prepare the update.", detail, "warning");
 		return;
 	}
 	busy = false;
 	if (shuttingDown) return;
+	closeUpdateProgress();
 	setUpdate({ kind: "ready", version: target });
 	await offerRestart();
 }
@@ -1084,24 +1166,20 @@ async function restartUpdate(): Promise<void> {
 	shuttingDown = true;
 	let deadline: NodeJS.Timeout | undefined;
 	try {
+		beginUpdateRestart(DIRECTORY, target);
 		await shutdown();
 		log("updates", "relaunching");
 		fallback("Updating Spool", `Spool ${target} is being swapped in, and the app reopens by itself.`);
 		// macOS has verified the bundle. This covers an exit refused by the app.
 		deadline = setTimeout(() => {
-			busy = false;
-			shuttingDown = false;
-			const detail =
-				lastUpdaterError() ??
-				"The update is ready, but Spool did not restart. Quit and reopen Spool to finish updating.";
-			log("updates", "FAIL", "no relaunch", detail);
-			setUpdate({ kind: "failed", version: target, message: detail, retryable: false });
-			void openCanvas();
+			log("updates", "quit delayed", lastUpdaterError() ?? "finishing the verified update");
+			app.quit();
 		}, RELAUNCH_DEADLINE_MS);
 		relaunchIntoUpdate();
 	} catch (error) {
 		busy = false;
 		clearTimeout(deadline);
+		clearUpdateRestart(DIRECTORY);
 		shuttingDown = false;
 		log("updates", "FAIL", String(error));
 		setUpdate({ kind: "failed", version: target, message: String(error), retryable: false });
@@ -1178,6 +1256,17 @@ export async function shutdown(): Promise<void> {
 }
 
 export function boot(): void {
+	openLog(DIRECTORY);
+	const restart = updateRestartState(DIRECTORY, version());
+	if (restart === "waiting") {
+		log("updates", "waiting for native replacement", `installed=${version()}`);
+		app.exit(0);
+		return;
+	}
+	if (restart === "completed" || restart === "expired") {
+		clearUpdateRestart(DIRECTORY);
+		log("updates", restart, `installed=${version()}`);
+	}
 	// First, because the lock the next line asks for lives in this directory, and
 	// a lane that shares it with the installed app can never hold one of its own.
 	const userData = daemon.userDataDirectory(app.getPath("userData"));
@@ -1195,7 +1284,6 @@ export function boot(): void {
 	}
 	app.on("second-instance", () => void openCanvas());
 
-	openLog(DIRECTORY);
 	installPlayChannels();
 	installUpdateChannels();
 	installCanvasChannels();
@@ -1210,6 +1298,7 @@ export function boot(): void {
 
 	app.on("will-quit", (event) => {
 		if (shuttingDown) return;
+		if (update?.kind === "ready") beginUpdateRestart(DIRECTORY, update.version);
 		shuttingDown = true;
 		event.preventDefault();
 		void shutdown().then(() => app.quit());
@@ -1217,6 +1306,12 @@ export function boot(): void {
 
 	void app.whenReady().then(async () => {
 		log("boot", `pid=${process.pid}`, `v${version()}`, DIRECTORY);
+		if (restart === "expired")
+			tell(
+				"Spool did not finish updating.",
+				"The previous update did not finish. Check for Updates to try again.",
+				"warning",
+			);
 		await offerApplicationsFolder();
 		installPermissions();
 		Menu.setApplicationMenu(buildAppMenu());

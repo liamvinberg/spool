@@ -200,7 +200,11 @@ electron-updater, so a version it names is one it can install. New releases
 download and prepare in the background while the canvas stays usable. Once Squirrel.Mac has verified the
 bundle, a native dialog offers Restart Spool or Later. Later leaves the update
 ready in the menu bar and installs it on normal quit. Check for Updates gives
-an explicit answer and offers the same restart dialog when an update is ready.
+a progress window immediately and offers the same restart dialog when an update is ready.
+Closing the progress window leaves preparation running. Retryable background
+failures are checked again after five minutes. During native replacement, an
+early launch of the old version exits without opening the canvas; the new
+version clears that handoff on launch.
 The feed is the release itself: `app-update.yml` inside the bundle names this
 repo and `latest-mac.yml` beside the dmg names the zip. No update server is needed.
 

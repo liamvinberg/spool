@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import type { MenuItemConstructorOptions, MessageBoxOptions } from "electron";
+import { beginUpdateRestart, updateRestartState } from "./update-restart";
 import type { InstallProgress } from "./updates";
 
 const require_ = createRequire(__filename);
@@ -35,13 +36,20 @@ const app = Object.assign(new EventEmitter(), {
 		exits++;
 	},
 });
+let progressWindows = 0;
 class Window extends EventEmitter {
+	constructor(options: { title?: string }) {
+		super();
+		if (options.title === "Spool update") progressWindows++;
+	}
 	static getFocusedWindow = () => undefined;
 	webContents = Object.assign(new EventEmitter(), {
 		setWindowOpenHandler: noop,
 		getURL: () => "http://localhost:7777",
 		send: (...args: unknown[]) => sent.push(args),
+		executeJavaScript: async () => {},
 	});
+	close = () => this.emit("closed");
 	show = noop;
 	focus = noop;
 	loadURL = async () => {};
@@ -65,6 +73,7 @@ const electron = {
 		},
 	},
 };
+let statusCalls = 0;
 let directory: string;
 let api: typeof import("./main");
 let dialogs: MessageBoxOptions[];
@@ -86,6 +95,7 @@ function replace(id: string, exports: unknown): void {
 }
 
 beforeEach(async () => {
+	progressWindows = 0;
 	directory = mkdtempSync(join(tmpdir(), "spool-update-flow-"));
 	dialogs = [];
 	sent = [];
@@ -129,13 +139,16 @@ beforeEach(async () => {
 	replace("./daemon", {
 		...daemon,
 		stateDirectory: () => directory,
-		status: async () => ({
-			running: true,
-			pid: 123,
-			version: "0.20.1",
-			url: "http://localhost:7777",
-			controlToken: "test",
-		}),
+		status: async () => {
+			statusCalls++;
+			return {
+				running: true,
+				pid: 123,
+				version: "0.20.1",
+				url: "http://localhost:7777",
+				controlToken: "test",
+			};
+		},
 	});
 	delete require_.cache[require_.resolve("./main")];
 	api = require_("./main") as typeof import("./main");
@@ -158,6 +171,7 @@ test("automatic updates prepare silently and Later preserves the ready update", 
 	mock.timers.tick(10_000);
 	await turn();
 	assert.equal(downloads, 1);
+	assert.equal(progressWindows, 0);
 	assert.equal(dialogs.length, 0);
 	assert.equal(restarts, 0);
 	const event = { returnValue: undefined };
@@ -175,11 +189,13 @@ test("automatic updates prepare silently and Later preserves the ready update", 
 	app.quit();
 	await turn();
 	assert.equal(quits, 1);
+	assert.equal(updateRestartState(directory, "0.20.1"), "waiting");
 	assert.equal(exits, 0);
 });
 
 test("manual checks prepare immediately but restart only after the ready dialog", async () => {
 	click("Check for Updates…");
+	assert.equal(progressWindows, 1);
 	await turn();
 	assert.equal(downloads, 1);
 	assert.equal(dialogs.length, 0);
@@ -202,16 +218,17 @@ test("a cached newer release is prepared without waiting another day", async () 
 	await turn();
 });
 
-test("background failures do not interrupt work and can retry on the next daily check", async () => {
+test("retryable background failures retry after five minutes without interrupting work", async () => {
 	api.boot();
 	await turn();
 	mock.timers.tick(10_000);
 	await turn();
-	fail(new Error("offline"));
+	const { UpdateCheckError } = require_("./updates") as typeof import("./updates");
+	fail(new UpdateCheckError("offline"));
 	await turn();
 	assert.equal(dialogs.length, 0);
 	assert.equal(restarts, 0);
-	mock.timers.tick(24 * 60 * 60 * 1000);
+	mock.timers.tick(5 * 60 * 1000);
 	await turn();
 	assert.equal(downloads, 2);
 	finish("0.20.2");
@@ -267,4 +284,47 @@ test("quitting during preparation never opens a late restart dialog", async () =
 	assert.equal(dialogs.length, 0);
 	assert.equal(restarts, 0);
 	assert.equal(quits, 1);
+});
+
+for (const event of ["activate", "second-instance"]) {
+	test(`reopening during restart does not enter the old canvas: ${event}`, async () => {
+		api.boot();
+		await turn();
+		click("Check for Updates…");
+		await turn();
+		response = 0;
+		finish("0.20.2");
+		await turn();
+		assert.equal(restarts, 1);
+		const before = statusCalls;
+		app.emit(event);
+		await turn();
+		assert.equal(statusCalls, before);
+	});
+}
+
+test("a new old-version process exits during the native replacement", async () => {
+	beginUpdateRestart(directory, "0.20.2");
+	const before = statusCalls;
+	api.boot();
+	await turn();
+	assert.equal(exits, 1);
+	assert.equal(statusCalls, before);
+	assert.equal(checks, 0);
+});
+
+test("a delayed native quit never reopens the old canvas", async () => {
+	api.boot();
+	await turn();
+	click("Check for Updates…");
+	await turn();
+	response = 0;
+	finish("0.20.2");
+	await turn();
+	const before = statusCalls;
+	mock.timers.tick(15_000);
+	await turn();
+	assert.equal(quits, 1);
+	assert.equal(statusCalls, before);
+	assert.equal(updateRestartState(directory, "0.20.1"), "waiting");
 });
