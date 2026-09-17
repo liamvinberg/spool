@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.3
+
+### Patch Changes
+
+- c56c469: Hide Share link from the canvas menu until an approved beta account signs in locally. Sharing controls appear when you return from login and disappear after logout.
+- bca66c9: Fixed blank or incorrect image and PDF exports of animated frames. Long frames that fit at native resolution now reduce pixel density when 2× capture would exceed the image limit. PDF creation runs off the canvas thread, and PNGs download as each frame finishes capturing.
+
 ## 0.21.2
 
 ### Patch Changes
