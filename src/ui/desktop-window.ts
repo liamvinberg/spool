@@ -13,6 +13,9 @@ export type DesktopCommand =
 export interface DesktopWindow {
 	onCommand(listener: (command: DesktopCommand) => void): () => void;
 	setCanvasActive(active: boolean): void;
+	onProjectDownload?(
+		listener: (result: { status: "completed"; filename: string } | { status: "failed"; message: string }) => void,
+	): () => void;
 	chooseDirectory?(request: DirectoryRequest): Promise<string | null>;
 }
 

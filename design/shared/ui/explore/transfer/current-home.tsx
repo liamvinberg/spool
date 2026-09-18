@@ -1,21 +1,20 @@
+import { SpoolMark as RibbonMark } from "shared/ui/spool/mark";
+import { CogIcon } from "./current-icons";
+// Current src/ui/home.tsx with fixture data and one proposed Export action.
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { ProjectCard } from "./api";
-import { EmptyFramesIcon, EmptyState } from "./empty-state";
-import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
-import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
+import type { ProjectCard } from "shared/ui/spool/home-fixture";
+import { EmptyFramesIcon, EmptyState } from "shared/ui/spool/empty-state";
 import {
 	ArrowRightIcon,
 	CloseIcon,
-	CogIcon,
 	DotsIcon,
 	FolderIcon,
 	FrameIcon,
 	PlusIcon,
-	RibbonMark,
 	SearchIcon,
-} from "./icons";
-import { systemTrashName } from "./system-trash";
-import { Thumbnail } from "./thumbnail";
+} from "./current-icons";
+const systemTrashName = () => "Trash";
+import { Thumbnail } from "shared/ui/spool/home-fixture";
 import "./home.css";
 
 export function Home({
@@ -28,8 +27,10 @@ export function Home({
 	onStart,
 	onFolder,
 	onSettings,
-	onImport,
 	onExportProject,
+	onCopyPath,
+	onImport,
+	initialMenu = null,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -40,12 +41,14 @@ export function Home({
 	onStart: () => void;
 	onFolder: () => void;
 	onSettings: () => void;
-	onImport?: () => void;
-	onExportProject?: (project: ProjectCard) => void;
+	onExportProject: (project: ProjectCard) => void;
+	onCopyPath: () => void;
+	onImport: () => void;
+	initialMenu?: string | null;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
-	const [menuRoot, setMenuRoot] = useState<string | null>(null);
+	const [menuRoot, setMenuRoot] = useState<string | null>(initialMenu);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const needle = query.trim().toLowerCase();
 	const visible = projects
@@ -53,20 +56,14 @@ export function Home({
 		.sort((a, b) =>
 			sort === "Name" ? a.name.localeCompare(b.name) : Date.parse(b.openedAt) - Date.parse(a.openedAt),
 		);
-	useEffect(
-		() =>
-			attachHotkeyLayer({
-				scope: "home",
-				handlers: {
-					"home.close-menu": () => setMenuRoot(null),
-					"home.search": (event) => {
-						event?.preventDefault();
-						searchRef.current?.focus();
-					},
-				} satisfies Record<HotkeyIdFor<"home">, HotkeyHandler>,
-			}),
-		[],
-	);
+	useEffect(() => {
+		const key = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setMenuRoot(null);
+			if (event.key === "/" && !(event.target instanceof HTMLInputElement)) { event.preventDefault(); searchRef.current?.focus(); }
+		};
+		window.addEventListener("keydown", key);
+		return () => window.removeEventListener("keydown", key);
+	}, []);
 	return (
 		<div className="pj-body h-full bg-bg text-text">
 			<div className="pj-layout">
@@ -85,7 +82,7 @@ export function Home({
 							<NavigationButton
 								icon={<CogIcon />}
 								onClick={onSettings}
-								title={`Settings ${hotkeyKey("app.settings")}`}
+								title="Settings"
 							>
 								Settings
 							</NavigationButton>
@@ -129,14 +126,6 @@ export function Home({
 											Keep the design beside your code.
 										</small>
 									</button>
-									<button type="button" onClick={onImport}>
-										<FolderIcon />
-										<strong>
-											Import…
-											<ArrowRightIcon className="home-arrow" />
-										</strong>
-										<small>Open a .spool project file.</small>
-									</button>
 								</>
 							}
 						/>
@@ -163,9 +152,7 @@ export function Home({
 										<kbd>/</kbd>
 									)}
 								</label>
-								<button type="button" className="home-action" onClick={onImport}>
-									Import…
-								</button>
+								<button type="button" className="home-action" onClick={onImport}>Import…</button>
 								<button type="button" className="home-action" onClick={onFolder}>
 									Open…
 								</button>
@@ -216,7 +203,8 @@ export function Home({
 										onForget={() => onForgetProject(project)}
 										onTrash={() => onTrashProject(project)}
 										onRename={() => onRenameProject(project)}
-										onExport={() => onExportProject?.(project)}
+										onExport={() => onExportProject(project)}
+										onCopyPath={onCopyPath}
 									/>
 								))}
 							</div>
@@ -246,6 +234,7 @@ function ProjectTile({
 	onTrash,
 	onRename,
 	onExport,
+	onCopyPath,
 }: {
 	project: ProjectCard;
 	menuOpen: boolean;
@@ -256,6 +245,7 @@ function ProjectTile({
 	onTrash: () => void;
 	onRename: () => void;
 	onExport: () => void;
+	onCopyPath: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const cover = project.covers[0];
@@ -309,14 +299,6 @@ function ProjectTile({
 						}}
 					/>
 					<MenuItem
-						label="Export project…"
-						onClick={() => {
-							manageRef.current?.focus();
-							onCloseMenu();
-							onExport();
-						}}
-					/>
-					<MenuItem
 						label="Rename…"
 						onClick={() => {
 							manageRef.current?.focus();
@@ -328,9 +310,10 @@ function ProjectTile({
 						label="Copy path"
 						onClick={() => {
 							onCloseMenu();
-							void navigator.clipboard?.writeText(project.root);
+							onCopyPath();
 						}}
 					/>
+					<MenuItem label="Export project…" onClick={() => { onCloseMenu(); onExport(); }} />
 					<div className="mx-2 my-unit h-px bg-border-raised" />
 					<MenuItem
 						label="Hide from Spool"

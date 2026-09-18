@@ -1,6 +1,7 @@
 import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "./cn";
+import { ProjectTabMenu } from "./project-tab-menu";
 import "./tab-strip.css";
 
 /**
@@ -69,6 +70,7 @@ export function TabStrip({
 	onClose,
 	onReorder,
 	onPick,
+	onExport,
 }: {
 	tabs: readonly TabProject[];
 	focused: string | null;
@@ -78,7 +80,9 @@ export function TabStrip({
 	onReorder: (order: readonly string[]) => void;
 	/** the "+" door: open a project folder */
 	onPick: () => void;
+	onExport?: (project: TabProject) => void;
 }) {
+	const [menu, setMenu] = useState<{ project: TabProject; x: number; y: number; anchor: HTMLElement } | null>(null);
 	const strip = useRef<HTMLDivElement | null>(null);
 	const layoutId = useId();
 	const reduced = useReducedMotion();
@@ -302,6 +306,20 @@ export function TabStrip({
 											<button
 												type="button"
 												className="project-tab-label"
+												onContextMenu={(event) => {
+													event.preventDefault();
+													const anchor = event.currentTarget;
+													if (anchor)
+														setMenu({ project: tab, x: event.clientX, y: event.clientY, anchor });
+												}}
+												onKeyDown={(event) => {
+													if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+														event.preventDefault();
+														const anchor = event.currentTarget;
+														const box = event.currentTarget.getBoundingClientRect();
+														if (anchor) setMenu({ project: tab, x: box.left, y: box.bottom, anchor });
+													}
+												}}
 												aria-current={active ? "page" : undefined}
 												onClick={() => {
 													if (!justDragged.current) onFocus(tab.root);
@@ -347,6 +365,14 @@ export function TabStrip({
 					</motion.button>
 				</nav>
 			</LayoutGroup>
+			{menu && (
+				<ProjectTabMenu
+					{...menu}
+					onClose={() => setMenu(null)}
+					onExport={() => onExport?.(menu.project)}
+					onCloseTab={() => onClose(menu.project.root)}
+				/>
+			)}
 		</MotionConfig>
 	);
 }
