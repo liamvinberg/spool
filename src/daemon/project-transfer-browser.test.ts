@@ -94,7 +94,10 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	for (const [path, content] of Object.entries(files))
 		expect(readFileSync(join(imported.root, "design", path), "utf8")).toBe(content);
 	const canvas: unknown = JSON.parse(readFileSync(join(imported.root, "design/canvas.json"), "utf8"));
-	expect(canvas).toMatchObject({ history: false, order: { pages: ["details"], frames: { "": ["start", "finish"] } } });
+	expect(canvas).toMatchObject({
+		history: false,
+		order: { pages: { "": ["details"] }, frames: { "": ["start", "finish"] } },
+	});
 	expect(existsSync(join(imported.root, ".env"))).toBe(false);
 	expect(existsSync(join(imported.root, "design/.spool/session-private.txt"))).toBe(false);
 	expect(readFileSync(join(destination, project.name, "keep.txt"), "utf8")).toBe("existing folder");
