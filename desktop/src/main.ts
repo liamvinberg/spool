@@ -29,6 +29,7 @@ import {
 	type WorkArea,
 	writeRect,
 } from "./play-window";
+import { installProjectDownloads } from "./project-download";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import { beginUpdateRestart, clearUpdateRestart, updateRestartState } from "./update-restart";
 import {
@@ -1314,6 +1315,12 @@ export function boot(): void {
 			);
 		await offerApplicationsFolder();
 		installPermissions();
+		installProjectDownloads(
+			session.defaultSession,
+			() => app.getPath("downloads"),
+			(contents, url) =>
+				contents === window?.webContents && isDaemonUrl(url.startsWith("blob:") ? url.slice(5) : url),
+		);
 		Menu.setApplicationMenu(buildAppMenu());
 		installDockIcon();
 		installTray();

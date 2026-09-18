@@ -61,7 +61,7 @@ const electron = {
 	BrowserWindow: Window,
 	Menu: { buildFromTemplate: (items: MenuItemConstructorOptions[]) => ({ items }), setApplicationMenu: noop },
 	nativeImage: { createEmpty: () => image },
-	session: { defaultSession: { setPermissionRequestHandler: noop, setPermissionCheckHandler: noop } },
+	session: { defaultSession: { on: noop, setPermissionRequestHandler: noop, setPermissionCheckHandler: noop } },
 	Tray: class {
 		setToolTip = noop;
 		setContextMenu = noop;

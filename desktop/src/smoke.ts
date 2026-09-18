@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { app } from "electron";
+import { app, BrowserWindow } from "electron";
 import { status } from "./daemon";
 import { buildAppMenu, buildTrayMenu, trayImage } from "./main";
+import { installProjectDownloads } from "./project-download";
 import { beginUpdateRestart } from "./update-restart";
 
 // The check CI runs on macOS, and the only one that needs a real Electron.
@@ -16,9 +18,80 @@ import { beginUpdateRestart } from "./update-restart";
 // daemon probe answers "nothing running" for a state directory that has never
 // held a daemon. Everything else about the app is behavior around those.
 
+async function checkProjectDownloads(directory: string): Promise<void> {
+	const downloads = join(directory, "Downloads");
+	mkdirSync(downloads);
+	const previous = app.getPath("downloads");
+	app.setPath("downloads", downloads);
+	writeFileSync(join(downloads, "Example.spool"), "existing project");
+	const server = createServer((request, response) => {
+		if (request.url === "/") {
+			response.writeHead(200, { "Content-Type": "text/html" });
+			response.end("<!doctype html><title>Canvas download check</title>");
+			return;
+		}
+		response.writeHead(200, {
+			"Content-Type": "application/octet-stream",
+			"Content-Disposition": 'attachment; filename="Example.spool"',
+		});
+		response.end("exported project");
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	assert(address !== null && typeof address !== "string");
+	const origin = `http://127.0.0.1:${address.port}`;
+	const canvas = new BrowserWindow({ show: false, webPreferences: { partition: `spool-download-${Date.now()}` } });
+	try {
+		installProjectDownloads(
+			canvas.webContents.session,
+			() => app.getPath("downloads"),
+			(contents, candidate) => contents === canvas.webContents && candidate.startsWith(`blob:${origin}/`),
+		);
+		await canvas.loadURL(origin);
+		await new Promise<void>((resolve, reject) => {
+			let completed = 0;
+			const deadline = setTimeout(
+				() => reject(new Error("project download did not finish without a Save dialog")),
+				10_000,
+			);
+			canvas.webContents.session.on("will-download", (_event, item) => {
+				assert(item.getSavePath().startsWith(`${downloads}/.spool-download-`));
+				item.once("done", (_done, state) => {
+					if (state !== "completed") {
+						clearTimeout(deadline);
+						reject(new Error(`project download ${state}`));
+					} else if (++completed === 2) {
+						clearTimeout(deadline);
+						resolve();
+					}
+				});
+			});
+			void canvas.webContents
+				.executeJavaScript(`
+				for (let index = 0; index < 2; index++) {
+					const anchor = document.createElement("a");
+					anchor.href = URL.createObjectURL(new Blob(["exported project"]));
+					anchor.download = "Example.spool";
+					anchor.click();
+				}
+			`)
+				.catch(reject);
+		});
+		assert.deepEqual(readdirSync(downloads).sort(), ["Example (1).spool", "Example (2).spool", "Example.spool"]);
+		assert.equal(readFileSync(join(downloads, "Example.spool"), "utf8"), "existing project");
+		for (const name of ["Example (1).spool", "Example (2).spool"])
+			assert.equal(readFileSync(join(downloads, name), "utf8"), "exported project");
+	} finally {
+		canvas.destroy();
+		server.close();
+		app.setPath("downloads", previous);
+	}
+}
+
 async function run(): Promise<void> {
 	const directory = mkdtempSync(join(tmpdir(), "spool-desktop-smoke-"));
 	try {
+		await checkProjectDownloads(directory);
 		const empty = await status(directory);
 		if (empty.running) throw new Error(`an empty state directory reported a running daemon`);
 
@@ -62,6 +135,8 @@ async function run(): Promise<void> {
 		rmSync(directory, { recursive: true, force: true });
 	}
 }
+
+app.on("window-all-closed", () => {});
 
 void app.whenReady().then(async () => {
 	try {

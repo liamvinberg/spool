@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DirectoryRequest } from "./directory-dialog";
 import type { CanvasCommand } from "./main";
+import type { ProjectDownloadResult } from "./project-download";
 
 // The canvas window's bridge.
 //
@@ -39,6 +40,11 @@ contextBridge.exposeInMainWorld("spoolApp", {
 });
 
 contextBridge.exposeInMainWorld("spoolCanvasWindow", {
+	onProjectDownload: (listener: (result: ProjectDownloadResult) => void): (() => void) => {
+		const handler = (_event: unknown, result: ProjectDownloadResult) => listener(result);
+		ipcRenderer.on("spool:project-download", handler);
+		return () => ipcRenderer.removeListener("spool:project-download", handler);
+	},
 	onCommand: (listener: (command: CanvasCommand) => void): (() => void) => {
 		const handler = (_event: unknown, command: CanvasCommand) => listener(command);
 		ipcRenderer.on("spool:canvas-command", handler);
