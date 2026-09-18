@@ -1,0 +1,40 @@
+.update-study{width:100%;height:100%;display:flex;flex-direction:column;background:#0e0e0e;color:#edecea;font-family:var(--font-sans);color-scheme:dark}
+.update-stage{position:relative;flex:1;min-height:0;overflow:hidden;isolation:isolate}
+.update-workspace{position:absolute;inset:0}
+.update-cover{position:absolute;inset:0;z-index:50;pointer-events:none}
+.update-stage[data-phase="waiting"] .update-cover,.update-stage[data-phase="failed"] .update-cover,.update-stage[data-phase="covering"] .update-cover,.update-stage[data-phase="revealing"] .update-cover,.update-stage[data-phase="preview"] .update-cover{pointer-events:auto}
+.update-field{position:absolute;inset:0;width:100%;height:100%}
+.update-fallback{position:absolute;inset:0;background:#0e0e0e;opacity:var(--cover)}
+.update-cover:has(.update-field[data-backend="webgl"]) .update-fallback{opacity:0}
+.update-message{position:absolute;left:17%;top:44%;transform:translateY(-50%);opacity:var(--copy);max-width:420px}
+.update-mark{width:26px;height:34px;color:#f5391a;margin-bottom:26px}
+.update-message h1{font-size:25px;letter-spacing:-.8px;line-height:1.2;font-weight:450;margin:0}
+.update-message p{font-size:13px;line-height:1.5;color:#94918e;margin:12px 0 0}
+.update-message button{margin-top:24px;border:1px solid #55514e;border-radius:5px;padding:9px 14px;font-size:13px}
+.update-stage[data-take="quiet"] .update-message{left:calc(50% + 40px)}
+.update-tools{flex:none;min-height:106px;display:flex;gap:24px;align-items:center;justify-content:space-between;padding:20px 28px;border-top:1px solid #2a2725;background:#141312;z-index:60}
+.update-about h2{font-size:15px;font-weight:500;margin:0 0 5px}
+.update-about p{font-size:12px;color:#aaa39d;margin:0}
+.update-about small{display:block;margin-top:8px;font-size:10px;color:#827c77}
+.update-controls{display:flex;gap:16px;align-items:center;font-size:12px;flex-wrap:wrap;justify-content:flex-end}
+.update-controls label{display:flex;align-items:center;gap:7px;color:#aaa39d}
+.update-controls select{background:#201e1c;padding:8px;border:1px solid #35312d;border-radius:4px;color:#ddd7d2}
+.update-controls input{accent-color:#f5391a}
+.update-study button{cursor:pointer}
+.update-controls button{padding:10px 6px;color:#bcb5ae;background:none;border:0;font-size:12px}
+.update-controls .update-play{padding:11px 15px;border-radius:5px;background:#e7e1db;color:#221f1c;display:flex;gap:22px;align-items:center}
+.update-controls button:disabled{opacity:.4;cursor:default}
+.update-study :is(button,input,select):focus-visible{outline:2px solid #f5391a;outline-offset:4px}
+.update-notice{position:absolute;bottom:68px;left:50%;transform:translateX(-50%);display:flex;gap:20px;align-items:center;padding:12px 16px;border:1px solid #3b3733;border-radius:6px;background:#201e1c;font-size:13px;z-index:30;white-space:nowrap}
+.update-notice button{color:#eee7df;font-size:12px}
+.update-notice button:last-child{font-size:20px;color:#aaa39d;line-height:1}
+.update-menu{position:absolute;right:22px;top:55px;background:#25211e;border:1px solid #484039;border-radius:4px;padding:7px 12px;font-size:12px;z-index:30}
+.update-returned{position:absolute;bottom:72px;left:50%;transform:translateX(-50%);font-size:13px;background:#201e1c;border:1px solid #3b3733;border-radius:6px;padding:12px 20px;z-index:30}
+@media(max-width:1000px){.update-tools{align-items:flex-start;flex-direction:column;gap:16px}.update-controls{justify-content:flex-start}.update-message{left:10%}.update-stage[data-take="quiet"] .update-message{left:55%}}
+@media(prefers-reduced-motion:reduce){.update-field{opacity:0}.update-cover:has(.update-field[data-backend="webgl"]) .update-fallback{opacity:var(--cover)}}
+.update-workspace{transform:scale(calc(1 - var(--cover)*.012));transform-origin:50% 48%;will-change:transform}
+.update-message{transform:translateY(calc(-50% + (1 - var(--copy))*8px))}
+.update-stage[data-take="aperture"] .update-message{left:50%;top:46%;width:420px;max-width:80%;text-align:center;transform:translate(-50%,calc(-50% + (1 - var(--copy))*8px))}
+.update-stage[data-take="aperture"] .update-mark{margin-left:auto;margin-right:auto}
+.update-stage[data-take="fold"] .update-message{left:20%}
+@media(prefers-reduced-motion:reduce){.update-workspace{transform:none}.update-message{transform:translateY(-50%)}.update-stage[data-take="aperture"] .update-message{transform:translate(-50%,-50%)}}
