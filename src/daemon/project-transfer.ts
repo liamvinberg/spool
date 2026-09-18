@@ -218,7 +218,19 @@ async function unpack(
 				fail("The archive is corrupt.");
 			const start = local + 30 + localLength + data.readUInt16LE(local + 28);
 			if (start + compressed > central) fail("The archive is corrupt.");
-			ranges.push({ start: local, end: start + compressed });
+			let localEnd = start + compressed;
+			if ((flags & 8) !== 0) {
+				const descriptor = data.readUInt32LE(localEnd) === 0x08074b50 ? localEnd + 4 : localEnd;
+				if (
+					descriptor + 12 > central ||
+					data.readUInt32LE(descriptor) !== data.readUInt32LE(offset + 16) ||
+					data.readUInt32LE(descriptor + 4) !== compressed ||
+					data.readUInt32LE(descriptor + 8) !== size
+				)
+					fail("The archive is corrupt.");
+				localEnd = descriptor + 12;
+			}
+			ranges.push({ start: local, end: localEnd });
 			entries.push({ name, size, compressed, start, crc: data.readUInt32LE(offset + 16), method });
 			offset += 46 + nameLength + data.readUInt16LE(offset + 30) + data.readUInt16LE(offset + 32);
 		}
