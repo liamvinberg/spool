@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.0
+
+### Minor Changes
+
+- ab50abc: Export entire projects as .spool files from Home or a project tab, then import them through Home or drag and drop. Each import opens a separate editable copy with its pages, frames, shared files and canvas arrangement.
+
 ## 0.21.4
 
 ### Patch Changes
