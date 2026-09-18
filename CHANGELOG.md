@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.0
+
+### Minor Changes
+
+- d89eaa7: On macOS, .spool files show the Spool icon and open in Spool from Finder. Opening a file imports an independent copy and opens its canvas.
+
 ## 0.22.0
 
 ### Minor Changes
