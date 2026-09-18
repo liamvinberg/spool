@@ -46,7 +46,7 @@ export function FlowingWelcome({ initialStep = 0, shader = "flowing", dissolveTa
 		setStep(next);
 	}
 	return (
-		<main className={cn("flowing-welcome", shader === "dissolve" && "fw-dissolve")} data-step={step} data-direction={direction}>
+		<main className={cn("flowing-welcome", shader === "dissolve" && "fw-dissolve", dissolveTake && "fw-step-dissolve")} data-step={step} data-direction={direction}>
 			{dissolveTake ? <DissolveField take={dissolveTake} step={step} /> : <WelcomeField variant={shader} step={step} />}
 			<header className="fw-brand"><SpoolMark className="fw-mark" /><span>spool</span></header>
 			<div className="fw-copy-position">

@@ -114,6 +114,10 @@
 @keyframes fw-return { from { opacity: 0; transform: translateY(-13px); filter: blur(3px); } to { opacity: 1; transform: translateY(0); filter: blur(0); } }
 .fw-dissolve .fw-copy { animation: fw-dissolve-arrive 420ms ease-out both; }
 @keyframes fw-dissolve-arrive { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.fw-step-dissolve .fw-copy-position { transition-duration: 360ms; }
+.fw-step-dissolve .fw-copy { animation: fw-step-arrive 320ms cubic-bezier(.22,1,.36,1) 80ms both; }
+.fw-step-dissolve .fw-progress span { transition-duration: 300ms; }
+@keyframes fw-step-arrive { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 700px) {
 	.fw-brand { top: 35px; left: 32px; }
 	.fw-copy-position { left: 32px; width: calc(100% - 64px); top: 31%; }

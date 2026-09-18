@@ -3,10 +3,10 @@ import fragment from "./dissolve-takes.glsl";
 
 export type DissolveTake = "clear" | "bloom" | "overlap" | "recede";
 const takes = {
-	clear: { index: 0, duration: 1.65 },
-	bloom: { index: 1, duration: 1.98 },
-	overlap: { index: 2, duration: 1.65 },
-	recede: { index: 3, duration: 2.05 },
+	clear: { index: 0, duration: .52 },
+	bloom: { index: 1, duration: .56 },
+	overlap: { index: 2, duration: .48 },
+	recede: { index: 3, duration: .58 },
 };
 const vertex = `attribute vec2 a_position; varying vec2 v_uv;
 void main() { v_uv=a_position*.5+.5; gl_Position=vec4(a_position,0.,1.); }`;
