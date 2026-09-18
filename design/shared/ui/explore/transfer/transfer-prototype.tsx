@@ -3,12 +3,21 @@ import { cn } from "shared/lib/utils";
 import { CoffeeScreen } from "shared/ui/demo/coffee-screens";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { MenuItem } from "shared/ui/spool/context-menu";
+import { Home } from "./current-home";
+import { homeProjects } from "shared/ui/spool/home-fixture";
+import { ProjectPicker, type ProjectPickerMode } from "shared/ui/spool/project-picker";
+import { CloseIcon } from "./current-icons";
+import { Toast } from "shared/ui/spool/toast";
+import { FormatOption } from "./format-option";
 import { SpoolShell } from "shared/ui/spool/shell";
 
 // Throwaway exploration: whole-project handoff versus deliberately adding frames.
 // All transfers, sizes and progress are fixtures. No archive is read or written.
 export type TransferTake = "window" | "edge" | "choice";
 export type TransferState =
+	| "home"
+	| "home-menu"
+	| "tab-menu"
 	| "idle"
 	| "hover"
 	| "export"
@@ -23,8 +32,8 @@ export type TransferState =
 	| "error"
 	| "choose";
 const FRAMES = ["menu", "cart", "receipt"] as const;
-const BUTTON =
-	"rounded-sm border border-border-raised px-3 py-2 type-control transition-colors hover:bg-raised focus-visible:outline-2 focus-visible:outline-thread disabled:opacity-40";
+// The shipped Home / confirmation-dialog button classes.
+const BUTTON = "home-action disabled:opacity-40";
 
 function Action({
 	children,
@@ -42,7 +51,7 @@ function Action({
 			type="button"
 			disabled={disabled}
 			onClick={onClick}
-			className={cn(BUTTON, primary && "bg-text text-bg hover:bg-text/90")}
+			className={cn(BUTTON, primary && "home-action-primary")}
 		>
 			{children}
 		</button>
@@ -57,10 +66,17 @@ export function TransferPrototype({
 	initial?: TransferState;
 }) {
 	const [state, setState] = useState<TransferState>(initial);
-	const [active, setActive] = useState(initial === "opened" ? "kaffe-studies" : "kaffe");
+	const [active, setActive] = useState(
+		initial === "home" || initial === "home-menu" ? "Home" : initial === "opened" ? "kaffe-studies" : "kaffe",
+	);
 	const [tabs, setTabs] = useState(initial === "opened" ? ["kaffe", "kaffe-studies"] : ["kaffe"]);
+	const [registered, setRegistered] = useState(initial === "opened" ? ["kaffe", "kaffe-studies"] : ["kaffe"]);
 	const [hover, setHover] = useState(initial === "hover");
-	const [menu, setMenu] = useState(false);
+	const [menu, setMenu] = useState<{ name: string; x: number; y: number } | null>(
+		initial === "tab-menu" ? { name: "kaffe", x: 160, y: 40 } : null,
+	);
+	const [picker, setPicker] = useState<ProjectPickerMode | null>(null);
+	const [exportName, setExportName] = useState("kaffe");
 	const [slow, setSlow] = useState(true);
 	const [same, setSame] = useState(false);
 	const [scope, setScope] = useState("project");
@@ -77,6 +93,7 @@ export function TransferPrototype({
 	const modal = ["export", "ready", "duplicate", "replace", "pick", "error", "choose"].includes(state);
 
 	function openProject(name: string) {
+		setRegistered((current) => current.includes(name) ? current : [...current, name]);
 		setTabs((current) => (current.includes(name) ? current : [...current, name]));
 		setActive(name);
 		setState("opened");
@@ -105,11 +122,14 @@ export function TransferPrototype({
 	function reset() {
 		setState(initial);
 		setHover(initial === "hover");
-		setMenu(false);
+		setMenu(null);
 		setNotice("");
 		setAdded(initial === "added");
-		setActive(initial === "opened" ? "kaffe-studies" : "kaffe");
+		setActive(
+			initial === "home" || initial === "home-menu" ? "Home" : initial === "opened" ? "kaffe-studies" : "kaffe",
+		);
 		setTabs(initial === "opened" ? ["kaffe", "kaffe-studies"] : ["kaffe"]);
+		setRegistered(initial === "opened" ? ["kaffe", "kaffe-studies"] : ["kaffe"]);
 		setSelected([...FRAMES]);
 		setCopy(false);
 		setFileName("kaffe-studies.spool");
@@ -122,7 +142,7 @@ export function TransferPrototype({
 		setStage(state === "packing" ? "Gathering frames and assets…" : "Reading file…");
 		const gate = window.setTimeout(() => setBusyVisible(true), 160);
 		const phase = window.setTimeout(
-			() => setStage(state === "packing" ? "Packing kaffe.spool…" : "Opening frames…"),
+			() => setStage(state === "packing" ? `Packing ${exportName}.spool…` : "Opening frames…"),
 			1100,
 		);
 		const finish = window.setTimeout(
@@ -130,6 +150,7 @@ export function TransferPrototype({
 				if (state === "packing") setState("ready");
 				else {
 					const name = copy ? "kaffe-copy" : same || initial === "replace" ? "kaffe" : "kaffe-studies";
+					setRegistered((current) => current.includes(name) ? current : [...current, name]);
 					setTabs((current) => (current.includes(name) ? current : [...current, name]));
 					setActive(name);
 					setState("opened");
@@ -143,7 +164,7 @@ export function TransferPrototype({
 			window.clearTimeout(phase);
 			window.clearTimeout(finish);
 		};
-	}, [busy, state, slow, same, copy, initial]);
+	}, [busy, state, slow, same, copy, initial, exportName]);
 	useEffect(() => {
 		if (!notice) return;
 		const timer = window.setTimeout(() => setNotice(""), 5000);
@@ -153,7 +174,7 @@ export function TransferPrototype({
 		const escape = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
 			setHover(false);
-			setMenu(false);
+			setMenu(null);
 			setState("idle");
 			dragDepth.current = 0;
 		};
@@ -164,12 +185,26 @@ export function TransferPrototype({
 		{ name: "app", frames: FRAMES, active: !added, open: true },
 		{ name: "site", frames: ["landing", "pricing"] },
 		{ name: "system", frames: ["type", "buttons", "colours"] },
-		...(added ? [{ name: "from-kaffe-studies", frames: selected, active: true, open: true }] : []),
+		...(added
+			? [{ name: "from-kaffe-studies", frames: selected.map((name) => `${name}-study`), active: true, open: true }]
+			: []),
 	];
 	return (
 		<div className="flex h-full flex-col bg-bg font-sans text-text">
 			<div
 				className="relative min-h-0 flex-1"
+				onContextMenu={(event) => {
+					const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-tab]") : null;
+					const name = target?.dataset.tab;
+					if (!name) return;
+					event.preventDefault();
+					const bounds = event.currentTarget.getBoundingClientRect();
+					setMenu({
+						name,
+						x: Math.min(event.clientX - bounds.left, bounds.width - 204),
+						y: event.clientY - bounds.top,
+					});
+				}}
 				onDragEnter={(event) => {
 					event.preventDefault();
 					dragDepth.current++;
@@ -199,50 +234,38 @@ export function TransferPrototype({
 					zoom="38%"
 					onFocus={setActive}
 					onHome={() => setActive("Home")}
-					onPick={() => setMenu(!menu)}
+					onPick={() => setPicker("start")}
+					canvasControls={active !== "Home"}
 					onClose={(name) => {
 						setTabs(tabs.filter((tab) => tab !== name));
 						setActive("Home");
 					}}
-					headerAccessory={
-						<button
-							type="button"
-							aria-label="Project actions"
-							onClick={() => setMenu(!menu)}
-							className="h-7 w-7 rounded-sm text-muted hover:bg-surface"
-						>
-							•••
-						</button>
-					}
 				>
 					{active === "Home" ? (
-						<div className="h-full bg-canvas px-20 py-16">
-							<h1 className="type-page">Projects</h1>
-							<div className="mt-8 flex gap-5">
-								{tabs.map((tab) => (
-									<button
-										type="button"
-										key={tab}
-										onClick={() => setActive(tab)}
-										className="w-64 rounded-md border border-border-raised bg-surface p-6 text-left"
-									>
-										<div className="mb-12 flex gap-2">
-											{FRAMES.map((name) => (
-												<span
-													key={name}
-													className="h-20 w-10 rounded-xs border border-border-raised bg-raised"
-												/>
-											))}
-										</div>
-										<span className="type-title">{tab}</span>
-										<p className="mt-2 text-muted type-detail">on this mac</p>
-									</button>
-								))}
-							</div>
-							<button type="button" onClick={() => input.current?.click()} className={cn(BUTTON, "mt-8")}>
-								Import project…
-							</button>
-						</div>
+						<Home
+							projects={registered.map((name, index) => ({
+								root: name,
+								name,
+								openedAt: new Date(Date.now() - index * 86400000).toISOString(),
+								frameCount: 8,
+								covers: homeProjects.find((project) => project.name === "kaffe")?.covers ?? [],
+							}))}
+							initialMenu={initial === "home-menu" ? "kaffe" : null}
+							onOpenProject={(project) => {setTabs((current) => current.includes(project.name) ? current : [...current, project.name]); setActive(project.name);}}
+							onExportProject={(project) => {
+								setExportName(project.name);
+								setScope("project");
+								setState("export");
+							}}
+							onForgetProject={() => setNotice("Hide from Spool is outside this prototype")}
+							onTrashProject={() => setNotice("Move to Trash is outside this prototype")}
+							onRenameProject={() => setNotice("Rename is outside this prototype")}
+							onCopyPath={() => setNotice("Path copied · simulated")}
+							onSettings={() => setNotice("Settings is outside this prototype")}
+							onStart={() => setPicker("start")}
+							onFolder={() => setPicker("folder")}
+							onImport={() => input.current?.click()}
+						/>
 					) : (
 						<CanvasChrome pages={pages} rail={null}>
 							<div className="flex h-full items-center justify-center gap-12 pb-12">
@@ -275,34 +298,58 @@ export function TransferPrototype({
 						event.target.value = "";
 					}}
 				/>
+				{picker ? (
+					<ProjectPicker
+						initial={picker}
+						onClose={() => setPicker(null)}
+						onOpened={(project) => {
+							setPicker(null);
+							openProject(project.name);
+						}}
+					/>
+				) : null}
 				{menu ? (
-					<div
-						role="menu"
-						className="absolute right-4 top-12 z-30 flex w-60 flex-col rounded-md border border-border-raised bg-raised p-1 animate-menu-in"
-					>
-						<MenuItem
-							label="Export project…"
-							onClick={() => {
-								setMenu(false);
-								setState("export");
-							}}
+					<>
+						<button
+							type="button"
+							aria-label="Dismiss tab menu"
+							className="absolute inset-0 z-20 cursor-default"
+							onClick={() => setMenu(null)}
 						/>
-						<MenuItem
-							label="Import project…"
-							onClick={() => {
-								setMenu(false);
-								input.current?.click();
-							}}
-						/>
-						<div className="my-1 border-border-raised border-t" />
-						<MenuItem
-							label="Add frames from a file…"
-							onClick={() => {
-								setMenu(false);
-								setState("pick");
-							}}
-						/>
-					</div>
+						<div
+							role="menu"
+							aria-label={`${menu.name} project`}
+							style={{ left: menu.x, top: menu.y }}
+							className="absolute z-30 flex w-[196px] animate-menu-in origin-top-left flex-col rounded-md border border-border-raised bg-raised p-unit"
+						>
+							<MenuItem
+								label="Export project…"
+								onClick={() => {
+									setExportName(menu.name);
+									setScope("project");
+									setMenu(null);
+									setState("export");
+								}}
+							/>
+							<MenuItem
+								label="Add frames from a file…"
+								onClick={() => {
+									setActive(menu.name);
+									setMenu(null);
+									setState("pick");
+								}}
+							/>
+							<div className="mx-2 my-unit h-px bg-border-raised" />
+							<MenuItem
+								label="Close tab"
+								onClick={() => {
+									setTabs(tabs.filter((tab) => tab !== menu.name));
+									if (active === menu.name) setActive("Home");
+									setMenu(null);
+								}}
+							/>
+						</div>
+					</>
 				) : null}
 				{hover && !busy ? (
 					<div
@@ -337,7 +384,9 @@ export function TransferPrototype({
 						<div className="flex items-center justify-between px-4 py-3">
 							<div>
 								<p className="type-control">{stage}</p>
-								<p className="mt-1 text-muted type-detail">{state === "packing" ? "kaffe.spool" : fileName}</p>
+								<p className="mt-1 text-muted type-detail">
+									{state === "packing" ? `${exportName}.spool` : fileName}
+								</p>
 							</div>
 							<button
 								type="button"
@@ -352,7 +401,9 @@ export function TransferPrototype({
 						</div>
 					</div>
 				) : null}
-				{notice ? (
+				{notice && !added ? (
+					<Toast notice={{ kind: "success", message: notice }} />
+				) : notice ? (
 					<div
 						role="status"
 						className="absolute bottom-20 left-1/2 z-30 flex -translate-x-1/2 items-center gap-6 rounded-md border border-border-raised bg-raised px-4 py-3 animate-toast-in type-control"
@@ -379,12 +430,12 @@ export function TransferPrototype({
 							role="dialog"
 							aria-modal="true"
 							aria-labelledby="transfer-title"
-							className="w-[460px] rounded-lg border border-border-raised bg-surface animate-find-panel-in"
+							className="w-[380px] rounded-lg border border-border-raised bg-raised animate-menu-in"
 						>
-							<div className="flex items-center justify-between border-border border-b px-6 py-4">
-								<h2 id="transfer-title" className="type-heading">
+							<div className="flex items-center justify-between border-border-raised border-b px-5 py-4">
+								<h2 id="transfer-title" className="type-title">
 									{state === "export"
-										? "Export kaffe"
+										? `Export ${exportName}`
 										: state === "ready"
 											? "Your project is ready"
 											: state === "duplicate"
@@ -403,37 +454,20 @@ export function TransferPrototype({
 									className="ml-4 text-muted hover:text-text"
 									onClick={() => setState("idle")}
 								>
-									✕
+									<CloseIcon />
 								</button>
 							</div>
-							<div className="px-6 py-5">
+							<div className="px-5 py-4">
 								{state === "export" ? (
 									<>
 										<p className="mb-5 text-muted type-body">Send an editable copy to someone using spool.</p>
-										<div className="space-y-2">
-											{[
-												["project", "Entire project", "3 pages · 8 frames"],
-												["page", "Current page", "app · 3 frames"],
-											].map(([value, label, detail]) => (
-												<label
-													key={value}
-													className={cn(
-														"flex cursor-pointer items-center gap-3 rounded-sm border p-3",
-														scope === value ? "border-muted" : "border-border",
-													)}
-												>
-													<input
-														type="radio"
-														name="scope"
-														checked={scope === value}
-														onChange={() => setScope(value ?? "project")}
-														className="accent-thread"
-													/>
-													<span className="flex-1 type-control">{label}</span>
-													<span className="text-muted type-detail">{detail}</span>
-												</label>
-											))}
-										</div>
+										<FormatOption
+											checked
+											description="3 pages · 8 frames"
+											disabled={false}
+											label="Entire project"
+											onClick={() => setScope("project")}
+										/>
 										<p className="mt-5 text-muted type-control">
 											Frames, layout, flows and local assets travel together.
 										</p>
@@ -441,7 +475,7 @@ export function TransferPrototype({
 								) : null}
 								{state === "ready" ? (
 									<>
-										<p className="type-value">{scope === "project" ? "kaffe.spool" : "kaffe-app.spool"}</p>
+										<p className="type-value">{`${exportName}.spool`}</p>
 										<p className="mt-2 text-muted type-detail">
 											{scope === "project" ? "8 frames · 3 pages" : "3 frames · 1 page"} · 2.4 mb
 										</p>
@@ -535,7 +569,7 @@ export function TransferPrototype({
 								) : null}
 							</div>
 							{state !== "duplicate" && state !== "choose" ? (
-								<div className="flex justify-end gap-2 border-border border-t px-6 py-4">
+								<div className="flex justify-end gap-2 border-border-raised border-t px-4 py-3">
 									<Action onClick={() => setState("idle")}>Cancel</Action>
 									{state === "export" ? (
 										<Action primary onClick={() => setState("packing")}>
@@ -556,6 +590,7 @@ export function TransferPrototype({
 											primary
 											onClick={() => {
 												setTabs((current) => [...current, "kaffe-backup"]);
+								setRegistered((current) => [...current, "kaffe-backup"]);
 												setSame(true);
 												setState("loading");
 											}}
@@ -593,7 +628,7 @@ export function TransferPrototype({
 				) : null}
 			</div>
 			<footer className="flex h-14 shrink-0 items-center gap-5 border-border-raised border-t bg-bg px-5 type-caption text-muted">
-				<span>Prototype · file operations are simulated</span>
+				<span>Prototype · simulated files</span>
 				<button
 					type="button"
 					draggable
@@ -603,7 +638,7 @@ export function TransferPrototype({
 				>
 					kaffe-studies.spool ↗
 				</button>
-				<span>Drag the file above, or click it.</span>
+				<span>Right-click a tab to export.</span>
 				<label className="ml-auto flex items-center gap-2">
 					<input type="checkbox" checked={slow} onChange={(event) => setSlow(event.target.checked)} />
 					Slow transfer
