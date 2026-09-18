@@ -39,7 +39,8 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 		const material=gl.getUniformLocation(program,"u_material");
 		const camera=gl.getUniformLocation(program,"u_camera");
 		gl.uniform1f(gl.getUniformLocation(program,"u_scene"),profile.scene ? 1 : 0);
-		let width=1,height=1,elapsed=0,last=0,raf=0,flowRate=1;
+		let width=1,height=1,elapsed=0,last=0,raf=0;
+		let flowFrom=0,flowTo=0,flowVelocity=0,flowInitialVelocity=0;
 		const draw=() => {
 			gl.uniform2f(size,width,height);gl.uniform1f(time,elapsed);
 			gl.uniform4f(shape,position[0]!,position[1]!,position[2]!,position[3]!);
@@ -52,11 +53,13 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 		const start=() => {
 			if(wanted.current!==target) {
 				source=[...position];target=wanted.current;started=performance.now();progress=0;
+				flowFrom=elapsed;flowTo=elapsed+(profile.flowTravel ?? 0);flowInitialVelocity=flowVelocity;
 			}
 			if(reduced.matches) {
 				const destination=profile.poses[target] ?? profile.poses[0];
 				destination.forEach((value,index)=>{position[index]=value;});
 				progress=1;
+				if(profile.flowTravel) { elapsed=flowTo;flowVelocity=0; }
 			}
 		};
 		const tick=(stamp:number) => {
@@ -66,11 +69,14 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 			progress=started ? Math.min(1,(stamp-started)/profile.duration) : 1;
 			const destination=profile.poses[target] ?? profile.poses[0];
 			const p=progress;
-			// Integrate the extra speed into the existing clock. Multiplying time
-			// would jump to another shape when the speed changes.
-			const desiredRate=1+(profile.flowBoost ?? 0)*Math.sin(Math.PI*p)**2;
-			flowRate+=(desiredRate-flowRate)*(1-Math.exp(-12*dt));
-			elapsed+=dt*flowRate;
+			if(profile.flowTravel) {
+				// One continuous trip through the pigment, then an exact hold.
+				// Preserve velocity if another click interrupts the trip.
+				const seconds=profile.duration/1000,travel=flowTo-flowFrom;
+				const tangent=flowInitialVelocity*seconds;
+				elapsed=flowFrom+travel*(3*p*p-2*p*p*p)+tangent*(p*p*p-2*p*p+p);
+				flowVelocity=(travel*(6*p-6*p*p)+tangent*(3*p*p-4*p+1))/seconds;
+			} else elapsed+=dt;
 			// A shared duration with the copy. Echo leads with the pigment;
 			// Current lets the words move first, then gently catches up.
 			const phase=take==="echo" ? Math.min(1,p/ .72) : take==="pan" ? Math.max(0,(p-.12)/.88) : p;
@@ -79,11 +85,12 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 			destination.forEach((value,index)=>{
 				position[index]=source[index]!+(value-source[index]!)*eased+profile.swell[index]!*pulse;
 			});
-			draw();raf=window.requestAnimationFrame(tick);
+			draw();
+			if(!profile.flowTravel || progress<1) raf=window.requestAnimationFrame(tick);
 		};
 		const sync=() => {
 			window.cancelAnimationFrame(raf);raf=0;last=0;start();draw();
-			if(!document.hidden && !reduced.matches) raf=window.requestAnimationFrame(tick);
+			if(!document.hidden && !reduced.matches && (!profile.flowTravel || progress<1)) raf=window.requestAnimationFrame(tick);
 		};
 		const resize=() => {
 			const box=canvas.getBoundingClientRect();width=Math.max(1,box.width);height=Math.max(1,box.height);
