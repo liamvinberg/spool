@@ -10,12 +10,15 @@ const descriptions: Record<Take, { name: string; description: string }> = {
 	weave: { name: "Weave", description: "Curved strands arrive in sequence and slip away together." },
 	fold: { name: "Fold", description: "A soft sheet rolls down, catches, and releases." },
 	aperture: { name: "Aperture", description: "The canvas closes to a point, then opens in one breath." },
+	"pigment-orbit": { name: "Pigment · Orbit", description: "A living pigment ring. The centre stays quiet." },
+	"pigment-tide": { name: "Pigment · Tide", description: "A low wash of red rises and falls beneath the words." },
+	"pigment-drift": { name: "Pigment · Drift", description: "Pigment flows through a narrow band, then disperses." },
 };
 type Phase = "preview" | "idle" | "covering" | "waiting" | "revealing" | "done" | "failed";
 export function UpdateStudy({ take }: { take: Take }) {
 	const [phase, setPhase] = useState<Phase>("preview");
 	const [notice, setNotice] = useState(true);
-	const [wait, setWait] = useState(650);
+	const [wait, setWait] = useState(take.startsWith("pigment-") ? 10000 : 650);
 	const [hold, setHold] = useState(false);
 	const [slow, setSlow] = useState(false);
 	const [failed, setFailed] = useState(false);
@@ -175,6 +178,7 @@ export function UpdateStudy({ take }: { take: Take }) {
 							<option value={650}>Quick update</option>
 							<option value={1500}>1.5 seconds</option>
 							<option value={5000}>5 seconds</option>
+							<option value={10000}>10 seconds</option>
 							<option value={20000}>20 seconds</option>
 						</select>
 					</label>

@@ -38,3 +38,8 @@
 .update-stage[data-take="aperture"] .update-mark{margin-left:auto;margin-right:auto}
 .update-stage[data-take="fold"] .update-message{left:20%}
 @media(prefers-reduced-motion:reduce){.update-workspace{transform:none}.update-message{transform:translateY(-50%)}.update-stage[data-take="aperture"] .update-message{transform:translate(-50%,-50%)}}
+.update-stage[data-take="pigment-orbit"] .update-message{left:50%;top:46%;width:420px;max-width:80%;text-align:center;transform:translate(-50%,calc(-50% + (1 - var(--copy))*8px))}
+.update-stage[data-take="pigment-orbit"] .update-mark{margin-left:auto;margin-right:auto}
+.update-stage[data-take="pigment-tide"] .update-message{left:50%;top:35%;width:420px;max-width:80%;text-align:center;transform:translate(-50%,calc(-50% + (1 - var(--copy))*8px))}
+.update-stage[data-take="pigment-tide"] .update-mark{margin-left:auto;margin-right:auto}
+@media(prefers-reduced-motion:reduce){.update-stage[data-take="pigment-orbit"] .update-message,.update-stage[data-take="pigment-tide"] .update-message{transform:translate(-50%,-50%)}}

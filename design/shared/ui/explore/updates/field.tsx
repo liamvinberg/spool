@@ -1,7 +1,27 @@
 import { useEffect, useRef, type MutableRefObject } from "react";
 import fragment from "./cover.glsl";
-export type Take = "quiet" | "thread" | "pigment" | "weave" | "fold" | "aperture";
-const takes: Record<Take, number> = { quiet: 0, thread: 1, pigment: 2, weave: 3, fold: 4, aperture: 5 };
+import livingPigment from "./pigment-wait.glsl";
+export type Take =
+	| "quiet"
+	| "thread"
+	| "pigment"
+	| "weave"
+	| "fold"
+	| "aperture"
+	| "pigment-orbit"
+	| "pigment-tide"
+	| "pigment-drift";
+const takes: Record<Take, number> = {
+	quiet: 0,
+	thread: 1,
+	pigment: 2,
+	weave: 3,
+	fold: 4,
+	aperture: 5,
+	"pigment-orbit": 6,
+	"pigment-tide": 7,
+	"pigment-drift": 8,
+};
 const vertex =
 	"attribute vec2 a_position; varying vec2 v_uv; void main(){v_uv=a_position*.5+.5;gl_Position=vec4(a_position,0.,1.);}";
 export function CoverField({
@@ -41,7 +61,7 @@ export function CoverField({
 		};
 		for (const [type, source] of [
 			[gl.VERTEX_SHADER, vertex],
-			[gl.FRAGMENT_SHADER, fragment],
+			[gl.FRAGMENT_SHADER, take.startsWith("pigment-") ? livingPigment : fragment],
 		] as const) {
 			const shader = gl.createShader(type);
 			if (!shader) {
@@ -96,9 +116,9 @@ export function CoverField({
 				!document.hidden &&
 				(last !== amount.current ||
 					(amount.current > 0 &&
-						(take === "pigment" || take === "weave" || take === "aperture") &&
+						(take.startsWith("pigment") || take === "weave" || take === "aperture") &&
 						!reduced.matches &&
-						now - lastDraw > 50))
+						now - lastDraw > (take.startsWith("pigment-") ? 30 : 50)))
 			) {
 				gl.uniform2f(size, width, height);
 				gl.uniform1f(time, reduced.matches ? 0 : now / 1000);
