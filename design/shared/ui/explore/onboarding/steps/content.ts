@@ -10,7 +10,9 @@ export const modules = {
  reference: { title: "Give your agent a starting point.", body: "Add a link or a local file path. Your agent will need access to the source to recreate it." },
  import: { title: "An import starts with a prompt.", body: "Ask your agent to rebuild the design in your project. Review the first frame together, then keep going." },
  agent: { title: "Where do you like to work?", body: "Both work with the same project files. You can change your mind whenever you want." },
- connect: { title: "Bring an account.", body: "Connect ChatGPT or an API key to use the agent beside your canvas." },
+ connect: { title: "Sign in and start making.", body: "Connect ChatGPT to use the agent in spool. Then your first prompt can go straight to work." },
+ signin: { title: "Finish signing in.", body: "Sign in to ChatGPT in your browser, then return to your project in spool." },
+ connected: { title: "You’re ready to make something.", body: "ChatGPT is connected. Tell your agent what you have in mind, right here in spool." },
  handoff: { title: "Meet you in your agent.", body: "Open this project folder in your usual agent. Paste the prompt below, and the frames it makes will appear in spool." },
  prompt: { title: "What should we make first?", body: "A rough idea is enough. Your agent can help you work out the details." },
  sample: { title: "Try a little project.", body: "Explore a small, working example before starting something of your own." },
@@ -23,7 +25,7 @@ export const modules = {
 export type Module = keyof typeof modules;
 export type Agent = "own" | "spool";
 export type Project = "new" | "existing" | "import" | "sample";
-export type Source = "Figma" | "Paper" | "Pen" | "Image";
+export type Source = "Figma" | "Paper" | "Pencil" | "Image";
 
 export function stageFor(module: Module): number {
  if (module === "welcome") return 0;

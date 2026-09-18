@@ -75,3 +75,26 @@
 .steps-canvas-center h1 { font-size: 29px; font-weight: 450; letter-spacing: -1px; }
 .steps-canvas-center > p { color: #ae9d8f; font-size: 14px; line-height: 1.6; }
 @media (max-height: 720px) { .onboarding-steps .opening-navigation { bottom: 35px; } .onboarding-steps .opening-content h1 { font-size: 36px; } .onboarding-steps .opening-description { margin-top: 15px; font-size: 15px; } .onboarding-steps .steps-compact button { height: 56px; } }
+.steps-signin { width: min(430px, 100%); margin: 42px auto 0; }
+.steps-login-button { display: flex; justify-content: space-between; align-items: center; width: 100%; height: 54px; padding: 0 20px; border: 1px solid #eee8e1; border-radius: 8px; background: #eee8e1; color: #241f1c; font-size: 14px; font-weight: 500; cursor: pointer; }
+.steps-login-button:hover { background: #fffaf4; }
+.steps-signin > p { font-size: 12px; line-height: 1.7; color: #a89a8f; margin-top: 18px; }
+.steps-login-preview { display: flex; justify-content: center; align-items: center; gap: 13px; margin-top: 37px; padding-top: 24px; border-top: 1px solid #65504460; color: #9d8979; font-size: 12px; }
+.steps-login-preview svg { width: 16px; height: 22px; }
+.steps-auth-status { padding: 15px 20px; }
+.steps-auth-status strong { display: block; font-weight: 500; font-size: 16px; margin-top: 22px; color: #e7d6c7; }
+.steps-auth-status p { font-size: 12px; line-height: 1.7; color: #aa9787; }
+.steps-auth-orbit { display: block; margin: 0 auto; width: 32px; height: 32px; border: 1px solid #695045; border-top-color: #e6c4aa; border-radius: 50%; animation: steps-auth-turn 1.8s linear infinite; }
+@keyframes steps-auth-turn { to { transform: rotate(360deg); } }
+.steps-connected { display: flex; gap: 17px; align-items: center; text-align: left; border-block: 1px solid #655044; padding: 27px 8px; }
+.steps-connected > span { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #ad8f78; border-radius: 50%; color: #e6c4aa; }
+.steps-connected strong { font-size: 16px; font-weight: 500; color: #e7d6c7; }
+.steps-connected p { font-size: 12px; color: #aa9787; margin: 7px 0 0; }
+.steps-conversation { text-align: left; width: min(450px, 100%); margin: 30px auto 0; font-size: 13px; line-height: 1.7; }
+.steps-user-message { margin-left: 40px; padding: 16px; border: 1px solid #655044; border-radius: 9px; color: #dfcfc2; background: #23191280; }
+.steps-conversation > div { display: flex; align-items: flex-start; gap: 17px; margin-top: 28px; color: #b9a18e; }
+.steps-conversation svg { width: 18px; height: 25px; flex: none; margin-top: 3px; }
+.steps-conversation > div p { margin: 0; }
+
+.onboarding-steps .opening-next.steps-skip { background: none; border-color: transparent; color: #a89a8f; }
+.onboarding-steps .opening-next.steps-skip:hover { color: #eee8e1; }
