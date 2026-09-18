@@ -1307,7 +1307,7 @@ export function createDaemonApp({
 		.post(
 			"/api/projects/export",
 			validator("json", (value, c) => {
-				const root = (value as { root?: unknown }).root;
+				const root = typeof value === "object" && value !== null ? (value as { root?: unknown }).root : undefined;
 				return typeof root === "string" ? { root } : c.json({ error: "A project root is required." }, 400);
 			}),
 			async (c) => {
@@ -1328,7 +1328,8 @@ export function createDaemonApp({
 		.post(
 			"/api/projects/transfer/cancel",
 			validator("json", (value, c) => {
-				const transfer = (value as { transfer?: unknown }).transfer;
+				const transfer =
+					typeof value === "object" && value !== null ? (value as { transfer?: unknown }).transfer : undefined;
 				return typeof transfer === "string" ? { transfer } : c.json({ error: "A transfer id is required." }, 400);
 			}),
 			(c) => {

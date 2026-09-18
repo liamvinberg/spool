@@ -75,7 +75,8 @@ export async function exportProject(
 		for (const entry of await readdir(directory, { withFileTypes: true })) {
 			signal?.throwIfAborted();
 			const path = `${relative}/${entry.name}`;
-			if (!portable(path)) continue;
+			if (entry.name.startsWith(".") || excluded.has(entry.name)) continue;
+			if (!portable(path)) fail(`Cannot export unsupported authored path: ${path}`);
 			const full = join(directory, entry.name);
 			if (entry.isSymbolicLink()) fail(`Cannot export symbolic link: ${path}`);
 			if (entry.isDirectory()) {
@@ -134,6 +135,27 @@ export async function exportProject(
 	return archive;
 }
 
+/** One spelling and one filesystem kind for every archive path and its parents. */
+class ArchivePaths {
+	private paths = new Map<string, { spelling: string; kind: "file" | "directory"; explicit: boolean }>();
+	add(path: string, kind: "file" | "directory"): void {
+		let prefix = "";
+		for (const part of path.split("/")) {
+			prefix = prefix ? `${prefix}/${part}` : part;
+			const key = prefix.normalize("NFC").toLowerCase();
+			const explicit = prefix === path;
+			const entryKind = explicit ? kind : "directory";
+			const previous = this.paths.get(key);
+			if (
+				previous &&
+				(previous.spelling !== prefix || previous.kind !== entryKind || (explicit && previous.explicit))
+			)
+				fail("The archive contains colliding paths.");
+			this.paths.set(key, { spelling: prefix, kind: entryKind, explicit: explicit || previous?.explicit === true });
+		}
+	}
+}
+
 /** Read central and local headers before inflation, rejecting ambiguous names and filesystem types. */
 async function unpack(
 	bytes: Uint8Array,
@@ -157,8 +179,7 @@ async function unpack(
 		let expanded = 0;
 		const entries: { name: string; size: number; compressed: number; start: number; crc: number; method: number }[] =
 			[];
-		const seen = new Set<string>();
-		const spellings = new Map<string, string>();
+		const paths = new ArchivePaths();
 		const ranges: { start: number; end: number }[] = [];
 		const decoder = new TextDecoder("utf-8", { fatal: true });
 		for (let index = 0; index < count; index++) {
@@ -175,17 +196,7 @@ async function unpack(
 			if ((flags & ~0x808) !== 0 || (method !== 0 && method !== 8) || data.readUInt16LE(offset + 34) !== 0)
 				fail("Unsupported archive entry.");
 			if (!safeEntry(name)) fail(`The archive contains an unsupported path: ${name}`);
-			const key = name.normalize("NFC").toLowerCase();
-			if (seen.has(key)) fail("The archive contains colliding paths.");
-			seen.add(key);
-			let prefix = "";
-			for (const segment of name.split("/")) {
-				prefix = prefix ? `${prefix}/${segment}` : segment;
-				const folded = prefix.normalize("NFC").toLowerCase();
-				const previous = spellings.get(folded);
-				if (previous !== undefined && previous !== prefix) fail("The archive contains colliding paths.");
-				spellings.set(folded, prefix);
-			}
+			paths.add(name, "file");
 			expanded += size;
 			if (expanded > limits.expandedBytes) fail("The archive exceeds the expanded size limit.");
 			const local = data.readUInt32LE(offset + 42);
@@ -227,13 +238,7 @@ async function unpack(
 		for (let index = 1; index < ranges.length; index++)
 			if ((ranges[index]?.start ?? 0) < (ranges[index - 1]?.end ?? 0))
 				fail("The archive contains overlapping entries.");
-		for (const key of seen) {
-			let parent = key;
-			while (parent.includes("/")) {
-				parent = parent.slice(0, parent.lastIndexOf("/"));
-				if (seen.has(parent)) fail("The archive contains colliding paths.");
-			}
-		}
+
 		const files = new Map<string, Uint8Array>();
 		for (const entry of entries) {
 			await yieldTurn();
@@ -287,20 +292,9 @@ export async function importProject(
 		!directories.every((path) => typeof path === "string" && portable(path) && path !== "design/canvas.json")
 	)
 		fail("The archive directories are invalid.");
-	const names = new Map<string, string>();
-	const fileNames = new Set([...files.keys()].map((path) => path.normalize("NFC").toLowerCase()));
-	for (const path of [...files.keys(), ...(directories as string[])]) {
-		let prefix = "";
-		for (const part of path.split("/")) {
-			prefix = prefix ? `${prefix}/${part}` : part;
-			const key = prefix.normalize("NFC").toLowerCase();
-			if ((names.has(key) && names.get(key) !== prefix) || (prefix !== path && fileNames.has(key)))
-				fail("The archive contains colliding paths.");
-			names.set(key, prefix);
-		}
-		if (directories.includes(path) && fileNames.has(path.normalize("NFC").toLowerCase()))
-			fail("The archive contains colliding paths.");
-	}
+	const paths = new ArchivePaths();
+	for (const path of files.keys()) paths.add(path, "file");
+	for (const path of directories as string[]) paths.add(path, "directory");
 	const name =
 		fields.name
 			.normalize("NFKC")
@@ -331,8 +325,12 @@ export async function importProject(
 		signal?.throwIfAborted();
 		// Reservation, installation and registry mutation are one synchronous commit.
 		// Cancellation can run before it or after it, never halfway through it.
+		const registered = new Set(
+			readRegistry(spoolDir).projects.map((project) => basename(project.root).normalize("NFC").toLowerCase()),
+		);
 		for (let suffix = 1; ; suffix++) {
 			const candidate = join(parent, suffix === 1 ? name : `${name} ${suffix}`);
+			if (registered.has(basename(candidate).normalize("NFC").toLowerCase())) continue;
 			try {
 				mkdirSync(candidate);
 				destination = candidate;
