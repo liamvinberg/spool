@@ -1,0 +1,33 @@
+.shader-study { width:100%; height:100%; display:flex; flex-direction:column; background:#101010; color:#f0eeeb; font-family:"Instrument Sans Variable","Instrument Sans",sans-serif; -webkit-font-smoothing:antialiased; }
+.shader-study-stage { position:relative; flex:1; min-height:0; isolation:isolate; overflow:hidden; }
+.shader-study-field { position:absolute; inset:0; width:100%; height:100%; background:#101010; pointer-events:none; }
+.shader-study-brand { position:absolute; z-index:1; left:64px; top:45px; display:flex; gap:12px; align-items:center; font-size:22px; letter-spacing:-.8px; }
+.shader-study-brand svg { width:19px; height:26px; }
+.shader-study-copy { position:absolute; z-index:1; left:7%; top:40%; }
+.shader-study-copy h1 { margin:0; font-size:46px; font-weight:450; letter-spacing:-2px; line-height:1.12; }
+.shader-study-copy p { margin:22px 0 0; color:#aaa5a0; font-size:17px; }
+.shader-study-nav { position:absolute; z-index:1; bottom:40px; left:64px; right:64px; display:flex; justify-content:space-between; align-items:center; }
+.shader-study-dots { display:flex; gap:7px; }
+.shader-study-dots span { width:5px; height:5px; border-radius:50%; background:#65584f; transition:background 180ms; }
+.shader-study-dots span[data-current="true"] { background:#e1d7cd; }
+.shader-study-actions { display:flex; align-items:center; gap:26px; }
+.shader-study button { cursor:pointer; border:0; font-family:inherit; font-size:13px; color:#b4aca5; background:none; padding:10px 6px; border-radius:6px; transition:background 160ms,color 160ms; }
+.shader-study button:hover { color:#f0eeeb; }
+.shader-study button:disabled { cursor:default; }
+.shader-study-actions button:disabled:not(.shader-study-next) { opacity:.4; }
+.shader-study .shader-study-next { background:#efebe6; color:#25221f; height:42px; padding:0 17px; min-width:146px; display:flex; align-items:center; gap:23px; }
+.shader-study .shader-study-next:hover { background:#fff9f2; }
+.shader-study .shader-study-next:disabled { background:#d3cdc6; }
+.shader-study-tools { position:relative; z-index:2; flex:none; min-height:94px; border-top:1px solid #292522; display:flex; align-items:center; justify-content:space-between; gap:24px; padding:18px 30px; background:#141311; }
+.shader-study-about h2 { margin:0; font-size:15px; line-height:1.3; font-weight:500; }
+.shader-study-about p { margin:6px 0 0; color:#98918b; font-size:12px; line-height:1.4; max-width:430px; }
+.shader-study-transport { position:relative; z-index:1; display:flex; align-items:center; gap:18px; flex:none; transform:translateZ(0); }
+.shader-study-copy-toggle { display:flex; align-items:center; gap:7px; font-size:12px; color:#b4aca5; cursor:pointer; }
+.shader-study-copy-toggle input { width:12px; height:12px; accent-color:#cfbba9; }
+.shader-study-scrub { display:flex; align-items:center; }
+.shader-study-scrub input { width:120px; height:3px; accent-color:#d4b69f; cursor:ew-resize; }
+.shader-study output { width:35px; text-align:right; font:10px "Fragment Mono",monospace; color:#aaa29b; }
+.shader-study :is(button,input):focus-visible { outline:2px solid #d4b69f; outline-offset:5px; }
+.shader-study-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media(max-width:800px) { .shader-study-tools { align-items:flex-start; gap:12px; flex-direction:column; } .shader-study-brand,.shader-study-nav { left:32px; } .shader-study-nav { right:32px; } .shader-study-copy h1 { font-size:38px; } }
+@media(prefers-reduced-motion:reduce) { .shader-study * { transition:none !important; } }
