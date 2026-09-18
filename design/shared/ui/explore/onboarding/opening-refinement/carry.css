@@ -1,0 +1,92 @@
+/*
+ * No transitions on anything a step moves. The frame's rAF loop writes --carry
+ * and its derivatives, so the copy, the mark, the bounds and the shader are one
+ * motion by construction rather than four that happen to be timed alike.
+ */
+.carry-welcome {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	min-height: 680px;
+	overflow: hidden;
+	isolation: isolate;
+	background: #11100f;
+	color: #f1eee9;
+	font-family: "Instrument Sans Variable", "Instrument Sans", sans-serif;
+	--carry: 0; --c1: 0; --c2: 0;
+	--t0: 1; --t1: 0; --t2: 0;
+	--y0: 0px; --y1: 30px; --y2: 30px;
+}
+.carry-mark {
+	position: absolute; z-index: 2; left: calc(50% - 28px); width: 56px; height: 70px;
+	top: calc(216px - 142px * var(--c1));
+	transform: scale(calc(1 - .48 * var(--c1)));
+	transform-origin: center top; color: #f1eee9;
+}
+.carry-mark svg { width: 100%; height: 100%; }
+.carry-content {
+	position: absolute; z-index: 2; left: 50%; width: 560px;
+	top: calc(354px - 178px * var(--c1));
+	transform: translateX(-50%); text-align: center;
+}
+.carry-step { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; }
+.carry-step[data-live="true"] { pointer-events: auto; }
+.carry-step[data-index="0"] { opacity: var(--t0); transform: translateY(var(--y0)); }
+.carry-step[data-index="1"] { opacity: var(--t1); transform: translateY(var(--y1)); }
+.carry-step[data-index="2"] { opacity: var(--t2); transform: translateY(var(--y2)); }
+.carry-step h1 { margin: 0; font-size: 42px; font-weight: 450; line-height: 1.16; letter-spacing: -1.65px; }
+.carry-description { max-width: 412px; margin: 22px auto 0; color: #aaa6a2; font-size: 17px; line-height: 1.55; letter-spacing: -.2px; }
+.carry-step[data-index="0"] .carry-description { max-width: 380px; }
+.carry-agent-options { display: grid; margin: 43px auto 0; width: 410px; gap: 10px; text-align: left; }
+.carry-agent-options button { display: flex; align-items: center; gap: 18px; height: 83px; border: 1px solid #383230; border-radius: 10px; padding: 0 21px; background: #181513; color: #d1ccc8; cursor: pointer; transition: background .2s, border-color .2s; }
+.carry-agent-options button:hover { background: #211c19; border-color: #75645d; }
+.carry-agent-options button[aria-pressed="true"] { background: #241c18; border-color: #a88c79; }
+.carry-agent-options svg { width: 23px; height: 29px; flex: none; }
+.carry-agent-options button > span:nth-child(2) { flex: 1; }
+.carry-agent-options strong { display: block; font-size: 15px; font-weight: 500; }
+.carry-agent-options small { display: block; margin-top: 5px; font-size: 12px; color: #8d8580; }
+.carry-terminal { width: 23px; flex: none; font-family: "Fragment Mono", monospace; font-size: 23px; }
+.carry-radio { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid #625650; border-radius: 50%; color: #edddd0; font-size: 11px; }
+.carry-agent-options button[aria-pressed="true"] .carry-radio { background: #edddd0; color: #241c18; border-color: #edddd0; }
+.carry-project { width: 332px; margin: 39px auto 0; padding: 12px 26px; text-align: left; font-family: "Fragment Mono", monospace; font-size: 13px; color: #a79f98; }
+.carry-project-row { height: 37px; display: flex; align-items: center; gap: 10px; }
+.carry-project-branch { margin-left: 8px; padding-left: 23px; border-left: 1px solid #423732; }
+.carry-project-children { margin-left: 8px; padding-left: 23px; border-left: 1px solid #423732; }
+.carry-design-row { color: #e6d6c7; }
+.carry-design-row > svg:last-child { width: 12px; height: 17px; margin-left: auto; color: #d96442; }
+.carry-bounds {
+	position: absolute; z-index: 1; left: 50%; top: 50%;
+	width: calc(440px + 190px * var(--c1) + (100% - 826px) * var(--c2));
+	height: calc(490px + 142px * var(--c1) + (100% - 726px) * var(--c2));
+	transform: translate(-50%, -50%);
+	border: 1px solid rgb(105 80 69 / calc(.13 * var(--c1) + .25 * var(--c2)));
+	border-radius: calc(22px - 7px * var(--c1) - 12px * var(--c2));
+	pointer-events: none;
+}
+.carry-bounds i { position: absolute; width: 5px; height: 5px; border: 1px solid #876b5c; background: #16120f; opacity: var(--c2); }
+.carry-bounds i:nth-of-type(1) { top: -3px; left: -3px; }
+.carry-bounds i:nth-of-type(2) { top: -3px; right: -3px; }
+.carry-bounds i:nth-of-type(3) { bottom: -3px; left: -3px; }
+.carry-bounds i:nth-of-type(4) { bottom: -3px; right: -3px; }
+.carry-bound-label { position: absolute; top: -26px; left: 0; font-family: "Fragment Mono", monospace; font-size: 10px; color: #95877f; opacity: var(--c2); }
+.carry-surround { position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: var(--c2); }
+.carry-ghost { position: absolute; top: 210px; width: 280px; height: 340px; border: 1px solid #58463d40; border-radius: 2px; }
+.carry-ghost-left { right: calc(100% - 57px); }
+.carry-ghost-right { left: calc(100% - 57px); top: 270px; }
+.carry-navigation { position: absolute; z-index: 3; width: 410px; left: 50%; bottom: 133px; transform: translateX(-50%); display: flex; align-items: center; justify-content: space-between; }
+.carry-navigation button { cursor: pointer; height: 42px; border-radius: 7px; font-size: 13px; font-weight: 500; transition: background .15s, transform .08s; }
+.carry-navigation button:active { transform: scale(.965); }
+.carry-back { width: 72px; text-align: left; color: #a29b96; background: none; border: none; }
+.carry-back:hover { color: #f1eee9; }
+.carry-back:disabled { visibility: hidden; }
+.carry-next { display: flex; align-items: center; justify-content: space-between; gap: 28px; min-width: 132px; padding: 0 17px; color: #241f1c; background: #eee8e1; border: 1px solid #eee8e1; }
+.carry-next:hover { background: #fffaf4; }
+.carry-dots { display: flex; gap: 6px; position: absolute; left: 50%; transform: translateX(-50%); }
+.carry-dots span { width: 4px; height: 4px; border-radius: 9px; background: #574b44; }
+.carry-dots span[data-index="0"] { width: calc(4px + 11px * var(--t0)); }
+.carry-dots span[data-index="1"] { width: calc(4px + 11px * var(--t1)); }
+.carry-dots span[data-index="2"] { width: calc(4px + 11px * var(--t2)); }
+.carry-welcome button:focus-visible { outline: 2px solid #e9d2c0; outline-offset: 5px; }
+@media (prefers-reduced-motion: reduce) {
+	.carry-welcome *, .carry-welcome *::before, .carry-welcome *::after { transition-duration: 0s !important; animation: none !important; }
+}
