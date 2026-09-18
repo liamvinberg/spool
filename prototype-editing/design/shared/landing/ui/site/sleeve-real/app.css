@@ -1,0 +1,94 @@
+.sr-app {
+	position: relative;
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	overflow: hidden;
+	background: #0e0e0e;
+	color: #f0efed;
+	border: 1px solid #30302e;
+	border-radius: 8px;
+	text-align: left;
+}
+.sr-app-stage {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 1600px;
+	height: 900px;
+	transform-origin: top left;
+}
+.sr-app-canvas > div > [data-dock] {
+	display: none;
+}
+.sr-app-field {
+	position: absolute;
+	width: 806.4px;
+	height: 595.2px;
+	left: 50%;
+	top: 108px;
+	transform: translateX(-50%);
+}
+.sr-app-frame {
+	position: absolute;
+	width: 384px;
+	height: 256px;
+}
+.sr-app-frame-document {
+	position: relative;
+	width: 1200px;
+	height: 800px;
+	transform: scale(0.32);
+	transform-origin: top left;
+}
+.sr-app-select {
+	position: absolute;
+	inset: 0;
+	cursor: default;
+	border: 0;
+	background: transparent;
+}
+.sr-app-selection {
+	position: absolute;
+	inset: -2px;
+	border: 1.5px solid var(--color-thread);
+	pointer-events: none;
+}
+.sr-app-selection i {
+	position: absolute;
+	width: 7px;
+	height: 7px;
+	background: #fff;
+	border: 1px solid var(--color-thread);
+}
+.sr-app-selection i:nth-child(1) {
+	left: -4px;
+	top: -4px;
+}
+.sr-app-selection i:nth-child(2) {
+	right: -4px;
+	top: -4px;
+}
+.sr-app-selection i:nth-child(3) {
+	left: -4px;
+	bottom: -4px;
+}
+.sr-app-selection i:nth-child(4) {
+	right: -4px;
+	bottom: -4px;
+}
+.sr-app-selection > span {
+	position: absolute;
+	top: calc(100% + 9px);
+	left: 50%;
+	transform: translateX(-50%);
+	padding: 3px 7px;
+	background: var(--color-thread);
+	color: white;
+	font: 10px / 12px var(--font-mono);
+	white-space: nowrap;
+	border-radius: 4px;
+}
+.sr-app button:focus-visible {
+	outline: 1px solid var(--color-thread);
+	outline-offset: 3px;
+}

@@ -1,0 +1,9 @@
+{
+	"imports": {
+		"class-variance-authority": "https://esm.sh/class-variance-authority@0.7.1",
+		"clsx": "https://esm.sh/clsx@2.1.1",
+		"motion": "https://esm.sh/motion@12.42.2?external=react,react-dom",
+		"motion/react": "https://esm.sh/motion@12.42.2/react?external=react,react-dom",
+		"tailwind-merge": "https://esm.sh/tailwind-merge@3.6.0"
+	}
+}

@@ -1,0 +1,7 @@
+/*
+ * Player transition styling, plain CSS (no Tailwind here).
+ * Crossfade is the default. For morphs, give elements a shared
+ * view-transition-name in their frames and style ::view-transition-* here.
+ * One direction or one data-transition type:
+ * html:active-view-transition-type(forward)::view-transition-old(root) { ... }
+ */
