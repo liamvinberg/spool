@@ -5,15 +5,10 @@ const vertex = `attribute vec2 a_position;
 varying vec2 v_uv;
 void main() { v_uv = a_position * .5 + .5; gl_Position = vec4(a_position, 0., 1.); }`;
 
-/**
- * The travel law. An exponential gives the first frame its jump; the floor rate
- * under it means the last of the distance is spent rather than approached, so
- * the motion has an end instead of a tail.
- */
-const CARRY_TAU = 0.2;
-const CARRY_FLOOR = 0.65;
-const PRESS_TAU = 0.16;
-const PRESS_FLOOR = 0.35;
+// Exact exponential travel keeps the first response immediate, then lets velocity
+// taper continuously into the ambient field instead of hitting a minimum-rate stop.
+const CARRY_TAU = 0.19;
+const PRESS_TAU = 0.19;
 
 /**
  * The standing pigment field, and the clock the whole frame runs on. Travel and
@@ -23,7 +18,6 @@ const PRESS_FLOOR = 0.35;
 export function CarryField({ step, press, onCarry }: { step: number; press: number; onCarry: (carry: number) => void }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const targetRef = useRef(step);
-	const pressRef = useRef(press);
 	const publishRef = useRef(onCarry);
 	const bumpRef = useRef<((pressed: boolean) => void) | null>(null);
 	publishRef.current = onCarry;
@@ -98,14 +92,12 @@ export function CarryField({ step, press, onCarry }: { step: number; press: numb
 		const tick = (now: number) => {
 			animation = 0;
 			if (document.hidden || reduced.matches) return;
-			const delta = last ? Math.min((now - last) / 1000, 0.08) : 0;
+			const delta = last ? Math.max(0, Math.min((now - last) / 1000, 0.08)) : 0;
 			last = now;
 			elapsed += delta;
 			const remaining = targetRef.current - carry;
-			const distance = Math.abs(remaining);
-			const travelled = Math.min(distance, (distance / CARRY_TAU + CARRY_FLOOR) * delta);
-			carry += Math.sign(remaining) * travelled;
-			pressure = Math.max(0, pressure * Math.exp(-delta / PRESS_TAU) - delta * PRESS_FLOOR);
+			carry += remaining * -Math.expm1(-delta / CARRY_TAU);
+			pressure *= Math.exp(-delta / PRESS_TAU);
 			publish();
 			paint?.();
 			animation = window.requestAnimationFrame(tick);
