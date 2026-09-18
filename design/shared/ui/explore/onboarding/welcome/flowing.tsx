@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { cn } from "shared/lib/utils";
 import { WelcomeField } from "shared/ui/explore/onboarding/welcome/field";
+import { DissolveField, type DissolveTake } from "./dissolve-takes";
 import { SpoolMark } from "shared/ui/spool/mark";
 import "./flowing.css";
 
@@ -35,7 +36,7 @@ function Folder({ open = false }: { open?: boolean }) {
 	);
 }
 
-export function FlowingWelcome({ initialStep = 0, shader = "flowing" }: { initialStep?: number; shader?: "flowing" | "dissolve" }) {
+export function FlowingWelcome({ initialStep = 0, shader = "flowing", dissolveTake }: { initialStep?: number; shader?: "flowing" | "dissolve"; dissolveTake?: DissolveTake }) {
 	const [step, setStep] = useState(Math.min(2, Math.max(0, initialStep)));
 	const [agent, setAgent] = useState("built-in");
 	const [direction, setDirection] = useState(1);
@@ -46,7 +47,7 @@ export function FlowingWelcome({ initialStep = 0, shader = "flowing" }: { initia
 	}
 	return (
 		<main className={cn("flowing-welcome", shader === "dissolve" && "fw-dissolve")} data-step={step} data-direction={direction}>
-			<WelcomeField variant={shader} step={step} />
+			{dissolveTake ? <DissolveField take={dissolveTake} step={step} /> : <WelcomeField variant={shader} step={step} />}
 			<header className="fw-brand"><SpoolMark className="fw-mark" /><span>spool</span></header>
 			<div className="fw-copy-position">
 				<section className="fw-copy" key={step} aria-live="polite" aria-atomic="true">
