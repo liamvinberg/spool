@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.1
+
+### Patch Changes
+
+- d536d8e: Mac updates now restore your window size, position, and fullscreen state along with the current project. If a display has been disconnected, the window opens on an available screen.
+
 ## 0.24.0
 
 ### Minor Changes
