@@ -93,6 +93,7 @@ import { isLoopbackHost } from "./loopback";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
+import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
 import {
 	FRAME_BIRTH,
 	frameDirectories,
@@ -816,6 +817,8 @@ export function createDaemonApp({
 	const settings = createSettingsStore(spoolDir);
 	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
 	const fsIndex = { home: home ?? homedir(), spoolDir };
+	const projectTransfers = new Map<string, AbortController>();
+	const cancelledTransfers = new Map<string, number>();
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
 
 	// the app-level channel: registry and session changes, fanned to every page
@@ -1300,6 +1303,90 @@ export function createDaemonApp({
 			const found = await searchDirectories(c.req.query("q") ?? "", { ...fsIndex, under: c.req.query("under") });
 			if (found === undefined) return c.json({ error: "not under home" }, 400);
 			return c.json(found);
+		})
+		.post(
+			"/api/projects/export",
+			validator("json", (value, c) => {
+				const root = (value as { root?: unknown }).root;
+				return typeof root === "string" ? { root } : c.json({ error: "A project root is required." }, 400);
+			}),
+			async (c) => {
+				try {
+					const { root } = c.req.valid("json");
+					const bytes = await exportProject(root, spoolDir, c.req.raw.signal);
+					c.header("Content-Type", "application/zip");
+					c.header(
+						"Content-Disposition",
+						`attachment; filename="project.spool"; filename*=UTF-8''${encodeURIComponent(basename(root))}.spool`,
+					);
+					return c.body(Buffer.from(bytes));
+				} catch (error) {
+					return c.json({ error: error instanceof Error ? error.message : "Export failed." }, 400);
+				}
+			},
+		)
+		.post(
+			"/api/projects/transfer/cancel",
+			validator("json", (value, c) => {
+				const transfer = (value as { transfer?: unknown }).transfer;
+				return typeof transfer === "string" ? { transfer } : c.json({ error: "A transfer id is required." }, 400);
+			}),
+			(c) => {
+				const transfer = c.req.valid("json").transfer;
+				for (const [id, at] of cancelledTransfers) if (Date.now() - at > 300_000) cancelledTransfers.delete(id);
+				if (cancelledTransfers.size >= 1000)
+					cancelledTransfers.delete(cancelledTransfers.keys().next().value ?? "");
+				cancelledTransfers.set(transfer, Date.now());
+				projectTransfers.get(transfer)?.abort();
+				return c.json({ cancelled: true });
+			},
+		)
+		.post("/api/projects/import", async (c) => {
+			const transfer = c.req.query("transfer");
+			if (!transfer || !/^[a-zA-Z0-9-]{1,100}$/.test(transfer))
+				return c.json({ error: "A transfer id is required." }, 400);
+			if (projectTransfers.has(transfer)) return c.json({ error: "This transfer is already running." }, 409);
+			const controller = new AbortController();
+			const cancelledAt = cancelledTransfers.get(transfer);
+			cancelledTransfers.delete(transfer);
+			if (cancelledAt !== undefined && Date.now() - cancelledAt <= 300_000) controller.abort();
+			projectTransfers.set(transfer, controller);
+			try {
+				const declared = Number(c.req.header("content-length"));
+				if (declared > TRANSFER_LIMITS.compressedBytes)
+					throw new TransferError("The archive exceeds the compressed size limit.");
+				const reader = c.req.raw.body?.getReader();
+				if (!reader) throw new TransferError("Choose a Spool project file.");
+				const chunks: Uint8Array[] = [];
+				let length = 0;
+				try {
+					for (;;) {
+						controller.signal.throwIfAborted();
+						const chunk = await reader.read();
+						if (chunk.done) break;
+						length += chunk.value.length;
+						if (length > TRANSFER_LIMITS.compressedBytes)
+							throw new TransferError("The archive exceeds the compressed size limit.");
+						chunks.push(chunk.value);
+					}
+				} finally {
+					await reader.cancel();
+				}
+				const location = settings.read().entries.find((entry) => entry.key === "projects.location");
+				return c.json(
+					await importProject(
+						Buffer.concat(chunks),
+						String(location?.value ?? "~/spool"),
+						spoolDir,
+						controller.signal,
+					),
+				);
+			} catch (error) {
+				if (controller.signal.aborted) return c.json({ error: "Import cancelled.", cancelled: true }, 409);
+				return c.json({ error: error instanceof Error ? error.message : "Import failed." }, 400);
+			} finally {
+				projectTransfers.delete(transfer);
+			}
 		})
 		.post("/api/projects/open", validator("json", requestedPath), (c) => {
 			try {
