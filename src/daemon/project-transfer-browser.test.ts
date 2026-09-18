@@ -8,18 +8,21 @@ import { builtUi, makeTempDir, serveProject, writeDesignFile, writeFrame, writeP
 import { createSettingsStore } from "./settings";
 
 async function dropProject(page: Page, bytes: Buffer, names = ["project.spool"], selector = "body") {
-	await page.locator(selector).evaluate(
-		(element, input) => {
-			const dataTransfer = new DataTransfer();
-			for (const name of input.names) {
-				dataTransfer.items.add(new File([Uint8Array.from(input.bytes)], name, { type: "application/zip" }));
-			}
-			element.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer }));
-			element.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer }));
-			element.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
-		},
-		{ bytes: [...bytes], names },
-	);
+	await page
+		.locator(selector)
+		.first()
+		.evaluate(
+			(element, input) => {
+				const dataTransfer = new DataTransfer();
+				for (const name of input.names) {
+					dataTransfer.items.add(new File([Uint8Array.from(input.bytes)], name, { type: "application/zip" }));
+				}
+				element.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer }));
+				element.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer }));
+				element.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+			},
+			{ bytes: [...bytes], names },
+		);
 }
 
 it("round-trips whole projects from Home and an inactive tab without replacing existing work", {
@@ -198,4 +201,58 @@ it("cancels a slow import cleanly and retries after invalid input and a write fa
 	const imported = readRegistry(project.spoolDir).projects.find((entry) => entry.root !== project.root);
 	if (!imported) throw new Error("retry did not install a project");
 	await page.getByRole("button", { name: `Close ${basename(imported.root)}`, exact: true }).waitFor();
+});
+
+it("accepts a real file drag over a live frame and leaves image drags alone", { timeout: 120_000 }, async () => {
+	const project = await serveProject({ uiDir: await builtUi() });
+	const destination = realpathSync(makeTempDir());
+	createSettingsStore(project.spoolDir).write("projects.location", destination);
+	writeFrame(
+		project.root,
+		"start",
+		'export default function Start() { return <main style={{height:"100%"}}>A live frame</main>; }',
+	);
+	writeDesignFile(project.root, "frames/start/frame.json", '{"x":0,"y":0,"w":480,"h":320}');
+	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
+	const response = await fetch(`${project.url}/api/projects/export`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "X-Spool-Control": project.controlToken },
+		body: JSON.stringify({ root: project.root }),
+	});
+	expect(response.ok).toBe(true);
+	const archive = join(makeTempDir(), "live.spool");
+	writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
+	const browser = await testBrowser();
+	const page = await browser.newPage({ viewport: { width: 1360, height: 900 }, reducedMotion: "reduce" });
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	await page.frameLocator('iframe[title="start"]').getByText("A live frame").waitFor();
+	await page.locator('[data-frame-label="start"]').click();
+	await page.keyboard.press("Enter");
+	const iframe = page.locator('iframe[title="start"]');
+	await expect.poll(() => iframe.evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("auto");
+	const rect = await iframe.boundingBox();
+	if (!rect) throw new Error("live frame has no bounds");
+	const cdp = await page.context().newCDPSession(page);
+	const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+	const data = { items: [], files: [archive], dragOperationsMask: 1 };
+	await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...point, data });
+	await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...point, data });
+	await expect.poll(() => page.locator("body").innerText()).toMatch(/drop.*project/i);
+	await cdp.send("Input.dispatchDragEvent", { type: "drop", ...point, data });
+	await expect.poll(() => readRegistry(project.spoolDir).projects.length).toBe(2);
+	const imported = readRegistry(project.spoolDir).projects.find((entry) => entry.root !== project.root);
+	if (!imported) throw new Error("live frame drop did not import");
+	await page.getByRole("button", { name: `Close ${basename(imported.root)}`, exact: true }).waitFor();
+	await page.evaluate(() => {
+		const dataTransfer = new DataTransfer();
+		dataTransfer.items.add(new File(["image"], "photo.png", { type: "image/png" }));
+		const enter = new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer });
+		const over = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer });
+		document.body.dispatchEvent(enter);
+		document.body.dispatchEvent(over);
+		if (enter.defaultPrevented || over.defaultPrevented) throw new Error("Project import intercepted an image drag");
+		document.body.dispatchEvent(new DragEvent("dragleave", { bubbles: true, dataTransfer }));
+	});
+	expect(readRegistry(project.spoolDir).projects.length).toBe(2);
+	await cdp.detach();
 });
