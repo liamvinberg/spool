@@ -15,19 +15,7 @@ export const TRANSFER_LIMITS = { compressedBytes: 128 * 1024 * 1024, expandedByt
 export type TransferLimits = typeof TRANSFER_LIMITS;
 export class TransferError extends Error {}
 const manifestPath = "spool-manifest.json";
-const excluded = new Set([
-	"node_modules",
-	"dist",
-	"coverage",
-	"verification",
-	"verify",
-	"credentials.json",
-	"credentials",
-	"sessions",
-	"threads",
-	"cache",
-	"stills",
-]);
+const excluded = new Set(["node_modules"]);
 
 function portable(path: string): boolean {
 	const segments = path.split("/");
