@@ -25,6 +25,7 @@ import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
+import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
 declare global {
 	interface Window {
@@ -94,7 +95,8 @@ export const captureOrigin =
 function controlFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
 	const headers = new Headers(init?.headers);
 	headers.set("X-Spool-Control", controlToken);
-	return fetch(input, { ...init, headers });
+	const request = fetch(input, { ...init, headers });
+	return init?.method && !["GET", "HEAD"].includes(init.method.toUpperCase()) ? trackUpdateWrite(request) : request;
 }
 
 const client = hc<AppType>("", { fetch: controlFetch });
@@ -142,7 +144,12 @@ export async function fetchCanvasState(project: string): Promise<CanvasState | u
 }
 
 export function putCanvasState(project: string, state: CanvasState): void {
-	void client.api.p[":project"].state.$put({ param: { project }, json: state });
+	void saveCanvasState(project, state).catch(() => {});
+}
+
+export async function saveCanvasState(project: string, state: CanvasState): Promise<void> {
+	const response = await client.api.p[":project"].state.$put({ param: { project }, json: state });
+	if (!response.ok) throw new Error("Could not save the canvas position. Try again.");
 }
 
 export async function browseDirectory(path?: string): Promise<FsListing | undefined> {
@@ -926,7 +933,7 @@ let credentialSpent = false;
 function reloadForNewDaemon(): void {
 	if (credentialSpent || uiWindow === undefined) return;
 	credentialSpent = true;
-	uiWindow.location.reload();
+	reloadCanvas();
 }
 
 /**
@@ -944,7 +951,7 @@ function reloadForNewDaemon(): void {
  * and every one of them is a page that has to go and get served again.
  */
 export function reloadForNewBundle(): void {
-	uiWindow?.location.reload();
+	reloadCanvas();
 }
 
 /**

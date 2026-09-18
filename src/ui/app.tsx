@@ -28,6 +28,7 @@ import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
 import { TrashProjectDialog } from "./trash-project-dialog";
+import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 import "./app-header.css";
 
@@ -79,6 +80,10 @@ export function App() {
 	/** The Mac app around this window, if there is one; a tab has none. */
 	const bridge = useMemo(() => desktopBridge(), []);
 	const appWindow = useMemo(() => desktopWindow(), []);
+	useEffect(() => bridge?.onPrepareUpdate?.(prepareForUpdate), [bridge]);
+	useEffect(() => {
+		if (booted && focused === null && projectsLoaded) bridge?.ready?.();
+	}, [bridge, booted, focused, projectsLoaded]);
 
 	const byRoot = useMemo(() => new Map(projects.map((p) => [p.root, p])), [projects]);
 	const tabs: TabProject[] = useMemo(
@@ -151,7 +156,7 @@ export function App() {
 	}, [booted, focused, open]);
 
 	const offerUpdate = useCallback((latest: string) => {
-		if (dismissedLatest.current === latest) return;
+		if (desktopBridge() !== undefined || dismissedLatest.current === latest) return;
 		if (toastRef.current !== null && toastRef.current.kind !== "offer") return;
 		setToast({ kind: "offer", latest });
 	}, []);
@@ -265,7 +270,7 @@ export function App() {
 			} else if (before === undefined) {
 				before = answering;
 			} else if (answering.version !== before.version) {
-				window.location.reload();
+				reloadCanvas();
 				return;
 			} else if (answering.startedAt !== before.startedAt) {
 				setToast({ kind: "failed", message: `Update did not land — still v${answering.version}` });

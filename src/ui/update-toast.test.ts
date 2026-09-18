@@ -11,6 +11,12 @@ function render(update: AppUpdate): string {
 }
 
 describe("the app update pill", () => {
+	it("lets a verified update wait without losing its restart action", () => {
+		const update: AppUpdate = { kind: "ready", version: "0.22.1" };
+		expect(render(update)).toContain("Restart to update");
+		expect(render(update)).toContain("Dismiss");
+		expect(updateToastBusy({ kind: "app", update })).toBe(false);
+	});
 	it("keeps preparing visible and busy without displaying a completed download", () => {
 		const update: AppUpdate = { kind: "preparing", version: "0.17.0" };
 		const html = render(update);

@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { beginUpdateRestart, clearUpdateRestart, RESTART_WINDOW_MS, updateRestartState } from "./update-restart";
+import {
+	beginUpdateRestart,
+	clearUpdateRestart,
+	RESTART_WINDOW_MS,
+	updateRestartPath,
+	updateRestartState,
+} from "./update-restart";
 
 test("restart handoff survives a new process without keeping the updated app out", (t) => {
 	const directory = mkdtempSync(join(tmpdir(), "spool-restart-"));
@@ -19,4 +25,15 @@ test("restart handoff survives a new process without keeping the updated app out
 	assert.equal(updateRestartState(directory, "0.21.1"), "none");
 	writeFileSync(join(directory, "app-update-restart.json"), '{"target":3}');
 	assert.equal(updateRestartState(directory, "0.21.1"), "none");
+});
+
+test("the replacement restores only a local canvas path", (t) => {
+	const directory = mkdtempSync(join(tmpdir(), "spool-restart-path-"));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	beginUpdateRestart(directory, "0.22.1", Date.now(), "/p/my%20project");
+	assert.equal(updateRestartPath(directory), "/p/my%20project");
+	for (const path of ["https://example.com", "//example.com", "/p/a?token=secret", "/api/health"]) {
+		beginUpdateRestart(directory, "0.22.1", Date.now(), path);
+		assert.equal(updateRestartPath(directory), undefined);
+	}
 });

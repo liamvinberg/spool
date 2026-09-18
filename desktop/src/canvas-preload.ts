@@ -5,8 +5,7 @@ import type { ProjectDownloadResult } from "./project-download";
 
 // The canvas window's bridge.
 //
-// The desktop marker also suppresses the daemon's npm update offer. App updates
-// now use native menus and dialogs; the update state returned here is null.
+// The marker suppresses the daemon's npm update offer; only verified app updates are offered.
 
 const STATE = "spool:app-update-state";
 const CHANGED = "spool:app-update-changed";
@@ -37,6 +36,24 @@ contextBridge.exposeInMainWorld("spoolApp", {
 	},
 	install: () => ipcRenderer.send(INSTALL),
 	dismiss: () => ipcRenderer.send(DISMISS),
+	ready: () => ipcRenderer.send("spool:canvas-ready"),
+	reload: (): Promise<void> => ipcRenderer.invoke("spool:canvas-reload"),
+	onPrepareUpdate: (listener: (localOnly: boolean) => Promise<void>): (() => void) => {
+		const handler = async (_event: unknown, id: number, localOnly: boolean) => {
+			try {
+				await listener(localOnly);
+				ipcRenderer.send("spool:canvas-saved", id, null);
+			} catch (error) {
+				ipcRenderer.send(
+					"spool:canvas-saved",
+					id,
+					error instanceof Error ? error.message : "Could not save the canvas.",
+				);
+			}
+		};
+		ipcRenderer.on("spool:canvas-save", handler);
+		return () => ipcRenderer.removeListener("spool:canvas-save", handler);
+	},
 });
 
 contextBridge.exposeInMainWorld("spoolCanvasWindow", {

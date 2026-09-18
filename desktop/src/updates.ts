@@ -73,8 +73,8 @@ export async function latestRelease(timeoutMs = 10_000): Promise<Release> {
 
 // MARK: - The cadence
 
-/** The update-notifier cadence, the same one the daemon keeps for npm. */
-export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** Hourly discovery; downloads are reused by electron-updater. */
+export const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 /** Long enough after launch that the window is up and the daemon has answered. */
 export const FIRST_CHECK_DELAY_MS = 10_000;
@@ -106,7 +106,7 @@ export function checkCachePath(directory: string): string {
 
 /**
  * When the next automatic check is due, given what the cache says. A launch
- * inside the day the last check happened in never re-asks; one after it asks
+ * inside the hour the last check happened in never re-asks; one after it asks
  * on the first-check delay.
  */
 export function nextCheckDelay(cache: CheckCache | undefined, now = Date.now()): number {

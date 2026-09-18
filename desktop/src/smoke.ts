@@ -4,10 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, WebContentsView } from "electron";
 import { status } from "./daemon";
 import { buildAppMenu, buildTrayMenu, trayImage } from "./main";
 import { installProjectDownloads } from "./project-download";
+import { UpdateCover } from "./update-cover";
 import { beginUpdateRestart } from "./update-restart";
 
 // The check CI runs on macOS, and the only one that needs a real Electron.
@@ -196,9 +197,63 @@ async function checkProjectOpening(directory: string): Promise<void> {
 	}
 }
 
+async function checkUpdateCover(): Promise<void> {
+	const canvas = new BrowserWindow({ width: 1000, height: 700, backgroundColor: "#0e0e0e" });
+	try {
+		await canvas.loadURL("data:text/html,<body style='background:%23222222'>Saved canvas</body>");
+		const cover = new UpdateCover(canvas);
+		await cover.enter();
+		const surface = canvas.contentView.children.find((child) => child instanceof WebContentsView);
+		assert(surface instanceof WebContentsView);
+		const contents = surface.webContents;
+		assert.equal(await contents.executeJavaScript("getComputedStyle(document.querySelector('main')).opacity"), "1");
+		const before = await contents.executeJavaScript(
+			"getComputedStyle(document.querySelector('.activity'),'::after').transform",
+		);
+		await canvas.loadURL("data:text/html,<body>Replacement canvas</body>");
+		canvas.setContentSize(900, 600);
+		await new Promise((resolve) => setTimeout(resolve, 10_000));
+		assert.deepEqual(surface.getBounds(), { x: 0, y: 0, width: 900, height: 600 });
+		const after = await contents.executeJavaScript(
+			"getComputedStyle(document.querySelector('.activity'),'::after').transform",
+		);
+		assert.notEqual(before, after);
+		assert.equal(await contents.executeJavaScript("document.querySelector('h1').textContent"), "Updating spool");
+		if (process.env.SPOOL_FOLD_CAPTURE)
+			writeFileSync(process.env.SPOOL_FOLD_CAPTURE, (await contents.capturePage()).toPNG());
+		const destroyed = new Promise<void>((resolve) => contents.once("destroyed", () => resolve()));
+		await cover.reveal();
+		await destroyed;
+		assert.equal(contents.isDestroyed(), true);
+		assert.equal(canvas.contentView.children.length, 0);
+		const reduced = new UpdateCover(canvas, true);
+		const reducedSurface = canvas.contentView.children.find((child) => child instanceof WebContentsView);
+		assert(reducedSurface instanceof WebContentsView);
+		reducedSurface.webContents.debugger.attach("1.3");
+		await reducedSurface.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+			features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+		});
+		await reduced.enter();
+		assert.equal(
+			await reducedSurface.webContents.executeJavaScript(
+				"getComputedStyle(document.querySelector('.activity'),'::after').animationName",
+			),
+			"none",
+		);
+		await reducedSurface.webContents.executeJavaScript(
+			"document.querySelector('canvas').getContext('webgl')?.getExtension('WEBGL_lose_context')?.loseContext()",
+		);
+		await reduced.reveal();
+		assert.equal(canvas.contentView.children.length, 0);
+	} finally {
+		canvas.destroy();
+	}
+}
+
 async function run(): Promise<void> {
 	const directory = mkdtempSync(join(tmpdir(), "spool-desktop-smoke-"));
 	try {
+		await checkUpdateCover();
 		await checkProjectOpening(directory);
 		await checkProjectDownloads(directory);
 		const empty = await status(directory);

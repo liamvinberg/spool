@@ -5,6 +5,7 @@ import {
 	app,
 	BrowserWindow,
 	dialog,
+	type IpcMainEvent,
 	ipcMain,
 	Menu,
 	type MenuItemConstructorOptions,
@@ -32,7 +33,8 @@ import {
 import { installProjectDownloads } from "./project-download";
 import { importProjectFile, ProjectOpenQueue } from "./project-open";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
-import { beginUpdateRestart, clearUpdateRestart, updateRestartState } from "./update-restart";
+import { UpdateCover } from "./update-cover";
+import { beginUpdateRestart, clearUpdateRestart, updateRestartPath, updateRestartState } from "./update-restart";
 import {
 	CHECK_INTERVAL_MS,
 	checkCachePath,
@@ -94,6 +96,76 @@ const NAME = LANE ? "Spool Dev" : "Spool";
 let tray: Tray | undefined;
 let window: BrowserWindow | undefined;
 let canvasReady = false;
+let workspaceReady = false;
+let cover: UpdateCover | undefined;
+let reloadQueued = false;
+let coverDeadline: NodeJS.Timeout | undefined;
+let resumePath: string | undefined;
+let resumeCovered = false;
+let dismissedUpdate: string | undefined;
+let saveSequence = 0;
+let saving: { id: number; resolve: () => void; reject: (error: Error) => void } | undefined;
+
+function canvasSender(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
+	return window !== undefined && event.sender === window.webContents && event.senderFrame === event.sender.mainFrame;
+}
+
+function saveWorkspace(localOnly = false): Promise<void> {
+	if (window === undefined) return Promise.resolve();
+	if (!workspaceReady && !localOnly)
+		return Promise.reject(new Error("The canvas is still opening. Try again when it is ready."));
+	return new Promise<void>((resolve, reject) => {
+		const id = ++saveSequence;
+		const deadline = setTimeout(() => {
+			if (saving?.id === id) saving = undefined;
+			reject(new Error("Saving took too long. Your app has not restarted. Try again."));
+		}, 10_000);
+		saving = {
+			id,
+			resolve: () => {
+				clearTimeout(deadline);
+				saving = undefined;
+				resolve();
+			},
+			reject: (error) => {
+				clearTimeout(deadline);
+				saving = undefined;
+				reject(error);
+			},
+		};
+		window?.webContents.send("spool:canvas-save", id, localOnly);
+	});
+}
+
+function uncover(): void {
+	clearTimeout(coverDeadline);
+	coverDeadline = undefined;
+	const current = cover;
+	void current
+		?.reveal()
+		.catch((error: unknown) => log("updates", "cover", String(error)))
+		.finally(() => {
+			if (cover === current) cover = undefined;
+			if (reloadQueued) {
+				reloadQueued = false;
+				void reloadCanvasWindow();
+			}
+		});
+}
+
+function awaitWorkspace(): void {
+	clearTimeout(coverDeadline);
+	coverDeadline = setTimeout(() => {
+		cover?.close();
+		cover = undefined;
+		tell(
+			"The canvas is taking longer to open.",
+			"Your saved work is still there. Reopen the window to try again.",
+			"warning",
+		);
+	}, 30_000);
+}
+
 let canvasActive = false;
 let pendingCanvasCommand: CanvasCommand | undefined;
 /** The daemon this app started, if it started one. */
@@ -164,6 +236,11 @@ function createWindow(): BrowserWindow {
 		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
 	});
 
+	if (resumeCovered) {
+		resumeCovered = false;
+		cover = new UpdateCover(created, true);
+		awaitWorkspace();
+	}
 	guard(created);
 	const fullscreen = () => created.webContents.send("spool:canvas-fullscreen", created.isFullScreen());
 	created.on("enter-full-screen", fullscreen);
@@ -173,13 +250,21 @@ function createWindow(): BrowserWindow {
 	created.webContents.on("did-start-navigation", (details) => {
 		if (!details.isMainFrame || details.isSameDocument) return;
 		canvasReady = false;
+		workspaceReady = false;
 		canvasActive = false;
 		updateCanvasMenu();
 	});
 	created.on("closed", () => {
 		if (created !== window) return;
+		clearTimeout(coverDeadline);
+		coverDeadline = undefined;
+		cover?.close();
+		cover = undefined;
+		reloadQueued = false;
+		saving?.reject(new Error("The canvas closed before saving finished."));
 		window = undefined;
 		canvasReady = false;
+		workspaceReady = false;
 		canvasActive = false;
 		updateCanvasMenu();
 	});
@@ -327,7 +412,9 @@ function point(
 	// reload it out from under whatever was on screen.
 	if (isDaemonUrl(showing.webContents.getURL())) return;
 	const loadingAt = performance.now();
-	void showing.loadURL(url).then(
+	const destination = resumePath === undefined ? url : new URL(resumePath, url).href;
+	resumePath = undefined;
+	void showing.loadURL(destination).then(
 		() => {
 			log(
 				"canvas",
@@ -654,7 +741,7 @@ export function buildAppMenu(): Menu {
 					],
 				},
 				{ type: "separator" },
-				{ label: "Check for Updates…", click: () => void checkForUpdates() },
+				{ ...updateItem(), id: "app-update" },
 				{ type: "separator" },
 				{ role: "services" },
 				{ type: "separator" },
@@ -885,21 +972,80 @@ function renderUpdateProgress(): void {
 
 /** Manual progress has its own window; background work stays in the menu. */
 function setUpdate(next: AppUpdate | null): void {
+	const previous = visibleUpdate();
 	update = next;
 	tray?.setContextMenu(buildTrayMenu());
+	const item = Menu.getApplicationMenu()?.getMenuItemById("app-update");
+	if (item) {
+		const state = updateItem();
+		item.label = state.label ?? "Check for Updates…";
+		item.enabled = state.enabled ?? true;
+		item.click = state.click ?? (() => {});
+	}
+	if (JSON.stringify(previous) !== JSON.stringify(visibleUpdate()))
+		window?.webContents.send("spool:app-update-changed", visibleUpdate());
 	renderUpdateProgress();
+}
+
+function visibleUpdate(): AppUpdate | null {
+	return update?.kind === "ready" && update.version !== dismissedUpdate ? update : null;
 }
 
 function installUpdateChannels(): void {
 	ipcMain.on("spool:app-version", (event) => {
-		event.returnValue = version();
+		event.returnValue = canvasSender(event) ? version() : null;
 	});
 	ipcMain.on("spool:app-update-state", (event) => {
-		event.returnValue = null;
+		event.returnValue = canvasSender(event) ? visibleUpdate() : null;
+	});
+	ipcMain.on("spool:app-update-install", (event) => {
+		if (canvasSender(event)) void restartUpdate();
+	});
+	ipcMain.on("spool:app-update-dismiss", (event) => {
+		if (!canvasSender(event) || update?.kind !== "ready") return;
+		dismissedUpdate = update.version;
+		window?.webContents.send("spool:app-update-changed", null);
+	});
+	ipcMain.on("spool:canvas-ready", (event) => {
+		if (!canvasSender(event)) return;
+		workspaceReady = true;
+		log("canvas", "ready", `process=${Math.round(process.uptime() * 1000)}ms`);
+		if (coverDeadline !== undefined) uncover();
+	});
+	ipcMain.on("spool:canvas-saved", (event, id: unknown, error: unknown) => {
+		if (!canvasSender(event) || saving?.id !== id) return;
+		if (error === null) saving?.resolve();
+		else saving?.reject(new Error(typeof error === "string" ? error : "Could not save the canvas."));
+	});
+	ipcMain.handle("spool:canvas-reload", async (event) => {
+		if (canvasSender(event)) await reloadCanvasWindow();
 	});
 }
 
-/** Check daily; a cached newer release should be prepared on this launch. */
+async function reloadCanvasWindow(): Promise<void> {
+	if (shuttingDown || !window) return;
+	if (cover) {
+		reloadQueued = true;
+		return;
+	}
+	// A successor daemon has already invalidated the old page's capability.
+	// Local drafts still need a checkpoint before discarding that page.
+	const showing = window;
+	cover = new UpdateCover(showing);
+	try {
+		await cover.enter();
+		await saveWorkspace(true);
+		workspaceReady = false;
+		awaitWorkspace();
+		showing.webContents.reload();
+	} catch (error) {
+		uncover();
+		log("canvas", "FAIL reload", String(error));
+		tell("Spool could not refresh yet.", String(error), "warning");
+	}
+}
+
+/** Check hourly; a cached newer release should be prepared on this launch. */
 function scheduleChecks(): void {
 	if (!updaterAvailable()) return;
 	const cache = readCheckCache(DIRECTORY);
@@ -1147,7 +1293,7 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 	if (shuttingDown) return;
 	closeUpdateProgress();
 	setUpdate({ kind: "ready", version: target });
-	await offerRestart();
+	if (manual) await offerRestart();
 }
 
 let restartDialogOpen = false;
@@ -1170,21 +1316,32 @@ async function offerRestart(): Promise<void> {
 	}
 }
 
-async function restartUpdate(): Promise<void> {
-	if (busy || shuttingDown || update?.kind !== "ready") return;
+async function restartUpdate(relaunch = true): Promise<void> {
+	if (busy || shuttingDown || cover || update?.kind !== "ready") return;
 	const target = update.version;
 	busy = true;
 	// Squirrel replaces the app on quit and relaunches it. The daemon this app
 	// started is stopped here, on purpose, before the updater owns the exit:
 	// will-quit's own preventDefault path would fight it.
-	setUpdate({ kind: "restarting", version: target });
-	shuttingDown = true;
+
 	let deadline: NodeJS.Timeout | undefined;
 	try {
-		beginUpdateRestart(DIRECTORY, target);
-		await shutdown();
+		if (window) {
+			cover = new UpdateCover(window);
+			await cover.enter();
+		}
+		await saveWorkspace();
+		const path = window ? new URL(window.webContents.getURL()).pathname : undefined;
+		beginUpdateRestart(DIRECTORY, target, Date.now(), path);
+		setUpdate({ kind: "restarting", version: target });
+		shuttingDown = true;
+		await shutdown(true);
+		if (!relaunch) {
+			app.quit();
+			return;
+		}
 		log("updates", "relaunching");
-		fallback("Updating Spool", `Spool ${target} is being swapped in, and the app reopens by itself.`);
+
 		// macOS has verified the bundle. This covers an exit refused by the app.
 		deadline = setTimeout(() => {
 			log("updates", "quit delayed", lastUpdaterError() ?? "finishing the verified update");
@@ -1197,7 +1354,9 @@ async function restartUpdate(): Promise<void> {
 		clearUpdateRestart(DIRECTORY);
 		shuttingDown = false;
 		log("updates", "FAIL", String(error));
-		setUpdate({ kind: "failed", version: target, message: String(error), retryable: false });
+		uncover();
+		setUpdate({ kind: "ready", version: target });
+		tell("Spool could not restart yet.", error instanceof Error ? error.message : String(error), "warning");
 		void openCanvas();
 	}
 }
@@ -1250,7 +1409,7 @@ async function cloudAccount(command: "login" | "logout"): Promise<void> {
  * restarted the daemon in between, the thing running is no longer the thing this
  * app started, and stopping it would be a stranger killing a process.
  */
-export async function shutdown(): Promise<void> {
+export async function shutdown(requireStopped = false): Promise<void> {
 	const started = performance.now();
 	if (startedPid === undefined) {
 		log("quit", "left the daemon running");
@@ -1262,6 +1421,7 @@ export async function shutdown(): Promise<void> {
 		return;
 	}
 	const stopped = await daemon.stop(current.pid);
+	if (!stopped && requireStopped) throw new Error("The background server has not stopped yet. Try updating again.");
 	log(
 		"quit",
 		stopped ? "stopped" : "FAIL did not exit",
@@ -1308,6 +1468,10 @@ export function boot(): void {
 		app.exit(0);
 		return;
 	}
+	if (restart === "completed") {
+		resumePath = updateRestartPath(DIRECTORY);
+		resumeCovered = true;
+	}
 	if (restart === "completed" || restart === "expired") {
 		clearUpdateRestart(DIRECTORY);
 		log("updates", restart, `installed=${version()}`);
@@ -1340,6 +1504,12 @@ export function boot(): void {
 		// mean it.
 	});
 	app.on("activate", () => void openCanvas());
+
+	app.on("before-quit", (event) => {
+		if (shuttingDown || update?.kind !== "ready") return;
+		event.preventDefault();
+		void restartUpdate(false);
+	});
 
 	app.on("will-quit", (event) => {
 		if (shuttingDown) return;

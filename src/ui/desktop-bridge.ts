@@ -13,6 +13,7 @@
 
 export type AppUpdate =
 	| { kind: "offer"; version: string }
+	| { kind: "ready"; version: string }
 	| { kind: "checking"; version: string }
 	| { kind: "downloading"; version: string; percent: number }
 	| { kind: "preparing"; version: string }
@@ -25,6 +26,9 @@ export interface DesktopBridge {
 	onUpdate(listener: (update: AppUpdate | null) => void): () => void;
 	install(): void;
 	dismiss(): void;
+	ready?(): void;
+	reload?(): Promise<void>;
+	onPrepareUpdate?(listener: (localOnly: boolean) => Promise<void>): () => void;
 }
 
 /** The dmg under the name that never moves, for the pill's way out when the app cannot update itself. */
@@ -36,6 +40,7 @@ export function isAppUpdate(value: unknown): value is AppUpdate | null {
 	const update = value as Record<string, unknown>;
 	if (typeof update.version !== "string") return false;
 	switch (update.kind) {
+		case "ready":
 		case "offer":
 		case "checking":
 		case "preparing":
@@ -67,7 +72,10 @@ export function desktopBridge(
 		typeof bridge.onUpdate !== "function" ||
 		typeof bridge.install !== "function" ||
 		typeof bridge.dismiss !== "function" ||
-		!isAppUpdate(bridge.update)
+		!isAppUpdate(bridge.update) ||
+		["ready", "reload", "onPrepareUpdate"].some(
+			(key) => bridge[key] !== undefined && typeof bridge[key] !== "function",
+		)
 	) {
 		return undefined;
 	}

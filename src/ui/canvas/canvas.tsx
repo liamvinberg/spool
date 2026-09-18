@@ -44,15 +44,18 @@ import {
 	readRungs,
 	resolveFlows,
 	revertPatch,
+	saveCanvasState,
 	subscribeSse,
 	swapAsset,
 	writeClass,
 	writeElement,
 	writeText,
 } from "../api";
+import { desktopBridge } from "../desktop-bridge";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { ProjectEmpty } from "../project-empty";
+import { beforeUpdate } from "../update-lifecycle";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
@@ -4374,6 +4377,27 @@ export function ProjectCanvas({
 		settledCameraRef.current = camera;
 		sweepLifecycle();
 	}, [camera, loaded, sweepLifecycle]);
+
+	const readyForUpdate = loaded && camera !== null;
+	useEffect(() => {
+		if (readyForUpdate) desktopBridge()?.ready?.();
+	}, [readyForUpdate]);
+
+	useEffect(
+		() =>
+			beforeUpdate(async () => {
+				flushNudge();
+				commitTrash();
+				if (camera === null) throw new Error("The canvas is still opening.");
+				cameras.current = { ...cameras.current, [activePage]: { x: camera.x, y: camera.y, k: camera.k } };
+				await saveCanvasState(project, {
+					arrows: arrowsOn,
+					...stateCameraSlots(cameras.current),
+					...(activePage === ROOT_PAGE ? {} : { activePage }),
+				});
+			}),
+		[camera, arrowsOn, project, activePage, flushNudge, commitTrash],
+	);
 
 	// persist arrows + the page bookkeeping on settle: last-settle wins
 	// the stored slot (#12); each page keeps its own camera, and the active

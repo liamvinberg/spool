@@ -194,12 +194,16 @@ and the GitHub release already exists. Rerun it the way a refused publish is
 rerun, with `gh workflow run publish.yml -f tag=vX.Y.Z`.
 
 The app checks for a release by itself, ten seconds after launch unless it
-checked within the day, and daily after that; Check for Updates is the same
+checked within the hour, and hourly after that; Check for Updates is the same
 check by hand. The source is the release's own `latest-mac.yml`, read by
 electron-updater, so a version it names is one it can install. New releases
 download and prepare in the background while the canvas stays usable. Once Squirrel.Mac has verified the
-bundle, a native dialog offers Restart Spool or Later. Later leaves the update
-ready in the menu bar and installs it on normal quit. Check for Updates gives
+bundle, a dismissible canvas notice offers Restart to update. Dismissing it leaves
+the verified update ready in the app and menu bar menus, and it installs on normal quit.
+Before replacement, Spool waits for pending canvas saves and unsent drafts. The Fold
+cover bridges the departure and reveals the restored project after the new canvas is
+ready. UI and daemon reloads keep the window open under the same local cover; a signed
+app replacement still closes and reopens the window. Check for Updates gives
 a progress window immediately and offers the same restart dialog when an update is ready.
 Closing the progress window leaves preparation running. Retryable background
 failures are checked again after five minutes. During native replacement, an

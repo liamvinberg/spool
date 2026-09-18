@@ -1,5 +1,6 @@
 import { type Attachment, parseAttachments } from "../../attachment";
 import { type AgentEngineId, isAgentEngineId } from "../../daemon/agent-engine";
+import { beforeUpdate } from "../update-lifecycle";
 
 export interface ComposerDraft {
 	readonly id: string;
@@ -31,6 +32,7 @@ export class AgentDrafts {
 		factory: IDBFactory | undefined,
 		private readonly storage?: Storage,
 	) {
+		beforeUpdate(() => this.flushForUpdate(), true);
 		this.prefix = `spool.agent-drafts.${encodeURIComponent(project)}.`;
 		this.recover();
 		this.ready = this.restore(factory).catch(() => {});
@@ -177,6 +179,11 @@ export class AgentDrafts {
 		return (this.database ? this.write() : this.ready.then(() => this.write())).catch(() => {
 			// Refused/full storage must never refuse typing. Keep the dirty memory copy.
 		});
+	}
+
+	async flushForUpdate(): Promise<void> {
+		await this.flush();
+		if (this.dirty.size > 0) throw new Error("An unsent draft could not be saved. Free some storage and try again.");
 	}
 
 	private async write(): Promise<void> {

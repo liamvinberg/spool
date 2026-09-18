@@ -7,9 +7,13 @@ import { compareVersions, parseVersion } from "./version";
 const FILE = "app-update-restart.json";
 export const RESTART_WINDOW_MS = 5 * 60_000;
 
-export function beginUpdateRestart(directory: string, target: string, now = Date.now()): void {
+export function beginUpdateRestart(directory: string, target: string, now = Date.now(), path?: string): void {
 	const file = join(directory, FILE);
-	writeFileSync(`${file}.tmp`, JSON.stringify({ target, startedAt: now }), { mode: 0o600 });
+	writeFileSync(
+		`${file}.tmp`,
+		JSON.stringify({ target, startedAt: now, ...(validUpdatePath(path) ? { path } : {}) }),
+		{ mode: 0o600 },
+	);
 	renameSync(`${file}.tmp`, file);
 }
 
@@ -36,4 +40,19 @@ export function updateRestartState(
 	if (compareVersions(current, target) >= 0) return "completed";
 	const age = now - value.startedAt;
 	return age >= 0 && age < RESTART_WINDOW_MS ? "waiting" : "expired";
+}
+
+function validUpdatePath(path: unknown): path is string {
+	return typeof path === "string" && (path === "/" || /^\/p\/[^/?#]+$/.test(path)) && path.length < 4096;
+}
+
+export function updateRestartPath(directory: string): string | undefined {
+	try {
+		const value: unknown = JSON.parse(readFileSync(join(directory, FILE), "utf8"));
+		if (typeof value === "object" && value !== null && "path" in value && validUpdatePath(value.path))
+			return value.path;
+	} catch {
+		/* A damaged handoff opens Home. */
+	}
+	return undefined;
 }

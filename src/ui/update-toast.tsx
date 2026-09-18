@@ -31,7 +31,12 @@ export type UpdateToast =
 /** Whether the pill is mid-flight, with nothing a hand should do to it. */
 export function updateToastBusy(toast: UpdateToast): boolean {
 	if (toast.kind === "updating") return true;
-	return toast.kind === "app" && toast.update.kind !== "offer" && toast.update.kind !== "failed";
+	return (
+		toast.kind === "app" &&
+		toast.update.kind !== "offer" &&
+		toast.update.kind !== "ready" &&
+		toast.update.kind !== "failed"
+	);
 }
 
 export function UpdateToastPill({
@@ -91,6 +96,15 @@ export function UpdateToastPill({
 
 function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () => void }) {
 	switch (update.kind) {
+		case "ready":
+			return (
+				<>
+					<span className="text-text type-control">Spool is ready to update.</span>
+					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
+						Restart to update
+					</button>
+				</>
+			);
 		case "offer":
 			return (
 				<>

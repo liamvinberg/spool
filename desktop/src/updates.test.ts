@@ -333,12 +333,13 @@ test("the relaunch uses the same updater that staged the archive", async () => {
 });
 
 test("the cadence honours the last check and treats invalid timestamps as absent", () => {
+	assert.equal(api.CHECK_INTERVAL_MS, 60 * 60 * 1000);
 	const now = Date.parse("2026-09-03T12:00:00Z");
 	assert.equal(api.nextCheckDelay(undefined, now), api.FIRST_CHECK_DELAY_MS);
 	assert.equal(api.nextCheckDelay({ latest: "0.13.0", checkedAt: "not a date" }, now), api.FIRST_CHECK_DELAY_MS);
 	assert.equal(
-		api.nextCheckDelay({ latest: "0.13.0", checkedAt: new Date(now - 3_600_000).toISOString() }, now),
-		api.CHECK_INTERVAL_MS - 3_600_000,
+		api.nextCheckDelay({ latest: "0.13.0", checkedAt: new Date(now - 1_800_000).toISOString() }, now),
+		api.CHECK_INTERVAL_MS - 1_800_000,
 	);
 	assert.equal(
 		api.nextCheckDelay({ latest: "0.13.0", checkedAt: new Date(now - 2 * api.CHECK_INTERVAL_MS).toISOString() }, now),
