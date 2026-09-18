@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
 	app,
 	BrowserWindow,
@@ -30,6 +30,7 @@ import {
 	writeRect,
 } from "./play-window";
 import { installProjectDownloads } from "./project-download";
+import { importProjectFile, ProjectOpenQueue } from "./project-open";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import { beginUpdateRestart, clearUpdateRestart, updateRestartState } from "./update-restart";
 import {
@@ -99,7 +100,7 @@ let pendingCanvasCommand: CanvasCommand | undefined;
 let startedPid: number | undefined;
 /** The daemon this window is pointed at, for telling its popups from the web. */
 let daemonPort: number | undefined;
-/** Its credential, held for the one control request this app makes: play geometry. */
+/** Its credential for native project imports and play geometry. */
 let daemonControlToken: string | undefined;
 /** The daemon the window is on: whose it is and which version, for the tray. */
 let daemonInfo: { version: string; adopted: boolean } | undefined;
@@ -250,6 +251,18 @@ function isDaemonUrl(candidate: string): boolean {
 
 /** Bring the canvas up: adopt or start a daemon, then point the window at it. */
 export async function openCanvas(): Promise<void> {
+	if (openingCanvas !== undefined) return openingCanvas;
+	openingCanvas = showCanvas();
+	try {
+		await openingCanvas;
+	} finally {
+		openingCanvas = undefined;
+	}
+}
+
+let openingCanvas: Promise<void> | undefined;
+
+async function showCanvas(): Promise<void> {
 	if (shuttingDown) return;
 	if (window === undefined) window = createWindow();
 	const showing = window;
@@ -257,7 +270,7 @@ export async function openCanvas(): Promise<void> {
 	showing.focus();
 
 	const current = await daemon.status(DIRECTORY);
-	if (shuttingDown) return;
+	if (shuttingDown || showing.isDestroyed()) return;
 	if (current.running && (current.pid === startedPid || !daemon.behind(current.version, version()))) {
 		point(
 			showing,
@@ -304,6 +317,7 @@ function point(
 	daemonVersion: string,
 	controlToken: string,
 ): void {
+	if (showing.isDestroyed()) return;
 	daemonPort = Number(new URL(url).port);
 	daemonControlToken = controlToken;
 	daemonInfo = { version: daemonVersion, adopted: verdict === "adopted" };
@@ -1257,6 +1271,36 @@ export async function shutdown(): Promise<void> {
 }
 
 export function boot(): void {
+	const documents = new ProjectOpenQueue(
+		async (path) => {
+			if (shuttingDown) return;
+			await openCanvas();
+			const current = await daemon.status(DIRECTORY);
+			if (!current.running)
+				throw new Error("Spool could not start. Open the file again after the daemon is running.");
+			const url = await importProjectFile(path, current.url, current.controlToken);
+			if (shuttingDown) return;
+			if (window === undefined || window.isDestroyed()) await openCanvas();
+			await window?.loadURL(url);
+			window?.show();
+			window?.focus();
+		},
+		async (path, error) => {
+			const detail = error instanceof Error ? error.message : String(error);
+			log("project open", "FAIL", detail);
+			await dialog.showMessageBox({
+				type: "error",
+				message: `Could not open ${basename(path)}.`,
+				detail,
+				buttons: ["OK"],
+			});
+		},
+	);
+	// Registered synchronously: Finder sends cold-launch documents before ready.
+	app.on("open-file", (event, path) => {
+		event.preventDefault();
+		documents.add(path);
+	});
 	openLog(DIRECTORY);
 	const restart = updateRestartState(DIRECTORY, version());
 	if (restart === "waiting") {
@@ -1325,6 +1369,7 @@ export function boot(): void {
 		installDockIcon();
 		installTray();
 		scheduleChecks();
-		return openCanvas();
+		await openCanvas();
+		documents.start();
 	});
 }

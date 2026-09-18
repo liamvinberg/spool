@@ -38,6 +38,7 @@ const app = Object.assign(new EventEmitter(), {
 });
 let progressWindows = 0;
 class Window extends EventEmitter {
+	isDestroyed = () => false;
 	constructor(options: { title?: string }) {
 		super();
 		if (options.title === "Spool update") progressWindows++;

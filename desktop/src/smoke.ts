@@ -88,9 +88,118 @@ async function checkProjectDownloads(directory: string): Promise<void> {
 	}
 }
 
+async function checkProjectOpening(directory: string): Promise<void> {
+	const state = join(directory, "file-open");
+	mkdirSync(state);
+	const cold = join(state, "Cold.spool");
+	const warm = join(state, "Warm.spool");
+	writeFileSync(cold, "cold archive");
+	writeFileSync(warm, "warm archive");
+	const imports: string[] = [];
+	const sessions: unknown[] = [];
+	const server = createServer(async (request, response) => {
+		if (request.url === "/api/health") {
+			response.end(
+				JSON.stringify({
+					name: "spool",
+					version: "999.0.0",
+					pid: process.pid,
+					startedAt: new Date().toISOString(),
+				}),
+			);
+			return;
+		}
+		if (request.url?.startsWith("/api/projects/import?") || request.url === "/api/session") {
+			assert.equal(request.headers["x-spool-control"], "smoke-control");
+			const chunks: Buffer[] = [];
+			for await (const chunk of request) chunks.push(Buffer.from(chunk));
+			const body = Buffer.concat(chunks).toString();
+			if (request.url === "/api/session") {
+				sessions.push(JSON.parse(body));
+				response.writeHead(204).end();
+			} else {
+				imports.push(body);
+				const name = imports.length === 1 ? "cold" : "warm";
+				response.end(JSON.stringify({ root: `/projects/${name}`, name }));
+			}
+			return;
+		}
+		response.writeHead(200, { "Content-Type": "text/html" });
+		response.end("<!doctype html><title>Native project open check</title>");
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	assert(address !== null && typeof address !== "string");
+	writeFileSync(
+		join(state, "daemon.json"),
+		JSON.stringify({
+			pid: process.pid,
+			host: "127.0.0.1",
+			port: address.port,
+			version: "999.0.0",
+			startedAt: new Date().toISOString(),
+			controlToken: "smoke-control",
+		}),
+	);
+	const entry = join(state, "open.cjs");
+	writeFileSync(
+		entry,
+		`
+		const { app } = require("electron");
+		const { boot } = require(${JSON.stringify(join(__dirname, "main.js"))});
+		app.on("browser-window-created", (_event, window) => {
+			window.webContents.on("did-finish-load", () => {
+				const url = window.webContents.getURL();
+				if (url.endsWith("/p/cold")) {
+					setTimeout(() => {
+						window.close();
+						app.emit("open-file", { preventDefault() {} }, ${JSON.stringify(warm)});
+					}, 50);
+				}
+				if (url.endsWith("/p/warm")) app.exit(0);
+			});
+		});
+		boot();
+		if (app.isReady()) throw new Error("cold file was not sent before ready");
+		app.emit("open-file", { preventDefault() {} }, ${JSON.stringify(cold)});
+	`,
+	);
+	try {
+		await new Promise<void>((resolve, reject) => {
+			const child = spawn(process.execPath, [entry], { env: { ...process.env, SPOOL_DIR: state }, stdio: "pipe" });
+			let errors = "";
+			child.stderr?.on("data", (chunk: Buffer) => {
+				errors += chunk.toString();
+			});
+			const deadline = setTimeout(() => {
+				child.kill();
+				reject(
+					new Error(
+						`native project opening timed out: ${errors}\n${readFileSync(join(state, "app.log"), "utf8")}\n${JSON.stringify(imports)}`,
+					),
+				);
+			}, 20_000);
+			child.once("error", reject);
+			child.once("exit", (code) => {
+				clearTimeout(deadline);
+				if (code === 0) resolve();
+				else reject(new Error(`native project opening exited ${code}: ${errors}`));
+			});
+		});
+		assert.deepEqual(imports, ["cold archive", "warm archive"]);
+		assert.deepEqual(sessions, [
+			{ root: "/projects/cold", open: true },
+			{ root: "/projects/warm", open: true },
+		]);
+	} finally {
+		server.close();
+	}
+}
+
 async function run(): Promise<void> {
 	const directory = mkdtempSync(join(tmpdir(), "spool-desktop-smoke-"));
 	try {
+		await checkProjectOpening(directory);
 		await checkProjectDownloads(directory);
 		const empty = await status(directory);
 		if (empty.running) throw new Error(`an empty state directory reported a running daemon`);

@@ -38,6 +38,12 @@ publish:
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
+  fileAssociations:
+    - ext: spool
+      name: Spool project
+      icon: assets/icon.icns
+      role: Viewer
+      rank: Owner
   darkModeSupport: true
   minimumSystemVersion: "14.0"
   # Required for notarization, and the reason build/entitlements.mac.plist exists.
