@@ -1,9 +1,9 @@
 import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { unzipSync, zipSync } from "fflate";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { readRegistry, registerProject } from "../registry";
-import { makeTempDir } from "../test-helpers";
+import { makeApp, makeTempDir } from "../test-helpers";
 import { exportProject, importProject, TRANSFER_LIMITS } from "./project-transfer";
 
 function fixture() {
@@ -165,4 +165,77 @@ it("refuses symlinks instead of reading outside the project", async () => {
 	const f = fixture();
 	symlinkSync(join(f.root, "design/canvas.json"), join(f.root, "design/shared/leak.json"));
 	await expect(exportProject(f.root, f.spool)).rejects.toThrow(/symbolic link/);
+});
+
+it.each(["bad:name.ts", "trailing.", "trailing "])(
+	"refuses unsupported authored filename %s without silently omitting it",
+	async (name) => {
+		const f = fixture();
+		writeFileSync(join(f.root, "design/shared", name), "authored bytes");
+		await expect(exportProject(f.root, f.spool)).rejects.toThrow(/unsupported authored path/);
+	},
+);
+it("reserves names against registered projects in different destination folders", async () => {
+	const f = fixture();
+	const bytes = await exportProject(f.root, f.spool);
+	const [first, second] = await Promise.all([
+		importProject(bytes, f.location, f.spool),
+		importProject(bytes, makeTempDir(), f.spool),
+	]);
+	expect(new Set([basename(f.root), first.name, second.name]).size).toBe(3);
+});
+it.each([
+	["design/frames/empty", "design/frames/empty"],
+	["design/frames/empty", "design/frames/Empty"],
+	["design/shared/asset", "design/shared/asset/child"],
+])("rejects duplicate or conflicting directory declarations %j", async (first, second) => {
+	const directories = [first, second];
+	const location = makeTempDir(),
+		spool = makeTempDir();
+	const files = { ...marker, "design/shared/asset": Buffer.from("file") };
+	await expect(importProject(archive(files, { directories }), location, spool)).rejects.toThrow(/colliding/);
+	expect(readdirSync(location)).toEqual([]);
+});
+it("cancels an upload stalled after its first chunk without waiting for more bytes", async () => {
+	const spool = makeTempDir();
+	const app = makeApp(spool);
+	const cancelled = vi.fn();
+	let pulled = false;
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(new Uint8Array([80, 75]));
+		},
+		pull() {
+			pulled = true;
+		},
+		cancel: cancelled,
+	});
+	const init: RequestInit & { duplex: "half" } = {
+		method: "POST",
+		body,
+		duplex: "half",
+		headers: { "Content-Type": "application/zip" },
+	};
+	const pending = app.request("/api/projects/import?transfer=slow-upload", init);
+	await vi.waitFor(() => expect(pulled).toBe(true));
+	const cancellation = await app.request("/api/projects/transfer/cancel", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ transfer: "slow-upload" }),
+	});
+	expect(cancellation.status).toBe(200);
+	const response = await pending;
+	expect(response.status).toBe(409);
+	expect(await response.json()).toMatchObject({ cancelled: true });
+	expect(cancelled).toHaveBeenCalled();
+	expect(readRegistry(spool).projects).toEqual([]);
+});
+it.each(["export", "transfer/cancel"])("rejects a null %s request body", async (path) => {
+	const app = makeApp(makeTempDir());
+	const response = await app.request(`/api/projects/${path}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: "null",
+	});
+	expect(response.status).toBe(400);
 });

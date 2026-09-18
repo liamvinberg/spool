@@ -21,7 +21,10 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 		setCounts(null);
 		void fetchProjection(request.name)
 			.then((projection) => {
-				if (alive && projection) setCounts(`${projection.pages.length} pages · ${projection.frames.length} frames`);
+				if (alive && projection)
+					setCounts(
+						`${projection.pages.length + 1} ${projection.pages.length === 0 ? "page" : "pages"} · ${projection.frames.length} ${projection.frames.length === 1 ? "frame" : "frames"}`,
+					);
 			})
 			.catch(() => {});
 		return () => {
@@ -100,7 +103,19 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 	};
 	importRef.current = receive;
 	useEffect(() => {
+		const shielded = new Set<HTMLIFrameElement>();
+		const shield = () => {
+			for (const frame of document.querySelectorAll("iframe")) {
+				if (getComputedStyle(frame).pointerEvents !== "none") {
+					shielded.add(frame);
+					frame.dataset.projectDropShield = "";
+				}
+			}
+			setDragging(true);
+		};
 		const clear = () => {
+			for (const frame of shielded) delete frame.dataset.projectDropShield;
+			shielded.clear();
 			setDragging(false);
 		};
 		const drag = (event: DragEvent) => {
@@ -109,7 +124,7 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 				![...event.dataTransfer.items].some((item) => projectFileType(item.type))
 			)
 				return;
-			setDragging(true);
+			shield();
 		};
 		const over = (event: DragEvent) => {
 			if (
@@ -121,9 +136,29 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 			}
 		};
 		const drop = (event: DragEvent) => {
+			const held = new Set(shielded);
 			clear();
 			const files = [...(event.dataTransfer?.files ?? [])];
-			if (!files.some((file) => file.name.toLowerCase().endsWith(".spool"))) return;
+			if (!files.some((file) => file.name.toLowerCase().endsWith(".spool"))) {
+				// Filenames are hidden until drop. Restore live-frame hit testing before
+				// handing unrelated files back to the authored surface beneath the shell.
+				const target = document.elementFromPoint(event.clientX, event.clientY);
+				if (files.length && target instanceof HTMLIFrameElement && held.has(target)) {
+					const rect = target.getBoundingClientRect();
+					target.contentWindow?.postMessage(
+						{
+							spool: "external-file-drop",
+							files,
+							x: ((event.clientX - rect.left) * target.clientWidth) / rect.width,
+							y: ((event.clientY - rect.top) * target.clientHeight) / rect.height,
+						},
+						"*",
+					);
+					event.preventDefault();
+					event.stopImmediatePropagation();
+				}
+				return;
+			}
 			event.preventDefault();
 			event.stopImmediatePropagation();
 			importRef.current(files);
@@ -153,7 +188,7 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 			)
 				return;
 			if ([...document.querySelectorAll("iframe")].some((frame) => frame.contentWindow === event.source)) {
-				setDragging(true);
+				shield();
 			}
 		};
 		window.addEventListener("dragenter", drag, true);
@@ -165,6 +200,7 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 		window.addEventListener("keydown", key);
 		window.addEventListener("message", relay);
 		return () => {
+			for (const frame of shielded) delete frame.dataset.projectDropShield;
 			window.removeEventListener("dragenter", drag, true);
 			window.removeEventListener("dragover", over, true);
 			window.removeEventListener("drop", drop, true);
@@ -220,11 +256,11 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 							startExport(request);
 						}}
 					>
-						<div className="rounded-md border border-border-raised px-4 py-3">
+						<div className="project-transfer-summary rounded-md border border-border-raised px-4 py-3">
 							<p className="type-control">Entire project</p>
 							<p className="text-muted type-detail">{counts ?? "All pages and frames"}</p>
 						</div>
-						<p className="mt-5 text-muted type-control">Includes frames, layout, flows and local assets.</p>
+						<p className="project-transfer-description">Includes frames, layout, flows and local assets.</p>
 					</ConfirmDialog>
 				)}
 				{dragging && (

@@ -32,6 +32,7 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	const destination = realpathSync(makeTempDir());
 	createSettingsStore(project.spoolDir).write("projects.location", destination);
 	const files = {
+		"frames/broken/frame.tsx": "export default function Broken( { this source does not compile\n",
 		"shared/ui/title.tsx": "export function Title() { return <h1>Portable project</h1>; }\n",
 		"shared/tokens.css": ":root { --portable: #234567; }\n",
 		"shared/fonts.css": "/* Project fonts remain authored. */\n",
@@ -46,7 +47,7 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	writeFrame(
 		project.root,
 		"start",
-		'import { Title } from "../../shared/ui/title"; export default function Start() { return <main><Title/><button data-go="finish">Continue</button></main>; }',
+		'import { Title } from "../../shared/ui/title"; import { ui } from "spool"; export default function Start() { ui.use(); return <main><Title/><output>{String(ui.state.count)}</output><button data-go="finish">Continue</button></main>; }',
 	);
 	writeFrame(project.root, "finish", "export default function Finish() { return <h1>Finished the flow</h1>; }");
 	writePageFrame(
@@ -105,6 +106,7 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	const played = await browser.newPage();
 	await played.goto(`${project.url}/play/${encodeURIComponent(basename(imported.root))}?frame=start`);
 	await played.frameLocator("iframe").getByRole("heading", { name: "Portable project" }).waitFor();
+	expect(await played.frameLocator("iframe").locator("output").innerText()).toBe("7");
 	await played.frameLocator("iframe").getByRole("button", { name: "Continue" }).click();
 	await played.frameLocator("iframe").getByRole("heading", { name: "Finished the flow" }).waitFor();
 
@@ -213,7 +215,7 @@ it("accepts a real file drag over a live frame and leaves image drags alone", { 
 	writeFrame(
 		project.root,
 		"start",
-		'export default function Start() { return <main style={{height:"100%"}}>A live frame</main>; }',
+		'export default function Start() { return <main style={{height:"100%"}} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void file.text().then(text => { document.querySelector("output").textContent = file.name + ":" + text; }); }}>A live frame<output /><input type="file" aria-label="Authored file input" onDrop={event => event.stopPropagation()} onChange={event => { document.querySelector("output").textContent = "input:" + event.currentTarget.files[0].name; }} /></main>; }',
 	);
 	writeDesignFile(project.root, "frames/start/frame.json", '{"x":0,"y":0,"w":480,"h":320}');
 	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
@@ -237,6 +239,32 @@ it("accepts a real file drag over a live frame and leaves image drags alone", { 
 	if (!rect) throw new Error("live frame has no bounds");
 	const cdp = await page.context().newCDPSession(page);
 	const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+	for (const filename of ["authored.bin", "authored.zip"]) {
+		const unrelated = join(makeTempDir(), filename);
+		writeFileSync(unrelated, "authored drop bytes");
+		const unrelatedData = { items: [], files: [unrelated], dragOperationsMask: 1 };
+		await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...point, data: unrelatedData });
+		await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...point, data: unrelatedData });
+		if (filename.endsWith(".zip")) await expect.poll(() => page.locator(".project-transfer-drop").count()).toBe(1);
+		await cdp.send("Input.dispatchDragEvent", { type: "drop", ...point, data: unrelatedData });
+		await expect
+			.poll(() => page.frameLocator('iframe[title="start"]').locator("output").innerText())
+			.toBe(`${filename}:authored drop bytes`);
+		expect(readRegistry(project.spoolDir).projects.length).toBe(1);
+	}
+	const nativeInput = await page.frameLocator('iframe[title="start"]').getByLabel("Authored file input").boundingBox();
+	if (!nativeInput) throw new Error("authored file input has no bounds");
+	const nativePoint = { x: nativeInput.x + nativeInput.width / 2, y: nativeInput.y + nativeInput.height / 2 };
+	const nativeFile = join(makeTempDir(), "input.zip");
+	writeFileSync(nativeFile, "file input bytes");
+	const nativeData = { items: [], files: [nativeFile], dragOperationsMask: 1 };
+	await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...nativePoint, data: nativeData });
+	await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...nativePoint, data: nativeData });
+	await expect.poll(() => page.locator(".project-transfer-drop").count()).toBe(1);
+	await cdp.send("Input.dispatchDragEvent", { type: "drop", ...nativePoint, data: nativeData });
+	await expect
+		.poll(() => page.frameLocator('iframe[title="start"]').locator("output").innerText())
+		.toBe("input:input.zip");
 	const data = { items: [], files: [archive], dragOperationsMask: 1 };
 	await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...point, data });
 	await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...point, data });

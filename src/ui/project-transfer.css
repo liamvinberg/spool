@@ -21,7 +21,7 @@
 	transform: translate(-50%, -50%);
 	text-align: center;
 }
-body:has(.project-transfer-drop) iframe {
+iframe[data-project-drop-shield] {
 	/* A file drag must cross frame surfaces even while a live frame captures pointer input. */
 	/* biome-ignore lint/complexity/noImportantStyles: override live-frame inline pointer events during an external file drag */
 	pointer-events: none !important;
@@ -33,4 +33,21 @@ body:has(.project-transfer-drop) iframe {
 	.project-transfer-indicator {
 		animation: none;
 	}
+}
+
+.confirm-dialog .project-transfer-summary p {
+	margin: 0;
+	font: var(--type-control);
+}
+.confirm-dialog .project-transfer-summary p + p {
+	margin-top: 4px;
+	font: var(--type-detail);
+}
+
+.confirm-dialog .project-transfer-summary p:first-child {
+	color: var(--color-text);
+}
+.confirm-dialog .project-transfer-description {
+	margin: 20px 0 0;
+	font: var(--type-control);
 }
