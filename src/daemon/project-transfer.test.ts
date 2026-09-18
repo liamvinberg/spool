@@ -24,6 +24,8 @@ function fixture() {
 		"design/shared/fonts.css": "@font-face {font-family: Test; src:url('./assets/font.woff2')}",
 		"design/shared/assets/font.woff2": "font bytes",
 		"design/shared/lib/one.ts": "export const one = 1;",
+		"design/frames/cache/sessions/frame.tsx": "export default () => <div>Session</div>;",
+		"design/shared/threads/stills/verify.ts": "export const authored = true;",
 		"design/shared/importmap.json": '{"imports":{}}',
 	};
 	for (const [path, bytes] of Object.entries(files)) {
@@ -51,7 +53,7 @@ it("round-trips authored bytes and organization, excludes local state, and alway
 		"design/.spool/state.json",
 		"design/shared/.env",
 		"design/shared/node_modules/package/index.js",
-		"design/shared/credentials/token.json",
+		"design/.spool/credentials/token.json",
 	]) {
 		mkdirSync(join(f.root, path, ".."), { recursive: true });
 		writeFileSync(join(f.root, path), "private");
@@ -84,7 +86,7 @@ it.each([
 	"design/shared/../escape",
 	"design/shared/a\\b",
 	"design/shared/.env",
-	"design/shared/credentials/token",
+	"design/shared/.credentials/token",
 	"design/shared/node_modules/code.js",
 ])("rejects unsafe or nonportable entry %s before any install", async (path) => {
 	const location = makeTempDir(),

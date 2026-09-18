@@ -1357,6 +1357,10 @@ export function createDaemonApp({
 					throw new TransferError("The archive exceeds the compressed size limit.");
 				const reader = c.req.raw.body?.getReader();
 				if (!reader) throw new TransferError("Choose a Spool project file.");
+				const cancelUpload = () => {
+					void reader.cancel().catch(() => {});
+				};
+				controller.signal.addEventListener("abort", cancelUpload, { once: true });
 				const chunks: Uint8Array[] = [];
 				let length = 0;
 				try {
@@ -1370,6 +1374,7 @@ export function createDaemonApp({
 						chunks.push(chunk.value);
 					}
 				} finally {
+					controller.signal.removeEventListener("abort", cancelUpload);
 					await reader.cancel();
 				}
 				const location = settings.read().entries.find((entry) => entry.key === "projects.location");
