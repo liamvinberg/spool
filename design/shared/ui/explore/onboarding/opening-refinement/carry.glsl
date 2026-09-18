@@ -3,7 +3,6 @@ varying vec2 v_uv;
 uniform vec2 u_size;
 uniform float u_time;
 uniform float u_carry;
-uniform float u_press;
 
 // spool.page's pigment, kept in document coordinates the way the site keeps it.
 // The material never re-poses. Continuing travels the viewport across one
@@ -40,8 +39,8 @@ void main() {
 
  float scale=clamp(u_size.x*.43,340.,700.);
  vec2 p=(px-vec2(u_size.x*.62,u_size.y*.30))/scale;
- // The press quickens the material itself, so a click reads before it travels.
- float value=pigment(p,u_time*.048+u_press*.075);
+ // The renderer advances one continuous clock, including click acceleration.
+ float value=pigment(p,u_time*.048);
  float cloud=smoothstep(.255,.735,value);
 
  float near=pool(px,vec2(.52,.15)*u_size,vec2(.25,.27)*u_size);
@@ -53,7 +52,6 @@ void main() {
  vec2 q=(screen-vec2(.48,.49)*u_size)/(vec2(.39,.45)*u_size);
  amount*=1.-exp(-dot(q,q)*2.)*.58;
  amount*=smoothstep(10.,115.,screen.y);
- amount*=1.+u_press*.13;
 
  float grain=hash(floor(screen));
  vec3 ink=mix(vec3(.28,.034,.017),RED,smoothstep(.28,.73,value));

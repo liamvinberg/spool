@@ -68,12 +68,10 @@ export function CarryField({ step, press, onCarry }: { step: number; press: numb
 					const sizeUniform = gl.getUniformLocation(program, "u_size");
 					const timeUniform = gl.getUniformLocation(program, "u_time");
 					const carryUniform = gl.getUniformLocation(program, "u_carry");
-					const pressUniform = gl.getUniformLocation(program, "u_press");
 					paint = () => {
 						gl.uniform2f(sizeUniform, width, height);
 						gl.uniform1f(timeUniform, elapsed);
 						gl.uniform1f(carryUniform, carry);
-						gl.uniform1f(pressUniform, pressure);
 						gl.drawArrays(gl.TRIANGLES, 0, 3);
 					};
 					canvas.dataset.backend = "webgl";
@@ -94,7 +92,8 @@ export function CarryField({ step, press, onCarry }: { step: number; press: numb
 			if (document.hidden || reduced.matches) return;
 			const delta = last ? Math.max(0, Math.min((now - last) / 1000, 0.08)) : 0;
 			last = now;
-			elapsed += delta;
+			// Integrate a positive speed boost; never offset the shader clock.
+			elapsed += delta + pressure * 0.65 * PRESS_TAU * -Math.expm1(-delta / PRESS_TAU);
 			const remaining = targetRef.current - carry;
 			carry += remaining * -Math.expm1(-delta / CARRY_TAU);
 			pressure *= Math.exp(-delta / PRESS_TAU);
