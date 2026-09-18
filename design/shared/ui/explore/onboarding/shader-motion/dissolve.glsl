@@ -1,14 +1,13 @@
 vec4 effect(vec2 uv,float p) {
- // Coherent chunks erode before the finer dust appears at their edges.
- float n=fbm(uv*13.);
- float outgoing=1.-smoothstep(n-.095,n+.095,p*1.6);
- float incoming=smoothstep(n-.095,n+.095,(p-.30)*1.6);
- vec2 qa=domain(uv,u_from),qb=domain(uv,u_to);
- float swell=pulse(p);
- qa+=vec2(sin(qa.y*5.),cos(qa.x*5.))*swell*.12;
- vec4 a=field(qa,envelope(qa)*outgoing);
- vec4 b=field(qb,envelope(qb)*incoming);
- float edge=exp(-abs(n-p*1.6)*85.);
- float dust=step(.982,hash(floor(uv*u_size*.5)))*edge*envelope(qa)*swell;
- return layer(a,b)+vec4(vec3(.9,.21,.065)*dust,0.);
+ // The dissolve belongs to the pigment's density. Its own soft variations
+ // loosen and regroup, with no second noise mask cutting holes through it.
+ float e=ease(p),breath=pow(pulse(p),2.);
+ vec2 q=domain(uv,mix(u_from,u_to,e));
+ vec2 carried=q+vec2(.08,-.045)*breath;
+ float value=pigment(carried);
+ float density=smoothstep(.24+breath*.17,.74+breath*.12,value);
+ float mask=envelope(q/(1.+breath*.18));
+ float alpha=clamp(density*mask*1.4*(1.-breath*.12),0.,1.);
+ vec3 ink=mix(vec3(.28,.034,.017),RED,smoothstep(.28,.73,value));
+ return vec4(ink*alpha,alpha);
 }

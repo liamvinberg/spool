@@ -4,6 +4,7 @@ uniform vec2 u_size;
 uniform float u_time;
 uniform float u_step;
 uniform float u_variant;
+uniform float u_dissolve;
 
 // The pigment material from spool.page's bloom/field.glsl, composed for a
 // three-step welcome. One continuous field changes its footprint, never resets.
@@ -40,24 +41,33 @@ void main() {
   center=mix(mix(vec2(.83,.40),vec2(.76,.23),first),vec2(.88,.64),second);
   radius=mix(mix(vec2(.36,.55),vec2(.48,.37),first),vec2(.46,.60),second);
   power=1.22;
- } else {
+ } else if(u_variant<2.5) {
   center=mix(mix(vec2(.50,.26),vec2(.80,.40),first),vec2(.87,.27),second);
   radius=mix(mix(vec2(.23,.26),vec2(.38,.46),first),vec2(.55,.58),second);
   power=mix(1.12,.65,second);
+ } else {
+  center=mix(mix(vec2(.83,.40),vec2(.76,.23),first),vec2(.88,.64),second);
+  radius=mix(mix(vec2(.36,.55),vec2(.43,.40),first),vec2(.43,.55),second);
+  radius*=1.+u_dissolve*.16;
+  power=.98;
  }
  vec2 px=st*u_size;
  float scale=clamp(u_size.x*.43,340.,700.);
- vec2 p=(px-center*u_size)/scale;
+ vec2 materialCenter=u_variant>2.5 ? mix(vec2(.83,.40),center,.42) : center;
+ vec2 p=(px-materialCenter*u_size)/scale;
  // A small continuous shift lets the material turn with the motion of the pool.
- p=rot(u_step*.12)*p+vec2(u_step*.06,0.);
+ if(u_variant<2.5) p=rot(u_step*.12)*p+vec2(u_step*.06,0.);
+ else p+=vec2(.08,-.045)*u_dissolve;
  float value=pigment(p,u_time*.048);
  float cloud=smoothstep(.255,.735,value);
+ if(u_variant>2.5) cloud=smoothstep(.255+u_dissolve*.17,.735+u_dissolve*.12,value);
  vec2 d=(st-center)/radius;
  float pool=exp(-dot(d,d)*2.);
  float grain=hash(floor(px));
  float amount=cloud*pool*power;
+ if(u_variant>2.5) amount*=1.-u_dissolve*.12;
  // The centered direction has a quiet middle once choices arrive.
- if(u_variant>1.5) {
+ if(u_variant>1.5 && u_variant<2.5) {
   vec2 quiet=(st-vec2(.48,.57))/vec2(.35,.28);
   amount*=1.-exp(-dot(quiet,quiet)*2.)*.52*first;
  }

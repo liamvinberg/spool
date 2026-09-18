@@ -2,17 +2,8 @@ import { useEffect, useRef } from "react";
 import material from "./material.glsl";
 import output from "./output.glsl";
 import dissolve from "./dissolve.glsl";
-import filaments from "./filaments.glsl";
-import vortex from "./vortex.glsl";
-import melt from "./melt.glsl";
-import bloom from "./bloom.glsl";
-import split from "./split.glsl";
-import fold from "./fold.glsl";
-import drift from "./drift.glsl";
-import ripple from "./ripple.glsl";
-import eclipse from "./eclipse.glsl";
 
-const sources = { dissolve, filaments, vortex, melt, bloom, split, fold, drift, ripple, eclipse };
+const sources = { dissolve };
 export type Effect = keyof typeof sources;
 export interface Playback {
 	from: number;
@@ -25,7 +16,7 @@ const centers: readonly (readonly [number, number])[] = [[.77,.40],[.69,.23],[.8
 const vertex = `attribute vec2 a_position; varying vec2 v_uv;
 void main() { v_uv=a_position*.5+.5; gl_Position=vec4(a_position,0.,1.); }`;
 
-/** Shared transport only. Each GLSL file owns its transition, not a preset. */
+/** Shared transport only. The pigment shader owns the transition. */
 export function MotionField({ effect, playback, onProgress, onComplete }: {
 	effect: Effect;
 	playback: Playback;

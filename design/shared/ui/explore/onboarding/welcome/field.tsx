@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import fragment from "./field.glsl";
 
-type Direction = "quiet" | "flowing" | "opening";
-const directions: Record<Direction, number> = { quiet: 0, flowing: 1, opening: 2 };
+type Direction = "quiet" | "flowing" | "opening" | "dissolve";
+const directions: Record<Direction, number> = { quiet: 0, flowing: 1, opening: 2, dissolve: 3 };
 const vertex = `attribute vec2 a_position;
 varying vec2 v_uv;
 void main() { v_uv = a_position * .5 + .5; gl_Position = vec4(a_position, 0., 1.); }`;
@@ -56,14 +56,16 @@ export function WelcomeField({ variant, step }: { variant: Direction; step: numb
 		const sizeUniform = gl.getUniformLocation(program, "u_size");
 		const timeUniform = gl.getUniformLocation(program, "u_time");
 		const stepUniform = gl.getUniformLocation(program, "u_step");
+		const dissolveUniform = gl.getUniformLocation(program, "u_dissolve");
 		gl.uniform1f(gl.getUniformLocation(program, "u_variant"), directions[variant]);
 		const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-		let width = 1, height = 1, scene = targetRef.current, elapsed = 0;
+		let width = 1, height = 1, scene = targetRef.current, elapsed = 0, thinning = 0;
 		let last = 0, animation = 0;
 		const draw = () => {
 			gl.uniform2f(sizeUniform, width, height);
 			gl.uniform1f(timeUniform, elapsed);
 			gl.uniform1f(stepUniform, scene);
+			gl.uniform1f(dissolveUniform, thinning);
 			gl.drawArrays(gl.TRIANGLES,0,3);
 		};
 		const tick = (now: number) => {
@@ -72,7 +74,11 @@ export function WelcomeField({ variant, step }: { variant: Direction; step: numb
 			const delta = last ? Math.min((now-last)/1000,.08) : 0;
 			last = now;
 			elapsed += delta;
-			scene += (targetRef.current-scene)*(1-Math.exp(-delta*4.8));
+			const distance = targetRef.current-scene;
+			// Loosen the material as it starts travelling; let it gather as it settles.
+			// Both values stay continuous when someone changes direction midway.
+			thinning += (Math.min(1,Math.abs(distance)*2)-thinning)*(1-Math.exp(-delta*5));
+			scene += distance*(1-Math.exp(-delta*(variant === "dissolve" ? 2.6 : 4.8)));
 			draw();
 			animation = window.requestAnimationFrame(tick);
 		};
@@ -80,7 +86,7 @@ export function WelcomeField({ variant, step }: { variant: Direction; step: numb
 			if (animation) window.cancelAnimationFrame(animation);
 			animation=0;
 			last=0;
-			if (reduced.matches) scene=targetRef.current;
+			if (reduced.matches) { scene=targetRef.current; thinning=0; }
 			draw();
 			if (!reduced.matches && !document.hidden) animation=window.requestAnimationFrame(tick);
 		};

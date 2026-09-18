@@ -4,19 +4,10 @@ import { MotionField, type Effect, type Playback } from "./field";
 import "./study.css";
 
 const studies: Record<Effect, { name: string; description: string }> = {
-	dissolve: { name: "Dissolve", description: "The pigment breaks apart, then gathers somewhere new." },
-	filaments: { name: "Filaments", description: "Pull the pigment into threads. Let them settle back together." },
-	vortex: { name: "Vortex", description: "Wind the whole field inward, then let it open again." },
-	melt: { name: "Melt", description: "The pigment stretches into uneven streams as it falls." },
-	bloom: { name: "Bloom", description: "A wet edge spreads through the next shape like ink on paper." },
-	split: { name: "Split", description: "One body separates, travels, and joins itself again." },
-	fold: { name: "Fold", description: "The field folds into a narrow seam and turns back out." },
-	drift: { name: "Drift", description: "A gust pulls the pigment sideways into long wisps." },
-	ripple: { name: "Ripple", description: "A travelling wave bends the material as it moves." },
-	eclipse: { name: "Eclipse", description: "A dark curved edge passes through and reveals the next field." },
+	dissolve: { name: "Dissolve", description: "The pigment thins and drifts, then gathers into its next shape." },
 };
 
-// Ten separate frames answer one question: how should the pigment move?
+// A scrub-able companion to the dissolve onboarding frame.
 export function ShaderStudy({ effect, midpoint = false }: { effect: Effect; midpoint?: boolean }) {
 	const [playback,setPlayback]=useState<Playback>({from:0,to:1,mode:midpoint ? "scrub" : "rest",progress:midpoint ? .5 : 0,revision:0});
 	const [step,setStep]=useState(midpoint ? 1 : 0);
