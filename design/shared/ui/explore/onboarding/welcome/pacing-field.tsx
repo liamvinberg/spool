@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
+import { sampleFlowEasing, type FlowEasing } from "./momentum-easing";
 import fragment from "./pacing-field.glsl";
 import { pacingProfiles, type PacingTake } from "./pacing-profiles";
 
 const vertex = `attribute vec2 a_position; varying vec2 v_uv;
 void main() { v_uv=a_position*.5+.5; gl_Position=vec4(a_position,0.,1.); }`;
 
-export function PacingField({ take, step }: { take: PacingTake; step: number }) {
+export function PacingField({ take, step, flowEasing }: { take: PacingTake; step: number; flowEasing?: FlowEasing }) {
 	const ref = useRef<HTMLCanvasElement>(null);
 	const wanted = useRef(step);
 	const notify = useRef<(() => void) | null>(null);
@@ -66,7 +67,7 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 			raf=0;
 			if(document.hidden || reduced.matches) return;
 			const dt=last ? Math.min((stamp-last)/1000,.06) : 0;last=stamp;
-			progress=started ? Math.min(1,(stamp-started)/profile.duration) : 1;
+			progress=started ? Math.max(0,Math.min(1,(stamp-started)/profile.duration)) : 1;
 			const destination=profile.poses[target] ?? profile.poses[0];
 			const p=progress;
 			if(profile.flowTravel) {
@@ -74,8 +75,14 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 				// Preserve velocity if another click interrupts the trip.
 				const seconds=profile.duration/1000,travel=flowTo-flowFrom;
 				const tangent=flowInitialVelocity*seconds;
-				elapsed=flowFrom+travel*(3*p*p-2*p*p*p)+tangent*(p*p*p-2*p*p+p);
-				flowVelocity=(travel*(6*p-6*p*p)+tangent*(3*p*p-4*p+1))/seconds;
+				if(flowEasing) {
+					const sample=sampleFlowEasing(flowEasing,p);
+					elapsed=p===1 ? flowTo : flowFrom+travel*sample.value;
+					flowVelocity=p===1 ? 0 : travel*sample.slope/seconds;
+				} else {
+					elapsed=flowFrom+travel*(3*p*p-2*p*p*p)+tangent*(p*p*p-2*p*p+p);
+					flowVelocity=(travel*(6*p-6*p*p)+tangent*(3*p*p-4*p+1))/seconds;
+				}
 			} else elapsed+=dt;
 			// A shared duration with the copy. Echo leads with the pigment;
 			// Current lets the words move first, then gently catches up.
@@ -102,6 +109,6 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 		reduced.addEventListener("change",sync);document.addEventListener("visibilitychange",sync);
 		notify.current=sync;resize();sync();canvas.dataset.backend="webgl";
 		return () => { notify.current=null;window.cancelAnimationFrame(raf);observer.disconnect();reduced.removeEventListener("change",sync);document.removeEventListener("visibilitychange",sync);dispose(); };
-	}, [take]);
-	return <canvas ref={ref} data-pacing-take={take} aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",background:"#101010"}} />;
+	}, [take,flowEasing]);
+	return <canvas ref={ref} data-pacing-take={take} data-flow-easing={flowEasing} aria-hidden="true" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",background:"#101010"}} />;
 }

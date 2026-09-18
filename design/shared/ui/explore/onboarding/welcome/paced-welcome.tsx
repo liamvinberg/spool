@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useState } from "react";
+import type { FlowEasing } from "./momentum-easing";
 import { PacingField } from "./pacing-field";
 import { pacingProfiles, type PacingTake } from "./pacing-profiles";
 import { SpoolMark } from "shared/ui/spool/mark";
@@ -36,7 +37,7 @@ function Folder({ open = false }: { open?: boolean }) {
 	);
 }
 
-export function PacedWelcome({ take }: { take: PacingTake }) {
+export function PacedWelcome({ take, flowEasing }: { take: PacingTake; flowEasing?: FlowEasing }) {
 	const [step, setStep] = useState(0);
 	const [previous, setPrevious] = useState<number | null>(null);
 	const [revision, setRevision] = useState(0);
@@ -84,7 +85,7 @@ export function PacedWelcome({ take }: { take: PacingTake }) {
 
 	return (
 		<main className="flowing-welcome paced-welcome" data-take={take} data-step={step} data-direction={direction} data-moving={previous !== null} data-started={revision > 0} style={style}>
-			<PacingField take={take} step={step} />
+			<PacingField take={take} step={step} {...(flowEasing ? { flowEasing } : {})} />
 			<header className="fw-brand"><SpoolMark className="fw-mark" /><span>spool</span></header>
 			<div className="fw-copy-position">
 				{previous !== null && renderCopy(previous,true)}
