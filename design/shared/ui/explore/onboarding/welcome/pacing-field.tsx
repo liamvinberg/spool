@@ -39,7 +39,7 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 		const material=gl.getUniformLocation(program,"u_material");
 		const camera=gl.getUniformLocation(program,"u_camera");
 		gl.uniform1f(gl.getUniformLocation(program,"u_scene"),profile.scene ? 1 : 0);
-		let width=1,height=1,elapsed=0,last=0,raf=0;
+		let width=1,height=1,elapsed=0,last=0,raf=0,flowRate=1;
 		const draw=() => {
 			gl.uniform2f(size,width,height);gl.uniform1f(time,elapsed);
 			gl.uniform4f(shape,position[0]!,position[1]!,position[2]!,position[3]!);
@@ -62,10 +62,15 @@ export function PacingField({ take, step }: { take: PacingTake; step: number }) 
 		const tick=(stamp:number) => {
 			raf=0;
 			if(document.hidden || reduced.matches) return;
-			const dt=last ? Math.min((stamp-last)/1000,.06) : 0;last=stamp;elapsed+=dt;
+			const dt=last ? Math.min((stamp-last)/1000,.06) : 0;last=stamp;
 			progress=started ? Math.min(1,(stamp-started)/profile.duration) : 1;
 			const destination=profile.poses[target] ?? profile.poses[0];
 			const p=progress;
+			// Integrate the extra speed into the existing clock. Multiplying time
+			// would jump to another shape when the speed changes.
+			const desiredRate=1+(profile.flowBoost ?? 0)*Math.sin(Math.PI*p)**2;
+			flowRate+=(desiredRate-flowRate)*(1-Math.exp(-12*dt));
+			elapsed+=dt*flowRate;
 			// A shared duration with the copy. Echo leads with the pigment;
 			// Current lets the words move first, then gently catches up.
 			const phase=take==="echo" ? Math.min(1,p/ .72) : take==="pan" ? Math.max(0,(p-.12)/.88) : p;

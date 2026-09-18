@@ -1,11 +1,12 @@
-// Ten separate frames explore the timing of the whole onboarding step.
-export type PacingTake = "together" | "exhale" | "pan" | "echo" | "still" | "rise" | "gather" | "travel" | "unfold" | "wander";
+// Separate frames explore the timing of the whole onboarding step.
+export type PacingTake = "together" | "exhale" | "pan" | "echo" | "still" | "rise" | "gather" | "travel" | "unfold" | "wander" | "momentum";
 // Center, radius, turn, bend, material scale, material travel.
 export type PacingPose = readonly [number, number, number, number, number, number, number, number];
 interface PacingProfile {
  duration: number;
  transport: number;
  scene?: boolean;
+ flowBoost?: number;
  poses: readonly [PacingPose, PacingPose, PacingPose];
  swell: PacingPose;
 }
@@ -14,6 +15,7 @@ const quiet: PacingProfile["poses"] = [origin,[.81,.32,.40,.43,-.04,.02,1,0],[.8
 const turning: PacingProfile["poses"] = [origin,[.80,.27,.46,.36,-.21,.08,1.03,.03],[.85,.56,.39,.52,.16,-.06,1.02,.07]];
 const zero: PacingPose = [0,0,0,0,0,0,0,0];
 export const pacingProfiles: Record<PacingTake,PacingProfile> = {
+ momentum: {duration:900,transport:0,flowBoost:6,poses:[origin,origin,origin],swell:zero},
  together: {duration:800,transport:.72,poses:quiet,swell:zero},
  exhale: {duration:1300,transport:.35,poses:[origin,[.82,.35,.46,.48,.04,.04,1.04,0],[.82,.46,.43,.53,-.05,-.04,1.08,.02]],swell:[0,0,.035,.035,0,.025,.035,0]},
  pan: {duration:1100,transport:0,scene:true,poses:[[0,0,0.4,0.43,0,0,1,0],[0.26,0,0.4,0.43,0,0,1,0],[0.52,0,0.4,0.43,0,0,1,0]],swell:zero},

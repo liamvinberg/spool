@@ -6,6 +6,8 @@
 .flowing-welcome.paced-welcome .pace-out { animation: var(--copy-out) var(--pace-duration) cubic-bezier(.4,0,.2,1) both; pointer-events: none; }
 .paced-welcome .fw-progress span { transition-duration: var(--pace-duration); transition-timing-function: cubic-bezier(.4,0,.2,1); }
 .paced-welcome .fw-back { transition: opacity calc(var(--pace-duration) * .6) ease, color 180ms ease; }
+.paced-welcome[data-take="momentum"] { --copy-in: pace-still-in; --copy-out: pace-still-out; }
+.paced-welcome[data-take="momentum"] .fw-copy-position { top: 29.25%; transform: none; }
 .paced-welcome[data-take="exhale"] { --copy-in: pace-exhale-in; --copy-out: pace-exhale-out; }
 .paced-welcome[data-take="pan"] { --copy-in: pace-pan-in; --copy-out: pace-pan-out; }
 .paced-welcome[data-take="echo"] { --copy-in: pace-echo-in; --copy-out: pace-echo-out; }
