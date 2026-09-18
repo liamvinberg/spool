@@ -182,3 +182,41 @@ async function render(props: Partial<Parameters<typeof TabStrip>[0]> = {}) {
 	await rerender();
 	return { host, rerender };
 }
+
+it("exports an inactive tab without focusing it, and restores keyboard focus on dismissal", async () => {
+	const onExport = vi.fn();
+	const onFocus = vi.fn();
+	const onClose = vi.fn();
+	const { host } = await render({ onExport, onFocus, onClose });
+	const beta = host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[1];
+	await act(async () =>
+		beta?.dispatchEvent(
+			new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 150, clientY: 20 }),
+		),
+	);
+	expect(onFocus).not.toHaveBeenCalled();
+	expect(document.activeElement?.textContent).toBe("Export project…");
+	await act(async () => document.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click());
+	expect(onExport).toHaveBeenCalledWith(tabs[1]);
+	expect(onFocus).not.toHaveBeenCalled();
+	expect(document.activeElement).toBe(beta);
+	await act(async () =>
+		beta?.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }),
+		),
+	);
+	await act(async () =>
+		document.activeElement?.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+		),
+	);
+	expect(document.activeElement?.textContent).toBe("Close tab");
+	await act(async () =>
+		document.activeElement?.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+		),
+	);
+	expect(document.querySelector('[role="menu"]')).toBeNull();
+	expect(document.activeElement).toBe(beta);
+	expect(onClose).not.toHaveBeenCalled();
+});
