@@ -47,6 +47,7 @@ const app = Object.assign(new EventEmitter(), {
 	},
 });
 let progressWindows = 0;
+let canvasOptions: Record<string, unknown> = {};
 let canvas: Window | undefined;
 let saveError: string | null = null;
 let saveReplies = true;
@@ -59,6 +60,7 @@ class Window extends EventEmitter {
 		if (options.title === "Spool update") progressWindows++;
 		else {
 			canvas = this;
+			canvasOptions = { ...options };
 			queueMicrotask(() => ipc.emit("spool:canvas-ready", sender()));
 		}
 	}
@@ -78,6 +80,9 @@ class Window extends EventEmitter {
 		executeJavaScript: async () => {},
 	});
 	close = () => this.emit("closed");
+	getNormalBounds = () => ({ x: 50, y: 50, width: 1100, height: 800 });
+	isMaximized = () => false;
+	isFullScreen = () => false;
 	show = noop;
 	focus = noop;
 	loadURL = async () => {};
@@ -101,6 +106,7 @@ const electron = {
 		setToolTip = noop;
 		setContextMenu = noop;
 	},
+	screen: { getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1728, height: 1117 } }] },
 	dialog: {
 		showMessageBox: async (options: MessageBoxOptions) => {
 			dialogs.push(options);
@@ -499,4 +505,23 @@ test("a renderer that never becomes ready cannot leave a permanent cover", async
 	await turn();
 	assert.equal(coversClosed, 1);
 	assert.match(dialogs.at(-1)?.message ?? "", /taking longer/);
+});
+
+test("a completed update restores the window on a connected screen", async () => {
+	beginUpdateRestart(directory, "0.20.1", Date.now(), { path: "/p/example", rect: { x: 80, y: 60, w: 1100, h: 800 } });
+	api.boot();
+	await turn();
+	assert.equal(canvasOptions.x, 80);
+	assert.equal(canvasOptions.y, 60);
+	assert.equal(canvasOptions.width, 1100);
+	assert.equal(canvasOptions.height, 800);
+});
+
+test("a disconnected display cannot strand the restored window", async () => {
+	beginUpdateRestart(directory, "0.20.1", Date.now(), { rect: { x: -5000, y: 60, w: 1100, h: 800 } });
+	api.boot();
+	await turn();
+	assert.equal(canvasOptions.x, undefined);
+	assert.equal(canvasOptions.y, undefined);
+	assert.equal(canvasOptions.width, 1440);
 });

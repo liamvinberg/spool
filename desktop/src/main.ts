@@ -34,7 +34,13 @@ import { installProjectDownloads } from "./project-download";
 import { importProjectFile, ProjectOpenQueue } from "./project-open";
 import { bundledCli, bundledShim, cloudCommand } from "./runtime";
 import { UpdateCover } from "./update-cover";
-import { beginUpdateRestart, clearUpdateRestart, updateRestartPath, updateRestartState } from "./update-restart";
+import {
+	beginUpdateRestart,
+	clearUpdateRestart,
+	type UpdateWorkspace,
+	updateRestartState,
+	updateRestartWorkspace,
+} from "./update-restart";
 import {
 	CHECK_INTERVAL_MS,
 	checkCachePath,
@@ -100,7 +106,7 @@ let workspaceReady = false;
 let cover: UpdateCover | undefined;
 let reloadQueued = false;
 let coverDeadline: NodeJS.Timeout | undefined;
-let resumePath: string | undefined;
+let resumeWorkspace: UpdateWorkspace = {};
 let resumeCovered = false;
 let dismissedUpdate: string | undefined;
 let saveSequence = 0;
@@ -224,9 +230,20 @@ function escapeHtml(text: string): string {
 function createWindow(): BrowserWindow {
 	canvasReady = false;
 	canvasActive = false;
+	const restored = resumeWorkspace.rect;
+	const rect =
+		restored &&
+		rectIsReachable(
+			restored,
+			screen.getAllDisplays().map((display) => display.workArea),
+		)
+			? restored
+			: undefined;
 	const created = new BrowserWindow({
-		width: 1440,
-		height: 900,
+		show: false,
+		...(rect ? { x: rect.x, y: rect.y } : {}),
+		width: rect?.w ?? 1440,
+		height: rect?.h ?? 900,
 		minWidth: 720,
 		minHeight: 480,
 		title: NAME,
@@ -236,6 +253,8 @@ function createWindow(): BrowserWindow {
 		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
 	});
 
+	if (resumeWorkspace.maximized) created.maximize();
+	if (resumeWorkspace.fullscreen) created.setFullScreen(true);
 	if (resumeCovered) {
 		resumeCovered = false;
 		cover = new UpdateCover(created, true);
@@ -412,8 +431,8 @@ function point(
 	// reload it out from under whatever was on screen.
 	if (isDaemonUrl(showing.webContents.getURL())) return;
 	const loadingAt = performance.now();
-	const destination = resumePath === undefined ? url : new URL(resumePath, url).href;
-	resumePath = undefined;
+	const destination = resumeWorkspace.path === undefined ? url : new URL(resumeWorkspace.path, url).href;
+	resumeWorkspace = {};
 	void showing.loadURL(destination).then(
 		() => {
 			log(
@@ -1331,8 +1350,15 @@ async function restartUpdate(relaunch = true): Promise<void> {
 			await cover.enter();
 		}
 		await saveWorkspace();
-		const path = window ? new URL(window.webContents.getURL()).pathname : undefined;
-		beginUpdateRestart(DIRECTORY, target, Date.now(), path);
+		const workspace: UpdateWorkspace = {};
+		if (window) {
+			const bounds = window.getNormalBounds();
+			workspace.path = new URL(window.webContents.getURL()).pathname;
+			workspace.rect = { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height };
+			workspace.maximized = window.isMaximized();
+			workspace.fullscreen = window.isFullScreen();
+		}
+		beginUpdateRestart(DIRECTORY, target, Date.now(), workspace);
 		setUpdate({ kind: "restarting", version: target });
 		shuttingDown = true;
 		await shutdown(true);
@@ -1469,7 +1495,7 @@ export function boot(): void {
 		return;
 	}
 	if (restart === "completed") {
-		resumePath = updateRestartPath(DIRECTORY);
+		resumeWorkspace = updateRestartWorkspace(DIRECTORY);
 		resumeCovered = true;
 	}
 	if (restart === "completed" || restart === "expired") {

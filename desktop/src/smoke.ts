@@ -202,10 +202,14 @@ async function checkUpdateCover(): Promise<void> {
 	try {
 		await canvas.loadURL("data:text/html,<body style='background:%23222222'>Saved canvas</body>");
 		const cover = new UpdateCover(canvas);
-		await cover.enter();
 		const surface = canvas.contentView.children.find((child) => child instanceof WebContentsView);
 		assert(surface instanceof WebContentsView);
 		const contents = surface.webContents;
+		contents.debugger.attach("1.3");
+		await contents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+			features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+		});
+		await cover.enter();
 		assert.equal(await contents.executeJavaScript("getComputedStyle(document.querySelector('main')).opacity"), "1");
 		const before = await contents.executeJavaScript(
 			"getComputedStyle(document.querySelector('.activity'),'::after').transform",

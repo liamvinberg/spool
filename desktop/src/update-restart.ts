@@ -1,5 +1,6 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { WindowRect } from "./play-window";
 import { compareVersions, parseVersion } from "./version";
 
 // ShipIt keeps working after this process exits. A Dock launch in that gap
@@ -7,13 +8,21 @@ import { compareVersions, parseVersion } from "./version";
 const FILE = "app-update-restart.json";
 export const RESTART_WINDOW_MS = 5 * 60_000;
 
-export function beginUpdateRestart(directory: string, target: string, now = Date.now(), path?: string): void {
+export interface UpdateWorkspace {
+	path?: string;
+	rect?: WindowRect;
+	maximized?: boolean;
+	fullscreen?: boolean;
+}
+
+export function beginUpdateRestart(
+	directory: string,
+	target: string,
+	now = Date.now(),
+	workspace: UpdateWorkspace = {},
+): void {
 	const file = join(directory, FILE);
-	writeFileSync(
-		`${file}.tmp`,
-		JSON.stringify({ target, startedAt: now, ...(validUpdatePath(path) ? { path } : {}) }),
-		{ mode: 0o600 },
-	);
+	writeFileSync(`${file}.tmp`, JSON.stringify({ target, startedAt: now, ...workspace }), { mode: 0o600 });
 	renameSync(`${file}.tmp`, file);
 }
 
@@ -46,13 +55,38 @@ function validUpdatePath(path: unknown): path is string {
 	return typeof path === "string" && (path === "/" || /^\/p\/[^/?#]+$/.test(path)) && path.length < 4096;
 }
 
-export function updateRestartPath(directory: string): string | undefined {
+export function updateRestartWorkspace(directory: string): UpdateWorkspace {
 	try {
 		const value: unknown = JSON.parse(readFileSync(join(directory, FILE), "utf8"));
-		if (typeof value === "object" && value !== null && "path" in value && validUpdatePath(value.path))
-			return value.path;
+		if (typeof value !== "object" || value === null) return {};
+		const workspace: UpdateWorkspace = {};
+		if ("path" in value && validUpdatePath(value.path)) workspace.path = value.path;
+		if ("rect" in value && validRect(value.rect)) workspace.rect = value.rect;
+		if ("maximized" in value && typeof value.maximized === "boolean") workspace.maximized = value.maximized;
+		if ("fullscreen" in value && typeof value.fullscreen === "boolean") workspace.fullscreen = value.fullscreen;
+		return workspace;
 	} catch {
-		/* A damaged handoff opens Home. */
+		return {};
 	}
-	return undefined;
+}
+
+function validRect(value: unknown): value is WindowRect {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"x" in value &&
+		typeof value.x === "number" &&
+		Number.isFinite(value.x) &&
+		"y" in value &&
+		typeof value.y === "number" &&
+		Number.isFinite(value.y) &&
+		"w" in value &&
+		typeof value.w === "number" &&
+		value.w >= 720 &&
+		value.w <= 32768 &&
+		"h" in value &&
+		typeof value.h === "number" &&
+		value.h >= 480 &&
+		value.h <= 32768
+	);
 }
