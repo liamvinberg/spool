@@ -2,6 +2,15 @@ export type FlowEasing = "linear" | "accelerate" | "cruise" | "late-brake" | "si
 
 // The value moves through the same amount of pigment; slope gives its speed.
 export function sampleFlowEasing(kind: FlowEasing, p: number): { value: number; slope: number } {
+ // Trim the nearly still beginning so every curve moves on the click.
+ const lead=kind==="accelerate" ? .2 : kind==="cruise" ? .06 : kind==="sine" ? .12 : 0;
+ const start=sampleCurve(kind,lead);
+ const sample=sampleCurve(kind,lead+(1-lead)*p);
+ const remaining=1-start.value;
+ return { value:(sample.value-start.value)/remaining, slope:sample.slope*(1-lead)/remaining };
+}
+
+function sampleCurve(kind: FlowEasing, p: number): { value: number; slope: number } {
  switch (kind) {
   case "linear": return { value:p, slope:1 };
   case "accelerate": return { value:p*p, slope:2*p };

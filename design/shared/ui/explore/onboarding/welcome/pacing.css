@@ -8,6 +8,13 @@
 .paced-welcome .fw-back { transition: opacity calc(var(--pace-duration) * .6) ease, color 180ms ease; }
 .paced-welcome[data-take="momentum"] { --copy-in: pace-still-in; --copy-out: pace-still-out; }
 .paced-welcome[data-take="momentum"] .fw-copy-position { top: 29.25%; transform: none; }
+/* A step acknowledges the click immediately; only the shader takes the full trip. */
+.flowing-welcome.paced-welcome[data-take="momentum"] .pace-out { display: none; }
+.paced-welcome[data-take="momentum"][data-started="true"] .pace-in { animation: pace-immediate-in 160ms linear both; }
+.paced-welcome[data-take="momentum"] .fw-progress span,
+.paced-welcome[data-take="momentum"] .fw-back { transition-duration: 160ms; }
+@keyframes pace-immediate-in { from { opacity: .65; } to { opacity: 1; } }
+
 .paced-welcome[data-take="exhale"] { --copy-in: pace-exhale-in; --copy-out: pace-exhale-out; }
 .paced-welcome[data-take="pan"] { --copy-in: pace-pan-in; --copy-out: pace-pan-out; }
 .paced-welcome[data-take="echo"] { --copy-in: pace-echo-in; --copy-out: pace-echo-out; }
