@@ -2579,6 +2579,18 @@ const canvasShimJs = `(() => {
 		}, "*");
 	}, { passive: false });
 
+	// Files entering a live iframe cannot bubble to the application shell.
+	// Only announce the gesture; archive bytes must arrive in a real shell drop.
+	for (const type of ["dragenter", "dragover"]) {
+		addEventListener(type, (event) => {
+			if (!event.isTrusted || window.parent === window || !event.dataTransfer?.types.includes("Files")) return;
+			window.parent.postMessage({
+				spool: "external-file-drag",
+				types: Array.from(event.dataTransfer.items, (item) => item.type),
+			}, "*");
+		}, { capture: true });
+	}
+
 	// Esc must still exit (#22); browser zoom shortcuts become the canvas's
 	// shortcuts so a focused frame cannot zoom the whole page into a trap.
 	addEventListener("keydown", (event) => {
