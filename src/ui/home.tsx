@@ -28,6 +28,8 @@ export function Home({
 	onStart,
 	onFolder,
 	onSettings,
+	onImport,
+	onExportProject,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -38,6 +40,8 @@ export function Home({
 	onStart: () => void;
 	onFolder: () => void;
 	onSettings: () => void;
+	onImport?: () => void;
+	onExportProject?: (project: ProjectCard) => void;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
@@ -125,6 +129,14 @@ export function Home({
 											Keep the design beside your code.
 										</small>
 									</button>
+									<button type="button" onClick={onImport}>
+										<FolderIcon />
+										<strong>
+											Import…
+											<ArrowRightIcon className="home-arrow" />
+										</strong>
+										<small>Open a .spool project file.</small>
+									</button>
 								</>
 							}
 						/>
@@ -151,6 +163,9 @@ export function Home({
 										<kbd>/</kbd>
 									)}
 								</label>
+								<button type="button" className="home-action" onClick={onImport}>
+									Import…
+								</button>
 								<button type="button" className="home-action" onClick={onFolder}>
 									Open…
 								</button>
@@ -201,6 +216,7 @@ export function Home({
 										onForget={() => onForgetProject(project)}
 										onTrash={() => onTrashProject(project)}
 										onRename={() => onRenameProject(project)}
+										onExport={() => onExportProject?.(project)}
 									/>
 								))}
 							</div>
@@ -229,6 +245,7 @@ function ProjectTile({
 	onForget,
 	onTrash,
 	onRename,
+	onExport,
 }: {
 	project: ProjectCard;
 	menuOpen: boolean;
@@ -238,6 +255,7 @@ function ProjectTile({
 	onForget: () => void;
 	onTrash: () => void;
 	onRename: () => void;
+	onExport: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const cover = project.covers[0];
@@ -288,6 +306,14 @@ function ProjectTile({
 						onClick={() => {
 							onCloseMenu();
 							onOpen();
+						}}
+					/>
+					<MenuItem
+						label="Export project…"
+						onClick={() => {
+							manageRef.current?.focus();
+							onCloseMenu();
+							onExport();
 						}}
 					/>
 					<MenuItem

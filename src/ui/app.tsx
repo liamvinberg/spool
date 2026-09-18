@@ -22,6 +22,7 @@ import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, HomeIcon } from "./icons";
 import { ProjectPicker } from "./picker";
+import { useProjectTransfer } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
@@ -413,6 +414,10 @@ export function App() {
 		});
 	}, [appWindow, openSettings]);
 
+	const transfer = useProjectTransfer(async (project) => {
+		await refetch();
+		openTab(project);
+	});
 	const canvasActive =
 		focusedTab !== undefined &&
 		chrome !== null &&
@@ -420,7 +425,8 @@ export function App() {
 		!keysOpen &&
 		!settingsOpen &&
 		renameRequest === null &&
-		trashRequest === null;
+		trashRequest === null &&
+		!transfer.confirming;
 	useEffect(() => {
 		appWindow?.setCanvasActive(canvasActive);
 		return () => appWindow?.setCanvasActive(false);
@@ -449,6 +455,7 @@ export function App() {
 						onFocus={focusProject}
 						onClose={closeTab}
 						onReorder={reorderTabs}
+						onExport={transfer.exportProject}
 						onPick={() => setPicking("new")}
 					/>
 				</div>
@@ -491,6 +498,8 @@ export function App() {
 						onStart={() => setPicking("new")}
 						onFolder={() => setPicking("folder")}
 						onSettings={openSettings}
+						onImport={transfer.importProject}
+						onExportProject={transfer.exportProject}
 						onOpenProject={(project) => openTab(project)}
 						onForgetProject={(project) => void forgetProject(project)}
 						onTrashProject={setTrashRequest}
@@ -509,6 +518,7 @@ export function App() {
 				)}
 			</main>
 
+			{transfer.surface}
 			{toast !== null && (
 				<UpdateToastPill
 					toast={toast}

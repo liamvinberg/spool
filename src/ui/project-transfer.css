@@ -1,0 +1,36 @@
+.project-transfer-drop {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+	pointer-events: none;
+}
+.project-transfer-drop > div {
+	display: none;
+}
+.project-transfer-drop.is-project {
+	inset: 8px;
+	border: 1px solid var(--color-thread);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--color-bg) 75%, transparent);
+}
+.project-transfer-drop.is-project > div {
+	display: block;
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	text-align: center;
+}
+body:has(.project-transfer-drop) iframe {
+	/* A file drag must cross frame surfaces even while a live frame captures pointer input. */
+	/* biome-ignore lint/complexity/noImportantStyles: override live-frame inline pointer events during an external file drag */
+	pointer-events: none !important;
+}
+.project-transfer-indicator {
+	animation: toast-sweep 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.project-transfer-indicator {
+		animation: none;
+	}
+}

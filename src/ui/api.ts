@@ -1621,3 +1621,30 @@ export async function fetchSharingAvailable(): Promise<boolean> {
 		return false;
 	}
 }
+
+/** Project transfer uses the same control token as every project lifecycle write. */
+export async function exportProject(root: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+	const response = await client.api.projects.export.$post({ json: { root } }, { init: { signal } });
+	if (!response.ok) throw new Error(await errorText(response));
+	const disposition = response.headers.get("Content-Disposition") ?? "";
+	const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+	const filename = encoded
+		? decodeURIComponent(encoded)
+		: (/filename="([^"]+)"/.exec(disposition)?.[1] ?? "project.spool");
+	return { blob: await response.blob(), filename };
+}
+
+export async function importProject(file: File, transfer: string): Promise<{ root: string; name: string }> {
+	const response = await client.api.projects.import.$post(
+		{ query: { transfer } },
+		{ init: { headers: { "Content-Type": "application/zip" }, body: file } },
+	);
+	if (!response.ok) throw new Error(await errorText(response));
+	return (await response.json()) as { root: string; name: string };
+}
+
+export async function cancelProjectTransfer(transfer: string): Promise<boolean> {
+	const response = await client.api.projects.transfer.cancel.$post({ json: { transfer } });
+	if (!response.ok) throw new Error(await errorText(response));
+	return ((await response.json()) as { cancelled: boolean }).cancelled;
+}
