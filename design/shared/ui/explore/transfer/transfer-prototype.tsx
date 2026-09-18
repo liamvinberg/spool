@@ -22,7 +22,7 @@ export type TransferState =
 	| "hover"
 	| "export"
 	| "packing"
-	| "ready"
+	| "downloaded"
 	| "loading"
 	| "opened"
 	| "duplicate"
@@ -79,21 +79,20 @@ export function TransferPrototype({
 	const [exportName, setExportName] = useState("kaffe");
 	const [slow, setSlow] = useState(true);
 	const [same, setSame] = useState(false);
-	const [scope, setScope] = useState("project");
 	const [selected, setSelected] = useState<string[]>([...FRAMES]);
 	const [added, setAdded] = useState(initial === "added");
 	const [copy, setCopy] = useState(false);
-	const [notice, setNotice] = useState("");
+	const [notice, setNotice] = useState(initial === "downloaded" ? "kaffe.spool saved to Downloads" : "");
 	const [stage, setStage] = useState("Reading file…");
 	const [busyVisible, setBusyVisible] = useState(initial === "loading" || initial === "packing");
 	const [fileName, setFileName] = useState(initial === "error" ? "kaffe.zip" : "kaffe-studies.spool");
 	const input = useRef<HTMLInputElement>(null);
 	const dragDepth = useRef(0);
 	const busy = state === "loading" || state === "packing";
-	const modal = ["export", "ready", "duplicate", "replace", "pick", "error", "choose"].includes(state);
+	const modal = ["export", "duplicate", "replace", "pick", "error", "choose"].includes(state);
 
 	function openProject(name: string) {
-		setRegistered((current) => current.includes(name) ? current : [...current, name]);
+		setRegistered((current) => (current.includes(name) ? current : [...current, name]));
 		setTabs((current) => (current.includes(name) ? current : [...current, name]));
 		setActive(name);
 		setState("opened");
@@ -123,7 +122,7 @@ export function TransferPrototype({
 		setState(initial);
 		setHover(initial === "hover");
 		setMenu(null);
-		setNotice("");
+		setNotice(initial === "downloaded" ? "kaffe.spool saved to Downloads" : "");
 		setAdded(initial === "added");
 		setActive(
 			initial === "home" || initial === "home-menu" ? "Home" : initial === "opened" ? "kaffe-studies" : "kaffe",
@@ -147,10 +146,12 @@ export function TransferPrototype({
 		);
 		const finish = window.setTimeout(
 			() => {
-				if (state === "packing") setState("ready");
-				else {
+				if (state === "packing") {
+					setState("downloaded");
+					setNotice(`${exportName}.spool saved to Downloads`);
+				} else {
 					const name = copy ? "kaffe-copy" : same || initial === "replace" ? "kaffe" : "kaffe-studies";
-					setRegistered((current) => current.includes(name) ? current : [...current, name]);
+					setRegistered((current) => (current.includes(name) ? current : [...current, name]));
 					setTabs((current) => (current.includes(name) ? current : [...current, name]));
 					setActive(name);
 					setState("opened");
@@ -251,10 +252,13 @@ export function TransferPrototype({
 								covers: homeProjects.find((project) => project.name === "kaffe")?.covers ?? [],
 							}))}
 							initialMenu={initial === "home-menu" ? "kaffe" : null}
-							onOpenProject={(project) => {setTabs((current) => current.includes(project.name) ? current : [...current, project.name]); setActive(project.name);}}
+							onOpenProject={(project) => {
+								setTabs((current) => (current.includes(project.name) ? current : [...current, project.name]));
+								setActive(project.name);
+							}}
 							onExportProject={(project) => {
 								setExportName(project.name);
-								setScope("project");
+
 								setState("export");
 							}}
 							onForgetProject={() => setNotice("Hide from Spool is outside this prototype")}
@@ -326,7 +330,7 @@ export function TransferPrototype({
 								label="Export project…"
 								onClick={() => {
 									setExportName(menu.name);
-									setScope("project");
+
 									setMenu(null);
 									setState("export");
 								}}
@@ -436,17 +440,15 @@ export function TransferPrototype({
 								<h2 id="transfer-title" className="type-title">
 									{state === "export"
 										? `Export ${exportName}`
-										: state === "ready"
-											? "Your project is ready"
-											: state === "duplicate"
-												? "kaffe is already on this Mac"
-												: state === "replace"
-													? "Replace kaffe?"
-													: state === "pick"
-														? "Add frames to kaffe"
-														: state === "choose"
-															? "Open kaffe-studies"
-															: "This file could not be opened"}
+										: state === "duplicate"
+											? "kaffe is already on this Mac"
+											: state === "replace"
+												? "Replace kaffe?"
+												: state === "pick"
+													? "Add frames to kaffe"
+													: state === "choose"
+														? "Open kaffe-studies"
+														: "This file could not be opened"}
 								</h2>
 								<button
 									type="button"
@@ -460,27 +462,16 @@ export function TransferPrototype({
 							<div className="px-5 py-4">
 								{state === "export" ? (
 									<>
-										<p className="mb-5 text-muted type-body">Send an editable copy to someone using spool.</p>
+										<p className="mb-5 text-muted type-body">Save an editable project to Downloads.</p>
 										<FormatOption
 											checked
 											description="3 pages · 8 frames"
 											disabled={false}
 											label="Entire project"
-											onClick={() => setScope("project")}
+											onClick={() => undefined}
 										/>
 										<p className="mt-5 text-muted type-control">
-											Frames, layout, flows and local assets travel together.
-										</p>
-									</>
-								) : null}
-								{state === "ready" ? (
-									<>
-										<p className="type-value">{`${exportName}.spool`}</p>
-										<p className="mt-2 text-muted type-detail">
-											{scope === "project" ? "8 frames · 3 pages" : "3 frames · 1 page"} · 2.4 mb
-										</p>
-										<p className="mt-5 text-muted type-body">
-											Send the file in Slack. They can drop it anywhere in spool to open it.
+											Includes frames, layout, flows and local assets.
 										</p>
 									</>
 								) : null}
@@ -575,22 +566,12 @@ export function TransferPrototype({
 										<Action primary onClick={() => setState("packing")}>
 											Export file
 										</Action>
-									) : state === "ready" ? (
-										<Action
-											primary
-											onClick={() => {
-												setState("idle");
-												setNotice("File saved");
-											}}
-										>
-											Save file
-										</Action>
 									) : state === "replace" ? (
 										<Action
 											primary
 											onClick={() => {
 												setTabs((current) => [...current, "kaffe-backup"]);
-								setRegistered((current) => [...current, "kaffe-backup"]);
+												setRegistered((current) => [...current, "kaffe-backup"]);
 												setSame(true);
 												setState("loading");
 											}}
