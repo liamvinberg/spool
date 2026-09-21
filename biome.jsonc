@@ -11,7 +11,16 @@
 		// makes one gate reach into somebody else's in-progress frame. A `--write` there also
 		// fires the daemon's watcher and reloads frames mid-edit, and the recommended preset is
 		// aimed at product code, not at sketches. Frames are read far more than maintained.
-		"includes": ["**", "!bench/evidence", "!design", "!fixtures/captures", "!spikes", "!research"]
+		"includes": [
+			"**",
+			"!.playwright-mcp",
+			"!bench/evidence",
+			"!design",
+			"!fixtures/captures",
+			"!prototype-editing",
+			"!spikes",
+			"!research"
+		]
 	},
 	"formatter": {
 		"indentStyle": "tab",
