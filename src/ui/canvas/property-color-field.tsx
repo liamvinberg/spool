@@ -1,4 +1,3 @@
-import "./property-color-field.css";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type { ThemeToken } from "../../daemon/theme";
 import { Row } from "./properties-fields";
@@ -163,7 +162,7 @@ export function PropertyColorField({
 				<button
 					type="button"
 					ref={trigger}
-					className="ep-color-trigger"
+					className="ep-color-trigger flex items-center gap-[6px] w-full min-w-0 py-[3px] px-[4px] [font:11px_var(--font-mono)] text-left rounded-[4px] [&:hover]:bg-surface"
 					aria-label={`Choose ${property}`}
 					aria-expanded={open}
 					disabled={!ok || !reading}
@@ -182,15 +181,17 @@ export function PropertyColorField({
 						setSearch("");
 					}}
 				>
-					<span className="ep-swatch" style={{ background: resolved }} />
-					<span>{binding ? binding.replace(/^--(color-)?/, "") : shown || "…"}</span>
-					<span className="ep-color-kind">{binding ? "↗" : (reading?.binding.kind ?? "")}</span>
+					<span className="ep-swatch size-[10px] shrink-0 border border-[#777]" style={{ background: resolved }} />
+					<span className="truncate">{binding ? binding.replace(/^--(color-)?/, "") : shown || "…"}</span>
+					<span className="ep-color-kind ml-auto text-muted text-[9px]">
+						{binding ? "↗" : (reading?.binding.kind ?? "")}
+					</span>
 				</button>
 				{accessory}
 			</Row>
 			{open && (
 				<fieldset
-					className="ep-color-menu"
+					className="ep-color-menu fixed z-[60] w-[256px] min-w-0 max-h-[min(432px,calc(100dvh-16px))] overflow-auto overscroll-contain m-0 bg-bg rounded-[6px] border border-border-raised p-[6px] text-text animate-menu-in origin-top-right motion-reduce:animate-none"
 					style={position}
 					aria-label={`${property} options`}
 					onKeyDown={(event) => {
@@ -202,12 +203,12 @@ export function PropertyColorField({
 						} else tokenKeys(event);
 					}}
 				>
-					<div className="ei-color-heading">
+					<div className="ei-color-heading flex justify-between pt-[6px] px-[6px] pb-[9px] text-[12px]">
 						<span>{property === "background-color" ? "Background" : "Color"}</span>
-						<span>{shown}</span>
+						<span className="text-muted [font:var(--type-detail)]">{shown}</span>
 					</div>
 					<input
-						className="ep-token-search"
+						className="ep-token-search w-full py-[8px] px-[6px] mb-[6px] border-0 border-b border-border rounded-none bg-transparent [font:var(--type-value)]"
 						aria-label={`Find ${property} token`}
 						placeholder="Find a color token…"
 						value={search}
@@ -219,19 +220,25 @@ export function PropertyColorField({
 						);
 						return (
 							matches.length > 0 && (
-								<div className="ep-color-options" key={group}>
-									<p>{group === "project" ? "Project" : "Default"}</p>
+								<div className="ep-color-options mt-[2px]" key={group}>
+									<p className="mt-0 mx-0 mb-[4px] p-[6px] text-[11px] text-muted">
+										{group === "project" ? "Project" : "Default"}
+									</p>
 									{matches.map((option) => (
 										<button
 											type="button"
 											key={option.name}
+											className="flex items-center gap-[8px] w-full min-h-[30px] p-[6px] rounded-[3px] text-left [font:var(--type-detail)] [&:hover]:bg-surface [&:hover]:outline-offset-[-1px] focus-visible:bg-surface focus-visible:outline-offset-[-1px] aria-pressed:bg-surface"
 											aria-label={`Apply ${option.reference ?? option.name}`}
 											aria-pressed={option.reference !== null && binding === option.reference}
 											onClick={() => choose({ kind: "binding", name: option.name })}
 										>
-											<span className="ep-swatch" style={{ background: option.value }} />
+											<span
+												className="ep-swatch size-[10px] shrink-0 border border-[#777]"
+												style={{ background: option.value }}
+											/>
 											<span>{option.name}</span>
-											<span>{option.value}</span>
+											<span className="ml-auto text-muted text-[10px]">{option.value}</span>
 										</button>
 									))}
 								</div>
@@ -239,26 +246,31 @@ export function PropertyColorField({
 						);
 					})}
 					{reading?.tokens.length ? (
-						<div className="ep-color-options">
-							<button type="button" onClick={() => choose({ kind: "remove" })}>
+						<div className="ep-color-options mt-[2px]">
+							<button
+								type="button"
+								className="flex items-center gap-[8px] w-full min-h-[30px] p-[6px] rounded-[3px] text-left [font:var(--type-detail)] [&:hover]:bg-surface [&:hover]:outline-offset-[-1px] focus-visible:bg-surface focus-visible:outline-offset-[-1px] aria-pressed:bg-surface"
+								onClick={() => choose({ kind: "remove" })}
+							>
 								{property === "color" ? "Remove color" : "Remove background color"}
 							</button>
 						</div>
 					) : null}
-					<div className="ep-custom-color">
+					<div className="ep-custom-color flex gap-[8px] flex-wrap items-end border-t border-border mt-[6px] mx-0 mb-0 pt-[9px] px-[6px] pb-[4px]">
 						{binding ? (
 							<button
 								type="button"
-								className="ep-unlink"
+								className="ep-unlink py-[4px] px-0 text-[11px] w-full text-left"
 								onClick={() => choose({ kind: "custom", value: resolved })}
 							>
 								Use custom value
 							</button>
 						) : (
 							<>
-								<label>
+								<label className="flex-1 min-w-0 text-[11px] text-muted">
 									Custom value
 									<input
+										className="block w-full p-[5px] mt-[5px] border border-border text-text [font:11px_var(--font-mono)] bg-transparent"
 										aria-label={property}
 										aria-invalid={!valid}
 										value={draft ?? shown}
@@ -283,6 +295,7 @@ export function PropertyColorField({
 								</label>
 								<input
 									type="color"
+									className="size-[28px] p-0 border-0 [background:none]"
 									aria-label={`Pick custom ${property}`}
 									value={/^#[0-9A-F]{6}$/i.test(draft ?? shown) ? (draft ?? shown).toLowerCase() : "#000000"}
 									onFocus={start}
@@ -293,7 +306,7 @@ export function PropertyColorField({
 									onBlur={() => complete(true)}
 								/>
 								{!valid && (
-									<span className="ep-color-error" role="status">
+									<span className="ep-color-error text-thread text-[11px]" role="status">
 										Enter a valid CSS color.
 									</span>
 								)}
