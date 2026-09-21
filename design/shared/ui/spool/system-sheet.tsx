@@ -92,7 +92,7 @@ export function Across({ children }: { children: ReactNode }) {
  */
 export function Gap({ name, says }: { name: string; says: string }) {
 	return (
-		<div className="flex flex-col gap-2.5" style={{ width: 232 }}>
+		<div className="flex w-[232px] flex-col gap-2.5">
 			<div className="flex min-h-[52px] items-center rounded-md border border-border border-dashed px-4 py-4">
 				<span className="text-muted type-detail">no specimen</span>
 			</div>
