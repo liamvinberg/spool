@@ -113,7 +113,7 @@ export function Home({
 										onClick={onStart}
 									>
 										<PlusIcon />
-										<strong className="flex w-full items-center justify-between [font:400_var(--text-lg)/var(--leading-lg)_var(--font-sans)]">
+										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
 											New project…
 											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 										</strong>
@@ -129,7 +129,7 @@ export function Home({
 										onClick={onFolder}
 									>
 										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-muted" />
-										<strong className="flex w-full items-center justify-between [font:400_var(--text-lg)/var(--leading-lg)_var(--font-sans)]">
+										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
 											Open…
 											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 										</strong>
@@ -145,7 +145,7 @@ export function Home({
 										onClick={onImport}
 									>
 										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-muted" />
-										<strong className="flex w-full items-center justify-between [font:400_var(--text-lg)/var(--leading-lg)_var(--font-sans)]">
+										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
 											Import…
 											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 										</strong>
@@ -158,7 +158,7 @@ export function Home({
 				) : (
 					<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
 						<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
-							<h1 className="type-page">Projects</h1>
+							<h1 className="type-page font-medium">Projects</h1>
 							<div className="flex items-center gap-[13px] [@media(max-width:720px)]:flex-wrap">
 								<label className="home-search flex h-[35px] w-[212px] items-center gap-[10px] rounded-[7px] border border-border bg-transparent px-[11px] text-muted focus-within:border-muted">
 									<SearchIcon />
@@ -310,7 +310,7 @@ function ProjectTile({
 					</span>
 				</div>
 				<div className="pj-cover-caption flex items-baseline justify-between gap-[9px] pt-[15px] pr-[32px]">
-					<strong className="truncate type-title">{project.name}</strong>
+					<strong className="truncate type-title font-[500]">{project.name}</strong>
 					<span className="shrink-0 text-muted type-detail">
 						{project.frameCount
 							? `${project.frameCount} ${project.frameCount === 1 ? "frame" : "frames"}`

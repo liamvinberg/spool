@@ -31,7 +31,7 @@ export function EmptyState({
 			)}
 		>
 			{icon}
-			<Heading className="[font:var(--type-page)] font-medium tracking-tight">{title}</Heading>
+			<Heading className="[font:var(--type-page)] [&]:font-medium tracking-tight">{title}</Heading>
 			{description && <p className="mt-[13px] [font:var(--type-control)] text-muted">{description}</p>}
 			{actions && (
 				<div className="spool-empty-actions flex items-center justify-center flex-wrap gap-[12px] mt-[25px]">
