@@ -2,7 +2,6 @@
 import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import "./tab-strip.css";
 
 /**
  * The open projects, as tabs you can arrange.
@@ -261,8 +260,8 @@ export function TabStrip({
 	return (
 		<MotionConfig reducedMotion="user" transition={{ duration, ease: [0.23, 1, 0.32, 1] }}>
 			<LayoutGroup id={layoutId}>
-				<nav aria-label="Open projects" className="project-tabs">
-					<motion.div ref={strip} layoutScroll className="project-tabs-scroll">
+				<nav aria-label="Open projects" className="project-tabs flex items-center min-w-0 h-full">
+					<motion.div ref={strip} layoutScroll className="project-tabs-scroll relative z-[1] flex items-center gap-[2px] min-w-0 h-full px-[2px] py-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none]">
 						<AnimatePresence initial={false} mode="popLayout">
 							{tabs.map((tab, index) => {
 								const active = focused === tab.root;
@@ -270,7 +269,7 @@ export function TabStrip({
 								return (
 									<motion.div
 										key={tab.root}
-										className={cn("project-tab-slot", lifted && "z-10")}
+										className={cn("project-tab-slot relative shrink-0 w-max min-w-[112px] max-w-[228px] h-[36px]", lifted && "z-10")}
 										layout={drag === null && !quiet ? "position" : false}
 										initial={{ opacity: 0, scale: duration === 0 ? 1 : 0.96 }}
 										animate={{ opacity: 1, scale: 1 }}
@@ -280,7 +279,7 @@ export function TabStrip({
 										 * measured drag owns only this inner box's transform. */}
 										<div
 											data-tab={tab.root}
-											className={cn("project-tab", active && "is-active", lifted && "is-dragging")}
+											className={cn("project-tab relative flex items-center w-full h-full [border-radius:8px_8px_0_0] touch-none select-none [&.is-active_.project-tab-label]:text-text [&.is-dragging_.project-tab-label]:cursor-grabbing [&:is(:hover,:focus-within,.is-active)_.project-tab-close]:opacity-100 [&:not(.is-active):hover]:[background:light-dark(#00000004,#ffffff04)]", active && "is-active", lifted && "is-dragging")}
 											style={{
 												transform: `translateX(${shiftOf(drag, index)}px)`,
 												transition:
@@ -293,13 +292,13 @@ export function TabStrip({
 											{active && (
 												<motion.div
 													layoutId="selection"
-													className="project-tab-selection"
+													className="project-tab-selection absolute [inset:0_0_-4px] [border-width:1px_1px_0] border-solid border-border [border-radius:8px_8px_0_0] bg-canvas pointer-events-none"
 													transition={{ duration: drag !== null || quiet ? 0 : duration, ease: [0.23, 1, 0.32, 1] }}
 												/>
 											)}
 											<button
 												type="button"
-												className="project-tab-label"
+												className="project-tab-label relative flex items-center flex-auto min-w-0 h-full [padding:0_38px_0_12px] [font:var(--type-control)] [color:var(--color-muted)] cursor-default after:content-[''] after:absolute after:[inset:0_0_-4px] [&_span]:overflow-hidden [&_span]:whitespace-nowrap [&_span]:text-ellipsis"
 												aria-current={active ? "page" : undefined}
 												onClick={() => {
 													if (!justDragged.current) onFocus?.(tab.root);
@@ -310,7 +309,7 @@ export function TabStrip({
 											</button>
 											<button
 												type="button"
-												className="project-tab-close"
+												className="project-tab-close absolute right-[4px] flex items-center justify-center shrink-0 w-[24px] h-[24px] rounded-[5px] [color:var(--color-muted)] opacity-0 cursor-pointer [&:hover]:[background:light-dark(#00000012,#ffffff12)] [&:hover]:text-text"
 												onPointerDown={(event) => event.stopPropagation()}
 												onClick={() => onClose?.(tab.root)}
 												aria-label={`Close ${tab.name}`}
@@ -334,7 +333,7 @@ export function TabStrip({
 					<motion.button
 						layout="position"
 						type="button"
-						className="project-tabs-plus"
+						className="project-tabs-plus relative flex items-center justify-center shrink-0 w-[32px] h-[30px] ml-[6px] rounded-[6px] [color:var(--color-muted)] cursor-pointer before:content-[''] before:absolute before:[inset:3px_4px] before:rounded-[5px] before:pointer-events-none [&_svg]:relative [&:hover]:before:[background:light-dark(#00000006,#ffffff06)] [&:hover]:text-text"
 						onClick={onPick}
 						title="New project"
 					>

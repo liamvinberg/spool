@@ -1,6 +1,9 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { build } from "esbuild";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
+import { builtUi } from "../test-helpers";
 
 it("focuses projects across the tab surface while keeping close and drag separate", async () => {
 	const bundle = await build({
@@ -45,6 +48,12 @@ it("focuses projects across the tab surface while keeping close and drag separat
 		button { padding: 0; border: 0; background: transparent; font: inherit; }
 		#root { height: 44px; }
 	</style><div id="root"></div>`);
+	// The tabs use the same compiled utilities as the app. esbuild alone only
+	// bundles JavaScript and cannot supply their layout or hit areas.
+	const assets = join(await builtUi(), "assets");
+	for (const file of readdirSync(assets).filter((name) => name.endsWith(".css"))) {
+		await page.addStyleTag({ content: readFileSync(join(assets, file), "utf8") });
+	}
 	for (const file of bundle.outputFiles) {
 		if (file.path.endsWith(".css")) await page.addStyleTag({ content: file.text });
 		else await page.addScriptTag({ content: file.text });

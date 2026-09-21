@@ -1,6 +1,5 @@
 import { cn } from "shared/lib/utils";
 import { ThreadIcon } from "shared/ui/spool/icons";
-import "./app-header.css";
 import { TabStrip } from "shared/ui/spool/tab-strip";
 
 /**
@@ -45,10 +44,10 @@ export function SpoolShell({
 }: SpoolShellProps) {
 	return (
 		<div className="flex h-full w-full flex-col overflow-hidden bg-bg font-sans text-text antialiased [font-synthesis:none]">
-			<header className="app-header relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
+			<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-muted)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
 				<div className="flex h-full min-w-0 flex-1 items-center">
-					<div className="app-home-zone">
-						<button type="button" data-go={homeTarget} className="app-home" title="Home" onClick={onHome} aria-current={activeTab === undefined ? "page" : undefined}>
+					<div className="app-home-zone relative flex items-center shrink-0 h-full mr-[12px] pr-[16px] after:content-[''] after:absolute after:right-0 after:w-px after:h-[18px] after:bg-border-raised">
+						<button type="button" data-go={homeTarget} className="app-home flex items-center gap-[9px] h-[32px] [padding:0_4px_0_6px] [font:var(--type-control)] [color:var(--color-muted)] cursor-pointer [&:is(:hover,[aria-current])]:text-text active:[transform:translateY(1px)] motion-reduce:active:transform-none" title="Home" onClick={onHome} aria-current={activeTab === undefined ? "page" : undefined}>
 							<svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
 								<path d="m3.5 8 6.5-5.5L16.5 8v9h-5v-5h-3v5h-5Z" stroke="currentColor" strokeWidth="1.45" strokeLinejoin="round" />
 							</svg>
