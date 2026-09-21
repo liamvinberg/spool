@@ -169,7 +169,9 @@ A scenario file that is missing or broken never blanks the frame: it plays with 
 
 Tailwind v4 puts important at the end: mt-3.5!, not !mt-3.5.
 
-Classes first, real CSS when classes can't say it: a <style> element in the frame for one-offs, or a plain .css import. transitions.css and fonts.css stay plain CSS.
+Use Tailwind classes for component layout, spacing, colors, borders, and interaction states. Preserve exact values with arbitrary utilities when needed. Keep shared tokens, fonts, typography roles, keyframes, and complex selectors or effects in CSS; keep calculated positions, sizes, and zoom in inline styles. Give each property one owner instead of repeating it in classes and CSS.
+
+Custom CSS remains supported: use a <style> element for a frame-local effect or import a plain .css file, including existing product component styles. Imported component CSS sits below utilities in the project layer, so a utility can override it. transitions.css and fonts.css stay plain CSS.
 
 Compose classes with cn() from shared/lib/utils.ts — cn() only, never template-literal class strings. Variant components ride cva (pinned).
 
