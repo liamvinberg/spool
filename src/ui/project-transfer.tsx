@@ -257,15 +257,17 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 						}}
 					>
 						<div className="project-transfer-summary rounded-md border border-border-raised px-4 py-3">
-							<p className="type-control">Entire project</p>
-							<p className="text-muted type-detail">{counts ?? "All pages and frames"}</p>
+							<p className="m-0 text-text type-control">Entire project</p>
+							<p className="m-0 mt-[4px] text-muted type-detail">{counts ?? "All pages and frames"}</p>
 						</div>
-						<p className="project-transfer-description">Includes frames, layout, flows and local assets.</p>
+						<p className="project-transfer-description m-0 mt-[20px] text-muted [font:var(--type-control)]">
+							Includes frames, layout, flows and local assets.
+						</p>
 					</ConfirmDialog>
 				)}
 				{dragging && (
-					<div className="project-transfer-drop is-project">
-						<div>
+					<div className="project-transfer-drop is-project fixed inset-[8px] z-[60] pointer-events-none border border-thread rounded-[6px] [background:color-mix(in_srgb,var(--color-bg)_75%,transparent)]">
+						<div className="absolute top-1/2 left-1/2 [transform:translate(-50%,-50%)] text-center">
 							<p className="type-heading">Drop to open a project</p>
 							<p className="mt-2 text-muted type-control">It opens in a new tab and appears in Home.</p>
 							<p className="mt-5 type-value">.spool</p>
