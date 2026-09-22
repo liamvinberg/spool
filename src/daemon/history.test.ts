@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
+import { FORMAT_VERSION } from "../templates";
 import { makeApp, makeTempDir, until, writeDesignFile, writeFrame, writePageFrame } from "../test-helpers";
 import { HISTORY_IDLE_MS, type HistoryClock, type HistoryTimer } from "./history";
 
@@ -380,7 +381,7 @@ describe("the switches", () => {
 		makeApp(spoolDir, { historyClock: clock.clock });
 
 		expect(JSON.parse(readFileSync(join(root, "design", "canvas.json"), "utf8"))).toEqual({
-			format: 1,
+			format: FORMAT_VERSION,
 			history: true,
 		});
 		await change(clock, () => writeFrame(root, "home", "export default () => <main>kept</main>;\n"));
@@ -453,7 +454,7 @@ describe("the switches", () => {
 		makeApp(spoolDir, { historyClock: clock.clock });
 
 		await change(clock, () => writeFrame(root, "home", "export default () => <main>on</main>;\n"));
-		writeDesignFile(root, "canvas.json", `${JSON.stringify({ format: 1, history: false })}\n`);
+		writeDesignFile(root, "canvas.json", `${JSON.stringify({ format: FORMAT_VERSION, history: false })}\n`);
 		await clock.fire();
 
 		expect(log(root)).toEqual(["init"]);

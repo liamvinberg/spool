@@ -297,7 +297,7 @@ export function frameSource(root: string, frame: string): FrameSource {
 /** Read every navigation site the source declares. Never throws: source that
  * does not parse claims nothing — the compile surface owns reporting it. */
 export function parseNavSites(source: string, path: string): NavSites {
-	const { imports: _imports, program: _program, ...sites } = parseSource(source, path);
+	const { imports: _imports, program: _program, literals: _literals, ...sites } = parseSource(source, path);
 	return sites;
 }
 
@@ -307,10 +307,30 @@ interface ParsedSource extends NavSites {
 	program?: Program;
 	/** Every specifier the file imports, raw — resolution happens per importer. */
 	imports: string[];
+	/** Where every target this file spells sits in its text. */
+	literals: TargetLiteral[];
+}
+
+/**
+ * One target spelled in source (#336): the string literal a `data-go`, a
+ * `ui.go` call or a `links` value names a frame with, by its offsets in the
+ * file, quotes included. Exactly the targets the map reads, so a move repairs
+ * exactly what it would otherwise report missing, and nothing the parser
+ * cannot read is ever guessed at.
+ */
+export interface TargetLiteral {
+	target: string;
+	start: number;
+	end: number;
+}
+
+/** Every target literal a file spells, in source order. */
+export function targetLiterals(source: string, path: string): TargetLiteral[] {
+	return parseSource(source, path).literals;
 }
 
 function parseSource(source: string, path: string): ParsedSource {
-	const out: ParsedSource = { sites: [], unreadable: [], imports: [] };
+	const out: ParsedSource = { sites: [], unreadable: [], imports: [], literals: [] };
 	let program: Node;
 	try {
 		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
@@ -320,7 +340,10 @@ function parseSource(source: string, path: string): ParsedSource {
 	}
 	out.program = program as Program;
 	const declaration = linksIn(program, path);
-	if (declaration.kind === "valid") out.links = declaration.value;
+	if (declaration.kind === "valid") {
+		out.links = declaration.value;
+		out.literals.push(...declaration.literals);
+	}
 	if (declaration.kind === "invalid") out.invalidLinks = declaration.at;
 	walkNodes(program, [], (node, ancestors) => {
 		// static import/export-from and dynamic import(): every way a file names
@@ -368,13 +391,14 @@ function parseSource(source: string, path: string): ParsedSource {
  * children-embedded calls anchor nowhere.
  */
 function pushSites(
-	out: NavSites,
+	out: ParsedSource,
 	read: TargetRead,
 	at: { via: NavSite["via"]; path: string; line: number; ancestors: readonly Node[] },
 ): void {
 	const element = nearestOpeningElement(at.ancestors);
 	const anchor = element === undefined ? {} : { anchor: stampOf(element) };
 	const branched = underBranch(at.ancestors);
+	out.literals.push(...read.targets.map(({ literal }) => literal));
 	for (const { target, conditional } of read.targets) {
 		out.sites.push({
 			target,
@@ -438,8 +462,12 @@ function codedWalk(callee: Node): "ui.go" | undefined {
 }
 
 interface TargetRead {
-	targets: { target: string; conditional: boolean }[];
+	targets: { target: string; conditional: boolean; literal: TargetLiteral }[];
 	unreadable: boolean;
+}
+
+function literalOf(node: Node, target: string): TargetLiteral {
+	return { target, start: node.start ?? 0, end: node.end ?? 0 };
 }
 
 /**
@@ -450,11 +478,14 @@ interface TargetRead {
  */
 function readTargets(node: Node): TargetRead {
 	if (node.type === "StringLiteral")
-		return { targets: [{ target: node.value, conditional: false }], unreadable: false };
+		return {
+			targets: [{ target: node.value, conditional: false, literal: literalOf(node, node.value) }],
+			unreadable: false,
+		};
 	if (node.type === "TemplateLiteral" && node.expressions.length === 0) {
 		const cooked = node.quasis[0]?.value.cooked;
 		if (cooked == null) return { targets: [], unreadable: true };
-		return { targets: [{ target: cooked, conditional: false }], unreadable: false };
+		return { targets: [{ target: cooked, conditional: false, literal: literalOf(node, cooked) }], unreadable: false };
 	}
 	if (node.type === "ConditionalExpression") {
 		return branchRead(readTargets(node.consequent as Node), readTargets(node.alternate as Node));
@@ -481,7 +512,7 @@ function linksIn(
 ):
 	| { kind: "none" }
 	| { kind: "invalid"; at: { path: string; line: number } }
-	| { kind: "valid"; value: LinksDeclaration } {
+	| { kind: "valid"; value: LinksDeclaration; literals: TargetLiteral[] } {
 	if (program.type !== "Program") return { kind: "none" };
 	for (const statement of program.body) {
 		if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
@@ -514,6 +545,7 @@ function linksIn(
 			)
 				return { kind: "invalid", at };
 			const values: Record<string, string> = {};
+			const literals: TargetLiteral[] = [];
 			for (const property of object.properties) {
 				if (property.type !== "ObjectProperty" || property.computed || property.key.type === "PrivateName")
 					return { kind: "invalid", at };
@@ -526,8 +558,9 @@ function linksIn(
 				const target = property.value.type === "StringLiteral" ? property.value.value : undefined;
 				if (key === undefined || target === undefined) return { kind: "invalid", at };
 				values[key] = target;
+				literals.push(literalOf(property.value as Node, target));
 			}
-			return { kind: "valid", value: { path, line: at.line, values } };
+			return { kind: "valid", value: { path, line: at.line, values }, literals };
 		}
 	}
 	return { kind: "none" };
@@ -536,7 +569,7 @@ function linksIn(
 /** Merge branch arms: every target turns conditional, any dark arm stays named. */
 function branchRead(...arms: TargetRead[]): TargetRead {
 	return {
-		targets: arms.flatMap((arm) => arm.targets.map(({ target }) => ({ target, conditional: true }))),
+		targets: arms.flatMap((arm) => arm.targets.map((each) => ({ ...each, conditional: true }))),
 		unreadable: arms.some((arm) => arm.unreadable),
 	};
 }

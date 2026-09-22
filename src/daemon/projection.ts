@@ -3,7 +3,7 @@ import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
 import { composePage, medianFrameArea, pageBox, type Rect, type Size, shelfPages } from "../page-box";
-import { isSafeName, pageHolds, pageName, pageParent, pageSlot, pageUnder, ROOT_PAGE } from "../page-path";
+import { isFramePath, isSafeName, pageHolds, pageParent, pageSlot, pageUnder, ROOT_PAGE } from "../page-path";
 import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, readSidecar, writePlacement } from "./geometry";
@@ -13,13 +13,14 @@ import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
 /**
  * The canvas projection of design/frames (#22), grouped to any depth (#39,
  * #231): a frame is a folder holding a frame entry, and every safe-named folder
- * above it without one is a page. A page's identity is its path under frames/
- * (`explorations/chat`); a frame's is its bare leaf name, unique project-wide —
- * a name claimed twice is surfaced as a collision, never resolved by guessing.
- * Geometry is the one thing hands own; a frame born without a sidecar gets one
- * filled in here — placed beside its own page's field, written to disk so
- * placement is durable, never re-rolled per request (#3: "optional frame.json,
- * app fills in").
+ * above it without one is a page. Pages and frames are both named by their path
+ * under frames/ (#336): `explorations/chat` is a page, `explorations/chat/intro`
+ * a frame on it, and a frame on the root page is named by its folder alone. A
+ * name only has to be free among its siblings, so the disk alone keeps two
+ * frames from ever sharing one. Geometry is the one thing hands own; a frame
+ * born without a sidecar gets one filled in here — placed beside its own page's
+ * field, written to disk so placement is durable, never re-rolled per request
+ * (#3: "optional frame.json, app fills in").
  *
  * What makes a folder a frame is its entry filename, frame.tsx, because that
  * must stay knowable by every layer even while source is broken mid-edit; a
@@ -27,6 +28,7 @@ import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
  */
 
 export interface ProjectedFrame {
+	/** The frame's path under frames/, which is its identity (#336). */
 	name: string;
 	/** The path of the page holding the frame's folder; absent on the root page. */
 	page?: string;
@@ -53,12 +55,6 @@ export interface ProjectedFrame {
 	unseen?: Unseen;
 }
 
-export interface FrameCollision {
-	name: string;
-	/** Every design-relative folder claiming the name, sorted. */
-	paths: string[];
-}
-
 export interface Projection {
 	root: string;
 	/** Every named page's path, sorted, empty ones included; the root page is implied. */
@@ -74,14 +70,10 @@ export interface Projection {
 	 */
 	places: Record<string, Place>;
 	frames: ProjectedFrame[];
-	collisions: FrameCollision[];
 }
 
-/** Where a bare frame name lands on disk — or why it cannot. */
-export type FrameLookup =
-	| { kind: "found"; dir: string; page?: string }
-	| { kind: "missing" }
-	| { kind: "collision"; paths: string[] };
+/** Where a frame name lands on disk, or that it lands nowhere. */
+export type FrameLookup = { kind: "found"; dir: string; page?: string } | { kind: "missing" };
 
 export function hasFrameEntry(frameDir: string, designDir: string): boolean {
 	let directory: string;
@@ -140,10 +132,9 @@ interface DiscoveredFrame {
 
 interface Discovery {
 	designDir: string;
-	/** Collision-free frames, sorted by name. */
+	/** Every frame, sorted by name. */
 	frames: DiscoveredFrame[];
 	pages: string[];
-	collisions: FrameCollision[];
 }
 
 /**
@@ -160,13 +151,6 @@ const GUTTER = 80;
 
 const DEFAULT_FOOTPRINT: Footprint = { w: DEFAULT_W, h: DEFAULT_H };
 
-/** One folder claiming a frame name, before anything knows whether two do. */
-interface FrameClaim {
-	name: string;
-	page: string | undefined;
-	dir: string;
-}
-
 /** Where a project's frames live, or nothing when design/ cannot be read. */
 function framesDirOf(root: string): { designDir: string; framesDir: string } | undefined {
 	try {
@@ -178,32 +162,17 @@ function framesDirOf(root: string): { designDir: string; framesDir: string } | u
 	}
 }
 
-/**
- * What a walk collected, read as a discovery: a name claimed once is a frame, a
- * name claimed twice is a collision nobody resolves by guessing. Both walks
- * below share this, so the two can never disagree about what a project holds.
- */
-function assemble(designDir: string, claimed: FrameClaim[], pages: string[]): Discovery {
-	const claims = new Map<string, FrameClaim[]>();
-	for (const claim of claimed) {
-		const list = claims.get(claim.name);
-		if (list === undefined) claims.set(claim.name, [claim]);
-		else list.push(claim);
-	}
-	const frames: DiscoveredFrame[] = [];
-	const collisions: FrameCollision[] = [];
-	for (const [name, list] of claims) {
-		const first = list[0];
-		if (list.length === 1 && first !== undefined) {
-			frames.push({ name, page: first.page, dir: first.dir });
-		} else {
-			collisions.push({ name, paths: list.map((entry) => frameFolder(name, entry.page)).sort() });
-		}
-	}
+/** What a walk collected, sorted: both walks below share this, so the two can
+ * never disagree about what a project holds. */
+function assemble(designDir: string, frames: DiscoveredFrame[], pages: string[]): Discovery {
 	frames.sort((a, b) => a.name.localeCompare(b.name));
-	collisions.sort((a, b) => a.name.localeCompare(b.name));
 	pages.sort((a, b) => a.localeCompare(b));
-	return { designDir, frames, pages, collisions };
+	return { designDir, frames, pages };
+}
+
+/** A frame folder found on a page, named by its path. */
+function discovered(page: string, folder: string, dir: string): DiscoveredFrame {
+	return { name: pageUnder(page, folder), page: page === ROOT_PAGE ? undefined : page, dir };
 }
 
 /**
@@ -216,7 +185,7 @@ function assemble(designDir: string, claimed: FrameClaim[], pages: string[]): Di
 function discover(root: string): Discovery | undefined {
 	const dirs = framesDirOf(root);
 	if (dirs === undefined) return undefined;
-	const claimed: FrameClaim[] = [];
+	const frames: DiscoveredFrame[] = [];
 	const pages: string[] = [];
 	// framesDir is resolved, and a directory entry is never a symlink, so every
 	// path built from here down is inside design/ without asking again
@@ -231,7 +200,7 @@ function discover(root: string): Discovery | undefined {
 			if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
 			const child = join(dir, entry.name);
 			if (hasEntry(child)) {
-				claimed.push({ name: entry.name, page: page === ROOT_PAGE ? undefined : page, dir: child });
+				frames.push(discovered(page, entry.name, child));
 				continue;
 			}
 			const inner = pageUnder(page, entry.name);
@@ -240,7 +209,7 @@ function discover(root: string): Discovery | undefined {
 		}
 	};
 	walk(dirs.framesDir, ROOT_PAGE);
-	return assemble(dirs.designDir, claimed, pages);
+	return assemble(dirs.designDir, frames, pages);
 }
 
 /**
@@ -252,33 +221,28 @@ function discover(root: string): Discovery | undefined {
 async function discoverAwaited(root: string): Promise<Discovery | undefined> {
 	const dirs = framesDirOf(root);
 	if (dirs === undefined) return undefined;
-	const walk = async (dir: string, page: string): Promise<{ pages: string[]; claimed: FrameClaim[] }> => {
+	const walk = async (dir: string, page: string): Promise<{ pages: string[]; frames: DiscoveredFrame[] }> => {
 		let entries: Dirent[];
 		try {
 			entries = await readdir(dir, { withFileTypes: true });
 		} catch {
-			return { pages: [], claimed: [] };
+			return { pages: [], frames: [] };
 		}
 		const walked = await Promise.all(
 			entries
 				.filter((entry) => entry.isDirectory() && isSafeName(entry.name))
-				.map(async (entry): Promise<{ pages: string[]; claimed: FrameClaim[] }> => {
+				.map(async (entry): Promise<{ pages: string[]; frames: DiscoveredFrame[] }> => {
 					const child = join(dir, entry.name);
-					if (await hasEntryAwaited(child)) {
-						return {
-							pages: [],
-							claimed: [{ name: entry.name, page: page === ROOT_PAGE ? undefined : page, dir: child }],
-						};
-					}
+					if (await hasEntryAwaited(child)) return { pages: [], frames: [discovered(page, entry.name, child)] };
 					const inner = pageUnder(page, entry.name);
 					const below = await walk(child, inner);
-					return { pages: [inner, ...below.pages], claimed: below.claimed };
+					return { pages: [inner, ...below.pages], frames: below.frames };
 				}),
 		);
-		return { pages: walked.flatMap((each) => each.pages), claimed: walked.flatMap((each) => each.claimed) };
+		return { pages: walked.flatMap((each) => each.pages), frames: walked.flatMap((each) => each.frames) };
 	};
 	const walked = await walk(dirs.framesDir, ROOT_PAGE);
-	return assemble(dirs.designDir, walked.claimed, walked.pages);
+	return assemble(dirs.designDir, walked.frames, walked.pages);
 }
 
 /** `hasEntry` without the blocking stat; the same lexical marker either way. */
@@ -292,25 +256,35 @@ async function hasEntryAwaited(directory: string): Promise<boolean> {
 }
 
 /** The design-relative folder a frame name resolves to, wire-format slashes —
- * the one spelling of "where pages put a frame" every daemon surface shares.
- * A page is already a path, so depth costs this nothing. */
-export function frameFolder(name: string, page: string | undefined): string {
-	return page === undefined ? `frames/${name}` : `frames/${page}/${name}`;
+ * the one spelling of "where a frame lives" every daemon surface shares. */
+export function frameFolder(name: string): string {
+	return `frames/${name}`;
 }
 
-/** Resolve a bare frame name to its folder — ambiguity is an answer, not a guess. */
+/**
+ * Resolve a frame name to its folder (#336). The name is the path, so this
+ * reads the disk along it rather than walking the project, and asks each folder
+ * what discovery would: every folder above the frame is a page, and the last
+ * one holds the entry. Discovery reads directory entries, which never follow a
+ * symlink, so neither does this.
+ */
 export function lookupFrame(root: string, frame: string): FrameLookup {
-	const discovery = discover(root);
-	if (discovery === undefined) return { kind: "missing" };
-	const collision = discovery.collisions.find((entry) => entry.name === frame);
-	if (collision !== undefined) return { kind: "collision", paths: collision.paths };
-	const found = discovery.frames.find((entry) => entry.name === frame);
-	if (found === undefined) return { kind: "missing" };
-	return {
-		kind: "found",
-		dir: found.dir,
-		...(found.page === undefined ? {} : { page: found.page }),
-	};
+	if (!isFramePath(frame)) return { kind: "missing" };
+	const dirs = framesDirOf(root);
+	if (dirs === undefined) return { kind: "missing" };
+	const segments = frame.split("/");
+	let dir = dirs.framesDir;
+	for (const [at, segment] of segments.entries()) {
+		dir = join(dir, segment);
+		try {
+			if (!lstatSync(dir).isDirectory()) return { kind: "missing" };
+		} catch {
+			return { kind: "missing" };
+		}
+		if (hasEntry(dir) !== (at === segments.length - 1)) return { kind: "missing" };
+	}
+	const page = pageParent(frame);
+	return { kind: "found", dir, ...(page === ROOT_PAGE ? {} : { page }) };
 }
 
 /**
@@ -325,11 +299,6 @@ export const FRAME_BIRTH =
 /** The miss told straight: the canvas holds no such frame, anywhere. */
 export function describeMissingFrame(name: string): string {
 	return `no frame "${name}" on the canvas — ${FRAME_BIRTH}`;
-}
-
-/** The collision told straight: both locations named, the law restated. */
-export function describeCollision(name: string, paths: string[]): string {
-	return `two frames named "${name}" — ${paths.join(" and ")} — frame names are identity and must be unique across the project`;
 }
 
 /** One frame as the placement reads it: where it sits, and which page's field it is on. */
@@ -427,7 +396,7 @@ export function placePages(
  */
 export function listProjectFrames(root: string, options: { seen?: boolean } = {}): Projection {
 	const discovery = discover(root);
-	if (discovery === undefined) return { root, pages: [], places: {}, frames: [], collisions: [] };
+	if (discovery === undefined) return { root, pages: [], places: {}, frames: [] };
 
 	// one sweep of the cover store answers every frame from immutable image names,
 	// so this costs a readdir per frame folder and opens no image
@@ -492,7 +461,7 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 			// placement stays deterministic within this daemon run either way
 		}
 	}
-	return { root, pages: discovery.pages, places, frames: placed, collisions: discovery.collisions };
+	return { root, pages: discovery.pages, places, frames: placed };
 }
 
 function readStoredPlaces(root: string): CanvasPlaces {
@@ -530,47 +499,20 @@ function folderBorn(dir: string): number | undefined {
 	}
 }
 
-/** Every unambiguous frame name, sorted; undefined when frames/ is unreadable. */
+/** Every frame name, sorted; undefined when frames/ is unreadable. */
 export function frameNames(root: string): string[] | undefined {
 	const discovery = discover(root);
 	if (discovery === undefined) return undefined;
 	return discovery.frames.map((frame) => frame.name);
 }
 
-/**
- * What a new name must miss (#228, #231): every name a frame claims anywhere,
- * ambiguous ones included, every page there is, and what those pages are called.
- * One walk answers all three, and it fills no sidecar — a rename, a copy and a
- * page create all have to know this before they write.
- *
- * Pages come back twice because a page is two things. Its identity is its path,
- * which is what tells one page from another; its name is the folder's own, which
- * is what a frame name has to miss — a bare frame name is identity across the
- * whole project, so nothing anywhere may repeat it, page folders included. Two
- * pages may share a name under different parents; no frame may share one with
- * any page at all.
- */
-export interface ClaimedNames {
-	frames: Set<string>;
-	/** Every page's path — a page's identity. */
-	pages: Set<string>;
-	/** Every page's own name, at whatever depth it sits. */
-	pageNames: Set<string>;
-}
-
-export function claimedNames(root: string): ClaimedNames {
-	const discovery = discover(root);
-	if (discovery === undefined) return { frames: new Set(), pages: new Set(), pageNames: new Set() };
-	const claimed = [...discovery.frames, ...discovery.collisions].map((entry) => entry.name);
-	return {
-		frames: new Set(claimed),
-		pages: new Set(discovery.pages),
-		pageNames: new Set(discovery.pages.map(pageName)),
-	};
+/** Every page there is, by path; the root page is implied. */
+export function pagePaths(root: string): Set<string> {
+	return new Set(discover(root)?.pages ?? []);
 }
 
 /**
- * Every unambiguous frame's folder, keyed by name, in name order — one
+ * Every frame's folder, keyed by name, in name order — one
  * discovery for a whole project-wide read. Asking `lookupFrame` per frame
  * re-walks design/frames once per frame, which a 145-frame read pays 145 times.
  */

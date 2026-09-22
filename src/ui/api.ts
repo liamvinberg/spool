@@ -20,7 +20,7 @@ import type { RungRead } from "../daemon/hand-lane";
 import type { AttributeRead, EditedNode, PatchRefusal, StampShift } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
-import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
+import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
@@ -49,7 +49,6 @@ export type {
 	FlowEdge,
 	Flows,
 	FlowUnreadable,
-	FrameCollision,
 	FrameCopy,
 	FsHit,
 	FsListing,

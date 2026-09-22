@@ -29,6 +29,36 @@ export function isPagePath(page: string): boolean {
 	return page !== ROOT_PAGE && page.split("/").every(isSafeName);
 }
 
+/**
+ * A frame's name, which is its path under design/frames/ (#336): `checkout` on
+ * the root page, `shop/checkout` on the page `shop`. A frame path has a page
+ * path's shape, so `pageParent` is the page a frame sits on and `pageName` is
+ * its own folder's name.
+ */
+export function isFramePath(frame: string): boolean {
+	return isPagePath(frame);
+}
+
+/**
+ * A frame's name as one path segment, for the stores that keep a file or a
+ * folder per frame (covers, verify records): `shop/checkout` is stored as
+ * `shop%2Fcheckout`. One flat folder of them stays flat at any depth, and no
+ * two names ever share a spelling.
+ */
+export function frameSegment(frame: string): string {
+	return encodeURIComponent(frame);
+}
+
+/** The frame a stored segment names, or nothing when it names none. */
+export function segmentFrame(segment: string): string | undefined {
+	try {
+		const frame = decodeURIComponent(segment);
+		return isFramePath(frame) ? frame : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Anywhere a page can be: a named page, or the root page itself. */
 export function isPageSlot(page: string): boolean {
 	return page === ROOT_PAGE || isPagePath(page);

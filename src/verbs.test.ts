@@ -168,14 +168,21 @@ describe("url", () => {
 		writeDesignFile(root, "frames/journey/paged/frame.tsx", plainTsx);
 
 		const token = controlToken(spoolDir);
-		for (const frame of ["flat", "paged"]) {
+		// a paged frame's name is its path, carried as one URL segment
+		for (const [frame, segment] of [
+			["flat", "flat"],
+			["journey/paged", "journey%2Fpaged"],
+		] as const) {
 			const player = await mintPlayerUrl(url, name, frame, token);
 			const raw = await mintRawUrl(url, name, frame, root);
-			expect(player).toBe(`${url}/play/${name}?frame=${frame}`);
-			expect(raw).toBe(`${renderUrl}/p/${name}/frames/${frame}`);
+			expect(player).toBe(`${url}/play/${name}?frame=${segment}`);
+			expect(raw).toBe(`${renderUrl}/p/${name}/frames/${segment}`);
 			expect((await fetch(player)).status).toBe(200);
 			expect((await fetch(raw)).status).toBe(200);
 		}
+		// the leaf alone names no frame on a page
+		await expect(mintRawUrl(url, name, "paged", root)).rejects.toThrow('no frame "paged"');
+		await expect(mintPlayerUrl(url, name, "paged", token)).rejects.toThrow('no frame "paged"');
 	});
 
 	it("mints a raw URL without materializing missing geometry", async () => {
@@ -232,9 +239,23 @@ describe("skill", () => {
 
 		const flows = skillText("flows");
 		expect(flows).toContain("Shared components may own data-go attributes");
-		expect(flows).toContain("spool flows --entry <frame-name>");
+		expect(flows).toContain("spool flows --entry <frame>");
 		expect(flows).toContain("export const links");
 		expect(flows).toContain("pass a callback");
+	});
+
+	it("teaches that a frame is named by its path, and which walks spool rewrites after a move (#336)", () => {
+		const frames = skillText("frames");
+		expect(frames).toContain("A frame is named by its path under frames/");
+		expect(frames).toContain("shop/buttons and vercel/buttons are two frames");
+		expect(frames).toContain(
+			"spool writes every data-go, ui.go and links literal that named a moved frame at its new name",
+		);
+		expect(frames).toContain(
+			"A frame or page renamed or moved outside spool leaves those literals naming the old path",
+		);
+		expect(frames).not.toContain("unique across every page");
+		expect(skillText("flows")).toContain("its full path under frames/ (shop/checkout)");
 	});
 
 	it("names the selector that actually discriminates a swap's direction and type", () => {

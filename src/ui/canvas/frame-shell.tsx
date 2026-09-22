@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
+import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
 import type { FrameState } from "./lifecycle";
@@ -274,7 +275,7 @@ export const FrameShell = memo(function FrameShell({
 						/>
 					) : (
 						<div className="absolute inset-0 flex items-center justify-center bg-surface">
-							<span className="text-muted type-value">{name}</span>
+							<span className="text-muted type-value">{pageName(name)}</span>
 						</div>
 					)}
 					{plan.badge && (

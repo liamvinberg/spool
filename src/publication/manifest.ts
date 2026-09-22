@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { isSafeName } from "../page-path";
+import { isFramePath, isSafeName } from "../page-path";
 
 export const ARTIFACT_FORMAT = 1;
 export const MAX_OBJECT_BYTES = 25 * 1024 * 1024;
@@ -15,7 +15,9 @@ const path = z
 			/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value) &&
 			value.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
 	);
-const name = z.string().max(200).refine(isSafeName);
+/** A frame is named by its path under design/frames (#336); a scenario by one file name. */
+const frameName = z.string().max(200).refine(isFramePath);
+const scenarioName = z.string().max(200).refine(isSafeName);
 const object = z.strictObject({
 	path,
 	mediaType: z
@@ -26,10 +28,10 @@ const object = z.strictObject({
 	sha256: digest,
 });
 const frame = z.strictObject({
-	name,
+	name: frameName,
 	width: z.number().positive().finite(),
 	height: z.number().positive().finite(),
-	outgoing: z.array(name).max(2000),
+	outgoing: z.array(frameName).max(2000),
 	module: path,
 	dependencies: z.array(path).max(MAX_OBJECTS),
 	stylesheet: path,
@@ -42,8 +44,8 @@ const body = z.strictObject({
 		version: z.string().min(1).max(100),
 		runtimeVersion: z.string().min(1).max(100),
 	}),
-	entry: name,
-	scenario: name,
+	entry: frameName,
+	scenario: scenarioName,
 	document: z.literal("index.html"),
 	bootstrap: path,
 	player: path,

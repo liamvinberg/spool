@@ -3,6 +3,7 @@ import * as React from "react";
 import { createElement, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { isFramePath } from "../page-path";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
 import { accelChord } from "./platform-keys";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
@@ -691,10 +692,6 @@ function postEmbeddedWalk(message: Record<string, unknown>): void {
 	post({ ...message, id: pending.id });
 }
 
-function isFrameName(name: string): boolean {
-	return name.length > 0 && !name.startsWith(".") && !name.includes("/") && !name.includes("\\");
-}
-
 /**
  * A session really walked from → to: witnessed edges draw the dashed arrows
  * (#25). Only the player reports — embedded walks ride the bridge and the
@@ -753,7 +750,7 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 		void publicationNavigate(target, patch, transition);
 		return;
 	} else {
-		if (!isFrameName(target)) {
+		if (!isFramePath(target)) {
 			console.error(`spool: not a frame name: "${target}"`);
 			return;
 		}

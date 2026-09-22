@@ -32,7 +32,7 @@ async function mountCanvas(): Promise<Harness> {
 			requests.push(`${url.pathname}${url.search}`);
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: [], frames, collisions: [] });
+				return Response.json({ root: "/project", pages: [], frames });
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: frames.map(({ name }) => name), links: [], edges: [], unreadable: [] });

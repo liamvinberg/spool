@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { FORMAT_VERSION } from "../templates";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { uncaughtNotice } from "./hand-notice";
 
@@ -13,7 +14,7 @@ import { uncaughtNotice } from "./hand-notice";
 
 function project(history: boolean): string {
 	const { root } = makeProject(makeTempDir());
-	writeDesignFile(root, "canvas.json", `{ "format": 1, "history": ${history} }\n`);
+	writeDesignFile(root, "canvas.json", `${JSON.stringify({ format: FORMAT_VERSION, history })}\n`);
 	return root;
 }
 

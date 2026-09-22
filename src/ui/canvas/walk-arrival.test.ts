@@ -32,7 +32,7 @@ describe("walk arrival", () => {
 				const url = new URL(raw, window.location.href);
 				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				if (url.pathname.endsWith("/frames")) {
-					return Response.json({ root: "/project", pages: [], frames, collisions: [] });
+					return Response.json({ root: "/project", pages: [], frames });
 				}
 				if (url.pathname.endsWith("/flows")) {
 					return Response.json({ frames: frames.map(({ name }) => name), links: [], edges: [], unreadable: [] });

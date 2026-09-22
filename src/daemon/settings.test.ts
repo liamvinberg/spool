@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { FORMAT_VERSION } from "../templates";
 import { makeProject, makeTempDir } from "../test-helpers";
 import { createSettingsStore } from "./settings";
 
@@ -23,7 +24,7 @@ describe("settings store", () => {
 		const written = store.write("history", true, root);
 
 		expect(written).toMatchObject({ ok: true, reading: { key: "history", value: true, source: "file" } });
-		expect(readJson(join(root, "design", "canvas.json"))).toEqual({ format: 1, history: true });
+		expect(readJson(join(root, "design", "canvas.json"))).toEqual({ format: FORMAT_VERSION, history: true });
 		expect(store.read(root).entries.find((entry) => entry.key === "history")?.value).toBe(true);
 	});
 
@@ -36,7 +37,7 @@ describe("settings store", () => {
 
 		const registry = readJson(join(spoolDir, "registry.json")) as { projects: Record<string, unknown>[] };
 		expect(registry.projects[0]).toMatchObject({ root, settings: { agent: { permissions: "bypass" } } });
-		expect(readJson(join(root, "design", "canvas.json"))).toEqual({ format: 1, history: false });
+		expect(readJson(join(root, "design", "canvas.json"))).toEqual({ format: FORMAT_VERSION, history: false });
 		expect(store.agentPermissions(root)).toBe("bypass");
 		expect(store.agentPermissions(makeTempDir())).toBe("ask");
 	});

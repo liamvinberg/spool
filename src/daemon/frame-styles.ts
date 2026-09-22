@@ -23,7 +23,7 @@ export async function buildFrameStyleClosure(
 	ref: FrameStyleRef,
 	publication = false,
 ): Promise<FrameStyleClosure> {
-	const folder = frameFolder(ref.name, ref.page);
+	const folder = frameFolder(ref.name);
 	const frame = await buildDesignEntry({
 		designDir,
 		resolveDir: join(designDir, folder),

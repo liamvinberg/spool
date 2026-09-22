@@ -1,4 +1,5 @@
 import type { Unseen } from "../../daemon/seen";
+import { pageName } from "../../page-path";
 import { UnseenMark } from "./unseen-mark";
 
 export function FrameLabel({
@@ -32,6 +33,8 @@ export function FrameLabel({
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
 	const width = frameWidth * k;
+	// the label sits on its own page, which already says where it is (#336)
+	const leaf = pageName(name);
 
 	return (
 		<div
@@ -53,7 +56,7 @@ export function FrameLabel({
 							selected ? "text-thread-strong" : hovered || unseen !== undefined ? "text-text" : "text-muted"
 						}`}
 					>
-						{name}
+						{leaf}
 					</span>
 					{/* the selection's own verb, at the far end of its own row: no
 					    travelling to a corner of the chrome to act on what is right
@@ -74,7 +77,7 @@ export function FrameLabel({
 					{selected && onPlay !== undefined && (
 						<button
 							type="button"
-							aria-label={`Play ${name}`}
+							aria-label={`Play ${leaf}`}
 							className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-muted transition-colors hover:text-thread-strong type-detail"
 							onPointerDown={(event) => {
 								event.stopPropagation();

@@ -19,4 +19,21 @@ describe("FrameLabel", () => {
 		expect(markup).toContain("width:240px");
 		expect(markup).toContain("min-w-0 truncate");
 	});
+
+	it("names the frame by its own folder, since the page around it says the rest", () => {
+		const markup = renderToStaticMarkup(
+			createElement(FrameLabel, {
+				name: "shop/checkout",
+				frameWidth: 400,
+				k: 1,
+				entered: false,
+				selected: false,
+				hovered: false,
+			}),
+		);
+
+		expect(markup).toContain('data-frame-label="shop/checkout"');
+		expect(markup).toContain(">checkout</span>");
+		expect(markup).not.toContain(">shop/checkout<");
+	});
 });

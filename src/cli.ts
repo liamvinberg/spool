@@ -30,6 +30,7 @@ import {
 	statusDaemon,
 	stopDaemon,
 } from "./daemon/lifecycle";
+import { describeMigration, migrateFrameNames } from "./daemon/migrate-frame-names";
 import { publicationReadiness } from "./daemon/publication-readiness";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
@@ -38,7 +39,7 @@ import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
-import { isSafeName } from "./page-path";
+import { isFramePath, isSafeName } from "./page-path";
 import { buildWebsite, writeWebsite } from "./publication/build";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
@@ -123,14 +124,13 @@ async function cloudJson(action: () => Promise<unknown>): Promise<void> {
 cloud
 	.command("publish")
 	.description("publish a connected website")
-	.argument("<frame>", "original entry frame", parseScenario)
+	.argument("<frame>", "original entry frame", parseFrame)
 	.option("--invite <email...>", "person allowed to open the new website")
 	.option("--scenario <name>", "scenario seed", parseScenario)
 	.option("--publication <id>", "owned publication to update")
 	.action(async (entry: string, options: { invite?: string[]; scenario?: string; publication?: string }) => {
 		await cloudJson(async () => {
-			const root = resolveProjectRoot(process.cwd());
-			if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
+			const root = offlineProject(process.cwd());
 			return publishWebsite({
 				spoolDir,
 				root,
@@ -248,14 +248,9 @@ program
 	.command("check")
 	.description("check frames or connected publication navigation offline")
 	.argument("[path]", "where the walk-up starts", ".")
-	.option("--entry <frame>", "check navigation only, without typechecking", parseScenario)
+	.option("--entry <frame>", "check navigation only, without typechecking", parseFrame)
 	.action(async (path: string, options: { entry?: string }) => {
-		const root = resolveProjectRoot(path);
-		if (root === undefined) {
-			throw new SpoolError(
-				`not inside a spool project — no design/canvas.json here or above; \`spool init\` starts one`,
-			);
-		}
+		const root = offlineProject(path);
 		if (options.entry !== undefined) {
 			const readiness = await publicationReadiness(createFlowGraph(), root, options.entry);
 			process.stdout.write(`${JSON.stringify(readiness)}\n`);
@@ -274,12 +269,11 @@ program
 program
 	.command("build")
 	.description("export the connected website without starting a daemon")
-	.argument("<frame>", "entry frame", parseScenario)
+	.argument("<frame>", "entry frame", parseFrame)
 	.requiredOption("--out <directory>", "output directory, empty or a previous Spool build")
 	.option("--scenario <name>", "scenario seed", parseScenario)
 	.action(async (entry: string, options: { out: string; scenario?: string }) => {
-		const root = resolveProjectRoot(process.cwd());
-		if (root === undefined) throw new SpoolError("not inside a spool project; `spool init` starts one");
+		const root = offlineProject(process.cwd());
 		try {
 			const artifact = await buildWebsite({
 				root,
@@ -333,6 +327,30 @@ function parseMilliseconds(value: string): number {
 	return Number(value);
 }
 
+/**
+ * The project a command that needs no daemon works on, read the way the daemon
+ * reads one first: a project still naming frames by folder has its walks
+ * renamed before anything reads them (#336).
+ */
+function offlineProject(start: string): string {
+	const root = resolveProjectRoot(start);
+	if (root === undefined) {
+		throw new SpoolError("not inside a spool project — no design/canvas.json here or above; `spool init` starts one");
+	}
+	const migrated = migrateFrameNames(root);
+	if (migrated !== undefined) process.stderr.write(`spool: ${describeMigration(root, migrated)}\n`);
+	return root;
+}
+
+function parseFrame(value: string): string {
+	if (!isFramePath(value)) {
+		throw new SpoolError(
+			`a frame is named by its path under design/frames, like "checkout" or "shop/checkout", got "${value}"`,
+		);
+	}
+	return value;
+}
+
 function parseScenario(value: string): string {
 	if (!isSafeName(value)) {
 		throw new SpoolError(`--scenario must be a scenario name without a leading dot or slash, got "${value}"`);
@@ -361,7 +379,7 @@ program
 program
 	.command("flows")
 	.description("print the link graph: read from source, verified by sessions")
-	.option("--entry <frame>", "check the connected set for publication", parseScenario)
+	.option("--entry <frame>", "check the connected set for publication", parseFrame)
 	.action(async (options: { entry?: string }) => {
 		const { name, daemonUrl, controlToken } = await verbContext();
 		process.stdout.write(
@@ -372,7 +390,7 @@ program
 program
 	.command("shot")
 	.description("save a headless screenshot of a frame")
-	.argument("<frame>", "frame folder name")
+	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
 	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
 	.option("--at <milliseconds>", "post-commit wait", parseMilliseconds)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
@@ -397,7 +415,7 @@ program
 program
 	.command("logs")
 	.description("print the frame's boot console output (cached until source changes)")
-	.argument("<frame>", "frame folder name")
+	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
 	.action(async (frame: string, options: Pick<VerifyOptions, "scenario">) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
@@ -424,7 +442,7 @@ program
 program
 	.command("url")
 	.description("mint a player-session URL to drive in a browser")
-	.argument("<frame>", "frame folder name")
+	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
 	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();

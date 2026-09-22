@@ -230,8 +230,10 @@ function classify(
 		while (at < segments.length - 1 && isPageFolder(join(designDir, "frames", ...segments.slice(0, at + 1)))) {
 			at += 1;
 		}
-		const frame = segments[at];
-		if (frame === undefined || frame === "") return { kind: "frame", frame: first };
+		const leaf = segments[at];
+		if (leaf === undefined || leaf === "") return { kind: "frame", frame: first };
+		// a frame is named by its path (#336): the pages walked through, then its folder
+		const frame = segments.slice(0, at + 1).join("/");
 		const rest = segments.slice(at + 1);
 		if (rest.length === 1 && rest[0]?.startsWith("frame.json") === true) return { kind: "geometry", frame };
 		return { kind: "frame", frame };

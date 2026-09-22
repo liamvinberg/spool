@@ -7,6 +7,7 @@ import { readFrameGeometry } from "./daemon/projection";
 import { type CaptureError, readCaptureError } from "./daemon/thumbs";
 import { SpoolError } from "./errors";
 import { launchHeadlessShell } from "./headless-shell";
+import { frameSegment } from "./page-path";
 import { refusalOf } from "./verbs";
 
 /**
@@ -156,9 +157,10 @@ function sweepShotFiles(root: string, frame: string, kept: string[]): void {
 	} catch {
 		return;
 	}
+	const stem = frameSegment(frame);
 	for (const name of names) {
-		if (!name.startsWith(`${frame}.`) || keep.has(name)) continue;
-		if (/^(\d+\.)?png$/.test(name.slice(frame.length + 1))) rmSync(join(dir, name), { force: true });
+		if (!name.startsWith(`${stem}.`) || keep.has(name)) continue;
+		if (/^(\d+\.)?png$/.test(name.slice(stem.length + 1))) rmSync(join(dir, name), { force: true });
 	}
 }
 
@@ -168,11 +170,8 @@ function logsFile(root: string, frame: string): string {
 
 function verifyFile(root: string, frame: string, extension: string): string {
 	const designDir = realDesignDir(root);
-	return resolveDesignPath(
-		designDir,
-		join(designDir, ".spool", "verify", `${frame}.${extension}`),
-		`.spool/verify/${frame}.${extension}`,
-	);
+	const file = `${frameSegment(frame)}.${extension}`;
+	return resolveDesignPath(designDir, join(designDir, ".spool", "verify", file), `.spool/verify/${file}`);
 }
 
 type Probe = { kind: "ok"; etag: string } | { kind: "error"; message: string } | { kind: "missing"; message: string };

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
 import { realDesignDir } from "./design-path";
 import { writePlacement } from "./geometry";
-import { listProjectFrames, readFrameGeometry } from "./projection";
+import { listProjectFrames, lookupFrame, readFrameGeometry } from "./projection";
 
 describe("frame birth", () => {
 	it("carries the folder's birth time so the finder can sort newest first", () => {
@@ -165,7 +165,8 @@ describe("a sidecar that states size without position", () => {
 /**
  * Discovery to any depth (#231): a safe folder holding a frame entry is a
  * frame, one holding none is a page, and its own folders get the same question.
- * A page's identity is its path under frames/; a frame's is still its bare name.
+ * Both are named by their path under frames/ (#336), so a folder name only has
+ * to be free among the folders beside it.
  */
 describe("pages at any depth", () => {
 	function deep(): string {
@@ -190,10 +191,10 @@ describe("pages at any depth", () => {
 
 		expect(pages).toEqual(["explorations", "explorations/chat", "explorations/chat/deeper"]);
 		expect(frames.map((frame) => ({ name: frame.name, page: frame.page }))).toEqual([
-			{ name: "agent-chat", page: "explorations/chat" },
+			{ name: "explorations/chat/agent-chat", page: "explorations/chat" },
+			{ name: "explorations/chat/deeper/shell", page: "explorations/chat/deeper" },
+			{ name: "explorations/notes", page: "explorations" },
 			{ name: "home", page: undefined },
-			{ name: "notes", page: "explorations" },
-			{ name: "shell", page: "explorations/chat/deeper" },
 		]);
 	});
 
@@ -220,12 +221,42 @@ describe("pages at any depth", () => {
 		expect(new Set(held.map((frame) => frame.x)).size).toBe(2);
 	});
 
-	it("keeps a frame name identity across depths, so two claimants is a collision", () => {
+	it("keeps one folder name on two pages as two frames, each named by its path", () => {
 		const root = deep();
 		writeDesignFile(root, join("frames", "site", "notes", "frame.tsx"), "export default () => null;\n");
 
-		const { frames, collisions } = listProjectFrames(root);
-		expect(frames.some((frame) => frame.name === "notes")).toBe(false);
-		expect(collisions).toEqual([{ name: "notes", paths: ["frames/explorations/notes", "frames/site/notes"] }]);
+		const projection = listProjectFrames(root);
+		expect(projection.frames.filter((frame) => frame.name.endsWith("notes")).map((frame) => frame.name)).toEqual([
+			"explorations/notes",
+			"site/notes",
+		]);
+		expect("collisions" in projection).toBe(false);
+	});
+
+	it("looks a frame up by walking its path, every folder above it a page", () => {
+		const root = deep();
+		writeDesignFile(root, join("frames", "home", "inner", "frame.tsx"), "export default () => null;\n");
+
+		expect(lookupFrame(root, "explorations/chat/agent-chat")).toEqual({
+			kind: "found",
+			dir: join(realDesignDir(root), "frames", "explorations", "chat", "agent-chat"),
+			page: "explorations/chat",
+		});
+		expect(lookupFrame(root, "home")).toMatchObject({ kind: "found" });
+		expect("page" in lookupFrame(root, "home")).toBe(false);
+		for (const name of [
+			"agent-chat",
+			"explorations/chat",
+			"explorations",
+			"home/inner",
+			"explorations/../home",
+			"../design/frames/home",
+			".spool",
+			"explorations//notes",
+			"explorations\\notes",
+			"",
+		]) {
+			expect(lookupFrame(root, name), name).toEqual({ kind: "missing" });
+		}
 	});
 });

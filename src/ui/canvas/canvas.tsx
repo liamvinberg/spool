@@ -13,7 +13,6 @@ import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
 	FlowEdge,
-	FrameCollision,
 	FrameCopy,
 	Geometry,
 	HeldPatch,
@@ -59,6 +58,7 @@ import { beforeUpdate } from "../update-lifecycle";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
+import { frameHolding } from "./agent-nouns";
 import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
@@ -79,7 +79,6 @@ import {
 } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
-import { CollisionNotice, NoticeStrip } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
 import { type ElementSnap, poolOf, type SnapRequest, type SnapTarget, snapResize, truthful } from "./element-snap";
@@ -92,6 +91,7 @@ import {
 	downloadBytes,
 	framesInCanvasOrder,
 	pngBytesFromImageBlob,
+	pngFileName,
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
@@ -540,7 +540,6 @@ export function ProjectCanvas({
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
 	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
-	const [collisions, setCollisions] = useState<FrameCollision[]>([]);
 	/**
 	 * Where each page stands on the field holding it (#265).
 	 *
@@ -1155,7 +1154,7 @@ export function ProjectCanvas({
 				const captured: CapturedFrame[] = [];
 				for (const frame of ordered) {
 					const image = await capturePng(frame);
-					if (format === "png") downloadBytes(image.png, "image/png", `${image.name}.png`);
+					if (format === "png") downloadBytes(image.png, "image/png", pngFileName(image.name));
 					else captured.push(image);
 				}
 
@@ -1171,7 +1170,7 @@ export function ProjectCanvas({
 						format === "pdf"
 							? `Exported ${project}.pdf`
 							: ordered.length === 1
-								? `Exported ${first.name}.png`
+								? `Exported ${pngFileName(first.name)}`
 								: `Exported ${ordered.length} PNG images`,
 				});
 			} catch (error) {
@@ -1227,7 +1226,6 @@ export function ProjectCanvas({
 		// with nothing to say about places leaves the field with no pages on it
 		// rather than with nothing on it
 		setPlaces(projection.places ?? {});
-		setCollisions(projection.collisions);
 		setLoaded(true);
 	}, [project]);
 
@@ -1433,7 +1431,13 @@ export function ProjectCanvas({
 
 	// the agent's hand (#214): where it is, and what it has just changed. The arms are a
 	// ref here because `requestSiteBoxes` reads them from inside a message handler
-	const { hand, marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
+	const { hand: handRead, marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
+	// a call on a file in a frame's own subfolder names that subfolder (#336): the hand is
+	// on the frame holding it
+	const hand = useMemo(
+		() => (handRead === null ? null : { ...handRead, frame: frameHolding(handRead.frame, reach.have) }),
+		[handRead, reach],
+	);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -1848,6 +1852,18 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * Frames the rail renamed, moved, or carried with a page (#336): a frame is
+	 * named by its path, so the selection follows it to its new name rather than
+	 * holding one nothing answers to.
+	 */
+	const followRenamedFrames = useCallback((carry: (name: string) => string) => {
+		setSelected((current) => {
+			const next = current.map(carry);
+			return sameNames(current, next) ? current : next;
+		});
+	}, []);
+
+	/**
 	 * Fresh copies from the rail (#229), given somewhere to be.
 	 *
 	 * A duplicate copies the geometry sidecar verbatim (#228), so a copy that
@@ -2040,8 +2056,8 @@ export function ProjectCanvas({
 
 	/** Whether a write landed outside the frame's own folder: in a shared definition's file (#318). */
 	const sharedWrite = useCallback((frame: string, path: string): boolean => {
-		const held = allFramesRef.current.find((entry) => entry.name === frame);
-		return held === undefined || !path.startsWith(`design/${frameFolderRel(frame, pageOf(held))}`);
+		const held = allFramesRef.current.some((entry) => entry.name === frame);
+		return !held || !path.startsWith(`design/${frameFolderRel(frame)}`);
 	}, []);
 
 	/**
@@ -6187,8 +6203,9 @@ export function ProjectCanvas({
 					onTrashFrames={stageTrash}
 					onTrashPage={(page, names) => stageEntry({ frames: names, page })}
 					onRevealFrame={landOnFrame}
-					onCopyPath={(name) => copySourcePath(frameSourcePath(name, framePageOf(name)))}
+					onCopyPath={(name) => copySourcePath(frameSourcePath(name))}
 					onCopiesLanded={cascadeCopies}
+					onFramesRenamed={followRenamedFrames}
 					onRefresh={() => void refetchFrames()}
 					onRecord={recordEntry}
 					run={runEntry}
@@ -6459,11 +6476,7 @@ export function ProjectCanvas({
 						}}
 						onCopyPath={() => {
 							const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
-							copySourcePath(
-								pick !== undefined
-									? sourcePathOf(pick, framePageOf(pick.frame))
-									: frameSourcePath(menu.frame, framePageOf(menu.frame)),
-							);
+							copySourcePath(pick !== undefined ? sourcePathOf(pick) : frameSourcePath(menu.frame));
 							setMenu(null);
 						}}
 						onReload={() => {
@@ -6480,12 +6493,6 @@ export function ProjectCanvas({
 				)}
 
 				{notice !== null ? <Toast notice={notice} /> : null}
-
-				{collisions.length > 0 && (
-					<NoticeStrip>
-						<CollisionNotice collisions={collisions} />
-					</NoticeStrip>
-				)}
 
 				{pendingTrash !== null && (
 					<TrashToast frames={pendingTrash.frames} page={pendingTrash.page} onUndo={undoTrash} />

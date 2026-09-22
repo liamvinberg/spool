@@ -5,6 +5,7 @@ import { readSession } from "./daemon/session";
 import { SpoolError } from "./errors";
 import { initProject } from "./init";
 import { readRegistry } from "./registry";
+import { FORMAT_VERSION } from "./templates";
 import { makeTempDir, markProject } from "./test-helpers";
 
 function listTree(base: string): string[] {
@@ -58,14 +59,14 @@ describe("initProject", () => {
 		const root = makeTempDir();
 		initProject(root, join(makeTempDir(), ".spool"));
 
-		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: 1, history: false });
+		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: FORMAT_VERSION, history: false });
 	});
 
 	it("writes the flag on when the caller opted in", () => {
 		const root = makeTempDir();
 		initProject(root, join(makeTempDir(), ".spool"), { history: true });
 
-		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: 1, history: true });
+		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: FORMAT_VERSION, history: true });
 	});
 
 	it("writes both signposts", () => {

@@ -59,6 +59,23 @@ describe("findFrames", () => {
 		const rows = newestFirst([frame("agent-play--plan-log", 1), frame("agent-play--plan-pinned", 2)]);
 		expect(names(findFrames("plan", rows))[0]).toBe("agent-play--plan-pinned");
 	});
+
+	/** a name is only unique on its page (#336): the row prints the own name, the query reaches the path */
+	it("matches a frame by its own name on any page, and by its page when that is what was typed", () => {
+		const paged = (name: string, born: number): ProjectedFrame => ({ name, x: 0, y: 0, w: 320, h: 200, born });
+		const rows = newestFirst([paged("shop/checkout", 3), paged("checkout", 2), paged("admin/users", 1)]);
+
+		const both = findFrames("checkout", rows);
+		expect(names(both)).toEqual(["shop/checkout", "checkout"]);
+		// an exact own name is exact on any page, and what landed is said against it
+		expect(both[0]?.score).toBe(both[1]?.score);
+		expect(both[0]?.matched).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+
+		const byPage = findFrames("shop", rows);
+		expect(names(byPage)).toEqual(["shop/checkout"]);
+		// the hits landed on the page, which the row prints in its own column
+		expect(byPage[0]?.matched).toEqual([]);
+	});
 });
 
 describe("newestFirst", () => {

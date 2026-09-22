@@ -159,8 +159,16 @@ describe("rename entries", () => {
 		const history = record(emptyHistory(), renamed);
 		// somebody else minted a frame called home while this sat on the stack
 		expect(takeUndo(history, at({ landing: "", home: "" }))).toBeUndefined();
-		// a page holds the name against a frame too — one namespace (#228)
+		// a page holds the name against a frame too: one folder on one page (#228)
 		expect(takeUndo(history, at({ landing: "" }, ["home"]))).toBeUndefined();
+	});
+
+	it("claims a name only on the page it would land on (#336)", () => {
+		const nested: HistoryEntry = { kind: "rename", of: "frame", from: "shop/home", to: "shop/landing" };
+		const history = record(emptyHistory(), nested);
+		// a home on the root page is a different frame, so the one on shop can take the name back
+		expect(takeUndo(history, at({ "shop/landing": "shop", home: "" }, ["shop"]))?.entry).toEqual(nested);
+		expect(takeUndo(history, at({ "shop/landing": "shop", "shop/home": "shop" }, ["shop"]))).toBeUndefined();
 	});
 
 	it("skips when the row it is about is gone, and tells a page from a frame", () => {
@@ -177,33 +185,54 @@ describe("move entries", () => {
 		kind: "move",
 		frames: [
 			{ name: "cart", from: "" },
-			{ name: "pay", from: "admin" },
+			{ name: "admin/pay", from: "admin" },
 		],
 		to: "shop",
 		lists: [],
 	};
 
-	it("undoes only the frames still sitting where the move left them", () => {
+	/** a frame is named by its path, so a move renames it and undo reaches for the new name (#336) */
+	it("undoes only the frames still sitting where the move left them, by the names they landed at", () => {
 		const history = record(emptyHistory(), moved);
 		// somebody dragged pay somewhere else in the meantime
-		const taken = takeUndo(history, at({ cart: "shop", pay: "admin" }, ["shop", "admin"]));
+		const taken = takeUndo(history, at({ "shop/cart": "shop", "admin/pay": "admin" }, ["shop", "admin"]));
 		expect(taken?.entry.kind === "move" ? taken.entry.frames : undefined).toEqual([{ name: "cart", from: "" }]);
 	});
 
 	it("skips a frame whose page to land on is gone, and the whole entry when none is left", () => {
 		const history = record(emptyHistory(), moved);
 		// admin was trashed: pay has nowhere to go back to, cart still goes to the root page
-		const taken = takeUndo(history, at({ cart: "shop", pay: "shop" }, ["shop"]));
+		const taken = takeUndo(history, at({ "shop/cart": "shop", "shop/pay": "shop" }, ["shop"]));
 		expect(taken?.entry.kind === "move" ? taken.entry.frames : undefined).toEqual([{ name: "cart", from: "" }]);
-		expect(takeUndo(history, at({ cart: "", pay: "admin" }, ["shop", "admin"]))).toBeUndefined();
+		expect(takeUndo(history, at({ cart: "", "admin/pay": "admin" }, ["shop", "admin"]))).toBeUndefined();
+	});
+
+	it("skips a frame whose old name is somebody else's by now", () => {
+		const history = record(emptyHistory(), moved);
+		// a new cart was written on the root page after the move
+		const taken = takeUndo(history, at({ "shop/cart": "shop", cart: "", "shop/pay": "shop" }, ["shop", "admin"]));
+		expect(taken?.entry.kind === "move" ? taken.entry.frames : undefined).toEqual([
+			{ name: "admin/pay", from: "admin" },
+		]);
 	});
 
 	it("redoes the frames still standing on the pages they came from", () => {
 		const history = record(emptyHistory(), moved);
-		const taken = takeRedo({ undo: [], redo: history.undo }, at({ cart: "", pay: "admin" }, ["shop", "admin"]));
+		const taken = takeRedo(
+			{ undo: [], redo: history.undo },
+			at({ cart: "", "admin/pay": "admin" }, ["shop", "admin"]),
+		);
 		expect(taken?.entry.kind === "move" ? taken.entry.frames.map((each) => each.name) : undefined).toEqual([
 			"cart",
-			"pay",
+			"admin/pay",
+		]);
+		// a frame already answering to the name it would land at holds that name
+		const held = takeRedo(
+			{ undo: [], redo: history.undo },
+			at({ cart: "", "shop/cart": "shop", "admin/pay": "admin" }, ["shop", "admin"]),
+		);
+		expect(held?.entry.kind === "move" ? held.entry.frames.map((each) => each.name) : undefined).toEqual([
+			"admin/pay",
 		]);
 	});
 });
@@ -258,7 +287,7 @@ describe("gather entries", () => {
 
 	it("undoes while the page is still there and the frames are still in it", () => {
 		const history = record(emptyHistory(), gathered);
-		expect(takeUndo(history, at({ home: "loose" }, ["loose"]))?.entry).toEqual(gathered);
+		expect(takeUndo(history, at({ "loose/home": "loose" }, ["loose"]))?.entry).toEqual(gathered);
 		// the page went away in the meantime, so there is nothing left to take back
 		expect(takeUndo(history, at({ home: "" }, []))).toBeUndefined();
 	});
@@ -351,7 +380,7 @@ describe("one stack", () => {
 /**
  * Depth (#231). A page is named by its path, so an entry about one carries a
  * path and the check is against paths — two pages under different pages may
- * share a name, and a frame's name still has to miss every one of them.
+ * share a name, and so may two frames (#336).
  */
 describe("entries about a nested page", () => {
 	const renamed: HistoryEntry = {
@@ -384,12 +413,12 @@ describe("entries about a nested page", () => {
 		);
 	});
 
-	it("holds a frame name against a page's name wherever that page sits", () => {
+	it("holds a frame name against a page only on the page the two would share", () => {
 		const frame: HistoryEntry = { kind: "rename", of: "frame", from: "chat", to: "home" };
 		const history = record(emptyHistory(), frame);
-		// undoing takes "chat" back, and a page answers to it at whatever depth it sits
-		expect(takeUndo(history, at({ home: "" }, ["explorations/chat"]))).toBeUndefined();
-		expect(takeUndo(history, at({ home: "" }, ["explorations/notes"]))?.entry).toEqual(frame);
+		// undoing takes "chat" back: a page at that path holds it, one deeper does not
+		expect(takeUndo(history, at({ home: "" }, ["chat"]))).toBeUndefined();
+		expect(takeUndo(history, at({ home: "" }, ["explorations/chat"]))?.entry).toEqual(frame);
 	});
 
 	const moved: HistoryEntry = {

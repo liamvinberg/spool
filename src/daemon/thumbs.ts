@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { type Dirent, readdirSync, readFileSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import type { Cover } from "../cover";
+import { frameSegment, segmentFrame } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 const COVER_FORMATS = [
@@ -25,10 +26,24 @@ function coverStoreDir(root: string): string {
 	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs"));
 }
 
-/** A frame's cover folder, keyed by its bare name — so a rename has to carry it (#228). */
+/** A frame's cover folder, keyed by its name, so a rename or a move has to carry it (#228, #336). */
 export function coverDir(root: string, frame: string): string {
 	const designDir = realDesignDir(root);
-	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs", frame));
+	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs", frameSegment(frame)));
+}
+
+/**
+ * A frame's covers follow it to a new name (#228, #336). The geometry sidecar
+ * rides inside the folder and needs nothing, but covers left under the old name
+ * would blank the picture the canvas is drawing right now.
+ */
+export function carryCover(root: string, from: string, to: string): void {
+	const held = coverDir(root, from);
+	if (!existsSync(held)) return;
+	const target = coverDir(root, to);
+	// the new name was nobody's frame, so anything parked under it is orphaned cache
+	rmSync(target, { recursive: true, force: true });
+	renameSync(held, target);
 }
 
 function listing(dir: string): Dirent[] {
@@ -43,10 +58,14 @@ const filesIn = (dir: string): string[] =>
 	listing(dir)
 		.filter((entry) => entry.isFile())
 		.map((entry) => entry.name);
-const foldersIn = (dir: string): string[] =>
+/** Every frame the store holds a folder for, with that folder's name. */
+const framesIn = (dir: string): { frame: string; folder: string }[] =>
 	listing(dir)
 		.filter((entry) => entry.isDirectory())
-		.map((entry) => entry.name);
+		.flatMap((entry) => {
+			const frame = segmentFrame(entry.name);
+			return frame === undefined ? [] : [{ frame, folder: entry.name }];
+		});
 
 /** A legacy ladder has no plain image name, and therefore no cover. */
 function coverOf(dir: string): Cover | undefined {
@@ -65,8 +84,8 @@ function coverAmong(names: string[]): Cover | undefined {
 export function scanCovers(root: string): Map<string, Cover> {
 	const covers = new Map<string, Cover>();
 	const store = coverStoreDir(root);
-	for (const frame of foldersIn(store)) {
-		const cover = coverOf(join(store, frame));
+	for (const { frame, folder } of framesIn(store)) {
+		const cover = coverOf(join(store, folder));
 		if (cover !== undefined) covers.set(frame, cover);
 	}
 	return covers;
@@ -89,8 +108,10 @@ export async function scanDatedCovers(root: string): Promise<Map<string, DatedCo
 	const store = coverStoreDir(root);
 	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 	const scanned = await Promise.all(
-		folders.map(async (frame) => {
-			const dir = join(store, frame);
+		folders.map(async (folder) => {
+			const frame = segmentFrame(folder);
+			if (frame === undefined) return undefined;
+			const dir = join(store, folder);
 			const cover = coverAmong((await listed(dir)).filter((entry) => entry.isFile()).map((entry) => entry.name));
 			return cover === undefined ? undefined : { frame, cover, shotAt: (await modified(dir)) ?? 0 };
 		}),

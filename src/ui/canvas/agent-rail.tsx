@@ -11,6 +11,7 @@ import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, 
 import { AgentChoice } from "./agent-choice";
 import type { AgentModelDeck } from "./agent-model";
 import { AgentModelPicker } from "./agent-model-picker";
+import { frameHolding } from "./agent-nouns";
 import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
@@ -1521,7 +1522,7 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 	 * in exactly the same way, and it is one beat from existing, so it reads as an
 	 * ordinary word and does nothing.
 	 */
-	const frame = entry.frame;
+	const frame = entry.frame === null ? null : frameHolding(entry.frame, jump.have, jump.gone);
 	const goes = frame !== null && jump.have.has(frame);
 	const gone = frame !== null && jump.gone.has(frame);
 	/** what this row is pointing at, so an unmount with the cursor on it can take it back */

@@ -3,6 +3,7 @@ import { ROOT_PAGE } from "../../page-path";
 import type { ProjectedFrame } from "../api";
 import {
 	camerasFromState,
+	frameFolderRel,
 	frameSourcePath,
 	frameSourceRel,
 	framesOnPage,
@@ -51,11 +52,12 @@ describe("sidebar list derivation", () => {
 		expect(pagePathLabel("explorations/chat")).toBe("explorations/chat");
 	});
 
-	it("builds a frame's source path through its page, at whatever depth it sits", () => {
-		expect(frameSourceRel("home", ROOT_PAGE)).toBe("frames/home/frame.tsx");
-		expect(frameSourceRel("checkout", "shop")).toBe("frames/shop/checkout/frame.tsx");
-		expect(frameSourcePath("checkout", "shop")).toBe("design/frames/shop/checkout/frame.tsx");
-		expect(frameSourceRel("agent-chat", "explorations/chat")).toBe("frames/explorations/chat/agent-chat/frame.tsx");
+	it("builds a frame's source path from its name, which already says its page", () => {
+		expect(frameSourceRel("home")).toBe("frames/home/frame.tsx");
+		expect(frameSourceRel("shop/checkout")).toBe("frames/shop/checkout/frame.tsx");
+		expect(frameSourcePath("shop/checkout")).toBe("design/frames/shop/checkout/frame.tsx");
+		expect(frameSourceRel("explorations/chat/agent-chat")).toBe("frames/explorations/chat/agent-chat/frame.tsx");
+		expect(frameFolderRel("shop/checkout")).toBe("frames/shop/checkout/");
 	});
 });
 

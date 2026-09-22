@@ -125,7 +125,7 @@ it("takes a page made with the selection back in one press, and puts it back in 
 	gatheredIn(false);
 	await act(async () => press("z", ACCEL));
 	await settle(20);
-	expect(moves().at(-1)).toEqual({ frames: ["home"], page: "" });
+	expect(moves().at(-1)).toEqual({ frames: ["loose/home"], page: "" });
 	expect(host.querySelector('button[aria-label="loose page"]')).toBeNull();
 
 	// and one more press puts both halves back
@@ -144,7 +144,11 @@ function renamedTo(name: string) {
 /** The page exists from here on, and the first frame is inside it or back out of it. */
 function gatheredIn(inside: boolean) {
 	projectedPages = ["loose"];
-	projected = [{ ...projected[0], page: inside ? "loose" : undefined }, ...projected.slice(1)];
+	// a frame is named by its path (#336), so moving it renames it
+	projected = [
+		{ ...projected[0], name: inside ? "loose/home" : "home", page: inside ? "loose" : undefined },
+		...projected.slice(1),
+	];
 }
 
 function itemNamed(label: string): HTMLButtonElement | undefined {
@@ -245,7 +249,7 @@ function stubCanvasApis(): void {
 			asked.push({ url: url.pathname, body });
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: projectedPages, frames: projected, collisions: [] });
+				return Response.json({ root: "/project", pages: projectedPages, frames: projected });
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });

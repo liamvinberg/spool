@@ -10,6 +10,7 @@ import { FORMAT_VERSION } from "../templates";
 import { parseOrder } from "./canvas-order";
 import { parsePlaces } from "./canvas-places";
 import { realDesignDir } from "./design-path";
+import { FOLDER_NAMES_FORMAT } from "./migrate-frame-names";
 
 export const TRANSFER_LIMITS = { compressedBytes: 128 * 1024 * 1024, expandedBytes: 512 * 1024 * 1024, entries: 10000 };
 export type TransferLimits = typeof TRANSFER_LIMITS;
@@ -48,10 +49,13 @@ function canvas(bytes: Uint8Array): Uint8Array {
 	if (typeof value !== "object" || value === null || Array.isArray(value))
 		return fail("The project canvas is invalid.");
 	const fields = value as Record<string, unknown>;
-	if (fields.format !== FORMAT_VERSION) fail("This project canvas version is not supported.");
+	// a project exported before frames were named by path keeps its stamp, so the
+	// first read after the import renames its walks (#336)
+	const format = fields.format === FOLDER_NAMES_FORMAT ? FOLDER_NAMES_FORMAT : FORMAT_VERSION;
+	if (fields.format !== format) fail("This project canvas version is not supported.");
 	return Buffer.from(
 		JSON.stringify({
-			format: FORMAT_VERSION,
+			format,
 			history: false,
 			order: parseOrder(fields.order),
 			places: parsePlaces(fields.places),

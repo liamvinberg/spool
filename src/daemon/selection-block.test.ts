@@ -16,14 +16,14 @@ import { EXCERPT_BUDGET, selectionBlock } from "./selection-block";
 
 const frame = (name: string): SelectionEntry => ({
 	kind: "frame",
-	frame: name,
+	frame: `app/${name}`,
 	path: `design/frames/app/${name}/frame.tsx`,
 	size: { w: 480, h: 640 },
 });
 
 const element = (name: string, excerpt: string, lines: [number, number] = [44, 56]): SelectionEntry => ({
 	kind: "element",
-	frame: "checkout",
+	frame: "app/checkout",
 	name,
 	path: "design/frames/app/checkout/frame.tsx",
 	lines,
@@ -38,7 +38,7 @@ describe("the selection block", () => {
 
 	it("draws a frame as its name, its path and its size", () => {
 		expect(selectionBlock([frame("cart")])).toBe(
-			["<selection>", "cart — design/frames/app/cart/frame.tsx — 480×640", "</selection>"].join("\n"),
+			["<selection>", "app/cart — design/frames/app/cart/frame.tsx — 480×640", "</selection>"].join("\n"),
 		);
 	});
 
@@ -46,7 +46,7 @@ describe("the selection block", () => {
 		expect(selectionBlock([element("line-item", '<li className="flex">…')])).toBe(
 			[
 				"<selection>",
-				"checkout · line-item — design/frames/app/checkout/frame.tsx:44-56",
+				"app/checkout · line-item — design/frames/app/checkout/frame.tsx:44-56",
 				'  <li className="flex">…',
 				"</selection>",
 			].join("\n"),
@@ -57,9 +57,9 @@ describe("the selection block", () => {
 		const block = selectionBlock([frame("cart"), frame("menu"), element("total-row", "<div>76 kr</div>", [61, 70])]);
 
 		expect(block.split("\n").slice(1, -1)).toEqual([
-			"cart — design/frames/app/cart/frame.tsx — 480×640",
-			"menu — design/frames/app/menu/frame.tsx — 480×640",
-			"checkout · total-row — design/frames/app/checkout/frame.tsx:61-70",
+			"app/cart — design/frames/app/cart/frame.tsx — 480×640",
+			"app/menu — design/frames/app/menu/frame.tsx — 480×640",
+			"app/checkout · total-row — design/frames/app/checkout/frame.tsx:61-70",
 			"  <div>76 kr</div>",
 		]);
 	});
@@ -72,7 +72,7 @@ describe("the selection block", () => {
 		const block = selectionBlock(entries, 500);
 
 		for (const at of [0, 1, 2, 3, 4]) {
-			expect(block).toContain(`checkout · row-${at} — design/frames/app/checkout/frame.tsx:${at + 1}-${at + 2}`);
+			expect(block).toContain(`app/checkout · row-${at} — design/frames/app/checkout/frame.tsx:${at + 1}-${at + 2}`);
 		}
 		expect(block.split("\n").filter((line) => line.includes(long))).toHaveLength(2);
 		expect(block).toContain("  3 excerpts elided over budget — read the paths");

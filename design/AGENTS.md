@@ -20,7 +20,7 @@ Four root pages, and the root itself stays empty.
 | `site` | spool.page ([#31](https://github.com/liamvinberg/spool/issues/31)), unbuilt. One sub-page per family of takes. |
 | `explore` | One sub-page per open question. When the question's work ships, the winner moves onto `app` and the sub-page is deleted. Git is the archive: `git log --diff-filter=D --stat -- design/frames` finds what was argued. |
 
-Inside a question, takes go down and states go across. A row is a thing you choose between; a column is the same thing in another state. A frame is named `<subject>-<take>`, and only a state carries `--`: `dock-stack` is a take, `dock-stack--cut` is that take with its motion removed. Frame names are unique across the whole project, which is why the subject stays in the name. Rows run smallest diff to most radical, top to bottom. A page that holds several questions holds them as sub-pages, each with its own rows.
+Inside a question, takes go down and states go across. A row is a thing you choose between; a column is the same thing in another state. A frame is named `<subject>-<take>`, and only a state carries `--`: `dock-stack` is a take, `dock-stack--cut` is that take with its motion removed. Rows run smallest diff to most radical, top to bottom. A page that holds several questions holds them as sub-pages, each with its own rows.
 
 `shared/` is split by who reaches a file:
 

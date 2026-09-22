@@ -13,7 +13,7 @@ const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [
 	{ name: "home" as const, x: 0, y: 0, w: 390, h: 844 },
-	{ name: "checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
+	{ name: "shop/checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
 ];
 
 const mounted: Array<{ root: ReturnType<typeof createRoot>; host: HTMLElement }> = [];
@@ -120,14 +120,14 @@ describe("page tree", () => {
 		});
 		// the range the modifiers ask for is the rail's to answer, so a click hands
 		// the canvas the question rather than a list
-		expect(onSelectFrame).toHaveBeenCalledWith("checkout", { shift: true, toggle: true }, expect.any(Function));
+		expect(onSelectFrame).toHaveBeenCalledWith("shop/checkout", { shift: true, toggle: true }, expect.any(Function));
 
 		await act(async () => {
 			host
 				.querySelector<HTMLButtonElement>('button[aria-label="checkout frame"]')
 				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
 		});
-		expect(onDoubleClickFrame).toHaveBeenCalledWith("checkout");
+		expect(onDoubleClickFrame).toHaveBeenCalledWith("shop/checkout");
 	});
 
 	it("collapses to a bare strip: the rail is the navigator, so a shut one lists nothing", async () => {
@@ -178,7 +178,7 @@ describe("page tree", () => {
 		const { host, rerender } = await render();
 		expect(host.querySelector('button[aria-label="checkout frame"]')).toBeNull();
 
-		await rerender({ activePage: "shop", selected: ["checkout"] });
+		await rerender({ activePage: "shop", selected: ["shop/checkout"] });
 		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')?.getAttribute("aria-pressed")).toBe("true");
 	});
@@ -201,6 +201,22 @@ describe("the stored order", () => {
 		expect(listed).toEqual(["shell frame", "home frame", "admin page", "shop page"]);
 	});
 
+	/** a name is only unique on its page (#336), so each page's list holds its own frames' names */
+	it("draws the same name on two pages as two rows, each in its own page's order", async () => {
+		stubDaemon({ "/order": { json: { frames: { "": ["home"], shop: ["home", "checkout"] } } } });
+		const { host } = await render({
+			frames: [...frames, { name: "shop/home", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 }],
+		});
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+		});
+		const tree = host.querySelector('[aria-label="Pages tree"]');
+		const listed = [
+			...(tree?.querySelectorAll('button[aria-label$=" frame"], button[aria-label$=" page"]') ?? []),
+		].map((node) => node.getAttribute("aria-label"));
+		expect(listed).toEqual(["home frame", "shop page", "home frame", "checkout frame"]);
+	});
+
 	it("writes the order the moment a page is dropped, and never touches geometry", async () => {
 		const { host } = await render({ pages: ["shop", "admin"] });
 		const row = host.querySelector<HTMLElement>('button[aria-label="admin page"]')?.parentElement;
@@ -219,8 +235,8 @@ describe("the stored order", () => {
 	 */
 	it("keeps a trashed page's frame arrangement while the toast is up, so undo brings it back whole", async () => {
 		const shopFrames = [
-			{ name: "cart", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
-			{ name: "checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
+			{ name: "shop/cart", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
+			{ name: "shop/checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
 		];
 		const onTrashPage = vi.fn();
 		const { host, rerender } = await render({ pages: ["shop"], frames: shopFrames, onTrashPage });
@@ -242,7 +258,7 @@ describe("the stored order", () => {
 		});
 		focusList(host);
 		await act(async () => press("Backspace"));
-		expect(onTrashPage).toHaveBeenCalledWith("shop", ["checkout", "cart"]);
+		expect(onTrashPage).toHaveBeenCalledWith("shop", ["shop/checkout", "shop/cart"]);
 		// staging says nothing about the order: the page is still on disk
 		expect(asked.filter((call) => call.url.endsWith("/order")).length).toBe(wrote);
 
@@ -358,14 +374,15 @@ describe("renaming in place", () => {
 	/**
 	 * The rail is drawing every frame and every page, so a name it can see is
 	 * taken is refused where it was typed. The wording is the daemon's own,
-	 * because it is the same refusal, said sooner.
+	 * because it is the same refusal, said sooner. Taken means taken on the same
+	 * page (#336): a frame and a page beside it are folders side by side.
 	 */
-	it("refuses a name the project already holds without asking the daemon", async () => {
-		const { host } = await render();
+	it("refuses a name the page already holds without asking the daemon", async () => {
+		const { host } = await render({ frames: [...frames, { name: "shell" as const, x: 0, y: 0, w: 390, h: 844 }] });
 		await beginRenameOf(host, "home frame", 11);
 		const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename"]');
-		// checkout is a frame on another page, and shop is a page's own name
-		await act(async () => type(input, "checkout"));
+		// shell is a frame on the same page, and shop is a page beside it
+		await act(async () => type(input, "shell"));
 		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
 		expect(host.querySelector('[role="alert"]')?.textContent).toBe("name taken");
 		expect(asked.some((call) => call.url.endsWith("/frames/rename"))).toBe(false);
@@ -378,6 +395,50 @@ describe("renaming in place", () => {
 		);
 		expect(host.querySelector('[role="alert"]')?.textContent).toBe("name taken");
 		expect(asked.some((call) => call.url.endsWith("/frames/rename"))).toBe(false);
+	});
+
+	/** a frame on another page is a different folder, so its name is free here */
+	it("lets a frame take a name another page's frame already has", async () => {
+		const { host } = await render();
+		await beginRenameOf(host, "home frame", 12);
+		const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename"]');
+		await act(async () => type(input, "checkout"));
+		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+		expect(host.querySelector('[role="alert"]')).toBeNull();
+		expect(asked.find((call) => call.url.endsWith("/frames/rename"))?.body).toEqual({ from: "home", to: "checkout" });
+	});
+
+	/**
+	 * A row is named by its own folder, so what is typed over is that name, and
+	 * what is sent is the whole path, on the page the frame already sits on.
+	 */
+	it("renames a frame on a page by its own name and sends the whole path", async () => {
+		const onFramesRenamed = vi.fn();
+		const { host } = await render({
+			frames: [...frames, { name: "shop/home", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 }],
+			onFramesRenamed,
+		});
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+		});
+		await beginRenameOf(host, "checkout frame", 13);
+		const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename"]');
+		expect(input?.value).toBe("checkout");
+		await act(async () => type(input, "cart"));
+		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+		expect(asked.find((call) => call.url.endsWith("/frames/rename"))?.body).toEqual({
+			from: "shop/checkout",
+			to: "shop/cart",
+		});
+		// the page's list names its frames by their own folder, and the renamed one keeps its place
+		const order = asked.filter((call) => call.url.endsWith("/order")).at(-1);
+		expect((order?.body as { frames?: Record<string, string[]> })?.frames?.shop).toEqual(["cart", "home"]);
+		// whatever the canvas holds by the old name follows the frame to its new one
+		const carry = onFramesRenamed.mock.calls.at(-1)?.[0] as ((name: string) => string) | undefined;
+		expect(carry?.("shop/checkout")).toBe("shop/cart");
+		expect(carry?.("home")).toBe("home");
 	});
 
 	it("refuses a new page named after a page that exists, in the row that is naming it", async () => {
@@ -653,7 +714,7 @@ describe("the sidebar scope", () => {
 		});
 		focusList(host);
 		await act(async () => press("Backspace"));
-		expect(onTrashPage).toHaveBeenCalledWith("shop", ["checkout"]);
+		expect(onTrashPage).toHaveBeenCalledWith("shop", ["shop/checkout"]);
 	});
 
 	/**
@@ -699,7 +760,7 @@ describe("the sidebar scope", () => {
 	});
 
 	it("copies and pastes onto the active page, and cascades what lands", async () => {
-		stubDaemon({ "/frames/duplicate": { json: { frames: [{ from: "home", to: "home-copy", page: "shop" }] } } });
+		stubDaemon({ "/frames/duplicate": { json: { frames: [{ from: "home", to: "shop/home-copy", page: "shop" }] } } });
 		const onCopiesLanded = vi.fn();
 		const { host } = await render({ activePage: "shop", onCopiesLanded, selected: ["home"] });
 		focusList(host);
@@ -709,7 +770,9 @@ describe("the sidebar scope", () => {
 		await act(async () => press("v", ACCEL));
 		const paste = asked.find((call) => call.url.endsWith("/frames/duplicate"));
 		expect(paste?.body).toEqual({ frames: ["home"], page: "shop" });
-		expect(onCopiesLanded).toHaveBeenCalledWith([{ from: "home", to: "home-copy", page: "shop" }]);
+		expect(onCopiesLanded).toHaveBeenCalledWith([{ from: "home", to: "shop/home-copy", page: "shop" }]);
+		// the page's list names the copy by its own folder, as it names every frame on it
+		expect(lastOrder()?.frames?.shop).toEqual(["checkout", "home-copy"]);
 	});
 });
 
@@ -723,8 +786,8 @@ describe("the sidebar scope", () => {
  */
 describe("the one undo stack", () => {
 	const shopFrames = [
-		{ name: "cart", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
-		{ name: "checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "shop/cart", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "shop/checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
 	];
 
 	it("records a reorder, and states the list it replaced again on the way back", async () => {
@@ -754,7 +817,8 @@ describe("the one undo stack", () => {
 	it("records a move against the page each frame came from, and puts it back there", async () => {
 		const kept: HistoryEntry[] = [];
 		const run: { current: RunEntry | null } = { current: null };
-		const { host } = await render({ onRecord: (e) => kept.push(e), run });
+		const onFramesRenamed = vi.fn();
+		const { host } = await render({ onRecord: (e) => kept.push(e), run, onFramesRenamed });
 
 		// out of the loose block and onto the middle band of the shop row, which is
 		// how a frame changes page
@@ -772,14 +836,21 @@ describe("the one undo stack", () => {
 			},
 		]);
 
+		// a frame is named by its path, so the move renamed it (#336)
+		const carried = onFramesRenamed.mock.calls.at(-1)?.[0] as ((name: string) => string) | undefined;
+		expect(carried?.("home")).toBe("shop/home");
+
+		// and undo reaches for it by the name the move gave it
 		await act(async () => {
 			await run.current?.(railEntry(kept[0]), "undo");
 		});
 		expect(asked.filter((call) => call.url.endsWith("/frames/move")).at(-1)?.body).toEqual({
-			frames: ["home"],
+			frames: ["shop/home"],
 			page: "",
 		});
 		expect(lastOrder()?.frames?.[""]).toEqual(["home"]);
+		const back = onFramesRenamed.mock.calls.at(-1)?.[0] as ((name: string) => string) | undefined;
+		expect(back?.("shop/home")).toBe("home");
 	});
 
 	/**
@@ -840,7 +911,7 @@ describe("the one undo stack", () => {
 			await run.current?.(railEntry(kept[0]), "undo");
 		});
 		expect(asked.filter((call) => call.url.endsWith("/frames/move")).at(-1)?.body).toEqual({
-			frames: ["home"],
+			frames: ["loose/home"],
 			page: "",
 		});
 	});
@@ -882,7 +953,7 @@ describe("pages inside pages", () => {
 	const deepPages = ["explorations", "explorations/chat", "application"];
 	const deepFrames = [
 		{ name: "home" as const, x: 0, y: 0, w: 390, h: 844 },
-		{ name: "agent-chat", page: "explorations/chat" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "explorations/chat/agent-chat", page: "explorations/chat" as const, x: 0, y: 0, w: 390, h: 844 },
 	];
 
 	it("draws a page inside a page by its own name, one step further in", async () => {
@@ -1058,13 +1129,13 @@ describe("the root page has no row", () => {
 		// out of shop and into the top-level block, under the frame already there
 		await dragRow(host, 'button[aria-label="checkout frame"]', 76, 28);
 		expect(asked.find((call) => call.url.endsWith("/frames/move"))?.body).toEqual({
-			frames: ["checkout"],
+			frames: ["shop/checkout"],
 			page: "",
 		});
 		expect(kept).toEqual([
 			{
 				kind: "move",
-				frames: [{ name: "checkout", from: "shop" }],
+				frames: [{ name: "shop/checkout", from: "shop" }],
 				to: "",
 				lists: [
 					{ of: "frames", page: "shop", before: ["checkout"], after: [] },

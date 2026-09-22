@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbuild";
-import { isSafeName } from "../page-path";
+import { isFramePath } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
 import {
 	assertDesignFile,
@@ -13,7 +13,7 @@ import {
 } from "./design-path";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { readIfExists } from "./project-files";
-import { describeCollision, describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
+import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
@@ -53,13 +53,8 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 	const cache = new Map<string, CacheEntry>();
 
 	async function getDocument(root: string, frame: string, authority: FrameAuthority): Promise<FrameDocument> {
-		if (!isSafeName(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
+		if (!isFramePath(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
 		const lookup = lookupFrame(root, frame);
-		if (lookup.kind === "collision") {
-			// an ambiguous name serves nobody — fail loud, name both locations (#39)
-			const message = describeCollision(frame, lookup.paths);
-			return { kind: "error", document: errorDocument(frame, message), message };
-		}
 		if (lookup.kind === "missing") {
 			return { kind: "missing", message: describeMissingFrame(frame) };
 		}
@@ -71,7 +66,7 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			// is known, so name it exactly, page segment and all
 			return {
 				kind: "missing",
-				message: `no frame "${frame}" — expected design/${frameFolder(frame, lookup.page)}/frame.tsx`,
+				message: `no frame "${frame}" — expected design/${frameFolder(frame)}/frame.tsx`,
 			};
 		}
 

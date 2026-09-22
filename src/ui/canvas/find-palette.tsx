@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { charWeights, runsIn, type Weight } from "../../name-match";
+import { pageName } from "../../page-path";
 import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { FolderIcon } from "../icons";
@@ -197,7 +198,7 @@ export function FindPalette({
 								hits.map((hit, index) => (
 									<FindRow
 										key={hit.frame.name}
-										name={hit.frame.name}
+										name={pageName(hit.frame.name)}
 										mark={unseen.get(hit.frame.name)}
 										gutter={unseen.size > 0}
 										page={pageLabel(pageOf(hit.frame))}

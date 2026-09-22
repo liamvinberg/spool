@@ -574,8 +574,8 @@ describe("one tool call", () => {
 				kind: "row",
 				state: "done",
 				verb: "read",
-				subject: "cart",
-				frame: "cart",
+				subject: "app/cart",
+				frame: "app/cart",
 				count: 1,
 				detail: "design/frames/app/cart/frame.tsx",
 				step: null,
@@ -636,7 +636,9 @@ describe("one tool call", () => {
 
 		expect(rows(entries).map((row) => row.subject)).toEqual([
 			"cart",
-			"checkout",
+			// a frame on a page is named by its path, which is what tells it from a
+			// checkout on any other page (#336)
+			"app/checkout",
 			// the geometry sidecar is the frame too: twelve rows that each read `frame.tsx`
 			// would name nothing at all
 			"cart",
@@ -646,7 +648,7 @@ describe("one tool call", () => {
 			"tokens.css",
 			"pnpm-lock.yaml",
 		]);
-		expect(rows(entries).map((row) => row.frame)).toEqual(["cart", "checkout", "cart", null, null, null]);
+		expect(rows(entries).map((row) => row.frame)).toEqual(["cart", "app/checkout", "cart", null, null, null]);
 	});
 
 	/** the agent's own word for what it is doing, where spool has no better noun */

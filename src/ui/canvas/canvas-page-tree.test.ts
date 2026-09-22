@@ -18,7 +18,7 @@ describe("canvas page tree", () => {
 	it("selects a frame from another page and brings that page onto the canvas", async () => {
 		const host = await mountCanvas({
 			pages: ["shop"],
-			frames: [frame("home"), frame("checkout", { page: "shop", x: 160 })],
+			frames: [frame("home"), frame("shop/checkout", { page: "shop", x: 160 })],
 		});
 
 		await act(async () => {
@@ -31,7 +31,7 @@ describe("canvas page tree", () => {
 		});
 
 		expect(host.querySelector('[data-frame-label="home"]')).toBeNull();
-		expect(host.querySelector('[data-frame-label="checkout"]')).not.toBeNull();
+		expect(host.querySelector('[data-frame-label="shop/checkout"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')?.getAttribute("aria-pressed")).toBe("true");
 		expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 
@@ -105,7 +105,7 @@ async function mountCanvas(project: {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: project.pages, frames: project.frames, collisions: [] });
+				return Response.json({ root: "/project", pages: project.pages, frames: project.frames });
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({

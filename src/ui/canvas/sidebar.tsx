@@ -84,9 +84,9 @@ import { UnseenMark } from "./unseen-mark";
  * like any others — a flat project's rail is just its frames.
  *
  * Two things it still does not do, and both are laws rather than gaps. It never
- * writes frame source: rename and move are folder operations, and a `data-go`
- * literal naming a renamed frame re-derives as missing, which is where an agent
- * fixes it. And it never writes geometry for a row it moved: order is the rail's
+ * writes frame source: rename and move are folder operations, and the daemon
+ * carries the walks naming a frame to its new path (#336). And it never writes
+ * geometry for a row it moved: order is the rail's
  * list and the canvas is a plane, so reordering rows moves nothing out there and
  * arranging frames out there changes no row. The one geometry write anywhere
  * near this surface is the cascade a fresh copy needs so it does not land exactly
@@ -231,6 +231,7 @@ export function CanvasSidebar({
 	onRevealFrame,
 	onCopyPath,
 	onCopiesLanded,
+	onFramesRenamed,
 	onRefresh,
 	onRecord,
 	run,
@@ -258,6 +259,13 @@ export function CanvasSidebar({
 	onCopyPath: (name: string) => void;
 	/** Fresh copies exist: the canvas cascades them off their originals and selects them. */
 	onCopiesLanded: (copies: readonly FrameCopy[]) => void;
+	/**
+	 * Frames answer to new names (#336): a frame is named by its path, so a
+	 * rename, a move, or its page moving renames it. `carry` says where each name
+	 * went and leaves every other name as it is, so what the canvas holds by name
+	 * can follow the frames rather than lose them.
+	 */
+	onFramesRenamed?: (carry: (name: string) => string) => void;
 	/** A folder operation landed; the projection is behind until it is read again. */
 	onRefresh: () => void;
 	/** A verb the canvas's one undo stack should hold; the rail records, the canvas keeps. */
@@ -348,13 +356,15 @@ export function CanvasSidebar({
 	const framesByPage = useMemo(() => {
 		const byPage = new Map<string, readonly RailFrame[]>();
 		for (const page of [ROOT_PAGE, ...orderedPages]) {
+			// a page's list names its frames by their own folder, the way it names
+			// its pages, so the merge is leaf against leaf and the row is the path
 			const here = framesOnPage(frames, page);
 			byPage.set(
 				page,
 				mergeOrder(
 					order.frames?.[page],
-					here.map((frame) => frame.name),
-				).map((name) => ({ name }) satisfies RailFrame),
+					here.map((frame) => pageName(frame.name)),
+				).map((leaf) => ({ name: pageUnder(page, leaf) }) satisfies RailFrame),
 			);
 		}
 		return byPage;
@@ -370,6 +380,9 @@ export function CanvasSidebar({
 		(page: string) => (framesByPage.get(page) ?? []).map((frame) => frame.name),
 		[framesByPage],
 	);
+
+	/** What a page's frames are called, in rail order: its list of the stored order. */
+	const leavesOn = useCallback((page: string) => namesOn(page).map(pageName), [namesOn]);
 
 	/** What a page's own pages are called, in rail order — one list of the order. */
 	const pagesIn = useCallback((parent: string) => (pageTree.get(parent) ?? []).map(pageName), [pageTree]);
@@ -597,11 +610,11 @@ export function CanvasSidebar({
 	const beginRename = useCallback((row: RailRow | null) => {
 		// a page still being named is already in the only state this puts a row into
 		if (row === null || row.kind === "born") return;
-		// a page is named by its own folder, so what is typed over is that name and
+		// a row is named by its own folder, so what is typed over is that name and
 		// the path around it stays where it is
 		setRenaming({
 			key: rowKey(row),
-			draft: row.kind === "page" ? pageLabel(row.page) : row.name,
+			draft: row.kind === "page" ? pageLabel(row.page) : pageName(row.name),
 			born: null,
 			error: null,
 			busy: false,
@@ -633,6 +646,20 @@ export function CanvasSidebar({
 	const pageHolding = useCallback((name: string) => pageHoldingIn(now.current.framesByPage, name), []);
 
 	/**
+	 * Frames that answer to new names (#336). A frame is named by its path, so
+	 * whatever holds one by name follows it here: the cursor, the clipboard, and
+	 * through the canvas, the selection.
+	 */
+	const framesCarried = useCallback(
+		(carry: (name: string) => string) => {
+			setCursor((was) => (was?.startsWith("frame:") ? `frame:${carry(was.slice("frame:".length))}` : was));
+			setClipboard((was) => was.map(carry));
+			onFramesRenamed?.(carry);
+		},
+		[onFramesRenamed],
+	);
+
+	/**
 	 * Frames gathered onto a page, wherever the gesture came from.
 	 *
 	 * A frame that changes page changes folder, and the folder is the whole move:
@@ -655,22 +682,32 @@ export function CanvasSidebar({
 				const from = pageHolding(name);
 				if (from !== undefined && from !== page) moved.push({ name, from });
 			}
+			// a list names its frames by their own folder, and a frame keeps that
+			// folder's name wherever it goes: only the page in front of it changes
+			const leaves = names.map(pageName);
 			let next = held;
 			const lists: OrderList[] = [];
 			for (const source of new Set(moved.map((each) => each.from))) {
-				const before = namesOn(source);
-				const after = without(before, names);
+				const before = leavesOn(source);
+				const after = without(
+					before,
+					moved.filter((each) => each.from === source).map((each) => pageName(each.name)),
+				);
 				next = withFrameOrder(next, source, after);
 				lists.push({ of: "frames", page: source, before, after });
 			}
-			const landing = namesOn(page);
-			const arrived = insertAt(without(landing, names), names, index);
+			const landing = leavesOn(page);
+			const arrived = insertAt(without(landing, leaves), leaves, index);
 			next = withFrameOrder(next, page, arrived);
 			lists.push({ of: "frames", page, before: landing, after: arrived });
 			storeOrder(next);
 			setOpen(page, true);
 			void moveFrames(project, [...names], page).then((done) => {
 				const carried = done.kind !== "refused" && moved.length > 0;
+				if (carried) {
+					const landed = new Map(moved.map((each) => [each.name, pageUnder(page, pageName(each.name))]));
+					framesCarried((name) => landed.get(name) ?? name);
+				}
 				// the page exists whatever happened to the frames, so a move that never
 				// happened leaves it with the staged delete a fresh page has always had
 				if (minted) {
@@ -685,7 +722,7 @@ export function CanvasSidebar({
 				onRefresh();
 			});
 		},
-		[project, namesOn, pageHolding, storeOrder, setOpen, onRecord, onRefresh],
+		[project, leavesOn, pageHolding, storeOrder, setOpen, framesCarried, onRecord, onRefresh],
 	);
 
 	/**
@@ -697,16 +734,17 @@ export function CanvasSidebar({
 	 * lines inline because undoing a rename is this exact move with the paths the
 	 * other way round (#230), and because a page carries its whole subtree: what
 	 * is open, where the cursor is and which page the canvas is on all name pages
-	 * that just changed path.
+	 * that just changed path, and so does every frame inside it (#336).
 	 */
 	const pageCarried = useCallback(
 		(from: string, to: string) => {
 			setExpanded((was) => new Set([...was].map((page) => carriedPage(page, from, to) ?? page)));
+			framesCarried((name) => carriedPage(name, from, to) ?? name);
 			setCursor(`page:${to}`);
 			const active = carriedPage(now.current.activePage, from, to);
 			if (active !== undefined) onSwitchPage(active);
 		},
-		[onSwitchPage],
+		[onSwitchPage, framesCarried],
 	);
 
 	const pageMoved = useCallback(
@@ -723,26 +761,27 @@ export function CanvasSidebar({
 	 * leave the place somebody put it the moment it was renamed.
 	 */
 	const frameRenamed = useCallback(
-		(page: string, from: string, to: string) => {
-			storeOrder(withFrameOrder(now.current.order, page, renameInOrder(namesOn(page), from, to)));
+		(from: string, to: string) => {
+			const page = pageParent(from);
+			storeOrder(
+				withFrameOrder(now.current.order, page, renameInOrder(leavesOn(page), pageName(from), pageName(to))),
+			);
+			framesCarried((name) => (name === from ? to : name));
 			setCursor(`frame:${to}`);
 		},
-		[storeOrder, namesOn],
+		[storeOrder, leavesOn, framesCarried],
 	);
 
 	/**
-	 * Whether the project already answers to a name (#228's law, asked here).
+	 * Whether the project already answers to a path (#228's law, asked here).
 	 *
-	 * A frame's name has to miss every frame and every page's own name, at whatever
-	 * depth that page sits; a page's path has to miss every page, and its own name
-	 * every frame. Two pages under different parents may share a name, which is why
-	 * one of these asks about a path and the other about a name.
+	 * Frames and pages are both named by their path (#336), and the frames and
+	 * pages on one page are folders side by side in it, so a name only has to miss
+	 * what already sits at the same path. Two frames or two pages on different
+	 * pages may share a name.
 	 */
 	const claimedBy = useCallback(
-		(of: "frame" | "page", name: string): boolean =>
-			of === "page"
-				? pages.includes(name) || frames.some((frame) => frame.name === pageName(name))
-				: frames.some((frame) => frame.name === name) || pages.some((page) => pageName(page) === name),
+		(path: string): boolean => pages.includes(path) || frames.some((frame) => frame.name === path),
 		[frames, pages],
 	);
 
@@ -771,7 +810,7 @@ export function CanvasSidebar({
 			}
 			const parent = at.born;
 			const path = pageUnder(parent, wanted);
-			if (claimedBy("page", path)) {
+			if (claimedBy(path)) {
 				setRenaming({ ...at, error: refusalLine(409) });
 				return;
 			}
@@ -806,13 +845,13 @@ export function CanvasSidebar({
 			return;
 		}
 		const from = row.kind === "page" ? row.page : row.name;
-		// a page keeps the page holding it, so what was typed is its last segment
-		const to = row.kind === "page" ? pageUnder(pageParent(row.page), wanted) : wanted;
+		// a row keeps the page holding it, so what was typed is its last segment
+		const to = pageUnder(pageParent(from), wanted);
 		if (wanted === "" || to === from) {
 			setRenaming(null);
 			return;
 		}
-		if (claimedBy(row.kind === "page" ? "page" : "frame", to)) {
+		if (claimedBy(to)) {
 			setRenaming({ ...at, error: refusalLine(409) });
 			return;
 		}
@@ -824,7 +863,7 @@ export function CanvasSidebar({
 		}
 		setRenaming(null);
 		if (row.kind === "page") pageMoved(from, to);
-		else frameRenamed(row.page, from, to);
+		else frameRenamed(from, to);
 		onRecord?.({ kind: "rename", of: row.kind === "page" ? "page" : "frame", from, to });
 		onRefresh();
 	}, [
@@ -872,8 +911,12 @@ export function CanvasSidebar({
 			const byPage = new Map<string, string[]>();
 			for (const copy of copies) {
 				const page = copy.page ?? ROOT_PAGE;
-				const list = byPage.get(page) ?? [...(next.frames?.[page] ?? namesOn(page))];
-				byPage.set(page, beside ? placeAfter(list, copy.from, [copy.to]) : insertAt(list, [copy.to], list.length));
+				const list = byPage.get(page) ?? [...(next.frames?.[page] ?? leavesOn(page))];
+				const leaf = pageName(copy.to);
+				byPage.set(
+					page,
+					beside ? placeAfter(list, pageName(copy.from), [leaf]) : insertAt(list, [leaf], list.length),
+				);
 			}
 			for (const [page, list] of byPage) next = withFrameOrder(next, page, list);
 			storeOrder(next);
@@ -881,7 +924,7 @@ export function CanvasSidebar({
 			onRecord?.({ kind: "mint", staged: { frames: copies.map((copy) => copy.to), page: null } });
 			onRefresh();
 		},
-		[namesOn, storeOrder, onCopiesLanded, onRecord, onRefresh],
+		[leavesOn, storeOrder, onCopiesLanded, onRecord, onRefresh],
 	);
 
 	/**
@@ -969,7 +1012,6 @@ export function CanvasSidebar({
 				case "rename": {
 					const from = way === "undo" ? entry.to : entry.from;
 					const to = way === "undo" ? entry.from : entry.to;
-					const page = entry.of === "frame" ? pageHolding(from) : undefined;
 					const done =
 						entry.of === "page" ? await renamePage(project, from, to) : await renameFrame(project, from, to);
 					// somebody claimed the name back while this entry sat on the stack:
@@ -980,7 +1022,7 @@ export function CanvasSidebar({
 						return false;
 					}
 					if (entry.of === "page") pageMoved(from, to);
-					else if (page !== undefined) frameRenamed(page, from, to);
+					else frameRenamed(from, to);
 					onRefresh();
 					return true;
 				}
@@ -992,11 +1034,14 @@ export function CanvasSidebar({
 					const to = entry.kind === "gather" ? entry.page : entry.to;
 					storeOrder(withLists(held, entry.lists, way));
 					// undo scatters the frames back to the pages they each came from;
-					// redo gathers them onto the one page the drop landed on
+					// redo gathers them onto the one page the drop landed on. A frame is
+					// named by the path it had before the move (#336), so undo reaches
+					// for it where the move left it and redo where it started
 					const groups = new Map<string, string[]>();
 					for (const moved of entry.frames) {
 						const page = way === "undo" ? moved.from : to;
-						groups.set(page, [...(groups.get(page) ?? []), moved.name]);
+						const name = way === "undo" ? pageUnder(to, pageName(moved.name)) : moved.name;
+						groups.set(page, [...(groups.get(page) ?? []), name]);
 					}
 					// one call per page, so a refusal partway leaves the groups before it
 					// moved and drops the entry whole: chosen rather than wrapped, because
@@ -1008,6 +1053,8 @@ export function CanvasSidebar({
 							onRefresh();
 							return false;
 						}
+						const landed = new Map(names.map((name) => [name, pageUnder(page, pageName(name))]));
+						framesCarried((name) => landed.get(name) ?? name);
 						setOpen(page, true);
 					}
 					onRefresh();
@@ -1047,7 +1094,7 @@ export function CanvasSidebar({
 					return true;
 			}
 		},
-		[project, pageHolding, pageMoved, pageCarried, frameRenamed, storeOrder, setOpen, refuted, onRefresh],
+		[project, pageMoved, pageCarried, frameRenamed, framesCarried, storeOrder, setOpen, refuted, onRefresh],
 	);
 	if (run !== undefined) run.current = runEntry;
 
@@ -1174,15 +1221,15 @@ export function CanvasSidebar({
 			const sources = new Set(names.map((name) => pageHolding(name)));
 			const index = target.kind === "frames" ? target.index : (now.current.framesByPage.get(page)?.length ?? 0);
 			if (sources.size === 1 && sources.has(page)) {
-				const before = namesOn(page);
-				const after = reorder(before, names, index);
+				const before = leavesOn(page);
+				const after = reorder(before, names.map(pageName), index);
 				storeOrder(withFrameOrder(held, page, after));
 				onRecord?.({ kind: "reorder", lists: [{ of: "frames", page, before, after }] });
 				return;
 			}
 			moveFramesInto(names, page, index);
 		},
-		[namesOn, pagesIn, pageHolding, storeOrder, onRecord, moveFramesInto, movePagesInto],
+		[leavesOn, pagesIn, pageHolding, storeOrder, onRecord, moveFramesInto, movePagesInto],
 	);
 
 	/**
@@ -1408,7 +1455,7 @@ export function CanvasSidebar({
 			const row = all[(from + walked + all.length) % all.length];
 			if (row === undefined) continue;
 			if (row.kind === "born") continue;
-			const name = row.kind === "page" ? pageLabel(row.page) : row.name;
+			const name = row.kind === "page" ? pageLabel(row.page) : pageName(row.name);
 			if (name.toLowerCase().startsWith(query)) {
 				landOn(row);
 				return;
@@ -1828,7 +1875,7 @@ function TreeRow({
 	onFly: () => void;
 	onMenu: (event: React.MouseEvent, target: MenuTarget) => void;
 }) {
-	const label = row.kind === "page" ? pageLabel(row.page) : row.name;
+	const label = row.kind === "page" ? pageLabel(row.page) : pageName(row.name);
 	const target: MenuTarget =
 		row.kind === "page" ? { kind: "page", page: row.page } : { kind: "frame", name: row.name };
 	const active = row.kind === "page" && row.page === activePage;
@@ -1944,7 +1991,7 @@ function TreeRow({
 						{rename === null ? (
 							<button
 								type="button"
-								aria-label={`${row.name} frame`}
+								aria-label={`${label} frame`}
 								aria-pressed={selected}
 								onClick={onSelect}
 								onDoubleClick={onFly}
@@ -1963,7 +2010,7 @@ function TreeRow({
 										selected || cursored || mark !== undefined ? "text-text" : "text-muted",
 									)}
 								>
-									{row.name}
+									{label}
 								</span>
 								{mark === undefined ? null : (
 									<UnseenMark mark={mark} className="transition-opacity group-hover/row:opacity-0" />

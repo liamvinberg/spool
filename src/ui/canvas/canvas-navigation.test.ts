@@ -46,7 +46,7 @@ it.each([0.64, 0.68])("double-clicking a neighboring frame at zoom %s pans into 
 			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera });
 			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: [], frames: entryFrames, collisions: [] });
+				return Response.json({ root: "/project", pages: [], frames: entryFrames });
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: entryFrames.map(({ name }) => name), links: [], edges: [], unreadable: [] });
@@ -101,7 +101,7 @@ describe("canvas keyboard navigation", () => {
 					return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				}
 				if (url.pathname.endsWith("/frames")) {
-					return Response.json({ root: "/project", pages: [], frames, collisions: [] });
+					return Response.json({ root: "/project", pages: [], frames });
 				}
 				if (url.pathname.endsWith("/flows"))
 					return Response.json({ frames: frames.map(({ name }) => name), links: [], edges: [], unreadable: [] });
@@ -210,7 +210,7 @@ describe("canvas keyboard navigation", () => {
 				}
 				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				if (url.pathname.endsWith("/frames")) {
-					return Response.json({ root: "/project", pages: [], frames: walkFrames, collisions: [] });
+					return Response.json({ root: "/project", pages: [], frames: walkFrames });
 				}
 				if (url.pathname.endsWith("/flows")) {
 					return Response.json({
@@ -364,7 +364,7 @@ describe("canvas keyboard navigation", () => {
 		const cover = { hash: "c".repeat(32) };
 		const walkFrames = [
 			{ name: "origin", x: 0, y: 0, w: 100, h: 100, cover },
-			{ name: "checkout", page: "shop", x: 0, y: 0, w: 100, h: 100, cover },
+			{ name: "shop/checkout", page: "shop", x: 0, y: 0, w: 100, h: 100, cover },
 		];
 		vi.stubGlobal(
 			"fetch",
@@ -373,7 +373,7 @@ describe("canvas keyboard navigation", () => {
 				const url = new URL(raw, window.location.href);
 				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				if (url.pathname.endsWith("/frames")) {
-					return Response.json({ root: "/project", pages: ["shop"], frames: walkFrames, collisions: [] });
+					return Response.json({ root: "/project", pages: ["shop"], frames: walkFrames });
 				}
 				if (url.pathname.endsWith("/flows")) {
 					return Response.json({
@@ -433,7 +433,7 @@ describe("canvas keyboard navigation", () => {
 					data: {
 						spool: "go",
 						frame: "origin",
-						target: "checkout",
+						target: "shop/checkout",
 						session: { scenario: "default", state: {}, stack: [] },
 						id: 1,
 					},
@@ -442,17 +442,20 @@ describe("canvas keyboard navigation", () => {
 			);
 		});
 		expect(host.querySelector('[data-frame-label="origin"]')).toBeNull();
-		expect(labelText(host, "checkout")).toContain("live · esc exits");
+		expect(labelText(host, "shop/checkout")).toContain("live · esc exits");
 
-		await until(() => host.querySelector('iframe[title="checkout"]') !== null);
-		const walked = host.querySelector<HTMLIFrameElement>('iframe[title="checkout"]')?.contentWindow ?? null;
+		await until(() => host.querySelector('iframe[title="shop/checkout"]') !== null);
+		const walked = host.querySelector<HTMLIFrameElement>('iframe[title="shop/checkout"]')?.contentWindow ?? null;
 		await act(async () => {
 			window.dispatchEvent(
-				new MessageEvent("message", { data: { spool: "key", frame: "checkout", key: "ctrl+o" }, source: walked }),
+				new MessageEvent("message", {
+					data: { spool: "key", frame: "shop/checkout", key: "ctrl+o" },
+					source: walked,
+				}),
 			);
 		});
 		// the page came back with the camera, and so did the standing
-		expect(host.querySelector('[data-frame-label="checkout"]')).toBeNull();
+		expect(host.querySelector('[data-frame-label="shop/checkout"]')).toBeNull();
 		expect(labelText(host, "origin")).toContain("live · esc exits");
 		expect(cameraTransform(host)).toBe(departed);
 	});

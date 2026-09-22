@@ -17,7 +17,7 @@ const frames = [
 	{ name: "a", x: 0, y: 0, w: 100, h: 100, cover: { hash: "a".repeat(32) } },
 	// no cover, so the canvas borrows it to make one (#112): a mounted sibling
 	{ name: "b", x: 160, y: 0, w: 100, h: 100 },
-	{ name: "c", page: "shop", x: 0, y: 0, w: 100, h: 100, cover: { hash: "c".repeat(32) } },
+	{ name: "shop/c", page: "shop", x: 0, y: 0, w: 100, h: 100, cover: { hash: "c".repeat(32) } },
 ];
 
 const openEventStream = () =>
@@ -34,7 +34,7 @@ describe("page session", () => {
 				if (url.pathname.endsWith("/events")) return openEventStream();
 				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				if (url.pathname.endsWith("/frames")) {
-					return Response.json({ root: "/project", pages: ["shop"], frames, collisions: [] });
+					return Response.json({ root: "/project", pages: ["shop"], frames });
 				}
 				if (url.pathname.endsWith("/flows")) {
 					return Response.json({ frames: frames.map(({ name }) => name), links: [], edges: [], unreadable: [] });

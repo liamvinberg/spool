@@ -2,7 +2,7 @@
  * The design/ contract written by `spool init`. Bump FORMAT_VERSION only on
  * breaking layout changes; the stamp lives in canvas.json, the marker file.
  */
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 
 /**
  * The marker file: the format stamp, and whether this project keeps history

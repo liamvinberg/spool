@@ -130,7 +130,7 @@ describe("canvas boot", () => {
 function stubEmptyProject(): void {
 	stubFetch(async (url) => {
 		if (url.pathname.endsWith("/frames")) {
-			return Response.json({ root: "/project", pages: [], frames: [], collisions: [] });
+			return Response.json({ root: "/project", pages: [], frames: [] });
 		}
 		if (url.pathname.endsWith("/flows")) {
 			return Response.json({ frames: [], links: [], edges: [], unreadable: [] });
@@ -150,7 +150,7 @@ function stubFetch(answer: (url: URL) => Promise<Response | undefined>): void {
 			if (url.pathname === "/api/settings") return Response.json({ project: null, entries: [] });
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: [], frames, collisions: [] });
+				return Response.json({ root: "/project", pages: [], frames });
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });

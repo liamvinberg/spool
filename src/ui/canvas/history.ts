@@ -35,9 +35,9 @@ export type Way = "undo" | "redo";
 export type Rects = Record<string, { before: Geometry; after: Geometry }>;
 
 /**
- * Something that changed the page holding it, against the page it left. A
- * frame is named by its own name and a page by its path, which is the whole of
- * what tells the two entries apart.
+ * Something that changed the page holding it, against the page it left, named
+ * by the path it had before the move: a frame and a page are both named by
+ * their path (#336), and the entry kind is what tells the two apart.
  */
 export interface Moved {
 	readonly name: string;
@@ -291,18 +291,16 @@ export function withdraw(history: History): History {
 }
 
 /**
- * A name nothing answers to (#228, #231).
+ * A name nothing answers to (#228, #231, #336).
  *
- * A frame's name has to be free of every frame and of every page's name, at
- * whatever depth that page sits; a page's path has to be free of every page,
- * and its own name of every frame. Two pages under different parents may share
- * a name, which is why one of these asks about a path and the other about a
- * name. The daemon has the last word either way — this is the same law asked
- * one round trip early, so a press does the next real thing.
+ * Frames and pages are both named by their path under frames/, and the pages
+ * and frames on one page share that page's folder, so a name only has to miss
+ * whatever already sits at the same path. The daemon has the last word either
+ * way: this is the same law asked one round trip early, so a press does the
+ * next real thing.
  */
-function free(alive: Liveness, of: "frame" | "page", name: string): boolean {
-	if (of === "page") return !alive.pages.has(name) && !alive.frames.has(pageName(name));
-	return !alive.frames.has(name) && ![...alive.pages].some((page) => pageName(page) === name);
+function free(alive: Liveness, name: string): boolean {
+	return !alive.frames.has(name) && !alive.pages.has(name);
 }
 
 function holds(alive: Liveness, of: "frame" | "page", name: string): boolean {
@@ -332,14 +330,18 @@ function liveRects(rects: Rects, alive: Liveness): Rects {
 /**
  * The frames of a move that are still where this run expects to find them, and
  * still have somewhere to land. A frame somebody moved elsewhere in the
- * meantime is not this entry's to drag back.
+ * meantime is not this entry's to drag back. A frame is named by the path it
+ * had before the move (#336), so undo looks for it on the page it landed on and
+ * redo looks for it where it started, and either way the page it goes to must
+ * not already hold its name.
  */
 function liveMoved(frames: readonly Moved[], to: string, alive: Liveness, way: Way): Moved[] {
-	return frames.filter((moved) =>
-		way === "undo"
-			? alive.frames.get(moved.name) === to && hasPage(alive, moved.from)
-			: alive.frames.get(moved.name) === moved.from && hasPage(alive, to),
-	);
+	return frames.filter((moved) => {
+		const landed = pageUnder(to, pageName(moved.name));
+		return way === "undo"
+			? alive.frames.has(landed) && hasPage(alive, moved.from) && free(alive, moved.name)
+			: alive.frames.has(moved.name) && hasPage(alive, to) && free(alive, landed);
+	});
 }
 
 /**
@@ -395,7 +397,7 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 		case "rename": {
 			const from = way === "undo" ? entry.to : entry.from;
 			const to = way === "undo" ? entry.from : entry.to;
-			return holds(alive, entry.of, from) && free(alive, entry.of, to) ? entry : undefined;
+			return holds(alive, entry.of, from) && free(alive, to) ? entry : undefined;
 		}
 		case "move": {
 			const frames = liveMoved(entry.frames, entry.to, alive, way);

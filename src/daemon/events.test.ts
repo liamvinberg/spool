@@ -89,7 +89,7 @@ describe("what a changed path means", () => {
 		// canvas has to hear — and never a reason to reload the document
 		expect(await landed(root, ["frames/hello/frame.json"])).toEqual([{ kind: "geometry", frame: "hello" }]);
 		// a frame inside a page sits one deeper, and the sidecar rule moves with it
-		expect(await landed(root, ["frames/shop/cart/frame.json"])).toEqual([{ kind: "geometry", frame: "cart" }]);
+		expect(await landed(root, ["frames/shop/cart/frame.json"])).toEqual([{ kind: "geometry", frame: "shop/cart" }]);
 	});
 
 	it("keeps a source edit a source edit, whichever shape the frame is in", async () => {
@@ -97,25 +97,27 @@ describe("what a changed path means", () => {
 		const root = project();
 
 		expect(await landed(root, ["frames/hello/frame.tsx"])).toEqual([{ kind: "frame", frame: "hello" }]);
-		expect(await landed(root, ["frames/shop/cart/frame.tsx"])).toEqual([{ kind: "frame", frame: "cart" }]);
+		expect(await landed(root, ["frames/shop/cart/frame.tsx"])).toEqual([{ kind: "frame", frame: "shop/cart" }]);
 	});
 
 	/**
 	 * A page is a page at any depth (#231), so this walks the path down through
 	 * the pages rather than counting segments — and what stops the walk is the
-	 * frame, wherever that turns out to be.
+	 * frame, wherever that turns out to be. The frame is named by that whole
+	 * path (#336).
 	 */
 	it("names the frame at the end of however many pages there are", async () => {
 		vi.useFakeTimers();
 		const root = project();
 		const deep = "frames/explorations/chat/agent-chat";
 
-		expect(await landed(root, [`${deep}/frame.tsx`])).toEqual([{ kind: "frame", frame: "agent-chat" }]);
-		expect(await landed(root, [`${deep}/frame.json`])).toEqual([{ kind: "geometry", frame: "agent-chat" }]);
+		const named = "explorations/chat/agent-chat";
+		expect(await landed(root, [`${deep}/frame.tsx`])).toEqual([{ kind: "frame", frame: named }]);
+		expect(await landed(root, [`${deep}/frame.json`])).toEqual([{ kind: "geometry", frame: named }]);
 		// a file inside the frame's own folder is still that frame's edit
-		expect(await landed(root, [`${deep}/parts/row.tsx`])).toEqual([{ kind: "frame", frame: "agent-chat" }]);
+		expect(await landed(root, [`${deep}/parts/row.tsx`])).toEqual([{ kind: "frame", frame: named }]);
 		// a page folder itself is a discovery change, named for the folder that moved
-		expect(await landed(root, ["frames/explorations/chat"])).toEqual([{ kind: "frame", frame: "chat" }]);
+		expect(await landed(root, ["frames/explorations/chat"])).toEqual([{ kind: "frame", frame: "explorations/chat" }]);
 	});
 
 	/**
@@ -128,7 +130,7 @@ describe("what a changed path means", () => {
 		const root = project();
 		rmSync(join(root, "design", "frames", "shop", "cart"), { recursive: true, force: true });
 
-		expect(await landed(root, ["frames/shop/cart/frame.tsx"])).toEqual([{ kind: "frame", frame: "cart" }]);
+		expect(await landed(root, ["frames/shop/cart/frame.tsx"])).toEqual([{ kind: "frame", frame: "shop/cart" }]);
 	});
 
 	it("carries a move and an edit to one frame as the two facts they are", async () => {

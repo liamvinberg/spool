@@ -74,6 +74,16 @@ export async function pngBytesFromImageBlob(blob: Blob, width: number, height: n
 	}
 }
 
+/**
+ * The file a frame's picture downloads as. A frame is named by its path
+ * (#336), and a file name cannot hold a slash, so the page rides in front with
+ * a dash: `shop/checkout` saves as `shop-checkout.png`, and two `checkout`s
+ * exported together stay two files.
+ */
+export function pngFileName(frame: string): string {
+	return `${frame.replaceAll("/", "-")}.png`;
+}
+
 export function downloadBytes(bytes: Uint8Array, type: string, filename: string): void {
 	const copy = Uint8Array.from(bytes);
 	const url = URL.createObjectURL(new Blob([copy.buffer], { type }));

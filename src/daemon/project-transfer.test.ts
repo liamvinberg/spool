@@ -3,16 +3,18 @@ import { basename, join } from "node:path";
 import { unzipSync, zipSync } from "fflate";
 import { expect, it, vi } from "vitest";
 import { readRegistry, registerProject } from "../registry";
+import { FORMAT_VERSION } from "../templates";
 import { makeApp, makeTempDir } from "../test-helpers";
+import { FOLDER_NAMES_FORMAT } from "./migrate-frame-names";
 import { exportProject, importProject, TRANSFER_LIMITS } from "./project-transfer";
 
-function fixture() {
+function fixture(format: number = FORMAT_VERSION) {
 	const root = realpathSync(makeTempDir());
 	const spool = makeTempDir();
 	const location = makeTempDir();
 	const files = {
 		"design/canvas.json": JSON.stringify({
-			format: 1,
+			format,
 			history: true,
 			order: { pages: ["page"], frames: { page: ["one"] } },
 			places: { page: { x: 123, y: 456 } },
@@ -44,7 +46,7 @@ function archive(files: Record<string, Uint8Array>, changes: Record<string, unkn
 		),
 	});
 }
-const marker = { "design/canvas.json": Buffer.from('{"format":1}') };
+const marker = { "design/canvas.json": Buffer.from(JSON.stringify({ format: FORMAT_VERSION })) };
 
 it("round-trips authored bytes and organization, excludes local state, and always reserves separate copies", async () => {
 	const f = fixture();
@@ -71,13 +73,29 @@ it("round-trips authored bytes and organization, excludes local state, and alway
 	for (const [path, content] of Object.entries(f.files))
 		if (!path.endsWith("canvas.json")) expect(readFileSync(join(first.root, path), "utf8")).toBe(content);
 	expect(JSON.parse(readFileSync(join(first.root, "design/canvas.json"), "utf8"))).toEqual({
-		format: 1,
+		format: FORMAT_VERSION,
 		history: false,
 		order: { pages: { "": ["page"] }, frames: { page: ["one"] } },
 		places: { page: { x: 123, y: 456 } },
 	});
 	expect(readRegistry(f.spool).projects).toHaveLength(3);
 	expect(readdirSync(f.location)).toHaveLength(2);
+});
+
+it("keeps a folder-names stamp on import so the first read renames its walks, and refuses any other", async () => {
+	const older = fixture(FOLDER_NAMES_FORMAT);
+	const imported = await importProject(await exportProject(older.root, older.spool), older.location, older.spool);
+	expect(JSON.parse(readFileSync(join(imported.root, "design/canvas.json"), "utf8"))).toMatchObject({
+		format: FOLDER_NAMES_FORMAT,
+	});
+
+	const location = makeTempDir(),
+		spool = makeTempDir();
+	for (const format of [0, FORMAT_VERSION + 1, "2"]) {
+		const stamped = { "design/canvas.json": Buffer.from(JSON.stringify({ format })) };
+		await expect(importProject(archive(stamped), location, spool)).rejects.toThrow(/version is not supported/);
+	}
+	expect(readdirSync(location)).toEqual([]);
 });
 
 it.each([

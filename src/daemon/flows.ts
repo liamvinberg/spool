@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
-import { isSafeName } from "../page-path";
+import { isFramePath } from "../page-path";
 import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import {
 	createSourcePass,
@@ -148,8 +148,8 @@ function verifiedWitness(root: string, alive: ReadonlySet<string>): FlowContext[
 function derivedTargets(sites: readonly NavSite[]): Map<string, NavSite[]> {
 	const byTarget = new Map<string, NavSite[]>();
 	for (const site of sites) {
-		// frame-folder-name targets only (#5) — one rule with the rest of spool
-		if (!isSafeName(site.target)) continue;
+		// frame names only (#5, #336), one rule with the rest of spool
+		if (!isFramePath(site.target)) continue;
 		const claiming = byTarget.get(site.target);
 		if (claiming === undefined) byTarget.set(site.target, [site]);
 		else claiming.push(site);
@@ -200,7 +200,7 @@ function resolvedBySite(
 	}
 	if (byAnchor.size === 0) return new Map();
 	for (const filled of read) {
-		if (!isSafeName(filled.target)) continue;
+		if (!isFramePath(filled.target)) continue;
 		byAnchor.get(`${filled.path}:${filled.line}:${filled.col}`)?.targets.add(filled.target);
 	}
 	for (const [key, entry] of byAnchor) if (entry.targets.size === 0) byAnchor.delete(key);

@@ -1,4 +1,5 @@
 import { type Match, matchName } from "../../name-match";
+import { pageName } from "../../page-path";
 import type { ProjectedFrame } from "../api";
 
 /**
@@ -14,7 +15,10 @@ import type { ProjectedFrame } from "../api";
 
 export interface Hit {
 	readonly frame: ProjectedFrame;
-	/** indices into `frame.name` the query landed on, ascending */
+	/**
+	 * indices into the frame's own name (its last segment, which is what a row
+	 * prints) the query landed on, ascending
+	 */
 	readonly matched: readonly number[];
 	readonly score: number;
 }
@@ -36,12 +40,28 @@ export function findFrames(query: string, frames: readonly ProjectedFrame[]): re
 
 	const hits: { hit: Hit; fresh: number }[] = [];
 	frames.forEach((frame, fresh) => {
-		const found: Match | null = matchName(wanted, frame.name.toLowerCase());
+		const found = matchFrame(wanted, frame.name);
 		if (found === null) return;
 		hits.push({ hit: { frame, matched: found.matched, score: found.score }, fresh });
 	});
 	hits.sort((a, b) => b.hit.score - a.hit.score || a.fresh - b.fresh);
 	return hits.map((entry) => entry.hit);
+}
+
+/**
+ * One frame against the query (#336). A frame is named by its path, and a row
+ * prints its own name beside its page, so the query is asked of both: the own
+ * name first, which keeps an exact name exact on any page, and the whole path
+ * second, so typing the page finds what is on it. What landed is said against
+ * the own name, which is the only part a row draws the hits in.
+ */
+function matchFrame(wanted: string, name: string): Match | null {
+	const leaf = pageName(name);
+	const own = matchName(wanted, leaf.toLowerCase());
+	const whole = leaf === name ? null : matchName(wanted, name.toLowerCase());
+	if (whole === null || (own !== null && own.score >= whole.score)) return own;
+	const offset = name.length - leaf.length;
+	return { score: whole.score, matched: whole.matched.filter((at) => at >= offset).map((at) => at - offset) };
 }
 
 /**

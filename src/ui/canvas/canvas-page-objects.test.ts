@@ -32,7 +32,7 @@ function frame(name: string, extra: Partial<Projected> = {}): Projected {
 
 const PROJECT = {
 	pages: ["shop"],
-	frames: [frame("home"), frame("checkout", { page: "shop" })],
+	frames: [frame("home"), frame("shop/checkout", { page: "shop" })],
 	places: { shop: { x: 400, y: 0 } },
 };
 
@@ -53,7 +53,11 @@ describe("a page on the field", () => {
 	it("draws no object for the page the canvas is standing on", async () => {
 		const host = await mountCanvas({
 			pages: ["shop", "shop/sale"],
-			frames: [frame("home"), frame("checkout", { page: "shop" }), frame("deal", { page: "shop/sale" })],
+			frames: [
+				frame("home"),
+				frame("shop/checkout", { page: "shop" }),
+				frame("shop/sale/deal", { page: "shop/sale" }),
+			],
 			places: { shop: { x: 400, y: 0 }, "shop/sale": { x: 900, y: 0 } },
 		});
 		// the root page draws `shop` and never `shop/sale`, which is inside it
@@ -102,7 +106,7 @@ describe("a page on the field", () => {
 				.querySelector('[data-canvas-camera=""]')
 				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 410, clientY: 10 }));
 		});
-		expect(host.querySelector('[data-frame-label="checkout"]')).not.toBeNull();
+		expect(host.querySelector('[data-frame-label="shop/checkout"]')).not.toBeNull();
 		expect(host.querySelector('[data-frame-label="home"]')).toBeNull();
 		expect(pageObject(host, "shop")).toBeNull();
 	});
@@ -110,7 +114,7 @@ describe("a page on the field", () => {
 	it("says so on a page nobody has written into, and never on a page of pages", async () => {
 		const host = await mountCanvas({
 			pages: ["shop", "fresh"],
-			frames: [frame("home"), frame("checkout", { page: "shop" })],
+			frames: [frame("home"), frame("shop/checkout", { page: "shop" })],
 			places: { shop: { x: 400, y: 0 }, fresh: { x: 800, y: 0 } },
 		});
 		expect(host.querySelector("[data-page-empty]")).toBeNull();
@@ -129,7 +133,11 @@ describe("a page holding only pages", () => {
 	// daemon laid, which is what the places here say
 	const SHELVED = {
 		pages: ["explore", "explore/agent", "explore/booting"],
-		frames: [frame("home"), frame("one", { page: "explore/agent" }), frame("two", { page: "explore/booting" })],
+		frames: [
+			frame("home"),
+			frame("explore/agent/one", { page: "explore/agent" }),
+			frame("explore/booting/two", { page: "explore/booting" }),
+		],
 		places: { explore: { x: 400, y: 0 }, "explore/agent": { x: 80, y: 80 }, "explore/booting": { x: 2000, y: 80 } },
 	};
 
@@ -239,7 +247,6 @@ async function mountCanvas(
 					pages: project.pages,
 					places: project.places,
 					frames: project.frames,
-					collisions: [],
 				});
 			}
 			if (url.pathname.endsWith("/flows")) {

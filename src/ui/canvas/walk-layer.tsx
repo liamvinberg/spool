@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { pageName } from "../../page-path";
 import type { FlowEdge, ProjectedFrame } from "../api";
 import { pageLabel, pageOf } from "./pages";
 
@@ -256,11 +257,13 @@ function tagBox(placed: PlacedWalk, k: number): React.CSSProperties {
 
 function WalkTag({ placed, k, onOpen }: { placed: PlacedWalk; k: number; onOpen: (target: string) => void }) {
 	const walk = placed.walk;
+	// the tag already says the page, so the target is named by its own folder
+	const target = pageName(walk.target);
 	return (
 		<button
 			type="button"
 			data-walk-exit={walk.target}
-			title={`go to ${walk.target} on ${walk.page}`}
+			title={`go to ${target} on ${walk.page}`}
 			// the canvas owns the pointer everywhere else: a press here is this
 			// tag's, never the start of a marquee over the frame behind it
 			onPointerDown={(event) => event.stopPropagation()}
@@ -270,7 +273,7 @@ function WalkTag({ placed, k, onOpen }: { placed: PlacedWalk; k: number; onOpen:
 			style={tagBox(placed, k)}
 		>
 			<EdgeMark certain={walk.certainty === "will"} />
-			<span className="text-text">{walk.target}</span>
+			<span className="text-text">{target}</span>
 			<span className="text-muted">·</span>
 			<span className="text-muted">{walk.page}</span>
 		</button>

@@ -208,7 +208,7 @@ function stubCanvasApis(projectedFrames = frames) {
 			return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 		}
 		if (url.pathname.endsWith("/frames")) {
-			return Response.json({ root: "/project", pages: [], frames: projectedFrames, collisions: [] });
+			return Response.json({ root: "/project", pages: [], frames: projectedFrames });
 		}
 		if (url.pathname.endsWith("/flows")) {
 			return Response.json({

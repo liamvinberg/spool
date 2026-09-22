@@ -87,7 +87,7 @@ export async function readRungs(
 ): Promise<RungsRead> {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to read` };
-	const folder = `${frameFolder(frame, found.page)}/`;
+	const folder = `${frameFolder(frame)}/`;
 	const stamps = sources.map((source) => {
 		try {
 			return parseStamp(root, source);

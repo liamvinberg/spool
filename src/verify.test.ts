@@ -90,6 +90,33 @@ describe("shot and logs, compile paths", () => {
 		expect(readdirSync(outside)).toEqual([]);
 	});
 
+	it("keeps a page frame's records under its whole name, one file segment (#336)", async () => {
+		const { root, name, url, controlToken, deps } = await serveVerifyProject();
+		writeFrame(root, "checkout", "export default function Checkout() { return <main>root</main> }\n");
+		writeDesignFile(
+			root,
+			join("frames", "shop", "checkout", "frame.tsx"),
+			"export default function Checkout() { return <main>shop</main> }\n",
+		);
+		const verify = await fetch(`${url}/api/p/${name}/verify/shop%2Fcheckout`, {
+			headers: { "X-Spool-Control": controlToken },
+		});
+		expect(verify.status).toBe(200);
+		const { etag } = (await verify.json()) as { etag: string };
+		writeDesignFile(
+			root,
+			".spool/verify/shop%2Fcheckout.logs.json",
+			`${JSON.stringify({ etag, scenario: "default", entries: [] })}\n`,
+		);
+		writeCaptureError(root, "shop/checkout", "shop only");
+
+		const logs = await logsFrame(deps("shop/checkout"));
+
+		expect(logs).toMatchObject({ kind: "logs", replayed: true, captureError: { error: "shop only" } });
+		// the root frame with the same folder name shares none of it
+		expect(existsSync(join(root, "design", ".spool", "verify", "checkout.logs.json"))).toBe(false);
+	});
+
 	it("surfaces a recorded self-capture failure alongside replayed logs (#173)", async () => {
 		const { root, name, url, controlToken, deps } = await serveVerifyProject();
 		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");

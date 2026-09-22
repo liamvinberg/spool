@@ -16,7 +16,7 @@ import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
-import { isSafeName } from "../page-path";
+import { isFramePath, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
@@ -90,6 +90,7 @@ import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, span
 import { createHistory, type HistoryClock } from "./history";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
+import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
@@ -212,7 +213,7 @@ export interface DaemonOptions {
 
 /** The player page's params (#24): Zod-validated, path-safe names only. */
 const playParams = z.object({
-	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
+	frame: z.string().refine(isFramePath, { message: "not a frame name" }).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 	shell: z.literal("1").optional(),
 	handoff: z
@@ -222,7 +223,7 @@ const playParams = z.object({
 });
 
 const publicationParams = z.strictObject({
-	entry: z.string().refine(isSafeName, { message: "not a frame name" }),
+	entry: z.string().refine(isFramePath, { message: "not a frame name" }),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }),
 });
 
@@ -564,7 +565,7 @@ export function createDaemonApp({
 	const rungsBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 		const sources = parseStamps(body.sources);
-		if (typeof body.frame !== "string" || !isSafeName(body.frame) || sources === undefined) {
+		if (typeof body.frame !== "string" || !isFramePath(body.frame) || sources === undefined) {
 			return c.text('a read is { "frame", "sources": [ "frames/…/frame.tsx:12:4" ] }', 400);
 		}
 		return { frame: body.frame, sources };
@@ -582,7 +583,7 @@ export function createDaemonApp({
 		const nodes = parseEditedNodes(body.nodes);
 		if (
 			typeof body.frame !== "string" ||
-			!isSafeName(body.frame) ||
+			!isFramePath(body.frame) ||
 			stamps === undefined ||
 			nodes === undefined ||
 			typeof body.fingerprint !== "string"
@@ -621,7 +622,7 @@ export function createDaemonApp({
 		const says = 'an element write is { "frame", "act", "sources": [ "…:12:4" ], "name"?, "value"?, "fingerprint" }';
 		if (
 			typeof body.frame !== "string" ||
-			!isSafeName(body.frame) ||
+			!isFramePath(body.frame) ||
 			typeof act !== "string" ||
 			!acts.includes(act) ||
 			stamps === undefined ||
@@ -687,7 +688,7 @@ export function createDaemonApp({
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 		const { frame, source, fingerprint, file, asset } = body;
 		const says = 'a swap is { "frame", "source", "fingerprint", and one of "file" or "asset" }';
-		if (typeof frame !== "string" || !isSafeName(frame) || typeof source !== "string") return c.text(says, 400);
+		if (typeof frame !== "string" || !isFramePath(frame) || typeof source !== "string") return c.text(says, 400);
 		if (parseStamps([source]) === undefined) return c.text(says, 400);
 		if (typeof fingerprint !== "string" || fingerprint === "") {
 			return c.text("a swap carries the fingerprint it was formed against", 400);
@@ -736,7 +737,7 @@ export function createDaemonApp({
 		);
 		if (
 			typeof body.frame !== "string" ||
-			!isSafeName(body.frame) ||
+			!isFramePath(body.frame) ||
 			stamps?.[0] === undefined ||
 			edits === undefined ||
 			shaped !== true ||
@@ -773,7 +774,7 @@ export function createDaemonApp({
 			return c.text('a revert is { "path", "start", "end", "text", "fingerprint", "frame"? }', 400);
 		}
 		if (!Number.isInteger(end) || start < 0 || end < start) return c.text("not a span", 400);
-		if (frame !== undefined && (typeof frame !== "string" || !isSafeName(frame))) return c.text("not a frame", 400);
+		if (frame !== undefined && (typeof frame !== "string" || !isFramePath(frame))) return c.text("not a frame", 400);
 		return { path, start, end, text, fingerprint, ...(typeof frame === "string" ? { frame } : {}) };
 	});
 
@@ -924,7 +925,27 @@ export function createDaemonApp({
 		if (trashingProjects.has(lookup.root)) {
 			return { response: c.json({ error: "This project is moving to the trash." }, 409) };
 		}
+		migrateOnce(lookup.root);
 		return { root: lookup.root };
+	}
+
+	/**
+	 * The first read of a project by this daemon renames its walks, when it still
+	 * names frames by folder (#336). Once per root per daemon: after that the
+	 * stamp says it is done, and a project that failed to migrate answers with
+	 * missing walks, which is the flow map's own repair list.
+	 */
+	const migrated = new Set<string>();
+	function migrateOnce(root: string): void {
+		if (migrated.has(root)) return;
+		migrated.add(root);
+		try {
+			const done = migrateFrameNames(root);
+			if (done === undefined) return;
+			console.error(`spool: ${describeMigration(root, done)}`);
+		} catch (error) {
+			console.error(`spool: could not rename the walks in ${root}: ${(error as Error).message}`);
+		}
 	}
 
 	/** The most the one uploaded cover image may weigh. */
@@ -1636,7 +1657,7 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			const hash = c.req.param("hash");
-			if (!isSafeName(frame) || !isCoverHash(hash)) {
+			if (!isFramePath(frame) || !isCoverHash(hash)) {
 				return c.text("no such cover", 404);
 			}
 			let exists = false;
@@ -1763,7 +1784,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const entry = c.req.query("entry");
-			if (entry === undefined || !isSafeName(entry)) return c.text("entry must be a frame name", 400);
+			if (entry === undefined || !isFramePath(entry)) return c.text("entry must be a frame name", 400);
 			return c.json(await publicationReadiness(flowGraph, project.root, entry));
 		})
 		.post("/api/p/:project/flows/resolve", async (c) => {
@@ -1791,7 +1812,7 @@ export function createDaemonApp({
 			"/api/p/:project/walked",
 			validator("json", (value, c) => {
 				const { from, to } = (value ?? {}) as { from?: unknown; to?: unknown };
-				if (typeof from !== "string" || !isSafeName(from) || typeof to !== "string" || !isSafeName(to)) {
+				if (typeof from !== "string" || !isFramePath(from) || typeof to !== "string" || !isFramePath(to)) {
 					return c.text('a walk is { "from": "<frame>", "to": "<frame>" }', 400);
 				}
 				return { from, to };
@@ -1828,7 +1849,7 @@ export function createDaemonApp({
 			"/api/p/:project/seen",
 			validator("json", (value, c) => {
 				const { frames } = (value ?? {}) as { frames?: unknown };
-				if (!Array.isArray(frames) || frames.some((name) => typeof name !== "string" || !isSafeName(name))) {
+				if (!Array.isArray(frames) || frames.some((name) => typeof name !== "string" || !isFramePath(name))) {
 					return c.text('seen is { "frames": ["<frame>", ...] }', 400);
 				}
 				return { frames: frames as string[] };
@@ -2507,7 +2528,7 @@ export function createDaemonApp({
 				const parsed: Record<string, Geometry> = {};
 				for (const [name, raw] of Object.entries(frames)) {
 					const geometry = parseGeometry(raw);
-					if (!isSafeName(name) || geometry === undefined || geometry.w <= 0 || geometry.h <= 0) {
+					if (!isFramePath(name) || geometry === undefined || geometry.w <= 0 || geometry.h <= 0) {
 						return c.text(`not a placeable geometry for "${name}"`, 400);
 					}
 					parsed[name] = geometry;
@@ -2702,7 +2723,7 @@ export function createDaemonApp({
 			"/api/p/:project/assets",
 			validator("query", (value, c) => {
 				const frame = (value as { frame?: unknown }).frame;
-				if (typeof frame !== "string" || !isSafeName(frame)) {
+				if (typeof frame !== "string" || !isFramePath(frame)) {
 					return c.text("an asset listing is for one frame", 400);
 				}
 				return { frame };
@@ -2890,7 +2911,7 @@ export function createDaemonApp({
 						if (!held.some((outer) => dir.startsWith(`${outer}${sep}`))) pageDirs.push(dir);
 					}
 					for (const name of frames) {
-						if (!isSafeName(name)) return c.text(`not a frame name: "${name}"`, 400);
+						if (!isFramePath(name)) return c.text(`not a frame name: "${name}"`, 400);
 						const found = lookupFrame(project.root, name);
 						if (found.kind !== "found") return c.text(`no frame "${name}" to trash`, 404);
 						const dir = resolveDesignPath(designDir, found.dir);
@@ -2926,7 +2947,7 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			// captures are only accepted for frames that exist — never a write for a ghost
-			if (!isSafeName(frame) || !frameExists(project.root, frame))
+			if (!isFramePath(frame) || !frameExists(project.root, frame))
 				return c.text(`no frame "${frame}" to cover`, 404);
 			let image: Buffer;
 			try {
@@ -2962,7 +2983,7 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const frame = c.req.param("frame");
-				if (!isSafeName(frame) || !frameExists(project.root, frame))
+				if (!isFramePath(frame) || !frameExists(project.root, frame))
 					return c.text(`no frame "${frame}" to cover`, 404);
 				writeCaptureError(project.root, frame, c.req.valid("json").error);
 				return c.body(null, 204);

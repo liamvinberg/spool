@@ -55,9 +55,8 @@ const PROJECTION = {
 	pages: ["site"],
 	frames: [
 		{ name: "home", x: 0, y: 0, w: 390, h: 844 },
-		{ name: "receipt", page: "site", x: 0, y: 0, w: 390, h: 844 },
+		{ name: "site/receipt", page: "site", x: 0, y: 0, w: 390, h: 844 },
 	],
-	collisions: [],
 };
 
 /** one message of a turn, as the daemon reads it off the wire */
@@ -1941,13 +1940,13 @@ describe("a row that names a frame", () => {
 		canvas.turn.push(edit("t1", "site/receipt"));
 		canvas.turn.push(settled("t1"));
 		await settle(120);
-		expect(rows(canvas.host)).toEqual(["edit receipt"]);
+		expect(rows(canvas.host)).toEqual(["edit site/receipt"]);
 
-		await press(name(canvas.host, "receipt"));
+		await press(name(canvas.host, "site/receipt"));
 		await settle(60);
 
 		// the page follows, and the frame it names is the one that is mounted
-		expect(canvas.host.querySelector('[data-frame-label="receipt"]')).not.toBeNull();
+		expect(canvas.host.querySelector('[data-frame-label="site/receipt"]')).not.toBeNull();
 		expect(canvas.host.querySelector('[data-frame-label="home"]')).toBeNull();
 		expect(canvas.host.querySelector('button[aria-label="receipt frame"]')?.getAttribute("aria-pressed")).toBe(
 			"true",
@@ -1955,7 +1954,9 @@ describe("a row that names a frame", () => {
 		// and the zoom is the reader's, so following a row is not a navigation to undo
 		expect(canvas.chrome.latest?.zoomPct).toBe(zoom);
 		// the press on the name is not the press on the disclosure
-		expect(canvas.host.querySelector('[aria-label="edit receipt"]')?.getAttribute("aria-expanded")).toBe("false");
+		expect(canvas.host.querySelector('[aria-label="edit site/receipt"]')?.getAttribute("aria-expanded")).toBe(
+			"false",
+		);
 	});
 
 	/**
@@ -1973,12 +1974,29 @@ describe("a row that names a frame", () => {
 		canvas.turn.push(settled("t1"));
 		await settle(120);
 
-		await hover(name(canvas.host, "receipt"), true);
+		await hover(name(canvas.host, "site/receipt"), true);
 		expect(canvas.host.querySelector("[data-page-lit]")?.textContent).toContain("site");
-		expect(canvas.host.querySelector('[data-frame-hover="receipt"]')).toBeNull();
+		expect(canvas.host.querySelector('[data-frame-hover="site/receipt"]')).toBeNull();
 
-		await hover(name(canvas.host, "receipt"), false);
+		await hover(name(canvas.host, "site/receipt"), false);
 		expect(canvas.host.querySelector("[data-page-lit]")).toBeNull();
+	});
+
+	/**
+	 * A file in a frame's own subfolder names that subfolder from the path alone, and
+	 * only the project knows which prefix of it is the frame (#336).
+	 */
+	it("goes to the frame holding a file in its own subfolder", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the receipt rows");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(called("t1", "Edit", { file_path: "/project/design/frames/site/receipt/parts/row.tsx" }));
+		canvas.turn.push(settled("t1"));
+		await settle(120);
+
+		expect(name(canvas.host, "site/receipt")).not.toBeNull();
 	});
 
 	/** the frame is drawn, so pointing rings it out there rather than lighting its page */
@@ -2055,16 +2073,16 @@ describe("a row that names a frame", () => {
 		canvas.turn.push(edit("t1", "site/receipt"));
 		canvas.turn.push(settled("t1"));
 		await settle(120);
-		expect(name(canvas.host, "receipt")).not.toBeNull();
+		expect(name(canvas.host, "site/receipt")).not.toBeNull();
 
 		// the frame leaves the folder, and the daemon's watcher says so
-		canvas.project.frames = canvas.project.frames.filter((frame) => frame.name !== "receipt");
-		canvas.watcher.push("change", { kind: "frame", frame: "receipt" });
-		await until(() => canvas.host.querySelector('[data-agent-jump="receipt"]') === null);
+		canvas.project.frames = canvas.project.frames.filter((frame) => frame.name !== "site/receipt");
+		canvas.watcher.push("change", { kind: "frame", frame: "site/receipt" });
+		await until(() => canvas.host.querySelector('[data-agent-jump="site/receipt"]') === null);
 
-		expect(rows(canvas.host)).toEqual(["edit receipt"]);
-		const word = [...(canvas.host.querySelectorAll('[aria-label="edit receipt"] span') ?? [])].find(
-			(span) => span.textContent === "receipt",
+		expect(rows(canvas.host)).toEqual(["edit site/receipt"]);
+		const word = [...(canvas.host.querySelectorAll('[aria-label="edit site/receipt"] span') ?? [])].find(
+			(span) => span.textContent === "site/receipt",
 		);
 		expect(word?.className).toContain("line-through");
 		// and a frame this turn has not written yet is not struck: it is one beat from here

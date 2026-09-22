@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
-import { isSafeName } from "../page-path";
+import { isFramePath } from "../page-path";
 import { parseStampRef } from "../stamp";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { extractJsxSpan, type JsxSpan } from "./jsx-span";
@@ -53,7 +53,7 @@ export function parseSelectionPut(value: unknown): SelectionPut | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const record = value as Record<string, unknown>;
 	if (Array.isArray(record.frames)) {
-		if (!record.frames.every((name): name is string => typeof name === "string" && isSafeName(name))) {
+		if (!record.frames.every((name): name is string => typeof name === "string" && isFramePath(name))) {
 			return undefined;
 		}
 		return { frames: record.frames };
@@ -63,7 +63,7 @@ export function parseSelectionPut(value: unknown): SelectionPut | undefined {
 	for (const element of record.elements) {
 		if (typeof element !== "object" || element === null) return undefined;
 		const { frame, selector, outerHtml, source, generated } = element as Record<string, unknown>;
-		if (typeof frame !== "string" || !isSafeName(frame)) return undefined;
+		if (typeof frame !== "string" || !isFramePath(frame)) return undefined;
 		if (typeof selector !== "string" || typeof outerHtml !== "string") return undefined;
 		if (source !== null && typeof source !== "string") return undefined;
 		if (typeof generated !== "boolean") return undefined;
@@ -98,7 +98,7 @@ export function parseSelectionEntries(value: unknown): SelectionEntry[] | undefi
 	for (const raw of value) {
 		if (typeof raw !== "object" || raw === null) return undefined;
 		const { kind, frame, path, size, name, lines, selector, excerpt, generated } = raw as Record<string, unknown>;
-		if (typeof frame !== "string" || !isSafeName(frame) || typeof path !== "string") return undefined;
+		if (typeof frame !== "string" || !isFramePath(frame) || typeof path !== "string") return undefined;
 		if (kind === "frame") {
 			const box = size as Record<string, unknown> | undefined;
 			if (typeof box?.w !== "number" || typeof box.h !== "number") return undefined;
@@ -159,7 +159,7 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 				{
 					kind: "frame" as const,
 					frame,
-					path: framePathOf(frame, found.page),
+					path: framePathOf(frame),
 					size: frameGeometry(root, frame),
 				},
 			];
@@ -169,8 +169,7 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 }
 
 function elementEntry(root: string, { frame, selector, outerHtml, source, generated }: ElementPut): SelectionEntry {
-	const found = lookupFrame(root, frame);
-	const framePath = framePathOf(frame, found.kind === "found" ? found.page : undefined);
+	const framePath = framePathOf(frame);
 	const stamp = source === null ? undefined : parseStamp(root, source);
 	if (stamp === undefined) {
 		// no stamp anywhere: JS-created DOM under an unstamped root (#6 degrade)
@@ -206,9 +205,9 @@ function elementEntry(root: string, { frame, selector, outerHtml, source, genera
 	return generated ? { ...entry, generated: true } : entry;
 }
 
-/** The frame's own source path, wherever its page put the folder (#39). */
-function framePathOf(frame: string, page: string | undefined): string {
-	return `design/${frameFolder(frame, page)}/frame.tsx`;
+/** The frame's own source path, which its name already spells (#39, #336). */
+function framePathOf(frame: string): string {
+	return `design/${frameFolder(frame)}/frame.tsx`;
 }
 
 export interface Stamp {

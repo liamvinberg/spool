@@ -38,19 +38,23 @@ export function pagePathLabel(page: string): string {
 	return page === ROOT_PAGE ? "root" : page;
 }
 
-/** The frame's own folder relative to design/, slash included: what a stamp of its own starts with. */
-export function frameFolderRel(name: string, page: string): string {
-	return page === ROOT_PAGE ? `frames/${name}/` : `frames/${page}/${name}/`;
+/**
+ * The frame's own folder relative to design/, slash included: what a stamp of
+ * its own starts with. A frame's name is its path under frames/ (#336), so the
+ * name alone says where it is.
+ */
+export function frameFolderRel(name: string): string {
+	return `frames/${name}/`;
 }
 
 /** The frame's own source file relative to design/ — the stamp convention. */
-export function frameSourceRel(name: string, page: string): string {
-	return `${frameFolderRel(name, page)}frame.tsx`;
+export function frameSourceRel(name: string): string {
+	return `${frameFolderRel(name)}frame.tsx`;
 }
 
-/** The same file as an editor path, wherever the frame's page put it. */
-export function frameSourcePath(name: string, page: string): string {
-	return `design/${frameSourceRel(name, page)}`;
+/** The same file as an editor path. */
+export function frameSourcePath(name: string): string {
+	return `design/${frameSourceRel(name)}`;
 }
 
 /**

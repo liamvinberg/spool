@@ -23,16 +23,15 @@ const PROJECTION = {
 	frames: [
 		{ name: "home", x: 0, y: 0, w: 390, h: 844 },
 		{ name: "menu", x: 500, y: 0, w: 390, h: 844 },
-		{ name: "checkout", page: "shop", x: 0, y: 0, w: 390, h: 844 },
+		{ name: "shop/checkout", page: "shop", x: 0, y: 0, w: 390, h: 844 },
 	],
-	collisions: [],
 };
 
 const FLOWS: Flows = {
-	frames: ["home", "menu", "checkout"],
+	frames: ["home", "menu", "shop/checkout"],
 	edges: [
 		{ from: "home", to: "menu", certainty: "will", sites: [] },
-		{ from: "home", to: "checkout", certainty: "might", sites: [], verified: true },
+		{ from: "home", to: "shop/checkout", certainty: "might", sites: [], verified: true },
 		{ from: "home", to: "ghost", certainty: "will", sites: [], missing: true },
 	],
 	unreadable: [],
@@ -100,11 +99,13 @@ describe("the walk layer", () => {
 		const canvas = mount();
 		await canvas.render();
 
-		const tag = exitTag(canvas.host, "checkout");
+		const tag = exitTag(canvas.host, "shop/checkout");
 		expect(tag).not.toBeNull();
 		// the page it lands on, and the certainty the arrows already distinguish
 		expect(tag?.textContent).toContain("checkout");
 		expect(tag?.textContent).toContain("shop");
+		// the tag says the page beside the name, so the name is the frame's own (#336)
+		expect(tag?.textContent).not.toContain("shop/checkout");
 		// nothing was selected to earn it — read off the rail, whose rows exist
 		// once the folder holding them is open (#229)
 		await act(async () => {
@@ -151,10 +152,10 @@ describe("the walk layer", () => {
 		await canvas.render();
 
 		await act(async () => {
-			exitTag(canvas.host, "checkout")?.click();
+			exitTag(canvas.host, "shop/checkout")?.click();
 		});
 
-		expect(canvas.host.querySelector('[data-frame-label="checkout"]')).not.toBeNull();
+		expect(canvas.host.querySelector('[data-frame-label="shop/checkout"]')).not.toBeNull();
 		expect(canvas.host.querySelector('[data-frame-label="home"]')).toBeNull();
 		expect(canvas.host.querySelector('button[aria-label="checkout frame"]')?.getAttribute("aria-pressed")).toBe(
 			"true",
@@ -168,15 +169,15 @@ describe("the walk layer", () => {
 
 		await act(async () => canvas.chrome.latest?.toggleArrows());
 
-		expect(exitTag(canvas.host, "checkout")).toBeNull();
+		expect(exitTag(canvas.host, "shop/checkout")).toBeNull();
 		expect(canvas.host.querySelector("svg[data-flow-arrows]")).toBeNull();
 	});
 
 	it("offers the toggle for a page whose only walks leave it", async () => {
 		// no same-page edge at all: the old rule counted no thread and drew no switch
 		const canvas = mount({
-			frames: ["home", "menu", "checkout"],
-			edges: [{ from: "home", to: "checkout", certainty: "will", sites: [] }],
+			frames: ["home", "menu", "shop/checkout"],
+			edges: [{ from: "home", to: "shop/checkout", certainty: "will", sites: [] }],
 			unreadable: [],
 		});
 		await canvas.render();
@@ -185,7 +186,7 @@ describe("the walk layer", () => {
 	});
 
 	it("draws no switch over a page with nothing to hide", async () => {
-		const canvas = mount({ frames: ["home", "menu", "checkout"], edges: [], unreadable: [] });
+		const canvas = mount({ frames: ["home", "menu", "shop/checkout"], edges: [], unreadable: [] });
 		await canvas.render();
 
 		expect(canvas.chrome.latest?.hasThreads).toBe(false);

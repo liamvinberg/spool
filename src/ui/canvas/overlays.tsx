@@ -983,12 +983,12 @@ function ElementOutline({
  * The source file behind the selection (#7: the path out of the stamp payload).
  * A picked element is often not the frame's own file — it is the shared
  * component the frame renders — which is the whole reason the stamp is read
- * rather than assumed. The stampless fallback needs the frame's page: the
- * folder moved with it (#39).
+ * rather than assumed. The stampless fallback is the frame's own file, which
+ * its name locates (#336).
  */
-export function sourcePathOf(picked: PickedSelection, page: string): string {
+export function sourcePathOf(picked: PickedSelection): string {
 	const stamp = parseStampRef(picked.source);
-	return stamp === undefined ? frameSourcePath(picked.frame, page) : `design/${stamp.rel}`;
+	return stamp === undefined ? frameSourcePath(picked.frame) : `design/${stamp.rel}`;
 }
 
 /**

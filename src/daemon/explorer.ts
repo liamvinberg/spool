@@ -1,6 +1,7 @@
-import { cpSync, type Dirent, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { cpSync, type Dirent, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import {
+	isFramePath,
 	isPagePath,
 	isPageSlot,
 	isSafeName,
@@ -18,33 +19,31 @@ import {
 	writePlaces,
 } from "./canvas-places";
 import { realDesignDir, resolveDesignPath } from "./design-path";
+import { type Moved, retargetFor, retargetLinks } from "./frame-links";
 import { reaimEscapingImports } from "./import-aim";
 import { pageMovedInState, pagesDroppedFromState, readCanvasState, writeCanvasState } from "./project-state";
-import { claimedNames, describeCollision, describeMissingFrame, hasFrameEntry, lookupFrame } from "./projection";
-import { coverDir } from "./thumbs";
+import { describeMissingFrame, hasFrameEntry, lookupFrame, pagePaths } from "./projection";
+import { carrySeen } from "./seen";
+import { carryCover } from "./thumbs";
 
 /**
  * The explorer's file operations (#228): what the rail's verbs do on disk, at
  * whatever depth the page holding them sits (#231).
  *
- * Every one of them moves or copies a folder, and none of them authors frame
- * source — the law that the canvas never writes what a frame draws stands
- * untouched. The one exception a move carries is bookkeeping, not authoring: a
- * `../` import whose target stayed put while the folder's depth changed is
- * re-aimed (#273, `import-aim.ts`), because leaving it is leaving the frame
- * broken by a gesture that promised to only rearrange. `data-go` literals are
- * deliberately left alone, because the flow map is derived and reports a
- * target it can no longer find.
+ * Every one of them moves or copies a folder. Frames and pages are both named
+ * by their path (#336), so a name only has to be free among the folders beside
+ * it, and the disk is the whole of what can refuse one. But a path is also what
+ * every walk into a frame says, so a gesture that changes one keeps two kinds
+ * of bookkeeping true afterwards, and authors nothing else: a `../` import whose
+ * target stayed put while the folder's depth changed is re-aimed (#273,
+ * `import-aim.ts`), and every walk target naming a frame that moved is written
+ * at its new name (`frame-links.ts`). A copy changes no name, so it re-aims
+ * imports and leaves every walk where it pointed.
  *
- * Three rules run through all of it. A bare frame name is identity across the
- * whole project, so a name that lands anywhere must miss every name claimed
- * anywhere — page folders included — and a claimed one is refused rather than
- * resolved by guessing. A page's identity is its path, so its own name only has
- * to be free among its siblings, and a page that moves carries its subtree's
- * cameras and stored order with it. And every path resolves before the first
- * write, the way the geometry handler resolves every sidecar before it writes
- * one: a rename that would escape design/ or a copy whose destination is taken
- * has to fail with the disk exactly as it was.
+ * Every path resolves before the first write, the way the geometry handler
+ * resolves every sidecar before it writes one: a rename that would escape
+ * design/ or a copy whose destination is taken has to fail with the disk
+ * exactly as it was.
  */
 
 /** Why an operation never happened, in the status the route answers with. */
@@ -64,49 +63,14 @@ export interface FrameCopy {
 
 const refuse = (status: Refusal["status"], message: string): Refusal => ({ kind: "refused", status, message });
 
-/** The refusal a taken frame name earns — `describeCollision`'s law, said before the fact. */
-function describeClaimed(name: string): string {
-	return `"${name}" is already a frame — frame names are identity and must be unique across the project`;
-}
-
 /** The refusal a taken folder earns, naming the folder that already holds one. */
 function describeTaken(parent: string, name: string): string {
 	return `design/${parent === ROOT_PAGE ? "frames" : `frames/${parent}`}/ already holds a folder named "${name}"`;
 }
 
-/** Where a page's folder is, or would be. A page is already a path, so this is one join. */
+/** Where a page's or a frame's folder is, or would be: both are paths, so this is one join. */
 function pageFolder(designDir: string, page: string): string {
 	return resolveDesignPath(designDir, join(designDir, "frames", page));
-}
-
-/** Where a frame's folder is, or would be, on a given page — `""` being the root one. */
-function frameFolderIn(designDir: string, page: string, name: string): string {
-	return page === ROOT_PAGE
-		? resolveDesignPath(designDir, join(designDir, "frames", name))
-		: resolveDesignPath(designDir, join(designDir, "frames", page, name));
-}
-
-/** One `.spool` store that has to follow a renamed frame, resolved before anything moves. */
-interface Carry {
-	from: string;
-	to: string;
-}
-
-/**
- * The store keyed by the bare name (#228): a frame's covers. The geometry
- * sidecar needs nothing — it rides inside the folder — but the covers sit in
- * .spool/ under the old name, and a rename that left them there would blank
- * the picture the canvas is drawing right now.
- */
-function nameKeyedStores(root: string, from: string, to: string): Carry[] {
-	return [{ from: coverDir(root, from), to: coverDir(root, to) }];
-}
-
-function carry({ from, to }: Carry): void {
-	if (!existsSync(from)) return;
-	// the new name is nobody's frame, so anything parked under it is orphaned cache
-	rmSync(to, { recursive: true, force: true });
-	renameSync(from, to);
 }
 
 /**
@@ -126,27 +90,45 @@ function carryPage(root: string, from: string, to: string): void {
 	if (places !== undefined) writePlaces(root, places);
 }
 
+/**
+ * What every rename and move ends with, once the folders stand where they were
+ * asked to: the covers and the seen mark of every frame that changed name
+ * follow it, and every walk into one is written at its new name.
+ */
+function renamed(root: string, designDir: string, moved: Moved): void {
+	const frames = [
+		...(moved.frames ?? []),
+		...(moved.pages ?? []).flatMap((page) =>
+			frameFoldersUnder(pageFolder(designDir, page.to), designDir).map((frame) => ({
+				from: pageUnder(page.from, frame),
+				to: pageUnder(page.to, frame),
+			})),
+		),
+	];
+	for (const frame of frames) carryCover(root, frame.from, frame.to);
+	carrySeen(root, frames);
+	retargetLinks(root, retargetFor(moved));
+}
+
+/**
+ * A frame renamed in place. Both ends are names and both sit on the same page:
+ * what a frame is called is one gesture and which page holds it is another.
+ */
 export function renameFrame(root: string, from: string, to: string): Refusal | { kind: "renamed" } {
-	if (!isSafeName(from)) return refuse(400, `not a frame name: "${from}"`);
-	if (!isSafeName(to)) return refuse(400, `not a frame name: "${to}"`);
+	if (!isFramePath(from)) return refuse(400, `not a frame name: "${from}"`);
+	if (!isFramePath(to)) return refuse(400, `not a frame name: "${to}"`);
 	// a frame renamed to what it is already called is a request already answered
 	if (from === to) return { kind: "renamed" };
+	if (pageParent(from) !== pageParent(to)) {
+		return refuse(400, "a rename keeps a frame on its page; moving it onto another page is a move");
+	}
 	const designDir = realDesignDir(root);
 	const found = lookupFrame(root, from);
-	if (found.kind === "collision") return refuse(409, describeCollision(from, found.paths));
 	if (found.kind === "missing") return refuse(404, describeMissingFrame(from));
-	const claimed = claimedNames(root);
-	const page = found.page ?? ROOT_PAGE;
-	const target = frameFolderIn(designDir, page, to);
-	if (claimed.frames.has(to)) return refuse(409, describeClaimed(to));
-	// a page holds its name against frames wherever that page sits, and holds it
-	// project-wide: only a frame landing beside the page's own folder would be
-	// stopped by the disk, so the disk alone would let a frame elsewhere take a
-	// name a page already answers to
-	if (claimed.pageNames.has(to) || existsSync(target)) return refuse(409, describeTaken(page, to));
-	const stores = nameKeyedStores(root, from, to);
+	const target = pageFolder(designDir, to);
+	if (existsSync(target)) return refuse(409, describeTaken(pageParent(to), pageName(to)));
 	renameSync(resolveDesignPath(designDir, found.dir), target);
-	for (const store of stores) carry(store);
+	renamed(root, designDir, { frames: [{ from, to }] });
 	return { kind: "renamed" };
 }
 
@@ -163,16 +145,14 @@ export function renamePage(root: string, from: string, to: string): Refusal | { 
 		return refuse(400, "a rename keeps a page where it is — moving it into another page is a move");
 	}
 	const designDir = realDesignDir(root);
-	const claimed = claimedNames(root);
-	if (!claimed.pages.has(from)) return refuse(404, describeMissingPage(from));
-	const name = pageName(to);
+	if (!pagePaths(root).has(from)) return refuse(404, describeMissingPage(from));
 	const target = pageFolder(designDir, to);
-	if (claimed.frames.has(name)) return refuse(409, describeClaimed(name));
-	if (claimed.pages.has(to) || existsSync(target)) return refuse(409, describeTaken(pageParent(to), name));
+	if (existsSync(target)) return refuse(409, describeTaken(pageParent(to), pageName(to)));
 	renameSync(pageFolder(designDir, from), target);
 	// the page's own bookkeeping follows the folder: the page the canvas is on,
 	// every camera inside it, and its place and contents in the rail's order
 	carryPage(root, from, to);
+	renamed(root, designDir, { pages: [{ from, to }] });
 	return { kind: "renamed" };
 }
 
@@ -188,13 +168,13 @@ export function movePages(root: string, pages: readonly string[], parent: string
 	if (pages.length === 0) return refuse(400, "a move must name at least one page");
 	if (!isPageSlot(parent)) return refuse(400, `not a page name: "${parent}"`);
 	const designDir = realDesignDir(root);
-	const claimed = claimedNames(root);
-	if (parent !== ROOT_PAGE && !claimed.pages.has(parent)) return refuse(404, describeMissingPage(parent));
+	const known = pagePaths(root);
+	if (parent !== ROOT_PAGE && !known.has(parent)) return refuse(404, describeMissingPage(parent));
 	const named = [...new Set(pages)];
 	const moves: { from: string; to: string; dir: string; target: string }[] = [];
 	for (const page of named) {
 		if (!isPagePath(page)) return refuse(400, `not a page name: "${page}"`);
-		if (!claimed.pages.has(page)) return refuse(404, describeMissingPage(page));
+		if (!known.has(page)) return refuse(404, describeMissingPage(page));
 		if (page === parent || pageWithin(page, parent)) {
 			return refuse(409, `"${page}" cannot move into itself or into a page inside it`);
 		}
@@ -204,7 +184,9 @@ export function movePages(root: string, pages: readonly string[], parent: string
 		if (pageParent(page) === parent) continue;
 		const to = pageUnder(parent, pageName(page));
 		const target = pageFolder(designDir, to);
-		if (existsSync(target)) return refuse(409, describeTaken(parent, pageName(page)));
+		if (existsSync(target) || moves.some((move) => move.to === to)) {
+			return refuse(409, describeTaken(parent, pageName(page)));
+		}
 		moves.push({ from: page, to, dir: pageFolder(designDir, page), target });
 	}
 	for (const move of moves) {
@@ -213,6 +195,7 @@ export function movePages(root: string, pages: readonly string[], parent: string
 		reaimEscapingImports(designDir, move.dir, move.target);
 		carryPage(root, move.from, move.to);
 	}
+	renamed(root, designDir, { pages: moves.map(({ from, to }) => ({ from, to })) });
 	return { kind: "moved" };
 }
 
@@ -220,28 +203,28 @@ export function moveFrames(root: string, frames: readonly string[], page: string
 	if (frames.length === 0) return refuse(400, "a move must name at least one frame");
 	if (!isPageSlot(page)) return refuse(400, `not a page name: "${page}"`);
 	const designDir = realDesignDir(root);
-	if (page !== ROOT_PAGE && !claimedNames(root).pages.has(page)) return refuse(404, describeMissingPage(page));
-	const moves: Carry[] = [];
+	if (page !== ROOT_PAGE && !pagePaths(root).has(page)) return refuse(404, describeMissingPage(page));
+	const moves: { from: string; to: string; dir: string; target: string }[] = [];
 	for (const name of new Set(frames)) {
-		if (!isSafeName(name)) return refuse(400, `not a frame name: "${name}"`);
+		if (!isFramePath(name)) return refuse(400, `not a frame name: "${name}"`);
 		const found = lookupFrame(root, name);
-		if (found.kind === "collision") return refuse(409, describeCollision(name, found.paths));
 		if (found.kind === "missing") return refuse(404, describeMissingFrame(name));
 		// a frame already on the page it is being moved to has arrived
-		if ((found.page ?? ROOT_PAGE) === page) continue;
-		const target = frameFolderIn(designDir, page, name);
-		if (existsSync(target)) return refuse(409, `${describePage(page)} already holds a folder named "${name}"`);
-		moves.push({ from: resolveDesignPath(designDir, found.dir), to: target });
+		if (pageParent(name) === page) continue;
+		const to = pageUnder(page, pageName(name));
+		const target = pageFolder(designDir, to);
+		if (existsSync(target) || moves.some((move) => move.to === to)) {
+			return refuse(409, `${describePage(page)} already holds a folder named "${pageName(name)}"`);
+		}
+		moves.push({ from: name, to, dir: resolveDesignPath(designDir, found.dir), target });
 	}
-	// name is identity, so the folder is the whole move: geometry, stills, the
-	// frame's URL and every flow into it are untouched.
-	// The one thing inside it a move does touch is a `../` import (#273): its
-	// target stayed put while the folder's depth changed, so the import is
-	// re-aimed rather than the frame left broken
+	// the folder carries geometry and source; a `../` import inside it is
+	// re-aimed (#273) because its target stayed put while the depth changed
 	for (const move of moves) {
-		renameSync(move.from, move.to);
-		reaimEscapingImports(designDir, move.from, move.to);
+		renameSync(move.dir, move.target);
+		reaimEscapingImports(designDir, move.dir, move.target);
 	}
+	renamed(root, designDir, { frames: moves.map(({ from, to }) => ({ from, to })) });
 	return { kind: "moved" };
 }
 
@@ -253,101 +236,72 @@ export function duplicateFrames(
 	if (frames.length === 0) return refuse(400, "a duplicate must name at least one frame");
 	if (page !== undefined && !isPageSlot(page)) return refuse(400, `not a page name: "${page}"`);
 	const designDir = realDesignDir(root);
-	const claimed = claimedNames(root);
-	if (page !== undefined && page !== ROOT_PAGE && !claimed.pages.has(page)) {
+	if (page !== undefined && page !== ROOT_PAGE && !pagePaths(root).has(page)) {
 		return refuse(404, describeMissingPage(page));
 	}
 	const minted = new Set<string>();
-	const plan: { move: Carry; copy: FrameCopy }[] = [];
+	const plan: { from: string; to: string; copy: FrameCopy }[] = [];
 	for (const name of new Set(frames)) {
-		if (!isSafeName(name)) return refuse(400, `not a frame name: "${name}"`);
+		if (!isFramePath(name)) return refuse(400, `not a frame name: "${name}"`);
 		const found = lookupFrame(root, name);
-		if (found.kind === "collision") return refuse(409, describeCollision(name, found.paths));
 		if (found.kind === "missing") return refuse(404, describeMissingFrame(name));
 		// with no page asked for, a copy stays where its original lives
-		const landing = page ?? found.page ?? ROOT_PAGE;
-		const fresh = freshName(
-			name,
-			(candidate) =>
-				claimed.frames.has(candidate) ||
-				claimed.pageNames.has(candidate) ||
-				minted.has(candidate) ||
-				existsSync(frameFolderIn(designDir, landing, candidate)),
-		);
-		minted.add(fresh);
+		const landing = page ?? pageParent(name);
+		const fresh = freshName(pageName(name), (candidate) => {
+			const at = pageUnder(landing, candidate);
+			return minted.has(at) || existsSync(pageFolder(designDir, at));
+		});
+		const to = pageUnder(landing, fresh);
+		minted.add(to);
 		plan.push({
-			move: { from: resolveDesignPath(designDir, found.dir), to: frameFolderIn(designDir, landing, fresh) },
-			copy: { from: name, to: fresh, ...(landing === ROOT_PAGE ? {} : { page: landing }) },
+			from: resolveDesignPath(designDir, found.dir),
+			to: pageFolder(designDir, to),
+			copy: { from: name, to, ...(landing === ROOT_PAGE ? {} : { page: landing }) },
 		});
 	}
 	// the whole folder, sidecar included: a copy lands where its original sits
 	for (const step of plan) {
-		cpSync(step.move.from, step.move.to, { recursive: true });
+		cpSync(step.from, step.to, { recursive: true });
 		// a copy asked onto another page may land at another depth (#273)
-		reaimEscapingImports(designDir, step.move.from, step.move.to);
+		reaimEscapingImports(designDir, step.from, step.to);
 	}
 	return { kind: "duplicated", copies: plan.map((step) => step.copy) };
 }
 
+/**
+ * A page copied beside itself, every frame and page inside it keeping its own
+ * name: a name only has to be free among its siblings, and the copy's are new.
+ */
 export function duplicatePage(
 	root: string,
 	name: string,
 ): Refusal | { kind: "duplicated"; page: string; copies: FrameCopy[] } {
 	if (!isPagePath(name)) return refuse(400, `not a page name: "${name}"`);
 	const designDir = realDesignDir(root);
-	const claimed = claimedNames(root);
-	if (!claimed.pages.has(name)) return refuse(404, describeMissingPage(name));
+	if (!pagePaths(root).has(name)) return refuse(404, describeMissingPage(name));
 	const source = pageFolder(designDir, name);
 	const parent = pageParent(name);
-	// a page's name only has to be free where the copy lands, because a page is
-	// its path: two pages under different parents may share one
-	const fresh = freshName(
-		pageName(name),
-		(candidate) =>
-			claimed.frames.has(candidate) ||
-			claimed.pages.has(pageUnder(parent, candidate)) ||
-			existsSync(pageFolder(designDir, pageUnder(parent, candidate))),
+	const fresh = freshName(pageName(name), (candidate) =>
+		existsSync(pageFolder(designDir, pageUnder(parent, candidate))),
 	);
 	const page = pageUnder(parent, fresh);
-	const target = pageFolder(designDir, page);
-	// every frame inside is renamed as it lands, at whatever depth it sits: two
-	// claimants of one name is a collision, so a page copy that kept its frames'
-	// names would make one per frame. The name this call is minting counts as
-	// claimed the moment it is chosen.
-	const minted = new Set<string>([fresh]);
-	// the copy is the source byte for byte, so what a child name would collide
-	// with there is what it collides with here — asked before anything is written
+	cpSync(source, pageFolder(designDir, page), { recursive: true });
 	const copies = frameFoldersUnder(source, designDir).map((held) => {
-		const under = pageParent(held);
-		const child = pageName(held);
-		const renamed = freshName(
-			child,
-			(candidate) =>
-				claimed.frames.has(candidate) ||
-				claimed.pageNames.has(candidate) ||
-				minted.has(candidate) ||
-				existsSync(join(source, under, candidate)),
-		);
-		minted.add(renamed);
-		return { held, under, from: child, to: renamed, page: pageUnder(page, under) };
+		const landed = pageParent(pageUnder(page, held));
+		return { from: pageUnder(name, held), to: pageUnder(page, held), page: landed };
 	});
-	cpSync(source, target, { recursive: true });
-	for (const copy of copies) renameSync(join(target, copy.held), join(target, copy.under, copy.to));
-	return { kind: "duplicated", page, copies: copies.map(({ from, to, page }) => ({ from, to, page })) };
+	return { kind: "duplicated", page, copies };
 }
 
 export function createPage(root: string, page: string): Refusal | { kind: "created" } {
 	if (!isPagePath(page)) return refuse(400, `not a page name: "${page}"`);
 	const designDir = realDesignDir(root);
-	const claimed = claimedNames(root);
 	const parent = pageParent(page);
 	// a page inside a page nothing holds has nowhere to be born; spool never
 	// mints the folders above it as a side effect of naming this one
-	if (parent !== ROOT_PAGE && !claimed.pages.has(parent)) return refuse(404, describeMissingPage(parent));
-	const name = pageName(page);
-	if (claimed.frames.has(name)) return refuse(409, describeClaimed(name));
+	if (parent !== ROOT_PAGE && !pagePaths(root).has(parent)) return refuse(404, describeMissingPage(parent));
 	const target = pageFolder(designDir, page);
-	if (claimed.pages.has(page) || existsSync(target)) return refuse(409, describeTaken(parent, name));
+	if (existsSync(target)) return refuse(409, describeTaken(parent, pageName(page)));
 	// an entry-less safe folder is already a page: nothing else has to be written
 	mkdirSync(target, { recursive: true });
 	return { kind: "created" };
@@ -356,7 +310,7 @@ export function createPage(root: string, page: string): Refusal | { kind: "creat
 /** Where a page's folder is, for the one caller that moves it to the OS Trash. */
 export function pageDir(root: string, page: string): Refusal | { kind: "found"; dir: string } {
 	if (!isPagePath(page)) return refuse(400, `not a page name: "${page}"`);
-	if (!claimedNames(root).pages.has(page)) return refuse(404, describeMissingPage(page));
+	if (!pagePaths(root).has(page)) return refuse(404, describeMissingPage(page));
 	return { kind: "found", dir: pageFolder(realDesignDir(root), page) };
 }
 
@@ -386,9 +340,8 @@ function describePage(page: string): string {
 
 /**
  * `<name>-copy`, `<name>-copy-2`, … — the first spelling nothing claims. What
- * claims one is the caller's to say: a frame copy has to miss every frame name
- * in the project, every name this same request already minted, and whatever
- * already sits where it would land.
+ * claims one is the caller's to say: whatever already sits where it would land,
+ * and every name this same request already minted.
  */
 function freshName(name: string, taken: (candidate: string) => boolean): string {
 	const base = `${name}-copy`;
@@ -401,8 +354,8 @@ function freshName(name: string, taken: (candidate: string) => boolean): string 
 
 /**
  * Every frame folder inside a page, as its path relative to that page —
- * discovery's own rule, asked of one subtree. A page copy has to rename every
- * frame it took, and how deep one sits changes nothing about that.
+ * discovery's own rule, asked of one subtree. A page that moves or is copied
+ * carries every frame inside it, at whatever depth it sits.
  */
 function frameFoldersUnder(dir: string, designDir: string): string[] {
 	const found: string[] = [];

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { FORMAT_VERSION } from "../templates";
 import {
 	makeApp,
 	makeProject,
@@ -233,7 +234,7 @@ describe("frame projection", () => {
 		// a project whose frames/ was never created (or was removed) still projects
 		const bare = makeTempDir();
 		mkdirSync(join(bare, "design"), { recursive: true });
-		writeFileSync(join(bare, "design", "canvas.json"), '{ "format": 1 }\n');
+		writeFileSync(join(bare, "design", "canvas.json"), `${JSON.stringify({ format: FORMAT_VERSION })}\n`);
 		expect(existsSync(join(bare, "design", "frames"))).toBe(false);
 	});
 });
@@ -270,32 +271,32 @@ describe("the project registry for home", () => {
 		expect(projects[1]).toMatchObject({ frameCount: 1, covers: [] });
 	});
 
-	it("summarizes across pages: three freshest covers, a name claimed twice counted as none", async () => {
+	it("summarizes across pages: three freshest covers, one folder name on two pages counted twice", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "one", frameTsx("one"));
 		writeFrame(root, "two", frameTsx("two"));
 		writePageFrame(root, "shop", "three", frameTsx("three"));
 		writePageFrame(root, "shop", "four", frameTsx("four"));
-		// the same name from two folders is a collision, and a collision is not a frame
+		// the same folder name on two pages is two frames, each named by its path
 		writeFrame(root, "twin", frameTsx("twin"));
 		writePageFrame(root, "shop", "twin", frameTsx("twin"));
 		const app = makeApp(spoolDir);
-		for (const frame of ["one", "two", "three", "four"]) {
-			expect((await putCover(app, name, frame, coverBody(PNG_BYTES))).status).toBe(200);
+		for (const frame of ["one", "two", "shop/three", "shop/four"]) {
+			expect((await putCover(app, name, encodeURIComponent(frame), coverBody(PNG_BYTES))).status).toBe(200);
 		}
 		// the store's own folder times order the cards, so name them rather than race the clock
-		const shotAt = { one: 1_000, two: 4_000, three: 2_000, four: 3_000 };
+		const shotAt = { one: 1_000, two: 4_000, "shop/three": 2_000, "shop/four": 3_000 };
 		for (const [frame, seconds] of Object.entries(shotAt)) {
-			utimesSync(join(root, "design", ".spool", "thumbs", frame), seconds, seconds);
+			utimesSync(join(root, "design", ".spool", "thumbs", encodeURIComponent(frame)), seconds, seconds);
 		}
 
 		const { projects } = (await (await app.request("/api/projects")).json()) as {
 			projects: { frameCount: number; covers: { frame: string }[] }[];
 		};
 
-		expect(projects[0]?.frameCount).toBe(4);
-		expect(projects[0]?.covers.map((cover) => cover.frame)).toEqual(["two", "four", "three"]);
+		expect(projects[0]?.frameCount).toBe(6);
+		expect(projects[0]?.covers.map((cover) => cover.frame)).toEqual(["two", "shop/four", "shop/three"]);
 	});
 
 	it("keeps listing projects whose disk has vanished", async () => {
@@ -1318,7 +1319,7 @@ describe("start designing", () => {
 		for (const project of projects) {
 			expect(existsSync(join(project.root, "design", "AGENTS.md"))).toBe(true);
 			expect(JSON.parse(readFileSync(join(project.root, "design", "canvas.json"), "utf8"))).toEqual({
-				format: 1,
+				format: FORMAT_VERSION,
 				history: false,
 			});
 			expect(readSession(spoolDir).open).toContain(project.root);

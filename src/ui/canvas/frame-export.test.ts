@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { framesInCanvasOrder, pngBytesFromImageBlob } from "./frame-export";
+import { framesInCanvasOrder, pngBytesFromImageBlob, pngFileName } from "./frame-export";
 
 import { buildFramePdf } from "./frame-pdf";
 
@@ -43,5 +43,13 @@ describe("frame export artifacts", () => {
 		const blob = new Blob([PNG_BYTES], { type: "image/png" });
 
 		expect(await pngBytesFromImageBlob(blob, 100, 200)).toEqual(PNG_BYTES);
+	});
+});
+
+describe("pngFileName", () => {
+	it("keeps the page in front of the name, since a file name cannot hold a slash", () => {
+		expect(pngFileName("home")).toBe("home.png");
+		expect(pngFileName("shop/checkout")).toBe("shop-checkout.png");
+		expect(pngFileName("explorations/chat/intro")).toBe("explorations-chat-intro.png");
 	});
 });

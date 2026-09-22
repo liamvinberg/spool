@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { FORMAT_VERSION } from "../templates";
 import {
 	COVER_PNG,
 	makeApp,
@@ -14,14 +15,14 @@ import {
 /**
  * The explorer's file operations and its order store (#228).
  *
- * Every verb here moves or copies a folder and never authors frame source —
- * the one write inside a moved folder is the re-aim of `../` imports whose
- * targets stayed put (#273, `import-aim.test.ts` holds its rules). The two
- * things these hold the daemon to are the ones a folder move can quietly break:
- * a bare frame name is identity across the whole project, so a landing name
- * that is claimed anywhere is refused rather than guessed at; and the stores
- * keyed by that name — a frame's covers, a page's camera and its place in the
- * rail — follow the name when it changes.
+ * Every verb here moves or copies a folder. A frame is named by its path under
+ * frames/ (#336), so a name only has to be free among the folders beside it,
+ * and the disk is the whole of what refuses one. What a folder move could
+ * quietly break is everything keyed by a name that changed: a frame's covers,
+ * a page's camera and its place in the rail, and every walk into a moved frame,
+ * which is written again at its new name. The one other write is the re-aim of
+ * `../` imports whose targets stayed put (#273, `import-aim.test.ts` holds its
+ * rules). A copy changes no name, so it rewrites no walk.
  */
 
 const label = (text: string) => `export default function F() {\n\treturn <p>${text}</p>;\n}\n`;
@@ -46,7 +47,7 @@ const readJson = (file: string): unknown => JSON.parse(readFileSync(file, "utf8"
 async function putCover(app: ReturnType<typeof makeApp>, name: string, frame: string): Promise<string> {
 	const body = new FormData();
 	body.append("cover", new Blob([COVER_PNG]));
-	const res = await app.request(`/api/p/${name}/thumbs/${frame}`, { method: "PUT", body });
+	const res = await app.request(`/api/p/${name}/thumbs/${encodeURIComponent(frame)}`, { method: "PUT", body });
 	return ((await res.json()) as { hash: string }).hash;
 }
 
@@ -56,9 +57,12 @@ describe("renaming a frame", () => {
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		writeDesignFile(root, "frames/shop/checkout/frame.json", '{ "x": 10, "y": 20, "w": 390, "h": 844 }\n');
 		const app = makeApp(spoolDir);
-		const hash = await putCover(app, name, "checkout");
+		const hash = await putCover(app, name, "shop/checkout");
 
-		const res = await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "checkout", to: "basket" }));
+		const res = await app.request(
+			`/api/p/${name}/frames/rename`,
+			jsonPost({ from: "shop/checkout", to: "shop/basket" }),
+		);
 
 		expect(res.status).toBe(204);
 		expect(existsSync(designFile(root, "frames", "shop", "checkout"))).toBe(false);
@@ -70,46 +74,71 @@ describe("renaming a frame", () => {
 			w: 390,
 			h: 844,
 		});
-		// the cover store is keyed by the bare name: the picture follows it
-		expect(existsSync(designFile(root, ".spool", "thumbs", "checkout"))).toBe(false);
-		expect(existsSync(designFile(root, ".spool", "thumbs", "basket", `${hash}.png`))).toBe(true);
-		expect((await app.request(`/covers/${name}/basket/${hash}`)).status).toBe(200);
+		// the cover store is keyed by the name, one segment per frame: the picture follows it
+		expect(existsSync(designFile(root, ".spool", "thumbs", "shop%2Fcheckout"))).toBe(false);
+		expect(existsSync(designFile(root, ".spool", "thumbs", "shop%2Fbasket", `${hash}.png`))).toBe(true);
+		expect((await app.request(`/covers/${name}/shop%2Fbasket/${hash}`)).status).toBe(200);
 
 		const { frames } = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
 			frames: { name: string; page?: string; cover?: { hash: string } }[];
 		};
-		expect(frames).toMatchObject([{ name: "basket", page: "shop", cover: { hash } }]);
+		expect(frames).toMatchObject([{ name: "shop/basket", page: "shop", cover: { hash } }]);
 	});
 
-	it("refuses a name claimed anywhere in the project, on any page", async () => {
+	it("refuses only a name the folders beside it already hold", async () => {
 		const { spoolDir, root, name } = explorerProject();
 		writeFrame(root, "home", label("home"));
 		writePageFrame(root, "shop", "checkout", label("checkout"));
-		writePageFrame(root, "admin", "users", label("users"));
+		writePageFrame(root, "shop", "cart", label("cart"));
 		const app = makeApp(spoolDir);
 
-		// bare names are identity project-wide: another page's frame still claims one
-		const taken = await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "home", to: "checkout" }));
+		// a frame beside it holds the name
+		const taken = await app.request(
+			`/api/p/${name}/frames/rename`,
+			jsonPost({ from: "shop/checkout", to: "shop/cart" }),
+		);
 		expect(taken.status).toBe(409);
-		expect(await taken.text()).toContain("identity");
-		expect(existsSync(designFile(root, "frames", "home", "frame.tsx"))).toBe(true);
+		expect(await taken.text()).toBe('design/frames/shop/ already holds a folder named "cart"');
+		expect(existsSync(designFile(root, "frames", "shop", "checkout", "frame.tsx"))).toBe(true);
 
-		// a page folder holding the name is a collision on disk just the same
+		// a page folder beside it holds the name just the same
 		const page = await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "home", to: "shop" }));
 		expect(page.status).toBe(409);
 		expect(existsSync(designFile(root, "frames", "home", "frame.tsx"))).toBe(true);
 
-		// and a page holds its name against a frame that lives inside another page,
-		// where the landing folder collides with nothing on disk at all
-		const inside = await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "checkout", to: "admin" }));
-		expect(inside.status).toBe(409);
+		// the same leaf on another page is another name, so it is free
+		const elsewhere = await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "home", to: "checkout" }));
+		expect(elsewhere.status).toBe(204);
+		const { frames } = (await (await app.request(`/api/p/${name}/frames`)).json()) as { frames: { name: string }[] };
+		expect(frames.map((frame) => frame.name)).toEqual(["checkout", "shop/cart", "shop/checkout"]);
+	});
+
+	it("refuses a rename that would change the page holding the frame", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writePageFrame(root, "shop", "checkout", label("checkout"));
+		writePageFrame(root, "admin", "users", label("users"));
+		const app = makeApp(spoolDir);
+
+		const across = await app.request(
+			`/api/p/${name}/frames/rename`,
+			jsonPost({ from: "shop/checkout", to: "admin/checkout" }),
+		);
+		expect(across.status).toBe(400);
+		expect(await across.text()).toContain("a rename keeps a frame on its page");
+		const out = await app.request(
+			`/api/p/${name}/frames/rename`,
+			jsonPost({ from: "shop/checkout", to: "checkout" }),
+		);
+		expect(out.status).toBe(400);
 		expect(existsSync(designFile(root, "frames", "shop", "checkout", "frame.tsx"))).toBe(true);
-		expect(existsSync(designFile(root, "frames", "shop", "admin"))).toBe(false);
+		expect(existsSync(designFile(root, "frames", "admin", "checkout"))).toBe(false);
 	});
 
 	it("404s a frame nothing claims, and 400s names that are not names", async () => {
 		const { spoolDir, root, name } = explorerProject();
 		writeFrame(root, "home", label("home"));
+		// a folder inside a frame is the frame's own business, never a frame
+		writeDesignFile(root, "frames/home/inner/frame.tsx", label("inner"));
 		const app = makeApp(spoolDir);
 
 		expect((await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "ghost", to: "home2" }))).status).toBe(
@@ -122,6 +151,16 @@ describe("renaming a frame", () => {
 			(await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "home", to: ".hidden" }))).status,
 		).toBe(400);
 		expect((await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "home", to: "" }))).status).toBe(400);
+		expect((await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "home", to: "a\\b" }))).status).toBe(
+			400,
+		);
+		expect(
+			(await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "shop//home", to: "shop//away" }))).status,
+		).toBe(400);
+		// a frame is never a page, so nothing inside one is a frame
+		expect(
+			(await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "home/inner", to: "home/outer" }))).status,
+		).toBe(404);
 		expect((await app.request(`/api/p/${name}/frames/rename`, jsonPost(null))).status).toBe(400);
 		expect(existsSync(designFile(root, "frames", "home", "frame.tsx"))).toBe(true);
 	});
@@ -154,13 +193,13 @@ describe("renaming a page", () => {
 		expect(res.status).toBe(204);
 		expect(existsSync(designFile(root, "frames", "shop"))).toBe(false);
 		expect(existsSync(designFile(root, "frames", "store", "checkout", "frame.tsx"))).toBe(true);
-		// the frame's identity is its leaf name, so the page move never touched it
+		// a frame is named by its path, so every frame inside the page changed name with it
 		const { frames, pages } = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
 			frames: { name: string; page?: string }[];
 			pages: string[];
 		};
 		expect(pages).toEqual(["store"]);
-		expect(frames).toMatchObject([{ name: "checkout", page: "store" }]);
+		expect(frames).toMatchObject([{ name: "store/checkout", page: "store" }]);
 
 		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({
 			camera: { x: 0, y: 0, k: 1 },
@@ -197,7 +236,7 @@ describe("renaming a page", () => {
 });
 
 describe("moving frames between pages", () => {
-	it("moves folders onto a page and back to the root, keeping every name-keyed store", async () => {
+	it("moves folders onto a page and back to the root, carrying every name-keyed store", async () => {
 		const { spoolDir, root, name } = explorerProject();
 		writeFrame(root, "home", label("home"));
 		writeFrame(root, "detail", label("detail"));
@@ -214,11 +253,12 @@ describe("moving frames between pages", () => {
 		expect(existsSync(designFile(root, "frames", "shop", "home", "frame.tsx"))).toBe(true);
 		expect(existsSync(designFile(root, "frames", "shop", "detail", "frame.tsx"))).toBe(true);
 		expect(existsSync(designFile(root, "frames", "home"))).toBe(false);
-		// name is identity, so the cover keyed by it never moved and still answers
-		expect((await app.request(`/covers/${name}/home/${hash}`)).status).toBe(200);
+		// the move changed the frame's name, and its cover followed it there
+		expect(existsSync(designFile(root, ".spool", "thumbs", "home"))).toBe(false);
+		expect((await app.request(`/covers/${name}/shop%2Fhome/${hash}`)).status).toBe(200);
 
 		// "" is the root page, the same spelling the order store uses
-		const back = await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["checkout"], page: "" }));
+		const back = await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["shop/checkout"], page: "" }));
 
 		expect(back.status).toBe(204);
 		expect(existsSync(designFile(root, "frames", "checkout", "frame.tsx"))).toBe(true);
@@ -227,9 +267,32 @@ describe("moving frames between pages", () => {
 		};
 		expect(frames).toMatchObject([
 			{ name: "checkout" },
-			{ name: "detail", page: "shop" },
-			{ name: "home", page: "shop" },
+			{ name: "shop/detail", page: "shop" },
+			{ name: "shop/home", page: "shop" },
 		]);
+	});
+
+	it("refuses a landing the page already holds, and two frames landing on one name", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writeFrame(root, "checkout", label("root checkout"));
+		writePageFrame(root, "shop", "checkout", label("shop checkout"));
+		writePageFrame(root, "admin", "cart", label("admin cart"));
+		writePageFrame(root, "store", "cart", label("store cart"));
+		const app = makeApp(spoolDir);
+
+		const taken = await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["checkout"], page: "shop" }));
+		expect(taken.status).toBe(409);
+		expect(existsSync(designFile(root, "frames", "checkout", "frame.tsx"))).toBe(true);
+
+		const twice = await app.request(
+			`/api/p/${name}/frames/move`,
+			jsonPost({ frames: ["admin/cart", "store/cart"], page: "" }),
+		);
+		expect(twice.status).toBe(409);
+		// all-or-nothing: neither of them moved
+		expect(existsSync(designFile(root, "frames", "admin", "cart", "frame.tsx"))).toBe(true);
+		expect(existsSync(designFile(root, "frames", "store", "cart", "frame.tsx"))).toBe(true);
+		expect(existsSync(designFile(root, "frames", "cart"))).toBe(false);
 	});
 
 	it("re-aims a ../ import at shared/ as the folder changes depth (#273)", async () => {
@@ -256,7 +319,10 @@ describe("moving frames between pages", () => {
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		const app = makeApp(spoolDir);
 
-		const res = await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["checkout"], page: "shop" }));
+		const res = await app.request(
+			`/api/p/${name}/frames/move`,
+			jsonPost({ frames: ["shop/checkout"], page: "shop" }),
+		);
 
 		expect(res.status).toBe(204);
 		expect(existsSync(designFile(root, "frames", "shop", "checkout", "frame.tsx"))).toBe(true);
@@ -312,18 +378,18 @@ describe("duplicating frames", () => {
 		expect(readFileSync(designFile(root, "frames", "home", "frame.tsx"), "utf8")).toBe(label("home"));
 	});
 
-	it("numbers a copy past every name the projection already holds", async () => {
+	it("numbers a copy past the names beside it, never those on another page", async () => {
 		const { spoolDir, root, name } = explorerProject();
 		writeFrame(root, "home", label("home"));
 		writeFrame(root, "home-copy", label("an earlier copy"));
-		// the taken name may be on another page: identity is project-wide
+		// a name only has to be free where the copy lands
 		writePageFrame(root, "shop", "home-copy-2", label("another"));
 		const app = makeApp(spoolDir);
 
 		const res = await app.request(`/api/p/${name}/frames/duplicate`, jsonPost({ frames: ["home"] }));
 
-		expect(await res.json()).toEqual({ frames: [{ from: "home", to: "home-copy-3" }] });
-		expect(existsSync(designFile(root, "frames", "home-copy-3", "frame.tsx"))).toBe(true);
+		expect(await res.json()).toEqual({ frames: [{ from: "home", to: "home-copy-2" }] });
+		expect(existsSync(designFile(root, "frames", "home-copy-2", "frame.tsx"))).toBe(true);
 	});
 
 	it("mints a distinct name per copy in one request, and lands them on a named page", async () => {
@@ -331,28 +397,32 @@ describe("duplicating frames", () => {
 		writeFrame(root, "home", label("home"));
 		writeFrame(root, "detail", label("detail"));
 		writePageFrame(root, "shop", "checkout", label("checkout"));
+		writePageFrame(root, "admin", "home", label("admin home"));
 		const app = makeApp(spoolDir);
 
 		const res = await app.request(
 			`/api/p/${name}/frames/duplicate`,
-			jsonPost({ frames: ["home", "detail", "checkout"], page: "shop" }),
+			jsonPost({ frames: ["home", "detail", "shop/checkout", "admin/home"], page: "shop" }),
 		);
 
+		// two copies of a "home" land on one page, so the second is numbered past the first
 		expect(await res.json()).toEqual({
 			frames: [
-				{ from: "home", to: "home-copy", page: "shop" },
-				{ from: "detail", to: "detail-copy", page: "shop" },
-				{ from: "checkout", to: "checkout-copy", page: "shop" },
+				{ from: "home", to: "shop/home-copy", page: "shop" },
+				{ from: "detail", to: "shop/detail-copy", page: "shop" },
+				{ from: "shop/checkout", to: "shop/checkout-copy", page: "shop" },
+				{ from: "admin/home", to: "shop/home-copy-2", page: "shop" },
 			],
 		});
 		const { frames } = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
 			frames: { name: string; page?: string }[];
 		};
 		expect(frames.filter((frame) => frame.page === "shop").map((frame) => frame.name)).toEqual([
-			"checkout",
-			"checkout-copy",
-			"detail-copy",
-			"home-copy",
+			"shop/checkout",
+			"shop/checkout-copy",
+			"shop/detail-copy",
+			"shop/home-copy",
+			"shop/home-copy-2",
 		]);
 	});
 
@@ -361,25 +431,46 @@ describe("duplicating frames", () => {
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		const app = makeApp(spoolDir);
 
-		const res = await app.request(`/api/p/${name}/frames/duplicate`, jsonPost({ frames: ["checkout"] }));
+		const res = await app.request(`/api/p/${name}/frames/duplicate`, jsonPost({ frames: ["shop/checkout"] }));
 
-		expect(await res.json()).toEqual({ frames: [{ from: "checkout", to: "checkout-copy", page: "shop" }] });
+		expect(await res.json()).toEqual({
+			frames: [{ from: "shop/checkout", to: "shop/checkout-copy", page: "shop" }],
+		});
 		expect(existsSync(designFile(root, "frames", "shop", "checkout-copy", "frame.tsx"))).toBe(true);
 	});
 
-	it("never mints a name a page already answers to", async () => {
+	it("never mints a name a page folder beside it holds, and ignores pages elsewhere", async () => {
 		const { spoolDir, root, name } = explorerProject();
 		writePageFrame(root, "shop", "checkout", label("checkout"));
-		writePageFrame(root, "checkout-copy", "users", label("users"));
+		writePageFrame(root, "shop/checkout-copy", "users", label("users"));
+		writePageFrame(root, "checkout-copy-2", "users", label("users"));
 		const app = makeApp(spoolDir);
 
-		// the copy lands inside shop, so nothing on disk stands where it would go —
-		// only the page list says the first spelling is already answered to
-		const res = await app.request(`/api/p/${name}/frames/duplicate`, jsonPost({ frames: ["checkout"] }));
+		const res = await app.request(`/api/p/${name}/frames/duplicate`, jsonPost({ frames: ["shop/checkout"] }));
 
-		expect(await res.json()).toEqual({ frames: [{ from: "checkout", to: "checkout-copy-2", page: "shop" }] });
+		expect(await res.json()).toEqual({
+			frames: [{ from: "shop/checkout", to: "shop/checkout-copy-2", page: "shop" }],
+		});
 		expect(existsSync(designFile(root, "frames", "shop", "checkout-copy-2", "frame.tsx"))).toBe(true);
-		expect(existsSync(designFile(root, "frames", "shop", "checkout-copy"))).toBe(false);
+	});
+
+	it("rewrites no walk, because the frame it copied still answers to its name", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		const home = 'export default () => <a data-go="shop/checkout">buy</a>;\n';
+		const checkout = 'export default () => <a data-go="shop/checkout">again</a>;\n';
+		writeFrame(root, "home", home);
+		writePageFrame(root, "shop", "checkout", checkout);
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(
+			`/api/p/${name}/frames/duplicate`,
+			jsonPost({ frames: ["shop/checkout"], page: "" }),
+		);
+
+		expect(await res.json()).toEqual({ frames: [{ from: "shop/checkout", to: "checkout-copy" }] });
+		expect(readFileSync(designFile(root, "frames", "home", "frame.tsx"), "utf8")).toBe(home);
+		// the copy walks where its original walked: back to the original
+		expect(readFileSync(designFile(root, "frames", "checkout-copy", "frame.tsx"), "utf8")).toBe(checkout);
 	});
 
 	it("resolves every source before the first copy", async () => {
@@ -401,7 +492,7 @@ describe("duplicating frames", () => {
 });
 
 describe("duplicating a page", () => {
-	it("copies the folder and renames every child, because two claimants is a collision", async () => {
+	it("copies the folder, every frame inside keeping its own name on the new page", async () => {
 		const { spoolDir, root, name } = explorerProject();
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		writePageFrame(root, "shop", "cart", label("cart"));
@@ -414,11 +505,11 @@ describe("duplicating a page", () => {
 		expect(await res.json()).toEqual({
 			page: "shop-copy",
 			frames: [
-				{ from: "cart", to: "cart-copy", page: "shop-copy" },
-				{ from: "checkout", to: "checkout-copy", page: "shop-copy" },
+				{ from: "shop/cart", to: "shop-copy/cart", page: "shop-copy" },
+				{ from: "shop/checkout", to: "shop-copy/checkout", page: "shop-copy" },
 			],
 		});
-		expect(readJson(designFile(root, "frames", "shop-copy", "cart-copy", "frame.json"))).toEqual({
+		expect(readJson(designFile(root, "frames", "shop-copy", "cart", "frame.json"))).toEqual({
 			x: 1,
 			y: 2,
 			w: 390,
@@ -427,26 +518,39 @@ describe("duplicating a page", () => {
 		const projection = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
 			pages: string[];
 			frames: { name: string; page?: string }[];
-			collisions: unknown[];
 		};
 		expect(projection.pages).toEqual(["shop", "shop-copy"]);
-		expect(projection.collisions).toEqual([]);
-		expect(projection.frames.map((frame) => frame.name)).toEqual(["cart", "cart-copy", "checkout", "checkout-copy"]);
+		expect(projection.frames.map((frame) => frame.name).sort()).toEqual(
+			["shop-copy/cart", "shop-copy/checkout", "shop/cart", "shop/checkout"].sort(),
+		);
 	});
 
-	it("never mints a child name a page already answers to", async () => {
+	it("keeps a child's name even where another page holds the same one", async () => {
 		const { spoolDir, root, name } = explorerProject();
+		writeFrame(root, "cart", label("root cart"));
 		writePageFrame(root, "shop", "cart", label("cart"));
-		writePageFrame(root, "cart-copy", "users", label("users"));
 		const app = makeApp(spoolDir);
 
 		const res = await app.request(`/api/p/${name}/pages/duplicate`, jsonPost({ name: "shop" }));
 
 		expect(await res.json()).toEqual({
 			page: "shop-copy",
-			frames: [{ from: "cart", to: "cart-copy-2", page: "shop-copy" }],
+			frames: [{ from: "shop/cart", to: "shop-copy/cart", page: "shop-copy" }],
 		});
-		expect(existsSync(designFile(root, "frames", "shop-copy", "cart-copy-2", "frame.tsx"))).toBe(true);
+		expect(existsSync(designFile(root, "frames", "shop-copy", "cart", "frame.tsx"))).toBe(true);
+	});
+
+	it("leaves every walk where it pointed, the copy's own included", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		const cart = 'export default () => <a data-go="shop/checkout">pay</a>;\n';
+		writePageFrame(root, "shop", "cart", cart);
+		writePageFrame(root, "shop", "checkout", label("checkout"));
+		const app = makeApp(spoolDir);
+
+		expect((await app.request(`/api/p/${name}/pages/duplicate`, jsonPost({ name: "shop" }))).status).toBe(200);
+
+		expect(readFileSync(designFile(root, "frames", "shop", "cart", "frame.tsx"), "utf8")).toBe(cart);
+		expect(readFileSync(designFile(root, "frames", "shop-copy", "cart", "frame.tsx"), "utf8")).toBe(cart);
 	});
 
 	it("copies an empty page, and 404s a page nothing claims", async () => {
@@ -530,7 +634,7 @@ describe("trashing a page", () => {
 
 		const res = await app.request(
 			`/api/p/${name}/trash`,
-			jsonPost({ pages: ["shop"], frames: ["checkout", "home"] }),
+			jsonPost({ pages: ["shop"], frames: ["shop/checkout", "home"] }),
 		);
 
 		expect(res.status).toBe(204);
@@ -550,6 +654,10 @@ describe("trashing a page", () => {
 		expect((await app.request(`/api/p/${name}/trash`, jsonPost({ pages: ["shop"], frames: ["ghost"] }))).status).toBe(
 			404,
 		);
+		// the leaf alone names no frame on a page
+		expect(
+			(await app.request(`/api/p/${name}/trash`, jsonPost({ pages: ["shop"], frames: ["checkout"] }))).status,
+		).toBe(404);
 		expect(moveToTrash).not.toHaveBeenCalled();
 		expect(existsSync(designFile(root, "frames", "shop", "checkout", "frame.tsx"))).toBe(true);
 	});
@@ -558,7 +666,11 @@ describe("trashing a page", () => {
 describe("the order store", () => {
 	it("round-trips through canvas.json, keeping the format stamp and every other field", async () => {
 		const { spoolDir, root, name } = explorerProject();
-		writeDesignFile(root, "canvas.json", `${JSON.stringify({ format: 1, somethingElse: { kept: true } })}\n`);
+		writeDesignFile(
+			root,
+			"canvas.json",
+			`${JSON.stringify({ format: FORMAT_VERSION, somethingElse: { kept: true } })}\n`,
+		);
 		writeFrame(root, "home", label("home"));
 		const app = makeApp(spoolDir);
 
@@ -568,7 +680,11 @@ describe("the order store", () => {
 		const put = await app.request(`/api/p/${name}/order`, jsonPut(order));
 
 		expect(put.status).toBe(204);
-		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1, somethingElse: { kept: true }, order });
+		expect(readJson(designFile(root, "canvas.json"))).toEqual({
+			format: FORMAT_VERSION,
+			somethingElse: { kept: true },
+			order,
+		});
 		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual(order);
 
 		// canvas.json is on disk, so the arrangement outlives the daemon that took it
@@ -599,7 +715,7 @@ describe("the order store", () => {
 		expect((await app.request(`/api/p/${name}/order`, jsonPut({}))).status).toBe(204);
 
 		// the key is gone and everything init wrote is still there
-		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1, history: false });
+		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: FORMAT_VERSION, history: false });
 		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual({});
 	});
 
@@ -677,7 +793,7 @@ describe("the explorer's door", () => {
 		expect(existsSync(designFile(root, "frames", "home", "frame.tsx"))).toBe(true);
 		expect(existsSync(designFile(root, "frames", "shop", "checkout", "frame.tsx"))).toBe(true);
 		expect(existsSync(designFile(root, "frames", "admin"))).toBe(false);
-		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1, history: false });
+		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: FORMAT_VERSION, history: false });
 	});
 });
 
@@ -707,8 +823,8 @@ describe("pages inside pages", () => {
 
 		expect(read.pages).toEqual(["explorations", "explorations/chat", "explorations/landing-page"]);
 		expect(read.frames).toMatchObject([
-			{ name: "agent-chat", page: "explorations/chat" },
-			{ name: "hero", page: "explorations/landing-page" },
+			{ name: "explorations/chat/agent-chat", page: "explorations/chat" },
+			{ name: "explorations/landing-page/hero", page: "explorations/landing-page" },
 			{ name: "home" },
 		]);
 	});
@@ -855,14 +971,16 @@ describe("pages inside pages", () => {
 
 		const copied = await app.request(
 			`/api/p/${name}/frames/duplicate`,
-			jsonPost({ frames: ["hero"], page: "explorations/chat" }),
+			jsonPost({ frames: ["explorations/landing-page/hero"], page: "explorations/chat" }),
 		);
 		expect(await copied.json()).toEqual({
-			frames: [{ from: "hero", to: "hero-copy", page: "explorations/chat" }],
+			frames: [
+				{ from: "explorations/landing-page/hero", to: "explorations/chat/hero-copy", page: "explorations/chat" },
+			],
 		});
 	});
 
-	it("copies a page's whole subtree, renaming every frame at every depth", async () => {
+	it("copies a page's whole subtree, every frame at every depth keeping its own name", async () => {
 		const { spoolDir, root, name } = nested();
 		const app = makeApp(spoolDir);
 
@@ -871,13 +989,19 @@ describe("pages inside pages", () => {
 		expect(await res.json()).toEqual({
 			page: "explorations-copy",
 			frames: [
-				{ from: "agent-chat", to: "agent-chat-copy", page: "explorations-copy/chat" },
-				{ from: "hero", to: "hero-copy", page: "explorations-copy/landing-page" },
+				{
+					from: "explorations/chat/agent-chat",
+					to: "explorations-copy/chat/agent-chat",
+					page: "explorations-copy/chat",
+				},
+				{
+					from: "explorations/landing-page/hero",
+					to: "explorations-copy/landing-page/hero",
+					page: "explorations-copy/landing-page",
+				},
 			],
 		});
-		expect(existsSync(designFile(root, "frames", "explorations-copy", "chat", "agent-chat-copy", "frame.tsx"))).toBe(
-			true,
-		);
+		expect(existsSync(designFile(root, "frames", "explorations-copy", "chat", "agent-chat", "frame.tsx"))).toBe(true);
 	});
 
 	it("takes a page, the pages inside it and their frames as one move to the Trash", async () => {
@@ -899,7 +1023,7 @@ describe("pages inside pages", () => {
 
 		const res = await held.request(
 			`/api/p/${name}/trash`,
-			jsonPost({ pages: ["explorations", "explorations/chat"], frames: ["agent-chat"] }),
+			jsonPost({ pages: ["explorations", "explorations/chat"], frames: ["explorations/chat/agent-chat"] }),
 		);
 
 		expect(res.status).toBe(204);
@@ -1026,5 +1150,111 @@ describe("what a page carries at depth", () => {
 			pages: { "": ["explorations"], explorations: [], "application/chat": ["deeper"] },
 			frames: { "application/chat/deeper": ["buried"] },
 		});
+	});
+});
+
+/**
+ * Walks follow a frame that changed name (#336). A frame is named by its path,
+ * so a gesture that moves one changes what every walk into it has to say, and
+ * the daemon writes each literal the flow map reads at the new name, wherever
+ * it is spelled: another page's frame, the frame itself, a shared/ component.
+ */
+describe("walks into a frame that changed name", () => {
+	async function edges(app: ReturnType<typeof makeApp>, name: string) {
+		const flows = (await (await app.request(`/api/p/${name}/flows`)).json()) as {
+			edges: { from: string; to: string; missing?: true }[];
+		};
+		return flows.edges.map(({ from, to, missing }) => ({ from, to, ...(missing ? { missing } : {}) }));
+	}
+
+	it("rewrites every walk into a renamed page's frames and carries their covers", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writePageFrame(root, "vercel", "buttons", label("vercel buttons"));
+		writeFrame(root, "buttons", label("root buttons"));
+		writePageFrame(
+			root,
+			"docs",
+			"intro",
+			[
+				'import { ui } from "spool";',
+				'import { Nav } from "shared/ui/nav";',
+				"export default () => (",
+				"\t<main>",
+				'\t\t<a data-go="vercel/buttons">see</a>',
+				'\t\t<button onClick={() => ui.go("vercel/buttons")}>go</button>',
+				"\t\t<Nav />",
+				"\t</main>",
+				");",
+				"",
+			].join("\n"),
+		);
+		writeDesignFile(
+			root,
+			"shared/ui/nav.tsx",
+			'export function Nav() {\n\treturn <nav><a data-go="vercel/buttons">v</a><a data-go="buttons">r</a></nav>;\n}\n',
+		);
+		const app = makeApp(spoolDir);
+		const hash = await putCover(app, name, "vercel/buttons");
+
+		const res = await app.request(`/api/p/${name}/pages/rename`, jsonPost({ from: "vercel", to: "acme" }));
+
+		expect(res.status).toBe(204);
+		const intro = readFileSync(designFile(root, "frames", "docs", "intro", "frame.tsx"), "utf8");
+		expect(intro).toContain('data-go="acme/buttons"');
+		expect(intro).toContain('ui.go("acme/buttons")');
+		expect(intro).not.toContain("vercel/buttons");
+		// a shared component names frames the same way, and only the moved one changed
+		expect(readFileSync(designFile(root, "shared", "ui", "nav.tsx"), "utf8")).toBe(
+			'export function Nav() {\n\treturn <nav><a data-go="acme/buttons">v</a><a data-go="buttons">r</a></nav>;\n}\n',
+		);
+		expect(existsSync(designFile(root, ".spool", "thumbs", "vercel%2Fbuttons"))).toBe(false);
+		expect((await app.request(`/covers/${name}/acme%2Fbuttons/${hash}`)).status).toBe(200);
+		expect(await edges(app, name)).toEqual([
+			{ from: "docs/intro", to: "acme/buttons" },
+			{ from: "docs/intro", to: "buttons" },
+		]);
+	});
+
+	it("rewrites the walk into a frame renamed through the route", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writeFrame(root, "home", 'export default () => <a data-go="shop/checkout">buy</a>;\n');
+		writePageFrame(
+			root,
+			"shop",
+			"checkout",
+			'export const links = { back: "home", self: "shop/checkout" } as const;\nexport default () => null;\n',
+		);
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(
+			`/api/p/${name}/frames/rename`,
+			jsonPost({ from: "shop/checkout", to: "shop/basket" }),
+		);
+
+		expect(res.status).toBe(204);
+		expect(readFileSync(designFile(root, "frames", "home", "frame.tsx"), "utf8")).toBe(
+			'export default () => <a data-go="shop/basket">buy</a>;\n',
+		);
+		// a links value naming the frame is a walk too, even inside the frame that moved
+		expect(readFileSync(designFile(root, "frames", "shop", "basket", "frame.tsx"), "utf8")).toBe(
+			'export const links = { back: "home", self: "shop/basket" } as const;\nexport default () => null;\n',
+		);
+	});
+
+	it("rewrites the walk into a frame moved onto another page", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writeFrame(root, "home", "export default () => <a data-go='checkout'>buy</a>;\n");
+		writeFrame(root, "checkout", label("checkout"));
+		mkdirSync(designFile(root, "frames", "shop"), { recursive: true });
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["checkout"], page: "shop" }));
+
+		expect(res.status).toBe(204);
+		// written inside the quotes the author chose
+		expect(readFileSync(designFile(root, "frames", "home", "frame.tsx"), "utf8")).toBe(
+			"export default () => <a data-go='shop/checkout'>buy</a>;\n",
+		);
+		expect(await edges(app, name)).toEqual([{ from: "home", to: "shop/checkout" }]);
 	});
 });

@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { splitClass } from "../../daemon/class-write";
+import { pageName } from "../../page-path";
 import type { RowElement } from "../../properties/rows";
 import type { CompiledTheme, Geometry, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
@@ -561,7 +562,8 @@ function Head({
 		frame === null
 			? []
 			: [
-					{ key: `frame:${frame}`, name: frame, onPress: () => acts.onRung(frame, null) },
+					// the frame by its own name: the canvas around the rail is already on its page
+					{ key: `frame:${frame}`, name: pageName(frame), onPress: () => acts.onRung(frame, null) },
 					...(element === null
 						? []
 						: walked.map((hit, index) => ({

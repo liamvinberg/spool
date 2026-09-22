@@ -1,7 +1,7 @@
 /**
  * The canvas's own words for what a tool call is doing (#117, #135, #142, #193).
  *
- * The rail's rule is spool's nouns: `read cart`, never `read
+ * The rail's rule is spool's nouns: `read app/cart`, never `read
  * design/frames/app/cart/frame.tsx`. The surface speaks frames and pages, and a
  * path lives behind the disclosure where it is reachable and never in the way.
  *
@@ -19,6 +19,8 @@
  * riding with the whole call. The fragments are a preview; the whole call is the
  * authority.
  */
+
+import { segmentFrame } from "../../page-path";
 
 /** a tool's arguments: partial JSON while they stream, the parsed object once whole */
 export type CallInput = unknown;
@@ -254,33 +256,54 @@ export function readProse(input: CallInput, key: string): string | null {
 /**
  * The frame a path names, or null when the path is a file that is not one (#143).
  *
- * A frame is the folder that holds its entry — `frames/<name>/frame.tsx` at the
- * root page, `frames/<page>/<name>/frame.tsx` where a page holds it, and one more
- * segment for every page above that — so the frame
- * is the last folder rather than the file, which is also why the geometry sidecar
- * beside it needs no rule of its own: both files are the frame, and twelve rows
- * that each read `write frame.tsx` would name nothing at all.
+ * A frame is named by its folder's path under `frames/` (#336): `home` at the
+ * root page, `shop/checkout` where a page holds it. So the frame is the folder
+ * rather than the file, which is also why the geometry sidecar beside it needs no
+ * rule of its own: both files are the frame, and twelve rows that each read
+ * `write frame.tsx` would name nothing at all. A file deeper inside a frame's own
+ * folder reads as the folder it sits in, because which prefix is the frame takes
+ * the project's frame list, and `frameHolding` is where that is answered.
  *
  * A verify shot is the same frame from the other end. 18 of 18 images in both
- * parent captures came back from `.spool/verify/<frame>.png`, so the rail never
- * has to say `.png` either.
+ * parent captures came back from `.spool/verify/<frame>.png`, with the name
+ * stored as one segment, so the rail never has to say `.png` either.
  */
 export function frameOf(path: string): string | null {
 	const trimmed = path.replace(/\/+$/, "");
-	const held = /(?:^|\/)frames\/(?:[^/]+\/)*([^/]+)\/[^/]*$/.exec(trimmed);
-	const shot = /(?:^|\/)\.spool\/verify\/(.+)\.png$/.exec(trimmed);
-	return held?.[1] ?? shot?.[1] ?? null;
+	const held = /(?:^|\/)frames\/(.+)\/[^/]*$/.exec(trimmed);
+	if (held?.[1] !== undefined) return held[1];
+	const shot = /(?:^|\/)\.spool\/verify\/([^/]+)\.png$/.exec(trimmed);
+	return shot?.[1] === undefined ? null : (segmentFrame(shot[1]) ?? null);
+}
+
+/**
+ * The frame a folder read off a path is inside, among the frames a project holds.
+ *
+ * `frameOf` answers from the path alone, and a file in a frame's own subfolder
+ * is a folder deeper than the frame. Frames never nest, so the one known name the
+ * folder is or sits inside is the frame; a folder inside none of them stays as it
+ * was read, since a frame the turn is one beat from writing is known to no list.
+ */
+export function frameHolding(folder: string, ...known: readonly ReadonlySet<string>[]): string {
+	const segments = folder.split("/");
+	for (let depth = 1; depth <= segments.length; depth += 1) {
+		const prefix = segments.slice(0, depth).join("/");
+		if (known.some((names) => names.has(prefix))) return prefix;
+	}
+	return folder;
 }
 
 /**
  * What a path is called on this rail.
  *
- * A frame is its own name. A folder directly under `frames/` with nothing after it
- * is the canvas's own name for a place — either a page or a frame sitting at the
- * root page — and either way it is a noun off the canvas rather than a path, which
- * is what this rail owes the reader; which of the two it is takes the project's own
- * frame list, and #143 hands that in rather than inferring it. Everything else is a
- * file and keeps its leaf: `read tokens.css`, `read AGENTS.md`.
+ * A frame is its own name, the whole of its path under `frames/`, because a row
+ * has no page around it to say which `checkout` it means. A folder directly under
+ * `frames/` with nothing after it is the canvas's own name for a place, either a
+ * page or a frame sitting at the root page, and either way it is a noun off the
+ * canvas rather than a path, which is what this rail owes the reader; which of
+ * the two it is takes the project's own frame list, and #143 hands that in rather
+ * than inferring it. Everything else is a file and keeps its leaf: `read
+ * tokens.css`, `read AGENTS.md`.
  */
 export function nameOf(path: string): string {
 	const trimmed = path.replace(/\/+$/, "");
@@ -384,7 +407,7 @@ export function nameCall(call: {
 		// a redirection is shell rather than subject: `spool shot home 2>&1` looked at home
 		const subject = (spool[2] ?? "").split(/\s*\d*>/)[0]?.trim() ?? "";
 		const target = subject.split(/\s+/)[0] ?? "";
-		const frame = TAKES_FRAME.has(verb) && /^[\w-]+$/.test(target) ? target : null;
+		const frame = TAKES_FRAME.has(verb) && /^[\w-]+(?:\/[\w-]+)*$/.test(target) ? target : null;
 		// `spool skill` and `spool selection` take no argument at all, so the verb is the
 		// whole row rather than a verb with an empty slot after it
 		return { ...plain, verb, subject: frame ?? (subject === "" ? null : subject), frame, detail: command };

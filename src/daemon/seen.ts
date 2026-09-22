@@ -19,7 +19,7 @@ import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-
  * Two states fall out of one comparison. No entry at all is `new`; an entry
  * older than the folder's newest write is `changed`. Deleted frames keep their
  * entries — a stale line is forty bytes, and pruning would lose the record of a
- * frame a collision is briefly hiding.
+ * frame that is only briefly gone, mid-move or mid-undo.
  *
  * The file lives beside state.json and walked.json, which is what makes it
  * per-person without any keying: .spool/ is app-owned and gitignored, so it
@@ -172,4 +172,36 @@ export function markSeen(root: string, frames: readonly SeenFrame[], names: read
 	const record = readRecord(root) ?? {};
 	for (const frame of here) record[frame.name] = folderTouched(frame.dir);
 	writeRecord(root, record);
+}
+
+/**
+ * Frames that changed name keep what was seen of them (#336). A rename or a move
+ * is a person rearranging, not news about the frame, and the record is keyed by
+ * name, so without this every frame a gesture carried would come back unread.
+ */
+export function carrySeen(root: string, renamed: ReadonlyArray<{ from: string; to: string }>): void {
+	const record = readRecord(root);
+	if (record === undefined || renamed.length === 0) return;
+	const held = new Map(renamed.flatMap(({ from, to }) => (record[from] === undefined ? [] : [[to, record[from]]])));
+	for (const { from } of renamed) delete record[from];
+	for (const [to, at] of held) if (at !== undefined) record[to] = at;
+	writeRecord(root, record);
+}
+
+/**
+ * A write spool makes into frames' own files that is not news about them: walk
+ * targets written at a moved frame's new name (#336). A frame that was seen
+ * before it stays seen after; one that was already unread stays unread.
+ */
+export function unnoticed(root: string, frames: readonly SeenFrame[], write: () => void): void {
+	const record = readRecord(root);
+	const current =
+		record === undefined
+			? []
+			: frames.filter((frame) => verdict(record[frame.name], folderTouched(frame.dir)) === undefined);
+	write();
+	if (record === undefined || current.length === 0) return;
+	const after = readRecord(root) ?? record;
+	for (const frame of current) after[frame.name] = folderTouched(frame.dir);
+	writeRecord(root, after);
 }

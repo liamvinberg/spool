@@ -138,7 +138,7 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 	}
 
 	async function compileOrReuse(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
-		const stamp = frames.map((ref) => frameFolder(ref.name, ref.page)).join("\n");
+		const stamp = frames.map((ref) => frameFolder(ref.name)).join("\n");
 		try {
 			// Match frame compilation: one canonical root covers imports, shared
 			// assets, Tailwind inputs, and cache revalidation for this player build.
@@ -225,7 +225,7 @@ export async function buildPublicationPlayer(
 	frames: PlayerFrameRef[],
 	version: string,
 ): Promise<{ bundle: PlayerBundle; inputs: string[] }> {
-	const stamp = frames.map((ref) => frameFolder(ref.name, ref.page)).join("\n");
+	const stamp = frames.map((ref) => frameFolder(ref.name)).join("\n");
 	const held: PlayerContext = {
 		stamp,
 		designDir,
@@ -450,7 +450,7 @@ function readComposition(designDir: string, frames: PlayerFrameRef[], result: Bu
 	};
 	const screens = new Map<string, string[]>();
 	for (const ref of frames) {
-		const module = byEntry.get(`${frameFolder(ref.name, ref.page)}/frame.tsx`);
+		const module = byEntry.get(`${frameFolder(ref.name)}/frame.tsx`);
 		// a stubbed frame has no module of its own: its screen is in the entry
 		screens.set(ref.name, module === undefined ? [] : closure(module));
 	}
@@ -461,7 +461,7 @@ function readComposition(designDir: string, frames: PlayerFrameRef[], result: Bu
 async function blameFrames(designDir: string, frames: PlayerFrameRef[]): Promise<Map<string, string>> {
 	const verdicts = await Promise.all(
 		frames.map(async (ref) => {
-			const folder = frameFolder(ref.name, ref.page);
+			const folder = frameFolder(ref.name);
 			try {
 				await buildDesignEntry({
 					designDir,
@@ -489,7 +489,7 @@ async function blameFrames(designDir: string, frames: PlayerFrameRef[]): Promise
  */
 function playerEntry(frames: PlayerFrameRef[], broken: Map<string, string>): string {
 	const entries = frames.map((ref) => {
-		const folder = frameFolder(ref.name, ref.page);
+		const folder = frameFolder(ref.name);
 		const error = broken.get(ref.name);
 		if (error === undefined) {
 			return `[${JSON.stringify(ref.name)}, { load: () => import(${JSON.stringify(`./${folder}/frame.tsx`)}) }]`;
