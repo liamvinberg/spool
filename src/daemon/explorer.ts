@@ -5,6 +5,7 @@ import {
 	isPagePath,
 	isPageSlot,
 	isSafeName,
+	movedOnto,
 	pageName,
 	pageParent,
 	pageUnder,
@@ -68,8 +69,8 @@ function describeTaken(parent: string, name: string): string {
 	return `design/${parent === ROOT_PAGE ? "frames" : `frames/${parent}`}/ already holds a folder named "${name}"`;
 }
 
-/** Where a page's or a frame's folder is, or would be: both are paths, so this is one join. */
-function pageFolder(designDir: string, page: string): string {
+/** Where a page's or a frame's folder is, or would be: both are paths under frames/, so this is one join. */
+function folderOf(designDir: string, page: string): string {
 	return resolveDesignPath(designDir, join(designDir, "frames", page));
 }
 
@@ -99,7 +100,7 @@ function renamed(root: string, designDir: string, moved: Moved): void {
 	const frames = [
 		...(moved.frames ?? []),
 		...(moved.pages ?? []).flatMap((page) =>
-			frameFoldersUnder(pageFolder(designDir, page.to), designDir).map((frame) => ({
+			frameFoldersUnder(folderOf(designDir, page.to), designDir).map((frame) => ({
 				from: pageUnder(page.from, frame),
 				to: pageUnder(page.to, frame),
 			})),
@@ -125,7 +126,7 @@ export function renameFrame(root: string, from: string, to: string): Refusal | {
 	const designDir = realDesignDir(root);
 	const found = lookupFrame(root, from);
 	if (found.kind === "missing") return refuse(404, describeMissingFrame(from));
-	const target = pageFolder(designDir, to);
+	const target = folderOf(designDir, to);
 	if (existsSync(target)) return refuse(409, describeTaken(pageParent(to), pageName(to)));
 	renameSync(resolveDesignPath(designDir, found.dir), target);
 	renamed(root, designDir, { frames: [{ from, to }] });
@@ -146,9 +147,9 @@ export function renamePage(root: string, from: string, to: string): Refusal | { 
 	}
 	const designDir = realDesignDir(root);
 	if (!pagePaths(root).has(from)) return refuse(404, describeMissingPage(from));
-	const target = pageFolder(designDir, to);
+	const target = folderOf(designDir, to);
 	if (existsSync(target)) return refuse(409, describeTaken(pageParent(to), pageName(to)));
-	renameSync(pageFolder(designDir, from), target);
+	renameSync(folderOf(designDir, from), target);
 	// the page's own bookkeeping follows the folder: the page the canvas is on,
 	// every camera inside it, and its place and contents in the rail's order
 	carryPage(root, from, to);
@@ -182,12 +183,12 @@ export function movePages(root: string, pages: readonly string[], parent: string
 		if (named.some((each) => pageWithin(each, page))) continue;
 		// a page already held by the page it is being moved to has arrived
 		if (pageParent(page) === parent) continue;
-		const to = pageUnder(parent, pageName(page));
-		const target = pageFolder(designDir, to);
+		const to = movedOnto(parent, page);
+		const target = folderOf(designDir, to);
 		if (existsSync(target) || moves.some((move) => move.to === to)) {
 			return refuse(409, describeTaken(parent, pageName(page)));
 		}
-		moves.push({ from: page, to, dir: pageFolder(designDir, page), target });
+		moves.push({ from: page, to, dir: folderOf(designDir, page), target });
 	}
 	for (const move of moves) {
 		renameSync(move.dir, move.target);
@@ -211,8 +212,8 @@ export function moveFrames(root: string, frames: readonly string[], page: string
 		if (found.kind === "missing") return refuse(404, describeMissingFrame(name));
 		// a frame already on the page it is being moved to has arrived
 		if (pageParent(name) === page) continue;
-		const to = pageUnder(page, pageName(name));
-		const target = pageFolder(designDir, to);
+		const to = movedOnto(page, name);
+		const target = folderOf(designDir, to);
 		if (existsSync(target) || moves.some((move) => move.to === to)) {
 			return refuse(409, `${describePage(page)} already holds a folder named "${pageName(name)}"`);
 		}
@@ -249,13 +250,13 @@ export function duplicateFrames(
 		const landing = page ?? pageParent(name);
 		const fresh = freshName(pageName(name), (candidate) => {
 			const at = pageUnder(landing, candidate);
-			return minted.has(at) || existsSync(pageFolder(designDir, at));
+			return minted.has(at) || existsSync(folderOf(designDir, at));
 		});
 		const to = pageUnder(landing, fresh);
 		minted.add(to);
 		plan.push({
 			from: resolveDesignPath(designDir, found.dir),
-			to: pageFolder(designDir, to),
+			to: folderOf(designDir, to),
 			copy: { from: name, to, ...(landing === ROOT_PAGE ? {} : { page: landing }) },
 		});
 	}
@@ -279,13 +280,13 @@ export function duplicatePage(
 	if (!isPagePath(name)) return refuse(400, `not a page name: "${name}"`);
 	const designDir = realDesignDir(root);
 	if (!pagePaths(root).has(name)) return refuse(404, describeMissingPage(name));
-	const source = pageFolder(designDir, name);
+	const source = folderOf(designDir, name);
 	const parent = pageParent(name);
 	const fresh = freshName(pageName(name), (candidate) =>
-		existsSync(pageFolder(designDir, pageUnder(parent, candidate))),
+		existsSync(folderOf(designDir, pageUnder(parent, candidate))),
 	);
 	const page = pageUnder(parent, fresh);
-	cpSync(source, pageFolder(designDir, page), { recursive: true });
+	cpSync(source, folderOf(designDir, page), { recursive: true });
 	const copies = frameFoldersUnder(source, designDir).map((held) => {
 		const landed = pageParent(pageUnder(page, held));
 		return { from: pageUnder(name, held), to: pageUnder(page, held), page: landed };
@@ -300,7 +301,7 @@ export function createPage(root: string, page: string): Refusal | { kind: "creat
 	// a page inside a page nothing holds has nowhere to be born; spool never
 	// mints the folders above it as a side effect of naming this one
 	if (parent !== ROOT_PAGE && !pagePaths(root).has(parent)) return refuse(404, describeMissingPage(parent));
-	const target = pageFolder(designDir, page);
+	const target = folderOf(designDir, page);
 	if (existsSync(target)) return refuse(409, describeTaken(parent, pageName(page)));
 	// an entry-less safe folder is already a page: nothing else has to be written
 	mkdirSync(target, { recursive: true });
@@ -311,7 +312,7 @@ export function createPage(root: string, page: string): Refusal | { kind: "creat
 export function pageDir(root: string, page: string): Refusal | { kind: "found"; dir: string } {
 	if (!isPagePath(page)) return refuse(400, `not a page name: "${page}"`);
 	if (!pagePaths(root).has(page)) return refuse(404, describeMissingPage(page));
-	return { kind: "found", dir: pageFolder(realDesignDir(root), page) };
+	return { kind: "found", dir: folderOf(realDesignDir(root), page) };
 }
 
 /**

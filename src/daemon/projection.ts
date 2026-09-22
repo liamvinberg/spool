@@ -512,9 +512,8 @@ export function pagePaths(root: string): Set<string> {
 }
 
 /**
- * Every frame's folder, keyed by name, in name order — one
- * discovery for a whole project-wide read. Asking `lookupFrame` per frame
- * re-walks design/frames once per frame, which a 145-frame read pays 145 times.
+ * Every frame's folder, keyed by name, in name order: one discovery for a
+ * whole project-wide read, rather than a lookup per frame.
  */
 export function frameDirectories(root: string): Map<string, string> {
 	const discovery = discover(root);

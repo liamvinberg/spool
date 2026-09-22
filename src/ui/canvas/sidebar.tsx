@@ -1,7 +1,16 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Unseen } from "../../daemon/seen";
-import { carriedPage, pageChain, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
+import {
+	carriedPage,
+	movedOnto,
+	pageChain,
+	pageName,
+	pageParent,
+	pageUnder,
+	pageWithin,
+	ROOT_PAGE,
+} from "../../page-path";
 import { accelPressed } from "../../runtime/platform-keys";
 import {
 	type CanvasOrder,
@@ -705,7 +714,7 @@ export function CanvasSidebar({
 			void moveFrames(project, [...names], page).then((done) => {
 				const carried = done.kind !== "refused" && moved.length > 0;
 				if (carried) {
-					const landed = new Map(moved.map((each) => [each.name, pageUnder(page, pageName(each.name))]));
+					const landed = new Map(moved.map((each) => [each.name, movedOnto(page, each.name)]));
 					framesCarried((name) => landed.get(name) ?? name);
 				}
 				// the page exists whatever happened to the frames, so a move that never
@@ -1040,7 +1049,7 @@ export function CanvasSidebar({
 					const groups = new Map<string, string[]>();
 					for (const moved of entry.frames) {
 						const page = way === "undo" ? moved.from : to;
-						const name = way === "undo" ? pageUnder(to, pageName(moved.name)) : moved.name;
+						const name = way === "undo" ? movedOnto(to, moved.name) : moved.name;
 						groups.set(page, [...(groups.get(page) ?? []), name]);
 					}
 					// one call per page, so a refusal partway leaves the groups before it
@@ -1053,7 +1062,7 @@ export function CanvasSidebar({
 							onRefresh();
 							return false;
 						}
-						const landed = new Map(names.map((name) => [name, pageUnder(page, pageName(name))]));
+						const landed = new Map(names.map((name) => [name, movedOnto(page, name)]));
 						framesCarried((name) => landed.get(name) ?? name);
 						setOpen(page, true);
 					}
@@ -1066,7 +1075,7 @@ export function CanvasSidebar({
 					// for it where the move left it and redo where it started
 					const groups = new Map<string, string[]>();
 					for (const moved of entry.pages) {
-						const from = way === "undo" ? pageUnder(entry.to, pageName(moved.name)) : moved.name;
+						const from = way === "undo" ? movedOnto(entry.to, moved.name) : moved.name;
 						const parent = way === "undo" ? moved.from : entry.to;
 						groups.set(parent, [...(groups.get(parent) ?? []), from]);
 					}
@@ -1079,7 +1088,7 @@ export function CanvasSidebar({
 							return false;
 						}
 						for (const page of moving) {
-							const landed = pageUnder(parent, pageName(page));
+							const landed = movedOnto(parent, page);
 							next = pageMovedInOrder(next, page, landed);
 							pageCarried(page, landed);
 						}
@@ -1186,7 +1195,7 @@ export function CanvasSidebar({
 				// the move never happened: put the rail back rather than let it claim it did
 				if (done.kind === "refused") storeOrder(held);
 				else if (moved.length > 0) {
-					for (const each of moved) pageCarried(each.name, pageUnder(parent, pageName(each.name)));
+					for (const each of moved) pageCarried(each.name, movedOnto(parent, each.name));
 					onRecord?.({ kind: "move-page", pages: moved, to: parent, lists });
 				}
 				onRefresh();

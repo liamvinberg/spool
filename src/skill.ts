@@ -218,7 +218,7 @@ Verify with spool url, shot and logs: wait for async initialization, inspect ren
 shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it.
 
   spool shot <frame> [--viewport <width>x<height>] [--at <milliseconds>] [--scenario <name>]
-                       Boots headless and writes design/.spool/verify/<frame>.png, printing the path.
+                       Boots headless and writes design/.spool/verify/<frame>.png (a frame on a page is stored as shop%2Fcheckout.png), printing the path.
                        Reports content height in CSS pixels on stderr after fonts load. For a tall page, use this to set frame.json's h; scroll height is at least the viewport height. Capture size stays the chosen viewport.
                        A frame much taller than a screen writes top-to-bottom slices <frame>.1.png … <frame>.N.png instead, one printed path per line, each slice legible on its own with a small overlap across cuts. Read every printed file — the layout's truth is the whole stack.
                        --viewport sets exact positive-integer CSS pixels instead of frame.json.

@@ -1,4 +1,4 @@
-import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
+import { movedOnto, pageWithin, ROOT_PAGE } from "../../page-path";
 import type { Geometry, HeldPatch, Place } from "../api";
 
 /**
@@ -337,7 +337,7 @@ function liveRects(rects: Rects, alive: Liveness): Rects {
  */
 function liveMoved(frames: readonly Moved[], to: string, alive: Liveness, way: Way): Moved[] {
 	return frames.filter((moved) => {
-		const landed = pageUnder(to, pageName(moved.name));
+		const landed = movedOnto(to, moved.name);
 		return way === "undo"
 			? alive.frames.has(landed) && hasPage(alive, moved.from) && free(alive, moved.name)
 			: alive.frames.has(moved.name) && hasPage(alive, to) && free(alive, landed);
@@ -352,7 +352,7 @@ function liveMoved(frames: readonly Moved[], to: string, alive: Liveness, way: W
  */
 function livePaged(pages: readonly Moved[], to: string, alive: Liveness, way: Way): Moved[] {
 	return pages.filter((moved) => {
-		const landed = pageUnder(to, pageName(moved.name));
+		const landed = movedOnto(to, moved.name);
 		return way === "undo"
 			? alive.pages.has(landed) && hasPage(alive, moved.from) && canHold(moved.from, landed)
 			: alive.pages.has(moved.name) && hasPage(alive, to) && canHold(to, moved.name);

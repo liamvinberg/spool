@@ -182,9 +182,20 @@ export function markSeen(root: string, frames: readonly SeenFrame[], names: read
 export function carrySeen(root: string, renamed: ReadonlyArray<{ from: string; to: string }>): void {
 	const record = readRecord(root);
 	if (record === undefined || renamed.length === 0) return;
-	const held = new Map(renamed.flatMap(({ from, to }) => (record[from] === undefined ? [] : [[to, record[from]]])));
+	const held = renamed.flatMap(({ from, to }) => {
+		const at = record[from];
+		return at === undefined ? [] : [{ to, at }];
+	});
 	for (const { from } of renamed) delete record[from];
-	for (const [to, at] of held) if (at !== undefined) record[to] = at;
+	for (const { to, at } of held) record[to] = at;
+	writeRecord(root, record);
+}
+
+/** Forget what was seen of these names, when nothing can say which frame it was. */
+export function forgetSeen(root: string, names: readonly string[]): void {
+	const record = readRecord(root);
+	if (record === undefined || !names.some((name) => record[name] !== undefined)) return;
+	for (const name of names) delete record[name];
 	writeRecord(root, record);
 }
 

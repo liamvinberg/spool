@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -12,6 +12,8 @@ import {
 } from "../test-helpers";
 import { readCanvasFields } from "./canvas-file";
 import { FOLDER_NAMES_FORMAT, migrateFrameNames } from "./migrate-frame-names";
+import { frameDirectories } from "./projection";
+import { unseenNow } from "./seen";
 import { coverDir } from "./thumbs";
 
 /** A project the way a format-1 spool left it: frames named by folder alone. */
@@ -75,6 +77,36 @@ describe("migrating a project named by folder", () => {
 		migrateFrameNames(root);
 
 		expect(existsSync(join(coverDir(root, "shop/checkout"), "0123456789abcdef0123456789abcdef.png"))).toBe(true);
+	});
+
+	it("keeps a nested frame seen when its own walks are rewritten", () => {
+		const root = legacyProject();
+		writePageFrame(root, "shop", "checkout", `export default () => <a data-go="receipt">pay</a>;\n`);
+		writePageFrame(root, "shop", "receipt", `export default () => <p>receipt</p>;\n`);
+		const past = new Date(Date.now() - 60_000);
+		utimesSync(join(root, "design", "frames", "shop", "checkout", "frame.tsx"), past, past);
+		writeDesignFile(
+			root,
+			".spool/seen.json",
+			`${JSON.stringify({ version: 1, frames: { checkout: past.getTime() + 1000, receipt: Date.now() + 60_000 } })}\n`,
+		);
+
+		migrateFrameNames(root);
+
+		const frames = [...frameDirectories(root)].map(([name, dir]) => ({ name, dir }));
+		expect(read(root, "frames/shop/checkout/frame.tsx")).toContain(`data-go="shop/receipt"`);
+		expect(unseenNow(root, frames).get("shop/checkout")).toBeUndefined();
+	});
+
+	it("drops what was stored under a folder name two frames share, since its owner is unknowable", () => {
+		const root = legacyProject();
+		writeFrame(root, "buttons", `export default () => <p>root</p>;\n`);
+		writePageFrame(root, "shop", "buttons", `export default () => <p>shop</p>;\n`);
+		writeDesignFile(root, ".spool/thumbs/buttons/0123456789abcdef0123456789abcdef.png", "png");
+
+		migrateFrameNames(root);
+
+		expect(existsSync(coverDir(root, "buttons"))).toBe(false);
 	});
 
 	it("leaves a project already on the current format exactly alone", () => {

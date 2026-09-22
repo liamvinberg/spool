@@ -83,6 +83,11 @@ export function pageUnder(parent: string, name: string): string {
 	return `${parent}/${name}`;
 }
 
+/** Where a frame or a page lands when it moves onto another page: its own folder name, under that page. */
+export function movedOnto(page: string, path: string): string {
+	return pageUnder(page, pageName(path));
+}
+
 /** Whether a page sits inside another — strictly, so no page is within itself. */
 export function pageWithin(ancestor: string, page: string): boolean {
 	if (page === ancestor) return false;

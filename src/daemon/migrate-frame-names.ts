@@ -1,9 +1,11 @@
+import { rmSync } from "node:fs";
+import { pageName } from "../page-path";
 import { FORMAT_VERSION } from "../templates";
 import { canvasFile, readCanvasFields, writeCanvasField } from "./canvas-file";
 import { retargetLinks } from "./frame-links";
 import { frameNames } from "./projection";
-import { carrySeen } from "./seen";
-import { carryCover } from "./thumbs";
+import { carrySeen, forgetSeen } from "./seen";
+import { carryCover, coverDir } from "./thumbs";
 
 /**
  * The one-time move from folder names to path names (#336).
@@ -41,20 +43,26 @@ export function migrateFrameNames(root: string): FrameNamesMigration | undefined
 	const frames = frameNames(root) ?? [];
 	const byFolder = new Map<string, string[]>();
 	for (const frame of frames) {
-		const folder = frame.slice(frame.lastIndexOf("/") + 1);
+		const folder = pageName(frame);
 		byFolder.set(folder, [...(byFolder.get(folder) ?? []), frame]);
 	}
 	const renamed = [...byFolder].flatMap(([folder, [only, ...rest]]) =>
 		only !== undefined && rest.length === 0 && only !== folder ? [{ from: folder, to: only }] : [],
 	);
+	const shared = [...byFolder].flatMap(([folder, holders]) => (holders.length > 1 ? [folder] : []));
+	// what was stored under a shared folder name dates from before the clash hid
+	// both frames, so which of them it belongs to is unknowable: it goes
+	for (const folder of shared) rmSync(coverDir(root, folder), { recursive: true, force: true });
+	forgetSeen(root, shared);
+	// the marks move before the rewrite, which keeps a frame it touches seen
+	for (const { from, to } of renamed) carryCover(root, from, to);
+	carrySeen(root, renamed);
 	const moves = new Map(renamed.map(({ from, to }) => [from, to]));
 	const ambiguous = new Set<string>();
 	const rewritten = retargetLinks(root, (target) => {
-		if ((byFolder.get(target)?.length ?? 0) > 1) ambiguous.add(target);
+		if (shared.includes(target)) ambiguous.add(target);
 		return moves.get(target);
 	});
-	for (const { from, to } of renamed) carryCover(root, from, to);
-	carrySeen(root, renamed);
 	writeCanvasField(canvasFile(root), "format", FORMAT_VERSION);
 	return { files: rewritten, ambiguous: [...ambiguous].sort() };
 }
