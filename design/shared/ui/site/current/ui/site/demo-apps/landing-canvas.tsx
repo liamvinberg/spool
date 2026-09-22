@@ -9,7 +9,7 @@ import { AgentIcon, ChevronIcon, CloseIcon, PanelCaret, PlusIcon, PropertiesIcon
 import { TabStrip } from "../../spool/tab-strip";
 import { usePreviewScale } from "./use-preview-scale";
 import "../../spool/app-header.css";
-import { type FoldSession, FoldStore } from "../../../../fold-objects/fold-store";
+import { type FoldSession, FoldStore } from "../fold-objects/fold-store";
 import { type Camera, centerOn, entryCamera, fitCamera, zoomAt } from "./canvas-camera";
 import "./canvas-motion.css";
 import "./mobile-product.css";

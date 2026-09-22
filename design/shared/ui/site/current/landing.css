@@ -1,4 +1,6 @@
-/* Current landing source, copied from the site on 2026-09-08. */
+/* The live spool.page landing, copied from the site on 2026-09-22. The site
+ * stylesheet is replaced by its fonts and its token values below. */
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@100..900&display=swap");
 
 /* The page scrolls with the browser; the embedded canvas keeps its own viewport. */
 html,
@@ -11,6 +13,11 @@ body,
 #root {
 	opacity: 1;
 	transition: none;
+}
+
+.es-page {
+	--font-sans: "Familjen Grotesk", Arial, sans-serif;
+	--font-mono: "Fragment Mono", monospace;
 }
 
 .sg-page.sm-page {
@@ -51,7 +58,8 @@ body,
 }
 
 /* Preserve the site’s token values within its frame. */
-.bl-page {
+.bl-page,
+.es-page {
 	--color-bg: #0e0e0e;
 	--color-canvas: #161616;
 	--color-surface: #1c1c1c;
@@ -87,9 +95,4 @@ body,
 	--radius-sm: 6px;
 	--radius-md: 8px;
 	--radius-lg: 12px;
-}
-
-.es-page {
-	--font-sans: "Familjen Grotesk", Arial, sans-serif;
-	--font-mono: "Fragment Mono", monospace;
 }

@@ -1,4 +1,4 @@
-import fragment from "./field.glsl";
+import fragment from "./field.glsl?raw";
 import { createResolutionBudget, drawingSize } from "./resolution";
 
 const vertex = `attribute vec2 a_position;
@@ -74,8 +74,8 @@ export function createBloomRenderer(canvas: HTMLCanvasElement, entrance: "none" 
 		stencil: false,
 		preserveDrawingBuffer: false,
 		powerPreference: "low-power",
-		// Spool also captures this shader in software-rendered canvas stills.
-		failIfMajorPerformanceCaveat: false,
+		// Software rendering can stall the page; decorative motion is optional.
+		failIfMajorPerformanceCaveat: true,
 	});
 	if (!gl) return null;
 

@@ -1,3 +1,5 @@
+/* biome-ignore-all lint/style/noDescendingSpecificity: source order is part of the accepted specimen cascade */
+/* biome-ignore-all lint/complexity/noImportantStyles: accepted specimen override must win its cascade */
 .sm-page {
 	--sm-bg: #101010;
 	--sm-fg: #f5f5f5;

@@ -107,12 +107,12 @@ export function TabStrip({
 		const reveal = () => {
 			if (live.current !== null || landing.current !== null) return;
 			// Embedded tabs may reveal sideways without scrolling the landing page.
-            if (activeTab) {
-                const left = activeTab.offsetLeft;
-                const right = left + activeTab.offsetWidth;
-                if (left < element.scrollLeft) element.scrollLeft = left;
-                else if (right > element.scrollLeft + element.clientWidth) element.scrollLeft = right - element.clientWidth;
-            }
+			if (activeTab) {
+				const left = activeTab.offsetLeft;
+				const right = left + activeTab.offsetWidth;
+				if (left < element.scrollLeft) element.scrollLeft = left;
+				else if (right > element.scrollLeft + element.clientWidth) element.scrollLeft = right - element.clientWidth;
+			}
 		};
 		reveal();
 		const observer = new ResizeObserver(reveal);

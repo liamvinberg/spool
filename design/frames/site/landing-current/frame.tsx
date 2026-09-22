@@ -1,3 +1,4 @@
+import "shared/ui/site/current/landing.css";
 import { BloomLanding } from "shared/ui/site/current/ui/site/bloom/landing";
 
 export default function Frame() {

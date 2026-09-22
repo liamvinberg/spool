@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Life } from "../../lib/spool/agent-threads";
 import { cn } from "../../lib/utils";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";

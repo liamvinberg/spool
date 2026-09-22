@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { type FoldScreen, FoldStore } from "../../../../fold-objects/fold-store";
+import { type FoldScreen, FoldStore } from "../fold-objects/fold-store";
 export type DemoTake = FoldScreen;
 export const DEMO_TAKES: readonly DemoTake[] = ["campaign", "finish", "bag"];
 export const DEMO_NAMES: Record<DemoTake, string> = {
