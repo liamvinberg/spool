@@ -2,12 +2,12 @@ import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 
-// The freeze end to end (#171, #319): a real canvas, real sandboxed frame
-// documents, a real wheel pan and a real pick. The shim's rAF gate and the
+// The freeze end to end (#171, #319, #339): a real canvas, real sandboxed frame
+// documents, a real wheel pan and a real Edit tool. The shim's rAF gate and the
 // canvas's decisions are each covered on their own; what only a browser can
 // show is that the two meet across the iframe boundary — that a frame animating
 // at speed stops counting while the camera moves, and again for as long as the
-// hand holds an element on any frame, and picks up where it held afterwards.
+// Edit tool is on, and picks up where it held afterwards.
 
 /**
  * A loop that counts its own animation frames onto the frame's own window, as a
@@ -134,6 +134,7 @@ async function twoLiveFrames(home: string) {
 		const body = (await response.json()) as { selection?: unknown[] };
 		return body.selection?.length ?? 0;
 	};
+	/** The Edit tool up, and the heading held in it. */
 	const pick = async (position?: { x: number; y: number }) => {
 		await expect.poll(() => heading.count(), { timeout: 30_000 }).toBe(1);
 		// the canvas takes the pointer off the iframe before a click can pick
@@ -143,41 +144,53 @@ async function twoLiveFrames(home: string) {
 				timeout: 30_000,
 			})
 			.toBe("none");
-		await heading.click({
-			modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
-			...(position === undefined ? {} : { position }),
-		});
+		await page.keyboard.press("e");
+		await heading.click(position === undefined ? {} : { position });
 		await expect.poll(selected, { timeout: 30_000 }).toBe(1);
 	};
-	/** Let go, on the empty field below both frames. */
+	/** Let go, on the empty field below both frames, and put the tool down. */
 	const deselect = async () => {
 		await page.mouse.click(400, 820);
 		await expect.poll(selected, { timeout: 30_000 }).toBe(0);
+		await page.keyboard.press("v");
 	};
 	return { project, page, heading, spun, ran, pick, deselect };
 }
 
-it("holds every live frame while the hand holds an element, and hands them back", { timeout: 180_000 }, async () => {
-	const { page, ran, pick, deselect } = await twoLiveFrames(veil("veil"));
+it("holds every live frame while the Edit tool is on, and hands them back when it goes down", {
+	timeout: 180_000,
+}, async () => {
+	const { page, ran, pick } = await twoLiveFrames(veil("veil"));
 
 	// both loops are really running before anything is asked of them
 	await expect.poll(() => ran("home"), { timeout: 60_000 }).toBeGreaterThan(4);
 	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBeGreaterThan(4);
 
-	await pick();
+	// the tool alone, with nothing held yet, is the whole cause
+	await page.keyboard.press("e");
 
 	// polled rather than sampled once: a frame owing a picture is photographed
-	// out of a thawed document, and that errand outlives the pick by a moment.
-	// The frame the element is in stops with the rest of them.
+	// out of a thawed document, and that errand outlives the press by a moment
 	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBe(0);
 	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBe(0);
-	// and it stays stopped rather than thawing itself a moment later
+
+	// holding an element changes nothing, and it stays stopped rather than
+	// thawing itself a moment later
+	await pick();
 	await page.waitForTimeout(1000);
-	expect(await ran("beside"), "a frozen field stays frozen while the hand holds").toBe(0);
+	expect(await ran("beside"), "a frozen field stays frozen while the tool is on").toBe(0);
+	expect(await ran("home")).toBe(0);
 
-	await deselect();
-
+	// putting the tool down hands them back, with the element still held
+	await page.keyboard.press("v");
 	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBeGreaterThan(4);
+	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBeGreaterThan(4);
+
+	// and ⌘ held in Select borrows the tool, the freeze with it, while it is held
+	const accel = process.platform === "darwin" ? "Meta" : "Control";
+	await page.keyboard.down(accel);
+	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBe(0);
+	await page.keyboard.up(accel);
 	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBeGreaterThan(4);
 });
 

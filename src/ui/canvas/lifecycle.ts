@@ -307,11 +307,13 @@ function isFrameLive(
  * what counts, and note that a camera at rest is not attention, only its motion.
  *
  * The third is the opposite: somebody is reading one frame very closely. While
- * the hand holds an element, every live frame holds still — the one being
+ * the Edit tool is on (#339), every live frame holds still — the one being
  * edited most of all, because a heading you are about to retype should not be
  * sliding under the caret, and a shader beside it should not be spending the
- * renderer the edit needs. Layout is untouched either way: the shim gates rAF
- * and pauses declarative animations, so a frame still reflows under the hold.
+ * renderer the edit needs. Putting the tool down lets them all go. Layout is
+ * untouched either way: the shim gates rAF and pauses declarative animations,
+ * so a frame still reflows under the hold. Timers and React state run on,
+ * which is the known limit of a hold the frame is never asked about.
  *
  * Three frames never freeze. The one you went inside is the one being used —
  * its own hands are inside it, and a pick elsewhere on the canvas does not
@@ -326,12 +328,12 @@ export function isFrameFrozen(input: {
 	state: FrameState | undefined;
 	entered: boolean;
 	capturing: boolean;
-	/** Whether the hand holds an element selection anywhere on the canvas (#319). */
-	picking: boolean;
+	/** Whether the Edit tool is on, anywhere on the canvas (#319, #339). */
+	editing: boolean;
 }): boolean {
-	const { cameraMoving, idleMs, state, entered, capturing, picking } = input;
+	const { cameraMoving, idleMs, state, entered, capturing, editing } = input;
 	if (state !== "live" || entered || capturing) return false;
-	return picking || cameraMoving || idleMs >= IDLE_FREEZE_MS;
+	return editing || cameraMoving || idleMs >= IDLE_FREEZE_MS;
 }
 
 /**
@@ -610,11 +612,11 @@ export interface LifecycleDeps {
 	 */
 	hovered: string | null;
 	/**
-	 * Whether the hand holds an element selection (#319) — one flag for the whole
-	 * canvas rather than a set of frames, because the field is what freezes, not
-	 * the frame the element is in.
+	 * Whether the Edit tool is on (#319, #339) — one flag for the whole canvas
+	 * rather than a set of frames, because the field is what freezes, not the
+	 * frame an element is in.
 	 */
-	picking: boolean;
+	editing: boolean;
 	hasCover: (frame: string) => boolean;
 	onShot: (frame: string, image: CoverRaster) => void;
 	/**
@@ -646,7 +648,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		resizing = null,
 		selected,
 		hovered,
-		picking,
+		editing,
 		hasCover,
 		onShot,
 		onCaptureFailure,
@@ -679,8 +681,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	selectedRef.current = selected;
 	const hoveredRef = useRef(hovered);
 	hoveredRef.current = hovered;
-	const pickingRef = useRef(picking);
-	pickingRef.current = picking;
+	const editingRef = useRef(editing);
+	editingRef.current = editing;
 	const hasCoverRef = useRef(hasCover);
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
@@ -776,7 +778,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 							state,
 							entered: entered === name,
 							capturing: captureWaiters.current.has(name),
-							picking: pickingRef.current,
+							editing: editingRef.current,
 						}),
 				);
 			}
@@ -1154,15 +1156,15 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	}, [settled, compute]);
 
 	// So must the wake, and so must the hold: a frozen frame you point at
-	// animates now and a live one holds the instant you pick an element (#319),
-	// not up to a sweep later. This is the freeze alone, never a sweep — neither
+	// animates now and a live one holds the instant the Edit tool comes up
+	// (#319, #339), and lets go the instant it goes down, not up to a sweep later. This is the freeze alone, never a sweep — neither
 	// the pointer nor a selection the current tool ignores mounts anything.
 	useEffect(() => {
 		hoveredRef.current = hovered;
 		selectedRef.current = selected;
-		pickingRef.current = picking;
+		editingRef.current = editing;
 		applyFreeze();
-	}, [hovered, selected, picking, applyFreeze]);
+	}, [hovered, selected, editing, applyFreeze]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);

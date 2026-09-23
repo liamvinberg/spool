@@ -62,7 +62,7 @@ async function mountLifecycle(
 			selectionTargets: new Set(),
 			selected: [],
 			hovered: null,
-			picking: false,
+			editing: false,
 			hasCover: (frame) => frames.some((candidate) => candidate.name === frame && candidate.cover !== undefined),
 			onShot,
 			onCaptureFailure,

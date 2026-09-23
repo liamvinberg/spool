@@ -583,6 +583,12 @@ export function ProjectCanvas({
 	const toolRef = useRef(effectiveTool);
 	toolRef.current = effectiveTool;
 	// Select and Edit both point, and everything a pointer draws — rings and
+	/**
+	 * Whether the Edit tool is on (#339): picked, or borrowed by holding ⌘ in
+	 * Select. Space borrowing the Hand does not put it down. While it is on,
+	 * every live frame holds its animation and nothing reaches any of them.
+	 */
+	const editOn = tool === "edit" || (tool === "select" && accelDown);
 	// previews — belongs to the pair of them. Only the Hand
 	// draws nothing, because the only thing it takes is the canvas itself.
 	const pointerTool = effectiveTool !== "hand";
@@ -783,8 +789,8 @@ export function ProjectCanvas({
 		resizing: resizingFrame,
 		selected,
 		hovered: hoveredFrame,
-		// the hand holding an element holds the whole field still (#319)
-		picking: picked.length > 0,
+		// the Edit tool holds the whole field still while it is on (#319, #339)
+		editing: editOn,
 		hasCover: hasCover,
 		onShot,
 		onCaptureFailure,
