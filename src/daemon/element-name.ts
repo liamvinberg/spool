@@ -9,56 +9,22 @@
  * a word for its tag (`h1` is Heading, `a` is Link, `nav` is Navigation), a
  * plain run of words is Text, and a plain `div` is a Group.
  *
- * The shim carries a copy of this function, interpolated into its source, so
- * the rule is written and tested once. That is why it is one function with
- * nothing named inside it: the copy has no module around it, and a dev build
- * that keeps names wraps every inner function in a helper the frame does not
- * have.
+ * The shim carries a copy of each half, interpolated into its source, so the
+ * rules are written and tested once. That is why each half is one function
+ * with nothing named inside it: the copy has no module around it, and a dev
+ * build that keeps names wraps every inner function in a helper the frame does
+ * not have. The shim puts the two together the way `elementName` does.
  */
 export function elementName(el: Element): string {
-	const tags: Record<string, string> = {
-		h1: "Heading",
-		h2: "Heading",
-		h3: "Heading",
-		h4: "Heading",
-		h5: "Heading",
-		h6: "Heading",
-		p: "Paragraph",
-		a: "Link",
-		button: "Button",
-		img: "Image",
-		picture: "Image",
-		video: "Video",
-		canvas: "Canvas",
-		svg: "Icon",
-		section: "Section",
-		header: "Header",
-		footer: "Footer",
-		nav: "Navigation",
-		main: "Main",
-		aside: "Aside",
-		article: "Article",
-		ul: "List",
-		ol: "List",
-		li: "List item",
-		form: "Form",
-		input: "Input",
-		textarea: "Input",
-		select: "Select",
-		label: "Label",
-		code: "Code",
-		pre: "Code block",
-		figure: "Figure",
-		figcaption: "Caption",
-		blockquote: "Quote",
-		table: "Table",
-		strong: "Text",
-		em: "Text",
-		small: "Text",
-		details: "Details",
-		summary: "Summary",
-		hr: "Divider",
-	};
+	return wholeComponent(el) ?? tagWord(el);
+}
+
+/**
+ * The component whose whole output the element is, or null where none is
+ * (#339). The element tree labels a row with it (#342), because `<Heading>`
+ * and `<h1>` are both a Heading to the name label and are different code.
+ */
+export function wholeComponent(el: Element): string | null {
 	// host fibers: a DOM element, a hoisted one, a singleton (html, body, head)
 	const host = [5, 26, 27];
 	type Fiber = {
@@ -112,7 +78,54 @@ export function elementName(el: Element): string {
 		if (roots.length === 1 && roots[0]?.stateNode === el) found = name;
 		else break;
 	}
-	if (found !== null) return found;
+	return found;
+}
+
+/** A word for what the element is, where no component owns it whole. */
+export function tagWord(el: Element): string {
+	const tags: Record<string, string> = {
+		h1: "Heading",
+		h2: "Heading",
+		h3: "Heading",
+		h4: "Heading",
+		h5: "Heading",
+		h6: "Heading",
+		p: "Paragraph",
+		a: "Link",
+		button: "Button",
+		img: "Image",
+		picture: "Image",
+		video: "Video",
+		canvas: "Canvas",
+		svg: "Icon",
+		section: "Section",
+		header: "Header",
+		footer: "Footer",
+		nav: "Navigation",
+		main: "Main",
+		aside: "Aside",
+		article: "Article",
+		ul: "List",
+		ol: "List",
+		li: "List item",
+		form: "Form",
+		input: "Input",
+		textarea: "Input",
+		select: "Select",
+		label: "Label",
+		code: "Code",
+		pre: "Code block",
+		figure: "Figure",
+		figcaption: "Caption",
+		blockquote: "Quote",
+		table: "Table",
+		strong: "Text",
+		em: "Text",
+		small: "Text",
+		details: "Details",
+		summary: "Summary",
+		hr: "Divider",
+	};
 	const known = tags[el.localName];
 	if (known !== undefined) return known;
 	if (el.namespaceURI === "http://www.w3.org/2000/svg") return "Shape";

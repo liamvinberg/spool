@@ -200,6 +200,7 @@ export type FrameMessage =
 	| FrameScrollMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "generation"; frame: string; id: number; chain: PickedHit[]; hits: PickedHit[] }
+	| { spool: "element-tree"; frame: string; id: number; nodes: ElementNode[] }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; nodes: EditedNode[]; owner: string | null }
 	| { spool: "restored"; frame: string; id: number; ok: boolean }
@@ -271,6 +272,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return Array.isArray(m.chain) && Array.isArray(m.hits) && typeof m.id === "number"
 				? (m as unknown as FrameMessage)
 				: undefined;
+		case "element-tree":
+			return Array.isArray(m.nodes) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
 		case "edit-open":
 			return typeof m.id === "number" && typeof m.ok === "boolean" && typeof m.text === "string"
 				? (m as unknown as FrameMessage)
@@ -458,6 +461,33 @@ export const kinMessage = (selector: string, step: KinStep, id: number, selects 
 export type Family = "children" | "siblings";
 export const familyMessage = (selector: string, of: Family, id: number) =>
 	({ spool: "family", selector, of, id }) as const;
+
+/**
+ * One element of a frame as the element tree reads it (#342), in document
+ * order. It is an element a selection can stand on, so a row and a click
+ * name the same thing, and it reads like the code that made it.
+ */
+export interface ElementNode {
+	selector: string;
+	/** the index of the element it sits in; -1 for a top-level element */
+	parent: number;
+	tag: string;
+	/** the component whose whole output the element is */
+	component: string | null;
+	/** its own words, flattened onto one line, when it has any */
+	words: string | null;
+	/** the file its stamp names, or its nearest stamped ancestor's */
+	file: string | null;
+	/** the root of a row a `.map()` renders: that map's stamp, and its place in the array */
+	row: { map: string; index: number } | null;
+}
+
+/**
+ * The whole element tree of one frame (#342), which the frame answers as
+ * `element-tree`. One read rather than a walk of `family` asks, because the
+ * tree opens down to whatever a click selects, however deep.
+ */
+export const elementsMessage = (id: number) => ({ spool: "elements", id }) as const;
 
 /**
  * The in-place text edit (#255): the element's own words become the field,

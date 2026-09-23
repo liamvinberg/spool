@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { COVER_DEVICE_SCALE, COVER_QUALITY, LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
 import { collapsedWords } from "./edit-words";
-import { elementName } from "./element-name";
+import { tagWord, wholeComponent } from "./element-name";
 import { PROJECT_LAYER } from "./tailwind";
 
 /**
@@ -1177,7 +1177,9 @@ const canvasShimJs = `(() => {
 
 	// what the name label calls an element (#339), written and tested once in
 	// daemon/element-name.ts
-	var nameOf = ${elementName.toString()};
+	var componentOf = ${wholeComponent.toString()};
+	var tagWordOf = ${tagWord.toString()};
+	function nameOf(el) { return componentOf(el) ?? tagWordOf(el); }
 
 	// the outermost svg an element is drawn inside, or the element itself: the
 	// paths of an icon are the icon's, never something a hand picks one by one
@@ -1260,6 +1262,76 @@ const canvasShimJs = `(() => {
 		const root = parent === bootRoot() || parent === document.body || parent === document.documentElement;
 		if (!root && !selectable(parent)) return null;
 		return { chain: root ? [] : chainOf(parent, true), hits: familyOf(parent).map((el) => hitOf(el, true)) };
+	}
+
+	// The frame's elements as the pages rail draws them (#342): every element a
+	// selection can stand on, in document order, each with the index of the
+	// one it sits in. It is the walk familyOf makes one level at a time, so a
+	// row is exactly an element a click or a key can hold, hidden or not. A
+	// row reads like the code: the component whose whole output the element
+	// is, its own words, the file its stamp names, and for the root of a row a
+	// map renders, that map and its place in it.
+	var TREE_MOST = 5000;
+
+	function ownWordsOf(el) {
+		let out = "";
+		let any = false;
+		for (let i = 0; i < el.childNodes.length; i++) {
+			const node = el.childNodes[i];
+			if (node.nodeType === 3) {
+				if (node.nodeValue && node.nodeValue.trim() !== "") any = true;
+				out += node.nodeValue || "";
+			} else if (node.nodeType === 1) out += node.localName === "br" ? " " : node.textContent || "";
+		}
+		if (!any) return null;
+		const flat = out.replace(/\\s+/g, " ").trim();
+		return flat.length > 120 ? flat.slice(0, 120) : flat;
+	}
+
+	// the row a map renders, asked of its root alone: itemOf answers for
+	// anything inside a row, and a heading inside a row is not the row
+	function rowRootOf(el) {
+		const siteOf = window.__spoolItemSiteOf;
+		if (typeof siteOf !== "function") return null;
+		const key = Object.keys(el).find((name) => name.startsWith("__reactFiber$"));
+		const own = key ? el[key] : null;
+		for (let fiber = own; fiber; fiber = fiber.return) {
+			if (fiber !== own && fiber.stateNode && fiber.stateNode.nodeType === 1) return null;
+			const props = fiber.memoizedProps;
+			const site = props && typeof props === "object" ? siteOf(props) : undefined;
+			if (site && typeof site.stamp === "string" && typeof site.index === "number") {
+				return { map: stampNow(site.stamp), index: site.index };
+			}
+		}
+		return null;
+	}
+
+	function elementTree() {
+		const nodes = [];
+		const visit = (parent, at) => {
+			const kids = familyOf(parent);
+			for (let i = 0; i < kids.length && nodes.length < TREE_MOST; i++) {
+				const el = kids[i];
+				const stamped = el.closest("[data-spool-source]");
+				const source = stamped ? stamped.getAttribute("data-spool-source") || "" : "";
+				let component = null;
+				let row = null;
+				try { component = componentOf(el); } catch {}
+				try { row = rowRootOf(el); } catch {}
+				nodes.push({
+					selector: cssPath(el),
+					parent: at,
+					tag: el.tagName.toLowerCase(),
+					component,
+					words: ownWordsOf(el),
+					file: source === "" ? null : source.replace(/:\\d+:\\d+$/, ""),
+					row,
+				});
+				visit(el, nodes.length - 1);
+			}
+		};
+		visit(bootRoot(), -1);
+		return nodes;
 	}
 
 	/**
@@ -1900,6 +1972,15 @@ const canvasShimJs = `(() => {
 			let found = null;
 			try { found = familyAt(m.selector, m.of === "children" ? "children" : "siblings"); } catch {}
 			parent.postMessage({ spool: "generation", frame, id: m.id, chain: found ? found.chain : [], hits: found ? found.hits : [] }, "*");
+			return;
+		}
+		if (m.spool === "elements") {
+			// answered under another name, like family: a same-named reply loops
+			// when parent === window
+			const frame = (window.__SPOOL__ || {}).frame;
+			let nodes = [];
+			try { nodes = elementTree(); } catch {}
+			parent.postMessage({ spool: "element-tree", frame, id: m.id, nodes }, "*");
 			return;
 		}
 		if (m.spool === "edit" || m.spool === "edit-end") {

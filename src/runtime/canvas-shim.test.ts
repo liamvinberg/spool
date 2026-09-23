@@ -628,6 +628,58 @@ describe("the canvas shim", () => {
 		expect(await family("main > h1", "children")).toEqual({ parent: "main > h1", hits: [] });
 	});
 
+	it("reads the element tree the rail draws, in document order (#342)", async () => {
+		const shim = await servedShim();
+		onTestFinished(runShim(shim));
+		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
+			<h1 data-spool-source="shared/ui/hero.tsx:8:4">A canvas for <em>working</em><br>things out.</h1>
+			<ul data-spool-source="frames/host/frame.tsx:5:4"><li>brygg</li><li>bulle</li></ul>
+			<a href="#go">Go<svg viewBox="0 0 24 24"><path d="M4 12h16" /></svg></a>
+		</main></div>`;
+		// the runtime notes each mapped row on the props React keeps for it
+		const rows = new Map<object, { stamp: string; index: number }>();
+		document.querySelectorAll("li").forEach((li, index) => {
+			const props = {};
+			rows.set(props, { stamp: "frames/host/frame.tsx:6:5", index });
+			Reflect.set(li, "__reactFiber$t", { tag: 5, type: "li", return: null, stateNode: li, memoizedProps: props });
+		});
+		Reflect.set(window, "__spoolItemSiteOf", (props: object) => rows.get(props));
+		onTestFinished(() => {
+			Reflect.deleteProperty(window, "__spoolItemSiteOf");
+		});
+
+		const answered = nextReply("element-tree");
+		window.postMessage({ spool: "elements", id: 7 }, "*");
+		const reply = (await answered) as { id: number; nodes: Record<string, unknown>[] };
+		expect(reply.id).toBe(7);
+		expect(reply.nodes.map((node) => [node.selector, node.parent])).toEqual([
+			["main", -1],
+			["main > h1", 0],
+			["main > h1 > em", 1],
+			["main > ul", 0],
+			["main > ul > li:nth-of-type(1)", 3],
+			["main > ul > li:nth-of-type(2)", 3],
+			["main > a", 0],
+			// an icon is one row: its insides and the line break are none
+			["main > a > svg", 6],
+		]);
+		const h1 = reply.nodes[1];
+		expect(h1?.words).toBe("A canvas for working things out.");
+		expect(h1?.file).toBe("shared/ui/hero.tsx");
+		// an element with no stamp of its own is written where its nearest stamped one is
+		expect(reply.nodes[4]?.file).toBe("frames/host/frame.tsx");
+		expect(reply.nodes.map((node) => node.row)).toEqual([
+			null,
+			null,
+			null,
+			null,
+			{ map: "frames/host/frame.tsx:6:5", index: 0 },
+			{ map: "frames/host/frame.tsx:6:5", index: 1 },
+			null,
+			null,
+		]);
+	});
+
 	it("answers an empty chain for the frame background and missing hits", async () => {
 		const shim = await servedShim();
 		runShim(shim);

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it } from "vitest";
-import { elementName } from "./element-name";
+import { elementName, wholeComponent } from "./element-name";
 
 /**
  * What the name label calls an element (#339), over the same fiber shape React
@@ -103,5 +103,16 @@ describe("elementName", () => {
 	it("names an element React never saw by its tag alone", () => {
 		expect(elementName(document.createElement("section"))).toBe("Section");
 		expect(elementName(document.createElementNS("http://www.w3.org/2000/svg", "circle"))).toBe("Shape");
+	});
+});
+
+describe("wholeComponent", () => {
+	it("is the component alone, and nothing where the tag names the element", () => {
+		const { el, fiber: h1 } = hosted("h1", "Hello");
+		under(fiber(5, "main"), under(fiber(0, Heading), h1));
+		expect(wholeComponent(el)).toBe("Heading");
+		// the tree tells `<Heading>` from `<h1>`, which the name label cannot
+		expect(wholeComponent(hosted("h1", "Hello").el)).toBeNull();
+		expect(elementName(hosted("h1", "Hello").el)).toBe("Heading");
 	});
 });
