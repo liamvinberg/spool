@@ -29,9 +29,10 @@ const FRAME_FLOOR = 80;
 /**
  * What the canvas is holding, as the rail reads it.
  *
- * One rung at a time is what a properties surface means, so a selection of
- * several says how many and nothing else: there is no honest single value to
- * put in a field that stands for three elements.
+ * The rail's fields are a frame's own geometry (#338), so an element, or
+ * several in one frame, shows the frame it is in. Only a selection spread
+ * over frames says how many and nothing else: there is no one frame whose
+ * fields stand for it.
  */
 export type Held =
 	| { kind: "frame"; name: string; geometry: Geometry }
@@ -108,18 +109,18 @@ export function PropertiesRail({
 
 /* ---------- what the file says about the ancestry ---------- */
 
-/** Which rung of the ancestry is held, or -1 when the chain no longer carries it. */
+/** Which element of the ancestry is held, or -1 when the chain no longer carries it. */
 export function rungOf(held: Held | null): number {
 	return held?.kind === "element" ? held.chain.findIndex((hit) => hit.selector === held.selector) : -1;
 }
 
 /**
- * The rungs' stamps, in rung order, down to and including the one held, and
- * which rung of the chain each one belongs to.
+ * The ancestry's stamps, root first, down to and including the one held, and
+ * which element of the chain each one belongs to.
  *
- * A rung the file has no stamp for — DOM some code drew — is left out of the
- * ask rather than blanking the whole read, so the rungs above and below it
- * still say what the file calls them.
+ * An element the file has no stamp for — DOM some code drew — is left out of
+ * the ask rather than blanking the whole read, so the elements above and
+ * below it are still read.
  */
 export function stampsOf(held: Held | null): { frame: string; sources: string[]; rungs: number[] } | null {
 	if (held?.kind === "elements") {
@@ -134,11 +135,11 @@ export function stampsOf(held: Held | null): { frame: string; sources: string[];
 		return sources.length === 0 ? null : { frame: held.frame, sources, rungs };
 	}
 	if (held?.kind !== "element") return null;
-	const rung = rungOf(held);
-	if (rung < 0) return null;
+	const at = rungOf(held);
+	if (at < 0) return null;
 	const sources: string[] = [];
 	const rungs: number[] = [];
-	for (const [index, hit] of held.chain.slice(0, rung + 1).entries()) {
+	for (const [index, hit] of held.chain.slice(0, at + 1).entries()) {
 		const source = hit.source ?? "";
 		if (source === "") continue;
 		sources.push(source);
@@ -156,9 +157,10 @@ export function stampsOf(held: Held | null): { frame: string; sources: string[];
  * lives), and whether its words can be typed into (#339).
  *
  * What comes back is scattered back onto the chain, so a caller indexes it by
- * rung and gets nothing where a rung had no stamp to ask about. A read in
- * flight is nothing rather than the last rung's answer: a write measured
- * against the previous element's file would land somewhere wrong.
+ * the element's place in the chain and gets nothing where an element had no
+ * stamp to ask about. A read in flight is nothing rather than the last
+ * element's answer: a write measured against the previous element's file
+ * would land somewhere wrong.
  */
 export function useRungs(project: string, held: Held | null, revision: number): (RungRead | undefined)[] | null {
 	const [answered, setAnswered] = useState<{ asked: string; on: string; rungs: RungRead[] } | null>(null);
@@ -195,7 +197,7 @@ export function useRungs(project: string, held: Held | null, revision: number): 
 	// there would leave nothing to measure a write against for a round trip.
 	if (answered.asked !== asked && (on === "" || answered.on !== on)) return null;
 	const byRung: (RungRead | undefined)[] = [];
-	for (const [index, rung] of ask.rungs.entries()) byRung[rung] = answered.rungs[index];
+	for (const [index, place] of ask.rungs.entries()) byRung[place] = answered.rungs[index];
 	return byRung;
 }
 

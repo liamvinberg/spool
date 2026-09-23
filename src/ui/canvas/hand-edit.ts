@@ -79,7 +79,7 @@ export interface HandEdit {
 	source: string;
 	/** the ask the frame answers; a reply carrying another is a dead edit */
 	id: number;
-	/** the hash of the file the rung was read out of, once that read has landed */
+	/** the hash of the file the element was read out of, once that read has landed */
 	fingerprint: string | undefined;
 	phase: "opening" | "open";
 	start: string;

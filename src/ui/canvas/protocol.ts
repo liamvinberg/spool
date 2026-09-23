@@ -428,7 +428,7 @@ export const captureMessage = (id: string, targetWidth: number, settleMs: number
 /**
  * `selects` is a pick that ends in a selection rather than a hover (#323), and
  * the frame answers it with what only a selection needs: which row of a list
- * each rung is, and which sides its content spills past.
+ * each element of the ancestry is, and which sides its content spills past.
  */
 export const pickMessage = (x: number, y: number, id: number, selects = false) =>
 	({ spool: "pick", x, y, id, selects }) as const;

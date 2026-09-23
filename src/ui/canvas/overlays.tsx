@@ -180,9 +180,9 @@ export function SelectionOverlay({
 			: undefined;
 	const single =
 		editable && selected.length === 1 && entered === null ? frames.find((f) => f.name === selected[0]) : undefined;
-	const unpicked = (rung: ElementPreview | null): ElementPreview | null =>
-		rung !== null && !picked.some((pick) => pick.frame === rung.frame && pick.selector === rung.selector)
-			? rung
+	const unpicked = (preview: ElementPreview | null): ElementPreview | null =>
+		preview !== null && !picked.some((pick) => pick.frame === preview.frame && pick.selector === preview.selector)
+			? preview
 			: null;
 	const previewShown = unpicked(preview);
 	/** the one element held, which is the one that wears a name label (#339) */
@@ -604,12 +604,12 @@ function ClippedEdges({
 /**
  * The mark on the side an element's content runs past its box (#324).
  *
- * The ring stays the border box: it is what the handles drag and what the file
- * says. A width written under the content's own min-content width leaves the
- * words standing outside it, and a ring shorter than the text it is round
- * reads as a broken ring rather than as the truth about a box that is smaller
- * than what is in it. The same two pixels of thread the frame clip already
- * uses, on the side it spills.
+ * The ring stays the border box, which is what the file says. A width
+ * written under the content's own min-content width leaves the words standing
+ * outside it, and a ring shorter than the text it is round reads as a broken
+ * ring rather than as the truth about a box that is smaller than what is in
+ * it. The same two pixels of thread the frame clip already uses, on the side
+ * it spills.
  */
 function SpillMark({ box, side }: { box: Box; side: "right" | "bottom" }) {
 	const place =

@@ -29,8 +29,8 @@ import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage }
  *
  * Live HTML frames hold their animations while the camera moves (#171), once
  * nothing has attended them for a long minute (#172), and for as long as the
- * hand holds an element (#319) — the mount is unchanged in every case, only the
- * frames it is running.
+ * Edit tool is on (#319, #339) — the mount is unchanged in every case, only
+ * the frames it is running.
  */
 
 export type FrameState = "picture" | "refreshing" | "held" | "live";

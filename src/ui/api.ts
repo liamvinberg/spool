@@ -309,7 +309,7 @@ export type TextWritten =
 /**
  * The write half of a text edit (#314): the element's child nodes as the
  * frame has them, the call one owner up when the frame knows it, and the
- * fingerprint of the file the rung was read from. A refusal comes back as
+ * fingerprint of the file the element was read from. A refusal comes back as
  * one; anything else is a write that could not land.
  */
 export async function writeText(
@@ -407,12 +407,13 @@ export async function putGeometry(project: string, frames: Record<string, Geomet
 }
 
 /**
- * What the file says about an ancestry (#256): the read the properties rail
- * draws from, before anything is touched.
+ * What the file says about an ancestry (#256): the read a selection takes
+ * before anything is touched.
  *
- * It is the write lane's own parse, asked a different question — so the name on
- * a crumb is the name the author wrote, and the fingerprint is the file a write
- * is measured against. Nothing comes back for a frame the daemon has lost.
+ * It is the write lane's own parse, asked a different question — so whether
+ * words can be typed into is the file's answer, and the fingerprint is the
+ * file a write is measured against. Nothing comes back for a frame the daemon
+ * has lost.
  */
 export async function readRungs(
 	project: string,

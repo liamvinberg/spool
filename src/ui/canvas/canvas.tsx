@@ -432,7 +432,7 @@ export function ProjectCanvas({
 	// the in-place text edit that is open (#314), which is what hands the frame its pointer
 	const [editing, setEditing] = useState<HandEdit | null>(null);
 	// how many times the hand has saved each frame without reloading it (#314):
-	// a save rewrites the very file the rung was read out of, so it is a fresh
+	// a save rewrites the very file the element was read out of, so it is a fresh
 	// read too, and the read has to carry the fingerprint the next write needs
 	const [saves, setSaves] = useState<Record<string, number>>({});
 	const [agentRequest, setAgentRequest] = useState<AgentRequest>();
@@ -880,11 +880,11 @@ export function ProjectCanvas({
 	}, []);
 
 	/**
-	 * The held rung's own read, as the handlers see it.
+	 * The held element's own read, as the handlers see it.
 	 *
 	 * Filled from the selection's read further down and mirrored here, because
 	 * the handlers are written before it and a write has to be measured against
-	 * the file the rung was read out of rather than against a render.
+	 * the file the element was read out of rather than against a render.
 	 */
 	const heldReadRef = useRef<RungRead | undefined>(undefined);
 	/** the selection's read as the handlers see it, a paint earlier than the render */
@@ -960,8 +960,8 @@ export function ProjectCanvas({
 	 */
 	const changedUnderHand = useCallback(
 		(frame: string, own: { source: string; fingerprint: string }) => {
-			void readRungs(project, frame, [own.source]).then((rungs) => {
-				if (saved.current.get(frame) !== own || rungs?.[0]?.fingerprint === own.fingerprint) return;
+			void readRungs(project, frame, [own.source]).then((reads) => {
+				if (saved.current.get(frame) !== own || reads?.[0]?.fingerprint === own.fingerprint) return;
 				reloadOrHold(frame);
 			});
 		},
@@ -1916,7 +1916,7 @@ export function ProjectCanvas({
 	 * Every write is measured against the file the surface read it out of, and
 	 * a write that reaches a call site one owner up reaches a second file — so
 	 * that one is looked up the same way: the hand's own last save on this
-	 * frame first, because it is newer than any read, then the rungs of the
+	 * frame first, because it is newer than any read, then the elements of the
 	 * selection's own read. Nothing when neither knows the file, which leaves
 	 * the daemon's fresh read of it the first anybody has seen.
 	 */
@@ -1924,8 +1924,8 @@ export function ProjectCanvas({
 		const path = `design/${stamp.replace(/:\d+:\d+$/, "")}`;
 		const own = saved.current.get(frame);
 		if (own !== undefined && `design/${own.source.replace(/:\d+:\d+$/, "")}` === path) return own.fingerprint;
-		for (const rung of railRungsRef.current ?? []) {
-			if (rung?.path === path && rung.fingerprint !== undefined) return rung.fingerprint;
+		for (const read of railRungsRef.current ?? []) {
+			if (read?.path === path && read.fingerprint !== undefined) return read.fingerprint;
 		}
 		return undefined;
 	}, []);
@@ -1938,7 +1938,7 @@ export function ProjectCanvas({
 
 	/**
 	 * The other frames rendering a shared file the hand is about to write
-	 * (#318), read off the rung before the gesture. Each is showing a document
+	 * (#318), read off the element before the gesture. Each is showing a document
 	 * the file is about to stop saying, and the watcher's echo will reload it;
 	 * its last paint is held from here, before the write leaves, so that
 	 * reload lands behind the document on screen rather than through a still
@@ -1966,7 +1966,7 @@ export function ProjectCanvas({
 	 * What a write that has landed leaves behind, whichever direction it ran.
 	 *
 	 * The frame already shows the words, so it is not reloaded (rule 4): the
-	 * file is a fresh read for the rung, the stamps a save shifted along its
+	 * file is a fresh read for the element, the stamps a save shifted along its
 	 * line are moved in the document and in the held picks, and the frame is
 	 * remembered as saved so the watcher's echo of this write reloads nothing
 	 * and leaving the frame does. A frame the hand had already left, or a
@@ -2015,7 +2015,7 @@ export function ProjectCanvas({
 	 * write that landed; everything between was the same thirty lines written
 	 * out for each. The readers held before the write go free the moment it
 	 * turns out not to have reached them; a refusal is shown where the gesture
-	 * was, and one about a file that moved underneath re-reads the rung; a
+	 * was, and one about a file that moved underneath re-reads the element; a
 	 * write that said what the file already said is no step at all; and a write
 	 * that landed is one history entry and, once per project, the line about
 	 * nothing catching hand edits.
@@ -2031,7 +2031,7 @@ export function ProjectCanvas({
 				edit: number;
 				/** the element the write was about, which is what walking its entry points at again (#322) */
 				selector: string;
-				/** the stamp the entry re-reads its rung at, given the file the write landed in */
+				/** the stamp the entry re-reads its element at, given the file the write landed in */
 				readAt: (path: string) => string;
 				refuse: (refusal: Refusal) => void;
 				/** the sentence for a write that never reached the daemon at all */
@@ -2051,7 +2051,7 @@ export function ProjectCanvas({
 			if (!written.ok) {
 				releaseReaders(frame, readers);
 				about.refuse(written.refusal);
-				// a file that moved underneath is a fresh read of the rung
+				// a file that moved underneath is a fresh read of the element
 				if (written.refusal.code === "stale-file") {
 					setSaves((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
 				}
@@ -2357,7 +2357,7 @@ export function ProjectCanvas({
 	 * The ancestry at a frame-local point: what every pointer verb asks for.
 	 *
 	 * A verb that ends in a selection asks for what only a selection needs
-	 * along with it (#323, #324): which row of a list each rung is, and which
+	 * along with it (#323, #324): which row of a list each element is, and which
 	 * sides its content spills past. A hover asks for a chain many times a
 	 * second and needs none of it, so it does not.
 	 */
@@ -2786,7 +2786,7 @@ export function ProjectCanvas({
 	 * ring is re-read off the element they are drawn in, and a commit that
 	 * changed them is one write in the background. A refusal puts the words
 	 * back on the element and sits under it with the reason and the door to
-	 * the agent; a file that moved underneath is a fresh read of the rung too.
+	 * the agent; a file that moved underneath is a fresh read of the element too.
 	 */
 	const finishEdit = useCallback(
 		(held: HandEdit, commit: boolean, nodes: readonly EditedNode[], owner: string | null) => {
@@ -2854,8 +2854,8 @@ export function ProjectCanvas({
 	// --- delete (#317) ------------------------------------------------------------
 
 	/**
-	 * What the hand holds once an element is gone: the rung above it, or the
-	 * frame when it had none. Never nothing — a frame the hand is still in is
+	 * What the hand holds once an element is gone: its parent, or the frame
+	 * when it had none. Never nothing — a frame the hand is still in is
 	 * what keeps its own save from reloading it out from under the gesture.
 	 */
 	const holdParent = useCallback(
@@ -2880,8 +2880,8 @@ export function ProjectCanvas({
 	 *
 	 * The frame changes first and answers with whether it could and with the
 	 * call one owner up — the only place that knows it. Then one write in the
-	 * background, addressed by the stamp and measured against the file the rung
-	 * was read out of. A refusal puts the document back exactly as it was and
+	 * background, addressed by the stamp and measured against the file the
+	 * element was read out of. A refusal puts the document back exactly as it was and
 	 * sits under the element with the reason and the door to the agent.
 	 *
 	 * A delete of something that is all of a component is refused rather than
@@ -2905,7 +2905,7 @@ export function ProjectCanvas({
 			if (pick === undefined || source === undefined) return;
 			// One row of a list goes as the row (#324): the file loses the array
 			// entry, and the document loses that entry's own element rather than
-			// the one under the pointer, which is a rung inside it.
+			// the one under the pointer, which is an element inside it.
 			const gone =
 				at.item !== undefined && pick.item !== undefined ? { ...pick, selector: pick.item.selector } : pick;
 			const target = iframes.current.get(pick.frame)?.contentWindow;
@@ -2970,7 +2970,7 @@ export function ProjectCanvas({
 						readAt: () => source,
 						refuse: (refusal) => refuse(refusal, insteadDeleteCall(refusal, owner)),
 						failed: "the change did not reach the file",
-						// the elements are gone: the rung above the first is what the
+						// the elements are gone: the parent of the first is what the
 						// hand holds now, and it holds it only once the write has
 						// actually landed, so a refusal still has them to sit under
 						...(picks.length === 1 ? {} : { entry: { picks: picks.map((held) => held.selector) } }),
@@ -2995,7 +2995,7 @@ export function ProjectCanvas({
 	/**
 	 * ⌫ on a held element (#317): it goes, here and in the file.
 	 *
-	 * The fingerprint is the one the selection's read holds for this very rung, which
+	 * The fingerprint is the one the selection's read holds for this very element, which
 	 * is the file the document on screen was rendered from. Without it there is
 	 * nothing to measure the write against, and the honest answer is to say so
 	 * rather than to write against whatever the file says now.
@@ -5283,7 +5283,7 @@ export function ProjectCanvas({
 	 * second piece of state that could disagree with it. With the experiment
 	 * off the strip is never drawn and the column is simply the properties rail.
 	 */
-	/** what the rail is looking at: one rung, one frame, or how many of either */
+	/** what the rail is looking at: one element, one frame, or how many of either */
 	const railHeld = ((): Held | null => {
 		// a page is held on its own, and the selection never holds both (#265)
 		const page = pageObjects.find((object) => object.page === selectedPage);
@@ -5306,13 +5306,13 @@ export function ProjectCanvas({
 				picks: one ? picked : [],
 			};
 		}
-		const rung = picked[0];
-		if (rung !== undefined) {
-			const chain = chainDrawn?.frame === rung.frame ? chainDrawn.chain : [rung];
-			const geometry = geometryOf(rung.frame);
+		const pick = picked[0];
+		if (pick !== undefined) {
+			const chain = chainDrawn?.frame === pick.frame ? chainDrawn.chain : [pick];
+			const geometry = geometryOf(pick.frame);
 			return geometry === null
 				? null
-				: { kind: "element", frame: rung.frame, geometry, chain, selector: rung.selector };
+				: { kind: "element", frame: pick.frame, geometry, chain, selector: pick.selector };
 		}
 		if (selected.length > 1) return { kind: "frames", count: selected.length };
 		const name = selected[0];

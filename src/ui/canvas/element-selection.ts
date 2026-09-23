@@ -64,7 +64,7 @@ export function parentOf(
  * words, say why they cannot be opened, or step into its children.
  *
  * Words of its own decide it. An element with some opens them, unless the file
- * has already said a hand cannot write them (the rung read's `words`), which
+ * has already said a hand cannot write them (the selection read's `words`), which
  * is said on the element before anything is typed. A group has no words and
  * holds elements, so the step goes into them.
  */
