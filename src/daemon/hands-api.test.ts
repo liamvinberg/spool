@@ -417,7 +417,6 @@ function stampFor(source: string, snippet: string): string {
 describe("the rungs read", () => {
 	interface RungAnswer {
 		source: string;
-		name?: string;
 		path?: string;
 		line?: number;
 		refusal?: { code: string; says: string; expression?: string };
@@ -466,7 +465,7 @@ describe("the rungs read", () => {
 		expect(read?.fingerprint).toBe(fingerprintOf(cartTsx));
 	});
 
-	it("reads a whole ancestry in rung order: the authored name, and where it is written", async () => {
+	it("reads a whole ancestry in order: where each element is written", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "cart", cartTsx);
@@ -475,7 +474,6 @@ describe("the rungs read", () => {
 		expect(await rungs(app, name, [stampFor(cartTsx, "<main"), stampFor(cartTsx, "<button")])).toEqual([
 			{
 				source: stampFor(cartTsx, "<main"),
-				name: "main",
 				path: "design/frames/cart/frame.tsx",
 				line: 5,
 				// a heading is no inline text, so the main's own children are not words a hand types into
@@ -483,7 +481,6 @@ describe("the rungs read", () => {
 			},
 			{
 				source: stampFor(cartTsx, "<button"),
-				name: "button",
 				path: "design/frames/cart/frame.tsx",
 				line: 7,
 			},
@@ -508,7 +505,6 @@ describe("the rungs read", () => {
 		expect(await rungs(app, name, ["shared/ui/card.tsx:2:9"])).toEqual([
 			{
 				source: "shared/ui/card.tsx:2:9",
-				name: "div",
 				path: "design/shared/ui/card.tsx",
 				line: 2,
 				shared: { frames: ["bag", "cart"] },

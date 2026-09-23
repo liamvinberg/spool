@@ -241,8 +241,6 @@ export const STALE_STAMP: PatchRefusal = { code: "stale-stamp", says: "the stamp
  * same way an op is — fresh, never from a mirror.
  */
 export interface ElementRead {
-	/** what the source calls it: `CartRow` for a component, `li` for a tag */
-	name: string;
 	/**
 	 * Why a hand may not type into this element's words, when the file alone
 	 * says so (#339): the refusal a text write here would meet, asked before
@@ -270,7 +268,7 @@ export function readElements(
 		const element = elementAt(program, line, column, rel);
 		if (element === undefined) return undefined;
 		const words = wordsRefusal(source, element);
-		return { name: rawOf(source, element.node.openingElement.name), ...(words === undefined ? {} : { words }) };
+		return words === undefined ? {} : { words };
 	});
 }
 

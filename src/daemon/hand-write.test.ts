@@ -395,10 +395,6 @@ describe("readElements", () => {
 		return readElements(FRAME, at);
 	}
 
-	it("names an element the way its author wrote it, tag or component", () => {
-		expect(read("<main", "<Card").map((one) => one?.name)).toEqual(["main", "Card"]);
-	});
-
 	it("says before any typing whether the words are the file's to take (#339)", () => {
 		const [heading, button, img, state, count] = read("<h1", "<button", "<img", "<p className={busy", "<span");
 		expect(heading?.words).toBeUndefined();

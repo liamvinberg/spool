@@ -46,8 +46,6 @@ export interface LaneDeps {
 export interface RungRead {
 	/** the stamp asked about, which is what pairs a reply with its rung */
 	source: string;
-	/** what the file calls it; absent when the stamp hits nothing any more */
-	name?: string;
 	/** where it is written: `design/frames/cart/frame.tsx` */
 	path?: string;
 	line?: number;
@@ -134,7 +132,6 @@ export async function readRungs(
 		}
 		rungs.push({
 			source,
-			name: read.name,
 			path: `design/${stamp.rel}`,
 			line: stamp.line,
 			...(read.words === undefined ? {} : { words: read.words }),
