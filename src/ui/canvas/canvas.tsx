@@ -16,6 +16,7 @@ import type {
 	FrameCopy,
 	Geometry,
 	HeldPatch,
+	MovePlace,
 	Place,
 	ProjectedFrame,
 	RungRead,
@@ -79,7 +80,7 @@ import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
-import { type Drop, dropAt, type Place as MovePlace, moveAsk } from "./element-move";
+import { type Drop, dropAt, moveAsk } from "./element-move";
 import { deepest, openingOf, parentOf, wordsAsk } from "./element-selection";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";

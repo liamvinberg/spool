@@ -1,3 +1,4 @@
+import type { MovePlace } from "../api";
 import type { PickedHit } from "./protocol";
 
 /**
@@ -7,14 +8,11 @@ import type { PickedHit } from "./protocol";
 
 type Rect = PickedHit["rect"];
 
-/** Which side of a sibling a move lands on. */
-export type Place = "before" | "after";
-
 /** Where a drag would put the element: beside which sibling, and the line drawn there. */
 export interface Drop {
 	/** the index of the sibling in the row it was read from */
 	beside: number;
-	place: Place;
+	place: MovePlace;
 	/** the insertion line, frame-local */
 	line: Rect;
 }
@@ -66,7 +64,7 @@ export function dropAt(rects: readonly Rect[], moving: number, point: { x: numbe
 	if (rect === undefined) return undefined;
 	const axis = axisOf(rects);
 	const middle = axis === "x" ? rect.x + rect.w / 2 : rect.y + rect.h / 2;
-	const place: Place = (axis === "x" ? point.x : point.y) < middle ? "before" : "after";
+	const place: MovePlace = (axis === "x" ? point.x : point.y) < middle ? "before" : "after";
 	if ((place === "before" && beside === moving + 1) || (place === "after" && beside === moving - 1)) {
 		return undefined;
 	}
@@ -77,6 +75,6 @@ export function dropAt(rects: readonly Rect[], moving: number, point: { x: numbe
 }
 
 /** What a move was, said the way a person would say it: `Move the li after the li`. */
-export function moveAsk(tag: string, place: Place, beside: string): string {
+export function moveAsk(tag: string, place: MovePlace, beside: string): string {
 	return `Move the ${tag} ${place} the ${beside}`;
 }

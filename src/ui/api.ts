@@ -15,7 +15,7 @@ import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows"
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { RungRead } from "../daemon/hand-lane";
-import type { EditedNode, PatchRefusal, StampShift } from "../daemon/hand-write";
+import type { EditedNode, Place as MovePlace, PatchRefusal, StampShift } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
@@ -49,6 +49,7 @@ export type {
 	FsSearch,
 	Geometry,
 	LocatedRange,
+	MovePlace,
 	PatchRefusal,
 	Place,
 	ProjectCard,
@@ -373,7 +374,7 @@ export interface MoveAsk {
 	act: "move";
 	sources: [string];
 	fingerprint: string;
-	place: "before" | "after";
+	place: MovePlace;
 	owner?: { source: string; fingerprint: string };
 	target?: { source: string; owner?: string };
 	item?: { source: string; index: number; target: number; fingerprint: string };

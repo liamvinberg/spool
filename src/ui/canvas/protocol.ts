@@ -6,6 +6,7 @@ import { type ClipboardCopyRequest, parseClipboardCopyRequest } from "../../runt
 import type { SessionRecord } from "../../runtime/frame-runtime";
 import type { AccelKeyName } from "../../runtime/platform-keys";
 import { isWalkId } from "../../runtime/walk-protocol";
+import type { MovePlace } from "../api";
 import type { Box } from "./camera";
 
 /**
@@ -534,7 +535,7 @@ export const alterMessage = (
  * the moved element's new ancestry, so the ring follows it, and the move is
  * held under its id like a delete so undo can put the very node back.
  */
-export const moveMessage = (id: number, moved: string, beside: string, place: "before" | "after") =>
+export const moveMessage = (id: number, moved: string, beside: string, place: MovePlace) =>
 	({ spool: "alter", id, selectors: [moved, beside], act: "move", place }) as const;
 
 /** How a save moved the stamps on its line, for a document that is not reloaded for it (#314). */
