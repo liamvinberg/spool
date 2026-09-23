@@ -1640,8 +1640,17 @@ const canvasShimJs = `(() => {
 
 	// Swallow the release half too. Relay modifier releases explicitly because
 	// application key listeners on this same window must not receive edit keys.
+	// The keys that went down in this document. A key released here that went
+	// down out on the canvas — the Enter that opened an edit, whose release
+	// lands after the focus has come in — is the canvas's, and the page never
+	// hears it (#339). Tracked by physical key, which a shift let go of first
+	// does not change.
+	var downHere = new Set();
+	addEventListener("keydown", (event) => { downHere.add(event.code); }, true);
+	addEventListener("blur", () => { downHere.clear(); });
 	addEventListener("keyup", (event) => {
-		if (editing || editingKeys.delete(event.key)) {
+		const stray = !downHere.delete(event.code);
+		if (editing || editingKeys.delete(event.key) || stray) {
 			event.stopImmediatePropagation();
 			if (event.key === "Meta" || event.key === "Control") parent.postMessage({ spool: "modifier", frame: (window.__SPOOL__ || {}).frame, modifier: event.key, held: false }, "*");
 		}

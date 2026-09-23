@@ -131,6 +131,7 @@ const COUNTING = `export default function Frame() {
 					};
 					(view.requestAnimationFrame as (cb: () => void) => void)(loop);
 					el.ownerDocument.addEventListener("keydown", count("typed"));
+					el.ownerDocument.addEventListener("keyup", count("typed"));
 				}}
 			>
 				spinning
@@ -177,6 +178,17 @@ it("keeps every pointer and key off the page while Edit is on, and holds its ani
 		.poll(() => frame.locator("#go").getAttribute("contenteditable"), { timeout: 15_000 })
 		.toBe("plaintext-only");
 	await page.mouse.move(at.x + 4, at.y + 2);
+	await page.keyboard.press("Escape");
+	await expect.poll(() => frame.locator("#go").getAttribute("contenteditable"), { timeout: 15_000 }).toBe(null);
+	// ⏎ opens them from the canvas, and its release, which lands after the
+	// focus has gone into the frame, is still the canvas's
+	await expect
+		.poll(() => page.evaluate(() => document.activeElement?.getAttribute("role") ?? "none"), { timeout: 15_000 })
+		.toBe("application");
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(() => frame.locator("#go").getAttribute("contenteditable"), { timeout: 15_000 })
+		.toBe("plaintext-only");
 	await page.keyboard.press("Escape");
 	await expect.poll(() => frame.locator("#go").getAttribute("contenteditable"), { timeout: 15_000 }).toBe(null);
 	for (const name of ["hovered", "clicked", "focused", "typed"]) expect(await counted(name), name).toBe(0);
