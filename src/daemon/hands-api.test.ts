@@ -714,3 +714,192 @@ export default () => <Card>Keep going</Card>;
 		expect(outside.status).toBe(400);
 	});
 });
+
+/**
+ * The reorder over the API (#340): one write, one span its undo puts back,
+ * and always a reload rather than stamps shifted along a line. The same
+ * fingerprint gate every other write in the lane keeps.
+ */
+describe("the move write", () => {
+	const nav = `const rows = ["one", "two", "three"];
+
+export default function Frame() {
+	return (
+		<main>
+			<nav>
+				<a href="/docs">Docs</a>
+				<a href="/code">GitHub</a>
+			</nav>
+			<ul>{rows.map((row) => <li key={row}>{row}</li>)}</ul>
+			<section>
+				<Card title="a" />
+				<Card title="b" />
+			</section>
+		</main>
+	);
+}
+`;
+	const card =
+		'export function Card({ title }: { title: string }) {\n\treturn <div className="card">{title}</div>;\n}\n';
+
+	function stampIn(rel: string, source: string, snippet: string): string {
+		const at = source.indexOf(snippet);
+		const before = source.slice(0, at);
+		return `${rel}:${before.split("\n").length}:${at - (before.lastIndexOf("\n") + 1) + 1}`;
+	}
+	const own = (snippet: string) => stampIn("frames/nav/frame.tsx", nav, snippet);
+
+	function project() {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "nav", nav);
+		writeDesignFile(root, "shared/ui/card.tsx", card);
+		const app = makeApp(spoolDir);
+		const read = (rel = "frames/nav/frame.tsx") => readFileSync(join(root, "design", rel), "utf8");
+		return { root, name, app, read };
+	}
+
+	it("moves a link after its sibling in one span, reloads, and puts it back", async () => {
+		const { name, app, read } = project();
+		const res = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "move",
+				sources: [own('<a href="/docs"')],
+				fingerprint: fingerprintOf(nav),
+				target: { source: own('<a href="/code"') },
+				place: "after",
+			}),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			shifts: unknown;
+			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
+		};
+		expect(body.shifts).toBeNull();
+		const moved = nav.replace(
+			'\t\t\t\t<a href="/docs">Docs</a>\n\t\t\t\t<a href="/code">GitHub</a>\n',
+			'\t\t\t\t<a href="/code">GitHub</a>\n\t\t\t\t<a href="/docs">Docs</a>\n',
+		);
+		expect(read()).toBe(moved);
+
+		const back = await app.request(`/api/p/${name}/revert`, jsonPost(body.undo));
+		expect(back.status).toBe(200);
+		expect(read()).toBe(nav);
+	});
+
+	it("refuses as stale when the file changed between the read and the write", async () => {
+		const { root, name, app, read } = project();
+		const changed = nav.replace("GitHub", "Source");
+		writeDesignFile(root, "frames/nav/frame.tsx", changed);
+		const res = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "move",
+				sources: [own('<a href="/docs"')],
+				fingerprint: fingerprintOf(nav),
+				target: { source: own('<a href="/code"') },
+				place: "after",
+			}),
+		);
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({
+			ok: false,
+			refusal: { code: "stale-file", says: "the file changed underneath" },
+		});
+		expect(read()).toBe(changed);
+	});
+
+	it("moves a row of a list as its entry in the array", async () => {
+		const { name, app, read } = project();
+		const res = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "move",
+				sources: [own("<li key")],
+				fingerprint: fingerprintOf(nav),
+				item: { source: own("<li key"), index: 2, target: 0, fingerprint: fingerprintOf(nav) },
+				place: "before",
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(read()).toBe(nav.replace('["one", "two", "three"]', '["three", "one", "two"]'));
+	});
+
+	it("moves the calls when each sibling is the whole of what a component returns", async () => {
+		const { name, app, read } = project();
+		const div = stampIn("shared/ui/card.tsx", card, "<div");
+		const res = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "move",
+				sources: [div],
+				fingerprint: fingerprintOf(card),
+				owner: { source: own('<Card title="b"'), fingerprint: fingerprintOf(nav) },
+				target: { source: div, owner: own('<Card title="a"') },
+				place: "before",
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(read()).toContain('<section>\n\t\t\t\t<Card title="b" />\n\t\t\t\t<Card title="a" />\n');
+		expect(read("shared/ui/card.tsx")).toBe(card);
+	});
+
+	it("says why in the planner's words, and turns away a malformed move", async () => {
+		const { name, app } = project();
+		const refused = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "move",
+				sources: [own('<a href="/docs"')],
+				fingerprint: fingerprintOf(nav),
+				target: { source: own("<ul>") },
+				place: "after",
+			}),
+		);
+		expect(refused.status).toBe(409);
+		expect(((await refused.json()) as { refusal: { code: string } }).refusal.code).toBe("not-siblings");
+		const malformed = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({ frame: "nav", act: "move", sources: [own("<ul>")], fingerprint: "x", place: "sideways" }),
+		);
+		expect(malformed.status).toBe(400);
+	});
+
+	it("lets an agent edit right after a move land, and the next move is measured against it", async () => {
+		const { root, name, app, read } = project();
+		const first = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "move",
+				sources: [own('<a href="/docs"')],
+				fingerprint: fingerprintOf(nav),
+				target: { source: own('<a href="/code"') },
+				place: "after",
+			}),
+		);
+		expect(first.status).toBe(200);
+		const agent = read().replace("Docs</a>", "Guides</a>");
+		writeDesignFile(root, "frames/nav/frame.tsx", agent);
+		expect(read()).toBe(agent);
+		const again = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "move",
+				sources: [stampIn("frames/nav/frame.tsx", agent, '<a href="/docs"')],
+				fingerprint: fingerprintOf(agent),
+				target: { source: stampIn("frames/nav/frame.tsx", agent, '<a href="/code"') },
+				place: "before",
+			}),
+		);
+		expect(again.status).toBe(200);
+		expect(read()).toBe(nav.replace("Docs</a>", "Guides</a>"));
+	});
+});

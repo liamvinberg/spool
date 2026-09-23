@@ -344,14 +344,16 @@ export async function writeText(
 export async function writeElement(
 	project: string,
 	frame: string,
-	ask: {
-		act: "delete";
-		/** several for a delete of a multi-pick, and all in one file (#323) */
-		sources: string[];
-		fingerprint: string;
-		/** the row a delete is about, when the document could say which one (#324) */
-		item?: { source: string; index: number; fingerprint: string };
-	},
+	ask:
+		| {
+				act: "delete";
+				/** several for a delete of a multi-pick, and all in one file (#323) */
+				sources: string[];
+				fingerprint: string;
+				/** the row a delete is about, when the document could say which one (#324) */
+				item?: { source: string; index: number; fingerprint: string };
+		  }
+		| MoveAsk,
 ): Promise<TextWritten | undefined> {
 	try {
 		const res = await client.api.p[":project"].element.$post({ param: { project }, json: { frame, ...ask } });
@@ -360,6 +362,21 @@ export async function writeElement(
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * A reorder (#340): the element held and the sibling on screen it lands
+ * beside, or a row of a list and the row it lands beside. The call one owner
+ * up rides along for each, so a component's whole output moves as its call.
+ */
+export interface MoveAsk {
+	act: "move";
+	sources: [string];
+	fingerprint: string;
+	place: "before" | "after";
+	owner?: { source: string; fingerprint: string };
+	target?: { source: string; owner?: string };
+	item?: { source: string; index: number; target: number; fingerprint: string };
 }
 
 export type Reverted =

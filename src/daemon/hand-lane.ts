@@ -8,6 +8,8 @@ import {
 	flatText,
 	mappedArrayAt,
 	type PatchRefusal,
+	type Place,
+	planItemMove,
 	planItemRemoval,
 	planOps,
 	readElements,
@@ -15,6 +17,7 @@ import {
 	type StampShift,
 	shiftsOf,
 	textOwner,
+	wholeReturnAt,
 } from "./hand-write";
 import { resolveLocalImport } from "./nav-sites";
 import { frameFolder, lookupFrame } from "./projection";
@@ -236,7 +239,9 @@ export function textSite(root: string, frame: string, ask: TextAsk): WriteSite {
  * One structural change as the canvas sends it (#317): what to do, where, and
  * the fingerprint of the file the rung was read from.
  */
-export interface ElementAsk {
+export type ElementAsk = DeleteAsk | MoveAsk;
+
+export interface DeleteAsk {
 	act: "delete";
 	/**
 	 * The stamps the gesture is about (#323).
@@ -274,6 +279,7 @@ export interface ElementAsk {
  * file, rather than one this quietly makes for them.
  */
 export function elementSite(root: string, frame: string, ask: ElementAsk): WriteSite {
+	if (ask.act === "move") return moveSite(root, frame, ask);
 	const [first] = ask.sources;
 	if (first === undefined) return { kind: "error", status: 400, message: "an element write names a stamp" };
 	const place = siteAt(root, frame, first, ask.fingerprint);
@@ -307,22 +313,30 @@ function itemSite(
 	frame: string,
 	item: { source: string; index: number; fingerprint: string },
 ): WriteSite {
+	const array = arraySite(root, frame, item);
+	if ("kind" in array) return array;
+	if (array.name === undefined) return planned(array.at, array.source, [{ kind: "delete", source: item.source }]);
+	return listed(array.at, array.source, planItemRemoval(array.source, array.name, item.index));
+}
+
+/**
+ * Where the array one row of a list is an entry of is written (#324, #340):
+ * beside the `.map()`, or in the file it is imported from under design/. No
+ * name where the stamp is not inside a map at all, which makes it one plain
+ * element rather than a row.
+ */
+function arraySite(
+	root: string,
+	frame: string,
+	item: { source: string; fingerprint: string },
+): { at: Stamp; source: string; name?: string } | Extract<WriteSite, { kind: "refusal" | "error" }> {
 	const place = siteAt(root, frame, item.source, item.fingerprint);
 	if ("kind" in place) return place;
 	const { at, source } = place;
 	const held = mappedArrayAt(source, { line: at.line, column: at.column }, at.rel);
 	if (held.kind === "refusal") return { kind: "refusal", refusal: held.refusal };
-	if (held.kind === "plain") return planned(at, source, [{ kind: "delete", source: item.source }]);
-	if (held.kind === "here") {
-		const plan = planItemRemoval(source, held.name, item.index);
-		if ("refusal" in plan) return { kind: "refusal", refusal: plan.refusal };
-		return spliced(at, source, {
-			ok: true,
-			text: applyAll(source, plan.patches),
-			patches: plan.patches,
-			mapped: true,
-		});
-	}
+	if (held.kind === "plain") return { at, source };
+	if (held.kind === "here") return { at, source, name: held.name };
 	const file = importedFile(root, at.file, held.specifier);
 	if (file === undefined) {
 		return {
@@ -334,20 +348,93 @@ function itemSite(
 			},
 		};
 	}
-	let arraySource: string;
 	try {
-		arraySource = readFileSync(file.file, "utf8");
+		return { at: { ...file, line: 1, column: 1 }, source: readFileSync(file.file, "utf8"), name: held.name };
 	} catch {
 		return { kind: "refusal", refusal: STALE_STAMP };
 	}
-	const plan = planItemRemoval(arraySource, held.name, item.index);
+}
+
+/** An array entry's plan, as the site the write lands on. */
+function listed(at: Stamp, source: string, plan: ReturnType<typeof planItemRemoval>): WriteSite {
 	if ("refusal" in plan) return { kind: "refusal", refusal: plan.refusal };
-	return spliced({ ...file, line: 1, column: 1 }, arraySource, {
-		ok: true,
-		text: applyAll(arraySource, plan.patches),
-		patches: plan.patches,
-		mapped: true,
-	});
+	return spliced(at, source, { ok: true, text: applyAll(source, plan.patches), patches: plan.patches, mapped: true });
+}
+
+/**
+ * A reorder as the canvas sends it (#340): the element held, the sibling on
+ * screen it lands beside, and which side.
+ *
+ * An element that is the whole of what a component returns is not what its
+ * parent writes: the call that renders it is. The frame names that call, and
+ * the move addresses it instead, measured against the call's own file. The
+ * sibling is resolved the same way, so a row of cards each rendered by a call
+ * reorders its calls.
+ */
+export interface MoveAsk {
+	act: "move";
+	/** the element held: one stamp */
+	sources: readonly string[];
+	fingerprint: string;
+	place: Place;
+	/** the call one owner up, and the fingerprint of the file it is in */
+	owner?: { source: string; fingerprint: string };
+	/** the sibling on screen, and the call one owner up from it */
+	target?: { source: string; owner?: string };
+	/** a row of a list: its entry moves beside the entry at `target` */
+	item?: { source: string; index: number; fingerprint: string; target: number };
+}
+
+/**
+ * Where a reorder lands (#340). Always a reload rather than stamps shifted
+ * along a line: a move carries elements across lines and past each other, and
+ * only a fresh document says where every stamp went.
+ */
+function moveSite(root: string, frame: string, ask: MoveAsk): WriteSite {
+	const moved = moveSpliced(root, frame, ask);
+	return moved.kind === "ok" ? { ...moved, shifts: null } : moved;
+}
+
+function moveSpliced(root: string, frame: string, ask: MoveAsk): WriteSite {
+	const [first] = ask.sources;
+	if (first === undefined) return { kind: "error", status: 400, message: "a move names a stamp" };
+	const place = siteAt(root, frame, first, ask.fingerprint);
+	if ("kind" in place) return place;
+	if (ask.item !== undefined) {
+		const array = arraySite(root, frame, ask.item);
+		if ("kind" in array) return array;
+		// a stamp that is not inside a map after all is no row, and nothing
+		// here names the sibling it would land beside
+		if (array.name === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+		return listed(
+			array.at,
+			array.source,
+			planItemMove(array.source, array.name, ask.item.index, ask.item.target, ask.place),
+		);
+	}
+	if (ask.target === undefined) return { kind: "error", status: 400, message: "a move names the sibling" };
+	let { at, source } = place;
+	let subject = first;
+	if (ask.owner !== undefined && wholeReturnAt(source, at)) {
+		const call = siteAt(root, frame, ask.owner.source, ask.owner.fingerprint);
+		if ("kind" in call) return call;
+		({ at, source } = call);
+		subject = ask.owner.source;
+	}
+	let target = ask.target.source;
+	if (ask.target.owner !== undefined) {
+		const beside = stampIn(root, target);
+		if ("message" in beside) return { kind: "error", ...beside };
+		if (beside.stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+		let text: string;
+		try {
+			text = beside.stamp.file === at.file ? source : readFileSync(beside.stamp.file, "utf8");
+		} catch {
+			return { kind: "refusal", refusal: STALE_STAMP };
+		}
+		if (wholeReturnAt(text, beside.stamp)) target = ask.target.owner;
+	}
+	return planned(at, source, [{ kind: "move", source: subject, target, place: ask.place }]);
 }
 
 /** The file one relative specifier in a design/ source lands on, inside design/. */

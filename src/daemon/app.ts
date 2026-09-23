@@ -72,7 +72,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { elementSite, readRungs, revertTarget, STALE_FILE, textSite, type WriteSite } from "./hand-lane";
+import { elementSite, type MoveAsk, readRungs, revertTarget, STALE_FILE, textSite, type WriteSite } from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
 import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
@@ -604,15 +604,20 @@ export function createDaemonApp({
 	const elementBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 		const stamps = parseStamps(body.sources);
-		const says = 'an element write is { "frame", "act": "delete", "sources": [ "…:12:4" ], "fingerprint" }';
+		const says = 'an element write is { "frame", "act": "delete" | "move", "sources": [ "…:12:4" ], "fingerprint" }';
 		if (
 			typeof body.frame !== "string" ||
 			!isFramePath(body.frame) ||
-			body.act !== "delete" ||
+			(body.act !== "delete" && body.act !== "move") ||
 			stamps === undefined ||
 			typeof body.fingerprint !== "string"
 		) {
 			return c.text(says, 400);
+		}
+		if (body.act === "move") {
+			const move = moveOf(body, stamps);
+			if (typeof move === "string") return c.text(move, 400);
+			return { frame: body.frame, fingerprint: body.fingerprint, ...move };
 		}
 		// A multi-pick deletes as one write, so its stamps are one file's: one
 		// write is one fingerprint and one span, which is what makes it one
@@ -647,6 +652,59 @@ export function createDaemonApp({
 			...(item === undefined ? {} : { item }),
 		};
 	});
+
+	/**
+	 * A reorder (#340): one element held, the sibling it lands beside and which
+	 * side, or a row of a list and the row it lands beside. The call one owner
+	 * up rides along for each, because only the frame knows it, and the lane
+	 * moves the call when the element is the whole of what a component returns.
+	 */
+	const moveOf = (body: Record<string, unknown>, stamps: string[]): string | Omit<MoveAsk, "fingerprint"> => {
+		const says = 'a move is { "sources": [ one ], "place": "before" | "after", "target" | "item" }';
+		const place = body.place;
+		if (stamps.length !== 1 || (place !== "before" && place !== "after")) return says;
+		const record = (value: unknown) =>
+			typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+		const stamped = (value: unknown): value is string =>
+			typeof value === "string" && parseStamps([value]) !== undefined;
+		const index = (value: unknown): value is number =>
+			typeof value === "number" && Number.isInteger(value) && value >= 0;
+		const owner = record(body.owner);
+		if (body.owner !== undefined && (!stamped(owner?.source) || typeof owner?.fingerprint !== "string")) {
+			return 'a move\'s call is { "owner": { "source", "fingerprint" } }';
+		}
+		const item = record(body.item);
+		if (item !== undefined) {
+			if (
+				!stamped(item.source) ||
+				!index(item.index) ||
+				!index(item.target) ||
+				typeof item.fingerprint !== "string" ||
+				item.fingerprint === ""
+			) {
+				return 'a move of one row is { "item": { "source", "index", "target", "fingerprint" } }';
+			}
+			return {
+				act: "move",
+				sources: stamps,
+				place,
+				item: { source: item.source, index: item.index, target: item.target, fingerprint: item.fingerprint },
+			};
+		}
+		const target = record(body.target);
+		if (!stamped(target?.source) || (target.owner !== undefined && !stamped(target.owner))) {
+			return 'a move names its sibling: { "target": { "source", "owner"? } }';
+		}
+		return {
+			act: "move",
+			sources: stamps,
+			place,
+			target: { source: target.source, ...(typeof target.owner === "string" ? { owner: target.owner } : {}) },
+			...(owner !== undefined && stamped(owner.source) && typeof owner.fingerprint === "string"
+				? { owner: { source: owner.source, fingerprint: owner.fingerprint } }
+				: {}),
+		};
+	};
 
 	/**
 	 * The patch that puts a hand edit back (#314): the run, and the file it
@@ -2461,7 +2519,7 @@ export function createDaemonApp({
 			return c.json(written(project.root, site));
 		})
 		/*
-		 * The structural write (#317): a delete.
+		 * The structural write (#317, #340): a delete or a move.
 		 * The frame already shows what happened; this puts it in the file, once,
 		 * and answers with the patch that takes it back.
 		 */
