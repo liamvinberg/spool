@@ -130,6 +130,33 @@ describe("page tree", () => {
 		expect(onDoubleClickFrame).toHaveBeenCalledWith("shop/checkout");
 	});
 
+	it("makes room under a frame's row for its element tree, and folds it without losing a row (#342)", async () => {
+		const tree = createElement("p", { id: "element-tree" }, "<main>");
+		const shopTop = (host: HTMLElement) =>
+			host.querySelector('button[aria-label="shop page"]')?.closest<HTMLElement>(".absolute")?.style.transform;
+		const { host, rerender } = await render({
+			under: { frame: "shop/checkout", height: 72, open: true, content: tree },
+		});
+		// the frame's page opens so its row is there to open under
+		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
+		const room = host.querySelector("#element-tree")?.parentElement?.parentElement;
+		expect(room?.style.height).toBe("72px");
+		expect(room?.hasAttribute("inert")).toBe(false);
+
+		await rerender({ under: { frame: "home", height: 72, open: true, content: tree } });
+		// the rows after it move down by the room it takes
+		expect(shopTop(host)).toBe("translateY(100px)");
+
+		await rerender({ under: { frame: "home", height: 72, open: false, content: tree } });
+		expect(shopTop(host)).toBe("translateY(28px)");
+		const folded = host.querySelector("#element-tree")?.parentElement?.parentElement;
+		expect(folded?.style.height).toBe("0px");
+		expect(folded?.hasAttribute("inert")).toBe(true);
+
+		await rerender({ under: null });
+		expect(host.querySelector("#element-tree")).toBeNull();
+	});
+
 	it("collapses to a bare strip: the rail is the navigator, so a shut one lists nothing", async () => {
 		const { host } = await render();
 

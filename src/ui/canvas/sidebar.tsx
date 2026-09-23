@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Unseen } from "../../daemon/seen";
 import {
@@ -127,8 +127,6 @@ const EDGE_SPEED = 14;
 const SPRING_MS = 450;
 /** how long a typed jump keeps collecting letters */
 const TYPED_MS = 700;
-/** the house curve, which every rail transition already wears */
-const CURVE = "cubic-bezier(0.23,1,0.32,1)";
 
 export interface SelectModifiers {
 	shift: boolean;
@@ -221,6 +219,19 @@ export type RailEntry = Extract<HistoryEntry, { kind: "rename" | "move" | "move-
  */
 export type RunEntry = (entry: RailEntry, way: Way) => Promise<boolean>;
 
+/**
+ * What the canvas draws under one frame's row (#342): the frame's element
+ * tree while the Edit tool is on. The rail makes the room and slides the rows
+ * after it; what stands there is the canvas's. Closed, the room folds to
+ * nothing with the content still in it, so the fold is seen rather than cut.
+ */
+export interface RailUnder {
+	readonly frame: string;
+	readonly height: number;
+	readonly open: boolean;
+	readonly content: ReactNode;
+}
+
 /** The pages navigator: a file explorer over the projection and the stored order. */
 /** a project whose record says nothing: every row draws exactly as it did */
 const NOTHING_UNSEEN: ReadonlyMap<string, Unseen> = new Map();
@@ -247,6 +258,7 @@ export function CanvasSidebar({
 	litPage = null,
 	unseen = NOTHING_UNSEEN,
 	onMarkSeen,
+	under = null,
 }: {
 	project: string;
 	/** Every named page's path, sorted; the root page is implied and has no row. */
@@ -299,6 +311,8 @@ export function CanvasSidebar({
 	 * the record and the optimistic overlay, so the rail only names the frames.
 	 */
 	onMarkSeen?: (names: readonly string[]) => void;
+	/** what stands under one frame's row, which is the element tree while Edit is on */
+	under?: RailUnder | null;
 }) {
 	const [width, setWidth] = useRailWidth("pages", PANEL_WIDTH);
 	const [resizing, setResizing] = useState(false);
@@ -379,10 +393,21 @@ export function CanvasSidebar({
 		return byPage;
 	}, [orderedPages, frames, order.frames]);
 
+	const belowFrame = under?.open === true ? under.frame : null;
+	const belowHeight = under?.open === true ? under.height : 0;
 	const rows = useMemo(
-		() => railRows(pageTree, framesByPage, expanded, born),
-		[pageTree, framesByPage, expanded, born],
+		() =>
+			railRows(
+				pageTree,
+				framesByPage,
+				expanded,
+				born,
+				belowFrame === null ? null : { frame: belowFrame, height: belowHeight },
+			),
+		[pageTree, framesByPage, expanded, born, belowFrame, belowHeight],
 	);
+	/** the row the room under it belongs to, open or folding */
+	const underRow = under === null ? undefined : rows.find((row) => row.kind === "frame" && row.name === under.frame);
 	const total = listHeight(rows);
 
 	const namesOn = useCallback(
@@ -536,6 +561,19 @@ export function CanvasSidebar({
 		if (holding.size === 0) return;
 		setExpanded((was) => ([...holding].every((page) => was.has(page)) ? was : new Set([...was, ...holding])));
 	}, [selected, frames]);
+
+	/**
+	 * The frame a tree opens under gets a row to open under, the same way a
+	 * selected frame does: an element held on the canvas holds no frame, so
+	 * the rule above never sees it.
+	 */
+	useEffect(() => {
+		if (belowFrame === null) return;
+		const frame = frames.find((each) => each.name === belowFrame);
+		if (frame === undefined) return;
+		const holding = pageChain(pageOf(frame));
+		setExpanded((was) => (holding.every((page) => was.has(page)) ? was : new Set([...was, ...holding])));
+	}, [belowFrame, frames]);
 
 	/* ── travelling ──────────────────────────────────────────────────── */
 
@@ -1654,6 +1692,28 @@ export function CanvasSidebar({
 								);
 							})}
 
+							{under === null || underRow?.kind !== "frame" ? null : (
+								<div
+									// the room folds on the house curve over 300ms and moves with its
+									// row; reduced motion puts it there at once
+									className="absolute inset-x-0 overflow-clip bg-bg [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),height_300ms_cubic-bezier(0.23,1,0.32,1)] motion-reduce:[transition:none]"
+									style={{
+										transform: `translateY(${underRow.top + underRow.height}px)`,
+										height: underRow.below,
+									}}
+									inert={!under.open}
+								>
+									{/* the page's spine runs on past the room to the frames below it */}
+									{underRow.page === ROOT_PAGE || underRow.last ? null : (
+										<span
+											className="absolute inset-y-0 w-px bg-border-raised"
+											style={{ left: guideX(underRow.depth) }}
+										/>
+									)}
+									<div style={{ paddingLeft: contentX(underRow.depth) - 18 }}>{under.content}</div>
+								</div>
+							)}
+
 							{landing === null || landing.kind === "into" ? null : (
 								<div
 									aria-hidden="true"
@@ -1798,11 +1858,12 @@ function RowShell({ row, lifted = false, children }: { row: RailRow; lifted?: bo
 	return (
 		<div
 			role="presentation"
-			className="absolute inset-x-0 animate-find-in"
+			// reduced motion puts a row where it goes at once, as it does the tree
+			// that opens between rows (#342)
+			className="absolute inset-x-0 animate-find-in [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),opacity_140ms_ease-out] motion-reduce:[transition:none]"
 			style={{
 				height: row.height,
 				transform: `translateY(${row.top}px)`,
-				transition: `transform 280ms ${CURVE}, opacity 140ms ease-out`,
 				opacity: lifted ? 0.3 : 1,
 			}}
 		>

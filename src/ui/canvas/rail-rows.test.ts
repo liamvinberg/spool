@@ -49,6 +49,18 @@ describe("the visible list", () => {
 		expect(listHeight(flat)).toBe(FRAME_ROW * 2);
 	});
 
+	it("makes room under a frame for what is drawn there, and a drop there lands after that frame (#342)", () => {
+		const under = railRows(pages, framesByPage, new Set(["admin"]), null, { frame: "home", height: 100 });
+		expect(under.map((row) => row.top)).toEqual(rows.map((row, index) => (index === 0 ? row.top : row.top + 100)));
+		expect(listHeight(under)).toBe(listHeight(rows) + 100);
+		// the room is under the row, not part of it
+		expect(under[0]?.height).toBe(FRAME_ROW);
+		expect(frameLanding(under, FRAME_ROW + 50)).toMatchObject({ kind: "frames", page: ROOT_PAGE, index: 1 });
+		// under the last row, it is part of the list's height
+		const last = railRows(pages, framesByPage, new Set(["admin"]), null, { frame: "users", height: 60 });
+		expect(listHeight(last)).toBe(listHeight(rows) + 60);
+	});
+
 	it("draws the root page's frames, then its pages, then the frames of an open one", () => {
 		expect(rows.map(rowKey)).toEqual(["frame:home", "frame:shell", "page:shop", "page:admin", "frame:users"]);
 		// the root page's own frames sit at the top level beside its page rows; a

@@ -92,6 +92,19 @@ export interface FrameRow extends RowPlace {
 	readonly name: string;
 	readonly page: string;
 	readonly last: boolean;
+	/**
+	 * How much is drawn under the row before the next one (#342): the frame's
+	 * element tree while the Edit tool is on, and nothing otherwise. It is not
+	 * part of the row, so a press there is not a press on the frame, and it
+	 * pushes the rows after it down by the same arithmetic as everything else.
+	 */
+	readonly below: number;
+}
+
+/** What stands under one frame's row, and how tall it is. */
+export interface RailBelow {
+	readonly frame: string;
+	readonly height: number;
 }
 
 /**
@@ -148,6 +161,7 @@ export function railRows(
 	expanded: ReadonlySet<string>,
 	/** the page a new one is being named inside; it waits at the end of that page's own */
 	born: string | null = null,
+	below: RailBelow | null = null,
 ): RailRow[] {
 	const rows: RailRow[] = [];
 	let top = 0;
@@ -157,6 +171,7 @@ export function railRows(
 		const held = pages.get(page) ?? [];
 		const depth = depthIn(page);
 		frames.forEach((frame, at) => {
+			const under = below !== null && below.frame === frame.name ? below.height : 0;
 			rows.push({
 				kind: "frame",
 				name: frame.name,
@@ -171,8 +186,9 @@ export function railRows(
 				last: at === frames.length - 1,
 				top,
 				height: FRAME_ROW,
+				below: under,
 			});
-			top += FRAME_ROW;
+			top += FRAME_ROW + under;
 		});
 		for (const [at, child] of held.entries()) block(child, at, held.length, at === held.length - 1);
 		if (born !== page) return;
@@ -219,7 +235,7 @@ export function railRows(
 
 export function listHeight(rows: readonly RailRow[]): number {
 	const last = rows.at(-1);
-	return last === undefined ? 0 : last.top + last.height;
+	return last === undefined ? 0 : last.top + last.height + (last.kind === "frame" ? last.below : 0);
 }
 
 /**
@@ -259,10 +275,17 @@ export function rowAt(rows: readonly RailRow[], contentY: number): number {
 	return rows.findIndex((row) => contentY >= row.top && contentY < row.top + row.height);
 }
 
-/** The gap a y is nearest: 0 above everything, rows.length below it. */
+/**
+ * The gap a y is nearest: 0 above everything, rows.length below it. A y in
+ * what is drawn under a frame's row is the gap after it, before the next row.
+ */
 function gapAt(rows: readonly RailRow[], contentY: number, at: number): number {
 	const row = at === -1 ? undefined : rows[at];
-	if (row === undefined) return contentY < 0 ? 0 : rows.length;
+	if (row === undefined) {
+		if (contentY < 0) return 0;
+		const next = rows.findIndex((each) => each.top > contentY);
+		return next === -1 ? rows.length : next;
+	}
 	return contentY - row.top < row.height / 2 ? at : at + 1;
 }
 
