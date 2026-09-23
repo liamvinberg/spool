@@ -92,16 +92,27 @@ function noteItem(child: unknown, index: number): void {
  */
 function noteItems(props: Record<string, unknown> | null, isStaticChildren: boolean): void {
 	const children = props?.children;
-	if (!Array.isArray(children)) return;
+	if (!Array.isArray(children) || written.has(children)) return;
+	if (isStaticChildren) written.add(children);
 	for (let index = 0; index < children.length; index += 1) {
 		const entry: unknown = children[index];
 		if (Array.isArray(entry)) {
+			if (written.has(entry)) continue;
 			for (let inner = 0; inner < entry.length; inner += 1) noteItem(entry[inner], inner);
 			continue;
 		}
 		if (!isStaticChildren) noteItem(entry, index);
 	}
 }
+
+/**
+ * The children arrays an author wrote out (#340). A component that renders
+ * `{children}` hands the very array its caller wrote on to a tag of its own,
+ * where it stands nested among that tag's children or alone as its value. It
+ * is still punctuation rather than data, so none of it is a row; the rows it
+ * holds were noted when the caller's tag was made.
+ */
+const written = new WeakSet<unknown[]>();
 
 export function jsxDEV(
 	type: unknown,

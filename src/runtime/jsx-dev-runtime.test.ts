@@ -86,6 +86,20 @@ describe("the row a mapped element is", () => {
 		expect(itemSiteOf(note.props)).toBeUndefined();
 	});
 
+	// a component that renders `{children}` passes its caller's written-out
+	// children on, and they are no more a list there than they were at the call
+	it("says nothing about written-out children a component passes on", () => {
+		const heading = jsxDEV("h2", { children: "Rows" }, undefined, false, source) as ElementLike;
+		const rows = [row(0), row(1)];
+		const Shell = () => null;
+		const call = jsxDEV(Shell, { children: [heading, rows] }, undefined, true, source) as ElementLike;
+		const passed = call.props.children;
+		jsxDEV("div", { children: [passed, "after"] }, undefined, true, source);
+		jsxDEV("main", { children: passed }, undefined, false, source);
+		expect(itemSiteOf(heading.props)).toBeUndefined();
+		expect(itemSiteOf(rows[1]?.props ?? {})).toEqual({ stamp: "shared/ui/rows.tsx:9:20", index: 1 });
+	});
+
 	it("says nothing about an element that stands on its own", () => {
 		const only = jsxDEV("p", { children: "alone" }, undefined, false, source) as ElementLike;
 		jsxDEV("div", { children: only }, undefined, false, source);
