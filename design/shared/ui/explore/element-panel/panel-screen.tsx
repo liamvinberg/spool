@@ -19,6 +19,7 @@ import {
 import { cn } from "shared/lib/utils";
 import { BloomLanding } from "shared/ui/site/current/ui/site/bloom/landing";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { NumField, Row, Section } from "shared/ui/spool/properties-fields";
 import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
@@ -29,15 +30,15 @@ import { SpoolShell } from "shared/ui/spool/shell";
  * nothing on the page answers a click.
  */
 
-export type Take = "path" | "outline" | "tree" | "source";
-export type Pick = "words" | "group" | "row" | "component";
+export type Take = "path" | "outline" | "tree" | "source" | "lean";
+export type Pick = "words" | "group" | "row" | "component" | "frame";
 
 /** where each state's selection starts */
-const PICKS: Record<Pick, string> = {
+const PICKS: Record<Exclude<Pick, "frame">, string> = {
 	words: ".ef-hero h1",
 	group: ".ef-acquire",
 	row: ".fold-finish-oxblood",
-	component: ".es-section[data-section=\"try\"] .es-heading",
+	component: '.es-section[data-section="try"] .es-heading',
 };
 
 const PAGES: readonly PageRow[] = [
@@ -49,14 +50,21 @@ const DOC_W = 1440;
 const DOC_H = 1000;
 const K = 0.56;
 
+/** what the hand holds: an element, the frame itself, or nothing */
+type Held = Element | "frame" | null;
+
 export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 	const stage = useRef<HTMLDivElement>(null);
 	const scroller = useRef<HTMLDivElement>(null);
+	const glass = useRef<HTMLDivElement>(null);
 	const doc = useRef<HTMLDivElement>(null);
-	const [selected, setSelected] = useState<Element | null>(null);
+	const [held, setHeld] = useState<Held>(null);
 	const [hover, setHover] = useState<Element | null>(null);
+	const [editing, setEditing] = useState<Element | null>(null);
+	const [saved, setSaved] = useState<string | null>(null);
 	const [, setTick] = useState(0);
 	const redraw = useCallback(() => setTick((n) => n + 1), []);
+	const selected = held instanceof Element ? held : null;
 
 	const reveal = useCallback((el: Element) => {
 		const box = scroller.current;
@@ -64,20 +72,25 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 		const r = el.getBoundingClientRect();
 		const s = box.getBoundingClientRect();
 		const top = (r.top - s.top) / K + box.scrollTop;
-		if (top < box.scrollTop + 40 || top + r.height / K > box.scrollTop + DOC_H - 40)
-			box.scrollTop = Math.max(0, top - DOC_H / 2 + r.height / K / 2);
+		// only when none of it is on screen: a parent bigger than the view is already in it
+		if (r.bottom < s.top + 20 || r.top > s.bottom - 20)
+			box.scrollTop = Math.max(0, top - DOC_H / 2 + Math.min(r.height / K, DOC_H) / 2);
 	}, []);
 
 	const select = useCallback(
-		(el: Element | null) => {
-			setSelected(el);
-			if (el !== null) reveal(el);
+		(next: Held) => {
+			setHeld(next);
+			if (next instanceof Element) reveal(next);
 		},
 		[reveal],
 	);
 
 	// the state's starting selection, once the landing has drawn
 	useEffect(() => {
+		if (pick === "frame") {
+			setHeld("frame");
+			return;
+		}
 		let tries = 0;
 		const find = () => {
 			const el = doc.current?.querySelector(PICKS[pick]) ?? null;
@@ -88,30 +101,86 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 		return () => clearTimeout(timer);
 	}, [pick, select]);
 
-	// the keys the approved Edit tool binds
+	/* ---------- words, edited where they are ---------- */
+
+	const root = doc.current;
+	const read = selected !== null && root !== null && root.contains(selected) ? readElement(selected, root) : null;
+	const canType = read !== null && read.text !== null && read.text.ok;
+
+	const begin = useCallback((el: Element, at?: { x: number; y: number }) => {
+		if (!(el instanceof HTMLElement)) return;
+		el.contentEditable = "true";
+		el.style.outline = "none";
+		el.focus();
+		const range = caretAt(at, glass.current) ?? document.createRange();
+		if (at === undefined || !el.contains(range.startContainer)) {
+			range.selectNodeContents(el);
+			range.collapse(false);
+		}
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+		setEditing(el);
+	}, []);
+
+	const finish = useCallback(() => {
+		if (!(editing instanceof HTMLElement)) return;
+		editing.contentEditable = "false";
+		editing.removeAttribute("contenteditable");
+		window.getSelection()?.removeAllRanges();
+		const answer = readElement(editing, doc.current ?? editing).text;
+		setSaved(answer?.ok === true && answer.where !== undefined ? `saved to ${answer.where}` : "saved");
+		setEditing(null);
+	}, [editing]);
+
+	useEffect(() => {
+		if (saved === null) return;
+		const timer = setTimeout(() => setSaved(null), 2200);
+		return () => clearTimeout(timer);
+	}, [saved]);
+
+	/* ---------- the keys the approved Edit tool binds ---------- */
+
 	useEffect(() => {
 		const down = (event: KeyboardEvent) => {
+			if (editing !== null) {
+				if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey)) {
+					event.preventDefault();
+					finish();
+				}
+				return;
+			}
 			const root = doc.current;
-			if (root === null || selected === null) return;
+			if (root === null || held === null) return;
+			if (held === "frame") {
+				if (event.key === "Enter") {
+					event.preventDefault();
+					const first = childrenOf(root)[0];
+					if (first !== undefined) select(first);
+				}
+				return;
+			}
 			if (event.key === "Escape" || (event.key === "Enter" && event.shiftKey)) {
 				event.preventDefault();
-				const up = parentOf(selected, root);
-				if (up !== null) select(up);
+				select(parentOf(held, root) ?? (take === "lean" ? "frame" : held));
 			} else if (event.key === "Tab") {
 				event.preventDefault();
-				const row = siblingsOf(selected, root);
-				const at = row.indexOf(selected);
+				const row = siblingsOf(held, root);
+				const at = row.indexOf(held);
 				const next = row[(at + (event.shiftKey ? -1 : 1) + row.length) % row.length];
 				if (next !== undefined) select(next);
 			} else if (event.key === "Enter") {
 				event.preventDefault();
-				const first = childrenOf(selected)[0];
-				if (first !== undefined) select(first);
+				if (take === "lean" && canType) begin(held);
+				else {
+					const first = childrenOf(held)[0];
+					if (first !== undefined) select(first);
+				}
 			}
 		};
 		window.addEventListener("keydown", down);
 		return () => window.removeEventListener("keydown", down);
-	}, [selected, select]);
+	}, [held, select, editing, finish, begin, canType, take]);
 
 	const hitAt = (x: number, y: number): Element | null => {
 		const root = doc.current;
@@ -123,9 +192,8 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 		return null;
 	};
 
-	const root = doc.current;
-	const read = selected !== null && root !== null && root.contains(selected) ? readElement(selected, root) : null;
 	const acts: Acts = { select, hover: setHover };
+	const frameName = FRAME.split("/").at(-1) ?? FRAME;
 
 	return (
 		<SpoolShell activeTab="spool" tabs={["spool"]} zoom="52%">
@@ -142,15 +210,24 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 						<OutlinePanel read={read} root={root} acts={acts} />
 					) : take === "tree" ? (
 						<TreePanel read={read} root={root} acts={acts} />
-					) : (
+					) : take === "source" ? (
 						<SourcePanel read={read} root={root} acts={acts} />
+					) : (
+						<LeanPanel read={read} frame={held === "frame"} root={root} acts={acts} />
 					)
 				}
 			>
 				<div ref={stage} className="absolute top-[56px] left-[20px]">
-					<div className="mb-1.5 flex items-center gap-2 text-muted type-value">
-						<span>{FRAME.split("/").at(-1)}</span>
-					</div>
+					<button
+						type="button"
+						onClick={() => {
+							if (editing !== null) finish();
+							select("frame");
+						}}
+						className={cn("mb-1.5 flex cursor-default items-center gap-2 type-value", held === "frame" ? "text-thread" : "text-muted")}
+					>
+						{frameName}
+					</button>
 					<div className="relative overflow-hidden rounded-[6px] border border-border" style={{ width: DOC_W * K, height: DOC_H * K }}>
 						<div
 							ref={scroller}
@@ -164,25 +241,71 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 						</div>
 						{/* the Edit tool's glass: the page hears nothing while it is on */}
 						<div
-							className="absolute inset-0 cursor-default"
-							onPointerMove={(event) => setHover(hitAt(event.clientX, event.clientY))}
+							ref={glass}
+							className={cn("absolute inset-0", editing === null ? "cursor-default" : "cursor-text")}
+							onPointerMove={(event) => editing === null && setHover(hitAt(event.clientX, event.clientY))}
 							onPointerLeave={() => setHover(null)}
-							onClick={(event) => select(hitAt(event.clientX, event.clientY))}
+							onPointerDown={(event) => {
+								if (editing === null) return;
+								const hit = hitAt(event.clientX, event.clientY);
+								event.preventDefault();
+								if (hit !== null && editing.contains(hit)) begin(editing, { x: event.clientX, y: event.clientY });
+								else finish();
+							}}
+							onClick={(event) => {
+								if (editing !== null) return;
+								select(hitAt(event.clientX, event.clientY));
+							}}
+							onDoubleClick={(event) => {
+								if (take !== "lean" || editing !== null) return;
+								const hit = hitAt(event.clientX, event.clientY);
+								if (hit === null || doc.current === null) return;
+								const answer = readElement(hit, doc.current).text;
+								if (answer?.ok === true) {
+									select(hit);
+									begin(hit, { x: event.clientX, y: event.clientY });
+								}
+							}}
 							onWheel={(event) => {
 								if (scroller.current !== null) scroller.current.scrollTop += event.deltaY / K;
 							}}
 						/>
+						{held === "frame" ? <span className="pointer-events-none absolute inset-0 rounded-[6px] border-[1.5px] border-thread" /> : null}
 					</div>
-					<Marks stage={stage.current} hover={hover === selected ? null : hover} read={read} />
+					<Marks stage={stage.current} hover={hover === selected ? null : hover} read={read} editing={editing !== null} />
+					{saved === null ? null : (
+						<span className="absolute left-0 mt-2 text-muted type-detail" style={{ top: 22 + DOC_H * K }}>
+							{saved}
+						</span>
+					)}
 				</div>
 			</CanvasChrome>
 		</SpoolShell>
 	);
 }
 
+/** the caret under a point in the page, asked past the glass */
+function caretAt(at: { x: number; y: number } | undefined, glass: HTMLDivElement | null): Range | null {
+	if (at === undefined || glass === null) return null;
+	glass.style.pointerEvents = "none";
+	const range = document.caretRangeFromPoint(at.x, at.y);
+	glass.style.pointerEvents = "";
+	return range;
+}
+
 /* ---------- the outline and the name label ---------- */
 
-function Marks({ stage, hover, read }: { stage: HTMLDivElement | null; hover: Element | null; read: ElementRead | null }) {
+function Marks({
+	stage,
+	hover,
+	read,
+	editing,
+}: {
+	stage: HTMLDivElement | null;
+	hover: Element | null;
+	read: ElementRead | null;
+	editing: boolean;
+}) {
 	if (stage === null) return null;
 	const s = stage.getBoundingClientRect();
 	const box = (el: Element) => {
@@ -195,12 +318,14 @@ function Marks({ stage, hover, read }: { stage: HTMLDivElement | null; hover: El
 			{read === null ? null : (
 				<>
 					<span className="absolute border-[1.5px] border-thread" style={box(read.el)} />
-					<span
-						className="absolute -translate-y-full rounded-t-[3px] bg-thread px-1.5 py-px text-on-thread type-detail"
-						style={{ left: box(read.el).left - 0.75, top: box(read.el).top - 0.75 }}
-					>
-						{read.name}
-					</span>
+					{editing ? null : (
+						<span
+							className="absolute -translate-y-full rounded-t-[3px] bg-thread px-1.5 py-px text-on-thread type-detail"
+							style={{ left: box(read.el).left - 0.75, top: box(read.el).top - 0.75 }}
+						>
+							{read.name}
+						</span>
+					)}
 				</>
 			)}
 		</div>
@@ -409,7 +534,7 @@ function useOpen(read: ElementRead | null, root: Element) {
 			else next.add(el);
 			return next;
 		});
-	return { open, toggle };
+	return { open, toggle, setOpen };
 }
 
 function Outline({
@@ -537,8 +662,19 @@ function unitsOf(parent: Element): Unit[] {
 	return out;
 }
 
-function SourcePanel({ read, root, acts }: { read: ElementRead | null; root: Element; acts: Acts }) {
-	const { open, toggle } = useOpen(read, root);
+function SourceRows({
+	read,
+	root,
+	acts,
+	open,
+	toggle,
+}: {
+	read: ElementRead | null;
+	root: Element;
+	acts: Acts;
+	open: Set<Element>;
+	toggle: (el: Element) => void;
+}) {
 	const rows: ReactNode[] = [];
 	const fileOf = (el: Element) => (el.getAttribute("data-spool-source") ?? "").replace(/:\d+:\d+$/, "").split("/").at(-1) ?? "";
 	const visit = (el: Element, depth: number, parentFile: string, label?: string) => {
@@ -600,12 +736,19 @@ function SourcePanel({ read, root, acts }: { read: ElementRead | null; root: Ele
 		}
 	};
 	for (const el of childrenOf(root)) visit(el, 0, "");
+	return <>{rows}</>;
+}
+
+function SourcePanel({ read, root, acts }: { read: ElementRead | null; root: Element; acts: Acts }) {
+	const { open, toggle } = useOpen(read, root);
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-bg">
 			<div className="flex h-9 shrink-0 items-center border-border border-b px-2.5 text-text type-value">
 				{FRAME.split("/").at(-1)}
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto pb-2">{rows}</div>
+			<div className="min-h-0 flex-1 overflow-y-auto pb-2">
+				<SourceRows read={read} root={root} acts={acts} open={open} toggle={toggle} />
+			</div>
 			{read === null ? null : (
 				<div className="shrink-0 border-border border-t bg-bg pb-1">
 					<div className="flex h-8 items-center gap-2 px-2.5">
@@ -620,6 +763,87 @@ function SourcePanel({ read, root, acts }: { read: ElementRead | null; root: Ele
 					<Shared read={read} />
 				</div>
 			)}
+		</div>
+	);
+}
+
+/* ---------- take 5: the lean panel ---------- */
+
+/**
+ * What survived the takes (spool-cloud#188): the panel says what the selection is,
+ * where it is written, and only what the hand cannot do and why. What it can do
+ * lives on the canvas: words edit in place, ⌫ deletes, arrows move. The tree
+ * underneath reads like the code. A frame shows its own geometry over the same tree.
+ */
+function LeanPanel({ read, frame, root, acts }: { read: ElementRead | null; frame: boolean; root: Element; acts: Acts }) {
+	const { open, toggle, setOpen } = useOpen(read, root);
+	// a frame held opens its tree two levels, so the rows under it say what the page is
+	useEffect(() => {
+		if (!frame) return;
+		const top = childrenOf(root)[0];
+		if (top === undefined) return;
+		setOpen((held) => new Set([...held, top, ...childrenOf(top)]));
+	}, [frame, root, setOpen]);
+	const refused = read === null ? [] : ([["words", read.text], ["delete", read.remove], ["move", read.move]] as const).filter(
+		(entry): entry is readonly [string, Extract<Answer, { ok: false }>] => entry[1] !== null && !entry[1].ok,
+	);
+	return (
+		<div className="flex h-full min-h-0 flex-col bg-bg">
+			{frame ? (
+				<div className="shrink-0">
+					<div className="flex h-9 items-center gap-2 border-border border-b px-2.5">
+						<span className="text-text type-value">{FRAME.split("/").at(-1)}</span>
+						<span className="ml-auto text-muted type-detail">frame.json</span>
+					</div>
+					<Section name="position">
+						<Row name="x">
+							<NumField value="80" readout="px" ok onCommit={() => {}} />
+						</Row>
+						<Row name="y">
+							<NumField value="80" readout="px" ok onCommit={() => {}} />
+						</Row>
+					</Section>
+					<Section name="size">
+						<Row name="w">
+							<NumField value="1440" readout="px" ok onCommit={() => {}} />
+						</Row>
+						<Row name="h">
+							<NumField value="1000" readout="px" ok onCommit={() => {}} />
+						</Row>
+					</Section>
+				</div>
+			) : read === null ? (
+				<div className="flex h-9 shrink-0 items-center border-border border-b px-2.5 text-muted type-value">no selection</div>
+			) : (
+				<div className="shrink-0 border-border border-b pb-1.5">
+					<div className="flex h-9 items-center gap-2 px-2.5">
+						<span className="shrink-0 text-text type-value">{read.name}</span>
+						{read.row === null ? null : (
+							<span className="shrink-0 text-muted type-detail">
+								{read.row.index + 1} of {read.row.count}
+							</span>
+						)}
+						<span className="ml-auto truncate text-muted type-detail">
+							{read.stamp === null ? "not in a file" : `${fileName(read.stamp.file)}:${read.stamp.line}`}
+						</span>
+					</div>
+					{read.shared.length === 0 ? null : (
+						<p className="px-2.5 pb-1 text-muted type-detail">also in {read.shared.map((f) => f.split("/").at(-1)).join(", ")}</p>
+					)}
+					{refused.map(([what, answer]) => (
+						<p key={what} className="px-2.5 pt-1 text-muted type-label">
+							<span className="text-text">Can’t {what === "words" ? "edit the words" : what}:</span>{" "}
+							{answer.says.replace(/;? ?(edit it in code or )?ask the agent$/, "")}.{" "}
+							<button type="button" className="cursor-pointer text-thread hover:underline">
+								Ask the agent
+							</button>
+						</p>
+					))}
+				</div>
+			)}
+			<div className="min-h-0 flex-1 overflow-y-auto py-1">
+				<SourceRows read={read} root={root} acts={acts} open={open} toggle={toggle} />
+			</div>
 		</div>
 	);
 }
