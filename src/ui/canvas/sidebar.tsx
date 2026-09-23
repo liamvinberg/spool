@@ -568,14 +568,34 @@ export function CanvasSidebar({
 	 * The frame a tree opens under gets a row to open under, the same way a
 	 * selected frame does: an element held on the canvas holds no frame, so
 	 * the rule above never sees it.
+	 *
+	 * The tree borrows those pages. Once it has folded away they shut again,
+	 * so Edit on and off leaves the rail as Select had it, unless a frame
+	 * selected meanwhile stands in one of them.
 	 */
+	const openedForTree = useRef(new Set<string>());
 	useEffect(() => {
 		if (belowFrame === null) return;
 		const frame = frames.find((each) => each.name === belowFrame);
 		if (frame === undefined) return;
 		const holding = pageChain(pageOf(frame));
-		setExpanded((was) => (holding.every((page) => was.has(page)) ? was : new Set([...was, ...holding])));
+		setExpanded((was) => {
+			const shut = holding.filter((page) => !was.has(page));
+			if (shut.length === 0) return was;
+			for (const page of shut) openedForTree.current.add(page);
+			return new Set([...was, ...shut]);
+		});
 	}, [belowFrame, frames]);
+	const treeGone = under === null;
+	useEffect(() => {
+		if (!treeGone || openedForTree.current.size === 0) return;
+		const opened = openedForTree.current;
+		openedForTree.current = new Set();
+		const kept = new Set(
+			frames.filter((frame) => selected.includes(frame.name)).flatMap((frame) => pageChain(pageOf(frame))),
+		);
+		setExpanded((was) => new Set([...was].filter((page) => !opened.has(page) || kept.has(page))));
+	}, [treeGone, frames, selected]);
 
 	/* ── travelling ──────────────────────────────────────────────────── */
 

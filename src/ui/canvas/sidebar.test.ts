@@ -157,6 +157,36 @@ describe("page tree", () => {
 		expect(host.querySelector("#element-tree")).toBeNull();
 	});
 
+	it("shuts a page the tree opened once the tree has folded away, so Edit on and off leaves the rail as it was (#342)", async () => {
+		const tree = createElement("p", { id: "element-tree" }, "<main>");
+		const checkout = (host: HTMLElement) => host.querySelector('button[aria-label="checkout frame"]');
+		const { host, rerender } = await render();
+		expect(checkout(host)).toBeNull();
+
+		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, content: tree } });
+		expect(checkout(host)).not.toBeNull();
+		// still open while the room folds, so the fold is seen under its row
+		await rerender({ under: { frame: "shop/checkout", height: 72, open: false, content: tree } });
+		expect(checkout(host)).not.toBeNull();
+
+		await rerender({ under: null });
+		expect(checkout(host)).toBeNull();
+		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
+	});
+
+	it("keeps a page open that was open before the tree came, or that holds a frame selected meanwhile (#342)", async () => {
+		const tree = createElement("p", { id: "element-tree" }, "<main>");
+		const checkout = (host: HTMLElement) => host.querySelector('button[aria-label="checkout frame"]');
+		const { host, rerender } = await render();
+		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, content: tree } });
+		await rerender({ under: null, selected: ["shop/checkout"] });
+		expect(checkout(host)).not.toBeNull();
+
+		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, content: tree }, selected: [] });
+		await rerender({ under: null, selected: [] });
+		expect(checkout(host)).not.toBeNull();
+	});
+
 	it("collapses to a bare strip: the rail is the navigator, so a shut one lists nothing", async () => {
 		const { host } = await render();
 
