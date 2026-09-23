@@ -133,3 +133,67 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 	await expect.poll(held).toBe("frame");
 	expect(await rail.innerText()).toBe(plain);
 });
+
+const LONG = `export default function Frame() {
+	return (
+		<main style={{ display: "grid", gridTemplateColumns: "repeat(2, 120px)" }}>
+			{Array.from({ length: 48 }, (_, at) => (
+				<p key={at} style={{ margin: 0 }}>
+					cell {at + 1}
+				</p>
+			))}
+		</main>
+	);
+}
+`;
+
+it("keeps a long tree to its own scroll, and scrolls the held row into view inside it", {
+	timeout: 180_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir });
+	writeFrame(project.root, "grid", LONG);
+	writeDesignFile(project.root, "frames/grid/frame.json", '{ "x": 0, "y": 0, "w": 800, "h": 600 }\n');
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
+
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	const grid = page.frameLocator('iframe[title="grid"]');
+	await expect.poll(() => grid.locator("p").count(), { timeout: 60_000 }).toBe(48);
+
+	const held = async (): Promise<string> => {
+		const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/selection`, {
+			headers: { "X-Spool-Control": project.controlToken },
+		});
+		const body = (await res.json()) as { selection?: { kind: string; selector?: string }[] };
+		const all = body.selection ?? [];
+		return all.length === 0 ? "nothing" : all.map((one) => one.selector ?? one.kind).join(", ");
+	};
+	const rail = page.locator("aside").first();
+	const box = rail.locator("[data-element-tree]");
+	const last = rail.locator('[data-element-row="main > p:nth-of-type(48)"]');
+
+	const cell = await grid.locator("p").nth(47).boundingBox();
+	if (cell === null) throw new Error("the grid drew no cells");
+	await page.mouse.click(cell.x + 4, cell.y + cell.height / 2);
+	await expect.poll(held).toBe("frame");
+	await page.keyboard.press("e");
+	await page.mouse.click(cell.x + 4, cell.y + cell.height / 2);
+	await expect.poll(() => last.getAttribute("aria-selected")).toBe("true");
+
+	// the tree stands no taller than 600px and scrolls inside that
+	const height = await box.evaluate((el) => el.getBoundingClientRect().height);
+	expect(height).toBeLessThanOrEqual(600);
+	expect(await box.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+	// the held row, deep in it, is scrolled into view inside the box
+	await expect
+		.poll(() =>
+			last.evaluate((row) => {
+				const at = row.getBoundingClientRect();
+				const edge = row.closest("[data-element-tree]")?.getBoundingClientRect();
+				return edge !== undefined && at.top >= edge.top && at.bottom <= edge.bottom;
+			}),
+		)
+		.toBe(true);
+});

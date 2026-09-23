@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../cn";
-import { ancestorsOf, frameOpening, type TreeRow, treeHeight, treeIndent, treeRows } from "./element-tree";
+import { ancestorsOf, frameOpening, TREE_MOST, type TreeRow, treeHeight, treeIndent, treeRows } from "./element-tree";
 import { type ElementNode, elementsMessage } from "./protocol";
 import type { RailUnder } from "./sidebar";
 
@@ -152,7 +152,7 @@ export function useElementTree(input: ElementTreeInput): ElementTree {
 		const target = shown;
 		return {
 			frame: target,
-			height: treeHeight(rows),
+			height: Math.min(treeHeight(rows), TREE_MOST),
 			open: editOn,
 			content: (
 				<TreeRows
@@ -171,14 +171,18 @@ export function useElementTree(input: ElementTreeInput): ElementTree {
 	return { under, receive, stale };
 }
 
-/** The list's own scroll, moved just far enough to show one row whole. */
+/**
+ * The tree's own scroll, then the rail list's, each moved just far enough to
+ * show one row whole.
+ */
 function intoRail(row: HTMLElement): void {
-	const list = row.closest<HTMLElement>('[role="tree"]');
-	if (list === null) return;
-	const at = row.getBoundingClientRect();
-	const box = list.getBoundingClientRect();
-	if (at.top < box.top) list.scrollTop -= box.top - at.top + 4;
-	else if (at.bottom > box.bottom) list.scrollTop += at.bottom - box.bottom + 4;
+	for (const box of [row.closest<HTMLElement>("[data-element-tree]"), row.closest<HTMLElement>('[role="tree"]')]) {
+		if (box === null) continue;
+		const at = row.getBoundingClientRect();
+		const edge = box.getBoundingClientRect();
+		if (at.top < edge.top) box.scrollTop -= edge.top - at.top + 4;
+		else if (at.bottom > edge.bottom) box.scrollTop += at.bottom - edge.bottom + 4;
+	}
 }
 
 /**
@@ -213,7 +217,7 @@ function TreeRows({
 	}, [reveal, onRevealed]);
 
 	return (
-		<div className="py-1">
+		<div data-element-tree="" className="pages-scrollbar overflow-y-auto py-1" style={{ maxHeight: TREE_MOST }}>
 			{rows.map((row) => {
 				if (row.kind === "map") {
 					return (

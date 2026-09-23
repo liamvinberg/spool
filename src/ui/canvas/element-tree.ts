@@ -19,6 +19,8 @@ export const TREE_PAD = 4;
 /** one level in; the step stops at DEEPEST so a row 23 levels down keeps its name */
 export const TREE_STEP = 10;
 export const DEEPEST = 14;
+/** the tallest the tree stands in the rail; a longer one scrolls inside that */
+export const TREE_MOST = 600;
 
 export function treeIndent(depth: number): number {
 	return 6 + Math.min(depth, DEEPEST) * TREE_STEP;
