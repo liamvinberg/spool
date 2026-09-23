@@ -5,14 +5,18 @@ import { assembleFrameDocument } from "./document";
 import { RENDER_HOST } from "./security";
 
 /**
- * The frame's half of the text gesture alone (#255, #314): an element made
- * editable in place, the keys and presses it swallows while it is, what it
- * says when the edit ends, and the words put back on the same nodes.
+ * The frame's half of the text gesture alone (#255, #314, #339): an element
+ * made editable in place, the keys, presses, hovers and focus it keeps from
+ * the page while it is, what it says when the edit ends, and the words put
+ * back on the same nodes.
  */
 
 const BOOT = `document.getElementById("root").innerHTML =
 	'<div class="screen"><h1 id="crumb">cart<br><i>now</i></h1><button id="pay">Pay now</button></div>';
 document.getElementById("pay").addEventListener("click", () => { window.__CLICKED__ = true; });
+for (const kind of ["pointerover", "mousemove", "focusin", "focus"]) {
+	document.getElementById("pay").addEventListener(kind, () => { window.__HEARD__ = (window.__HEARD__ || []).concat(kind); });
+}
 document.addEventListener("keydown", (event) => {
 	window.__TYPED__ = (window.__TYPED__ || "") + event.key;
 });`;
@@ -126,8 +130,11 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 	// ran while they were typed, and a press on the button under the edit
 	// places the caret rather than pressing it
 	expect(await inFrame(() => (window as unknown as { __TYPED__?: string }).__TYPED__)).toBe(undefined);
+	await frame.locator("#pay").hover();
 	await frame.locator("#pay").click();
 	expect(await inFrame(() => (window as unknown as { __CLICKED__?: boolean }).__CLICKED__)).toBe(undefined);
+	// and the page heard no hover and no focus arrive on it either (#339)
+	expect(await inFrame(() => (window as unknown as { __HEARD__?: string[] }).__HEARD__)).toBe(undefined);
 	expect(await editable("#pay")).toBe("plaintext-only");
 
 	await page.keyboard.press("Enter");
@@ -147,8 +154,8 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 	await frame.locator("#pay").click();
 	expect(await inFrame(() => (window as unknown as { __CLICKED__?: boolean }).__CLICKED__)).toBe(true);
 
-	// Esc cancels and restores, down to the words that were there — on the
-	// nodes that were there, line break and inline element included
+	// the canvas abandoning an edit restores, down to the words that were
+	// there — on the nodes that were there, line break and inline element included
 	await send({ spool: "edit", selector: "#crumb", x: 4, y: 4 });
 	await expect
 		.poll(async () => (await said()).at(-1))
@@ -156,18 +163,19 @@ it("makes an element's own words editable, and ends the edit both ways", { timeo
 	await page.keyboard.press("ControlOrMeta+a");
 	await page.keyboard.type("basket");
 	await expect.poll(() => text("#crumb")).toBe("basket");
-	await page.keyboard.press("Escape");
+	await send({ spool: "edit-end", commit: false });
 	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "edited", commit: false });
 	await expect.poll(() => frame.locator("#crumb").innerHTML()).toBe("cart<br><i>now</i>");
 
-	// a committed edit is held by its ask: the words before it and after it
-	// come back on request, and a document that has moved on says no
+	// Esc finishes an edit and saves it, as Enter does (#339). A committed edit
+	// is held by its ask: the words before it and after it come back on
+	// request, and a document that has moved on says no
 	await send({ spool: "edit", selector: "#crumb", x: 4, y: 4 });
 	await expect.poll(async () => (await said()).at(-1)).toMatchObject({ spool: "edit-open", ok: true });
 	const opened = (await said()).at(-1) as { id: number };
 	await page.keyboard.press("End");
 	await page.keyboard.type("!");
-	await page.keyboard.press("Enter");
+	await page.keyboard.press("Escape");
 	await expect
 		.poll(async () => (await said()).at(-1))
 		.toMatchObject({ spool: "edited", commit: true, nodes: [{ text: "cart!" }, { tag: "br" }, { tag: "i" }] });

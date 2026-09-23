@@ -1206,8 +1206,8 @@ const canvasShimJs = `(() => {
 	 *
 	 * A hand edits the words where they are drawn rather than in a box
 	 * somewhere else, so the element is made editable, focused, and given the
-	 * caret at the point that was clicked. Enter and a click away commit; Esc
-	 * puts back what was there.
+	 * caret at the point that was clicked. Enter, Esc and a click away all
+	 * finish it and save (#339).
 	 *
 	 * While an edit is open the shim swallows the keys and the presses before
 	 * frame code sees them. That is not the chrome bending the frame: the
@@ -1490,8 +1490,8 @@ const canvasShimJs = `(() => {
 		return true;
 	}
 
-	// the caret where the click was, and the whole of the words when the
-	// browser cannot resolve a point inside them
+	// the caret where the click was, and after the words when there was no
+	// click or the browser cannot resolve a point inside them
 	function caretAt(el, x, y) {
 		const selection = getSelection();
 		if (!selection) return;
@@ -1565,6 +1565,7 @@ const canvasShimJs = `(() => {
 		if (held.finish) setTimeout(() => { if (editing === held) endEdit(true); }, 0);
 	}, true);
 	for (const kind of ["beforeinput", "input", "keypress", "submit"]) addEventListener(kind, (event) => {
+			range.collapse(false);
 		if (!editing) return;
 		event.stopImmediatePropagation();
 		if (kind === "submit") event.preventDefault();
@@ -2015,7 +2016,7 @@ const canvasShimJs = `(() => {
 		// prototype's — the default action still types the character
 		if (editing) {
 			editingKeys.add(event.key);
-			if (event.key === "Escape" || (event.key === "Enter" && !event.shiftKey && !event.isComposing && !editing.composing && event.keyCode !== 229)) {
+			if ((event.key === "Escape" && !event.isComposing && !editing.composing) || (event.key === "Enter" && !event.shiftKey && !event.isComposing && !editing.composing && event.keyCode !== 229)) {
 				event.preventDefault();
 				event.stopImmediatePropagation();
 				endEdit(event.key === "Enter");

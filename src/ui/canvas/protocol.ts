@@ -429,12 +429,13 @@ export const kinMessage = (selector: string, step: KinStep, id: number, selects 
 
 /**
  * The in-place text edit (#255): the element's own words become the field,
- * with the caret where the click landed. The frame answers `edit-open` at
+ * with the caret where the click landed, or after the words when the keyboard
+ * opened it and there was no click (#339). The frame answers `edit-open` at
  * once — a selector nothing answers to is `ok: false` — and `edited` when
  * Enter, Esc or a click away has ended it. `endEditMessage` is the canvas's
  * own way to end one, which is what a click out on the field means.
  */
-export const editMessage = (selector: string, x: number, y: number, id: number) =>
+export const editMessage = (selector: string, x: number | null, y: number | null, id: number) =>
 	({ spool: "edit", selector, x, y, id }) as const;
 export const endEditMessage = (commit: boolean) => ({ spool: "edit-end", commit }) as const;
 
