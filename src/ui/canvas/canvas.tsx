@@ -81,7 +81,6 @@ import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
-import { type ElementSnap, poolOf, type SnapRequest, type SnapTarget, snapResize, truthful } from "./element-snap";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -109,47 +108,6 @@ import {
 	wordsOf,
 } from "./hand-edit";
 import {
-	type GapAxis,
-	type GapBand,
-	type GapDrag,
-	type GapReading,
-	type GapTargets,
-	gapAxisOf,
-	gapBands,
-	gapDragSign,
-	gapField,
-	gapMoved,
-	gapPaint,
-	gapSample,
-	gapSteppable,
-	gapStyle,
-	gapWritable,
-	ownedGap,
-} from "./hand-gap";
-import {
-	authoredSpelling,
-	draggedAngle,
-	draggedRect,
-	type Edge,
-	edgeSigns,
-	NO_RING,
-	placementShift,
-	quantizerFor,
-	RESIZE_PROPERTIES,
-	type ResizeMeasurement,
-	type ResizeModifiers,
-	type ResizeProperty,
-	type Ring,
-	resizedBox,
-	resizeFields,
-	resizeStyle,
-	ringOf,
-	type Size,
-	type SizeWrite,
-	snapTrial,
-	turnValue,
-} from "./hand-resize";
-import {
 	amend,
 	drop,
 	emptyHistory,
@@ -169,10 +127,7 @@ import {
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { atRung, type FrameBox, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
-import { decompose, measuredTarget } from "./measure-spacing";
 import {
-	type ElementGuides,
-	type ElementHandles,
 	type ElementPreview,
 	type FrameHover,
 	HANDLE_CURSORS,
@@ -181,7 +136,6 @@ import {
 	isHandle,
 	NO_MARKS,
 	type PickedSelection,
-	ROTATE_CURSOR,
 	SelectionOverlay,
 	sourcePathOf,
 } from "./overlays";
@@ -197,7 +151,6 @@ import {
 	switchPage,
 } from "./pages";
 import { type Held, PropertiesRail, rungOf, useRungs, useTheme } from "./properties-rail";
-import { BASE, scopedClass } from "./properties-scope";
 import { classEditsOf, type PropertyControls, type PropertyValue } from "./property-controls";
 import {
 	alterMessage,
@@ -205,14 +158,10 @@ import {
 	clipboardCopyAllowed,
 	dropTargetMessage,
 	type EditedNode,
-	type ElementSizing,
-	type ElementSnapping,
 	editMessage,
 	endEditMessage,
-	gapsMessage,
 	type KinStep,
 	kinMessage,
-	measureMessage,
 	type PickedHit,
 	parseFrameMessage,
 	pickKey,
@@ -221,13 +170,9 @@ import {
 	restoreMessage,
 	type SessionRecord,
 	type SiteAnchor,
-	type SnapTrial,
-	type SpacingReading,
 	sessionReply,
 	sharedStateMessage,
 	sitesMessage,
-	sizingMessage,
-	snappingMessage,
 	styleMessage,
 	walkRejectionReason,
 } from "./protocol";
@@ -289,35 +234,7 @@ type Gesture =
 	| { kind: "page-pending"; page: string; origin: Point; start: Point }
 	| { kind: "page-move"; page: string; origin: Point; start: Point }
 	| { kind: "marquee"; start: Point; base: readonly string[] }
-	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box }
-	// the element ring's own two drags (#259), which write classes rather than
-	// geometry: the file is left alone until the pointer comes up, so one
-	// gesture is one patch and one press of undo
-	| {
-			kind: "element-size";
-			pick: PickedSelection;
-			edge: Edge;
-			from: Point;
-			/** ⇧ and ⌥ as the grab found them; what they may mean waits on the measurement */
-			asked: ResizeModifiers;
-			/** null until the document answers: an unmeasured grab draws and writes nothing */
-			measured: ResizeMeasurement | null;
-	  }
-	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number }
-	// the gap between a held container's children (#306): the same one read,
-	// preview and save the ring's other drags use, over the space itself
-	| ({ kind: "element-gap"; pick: PickedSelection } & GapDrag);
-
-/** Every drag the ring owns, which share every way of being interrupted. */
-function isRingGesture(
-	active: Gesture,
-): active is Extract<Gesture, { kind: "element-size" | "element-turn" | "element-gap" }> {
-	return active.kind === "element-size" || active.kind === "element-turn" || active.kind === "element-gap";
-}
-
-/** Two lists of guide coordinates saying the same thing. */
-const same = (a: readonly number[], b: readonly number[]): boolean =>
-	a.length === b.length && a.every((value, at) => value === b[at]);
+	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
 
 /** One size a resize drag worked out, and the guides that belong to it. */
 interface ResizePaint {
@@ -499,43 +416,6 @@ export function ProjectCanvas({
 	const [saves, setSaves] = useState<Record<string, number>>({});
 	const [agentRequest, setAgentRequest] = useState<AgentRequest>();
 	const [agentHandoff, setAgentHandoff] = useState(false);
-	/**
-	 * The element drag in flight (#259), as the ring draws it.
-	 *
-	 * The gesture itself lives in the ref every other drag does; this is the
-	 * half that has to re-render — the box the ring follows the pointer with,
-	 * the readout that rides beside it, and the tokens the rail's own fields
-	 * tick in. Nothing here is written until the pointer comes up.
-	 */
-	const [elementDrag, setElementDrag] = useState<{
-		frame: string;
-		selector: string;
-		rect: { x: number; y: number; w: number; h: number };
-		says: string;
-		turning: boolean;
-		/** the target the pointer is holding, so the ring keeps drawing it */
-		edge: Edge | null;
-		box: Size;
-	} | null>(null);
-	/**
-	 * The alignments a snapped resize is a true statement about (#311), in the
-	 * frame document's own coordinates. Drawn only after the layout the
-	 * correction made has been measured and still says so.
-	 */
-	const [elementGuides, setElementGuides] = useState<ElementGuides | null>(null);
-	/**
-	 * What the held container's own document says about its gaps (#306), and
-	 * what a drag over one of them is doing.
-	 *
-	 * The reading is the frame's answer, kept beside the selector it is about
-	 * so a stale one is never drawn over a new selection. The drag holds the
-	 * band it grabbed, which stays where the pointer put it while the layout
-	 * moves underneath.
-	 */
-	const [gapRead, setGapRead] = useState<{ frame: string; selector: string; reading: GapReading | null } | null>(null);
-	const [gapDrag, setGapDrag] = useState<{ selector: string; index: number; band: GapBand; says: string } | null>(
-		null,
-	);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
@@ -701,10 +581,6 @@ export function ProjectCanvas({
 	enteredRef.current = entered;
 	const accelDownRef = useRef(accelDown);
 	accelDownRef.current = accelDown;
-	// ⌥ is a hover modifier and nothing else: it draws the measurement and
-	// changes no selection, so it never needs a render of its own — the reading
-	// it asks for is what redraws (#261)
-	const optionDownRef = useRef(false);
 	/** The last screen point a relayed middle-button drag reported (#8). */
 	const framePan = useRef<Point | null>(null);
 	// ⌘ no longer borrows Select — Select is the base, and ⌘ is its element
@@ -713,8 +589,8 @@ export function ProjectCanvas({
 	const effectiveTool = transientTool ?? tool;
 	const toolRef = useRef(effectiveTool);
 	toolRef.current = effectiveTool;
-	// Select and Edit both point, and everything a pointer draws — rings,
-	// previews, element handles — belongs to the pair of them. Only the Hand
+	// Select and Edit both point, and everything a pointer draws — rings and
+	// previews — belongs to the pair of them. Only the Hand
 	// draws nothing, because the only thing it takes is the canvas itself.
 	const pointerTool = effectiveTool !== "hand";
 	const hideFrameHover = useCallback(() => {
@@ -777,14 +653,6 @@ export function ProjectCanvas({
 	 * the frame reloads behind its hold the moment the hand leaves it.
 	 */
 	const saved = useRef(new Map<string, { source: string; fingerprint: string; own: boolean }>());
-	/** the measurement overlay's own replies (#261), on the same id sequence */
-	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
-	const sizingWaiters = useRef(new Map<number, (sizing: ElementSizing | null) => void>());
-	const snapWaiters = useRef(new Map<number, (snapping: ElementSnapping | null) => void>());
-	/** which sample owns the outstanding snap: an older answer is not applied */
-	const snapSample = useRef(0);
-	/** the gap gesture's own replies (#306), on the same id sequence */
-	const gapWaiters = useRef(new Map<number, (gaps: GapReading | null) => void>());
 	const pickSeq = useRef(0);
 	// picks apply only while their generation is current: a superseding intent
 	// (a fresh press, a drag, Esc) bumps it and voids them — while a click and
@@ -926,8 +794,8 @@ export function ProjectCanvas({
 	 * right until the hand starts moving one: a document that never gets an
 	 * animation frame cannot redraw what the drag is changing, and a canvas
 	 * element clears itself the moment its size changes and stays black. So the
-	 * one frame under a handle, a gap band or a scrubbed number animates while
-	 * the gesture lasts, and the rest of the field stays held.
+	 * one frame under a scrubbed number animates while the gesture lasts, and
+	 * the rest of the field stays held.
 	 */
 	const [gesturing, setGesturing] = useState<string | null>(null);
 	const restTick = useRef<number | null>(null);
@@ -1002,18 +870,15 @@ export function ProjectCanvas({
 	}, []);
 
 	/**
-	 * What the held rung's own file leaves live (#259), as the press reads it.
+	 * The held rung's own read, as the handlers see it.
 	 *
-	 * Filled from the ring's read further down and mirrored here, because the
-	 * handlers are written before it and a grab has to answer off the file
-	 * rather than off a render.
+	 * Filled from the selection's read further down and mirrored here, because
+	 * the handlers are written before it and a write has to be measured against
+	 * the file the rung was read out of rather than against a render.
 	 */
-	const ringRef = useRef<Ring>(NO_RING);
+	const heldReadRef = useRef<RungRead | undefined>(undefined);
 	/** the selection's read as the handlers see it, a paint earlier than the render */
 	const railRungsRef = useRef<(RungRead | undefined)[] | null>(null);
-
-	/** The bands a gap gesture may grab, off the render the pointer can see (#306). */
-	const gapRef = useRef<GapTargets>({ axis: null, sign: 1, authored: null, bands: [] });
 
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
@@ -2541,81 +2406,6 @@ export function ProjectCanvas({
 		[askChain],
 	);
 
-	/**
-	 * The measurement overlay's ask (#261): the held element, and where the
-	 * pointer is. The frame resolves the second element and reads the raw
-	 * facts; a point that names nothing to measure answers with no reading, and
-	 * so does a document that says nothing at all.
-	 */
-	const askMeasure = useCallback(
-		(frame: string, selector: string, local: Point, apply: (reading: SpacingReading | null) => void) => {
-			askFrame(
-				frame,
-				measureWaiters.current,
-				(id) => measureMessage(selector, local.x, local.y, id),
-				apply,
-				() => apply(null),
-			);
-		},
-		[askFrame],
-	);
-
-	/**
-	 * A resize gesture's own ask (#305): the box, the engine's limits on it and
-	 * the placement it already has, from the one place that knows them.
-	 */
-	const askSizing = useCallback(
-		(frame: string, selector: string, apply: (sizing: ElementSizing | null) => void) => {
-			askFrame(
-				frame,
-				sizingWaiters.current,
-				(id) => sizingMessage(selector, id),
-				apply,
-				() => apply(null),
-			);
-		},
-		[askFrame],
-	);
-
-	/**
-	 * A snapping sample's ask (#311): what this element may align with, and how
-	 * far its dragged edge moves per pixel of written size.
-	 *
-	 * A trial states the size the sample is about, worn and taken off inside the
-	 * document's own task; a trial-less ask reads what the layout made of the
-	 * size the sample actually wrote.
-	 */
-	const askSnapping = useCallback(
-		(frame: string, selector: string, trial: SnapTrial | null): Promise<ElementSnapping | null> =>
-			new Promise((resolve) => {
-				askFrame(
-					frame,
-					snapWaiters.current,
-					(id) => snappingMessage(selector, trial, id),
-					resolve,
-					() => resolve(null),
-				);
-			}),
-		[askFrame],
-	);
-
-	/**
-	 * A gap gesture's own ask (#306): the container's layout words and every
-	 * child's box, from the one place that knows where the flow put them.
-	 */
-	const askGaps = useCallback(
-		(frame: string, selector: string, apply: (gaps: GapReading | null) => void) => {
-			askFrame(
-				frame,
-				gapWaiters.current,
-				(id) => gapsMessage(selector, id),
-				apply,
-				() => apply(null),
-			);
-		},
-		[askFrame],
-	);
-
 	const applyPick = useCallback(
 		(frame: string, chain: PickedHit[], hit: PickedHit | undefined) => {
 			if (hit === undefined) return; // frame background: the frame stays the selection
@@ -3007,7 +2797,7 @@ export function ProjectCanvas({
 			const target = iframes.current.get(pick.frame);
 			if (target?.contentWindow == null) return;
 			const id = ++pickSeq.current;
-			const read = ringRef.current.read;
+			const read = heldReadRef.current;
 			setEdit({
 				frame: pick.frame,
 				selector: pick.selector,
@@ -3076,7 +2866,7 @@ export function ProjectCanvas({
 			if (stillHeld) walkKin(held.frame, held.selector, "self");
 			const attempted = wordsOf(nodes);
 			if (!commit || attempted === held.start) return;
-			const read = ringRef.current.read;
+			const read = heldReadRef.current;
 			const fingerprint = held.fingerprint ?? (read?.source === held.source ? read.fingerprint : undefined);
 			const refuse = (refusal: Refusal) => {
 				restoreWords(held.frame, held.id, "before", () => {});
@@ -3200,7 +2990,7 @@ export function ProjectCanvas({
 				return;
 			}
 			const own = saved.current.get(pick.frame);
-			const read = ringRef.current.read;
+			const read = heldReadRef.current;
 			const fingerprint =
 				own !== undefined && own.source.replace(/:\d+:\d+$/, "") === file
 					? own.fingerprint
@@ -3434,7 +3224,7 @@ export function ProjectCanvas({
 				// the element's file may be a shared definition's; whether the change
 				// lands there or at a call site in this frame's own file is the daemon's
 				// to say, so its readers are held now and let go if they did not (#318)
-				const read = ringRef.current.read;
+				const read = heldReadRef.current;
 				const readers = read?.source === source ? (read.shared?.frames ?? []) : [];
 				holdReaders(pick.frame, readers);
 				void writeElement(project, pick.frame, {
@@ -3513,7 +3303,7 @@ export function ProjectCanvas({
 				});
 				return;
 			}
-			const read = ringRef.current.read;
+			const read = heldReadRef.current;
 			const fingerprint =
 				read !== undefined && sources.includes(read.source)
 					? read.fingerprint
@@ -3576,7 +3366,7 @@ export function ProjectCanvas({
 		) => {
 			setRefused(null);
 			// a shared definition's readers are held before the write leaves (#318)
-			const read = ringRef.current.read;
+			const read = heldReadRef.current;
 			const readers = read?.source === at.source ? (read.shared?.frames ?? []) : [];
 			holdReaders(frame, readers);
 			const bytes = "file" in put ? fileAsAsset(put.file).then((file) => ({ file })) : Promise.resolve(put);
@@ -4163,30 +3953,6 @@ export function ProjectCanvas({
 					});
 					return;
 				}
-				case "snapped": {
-					const waiter = snapWaiters.current.get(message.id);
-					snapWaiters.current.delete(message.id);
-					waiter?.(message.snapping);
-					break;
-				}
-				case "gapped": {
-					const waiter = gapWaiters.current.get(message.id);
-					gapWaiters.current.delete(message.id);
-					waiter?.(message.gaps);
-					return;
-				}
-				case "sized": {
-					const waiter = sizingWaiters.current.get(message.id);
-					sizingWaiters.current.delete(message.id);
-					waiter?.(message.sizing);
-					return;
-				}
-				case "measured": {
-					const waiter = measureWaiters.current.get(message.id);
-					measureWaiters.current.delete(message.id);
-					waiter?.(message.reading);
-					return;
-				}
 				case "site-boxes": {
 					// only the newest request per frame applies — a slow reply from a
 					// superseded document must not re-anchor arrows to dead geometry
@@ -4452,62 +4218,6 @@ export function ProjectCanvas({
 		return target.closest<HTMLElement>(`[data-${attribute}]`)?.dataset[camelize(attribute)] ?? null;
 	};
 
-	/** A picked element's box in the viewport's own pixels, which is where a drag happens. */
-	const elementScreenBox = (pick: PickedSelection): Box | null => {
-		const cam = cameraRef.current;
-		const frame = framesRef.current.find((f) => f.name === pick.frame);
-		if (cam === null || frame === undefined) return null;
-		return {
-			x: (frame.x + pick.rect.x) * cam.k + cam.x,
-			y: (frame.y + pick.rect.y) * cam.k + cam.y,
-			w: pick.rect.w * cam.k,
-			h: pick.rect.h * cam.k,
-		};
-	};
-
-	/**
-	 * What the ring draws while an element drag is live (#259), and what the
-	 * element itself wears for it (#316).
-	 *
-	 * Preview is the DOM: every sample puts the values the release will write
-	 * on the element as inline style, and nothing leaves the canvas for it.
-	 * The write at the end lifts the preview by putting the class on in its
-	 * place, and a cancelled drag lifts it with nothing written.
-	 */
-	const showElementDrag = (active: Gesture): void => {
-		if (active.kind === "element-size") {
-			const { pick, edge, measured } = active;
-			if (measured === null) return;
-			previewStyle(pick.frame, pick.selector, resizeStyle(measured));
-			// whole pixels once: the readout, the ring and the rail's fields are all
-			// about the same box, and a rounding each is three chances to disagree
-			const whole = { w: Math.round(measured.live.w), h: Math.round(measured.live.h) };
-			setElementDrag({
-				frame: pick.frame,
-				selector: pick.selector,
-				rect: draggedRect(pick.rect, whole),
-				says: `${whole.w} × ${whole.h}`,
-				turning: false,
-				edge,
-				box: whole,
-			});
-			return;
-		}
-		if (active.kind === "element-turn") {
-			const { pick, live } = active;
-			previewStyle(pick.frame, pick.selector, { rotate: `${live}deg` });
-			setElementDrag({
-				frame: pick.frame,
-				selector: pick.selector,
-				rect: pick.rect,
-				says: `${live}°`,
-				turning: true,
-				edge: null,
-				box: { w: pick.rect.w, h: pick.rect.h },
-			});
-		}
-	};
-
 	/** A world point in a frame's own coordinates — what every pick verb takes. */
 	const frameLocalAt = (name: string, world: Point): Point | null => {
 		const frame = framesRef.current.find((f) => f.name === name);
@@ -4525,7 +4235,7 @@ export function ProjectCanvas({
 	 * A field of live documents each drawing rings is a busier surface than the
 	 * one that ships, so only the frame under the pointer ever draws.
 	 */
-	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean, measuring = false) => {
+	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean) => {
 		if (frame === null) {
 			hoverPoint.current = null;
 			hoverChain.current = null;
@@ -4539,26 +4249,6 @@ export function ProjectCanvas({
 		if (hoverBusy.current || now - hoverLast.current < HOVER_PICK_MS) return;
 		hoverLast.current = now;
 		hoverBusy.current = true;
-		// ⌥ over a sibling measures instead of previewing a rung (#261). One
-		// rung is held or there is no distance to draw: a measure is from
-		// somewhere to somewhere, and a multi-selection has no somewhere.
-		const held = measuring ? onlyHeldRung() : undefined;
-		if (held !== undefined && held.frame === frame) {
-			askMeasure(frame, held.selector, local, (reading) => {
-				hoverBusy.current = false;
-				if (gesture.current.kind !== "idle" || toolRef.current === "hand" || !optionDownRef.current) return;
-				if (reading === null) {
-					setPreview(null);
-					return;
-				}
-				const other = measuredTarget(reading, held.selector);
-				setPreview({
-					click: { frame, selector: other.selector, rect: other.rect, radius: other.radius },
-					spacing: { frame, ...decompose(reading) },
-				});
-			});
-			return;
-		}
 		beginPick(
 			frame,
 			local,
@@ -4612,7 +4302,7 @@ export function ProjectCanvas({
 			return;
 		}
 		hoverLast.current = 0;
-		hoverPickAt(at.frame, at.world, accelDownRef.current, optionDownRef.current);
+		hoverPickAt(at.frame, at.world, accelDownRef.current);
 	};
 
 	/**
@@ -4672,18 +4362,12 @@ export function ProjectCanvas({
 
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
-		// an interrupted ring drag wrote nothing and shows nothing: the inline
-		// preview comes off and the element is as the file still has it (#316)
-		if (isRingGesture(active)) previewStyle(active.pick.frame, active.pick.selector, null);
 		gesture.current = { kind: "idle" };
 		dropResize();
 		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
 		setResizingFrame(null);
-		setElementDrag(null);
-		setElementGuides(null);
-		setGapDrag(null);
 		setPanning(false);
 		if (active.kind === "move") {
 			setFrames((current) =>
@@ -4697,28 +4381,7 @@ export function ProjectCanvas({
 				current.map((frame) => (frame.name === active.frame ? { ...frame, ...active.origin } : frame)),
 			);
 		}
-	}, [dropResize, previewStyle]);
-
-	/**
-	 * The two interruptions a ring drag never sees coming.
-	 *
-	 * A window that loses focus never sees the release, and a canvas that
-	 * scrolls or zooms moves the box out from under the pointer: both end the
-	 * gesture where it stands. The wheel is watched on the way down so the pan
-	 * it also means still happens.
-	 */
-	useEffect(() => {
-		const el = viewportRef.current;
-		const interrupted = () => {
-			if (isRingGesture(gesture.current)) cancelGesture();
-		};
-		window.addEventListener("blur", interrupted);
-		el?.addEventListener("wheel", interrupted, { capture: true });
-		return () => {
-			window.removeEventListener("blur", interrupted);
-			el?.removeEventListener("wheel", interrupted, { capture: true });
-		};
-	}, [cancelGesture]);
+	}, [dropResize]);
 
 	const originsOf = (names: readonly string[]): Map<string, Point> => {
 		const origins = new Map<string, Point>();
@@ -4788,58 +4451,6 @@ export function ProjectCanvas({
 		}
 
 		if (event.button !== 0) return;
-
-		// the element ring's handles first of all: they overhang the element and
-		// sit over whatever the frame would otherwise have taken the press for
-		const held = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
-		if (held !== undefined) {
-			const turn = datasetHit(event.target, "element-rotate");
-			const grab = datasetHit(event.target, "element-handle");
-			if (turn !== null) {
-				const box = elementScreenBox(held);
-				if (box !== null) {
-					gesture.current = {
-						kind: "element-turn",
-						pick: held,
-						centre: { x: box.x + box.w / 2, y: box.y + box.h / 2 },
-						from: Math.atan2(p.y - (box.y + box.h / 2), p.x - (box.x + box.w / 2)),
-						base: ringRef.current.rotation,
-						live: ringRef.current.rotation,
-					};
-					setResizeCursor(ROTATE_CURSOR);
-					showElementDrag(gesture.current);
-					return;
-				}
-			}
-			// the band over a gap, which sits inside the element rather than on its
-			// edge: a press on it is that gap's, not the frame's underneath (#306)
-			// ⌥ is the measurement's own modifier (#261), and a band must not take
-			// the press that was asking how far apart two things are
-			const grabbedGap = event.altKey ? null : datasetHit(event.target, "element-gap");
-			const gapAxis = gapRef.current.axis;
-			if (grabbedGap !== null && gapAxis !== null) {
-				const index = Number(grabbedGap);
-				const band = gapRef.current.bands[index];
-				if (band !== undefined && beginElementGap(held, gapAxis, index, band, gapRef.current.sign, p)) {
-					event.preventDefault();
-					return;
-				}
-			}
-			if (grab !== null && isHandle(grab)) {
-				// a handle only moves the axes the file leaves live, so a corner on
-				// an element a breakpoint pins the height of drags width alone
-				const grabbed = edgeSigns(grab);
-				const live = ringRef.current.live;
-				if ((grabbed.sx !== 0 && live.w) || (grabbed.sy !== 0 && live.h)) {
-					beginElementResize(held, grab, p, {
-						center: event.altKey,
-						proportional: event.shiftKey,
-					});
-					setResizeCursor(HANDLE_CURSORS[grab]);
-					return;
-				}
-			}
-		}
 
 		// resize handles first: they overhang the frame and own the pointer
 		const handleHit = datasetHit(event.target, "handle");
@@ -5002,11 +4613,7 @@ export function ProjectCanvas({
 			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
 			// and a pointer resting on a frame is resting on it in the Hand too.
 			if (toolRef.current === "hand") return;
-			// ⌥ is read off the move rather than off the key event, exactly as ⌘
-			// is: the ref is what a reply is checked against, and the modifier
-			// the pointer reports is the one that was down when the ask went out
-			optionDownRef.current = event.altKey;
-			hoverPickAt(label === null ? frame : null, world, accelPressed(event), event.altKey);
+			hoverPickAt(label === null ? frame : null, world, accelPressed(event));
 			return;
 		}
 
@@ -5015,51 +4622,6 @@ export function ProjectCanvas({
 			const dy = p.y - active.lastY;
 			gesture.current = { ...active, lastX: p.x, lastY: p.y };
 			setCamera((c) => (c === null ? c : { ...c, x: c.x + dx, y: c.y + dy }));
-			return;
-		}
-
-		// the element ring's drags: nothing is written until the pointer is up,
-		// so what moves here is the ring, the readout and the rail's fields
-		if (active.kind === "element-size") {
-			const held = active.measured;
-			if (held === null) return;
-			const dragged = resizedBox(
-				held.start,
-				active.edge,
-				(p.x - active.from.x) / cam.k,
-				(p.y - active.from.y) / cam.k,
-				held.modifiers,
-				held.limits,
-			);
-			const raw = { w: dragged.w, h: dragged.h };
-			const measured: ResizeMeasurement = {
-				...held,
-				raw,
-				live: raw,
-				shift: { x: dragged.shiftX, y: dragged.shiftY },
-			};
-			// the pointer intent, not the corrected size, is what a sample repeats:
-			// a snap that compared itself would stick to the stop it just made
-			if (raw.w === held.raw.w && raw.h === held.raw.h) return;
-			const next: Gesture = { ...active, measured };
-			gesture.current = next;
-			showElementDrag(next);
-			void alignElementResize(next, accelPressed(event), cam.k);
-			return;
-		}
-
-		if (active.kind === "element-gap") {
-			sampleElementGap(active, p, event.shiftKey);
-			return;
-		}
-
-		if (active.kind === "element-turn") {
-			const now = Math.atan2(p.y - active.centre.y, p.x - active.centre.x);
-			const live = draggedAngle(active.base, active.from, now, event.shiftKey);
-			if (live === active.live) return;
-			const next: Gesture = { ...active, live };
-			gesture.current = next;
-			showElementDrag(next);
 			return;
 		}
 
@@ -5208,221 +4770,6 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * Where a size drag begins (#305): the facts only the document has.
-	 *
-	 * ⇧ and ⌥ are read here and nowhere else. The gesture is about exactly the
-	 * fields it may write, and a modifier picked up half way through would
-	 * change that set, so the drag that opened without them keeps its own
-	 * promise and the readout says which one it made.
-	 */
-	const beginElementResize = (pick: PickedSelection, edge: Edge, from: Point, asked: ResizeModifiers) => {
-		const { sx, sy } = edgeSigns(edge);
-		gesture.current = { kind: "element-size", pick, edge, from, asked, measured: null };
-		askSizing(pick.frame, pick.selector, (sizing) => {
-			const active = gesture.current;
-			if (active.kind !== "element-size" || active.pick.selector !== pick.selector) return;
-			const live = ringRef.current.live;
-			const center = asked.center && (sizing?.free ?? false);
-			const properties: ResizeProperty[] =
-				sizing === null
-					? []
-					: [
-							...(sx !== 0 || asked.proportional ? (live.w ? (["width"] as const) : []) : []),
-							...(sy !== 0 || asked.proportional ? (live.h ? (["height"] as const) : []) : []),
-							// an already free element's own placement, and only where it has one
-							...(sizing.free && sizing.offset.left !== null && (center || sx === -1)
-								? (["left"] as const)
-								: []),
-							...(sizing.free && sizing.offset.top !== null && (center || sy === -1) ? (["top"] as const) : []),
-						];
-			// a document that says nothing about the box, or a box with nothing this
-			// grab may write, is not a drag anybody should be left holding
-			if (sizing === null || properties.length === 0) {
-				cancelGesture();
-				return;
-			}
-			// what the file already says each of them is written in; a form no
-			// drag can move refuses by name rather than being rewritten in pixels
-			const writes: Partial<Record<ResizeProperty, SizeWrite>> = {};
-			for (const property of properties) {
-				const spelling = authoredSpelling(
-					ringRef.current.className,
-					RESIZE_PROPERTIES[property].family,
-					sizing.units,
-				);
-				if (spelling.kind === "refused") {
-					cancelGesture();
-					showRefusal(pick.frame, pick.selector, { code: "authored-unit", says: spelling.says });
-					return;
-				}
-				writes[property] = spelling.kind === "pixels" ? { unit: "px", per: 1 } : spelling;
-			}
-			const measured: ResizeMeasurement = {
-				modifiers: { center, proportional: asked.proportional },
-				properties,
-				writes: writes as Record<ResizeProperty, SizeWrite>,
-				start: sizing.box,
-				extra: sizing.extra,
-				raw: sizing.box,
-				offset: { left: sizing.offset.left ?? 0, top: sizing.offset.top ?? 0 },
-				limits: sizing.limits,
-				live: sizing.box,
-				shift: { x: 0, y: 0 },
-			};
-			gesture.current = { ...active, measured };
-			showElementDrag(gesture.current);
-		});
-	};
-
-	/**
-	 * The size one sample settles on, and the alignments it may claim (#311).
-	 *
-	 * Every sample begins from the raw pointer intent, asks the document what
-	 * that size would align with, tries one correction and then asks what the
-	 * layout actually made of it. A stop CSS rounded away, refused, or moved
-	 * while answering leaves the pointer's own size and draws nothing: a guide
-	 * is a statement about the box that is there, never about the one that was
-	 * asked for. There is no second attempt: this chases nothing.
-	 */
-	const alignElementResize = async (
-		active: Extract<Gesture, { kind: "element-size" }>,
-		bypass: boolean,
-		zoom: number,
-	): Promise<void> => {
-		const held = active.measured;
-		if (held === null) return;
-		const sample = ++snapSample.current;
-		const { pick, edge } = active;
-		const { sx, sy } = edgeSigns(edge);
-		/** the gesture this sample belongs to, or nothing where it was superseded */
-		const current = (): Extract<Gesture, { kind: "element-size" }> | null => {
-			const now = gesture.current;
-			return snapSample.current === sample &&
-				now.kind === "element-size" &&
-				now.pick.selector === pick.selector &&
-				now.measured !== null
-				? now
-				: null;
-		};
-		/** Undefined leaves what is drawn alone; null takes it down. */
-		const showGuides = (guides: { v: number[]; h: number[] } | null | undefined) => {
-			if (guides === undefined) return;
-			setElementGuides((current) =>
-				guides === null
-					? null
-					: current !== null &&
-							current.frame === pick.frame &&
-							same(current.v, guides.v) &&
-							same(current.h, guides.h)
-						? current
-						: { frame: pick.frame, ...guides },
-			);
-		};
-		const settle = async (size: Size, guides: { v: number[]; h: number[] } | null | undefined): Promise<boolean> => {
-			const now = current();
-			if (now === null || now.measured === null) return false;
-			showGuides(guides);
-			// the size already on the layout is not written again: the pointer's own
-			// sample put it there, and only a correction is news
-			if (now.measured.live.w === size.w && now.measured.live.h === size.h) return true;
-			const measured: ResizeMeasurement = {
-				...now.measured,
-				live: size,
-				shift: placementShift(held.start, edge, held.modifiers, size),
-			};
-			const next: Gesture = { ...now, measured };
-			gesture.current = next;
-			showElementDrag(next);
-			return true;
-		};
-		if (bypass || (sx === 0 && sy === 0)) {
-			await settle(held.raw, null);
-			return;
-		}
-		const before = await askSnapping(pick.frame, pick.selector, snapTrial(held, edge, sx, sy));
-		if (current() === null) return;
-		const pool: SnapTarget[] = before === null ? [] : poolOf(before);
-
-		const request: SnapRequest = {
-			sx,
-			sy,
-			zoom,
-			// ⇧ holds the proportions the border box started at
-			ratio: held.modifiers.proportional && held.start.h > 0 ? held.start.w / held.start.h : null,
-			sensitivity: before?.sensitivity ?? { w: 0, h: 0 },
-			limits: held.limits,
-			quantize: quantizerFor(held),
-		};
-		const snap: ElementSnap | null = before === null ? null : snapResize(before.box, held.raw, pool, request);
-		if (before === null || snap === null || (snap.v.length === 0 && snap.h.length === 0)) {
-			await settle(held.raw, null);
-			return;
-		}
-		// the correction goes on with the guides the last sample earned still up:
-		// they come down when this sample's own answer replaces them, so a held
-		// snap reads as one steady line rather than one that blinks per sample
-		if (!(await settle(snap.size, undefined))) return;
-		const after = await askSnapping(pick.frame, pick.selector, null);
-		if (current() === null) return;
-		if (after !== null && truthful(snap, after.box, poolOf(after), request, pool))
-			showGuides({ v: snap.v, h: snap.h });
-		else await settle(held.raw, null);
-	};
-
-	/**
-	 * Where a gap drag begins (#306).
-	 *
-	 * The same shape the size drag has: about exactly the one property this
-	 * drag may move. A value no step can move without renaming it never opens
-	 * one: the rail keeps it, where it is read for what it is.
-	 */
-	const beginElementGap = (
-		pick: PickedSelection,
-		axis: GapAxis,
-		index: number,
-		band: GapBand,
-		sign: 1 | -1,
-		from: Point,
-	): boolean => {
-		const authored = gapRef.current.authored;
-		if (authored === null || !gapSteppable(authored)) return false;
-		gesture.current = {
-			kind: "element-gap",
-			pick,
-			axis,
-			index,
-			band,
-			sign,
-			from,
-			authored,
-			measured: axis === "column-gap" ? band.w : band.h,
-			units: 0,
-			live: null,
-		};
-		return true;
-	};
-
-	/** One sample of a live gap drag, drawn as the band the pointer is making. */
-	const sampleElementGap = (active: Extract<Gesture, { kind: "element-gap" }>, p: Point, coarse: boolean): void => {
-		const sampled = gapSample(active, p, coarse, cameraRef.current?.k ?? 1, ringRef.current.step, DRAG_THRESHOLD_PX);
-		if (sampled === null) return;
-		const next: Gesture = { ...active, units: sampled.units, live: sampled.live };
-		gesture.current = next;
-		showGapDrag(next);
-	};
-
-	/**
-	 * What the band draws while a gap drag is live: the space the pointer is
-	 * making, and the same space on the element itself (#316), on the one axis
-	 * the band was grabbed on.
-	 */
-	const showGapDrag = (active: Extract<Gesture, { kind: "element-gap" }>): void => {
-		const style = gapStyle(active, ringRef.current.step);
-		if (style !== null) previewStyle(active.pick.frame, active.pick.selector, style);
-		setGapDrag({ selector: active.pick.selector, index: active.index, ...gapPaint(active, ringRef.current.step) });
-	};
-
-	/**
 	 * Where a page drag left it: one gesture, one entry on the one stack (#265).
 	 *
 	 * The field has been drawing the page at its new place all through the drag,
@@ -5438,55 +4785,6 @@ export function ProjectCanvas({
 		applyPlaces({ [page]: at });
 	};
 
-	/**
-	 * Where a ring drag left it: one class write and one step on the one stack
-	 * (#316).
-	 *
-	 * The element already wears what the release means, so this is only what
-	 * makes it durable — the same lane a rail field commits through, on the
-	 * values the last sample showed. The write's own answer puts the class on
-	 * and lifts the preview, so the frame is never reloaded for its own drag.
-	 * A drag that moved nothing writes nothing and simply lifts.
-	 */
-	const commitRingGesture = (active: Extract<Gesture, { kind: "element-size" | "element-turn" | "element-gap" }>) => {
-		const lift = () => previewStyle(active.pick.frame, active.pick.selector, null);
-		if (active.kind === "element-size") {
-			const held = active.measured;
-			if (held === null || (held.live.w === held.start.w && held.live.h === held.start.h)) {
-				lift();
-				return;
-			}
-			const fields = resizeFields(
-				held.properties,
-				held.live,
-				held.shift,
-				held.offset,
-				ringRef.current.step,
-				held.writes,
-			);
-			commitClass(
-				[active.pick],
-				fields.map((field) => field.value),
-			);
-			return;
-		}
-		if (active.kind === "element-turn") {
-			if (active.live === active.base) {
-				lift();
-				return;
-			}
-			commitClass([active.pick], [turnValue(active.live, active.base)]);
-			return;
-		}
-		const live = active.live;
-		if (live === null || !gapMoved(active)) {
-			lift();
-			return;
-		}
-		const at = { scoped: scopedClass(ringRef.current.className, BASE), theme: ringRef.current.theme };
-		commitClass([active.pick], [gapField(active.axis, live, at)]);
-	};
-
 	const onPointerUp = () => {
 		const active = gesture.current;
 		// settled while the drag still counts as in flight, so the footprint the
@@ -5498,13 +4796,9 @@ export function ProjectCanvas({
 		setMarquee(null);
 		setResizeCursor(null);
 		setResizingFrame(null);
-		setElementDrag(null);
-		setElementGuides(null);
-		setGapDrag(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
-		if (isRingGesture(active)) commitRingGesture(active);
 		// the press never became a drag, so the second click meant the words (#255)
 		const again = pressOnHeld.current;
 		pressOnHeld.current = null;
@@ -5525,9 +4819,6 @@ export function ProjectCanvas({
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
 		if (toolRef.current === "hand") return;
-		// a second click on a band is the band's own: it opens the same value the
-		// first one did rather than stepping down the ladder underneath it (#306)
-		if (datasetHit(event.target, "element-gap") !== null) return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
 		const label = datasetHit(event.target, "frame-label");
@@ -5723,13 +5014,6 @@ export function ProjectCanvas({
 				if (accelDownRef.current) return;
 				setAccelDown(true);
 				accelDownRef.current = true;
-				refreshRings.current();
-			},
-			// ⌥ down redraws where the pointer already rests, which is what turns
-			// a resting hover into a measurement without moving the mouse (#261)
-			"canvas.measure": () => {
-				if (optionDownRef.current) return;
-				optionDownRef.current = true;
 				refreshRings.current();
 			},
 			"canvas.space-hold": (event) => {
@@ -5948,19 +5232,10 @@ export function ProjectCanvas({
 				accelDownRef.current = false;
 				refreshRings.current();
 			}
-			// letting ⌥ go puts the rungs back where the measurement was. The
-			// overlay goes at once rather than when the fresh ancestry lands: a
-			// distance is only true while the modifier that asked for it is held.
-			if (event.key === "Alt") {
-				optionDownRef.current = false;
-				setPreview(null);
-				refreshRings.current();
-			}
 		};
 		const clearModifiers = () => {
 			setAccelDown(false);
 			setSpaceDown(false);
-			optionDownRef.current = false;
 			setPreview(null);
 		};
 		window.addEventListener("keyup", onKeyUp);
@@ -6071,13 +5346,8 @@ export function ProjectCanvas({
 				: railHeld?.kind === "frame"
 					? railHeld.name
 					: null;
-	/**
-	 * The element ring's own read (#259): which of its handles the file leaves
-	 * live, the step a whole class is measured in, and the turn it already
-	 * wears. An element with no stamp of its own has no handle at all — the
-	 * lane has nothing to write against, so there is nothing to grab.
-	 */
-	const ringPick = picked.length === 1 ? picked[0] : undefined;
+	/** the one element held, whose own read every hand write is measured against */
+	const heldPick = picked.length === 1 ? picked[0] : undefined;
 	/**
 	 * The box an open edit hands its frame (#321): the element the words are
 	 * drawn in, and nothing else. The whole document was the frame's while an
@@ -6103,86 +5373,13 @@ export function ProjectCanvas({
 	const railRevision = railFrame === null ? 0 : railReloads + (saves[railFrame] ?? 0);
 	const railRungs = useRungs(project, railHeld, railRevision);
 	const railTheme = useTheme(project, railReloads);
-	const ring = ringOf(
-		railHeld?.kind === "element" && ringPick !== undefined && !ringPick.generated
+	// an element with no stamp of its own has nothing a write could be measured
+	// against, so it holds no read at all
+	heldReadRef.current =
+		railHeld?.kind === "element" && heldPick !== undefined && !heldPick.generated
 			? railRungs?.[rungOf(railHeld)]
-			: undefined,
-		railTheme,
-	);
-	ringRef.current = ring;
+			: undefined;
 	railRungsRef.current = railRungs;
-	/** the drag in flight on the rung the ring is drawn on, and nothing else */
-	const ringDrag = elementDrag !== null && elementDrag.selector === ringPick?.selector ? elementDrag : null;
-	/**
-	 * The gaps the held container identifies, in this camera (#306).
-	 *
-	 * The reading is the frame's own, kept only while it is about this
-	 * selection; the bands are the decisions read over it. A drag holds the one
-	 * it grabbed, so a band the pointer is on stays where the pointer put it.
-	 */
-	const gapReading =
-		ringPick !== undefined && gapRead?.frame === ringPick.frame && gapRead.selector === ringPick.selector
-			? gapRead.reading
-			: null;
-	const gapAxis = gapReading === null || !gapWritable(ring.read) ? null : gapAxisOf(gapReading);
-	// a measured gap is not proof of who wrote it: only the declaration this
-	// class cell owns may be dragged (#306)
-	const gapOwned =
-		gapReading === null || gapAxis === null ? null : ownedGap(gapReading, gapAxis, ring.className, ring.step);
-	const heldGap = gapDrag !== null && gapDrag.selector === ringPick?.selector ? gapDrag : null;
-	// a size or turn drag moves the boxes the bands were measured between, so the
-	// bands stand down until the reading that comes after it lands
-	const gapTargets =
-		gapReading === null || gapAxis === null || gapOwned === null || ringDrag !== null
-			? []
-			: gapBands(gapReading, camera?.k ?? 1).map((band, index) =>
-					heldGap !== null && heldGap.index === index ? heldGap.band : band,
-				);
-	const elementHandles: ElementHandles | null =
-		ringPick === undefined || !pointerTool || entered !== null
-			? null
-			: {
-					frame: ringPick.frame,
-					selector: ringPick.selector,
-					rect: ringDrag?.rect ?? ringPick.rect,
-					live: ring.live,
-					active: ringDrag?.edge ?? null,
-					says: ringDrag?.says ?? null,
-					turning: ringDrag?.turning ?? false,
-					gaps: {
-						bands: gapTargets,
-						axis: gapTargets.length === 0 ? null : gapAxis,
-						held: heldGap?.index ?? null,
-						says: heldGap?.says ?? null,
-					},
-				};
-	gapRef.current = {
-		axis: gapTargets.length === 0 ? null : gapAxis,
-		sign: gapReading === null ? 1 : gapDragSign(gapReading),
-		authored: gapOwned,
-		bands: gapTargets,
-	};
-	const gapFrame = ringPick?.frame;
-	const gapSelector = ringPick?.selector;
-	const gapNonce = gapFrame === undefined ? 0 : (docNonces[gapFrame] ?? 0);
-	const gapSettled = gapDrag === null;
-	// the container's own gaps, asked of the document that laid them out: on a
-	// fresh selection, on a reloaded document, after a save, and once a drag has
-	// let go of the band it was holding
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the nonce and a settled drag are triggers rather than values read in here
-	useEffect(() => {
-		if (gapFrame === undefined || gapSelector === undefined) {
-			setGapRead(null);
-			return;
-		}
-		let live = true;
-		askGaps(gapFrame, gapSelector, (reading) => {
-			if (live) setGapRead({ frame: gapFrame, selector: gapSelector, reading });
-		});
-		return () => {
-			live = false;
-		};
-	}, [askGaps, gapFrame, gapSelector, gapNonce, gapSettled]);
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
@@ -6246,10 +5443,6 @@ export function ProjectCanvas({
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerUp}
 				onPointerCancel={cancelGesture}
-				onLostPointerCapture={() => {
-					const active = gesture.current;
-					if (isRingGesture(active)) cancelGesture();
-				}}
 				onPointerLeave={() => {
 					setPreview(null);
 					hideFrameHover();
@@ -6419,9 +5612,7 @@ export function ProjectCanvas({
 							refused={refused}
 							onAsk={() => askAgent(refused ?? undefined)}
 							onOpenFile={(path, line) => copySourcePath(`${path}:${line}`)}
-							handles={elementHandles}
 							marks={marks}
-							elementGuides={elementGuides}
 							marquee={marquee}
 							shellRadius={shellRadius}
 						/>
@@ -6561,7 +5752,6 @@ export function ProjectCanvas({
 						reloads={railReloads}
 						width={width}
 						onCollapse={shut}
-						preview={elementDrag === null ? null : { box: elementDrag.box }}
 						acts={{
 							onAsk: askAgent,
 							onRung: takeRung,

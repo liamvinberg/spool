@@ -7,8 +7,8 @@ import { apiRequests, handCanvas, VEIL_FILES, VEIL_PAGE } from "./hand-browser-h
  * The fixture is the shaders veil page. A person picks the edit tool and walks
  * into the page the way they would in a design tool: a click on the section, a
  * double-click on the heading, another on its words. Nothing on that walk hands
- * the prototype the pointer, the ring tells the truth about the box it is
- * drawn round, and the rail's numbers take a drag.
+ * the prototype the pointer, and the ring tells the truth about the box it is
+ * drawn round.
  */
 
 /** The rung the canvas last told the daemon it is pointing at: its tag, or the frame. */
@@ -104,136 +104,6 @@ it("walks into the page and never hands it the pointer", { timeout: 240_000 }, a
 	await expect.poll(label, { timeout: 15_000 }).not.toContain("esc exits");
 	await expect.poll(pointerEvents, { timeout: 15_000 }).toBe("none");
 	await expect.poll(held, { timeout: 15_000 }).toBe("frame");
-});
-
-it("keeps a small element resizable, its ring on the box, and scrubs unbounded", {
-	timeout: 240_000,
-}, async () => {
-	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 700 });
-	const { page, frame } = f;
-	const requests = apiRequests(page, f.project.name);
-	const inline = (selector: string, property: string) =>
-		frame
-			.locator(selector)
-			.first()
-			.evaluate((el, name) => el.style.getPropertyValue(name), property);
-	/** What owns the pixel out on the canvas: one of the ring's targets, or the frame under them all. */
-	const owns = (x: number, y: number) =>
-		page.evaluate(
-			(at) => {
-				const el = document.elementFromPoint(at.x, at.y);
-				const target = el?.closest("[data-element-rotate],[data-element-handle],[data-hand-refusal]") ?? null;
-				return target === null ? "frame" : (target.getAttribute("data-element-rotate") ?? "handle");
-			},
-			{ x, y },
-		);
-
-	// --- a small element keeps its corners and nothing that overhangs ---------
-	await f.select("a.brand");
-	const brand = await frame.locator("a.brand").boundingBox();
-	if (brand === null) throw new Error("the veil page drew no brand");
-	expect(brand.height).toBeLessThan(24);
-	await expect.poll(() => page.locator("[data-element-ring]").count(), { timeout: 15_000 }).toBe(1);
-	// the corners are how a small box is resized at all, so they are always
-	// drawn; the rotate zones overhang the words above and below it and wait
-	// for a box with room for them (#324)
-	await expect.poll(() => page.locator('[data-element-handle="nw"]').count(), { timeout: 15_000 }).toBe(1);
-	expect(await page.locator('[data-element-handle="se"]').count()).toBe(1);
-	expect(await page.locator("[data-element-rotate]").count()).toBe(0);
-	// its short side has no length left for a strip either
-	expect(await page.locator('[data-element-handle="e"]').count()).toBe(0);
-	// and the words above and below it are still the frame's
-	for (const point of [
-		{ x: brand.x + brand.width / 2, y: brand.y + brand.height / 2 },
-		{ x: brand.x + brand.width / 2, y: brand.y - 10 },
-		{ x: brand.x + brand.width / 2, y: brand.y + brand.height + 10 },
-	]) {
-		expect(await owns(point.x, point.y), `${point.x},${point.y} is not the frame's`).toBe("frame");
-	}
-
-	// --- the ring is the box the element has, not the one it had --------------
-	await f.select("div.veil-art", { x: 60, y: 45 });
-	await expect.poll(() => page.locator('[data-element-handle="w"]').count(), { timeout: 30_000 }).toBe(1);
-	const knob = await page.locator('[data-element-handle="w"]').boundingBox();
-	if (knob === null) throw new Error("the ring drew no west handle");
-	const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
-	await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2);
-	await page.mouse.down();
-	await page.mouse.move(knob.x + knob.width / 2 + 291, knob.y + knob.height / 2);
-	await expect.poll(() => inline("div.veil-art", "width"), { timeout: 15_000 }).toBe("699px");
-	await page.mouse.up();
-	await wrote;
-	await expect.poll(() => f.bytes().includes("w-[699px]"), { timeout: 15_000 }).toBe(true);
-	// the ring follows the write with no second click: it hugs the new box
-	await expect
-		.poll(
-			async () => {
-				const ring = await page.locator("[data-element-ring]").first().boundingBox();
-				const box = await frame.locator("div.veil-art").first().boundingBox();
-				return ring === null || box === null ? null : Math.round(Math.abs(ring.width - box.width));
-			},
-			{ timeout: 15_000 },
-		)
-		.toBeLessThanOrEqual(6);
-
-	// --- the width, scrubbed off the end of the field -------------------------
-	const field = page.locator('[data-properties-row="width"] input').first();
-	await expect.poll(() => field.count(), { timeout: 15_000 }).toBe(1);
-	const spot = await field.boundingBox();
-	if (spot === null) throw new Error("the rail drew no width field");
-	const from = { x: spot.x + spot.width / 2, y: spot.y + spot.height / 2 };
-	await requests.quiet();
-	// Exercise a denied pointer lock explicitly: headless Chromium grants it
-	// on some platforms. The fallback still tracks the pointer past the field.
-	await page.evaluate(() => {
-		Reflect.set(window, "__lock", []);
-		Element.prototype.requestPointerLock = function denied(this: Element) {
-			(Reflect.get(window, "__lock") as string[]).push(this.tagName.toLowerCase());
-			document.dispatchEvent(new Event("pointerlockerror"));
-			return Promise.reject(new DOMException("Pointer lock denied", "NotAllowedError"));
-		};
-	});
-	await page.mouse.move(from.x, from.y);
-	await page.mouse.down();
-	const drawn: string[] = [];
-	// the last of these is past the right edge of the window, let alone the field
-	for (const dx of [24, 120, 400, 900]) {
-		await page.mouse.move(from.x + dx, from.y);
-		await expect.poll(() => inline("div.veil-art", "width"), { timeout: 15_000 }).not.toBe(drawn.at(-1) ?? "");
-		drawn.push(await inline("div.veil-art", "width"));
-	}
-	expect(await page.evaluate(() => Reflect.get(window, "__lock"))).toEqual(["input"]);
-	// every sample drew, each one wider than the last, and none of them wrote
-	expect(new Set(drawn).size).toBe(drawn.length);
-	expect(drawn.map((width) => Number.parseInt(width, 10))).toEqual(
-		[...drawn.map((w) => Number.parseInt(w, 10))].sort((a, b) => a - b),
-	);
-	expect(Number.parseInt(drawn[drawn.length - 1] ?? "0", 10)).toBeGreaterThan(699);
-	expect(requests.taken().filter((sent) => sent.endsWith("/class"))).toEqual([]);
-
-	// the rail keeps its rows and the ring its handles across the write
-	await page.evaluate(() => {
-		Reflect.set(window, "__blank", 0);
-		Reflect.set(window, "__stop", false);
-		const tick = () => {
-			const row = document.querySelector('[data-properties-row="width"] input');
-			const blank = row === null || (row as HTMLInputElement).value === "";
-			const bare = document.querySelectorAll("[data-element-handle]").length === 0;
-			if (blank || bare) Reflect.set(window, "__blank", (Reflect.get(window, "__blank") as number) + 1);
-			if (Reflect.get(window, "__stop") !== true) requestAnimationFrame(tick);
-		};
-		requestAnimationFrame(tick);
-	});
-	const saved = page.waitForResponse((response) => response.url().endsWith("/class"));
-	const reread = page.waitForResponse((response) => response.url().endsWith("/rungs"));
-	await page.mouse.up();
-	await saved;
-	await reread;
-	await expect.poll(() => f.bytes().includes(`w-[${drawn[drawn.length - 1]}]`), { timeout: 15_000 }).toBe(true);
-	await page.evaluate(() => Reflect.set(window, "__stop", true));
-	expect(await page.evaluate(() => Reflect.get(window, "__blank"))).toBe(0);
-	// one write for the whole gesture, however many samples it drew
-	expect(requests.taken().filter((sent) => sent.endsWith("/class"))).toHaveLength(1);
 });
 
 it("picks the block under the pointer before it opens any words", { timeout: 240_000 }, async () => {
@@ -390,30 +260,11 @@ it("puts the ring back on the element a step was about", { timeout: 240_000 }, a
 	};
 
 	await f.select("div.veil-art", { x: 60, y: 45 });
-	await expect.poll(() => page.locator('[data-element-handle="w"]').count(), { timeout: 30_000 }).toBe(1);
-	const knob = await page.locator('[data-element-handle="w"]').boundingBox();
-	if (knob === null) throw new Error("the ring drew no west handle");
-	const wrote = page.waitForResponse((response) => response.url().endsWith("/class"));
-	await page.mouse.move(knob.x + knob.width / 2, knob.y + knob.height / 2);
-	await page.mouse.down();
-	await page.mouse.move(knob.x + knob.width / 2 + 291, knob.y + knob.height / 2);
-	await page.mouse.up();
-	await wrote;
-	await expect.poll(() => f.bytes().includes("w-[699px]"), { timeout: 15_000 }).toBe(true);
-
-	// ⌘Z puts the size back and the ring with it, on the element it was about
-	await f.history();
-	await expect.poll(() => f.bytes().includes("w-[990px]"), { timeout: 15_000 }).toBe(true);
-	await expect.poll(held, { timeout: 15_000 }).toBe("div");
+	await expect.poll(held, { timeout: 30_000 }).toBe("div");
 	await expect.poll(hugging, { timeout: 15_000 }).toBeLessThanOrEqual(6);
 
-	await f.history(true);
-	await expect.poll(() => f.bytes().includes("w-[699px]"), { timeout: 15_000 }).toBe(true);
-	await expect.poll(held, { timeout: 15_000 }).toBe("div");
-	await expect.poll(hugging, { timeout: 15_000 }).toBeLessThanOrEqual(6);
-
-	// and a step that takes the element away leaves nothing to point at, while
-	// the step that brings it back is picked again
+	// a step that takes the element away leaves nothing to point at, while the
+	// step that brings it back is picked again
 	const deleted = page.waitForResponse((response) => response.url().endsWith("/element"));
 	await page.keyboard.press("Backspace");
 	await (await deleted).finished();
