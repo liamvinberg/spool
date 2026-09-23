@@ -174,6 +174,7 @@ import {
 	sitesMessage,
 	walkRejectionReason,
 } from "./protocol";
+import { useElementTree } from "./rail-elements";
 import { CanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
@@ -2559,6 +2560,58 @@ export function ProjectCanvas({
 		return false;
 	}, [holdChain, holdFrame]);
 
+	/**
+	 * The element tree in the pages rail (#342): a third reader of this one
+	 * selection, beside the outline and the name label. A row click is the
+	 * selection a canvas click makes, and the keyboard stays the canvas's, so
+	 * every Edit key works whichever of them made it. Hovering a row outlines
+	 * its element the way hovering the canvas does.
+	 */
+	const treeHover = useRef<string | null>(null);
+	const elementTree = useElementTree({
+		editOn,
+		frame: picked.at(-1)?.frame ?? (selected.length === 1 ? (selected[0] ?? null) : null),
+		held: picked,
+		frameHeld: picked.length === 0 && selected.length === 1,
+		post: (frame, message) => {
+			const target = iframes.current.get(frame)?.contentWindow;
+			target?.postMessage(message, "*");
+			return target != null;
+		},
+		onSelect: (frame, selector) => {
+			walkKin(frame, selector, "self");
+			viewportRef.current?.focus({ preventScroll: true });
+		},
+		onHover: (frame, selector) => {
+			treeHover.current = selector;
+			if (selector === null) {
+				setPreview(null);
+				return;
+			}
+			askChain(
+				frame,
+				(id) => kinMessage(selector, "self", id),
+				(chain) => {
+					const target = chain.at(-1);
+					if (treeHover.current !== selector) return;
+					setPreview(
+						target === undefined
+							? null
+							: {
+									frame,
+									selector: target.selector,
+									rect: target.rect,
+									...(target.rects === undefined ? {} : { rects: target.rects }),
+									radius: target.radius,
+								},
+					);
+				},
+			);
+		},
+	});
+	const elementTreeRef = useRef(elementTree);
+	elementTreeRef.current = elementTree;
+
 	/** ⌘A (#339): every sibling of the element held, and the element with them. */
 	const selectSiblings = useCallback((): boolean => {
 		const anchor = pickedRef.current[pickedRef.current.length - 1];
@@ -3684,6 +3737,10 @@ export function ProjectCanvas({
 			const message = parseFrameMessage(event.data);
 			if (message === undefined) return;
 			if (!ownsFrameMessage(iframes.current, message.frame, event.source)) return;
+			// a document that may have changed under the element tree reads it again (#342)
+			if (["loaded", "arrived", "edited", "altered", "restored"].includes(message.spool)) {
+				elementTreeRef.current.stale(message.frame);
+			}
 			switch (message.spool) {
 				case "content-size": {
 					const active = gesture.current;
@@ -3800,6 +3857,9 @@ export function ProjectCanvas({
 					waiter?.({ chain: message.chain, hits: message.hits });
 					return;
 				}
+				case "element-tree":
+					elementTreeRef.current.receive(message);
+					return;
 				// the in-place edit (#255): the frame says it has opened, and later
 				// says how it ended. A reply carrying another ask is a dead edit —
 				// its element has moved on, and writing what it says would land on
@@ -5329,6 +5389,7 @@ export function ProjectCanvas({
 					// the same path the dwell clock takes, so a marked-by-hand frame clears
 					// against the same overlay and lands in the same batched write
 					onMarkSeen={markRead}
+					under={elementTree.under}
 				/>
 			</div>
 			<div
