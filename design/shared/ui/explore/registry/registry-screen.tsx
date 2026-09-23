@@ -40,11 +40,16 @@ import { Mini, SpecimenView } from "./specimens";
  * - `rail`: the registry is a row at the foot of every project's pages rail. It
  *   opens inside the project's own tab, so the agent it hands to is right there.
  *
+ * - `nav`: the recommendation after the first three. Registry is an item under
+ *   Projects on Home that opens the registry tab straight away, and the agent's
+ *   log opens it again at whatever the agent took. No handoff button: the person
+ *   names an entry in words (spool-cloud#184).
+ *
  * Nothing here imports or copies anything. The copy is the agent's work, the
  * person asked for it, and it lands as ordinary files the person owns.
  */
 
-export type Take = "home" | "tab" | "rail";
+export type Take = "home" | "tab" | "rail" | "nav";
 
 const PURPOSE_HINT: Readonly<Record<Purpose, string>> = {
 	"starting point": "Built to be taken and changed.",
@@ -192,7 +197,86 @@ export function RegistryHomeCard({ openTarget }: { openTarget: string }) {
 	);
 }
 
-function HomeNav({ current }: { current: "Projects" | "Registry" }) {
+/** take `nav`: Home as it is, with Registry listed under Projects and opening the tab directly */
+export function RegistryHomeNav({ registryTarget }: { registryTarget: string }) {
+	return (
+		<SpoolShell canvasControls={false} tabs={["tvärsö", "kaffe"]}>
+			<div className="grid h-full grid-cols-[208px_minmax(0,1fr)] overflow-hidden bg-bg">
+				<HomeNav current="Projects" registryTarget={registryTarget} />
+				<main className="min-w-0 overflow-hidden px-[48px] pt-[46px]">
+					<header className="mb-[31px] flex items-center justify-between gap-6">
+						<h1 className="type-page font-medium">Projects</h1>
+						<div className="flex items-center gap-[13px]">
+							<SearchBox placeholder="Search projects" />
+							<button type="button" className="h-[35px] rounded-[7px] border border-border-raised px-[14px] type-control">
+								Open…
+							</button>
+							<button type="button" className="h-[35px] rounded-[7px] bg-text px-[14px] text-bg type-control">
+								+ New project…
+							</button>
+						</div>
+					</header>
+					<div className="mb-[18px] text-muted type-value">6 projects</div>
+					<div className="grid grid-cols-3 gap-x-[24px] gap-y-[34px]">
+						{([
+							["tvärsö", "coast", 24],
+							["kaffe", "coffee", 18],
+							["fieldnotes", "notes", 12],
+							["studio", "studio", 32],
+							["dispatch", "slack", 9],
+						] as const).map(([name, art, frames]) => (
+							<div key={name} className="flex flex-col">
+								<div className="h-[200px] overflow-hidden rounded-[8px]">
+									<ProjectArtwork kind={art} className="h-full w-full" />
+								</div>
+								<div className="mt-[12px] flex items-baseline justify-between">
+									<strong className="type-title font-[500]">{name}</strong>
+									<span className="text-muted type-detail">{frames} frames</span>
+								</div>
+							</div>
+						))}
+					</div>
+				</main>
+			</div>
+		</SpoolShell>
+	);
+}
+
+/** take `nav`, first use: the tab opens at once and fills in when the download lands (spool-cloud#183) */
+export function RegistryDownloading() {
+	return (
+		<SpoolShell activeTab="registry" tabs={["kaffe", "registry"]} canvasControls={false}>
+			<div className="flex h-full w-full overflow-hidden bg-bg">
+				<aside className="flex w-[248px] shrink-0 flex-col border-border border-r bg-bg">
+					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-3 pl-3.5">
+						<h1 className="font-semibold type-control">Pages</h1>
+					</div>
+				</aside>
+				<div className="relative flex min-w-0 flex-1 items-center justify-center bg-canvas">
+					<div className="flex w-[320px] flex-col gap-3">
+						<span className="type-control">Downloading the registry</span>
+						<div className="h-[3px] overflow-hidden rounded-full bg-raised">
+							<div className="h-full w-[64%] rounded-full bg-thread" />
+						</div>
+						<span className="text-muted type-detail">
+							{REVISION} · 11.8 of 18.4 MB
+						</span>
+						<span className="text-muted type-control">It stays on this Mac, so its source is readable offline.</span>
+					</div>
+				</div>
+			</div>
+		</SpoolShell>
+	);
+}
+
+function HomeNav({
+	current,
+	registryTarget,
+}: {
+	current: "Projects" | "Registry";
+	/** take `nav`: Registry is always listed, and pressing it opens the tab */
+	registryTarget?: string | undefined;
+}) {
 	return (
 		<aside className="flex h-full flex-col border-border border-r bg-bg px-[16px] pt-[32px] pb-[22px]">
 			<div className="mb-[30px] flex h-[32px] items-center gap-[10px] px-[13px] tracking-[-1px] [font:var(--type-mark)]">
@@ -201,18 +285,20 @@ function HomeNav({ current }: { current: "Projects" | "Registry" }) {
 			</div>
 			<nav className="flex flex-col gap-1">
 				{(["Projects", "Registry"] as const)
-					.filter((item) => item === "Projects" || current === "Registry")
+					.filter((item) => item === "Projects" || current === "Registry" || registryTarget !== undefined)
 					.map((item) => (
-						<span
+						<button
+							type="button"
 							key={item}
+							data-go={item === "Registry" ? registryTarget : undefined}
 							className={cn(
-								"flex h-[38px] items-center gap-[12px] rounded-[7px] px-[12px] type-control",
-								item === current ? "bg-surface text-text" : "text-muted",
+								"flex h-[38px] items-center gap-[12px] rounded-[7px] px-[12px] text-left type-control",
+								item === current ? "bg-surface text-text" : "text-muted hover:bg-surface hover:text-text",
 							)}
 						>
 							{item === "Projects" ? <FrameIcon className="h-4 w-4" /> : <RegistryIcon className="h-4 w-4" />}
 							{item}
-						</span>
+						</button>
 					))}
 			</nav>
 			<span className="mt-auto pl-[12px] text-muted type-detail">On this Mac</span>
@@ -240,6 +326,7 @@ export function RegistryCanvas({
 	selected,
 	handTarget,
 	copied = false,
+	traced = false,
 }: {
 	take: Take;
 	/** the collection page on screen */
@@ -250,6 +337,8 @@ export function RegistryCanvas({
 	handTarget?: string | undefined;
 	/** take `tab`: the note is on the clipboard */
 	copied?: boolean;
+	/** take `nav`: opened from kaffe's agent log, at the frame the agent took */
+	traced?: boolean;
 }) {
 	const item = collection(page);
 	const frame = `${page}/${selected}`;
@@ -266,6 +355,7 @@ export function RegistryCanvas({
 				</aside>
 				<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
 					{inProject ? <ReadOnlyBand /> : null}
+					{traced ? <TracedBand /> : null}
 					<Field item={item} selected={selected} />
 					<ReadOnlyTools />
 					{copied ? <CopiedToast frame={frame} purpose={item.purpose} /> : null}
@@ -421,6 +511,18 @@ function ProjectPagesWithRegistry({ page, selected }: { page: string; selected: 
 	);
 }
 
+/** take `nav`: why this tab opened where it did, and the way back */
+function TracedBand() {
+	return (
+		<div className="absolute inset-x-0 top-0 z-10 flex h-9 items-center gap-3 border-border border-b bg-bg/90 px-4 backdrop-blur">
+			<AgentIcon className="h-3.5 w-3.5 text-thread" />
+			<span className="type-value">from kaffe's agent</span>
+			<span className="text-muted type-detail">it copied this frame into slack/orders</span>
+			<span className="ml-auto text-muted type-detail">kaffe ↩</span>
+		</div>
+	);
+}
+
 function ReadOnlyBand() {
 	return (
 		<div className="absolute inset-x-0 top-0 z-10 flex h-9 items-center gap-3 border-border border-b bg-bg/90 px-4 backdrop-blur">
@@ -522,9 +624,11 @@ function About({
 				<Block name="source" reason={REVISION}>
 					<span className="block break-all text-muted type-detail">{REGISTRY_ROOT}/design</span>
 				</Block>
-				<div className="mt-auto flex flex-col gap-2 border-border border-t p-3">
-					<Handoff take={take} target={handTarget} copied={copied} />
-				</div>
+				{take === "nav" ? null : (
+					<div className="mt-auto flex flex-col gap-2 border-border border-t p-3">
+						<Handoff take={take} target={handTarget} copied={copied} />
+					</div>
+				)}
 			</div>
 		</>
 	);
@@ -610,10 +714,13 @@ export function ProjectAgent({
 	take,
 	step,
 	sendTarget,
+	traceTarget,
 }: {
 	take: Take;
 	step: "ask" | "copied";
 	sendTarget?: string | undefined;
+	/** take `nav`: the log line naming the registry frame opens the registry tab at it */
+	traceTarget?: string | undefined;
 }) {
 	const done = step === "copied";
 	const registryFoot: PageRow[] =
@@ -629,7 +736,7 @@ export function ProjectAgent({
 			<CanvasChrome
 				pages={pages}
 				selected={done ? "orders" : undefined}
-				rail={<AgentPanel done={done} sendTarget={sendTarget} />}
+				rail={<AgentPanel done={done} sendTarget={sendTarget} found={take === "nav"} traceTarget={traceTarget} />}
 				railWidth={420}
 				railLabel="agent"
 			>
@@ -711,7 +818,61 @@ export function ProjectWithRegistryRow({ openTarget }: { openTarget: string }) {
 
 const ASK = "Start the orders bot from this. Keep Slack's look and use our order data.";
 
-function AgentPanel({ done, sendTarget }: { done: boolean; sendTarget?: string | undefined }) {
+const FOUND_ASK = "Prototype the Slack bot that posts new kaffe orders.";
+
+function AgentPanel({
+	done,
+	sendTarget,
+	found = false,
+	traceTarget,
+}: {
+	done: boolean;
+	sendTarget?: string | undefined;
+	/** the agent reached for the registry itself; nothing was attached */
+	found?: boolean;
+	traceTarget?: string | undefined;
+}) {
+	if (found) {
+		return (
+			<div className="flex h-full min-h-0 flex-col bg-bg">
+				<div className="flex h-11 shrink-0 items-center gap-3 border-border border-b px-4">
+					<span className="text-muted">+</span>
+					<span className="truncate type-value">prototype the slack bot</span>
+				</div>
+				<div className="flex min-h-0 flex-1 flex-col justify-end gap-4 px-5 pb-5">
+					<div className="border-border-raised border-l-2 pl-3">
+						<p className="type-body">{FOUND_ASK}</p>
+					</div>
+					<div className="flex flex-col gap-2.5 text-muted type-value">
+						<LogRow>spool registry</LogRow>
+						<button type="button" data-go={traceTarget} className="group flex items-center gap-2.5 text-left">
+							<svg viewBox="0 0 10 10" className="h-2.5 w-2.5" fill="none" aria-hidden="true">
+								<path d="m1.5 5.2 2.3 2.3 4.7-5" stroke="currentColor" strokeWidth="1.4" />
+							</svg>
+							<span>read</span>
+							<span className="inline-flex items-center gap-1.5 rounded-xs border border-border-raised px-1.5 py-[1px] text-text group-hover:border-thread">
+								<RegistryIcon className="h-3 w-3 text-thread" />
+								apps/slack/channel
+								<span className="text-muted">↗</span>
+							</span>
+						</button>
+						<LogRow>copy 4 files into shared/ui/slack</LogRow>
+						<LogRow>write slack/orders</LogRow>
+					</div>
+					<p className="type-body">
+						I started from the registry's Slack channel so the bot looks like Slack. slack/orders posts kaffe orders
+						from the sample data; the theme, message row and data sit beside it in shared/ui/slack.
+					</p>
+				</div>
+				<div className="border-border border-t p-4">
+					<div className="rounded-lg border border-border-raised bg-surface p-3">
+						<p className="min-h-[48px] text-muted type-body">say what to change</p>
+					</div>
+					<div className="mt-2 text-muted type-detail">Opus · high</div>
+				</div>
+			</div>
+		);
+	}
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-bg">
 			<div className="flex h-11 shrink-0 items-center gap-3 border-border border-b px-4">
