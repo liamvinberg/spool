@@ -379,11 +379,10 @@ describe("the round trip an edit makes", () => {
 });
 
 /**
- * The read half (#256): what the properties rail draws before anything is
- * touched.
+ * The read half (#256): what a selection knows before anything is touched.
  *
  * It is the same parse the write runs, asked a different question, and that is
- * the whole point of it — a crumb says the name the author wrote.
+ * the whole point of it: the file says what the write will meet.
  */
 describe("readElements", () => {
 	/** The reads for a snippet's element, in the order they were asked for. */

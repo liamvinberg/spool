@@ -158,7 +158,7 @@ export function Footer({ name, note }: { name: string; note: string }) {
  * The veil page: the h1 wears its size as a class, the art block the width a
  * drag wrote, the marks row the gap a band stands over, the action its colour
  * and radius; the voice block and the mono span are design/'s own. The work
- * section is the one block with a rung between the section and its words: a
+ * section is the one block with an element between the section and its words: a
  * container holding a heading, which is what a descent has to stop on (#322).
  */
 export const VEIL_PAGE = `import { cn } from '../../shared/lib/utils';

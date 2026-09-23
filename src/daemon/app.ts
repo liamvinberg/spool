@@ -548,7 +548,7 @@ export function createDaemonApp({
 		};
 	};
 
-	/** The rail's read (#256): one frame, and the ancestry's stamps in rung order. */
+	/** The selection's read (#256): one frame, and the ancestry's stamps, root first. */
 	const rungsBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 		const sources = parseStamps(body.sources);
@@ -560,7 +560,7 @@ export function createDaemonApp({
 
 	/**
 	 * A text commit (#314): one element's words as the frame has them now,
-	 * addressed by its stamp and measured against the file the rung was read
+	 * addressed by its stamp and measured against the file the element was read
 	 * from. A stamp is a place in a file the daemon is about to open, so the
 	 * shape is strict.
 	 */

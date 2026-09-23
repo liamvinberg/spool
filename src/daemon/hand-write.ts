@@ -233,12 +233,11 @@ export function planOps(source: string, ops: readonly HandOp[]): Planned {
 export const STALE_STAMP: PatchRefusal = { code: "stale-stamp", says: "the stamp hits nothing" };
 
 /**
- * What the file says about one element, for a surface that has to draw it
+ * What the file says about one element, for a selection that has to know it
  * before anybody touches it (#256).
  *
- * The properties rail reads rather than writes: the crumbs want the name the
- * author wrote. That is a fact about the file, so it is parsed out of it the
- * same way an op is — fresh, never from a mirror.
+ * A read rather than a write, and a fact about the file, so it is parsed out
+ * of it the same way an op is — fresh, never from a mirror.
  */
 export interface ElementRead {
 	/**

@@ -34,17 +34,18 @@ export interface LaneDeps {
 }
 
 /**
- * One rung as the file has it (#256): what the author called it, where it is
- * written, and the file a write about it is measured against.
+ * One element of an ancestry as the file has it (#256): where it is written,
+ * whether its words can be typed into, and the file a write about it is
+ * measured against.
  *
- * The properties rail draws before anything is touched, so it needs the read
- * half of the lane's answer: the crumbs are authored names. A rung whose stamp
- * points outside the frame's own folder is a shared definition (#318): it
- * reads and writes exactly as the frame's own do, and says how many frames
- * render it, because that is how far an edit reaches.
+ * A selection reads this before anything is touched, so a write already knows
+ * what it is measured against. An element whose stamp points outside the
+ * frame's own folder is a shared definition (#318): it reads and writes
+ * exactly as the frame's own do, and says how many frames render it, because
+ * that is how far an edit reaches.
  */
 export interface RungRead {
-	/** the stamp asked about, which is what pairs a reply with its rung */
+	/** the stamp asked about, which is what pairs a reply with its element */
 	source: string;
 	/** where it is written: `design/frames/cart/frame.tsx` */
 	path?: string;
@@ -61,7 +62,7 @@ export interface RungRead {
 	 */
 	shared?: { frames?: string[] };
 	/**
-	 * The hash of the file this rung was read out of.
+	 * The hash of the file this element was read out of.
 	 *
 	 * A write carries this, so it is measured against the file the surface
 	 * actually drew — the same promise every other op keeps, made from the read
@@ -86,12 +87,12 @@ export async function readRungs(
 			return parseStamp(root, source);
 		} catch (error) {
 			// a stamp that leaves design/ through a symlink is the boundary's
-			// answer, and for a read it is simply a rung with nothing behind it
+			// answer, and for a read it is simply an element with nothing behind it
 			if (error instanceof DesignBoundaryError) return undefined;
 			throw error;
 		}
 	});
-	// one parse per file rather than one per rung: an ancestry is nearly always
+	// one parse per file rather than one per element: an ancestry is nearly always
 	// the same file over and over
 	const byFile = new Map<
 		string,
@@ -154,7 +155,7 @@ export const STALE_FILE: PatchRefusal = { code: "stale-file", says: "the file ch
 /**
  * A text commit as the canvas sends it (#314): the element's stamp, its child
  * nodes as the frame has them now, the call site one owner up when the frame
- * knows it, and the fingerprint of the file the rung was read from.
+ * knows it, and the fingerprint of the file the element was read from.
  */
 export interface TextAsk {
 	source: string;
@@ -167,7 +168,7 @@ export interface TextAsk {
 	 * A supplied word lands one owner up, in a second file, and that file is
 	 * owed the same promise as the element's: the write is measured against
 	 * what the surface read. The canvas holds it whenever the call site is a
-	 * rung it read or a file it just saved; where it holds none the daemon's
+	 * element it read or a file it just saved; where it holds none the daemon's
 	 * own read of the call is the first anybody has seen of that file, and
 	 * there is nothing for it to have moved from.
 	 */
@@ -234,7 +235,7 @@ export function textSite(root: string, frame: string, ask: TextAsk): WriteSite {
 
 /**
  * One structural change as the canvas sends it (#317): what to do, where, and
- * the fingerprint of the file the rung was read from.
+ * the fingerprint of the file the element was read from.
  */
 export type ElementAsk = DeleteAsk | MoveAsk;
 
@@ -479,7 +480,7 @@ function spliced(stamp: Stamp, source: string, plan: Extract<ReturnType<typeof p
  *
  * Every op in the lane opens the same way: the frame has to exist, the stamp
  * has to resolve inside design/, the file has to be there, and it has to be
- * the file the surface read the rung out of. Four gestures asked those four
+ * the file the surface read the element out of. Four gestures asked those four
  * questions in four places, and a gate written four times is four gates.
  */
 type Site =
