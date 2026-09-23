@@ -553,6 +553,63 @@ describe("the canvas shim", () => {
 		expect(reply.chain.map((rung) => rung.selector)).toEqual(["main", "main > button"]);
 	});
 
+	it("takes an icon whole, and names what a selection lands on (#339)", async () => {
+		const shim = await servedShim();
+		onTestFinished(runShim(shim));
+		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
+			<a href="#go" data-spool-source="frames/host/frame.tsx:4:4">Go<svg viewBox="0 0 24 24"><path d="M4 12h16" /></svg></a>
+		</main></div>`;
+
+		const path = document.querySelector("path") as Element;
+		document.elementFromPoint = () => path;
+		let picked = nextPicked();
+		window.postMessage({ spool: "pick", x: 1, y: 1, id: 3, selects: true }, "*");
+		let reply = (await picked) as { chain: Array<Record<string, unknown>> };
+		// the deepest thing a hand can stand on under a path is the icon it is in
+		expect(reply.chain.map((hit) => hit.selector)).toEqual(["main", "main > a", "main > a > svg"]);
+		expect(reply.chain.map((hit) => hit.name)).toEqual(["Main", "Link", "Icon"]);
+
+		// a hover draws a ring and says no name
+		picked = nextPicked();
+		window.postMessage({ spool: "pick", x: 1, y: 1, id: 4 }, "*");
+		reply = (await picked) as { chain: Array<Record<string, unknown>> };
+		expect(reply.chain.every((hit) => hit.name === undefined)).toBe(true);
+	});
+
+	it("walks round a row by kinship and answers a whole generation (#339)", async () => {
+		const shim = await servedShim();
+		onTestFinished(runShim(shim));
+		document.body.innerHTML = `<div id="root"><main>
+			<h1>cart</h1><br><ul><li>brygg</li><li>bulle</li><li>latte</li></ul>
+		</main></div>`;
+		const kin = async (selector: string, step: string) => {
+			const picked = nextPicked();
+			window.postMessage({ spool: "kin", selector, step, id: 1 }, "*");
+			return ((await picked) as { chain: { selector: string }[] }).chain.map((hit) => hit.selector).at(-1);
+		};
+		const family = async (selector: string, of: string) => {
+			const answered = nextReply("generation");
+			window.postMessage({ spool: "family", selector, of, id: 2 }, "*");
+			const reply = (await answered) as { chain: { selector: string }[]; hits: { selector: string }[] };
+			return { parent: reply.chain.at(-1)?.selector ?? "", hits: reply.hits.map((hit) => hit.selector) };
+		};
+
+		// the line break is no stop: the heading's next is the list
+		expect(await kin("main > h1", "next")).toBe("main > ul");
+		// and the row goes round at either end
+		expect(await kin("main > ul > li:nth-of-type(3)", "next")).toBe("main > ul > li:nth-of-type(1)");
+		expect(await kin("main > ul > li:nth-of-type(1)", "previous")).toBe("main > ul > li:nth-of-type(3)");
+
+		expect(await family("main > ul > li:nth-of-type(2)", "siblings")).toEqual({
+			parent: "main > ul",
+			hits: ["main > ul > li:nth-of-type(1)", "main > ul > li:nth-of-type(2)", "main > ul > li:nth-of-type(3)"],
+		});
+		expect(await family("main", "children")).toEqual({ parent: "main", hits: ["main > h1", "main > ul"] });
+		// the children of the frame are its top-level elements, under no parent
+		expect(await family("", "children")).toEqual({ parent: "", hits: ["main"] });
+		expect(await family("main > h1", "children")).toEqual({ parent: "main > h1", hits: [] });
+	});
+
 	it("answers an empty chain for the frame background and missing hits", async () => {
 		const shim = await servedShim();
 		runShim(shim);

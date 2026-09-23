@@ -82,6 +82,9 @@ it("edits the veil page's words in place and saves each once", { timeout: 240_00
 	const editable = (selector: string) => frame.locator(selector).first().getAttribute("contenteditable");
 	const text = (selector: string) => frame.locator(selector).first().textContent();
 	const fileHas = (snippet: string) => expect.poll(() => f.bytes().includes(snippet), { timeout: 15_000 }).toBe(true);
+	// the words are the Edit tool's: a click holds the element, and a second
+	// click on it puts the caret where it landed (#255, #339)
+	await page.keyboard.press("e");
 	const open = async (selector: string, position?: { x: number; y: number }) => {
 		const held = await f.select(selector, position);
 		await page.mouse.click(held.at.x, held.at.y);

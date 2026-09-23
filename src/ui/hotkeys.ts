@@ -180,15 +180,15 @@ export const HOTKEYS = [
 		label: "Select the deepest element under the cursor",
 		gesture: () => `${accelBare()} click`,
 	},
-	// The selection ladder (#254): Enter and its double-click both belong to
-	// going inside the frame, which is the constant act, so the ladder is
-	// walked from the keyboard — the accel chord Figma left free, and ⇧⏎ back
-	// up. ⌘-click is the pointer's way in, and it lands deepest in one go.
+	// The Edit tool's keys (#339): a click takes the deepest element, and the
+	// keys step from what is held. ⏎ opens the words or the children and ⌘⏎ is
+	// the same from Select, which ⌘ borrows Edit in; ⇧⏎ and Esc climb to the
+	// parent, Tab walks round the siblings and ⌘A takes all of them.
 	{
 		id: "canvas.descend",
 		scope: "canvas",
 		group: "Selection",
-		label: "Go down one rung, into the element",
+		label: "Edit the words, or select the children",
 		keys: ["accel+enter"],
 		repeats: false,
 	},
@@ -196,7 +196,7 @@ export const HOTKEYS = [
 		id: "canvas.ascend",
 		scope: "canvas",
 		group: "Selection",
-		label: "Go up one rung",
+		label: "Select the parent",
 		keys: ["shift+enter"],
 		repeats: false,
 	},
@@ -207,11 +207,17 @@ export const HOTKEYS = [
 		label: "Select the next element, or the one before",
 		keys: ["tab", "shift+tab"],
 	},
-	// The words of the rung held (#323). The pointer's way in is a click on what
-	// is already held; this one hit-tests nothing, which is what makes it work
-	// on a page the pointer path cannot be trusted on. F2 is the sidebar's own
-	// rename key; ⏎ is handed over by `canvas.enter` before it means anything
-	// else, so the face says both.
+	{
+		id: "canvas.select-siblings",
+		scope: "canvas",
+		group: "Selection",
+		label: "Select the element and its siblings",
+		keys: ["accel+a"],
+		repeats: false,
+	},
+	// The words of the element held (#323), from a key that hit-tests nothing.
+	// F2 is the sidebar's own rename key; ⏎ is handed over by `canvas.enter`
+	// before it means anything else, so the face says both.
 	{
 		id: "canvas.words",
 		scope: "canvas",

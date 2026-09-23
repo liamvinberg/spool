@@ -32,19 +32,6 @@ export interface ElementPreview {
 }
 
 /**
- * The rungs a hover draws (#254). The one a click takes is solid; the one under
- * it is dashed, and that second ring is what makes Edit's descent a step you
- * can see rather than a guess. There is no second ring at the leaf, or where a
- * click already lands where a descent would, or in Select, which has no descent
- * — and no first one there with no rung open either, because a click takes the
- * frame and the frame draws its own.
- */
-export interface HoverRungs {
-	click: ElementPreview | null;
-	under?: ElementPreview | null;
-}
-
-/**
  * How far past its element the ring's outline reaches, in screen pixels
  * (#324).
  *
@@ -103,6 +90,7 @@ export function SelectionOverlay({
 	lit = null,
 	preview,
 	refused = null,
+	editing = null,
 	onOpenFile,
 	onAsk,
 	marks,
@@ -125,17 +113,24 @@ export function SelectionOverlay({
 	 * one string in the rail and only their boxes tell them apart.
 	 */
 	lit?: string | null;
-	preview: HoverRungs | null;
+	/** the element a click would take, outlined faintly under the pointer (#339) */
+	preview: ElementPreview | null;
 	/**
-	 * Why the gesture just tried on this element does not apply (#255).
+	 * The element whose words are open, which wears its outline and nothing
+	 * else (#339): no name label while the caret is in.
+	 */
+	editing?: { frame: string; selector: string } | null;
+	/**
+	 * The refusal note (#255, #339): why the gesture just tried on this
+	 * element does not apply.
 	 *
 	 * A refusal is quiet — the element stays what it was and nothing is sent
-	 * anywhere — but it is never silent, so the reason sits under the outline
-	 * in the same plain language every other canvas notice uses, and leaves
-	 * when the selection does.
+	 * anywhere — but it is never silent, so the planner's reason sits under the
+	 * outline in its own words, and leaves after a moment or when the
+	 * selection does.
 	 */
 	refused?: ShownRefusal | null;
-	/** The door to the agent a refusal of typed words offers (#314): the composer, prefilled. */
+	/** The door to the agent every refusal offers (#314, #339): the composer, holding the attempt. */
 	onAsk?: () => void;
 	/** The file a refusal points at (#317), handed out by path. */
 	onOpenFile?: (path: string, line: number) => void;
@@ -186,8 +181,9 @@ export function SelectionOverlay({
 		rung !== null && !picked.some((pick) => pick.frame === rung.frame && pick.selector === rung.selector)
 			? rung
 			: null;
-	const previewShown = preview === null ? null : unpicked(preview.click);
-	const deeperShown = preview?.under === undefined ? null : unpicked(preview.under);
+	const previewShown = unpicked(preview);
+	/** the one element held, which is the one that wears a name label (#339) */
+	const named = picked.length === 1 ? picked[0] : undefined;
 	/** the frames the picks and the ring furniture are drawn inside, one clipped box each (#323) */
 	const pickedFrames = [...new Set(picked.map((pick) => pick.frame))];
 
@@ -366,45 +362,48 @@ export function SelectionOverlay({
 								/>
 							)}
 							<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
+							{named !== undefined &&
+							named.frame === name &&
+							named.name !== undefined &&
+							!(editing?.frame === named.frame && editing.selector === named.selector) ? (
+								<NameLabel name={named.name} box={localBox(unionOf(lineBoxes(named)))} />
+							) : null}
 						</div>
 					</div>
 				);
 			})}
 
-			{[previewShown, deeperShown].map((shown, index) => {
-				if (shown === null) return null;
-				const frame = frames.find((f) => f.name === shown.frame);
-				if (frame === undefined) return null;
-				const rect = screenRect(frame);
-				const dashed = index === 1;
-				return (
-					<div
-						key={dashed ? "hover-under" : "hover-click"}
-						className="absolute overflow-hidden"
-						style={{
-							left: rect.x - RING_REACH,
-							top: rect.y - RING_REACH,
-							width: rect.w + RING_REACH * 2,
-							height: rect.h + RING_REACH * 2,
-						}}
-					>
+			{previewShown !== null &&
+				(() => {
+					const frame = frames.find((f) => f.name === previewShown.frame);
+					if (frame === undefined) return null;
+					const rect = screenRect(frame);
+					return (
 						<div
-							className="absolute"
-							style={{ left: RING_REACH, top: RING_REACH, width: rect.w, height: rect.h }}
+							className="absolute overflow-hidden"
+							style={{
+								left: rect.x - RING_REACH,
+								top: rect.y - RING_REACH,
+								width: rect.w + RING_REACH * 2,
+								height: rect.h + RING_REACH * 2,
+							}}
 						>
-							{lineBoxes(shown).map((box) => (
-								<ElementOutline
-									key={`${box.y}-${box.x}`}
-									box={localBox(box)}
-									radius={shown.radius * k}
-									faded
-									{...(dashed ? { dashed: true } : {})}
-								/>
-							))}
+							<div
+								className="absolute"
+								style={{ left: RING_REACH, top: RING_REACH, width: rect.w, height: rect.h }}
+							>
+								{lineBoxes(previewShown).map((box) => (
+									<ElementOutline
+										key={`${box.y}-${box.x}`}
+										box={localBox(box)}
+										radius={previewShown.radius * k}
+										faded
+									/>
+								))}
+							</div>
 						</div>
-					</div>
-				);
-			})}
+					);
+				})()}
 
 			{refused !== null &&
 				(() => {
@@ -440,7 +439,7 @@ export function SelectionOverlay({
 									{refused.instead.says}
 								</button>
 							)}
-							{refused.attempted !== undefined && onAsk !== undefined && (
+							{onAsk !== undefined && (
 								<button
 									type="button"
 									data-hand-ask
@@ -448,7 +447,7 @@ export function SelectionOverlay({
 									onPointerDown={(event) => event.stopPropagation()}
 									onClick={onAsk}
 								>
-									Ask agent
+									Ask the agent
 								</button>
 							)}
 						</div>
@@ -503,15 +502,24 @@ function SpanBar({
 }
 
 /**
- * The element outline: 1px thread at 2px offset, no handles — faded previews.
- *
- * `lit` is the cursor sitting on this element's chip in the composer, which fills the
- * box rather than thickening its edge: the stroke is the system page's law, and a
- * fill is the lightest thing that says *this one* among five identical outlines.
- *
- * `dashed` is the rung under the one a click takes (#254), drawn fainter still:
- * a solid second ring would read as a second target rather than as the step after.
+ * The name label (#339): the held element's name, sat on the outline's top
+ * edge at its left corner, and nothing else. The name is the component whose
+ * whole output the element is, otherwise a word for its tag, as the frame
+ * reads it (`daemon/element-name.ts`). Not a chip, which is the composer's
+ * word for a selection entry.
  */
+function NameLabel({ name, box }: { name: string; box: Box }) {
+	return (
+		<div
+			data-name-label={name}
+			className="absolute -translate-y-full whitespace-nowrap rounded-t-[3px] bg-thread px-1.5 py-px text-on-thread type-detail"
+			style={{ left: box.x - 2, top: box.y - 2 }}
+		>
+			{name}
+		</div>
+	);
+}
+
 /** The one box several held elements come to, which is the ring a multi-pick wears (#323). */
 function unionOf(rects: readonly { x: number; y: number; w: number; h: number }[]): {
 	x: number;
@@ -590,18 +598,23 @@ function SpillMark({ box, side }: { box: Box; side: "right" | "bottom" }) {
 	return <div data-ring-spill={side} className="absolute bg-thread" style={place} />;
 }
 
+/**
+ * The element outline: 1px thread at 2px offset, no handles — faded previews.
+ *
+ * `lit` is the cursor sitting on this element's chip in the composer, which fills the
+ * box rather than thickening its edge: the stroke is the system page's law, and a
+ * fill is the lightest thing that says *this one* among five identical outlines.
+ */
 function ElementOutline({
 	box,
 	radius,
 	faded,
-	dashed,
 	lit,
 	mark,
 }: {
 	box: Box;
 	radius: number;
 	faded?: boolean;
-	dashed?: boolean;
 	lit?: boolean;
 	/** the ring round the selection itself, which a test can find and measure */
 	mark?: boolean;
@@ -609,7 +622,7 @@ function ElementOutline({
 	return (
 		<div
 			{...(mark === true ? { "data-element-ring": "" } : {})}
-			className={`absolute border border-thread ${dashed === true ? "border-dashed opacity-30" : faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
+			className={`absolute border border-thread ${faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
 			style={{
 				left: box.x - 2,
 				top: box.y - 2,

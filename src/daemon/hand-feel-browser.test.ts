@@ -2,28 +2,27 @@ import { expect, it } from "vitest";
 import { handCanvas, VEIL_FILES, VEIL_PAGE } from "./hand-browser-helpers";
 
 /**
- * Entering and moving between elements, on a real landing page (#321).
+ * The Edit tool on a real landing page (#321, #339).
  *
- * The fixture is the shaders veil page. A person picks the edit tool and walks
- * into the page the way they would in a design tool: a click on the section, a
- * double-click on the heading, another on its words. Nothing on that walk hands
- * the prototype the pointer, and the ring tells the truth about the box it is
- * drawn round.
+ * The fixture is the shaders veil page. A person picks the edit tool and
+ * clicks: the click lands on the deepest element under the pointer, the keys
+ * step from there, and a double-click opens the words. Nothing on that walk
+ * hands the prototype the pointer, and the ring tells the truth about the box
+ * it is drawn round.
  */
 
-/** The rung the canvas last told the daemon it is pointing at: its tag, or the frame. */
+/** What the canvas last told the daemon it is pointing at: each tag, or the frame. */
 async function heldTag(project: { url: string; name: string; controlToken: string }): Promise<string> {
 	const response = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/selection`, {
 		headers: { "X-Spool-Control": project.controlToken },
 	});
 	const body = (await response.json()) as { selection?: { kind: string; name?: string }[] };
-	const [only] = body.selection ?? [];
-	return only === undefined ? "nothing" : (only.name ?? only.kind);
+	const all = body.selection ?? [];
+	return all.length === 0 ? "nothing" : all.map((one) => one.name ?? one.kind).join(", ");
 }
 
-it("walks into the page and never hands it the pointer", { timeout: 240_000 }, async () => {
-	// shorter than the page it draws, so its root is a wrapper over the whole
-	// frame — the rung a first click has to go past
+it("lands on the deepest element and never hands the page the pointer", { timeout: 240_000 }, async () => {
+	// shorter than the page it draws, so its root is a wrapper over the whole frame
 	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 400 });
 	const { page, frame } = f;
 	const held = () => heldTag(f.project);
@@ -31,25 +30,19 @@ it("walks into the page and never hands it the pointer", { timeout: 240_000 }, a
 	const pointerEvents = () =>
 		page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents);
 
-	const root = await frame.locator("main.landing").boundingBox();
 	const heading = await frame.locator("h1").boundingBox();
-	if (root === null || heading === null) throw new Error("the veil page drew nothing");
-	expect(root.height).toBeGreaterThanOrEqual(400);
+	if (heading === null) throw new Error("the veil page drew nothing");
 	// on the first line of the heading's own words
 	const at = { x: heading.x + 24, y: heading.y + 14 };
 
 	await page.getByRole("button", { name: "edit", exact: true }).click();
 
-	// one click goes past the wrapper and lands on the section, the top-level
-	// child under the pointer, exactly as it does in Figma
+	// one click, and it is the heading: the element the words are in
 	await page.mouse.click(at.x, at.y);
-	await expect.poll(held, { timeout: 15_000 }).toBe("section");
-
-	// a double-click steps one rung down, onto the heading itself
-	await page.mouse.dblclick(at.x, at.y);
 	await expect.poll(held, { timeout: 15_000 }).toBe("h1");
+	await expect.poll(() => page.locator("[data-name-label]").textContent(), { timeout: 15_000 }).toBe("Heading");
 
-	// and another opens its words, rather than cancelling the edit it opened
+	// a double-click opens its words
 	await page.mouse.dblclick(at.x, at.y);
 	await expect
 		.poll(() => frame.locator("h1").first().getAttribute("contenteditable"), { timeout: 15_000 })
@@ -61,17 +54,19 @@ it("walks into the page and never hands it the pointer", { timeout: 240_000 }, a
 			.evaluate((el) => el.ownerDocument.activeElement === el),
 	).toBe(true);
 	// the words take the pointer and nothing else in the document does: the
-	// canvas keeps the rest of the frame behind four bands of its own
+	// canvas keeps the rest of the frame behind four bands of its own, and the
+	// outline is the only cue — no label while the caret is in
 	await expect.poll(pointerEvents, { timeout: 15_000 }).toBe("auto");
 	expect(await page.locator("[data-edit-band]").count()).toBe(4);
+	expect(await page.locator("[data-name-label]").count()).toBe(0);
 
-	// Escape lets the words go, and the frame's pointer with them
+	// Escape finishes the words, and the frame's pointer goes with them
 	await page.keyboard.press("Escape");
 	await expect.poll(() => frame.locator("h1").first().getAttribute("contenteditable"), { timeout: 15_000 }).toBe(null);
 	await expect.poll(pointerEvents, { timeout: 15_000 }).toBe("none");
 	expect(await page.locator("[data-edit-band]").count()).toBe(0);
 
-	// then it climbs the rungs the pointer came down
+	// then it climbs to each parent in turn, and to the frame at the top
 	await page.keyboard.press("Escape");
 	await expect.poll(held, { timeout: 15_000 }).toBe("section");
 	await page.keyboard.press("Escape");
@@ -79,16 +74,11 @@ it("walks into the page and never hands it the pointer", { timeout: 240_000 }, a
 	await page.keyboard.press("Escape");
 	await expect.poll(held, { timeout: 15_000 }).toBe("frame");
 
-	// ⏎ walks the same rungs the pointer walked: the branch it rests on is the
-	// one it descends, which is the ring the hover is already drawing
-	await page.mouse.move(at.x + 2, at.y);
-	await expect.poll(() => page.locator(".opacity-50").count(), { timeout: 15_000 }).toBeGreaterThan(0);
+	// ⏎ goes back down: the frame's top-level element, then all its children
 	await page.keyboard.press("Enter");
-	await expect.poll(held, { timeout: 15_000 }).toBe("section");
+	await expect.poll(held, { timeout: 15_000 }).toBe("main");
 	await page.keyboard.press("Enter");
-	await expect.poll(held, { timeout: 15_000 }).toBe("h1");
-	await page.keyboard.press("Shift+Enter");
-	await expect.poll(held, { timeout: 15_000 }).toBe("section");
+	await expect.poll(held, { timeout: 15_000 }).toMatch(/^header, section, div, div, span, div, a, section, footer$/);
 
 	// none of that went inside, and neither does the label's own double-click
 	expect(await label()).not.toContain("esc exits");
@@ -106,61 +96,96 @@ it("walks into the page and never hands it the pointer", { timeout: 240_000 }, a
 	await expect.poll(held, { timeout: 15_000 }).toBe("frame");
 });
 
-it("picks the block under the pointer before it opens any words", { timeout: 240_000 }, async () => {
-	const f = await handCanvas(VEIL_FILES, VEIL_PAGE, { w: 1100, h: 600 });
+/**
+ * A page that counts everything done to it: hovers, presses, keys, focus and
+ * its own animation frames, each onto its own window. Built to show the Edit
+ * tool is inert (#339): with it on, none of the first four move and the last
+ * stops; with it off, all of them are the page's again.
+ */
+const COUNTING = `export default function Frame() {
+	const count = (name: string) => () => {
+		const held = window as unknown as Record<string, number>;
+		held[name] = (held[name] ?? 0) + 1;
+	};
+	return (
+		<main style={{ padding: 24, fontFamily: "system-ui" }}>
+			<button
+				id="go"
+				style={{ fontSize: 24, padding: 16 }}
+				onPointerEnter={count("hovered")}
+				onMouseOver={count("hovered")}
+				onClick={count("clicked")}
+				onFocus={count("focused")}
+			>
+				Press me
+			</button>
+			<p
+				ref={(el) => {
+					if (el === null) return;
+					const view = el.ownerDocument.defaultView as unknown as Record<string, unknown> | null;
+					if (view === null || view.spun !== undefined) return;
+					view.spun = 0;
+					const loop = () => {
+						(view.spun as number)++;
+						(view.requestAnimationFrame as (cb: () => void) => void)(loop);
+					};
+					(view.requestAnimationFrame as (cb: () => void) => void)(loop);
+					el.ownerDocument.addEventListener("keydown", count("typed"));
+				}}
+			>
+				spinning
+			</p>
+		</main>
+	);
+}
+`;
+
+it("keeps every pointer and key off the page while Edit is on, and holds its animation", {
+	timeout: 240_000,
+}, async () => {
+	const f = await handCanvas({}, COUNTING, { w: 700, h: 400 });
 	const { page, frame } = f;
 	const held = () => heldTag(f.project);
-	const editable = () => frame.locator("[contenteditable]").count();
-	const pointerEvents = () =>
-		page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents);
+	const counted = (name: string) =>
+		frame
+			.locator("main")
+			.evaluate((el, key) => (el.ownerDocument.defaultView as unknown as Record<string, number>)[key] ?? 0, name);
+	/** How many animation frames the page ran over a third of a second. */
+	const ran = async () => {
+		const before = await counted("spun");
+		await page.waitForTimeout(300);
+		return (await counted("spun")) - before;
+	};
+	const button = await frame.locator("#go").boundingBox();
+	if (button === null) throw new Error("the counting page drew no button");
+	const at = { x: button.x + button.width / 2, y: button.y + button.height / 2 };
 
-	const words = await frame.locator("#details h2").boundingBox();
-	if (words === null) throw new Error("the veil page drew no work heading");
-	const at = { x: words.x + 30, y: words.y + 14 };
+	await expect.poll(ran, { timeout: 30_000 }).toBeGreaterThan(4);
 
-	await page.getByRole("button", { name: "edit", exact: true }).click();
+	await page.keyboard.press("e");
+	await expect.poll(ran, { timeout: 15_000 }).toBe(0);
 
+	// hover, click, a double-click on its words, and typing: the canvas hears
+	// all of it and the page none of it
+	await page.mouse.move(at.x - 10, at.y);
+	await page.mouse.move(at.x, at.y);
 	await page.mouse.click(at.x, at.y);
-	await expect.poll(held, { timeout: 15_000 }).toBe("section");
-
-	// a click on the section it is already holding is not the words gesture: a
-	// container has no words of its own, and an edit opened on one would hand
-	// the page the pointer everywhere inside it (#322)
-	await page.mouse.click(at.x, at.y);
-	await page.waitForTimeout(600);
-	expect(await editable()).toBe(0);
-	expect(await pointerEvents()).toBe("none");
-	await expect.poll(held, { timeout: 15_000 }).toBe("section");
-
-	// with the section held, the two clicks mean the rung under the pointer —
-	// the block the heading sits in — and never the words at the bottom of it
-	await page.mouse.dblclick(at.x, at.y);
-	await expect.poll(held, { timeout: 15_000 }).toBe("div");
-	expect(await editable()).toBe(0);
-
-	await page.mouse.dblclick(at.x, at.y);
-	await expect.poll(held, { timeout: 15_000 }).toBe("h2");
-	expect(await editable()).toBe(0);
-
-	// only on the element already held, and only where it has words of its own
+	await expect.poll(held, { timeout: 15_000 }).toBe("button");
+	await page.keyboard.type("xyz");
 	await page.mouse.dblclick(at.x, at.y);
 	await expect
-		.poll(() => frame.locator("#details h2").getAttribute("contenteditable"), { timeout: 15_000 })
+		.poll(() => frame.locator("#go").getAttribute("contenteditable"), { timeout: 15_000 })
 		.toBe("plaintext-only");
-
-	// and ⌫ on the held heading takes it out of the file
+	await page.mouse.move(at.x + 4, at.y + 2);
 	await page.keyboard.press("Escape");
-	await expect
-		.poll(() => frame.locator("#details h2").getAttribute("contenteditable"), { timeout: 15_000 })
-		.toBe(null);
-	await expect.poll(held, { timeout: 15_000 }).toBe("h2");
-	// the frame holds the keyboard until its own answer lands, so ⌫ waits
-	await expect
-		.poll(() => page.evaluate(() => document.activeElement?.getAttribute("role") ?? "none"), { timeout: 15_000 })
-		.toBe("application");
-	await page.keyboard.press("Backspace");
-	await expect.poll(() => frame.locator("#details h2").count(), { timeout: 15_000 }).toBe(0);
-	await expect.poll(() => f.bytes().includes("Ideas stay"), { timeout: 15_000 }).toBe(false);
+	await expect.poll(() => frame.locator("#go").getAttribute("contenteditable"), { timeout: 15_000 }).toBe(null);
+	for (const name of ["hovered", "clicked", "focused", "typed"]) expect(await counted(name), name).toBe(0);
+	// and the page stayed held the whole way through
+	expect(await ran()).toBe(0);
+
+	// putting the tool down gives the page its animation back
+	await page.keyboard.press("v");
+	await expect.poll(ran, { timeout: 15_000 }).toBeGreaterThan(4);
 });
 
 it("puts the ring back on the element a step was about", { timeout: 240_000 }, async () => {

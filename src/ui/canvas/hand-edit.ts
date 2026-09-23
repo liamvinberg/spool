@@ -32,17 +32,19 @@ export const NO_STAMP: Refusal = { code: "stale-stamp", says: "no stamp of its o
 export const GONE: Refusal = { code: "stale-stamp", says: "the element is no longer there" };
 
 /**
- * Where a refusal is shown: on the element it was about, in its own frame.
- * One that refused words the hand had already typed carries them, and that
- * is what the Ask agent action hands the composer (#314).
+ * The refusal note (#339): where a refusal is shown, on the element it was
+ * about, in its own frame. Every one carries what the hand tried, which is
+ * what "Ask the agent" hands the composer; one that refused words the hand had
+ * already typed carries those words too (#314).
  */
 export interface ShownRefusal {
 	frame: string;
 	selector: string;
 	refusal: Refusal;
+	/** what the hand tried, in plain words: `Delete the li`, `Change the words of the h1` (#317) */
+	asked: string;
+	/** the words the hand typed, when typed words are what was refused (#314) */
 	attempted?: string;
-	/** what the hand tried, in plain words, when it was not typing words (#317) */
-	asked?: string;
 	/** the file the refusal points at, for the link that hands its path out (#317) */
 	file?: { path: string; line: number };
 	/**
@@ -66,7 +68,7 @@ export function deleteAsk(tags: readonly string[]): string {
  * `opening` is one double-click interval after the caret landed: the frame
  * already has the caret, and the words already take the keys, but its
  * pointer stays the canvas's for that long so the second half of a
- * double-click can still descend the ladder (#254) rather than land in the
+ * double-click is still the canvas's to hear rather than a press in the
  * words. `start` is the words the edit began with, and an edit that ends on
  * the same ones writes nothing at all.
  */
@@ -109,19 +111,22 @@ export function wordsOf(nodes: readonly EditedNode[]): string {
 }
 
 /**
- * What the composer opens holding after a refused edit (#314): the change
+ * What the composer opens holding after a refusal (#314, #339): the change
  * the hand tried, where, and why the hand could not make it. Plain words,
  * because the agent reads them as a request and the person reads them
  * before sending.
  */
 export function askText(refused: ShownRefusal, pick: PickedSelection | undefined): string {
 	const where = pick?.source ? ` at design/${pick.source}` : "";
-	const what = pick === undefined ? "the element" : `the ${pick.tag}`;
-	if (refused.asked !== undefined) {
+	if (refused.attempted === undefined) {
 		return `${refused.asked}${where}. ${refused.refusal.says}, so the hand could not do it in place.`;
 	}
-	return `Change the words of ${what}${where} to ${JSON.stringify(refused.attempted ?? "")}. ${refused.refusal.says}, so the hand could not write it in place.`;
+	const what = pick === undefined ? "the element" : `the ${pick.tag}`;
+	return `Change the words of ${what}${where} to ${JSON.stringify(refused.attempted)}. ${refused.refusal.says}, so the hand could not write it in place.`;
 }
+
+/** How long a refusal note stays under its element before it goes by itself (#339). */
+export const REFUSAL_MS = 4000;
 
 /** The stamp a gesture on this pick would act on, or why there is none. */
 export function stampOf(pick: PickedSelection): string | Refusal {
@@ -134,16 +139,15 @@ export function stampOf(pick: PickedSelection): string | Refusal {
  * Whether this press is the second click on what is already held (#255).
  *
  * The gesture that starts a text edit is a click on an element that was
- * selected before the press — the rename idiom, and the one meaning left over
- * on an element with words of its own, since a double-click there has no rung
- * beneath it to descend to. One rung only: a second click has to mean one
- * element, and the press has to land inside the box that element is drawn in,
- * so a click onto a sibling reads as a move of the selection instead.
+ * selected before the press — the rename idiom, and the first half of the
+ * double-click that opens words (#339). One element only: a second click has
+ * to mean one element, and the press has to land inside the box that element
+ * is drawn in, so a click onto a sibling reads as a move of the selection
+ * instead.
  *
- * Words of its own is the whole of it (#322). A container holds rungs, not
+ * Words of its own is the whole of it (#322). A container holds elements, not
  * text, and the clicks landing in it mean the one under the pointer; an edit
- * opened on it would hand the page the pointer across everything it contains,
- * so the double-click meant for the rung beneath would land in the prototype.
+ * opened on it would hand the page the pointer across everything it contains.
  */
 export function secondClick(
 	picks: readonly PickedSelection[],

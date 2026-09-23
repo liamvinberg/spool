@@ -14,8 +14,9 @@ interface ToolMeta {
 
 // Two pointer tools, by what they take. Select takes frames: a click selects
 // one, a double-click goes inside it, and ⌘ borrows Edit for as long as it is
-// held. Edit takes the elements inside them, on Figma's ladder: a click takes
-// the rung the scope is open on, a double-click steps down one (#254).
+// held. Edit takes the elements inside them (#339): a click takes the deepest
+// one under the pointer, a double-click opens its words or its children, and
+// nothing the pointer or the keys do reaches the page while it is on.
 //
 // Each tool is also a transient of the other: ⌘ borrows Edit inside Select,
 // Space borrows Hand anywhere.

@@ -1,11 +1,11 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { pageName } from "../../page-path";
 import type { Geometry, RungRead } from "../api";
 import { readRungs } from "../api";
 import { cn } from "../cn";
 import { MenuItem } from "./context-menu";
 import type { PickedHit } from "./protocol";
-import { FAINT, NumField, popoverAt, Row, Section, useCloseOnPressAway, VALUE } from "./rail-fields";
+import { NumField, popoverAt, Row, Section, useCloseOnPressAway, VALUE } from "./rail-fields";
 import { PanelCaret } from "./sidebar";
 
 /**
@@ -19,10 +19,8 @@ import { PanelCaret } from "./sidebar";
  *
  * What it says about a frame is the frame's own geometry, which is
  * `frame.json` and never source. An element says the same about the frame it
- * is in, and where it sits in it: the crumbs, read off the file rather than off
- * the document, so a crumb says the name the author wrote. Nothing about the
- * element itself is set here — its words are typed on the canvas, and the
- * rest is the agent's.
+ * is in, and nothing about itself (#339): its name is the label on the canvas,
+ * its words are typed where they are drawn, and the rest is the agent's.
  */
 
 /** the smallest a frame may be dragged or typed to, which is the canvas's own floor */
@@ -69,8 +67,6 @@ export type Held =
 
 export interface PropertiesActs {
 	onAsk?: () => void;
-	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
-	onRung: (frame: string, hit: PickedHit | null) => void;
 	/** the frame's own geometry, which is `frame.json` and never source */
 	onGeometry: (name: string, patch: Partial<Geometry>) => void;
 	/** a scrub tick: the screen follows, the file waits for the pointer to lift */
@@ -82,15 +78,12 @@ export interface PropertiesActs {
 export function PropertiesRail({
 	recovery,
 	held,
-	rungs,
 	acts,
 	width,
 	onCollapse,
 }: {
 	recovery?: ReactNode;
 	held: Held | null;
-	/** the selection's one read (#256), indexed by rung; the canvas owns it */
-	rungs: (RungRead | undefined)[] | null;
 	acts: PropertiesActs;
 	/** what the dock has given this surface, which is its own remembered width */
 	width: number;
@@ -104,7 +97,7 @@ export function PropertiesRail({
 			style={{ width }}
 			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
 		>
-			<Head held={held} rungs={rungs} acts={acts} onCollapse={onCollapse} />
+			<Head held={held} acts={acts} onCollapse={onCollapse} />
 			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
 				<Body held={held} acts={acts} />
 			</div>
@@ -155,18 +148,17 @@ export function stampsOf(held: Held | null): { frame: string; sources: string[];
 }
 
 /**
- * The one read behind everything a selection draws (#256, #259).
+ * The one read behind every hand write on a selection (#256, #259).
  *
- * The whole ancestry in one ask, answered once per selection and shared by
- * every reader of it: the rail's crumbs, and the fingerprint every hand write
- * on the held element is measured against. Two reads of the same rungs was two
- * round trips saying the same thing.
+ * The whole ancestry in one ask, answered once per selection: the fingerprint
+ * every write on the held element is measured against, the fingerprints of
+ * the files its ancestors are written in (where a call site one owner up
+ * lives), and whether its words can be typed into (#339).
  *
  * What comes back is scattered back onto the chain, so a caller indexes it by
  * rung and gets nothing where a rung had no stamp to ask about. A read in
- * flight is nothing rather than the last rung's answer: crumbs fall back to
- * the live tags for a beat, and a write measured against the previous
- * element's file would land somewhere wrong.
+ * flight is nothing rather than the last rung's answer: a write measured
+ * against the previous element's file would land somewhere wrong.
  */
 export function useRungs(project: string, held: Held | null, revision: number): (RungRead | undefined)[] | null {
 	const [answered, setAnswered] = useState<{ asked: string; on: string; rungs: RungRead[] } | null>(null);
@@ -199,8 +191,8 @@ export function useRungs(project: string, held: Held | null, revision: number): 
 	}, [project, asked, on]);
 	if (ask === null || answered === null) return null;
 	// A re-read of the element already answered for is the hand's own write
-	// coming back, and the crumbs go on saying what they said until it lands
-	// (#321): blanking there would flash them for a round trip after each save.
+	// coming back, and the last answer stands until it lands (#321): blanking
+	// there would leave nothing to measure a write against for a round trip.
 	if (answered.asked !== asked && (on === "" || answered.on !== on)) return null;
 	const byRung: (RungRead | undefined)[] = [];
 	for (const [index, rung] of ask.rungs.entries()) byRung[rung] = answered.rungs[index];
@@ -230,58 +222,23 @@ function Empty({ says }: { says: string }) {
 	);
 }
 
-/* ---------- the crumbs ---------- */
+/* ---------- the head ---------- */
 
 /**
- * `cart / main / CartRow`, and a press on any of them climbs.
- *
- * The frame is the root of the chain, which is what tells it apart from its
- * root element: the two are the same rectangle on screen and different things
- * to adjust, so the crumbs are the only place that says which one is held
- * (#254). A name is the one the author wrote where the file could be read, and
- * the live tag until it can be.
+ * What the rail is about, by name: the frame held, or the frame the held
+ * elements are in. The frame is the rail's subject either way, so it is the
+ * frame's name that heads it; where in the frame an element sits is the
+ * canvas's to show, on the element itself.
  */
-function Head({
-	held,
-	rungs,
-	acts,
-	onCollapse,
-}: {
-	held: Held | null;
-	rungs: (RungRead | undefined)[] | null;
-	acts: PropertiesActs;
-	onCollapse: () => void;
-}) {
-	const element = held?.kind === "element" ? held : null;
-	const rung = rungOf(held);
-	const walked = element === null || rung < 0 ? [] : element.chain.slice(0, rung + 1);
-	const frame = element?.frame ?? (held?.kind === "frame" ? held.name : null);
-	const steps: Step[] =
-		frame === null
-			? []
-			: [
-					// the frame by its own name: the canvas around the rail is already on its page
-					{ key: `frame:${frame}`, name: pageName(frame), onPress: () => acts.onRung(frame, null) },
-					...(element === null
-						? []
-						: walked.map((hit, index) => ({
-								key: hit.selector,
-								name: rungs?.[index]?.name ?? hit.tag,
-								onPress: () => acts.onRung(element.frame, hit),
-							}))),
-				];
+function Head({ held, acts, onCollapse }: { held: Held | null; acts: PropertiesActs; onCollapse: () => void }) {
+	const frame =
+		held?.kind === "frame" ? held.name : held?.kind === "element" || held?.kind === "elements" ? held.frame : null;
 	return (
 		<div className="shrink-0 border-border border-b">
-			{/* the ruler under the trail is placed against this row, not against the page */}
-			<div className="relative flex h-9 items-center gap-2 px-2.5">
-				{steps.length === 0 ? (
-					<span data-properties-crumbs="" className={cn("flex min-w-0 flex-1 items-center gap-1", VALUE)}>
-						<span className={cn("text-muted", VALUE)}>properties</span>
-					</span>
-				) : (
-					<Trail steps={steps} />
-				)}
-				{element === null ? null : <span className={cn("shrink-0", FAINT)}>{element.chain[rung]?.tag ?? ""}</span>}
+			<div className="flex h-9 items-center gap-2 px-2.5">
+				<span data-properties-head="" className={cn("min-w-0 flex-1 truncate", VALUE)}>
+					{frame === null ? <span className="text-muted">properties</span> : pageName(frame)}
+				</span>
 				{acts.onAsk && held ? <Actions onAsk={acts.onAsk} /> : null}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
@@ -290,8 +247,8 @@ function Head({
 }
 
 /**
- * The `⋯` beside the crumbs: what can be done about the thing held, which is
- * to hand it to the agent. It opens the canvas's own menu (`context-menu.tsx`)
+ * The `⋯` in the head: what can be done about the thing held, which is to
+ * hand it to the agent. It opens the canvas's own menu (`context-menu.tsx`)
  * rather than a list this surface invented.
  */
 function Actions({ onAsk }: { onAsk: () => void }) {
@@ -342,213 +299,10 @@ function Actions({ onAsk }: { onAsk: () => void }) {
 	);
 }
 
-/** one crumb's worth of the trail: a name, and the rung a press on it climbs to */
-interface Step {
-	key: string;
-	name: string;
-	onPress: () => void;
-}
-
-/** the canvas menu's box, which the `…` opens a short one of */
+/** the canvas menu's box, which the `⋯` opens a short one of */
 const MENU_WIDTH = 200;
 const MENU_ROW = 30;
 const MENU_PAD = 8;
-
-/**
- * The trail, showing the rungs nearest the one held and eliding the rest.
- *
- * A chain eight deep does not fit a 300px column, and the rule that let every
- * ancestor squeeze spent the width on `spoo… / d. / m… / d.` — a row that
- * names nothing and that nobody can press on purpose. So the frame at the root
- * and as many of the nearest rungs as fit read whole, and what is left over
- * collapses into a `…` that opens on the rungs it stands for. A trail should
- * always say something true about where you are, even when it cannot say all
- * of it.
- *
- * How many fit is measured rather than counted out, because the rail's width
- * is the reader's to drag (`rail-width.ts`). The ruler is the whole trail drawn
- * where nothing can see it: measuring the crumbs on screen would only ever say
- * how much of what is already shown fits, never whether one more would.
- */
-function Trail({ steps }: { steps: readonly Step[] }) {
-	const row = useRef<HTMLSpanElement | null>(null);
-	const ruler = useRef<HTMLSpanElement | null>(null);
-	const opener = useRef<HTMLButtonElement | null>(null);
-	const list = useRef<HTMLDivElement | null>(null);
-	const [near, setNear] = useState(steps.length - 1);
-	const [menu, setMenu] = useState<{ chain: string; left: number; top: number } | null>(null);
-	const shut = useCallback(() => setMenu(null), []);
-
-	useLayoutEffect(() => {
-		const box = row.current;
-		const rule = ruler.current;
-		if (box !== null && rule !== null) setNear(fitting(box.getBoundingClientRect().width, rule));
-	});
-
-	// the menu carries the trail it was opened on: a climb from anywhere else
-	// would otherwise leave it standing, listing rungs nobody is under any more
-	const chain = steps.map((step) => step.key).join(">");
-	const at = menu?.chain === chain ? menu : null;
-	useCloseOnPressAway(at !== null, shut, list, opener);
-
-	const kept = Math.max(0, Math.min(near, steps.length - 1));
-	const root = steps[0];
-	const skipped = steps.slice(1, steps.length - kept);
-	const nearest = steps.slice(steps.length - kept);
-
-	const show = () => {
-		const rect = opener.current?.getBoundingClientRect();
-		if (rect === undefined) return;
-		setMenu({ chain, ...popoverAt(rect, MENU_WIDTH, skipped.length * MENU_ROW + MENU_PAD) });
-	};
-
-	return (
-		<>
-			<span
-				ref={row}
-				data-properties-crumbs=""
-				className={cn("flex min-w-0 flex-1 items-center gap-1 overflow-hidden", VALUE)}
-			>
-				{root === undefined ? null : (
-					<Crumb name={root.name} last={steps.length === 1} squeezes={steps.length > 1} onPress={root.onPress} />
-				)}
-				{skipped.length === 0 ? null : (
-					<Elision ref={opener} open={at !== null} onToggle={() => (at === null ? show() : shut())} />
-				)}
-				{nearest.map((step, index) => (
-					<Crumb
-						key={step.key}
-						name={step.name}
-						last={index === nearest.length - 1}
-						squeezes={false}
-						onPress={step.onPress}
-					/>
-				))}
-			</span>
-			{/* clipped to nothing rather than merely faded, so a long trail cannot
-			    push the tag and the caret off the row while it is being measured */}
-			<span aria-hidden="true" inert className="absolute top-0 left-0 h-0 w-0 overflow-hidden">
-				<span ref={ruler} data-crumb-ruler="" className={cn("flex w-max items-center gap-1", VALUE)}>
-					{root === undefined ? null : <Crumb name={root.name} last={false} squeezes={false} onPress={() => {}} />}
-					<Elision open={false} onToggle={() => {}} />
-					{steps.slice(1).map((step, index) => (
-						<Crumb
-							key={step.key}
-							name={step.name}
-							last={index === steps.length - 2}
-							squeezes={false}
-							onPress={() => {}}
-						/>
-					))}
-				</span>
-			</span>
-			{at === null ? null : (
-				<div
-					ref={list}
-					role="menu"
-					aria-label="Skipped rungs"
-					style={{ left: at.left, top: at.top }}
-					className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
-					onPointerDown={(event) => event.stopPropagation()}
-				>
-					{skipped.map((step) => (
-						<MenuItem
-							key={step.key}
-							label={step.name}
-							onClick={() => {
-								shut();
-								step.onPress();
-							}}
-						/>
-					))}
-				</div>
-			)}
-		</>
-	);
-}
-
-/**
- * How many of the nearest rungs the row has room to draw whole.
- *
- * Read off the ruler, whose children are the whole trail with the `…` second,
- * so the gap the row sets between crumbs is measured here too rather than
- * restated as a number. The held rung is drawn whatever the answer: a trail
- * that names nothing is worse than one that runs past its edge.
- */
-function fitting(available: number, ruler: HTMLElement): number {
-	const boxes = [...ruler.children].map((child) => child.getBoundingClientRect());
-	const root = boxes[0];
-	const elision = boxes[1];
-	if (root === undefined || elision === undefined) return 0;
-	const gap = elision.left - root.right;
-	const rungs = boxes.slice(2);
-	const whole = rungs.reduce((width, box) => width + gap + box.width, root.width);
-	if (whole <= available) return rungs.length;
-	let width = root.width + gap + elision.width;
-	for (let kept = 1; kept <= rungs.length; kept++) {
-		width += gap + (rungs[rungs.length - kept]?.width ?? 0);
-		if (width > available) return Math.max(1, kept - 1);
-	}
-	return rungs.length;
-}
-
-/** the face a crumb wears, worn by the `…` too so the ruler measures what will draw */
-const FACE = "cursor-pointer truncate rounded-xs px-0.5 focus:outline-none focus-visible:bg-surface";
-
-function Crumb({
-	name,
-	last,
-	squeezes,
-	onPress,
-}: {
-	name: string;
-	last: boolean;
-	/**
-	 * The frame gives its width up first, and only once the elided trail has
-	 * itself run out of room: everything the trail still draws reads whole.
-	 */
-	squeezes: boolean;
-	onPress: () => void;
-}) {
-	return (
-		<span className={cn("flex items-center gap-1", squeezes ? "min-w-0" : "shrink-0")}>
-			<button
-				type="button"
-				onClick={onPress}
-				className={cn(FACE, last ? "text-thread-strong" : "text-muted hover:text-text")}
-			>
-				{name}
-			</button>
-			{last ? null : <span className="shrink-0 text-muted">/</span>}
-		</span>
-	);
-}
-
-/**
- * The `…` the middle of the trail collapses into.
- *
- * It is a crumb like the others, so a press on it is the affordance the row
- * already teaches; what it opens is the canvas's own menu (`context-menu.tsx`)
- * rather than a list this surface invented, one item per rung it stands for,
- * outermost first.
- */
-function Elision({ ref, open, onToggle }: { ref?: React.Ref<HTMLButtonElement>; open: boolean; onToggle: () => void }) {
-	return (
-		<span className="flex shrink-0 items-center gap-1">
-			<button
-				ref={ref}
-				type="button"
-				aria-label="Skipped rungs"
-				aria-expanded={open}
-				onClick={onToggle}
-				className={cn(FACE, "text-muted hover:text-text", open && "bg-surface text-text")}
-			>
-				…
-			</button>
-			<span className="shrink-0 text-muted">/</span>
-		</span>
-	);
-}
 
 function CollapseCaret({ onCollapse }: { onCollapse: () => void }) {
 	return (

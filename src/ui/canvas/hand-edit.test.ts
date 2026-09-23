@@ -37,7 +37,7 @@ describe("the second click", () => {
 		expect(secondClick([pick()], "cart", { x: 20, y: 200 })).toBeUndefined();
 	});
 
-	it("is not a press on another frame, and not one with more than a rung held", () => {
+	it("is not a press on another frame, and not one with more than one element held", () => {
 		expect(secondClick([pick()], "checkout", { x: 20, y: 20 })).toBeUndefined();
 		expect(secondClick([pick(), pick({ selector: "screen > p" })], "cart", { x: 20, y: 20 })).toBeUndefined();
 	});
@@ -46,7 +46,7 @@ describe("the second click", () => {
 		expect(secondClick([], "cart", { x: 20, y: 20 })).toBeUndefined();
 	});
 
-	it("is not a press on a container, which holds rungs rather than words (#322)", () => {
+	it("is not a press on a container, which holds elements rather than words (#322)", () => {
 		expect(secondClick([pick({ words: false })], "cart", { x: 20, y: 20 })).toBeUndefined();
 		const { words: _unread, ...silent } = pick();
 		expect(secondClick([silent], "cart", { x: 20, y: 20 })).toBeUndefined();
@@ -94,12 +94,28 @@ describe("after a save that is not a reload", () => {
 				frame: "home",
 				selector: "main > h2",
 				refusal: { code: "expression-text", says: "{title} is an expression; edit it in code or ask the agent" },
+				asked: "Change the words of the h2",
 				attempted: "Studio",
 			},
 			pick({ tag: "h2", source: "frames/home/frame.tsx:9:5" }),
 		);
 		expect(text).toBe(
 			'Change the words of the h2 at design/frames/home/frame.tsx:9:5 to "Studio". {title} is an expression; edit it in code or ask the agent, so the hand could not write it in place.',
+		);
+	});
+
+	it("prepares an ask for a refusal met before anything was typed (#339)", () => {
+		const text = askText(
+			{
+				frame: "home",
+				selector: "main > h2",
+				refusal: { code: "no-text", says: "no text of its own" },
+				asked: "Change the words of the img",
+			},
+			pick({ tag: "img", source: "frames/home/frame.tsx:9:5" }),
+		);
+		expect(text).toBe(
+			"Change the words of the img at design/frames/home/frame.tsx:9:5. no text of its own, so the hand could not do it in place.",
 		);
 	});
 });

@@ -2,13 +2,13 @@ import { expect, it } from "vitest";
 import { handCanvas } from "./hand-browser-helpers";
 
 /**
- * Opening the words of the rung held (#323).
+ * Opening the words of the element held (#323, #339).
  *
  * The fixture is the veil page's intro: a flex row with a very large heading
  * on the left and a narrow paragraph of three `<br/>`-separated lines on the
  * right, in a frame shorter than the page, so the root element is a wrapper
- * the ladder has to go past. That paragraph is the one the third hand test
- * could not open by clicking.
+ * over the whole frame. That paragraph is the one the third hand test could
+ * not open by clicking.
  *
  * Two paths, and the keyboard one hit-tests nothing: a person holding an
  * element and pressing ⏎ gets its words whatever the pointer would have found.
@@ -36,7 +36,7 @@ export default function Veil() {
 
 const FILES = { "shared/ui/veil.css": CSS };
 
-/** The rung the canvas last told the daemon it is pointing at: its tag, or the frame. */
+/** The element the canvas last told the daemon it is pointing at: its tag, or the frame. */
 async function heldTag(project: { url: string; name: string; controlToken: string }): Promise<string> {
 	const response = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/selection`, {
 		headers: { "X-Spool-Control": project.controlToken },
@@ -58,11 +58,8 @@ it("opens the intro paragraph's words from the keyboard and from the pointer", {
 
 	await page.getByRole("button", { name: "edit", exact: true }).click();
 
-	// down the ladder to the paragraph: past the wrapper onto the section, then
-	// one rung in
+	// one click is the paragraph: the deepest element under the pointer
 	await page.mouse.click(at.x, at.y);
-	await expect.poll(held, { timeout: 15_000 }).toBe("section");
-	await page.mouse.dblclick(at.x, at.y);
 	await expect.poll(held, { timeout: 15_000 }).toBe("p");
 	expect(await editable()).toBe(null);
 
@@ -94,7 +91,7 @@ it("opens the intro paragraph's words from the keyboard and from the pointer", {
 	await expect.poll(held, { timeout: 15_000 }).toBe("p");
 });
 
-it("opens them from the pointer too, one rung per double-click", { timeout: 240_000 }, async () => {
+it("opens them from the pointer too, with one double-click", { timeout: 240_000 }, async () => {
 	const f = await handCanvas(FILES, PAGE, { w: 1200, h: 400 }, { x: 40, y: 40, k: 0.6 });
 	const { page, frame } = f;
 	const held = () => heldTag(f.project);
@@ -105,13 +102,8 @@ it("opens them from the pointer too, one rung per double-click", { timeout: 240_
 	const at = { x: box.x + 20, y: box.y + 8 };
 
 	await page.getByRole("button", { name: "edit", exact: true }).click();
-	// every double-click spends its own descent: the presses behind one used to
-	// void the ask it had in flight, which on a frame slow to answer left the
-	// ladder where it was however many times the paragraph was clicked
-	await page.mouse.click(at.x, at.y);
-	await expect.poll(held, { timeout: 15_000 }).toBe("section");
-	await page.mouse.dblclick(at.x, at.y);
-	await expect.poll(held, { timeout: 15_000 }).toBe("p");
+	// nothing held first: the double-click lands on the paragraph and opens it
 	await page.mouse.dblclick(at.x, at.y);
 	await expect.poll(editable, { timeout: 15_000 }).toBe("plaintext-only");
+	await expect.poll(held, { timeout: 15_000 }).toBe("p");
 });

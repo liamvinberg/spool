@@ -169,7 +169,9 @@ it("edits a shared component from one frame and every frame follows", { timeout:
 	};
 
 	// a label supplied at the call edits that call alone: the frame's own file,
-	// the definition untouched, the other frames' labels their own
+	// the definition untouched, the other frames' labels their own. The words
+	// are the Edit tool's, where a second click on what is held opens them
+	await page.keyboard.press("e");
 	await mark(frame, "labelDocument");
 	const button = await f.select("button.action");
 	await page.mouse.click(button.at.x, button.at.y);

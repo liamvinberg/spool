@@ -78,6 +78,7 @@ import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
+import { deepest, openingOf, parentOf, wordsAsk } from "./element-selection";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -97,6 +98,7 @@ import {
 	GONE,
 	type HandEdit,
 	OPENING_MS,
+	REFUSAL_MS,
 	type Refusal,
 	restamped,
 	type ShownRefusal,
@@ -122,14 +124,12 @@ import {
 	type Way,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
-import { atRung, type FrameBox, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
 	type FrameHover,
 	HANDLE_CURSORS,
 	type Handle,
-	type HoverRungs,
 	isHandle,
 	NO_MARKS,
 	type PickedSelection,
@@ -154,6 +154,8 @@ import {
 	type EditedNode,
 	editMessage,
 	endEditMessage,
+	type Family,
+	familyMessage,
 	type KinStep,
 	kinMessage,
 	type PickedHit,
@@ -180,13 +182,12 @@ import { WalkLayer, walksOf } from "./walk-layer";
 
 /**
  * The infinite canvas (#22) and its hands (#23): design/ projected as
- * sandboxed frames with two tools. Select picks live DOM and arranges frames;
- * Hand pans, and Space borrows it while held. Selection keeps Figma's scope
- * grammar minus its descent: a click takes the frame, Command-click jumps
- * deepest, Shift toggles, hover previews, and Esc ascends — double-click goes
- * inside the frame, and the ladder is walked from the keyboard. Every frame
- * represented by element picks stays mounted for the selection. Geometry
- * sidecars are the only canvas writes; frame source remains agent-owned.
+ * sandboxed frames with three tools. Select takes frames and arranges them: a
+ * click takes one, a double-click goes inside it, and Command borrows Edit for
+ * as long as it is held. Edit takes the elements inside them (#339): a click
+ * lands on the deepest element under the pointer, and the keys step from
+ * there. Hand pans, and Space borrows it while held. Every frame represented
+ * by element picks stays mounted for the selection.
  */
 
 export interface CanvasChrome {
@@ -355,8 +356,8 @@ export function ProjectCanvas({
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
 	const [hovered, setHovered] = useState<FrameHover | null>(null);
-	// the hover preview (#37, #254): the rung a click would take
-	const [preview, setPreview] = useState<HoverRungs | null>(null);
+	// the hover preview (#37, #339): the element a click would take
+	const [preview, setPreview] = useState<ElementPreview | null>(null);
 	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
 	const [accelDown, setAccelDown] = useState(false);
 	const [spaceDown, setSpaceDown] = useState(false);
@@ -582,13 +583,13 @@ export function ProjectCanvas({
 	const effectiveTool = transientTool ?? tool;
 	const toolRef = useRef(effectiveTool);
 	toolRef.current = effectiveTool;
-	// Select and Edit both point, and everything a pointer draws — rings and
 	/**
 	 * Whether the Edit tool is on (#339): picked, or borrowed by holding ⌘ in
 	 * Select. Space borrowing the Hand does not put it down. While it is on,
 	 * every live frame holds its animation and nothing reaches any of them.
 	 */
 	const editOn = tool === "edit" || (tool === "select" && accelDown);
+	// Select and Edit both point, and everything a pointer draws — rings and
 	// previews — belongs to the pair of them. Only the Hand
 	// draws nothing, because the only thing it takes is the canvas itself.
 	const pointerTool = effectiveTool !== "hand";
@@ -623,20 +624,17 @@ export function ProjectCanvas({
 	const restoreWaiters = useRef(new Map<number, (ok: boolean) => void>());
 	/** the frame's answer to a delete (#317) */
 	const alterWaiters = useRef(new Map<number, (answer: { ok: boolean; owner: string | null }) => void>());
+	/** the frame's answer to a whole generation: children or siblings (#339) */
+	const generationWaiters = useRef(new Map<number, (answer: { chain: PickedHit[]; hits: PickedHit[] }) => void>());
 	// the open edit as the handlers read it, a paint earlier than the render
 	const editingRef = useRef<HandEdit | null>(null);
 	const endEditRef = useRef<(commit: boolean) => void>(() => {});
-	/** the text gesture, reached from the descent above it in the file (#321) */
-	const beginTextEditRef = useRef<(pick: PickedSelection, local: Point) => void>(() => {});
 	/** the delete as its own refusal reaches for it: a delete that offers the call */
 	const alterElementRef = useRef<
 		(picks: readonly PickedSelection[], at: { sources: readonly string[]; fingerprint: string }) => void
 	>(() => {});
 	// a press on the element already held, acted on at pointer-up (#255)
 	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
-	/** the descent waiting on a frame, and the double-clicks queued behind it (#323) */
-	const descending = useRef<{ frame: string; at: Point; local: Point; queued: number } | null>(null);
-	const descendAtRef = useRef<(frame: string, local: Point, from?: LadderScope | null, at?: Point) => void>(() => {});
 	const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	/**
@@ -658,9 +656,10 @@ export function ProjectCanvas({
 	 * The same ancestry, drawn rather than read.
 	 *
 	 * Every gesture reads the chain synchronously, inside handlers that outlive
-	 * the render they were made in, so the ref stays the authority. The rail's
-	 * crumbs are the one reader that has to re-render when it moves (#256), and
-	 * a mirror is cheaper than teaching a dozen handlers to await a state write.
+	 * the render they were made in, so the ref stays the authority. The
+	 * selection's read of the file is the one reader that has to re-render when
+	 * it moves (#256), and a mirror is cheaper than teaching a dozen handlers to
+	 * await a state write.
 	 */
 	const [chainDrawn, setChainDrawn] = useState<{ frame: string; chain: PickedHit[] } | null>(null);
 	const holdChain = useCallback((next: { frame: string; chain: PickedHit[] } | null) => {
@@ -673,8 +672,6 @@ export function ProjectCanvas({
 	// where the ring was last drawn, so pressing or releasing ⌘ redraws it
 	// under a pointer that has not moved (#254)
 	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
-	// the ancestry the last hover found, which is the branch ⏎ descends (#321)
-	const hoverChain = useRef<{ frame: string; chain: readonly PickedHit[] } | null>(null);
 	// the redraw, reached from the key layer that outlives every render
 	const refreshRings = useRef<() => void>(() => {});
 	// frames whose next reload the canvas caused, so the outgoing document is
@@ -870,7 +867,7 @@ export function ProjectCanvas({
 			// a reload drops every pick in the frame: the new document is asked afresh
 			setPicked((current) => current.filter((pick) => pick.frame !== frame));
 			if (pickedChain.current?.frame === frame) holdChain(null);
-			setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
+			setPreview((current) => (current?.frame === frame ? null : current));
 			lifecycleRef.current.markStale(frame);
 		},
 		[holdChain, releaseHold],
@@ -1443,7 +1440,7 @@ export function ProjectCanvas({
 	/**
 	 * Picking a tool (#321). The Edit tool is never inside a frame: taking it
 	 * while one is live steps back out of it, holding that frame as the
-	 * selection, which is where the ladder's first click starts from.
+	 * selection, so ⏎ goes on from there into its elements (#339).
 	 */
 	const chooseTool = useCallback(
 		(next: CanvasTool) => {
@@ -1831,8 +1828,8 @@ export function ProjectCanvas({
 
 	/**
 	 * The hand's door to the agent: the composer takes focus, on the thread that
-	 * is open. From a refusal of typed words it opens holding the change the
-	 * hand tried (#314), and sends nothing until the person does.
+	 * is open. From a refusal it opens holding the change the hand tried (#314,
+	 * #339), whatever the gesture was, and sends nothing until the person does.
 	 */
 	const askAgent = useCallback(
 		(from?: ShownRefusal) => {
@@ -1843,7 +1840,7 @@ export function ProjectCanvas({
 			setAgentRequest({
 				id: crypto.randomUUID(),
 				thread: deck.open,
-				...(from?.attempted === undefined
+				...(from === undefined
 					? {}
 					: {
 							prepared: {
@@ -2232,8 +2229,6 @@ export function ProjectCanvas({
 			request: (id: number) => unknown,
 			apply: (value: T) => void,
 			onSilence?: () => void,
-			/** whether this ask still stands, where the pick generation is not what says so */
-			alive?: () => boolean,
 		) => {
 			const target = iframes.current.get(frame)?.contentWindow;
 			if (target == null) {
@@ -2242,10 +2237,7 @@ export function ProjectCanvas({
 			}
 			const id = ++pickSeq.current;
 			const gen = pickGen.current;
-			// a descent is the one ask a press does not void (#323): its own
-			// double-click is what those presses are, and cancelling it there is
-			// what left the ladder where it was on a frame slow to answer
-			const live = alive ?? (() => pickGen.current === gen);
+			const live = () => pickGen.current === gen;
 			waiters.set(id, (value) => {
 				if (live()) apply(value);
 			});
@@ -2264,9 +2256,8 @@ export function ProjectCanvas({
 			request: (id: number) => unknown,
 			apply: (chain: PickedHit[]) => void,
 			onSilence?: () => void,
-			alive?: () => boolean,
 		) => {
-			askFrame(frame, pickWaiters.current, request, apply, onSilence, alive);
+			askFrame(frame, pickWaiters.current, request, apply, onSilence);
 		},
 		[askFrame],
 	);
@@ -2280,15 +2271,8 @@ export function ProjectCanvas({
 	 * second and needs none of it, so it does not.
 	 */
 	const beginPick = useCallback(
-		(
-			frame: string,
-			local: Point,
-			apply: (chain: PickedHit[]) => void,
-			onSilence?: () => void,
-			selects = true,
-			alive?: () => boolean,
-		) => {
-			askChain(frame, (id) => pickMessage(local.x, local.y, id, selects), apply, onSilence, alive);
+		(frame: string, local: Point, apply: (chain: PickedHit[]) => void, onSilence?: () => void, selects = true) => {
+			askChain(frame, (id) => pickMessage(local.x, local.y, id, selects), apply, onSilence);
 		},
 		[askChain],
 	);
@@ -2300,176 +2284,84 @@ export function ProjectCanvas({
 			holdChain({ frame, chain });
 			setSelected([]);
 			setPicked(held);
-			// The ladder reads where it stands off this ref, and the next rung of a
-			// walk is often decided before React has committed the last one — a
-			// second double-click arriving on the heels of the first (#323). The
-			// chain beside it is already written here and now for the same reason.
+			// The next step reads where the selection stands off this ref, and it
+			// is often decided before React has committed the last one — a key
+			// pressed on the heels of a click (#323). The chain beside it is
+			// already written here and now for the same reason.
 			pickedRef.current = held;
 		},
 		[holdChain],
 	);
 
-	/** The anchor of the element scope: the most recent pick, whose chain is held. */
-	const pickAnchor = useCallback((): PickedSelection | undefined => {
-		return pickedRef.current[pickedRef.current.length - 1];
-	}, []);
-
 	/**
-	 * The one rung the keyboard can walk from. A ladder has one rung at a time,
-	 * so a multi-selection has nowhere to step and answers nothing.
+	 * The frame held on its own, which is what a step off the top of the
+	 * elements lands on, and what a click on the frame's background takes.
 	 */
-	const onlyHeldRung = useCallback((): PickedSelection | undefined => {
-		return pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
-	}, []);
-
-	/**
-	 * The rung this frame holds, as the ladder wants it: the ancestry the last
-	 * pick was found in and which element of it is held. Null when the scope is
-	 * another frame's, which is a frame with no rung open.
-	 */
-	const scopeIn = useCallback(
-		(frame: string): LadderScope | null => {
-			const anchor = pickAnchor();
-			const held = pickedChain.current;
-			if (anchor === undefined || anchor.frame !== frame || held === null || held.frame !== frame) return null;
-			return { chain: held.chain, selector: anchor.selector };
+	const holdFrame = useCallback(
+		(frame: string) => {
+			holdChain(null);
+			setPicked([]);
+			setSelected([frame]);
 		},
-		[pickAnchor],
-	);
-
-	/** The frame's own box: what the ladder measures a root wrapper against (#321). */
-	const frameBox = useCallback((frame: string): FrameBox | null => {
-		const found = framesRef.current.find((candidate) => candidate.name === frame);
-		return found === undefined ? null : { w: found.w, h: found.h };
-	}, []);
-
-	/** Figma's deep select (⌘-click, and the right-click point): the deepest element. */
-	const deepSelectAt = useCallback(
-		(frame: string, local: Point) => {
-			beginPick(frame, local, (chain) => applyPick(frame, chain, chain[chain.length - 1]));
-		},
-		[beginPick, applyPick],
+		[holdChain],
 	);
 
 	/**
-	 * The scoped click: while an element is selected, a click selects the
-	 * element at the same depth under the cursor; empty space (and a frame that
-	 * never answers) pops the selection back to the frame.
+	 * A click in Edit (#339), and ⌘-click from Select: the deepest element
+	 * under the pointer, in one go. The frame's background, and a frame that
+	 * never answers, is the frame itself.
 	 */
-	const scopedSelectAt = useCallback(
+	const selectDeepestAt = useCallback(
 		(frame: string, local: Point) => {
-			const pop = () => {
-				holdChain(null);
-				setPicked([]);
-				setSelected([frame]);
-			};
 			beginPick(
 				frame,
 				local,
 				(chain) => {
-					const target = atRung(chain, scopeIn(frame), frameBox(frame));
-					if (target === undefined) {
-						pop();
-						return;
-					}
-					applyPick(frame, chain, target);
+					const target = deepest(chain);
+					if (target === undefined) holdFrame(frame);
+					else applyPick(frame, chain, target);
 				},
-				pop,
+				() => holdFrame(frame),
 			);
 		},
-		[beginPick, applyPick, frameBox, holdChain, scopeIn],
+		[beginPick, applyPick, holdFrame],
 	);
 
 	/**
-	 * The descent (#254): one rung down the ancestry under the pointer, which
-	 * is what a double-click means in Edit.
-	 *
-	 * The scope is read here and the second click's own pick is voided, so the
-	 * descent starts from whichever rung has settled rather than racing that
-	 * reply. A click at the scope is idempotent while the pointer has not moved
-	 * — which inside a double-click it has not — so the two answers agree, and
-	 * a scope that has not landed yet only means the descent starts a rung
-	 * higher rather than somewhere wrong.
+	 * A whole generation at once (#339): the children of a group, which Enter
+	 * and a double-click take, or every sibling of what is held, which ⌘A
+	 * takes. An empty selector is the frame, whose children are its top-level
+	 * elements. The frame says who they are; a generation of nobody leaves
+	 * the selection where it was.
 	 */
-	const descendAt = useCallback(
-		(frame: string, local: Point, from?: LadderScope | null, at?: Point) => {
-			// A descent already waiting on the frame is not voided by the one
-			// behind it (#323): it is the rung this one has to start from, and
-			// the frame is the only one who knows which rung that is. So the
-			// second double-click queues, and the answer to the first runs it.
-			// Cancelling instead is what left the ladder where it was and what
-			// made a paragraph on a heavy page impossible to open by clicking.
-			const flight = descending.current;
-			if (from === undefined && flight !== null && flight.frame === frame) {
-				flight.local = local;
-				flight.queued += 1;
-				return;
-			}
-			const scope = from === undefined ? scopeIn(frame) : from;
-			const box = frameBox(frame);
+	const selectGeneration = useCallback(
+		(frame: string, selector: string, of: Family) => {
 			cancelPicks();
-			const held = { frame, at: at ?? local, local, queued: 0 };
-			descending.current = held;
-			const drain = (next: LadderScope | null) => {
-				if (descending.current !== held) return;
-				descending.current = null;
-				if (held.queued > 0) descendAtRef.current(frame, held.local, next, held.at);
-			};
-			beginPick(
+			askFrame(
 				frame,
-				local,
-				(chain) => {
-					const target = oneDown(chain, scope, box);
-					if (target !== undefined) {
-						endEditRef.current(false);
-						applyPick(frame, chain, target);
-						drain({ chain, selector: target.selector });
-						return;
-					}
-					// No rung under this one: the two clicks meant the words (#254,
-					// #255). What they meant them on is the rung the pointer landed
-					// in at the held depth, which on overlapping text boxes is not
-					// always what was held — the slow second click opens the edit on
-					// the held element, and this is where that is put right (#321).
-					const words = atRung(chain, scope, box);
-					// frame background, or a container with no words in it: two clicks
-					// there mean neither a rung nor a caret
-					if (words === undefined || words.words !== true) {
-						drain(scope);
-						return;
-					}
-					const open = editingRef.current;
-					if (open?.frame === frame && open.selector === words.selector) {
-						drain(null);
-						return;
-					}
-					endEditRef.current(false);
-					applyPick(frame, chain, words);
-					beginTextEditRef.current({ frame, ...words }, local);
-					// the words are open: a double-click behind this one has
-					// nothing left to descend to
-					descending.current = null;
+				generationWaiters.current,
+				(id) => familyMessage(selector, of, id),
+				({ chain, hits }) => {
+					const anchor = hits[hits.length - 1];
+					if (anchor === undefined) return;
+					const held = hits.map((hit) => ({ frame, ...hit }));
+					holdChain({ frame, chain: [...chain, anchor] });
+					setSelected([]);
+					setPicked(held);
+					pickedRef.current = held;
 				},
-				() => {
-					if (descending.current === held) descending.current = null;
-				},
-				true,
-				// the presses of its own double-click void every other ask; this
-				// one stands until it answers or the pointer goes somewhere else
-				() => descending.current === held,
 			);
 		},
-		[beginPick, applyPick, cancelPicks, frameBox, scopeIn],
+		[askFrame, cancelPicks, holdChain],
 	);
-	descendAtRef.current = descendAt;
 
 	/**
-	 * The keyboard's own rung (#254): kinship instead of position. An empty
+	 * The keyboard's own step (#254): kinship instead of position. An empty
 	 * selector is the boot root, so a `child` step off the frame itself lands
-	 * on its root element. A rung that does not exist answers with no chain, and
-	 * the selection stays where it was unless the caller says what to do then
-	 * — which undo does, because a step that took the element away has nothing
-	 * left to point at (#322).
+	 * on its root element. An element that does not exist answers with no
+	 * chain, and the selection stays where it was unless the caller says what
+	 * to do then — which undo does, because a step that took the element away
+	 * has nothing left to point at (#322).
 	 */
 	const walkKin = useCallback(
 		(frame: string, selector: string, step: KinStep, gone?: () => void) => {
@@ -2498,8 +2390,9 @@ export function ProjectCanvas({
 	 * back has to put the whole selection back rather than one member of it.
 	 * Each selector is asked for on its own, because only the frame knows where
 	 * the nodes went back to; the last answer's ancestry is the chain the
-	 * ladder and the rail read from, which is the anchor a multi-pick has
-	 * anyway. A selection nothing answered for is a frame with no rung open.
+	 * selection climbs from and the rail reads, which is the anchor a
+	 * multi-pick has anyway. A selection nothing answered for is a frame with
+	 * nothing in it held.
 	 */
 	const repick = useCallback(
 		(frame: string, selectors: readonly string[], gone: () => void) => {
@@ -2535,66 +2428,37 @@ export function ProjectCanvas({
 	);
 	repickRef.current = repick;
 
-	/**
-	 * ⌘⏎, and the rung a descent from the frame itself lands on: the first
-	 * child of what is held, or the frame's root element when the frame is.
-	 * Figma's descent key takes every child at once; a selection that is a
-	 * handle wants one, and Tab walks the row from there.
-	 */
-	const descendKey = useCallback(() => {
-		const held = onlyHeldRung();
-		const frame = held?.frame ?? (selectedRef.current.length === 1 ? selectedRef.current[0] : undefined);
-		if (enteredRef.current !== null || frame === undefined) return;
-		// the branch the pointer is over is what a descent means while it rests
-		// on one (#321): the very rung its double-click would take, straight
-		// off the ancestry the hover already has, with nothing asked for it.
-		// Only in Edit, where the pointer is pointing at elements at all — in
-		// Select it means frames, and the ladder there is the keyboard's own
-		const hover = toolRef.current === "edit" ? hoverChain.current : null;
-		const target = hover?.frame === frame ? oneDown(hover.chain, scopeIn(frame), frameBox(frame)) : undefined;
-		if (target !== undefined) {
-			applyPick(frame, [...(hover?.chain ?? [])], target);
-			return;
-		}
-		walkKin(frame, held?.selector ?? "", "child");
-	}, [applyPick, frameBox, onlyHeldRung, scopeIn, walkKin]);
-
-	/** Tab and ⇧Tab: the next or previous sibling of the held element. */
+	/** Tab and ⇧Tab: round the siblings of the one element held. */
 	const walkSibling = useCallback(
 		(step: "next" | "previous"): boolean => {
-			const held = onlyHeldRung();
+			const held = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
 			if (enteredRef.current !== null || held === undefined) return false;
 			walkKin(held.frame, held.selector, step);
 			return true;
 		},
-		[walkKin, onlyHeldRung],
+		[walkKin],
 	);
 
 	/**
-	 * One rung up, which ⇧⏎ takes on its own and Esc reaches once it has left
-	 * whatever it was inside: element → parent → … → frame → nothing. False
-	 * when there was no rung to climb, which is what lets Esc carry on down its
-	 * own list of meanings.
+	 * Esc and ⇧⏎ (#339): the parent of what is held, element → parent → … →
+	 * frame → nothing. Several held elements climb together to the parent
+	 * they share, and to their frames where they share none. False when there
+	 * was nothing to climb, which is what lets Esc carry on down its own list
+	 * of meanings.
 	 */
-	const climbRung = useCallback((): boolean => {
+	const selectParent = useCallback((): boolean => {
 		const held = pickedRef.current;
-		if (held.length > 1) {
-			// a multi-selection has no one ancestry: drop to its frames
-			const frames = [...new Set(held.map((pick) => pick.frame))];
-			holdChain(null);
-			setPicked([]);
-			setSelected(frames);
-			return true;
-		}
-		const only = held[0];
-		if (only !== undefined) {
-			// ascend the ancestry (Figma): element → parent → … → frame → clear
-			const parent = oneUp(scopeIn(only.frame));
-			if (parent !== undefined) setPicked([{ frame: only.frame, ...parent }]);
-			else {
+		if (held.length > 0) {
+			const up = parentOf({ picks: held, chain: pickedChain.current });
+			if (up === undefined) {
 				holdChain(null);
 				setPicked([]);
-				setSelected([only.frame]);
+				setSelected([...new Set(held.map((pick) => pick.frame))]);
+			} else if (up.hit === null) holdFrame(up.frame);
+			else {
+				holdChain({ frame: up.frame, chain: [...up.chain] });
+				setSelected([]);
+				setPicked([{ frame: up.frame, ...up.hit }]);
 			}
 			return true;
 		}
@@ -2603,34 +2467,27 @@ export function ProjectCanvas({
 			return true;
 		}
 		return false;
-	}, [holdChain, scopeIn]);
+	}, [holdChain, holdFrame]);
 
-	/**
-	 * A crumb press (#256): the rung it names, straight away.
-	 *
-	 * The ancestry is the one already held, so this is a move along it rather
-	 * than a fresh pick — no round trip, and the frame at its root is the same
-	 * clear-to-the-frame that climbing off the root element does.
-	 */
-	const takeRung = useCallback(
-		(frame: string, hit: PickedHit | null) => {
-			if (hit === null) {
-				holdChain(null);
-				setPicked([]);
-				setSelected([frame]);
-				return;
-			}
-			setSelected([]);
-			setPicked([{ frame, ...hit }]);
-		},
-		[holdChain],
-	);
+	/** ⌘A (#339): every sibling of the element held, and the element with them. */
+	const selectSiblings = useCallback((): boolean => {
+		const anchor = pickedRef.current[pickedRef.current.length - 1];
+		if (enteredRef.current !== null || anchor === undefined) return false;
+		selectGeneration(anchor.frame, anchor.selector, "siblings");
+		return true;
+	}, [selectGeneration]);
 
 	// --- the hand's refusals -----------------------------------------------------
 
-	/** Why the gesture just tried does not apply, on the element it was about. */
-	const showRefusal = useCallback((frame: string, selector: string, refusal: Refusal) => {
-		setRefused({ frame, selector, refusal });
+	/**
+	 * The refusal note (#339): why the gesture just tried does not apply, said
+	 * under the element it was about, with "Ask the agent" carrying what was
+	 * tried. Every refusal a hand meets comes through here — ⌫, Enter on words,
+	 * and a move once there is one — and never goes to the notice strip. It
+	 * goes by itself after `REFUSAL_MS`, or when the selection moves.
+	 */
+	const showRefusal = useCallback((shown: ShownRefusal) => {
+		setRefused(shown);
 	}, []);
 
 	// --- the text gesture (#255, #314) --------------------------------------------
@@ -2667,24 +2524,36 @@ export function ProjectCanvas({
 	endEditRef.current = endEdit;
 
 	/**
-	 * The text gesture (#255): a second click on an element's own words puts
-	 * the caret there at once (#314). Nothing is asked first — the frame makes
-	 * the element editable the moment the message lands, and whether the file
-	 * will take the words is the daemon's answer when the edit ends. The
-	 * fingerprint the write will carry is the one the selection's read holds for
-	 * this very rung, when that read has landed.
+	 * The text gesture (#255): the caret in an element's own words, at once
+	 * (#314) — where the pointer was, or after the words when the keyboard
+	 * opened them (`null`). Nothing is asked first, with one exception: where
+	 * the selection's read of the file has already said a hand cannot write
+	 * these words (#339), that is said on the element instead of opening them.
+	 * Otherwise the frame makes the element editable the moment the message
+	 * lands, and whether the file will take the words is the daemon's answer
+	 * when the edit ends. The fingerprint the write will carry is the one the
+	 * selection's read holds for this very element, when that read has landed.
 	 */
 	const beginTextEdit = useCallback(
-		(pick: PickedSelection, local: Point) => {
+		(pick: PickedSelection, local: Point | null) => {
+			const open = editingRef.current;
+			if (open?.frame === pick.frame && open.selector === pick.selector) return;
+			const refuse = (refusal: Refusal) =>
+				showRefusal({ frame: pick.frame, selector: pick.selector, refusal, asked: wordsAsk(pick) });
 			const stamp = stampOf(pick);
 			if (typeof stamp !== "string") {
-				showRefusal(pick.frame, pick.selector, stamp);
+				refuse(stamp);
+				return;
+			}
+			const read = heldReadRef.current;
+			const opening = openingOf(pick, read);
+			if (opening.kind === "refused") {
+				refuse(opening.refusal);
 				return;
 			}
 			const target = iframes.current.get(pick.frame);
 			if (target?.contentWindow == null) return;
 			const id = ++pickSeq.current;
-			const read = heldReadRef.current;
 			setEdit({
 				frame: pick.frame,
 				selector: pick.selector,
@@ -2695,7 +2564,7 @@ export function ProjectCanvas({
 				start: "",
 			});
 			setRefused(null);
-			target.contentWindow.postMessage(editMessage(pick.selector, local.x, local.y, id), "*");
+			target.contentWindow.postMessage(editMessage(pick.selector, local?.x ?? null, local?.y ?? null, id), "*");
 			// typing has to land in the frame, which only happens once the
 			// document it is drawn in holds the focus
 			target.focus();
@@ -2707,29 +2576,65 @@ export function ProjectCanvas({
 		},
 		[setEdit, showRefusal],
 	);
-	beginTextEditRef.current = beginTextEdit;
 
 	/**
-	 * The words of the rung held, opened from the keyboard (#323).
-	 *
-	 * The pointer's way into an element's words is a click on one already held,
-	 * which needs the frame to have answered the pick and the press to land in
-	 * the box it drew. Neither holds often enough on a page heavy enough to be
-	 * worth editing — a descent whose answer had not landed took the press that
-	 * was meant to open the words — so the held rung gets a door that hit-tests
-	 * nothing. `beginTextEdit` wants a frame-local point and the shim's
-	 * `caretAt` falls back to the whole of the words where one resolves to
-	 * nothing, so the middle of the drawn box is a caret that always lands.
-	 *
-	 * It says whether it had anything to open, which is what lets ⏎ go on
-	 * meaning everything else it means when it did not.
+	 * Enter and a double-click on one element (#339): its words where it has
+	 * words of its own, and its children where it is a group.
+	 */
+	const openElement = useCallback(
+		(pick: PickedSelection, local: Point | null) => {
+			if (pick.words === true) beginTextEdit(pick, local);
+			else selectGeneration(pick.frame, pick.selector, "children");
+		},
+		[beginTextEdit, selectGeneration],
+	);
+
+	/**
+	 * Enter, from the keyboard (#339): the words or the children of the one
+	 * element held, or the top-level elements of the one frame held — which
+	 * is how a person with no pointer gets from a frame into it. It says
+	 * whether it had anything to act on, which is what lets ⏎ go on meaning
+	 * everything else it means when it did not.
+	 */
+	const openHeld = useCallback((): boolean => {
+		if (enteredRef.current !== null || editingRef.current !== null) return false;
+		const picks = pickedRef.current;
+		const only = picks.length === 1 ? picks[0] : undefined;
+		if (only !== undefined) {
+			openElement(only, null);
+			return true;
+		}
+		if (picks.length > 1) return false;
+		const frame = selectedRef.current.length === 1 ? selectedRef.current[0] : undefined;
+		if (frame === undefined) return false;
+		selectGeneration(frame, "", "children");
+		return true;
+	}, [openElement, selectGeneration]);
+
+	/** A double-click in Edit (#339): the deepest element under it, opened. */
+	const openAt = useCallback(
+		(frame: string, local: Point) => {
+			beginPick(frame, local, (chain) => {
+				const target = deepest(chain);
+				if (target === undefined) return;
+				const open = editingRef.current;
+				if (open?.frame === frame && open.selector === target.selector) return;
+				applyPick(frame, chain, target);
+				openElement({ frame, ...target }, local);
+			});
+		},
+		[applyPick, beginPick, openElement],
+	);
+
+	/**
+	 * F2 (#323): the words of the one element held, and nothing else. The
+	 * rename key the sidebar already uses, on the element rather than on a row.
 	 */
 	const openWords = useCallback((): boolean => {
 		if (enteredRef.current !== null || editingRef.current !== null) return false;
 		const only = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
 		if (only === undefined || only.words !== true) return false;
-		const { x, y, w, h } = only.rect;
-		beginTextEdit(only, { x: x + w / 2, y: y + h / 2 });
+		beginTextEdit(only, null);
 		return true;
 	}, [beginTextEdit]);
 
@@ -2746,22 +2651,26 @@ export function ProjectCanvas({
 			viewportRef.current?.focus();
 			// the box the words are drawn in moved with them, so the ring is
 			// re-read off the element itself — while it is still the one held: a
-			// descent that ended this edit has already moved the selection on
-			const stillHeld = pickedRef.current.some(
+			// click that ended this edit has already moved the selection on
+			const stillHeld = pickedRef.current.find(
 				(pick) => pick.frame === held.frame && pick.selector === held.selector,
 			);
-			if (stillHeld) walkKin(held.frame, held.selector, "self");
+			if (stillHeld !== undefined) walkKin(held.frame, held.selector, "self");
 			const attempted = wordsOf(nodes);
 			if (!commit || attempted === held.start) return;
 			const read = heldReadRef.current;
 			const fingerprint = held.fingerprint ?? (read?.source === held.source ? read.fingerprint : undefined);
 			const refuse = (refusal: Refusal) => {
 				restoreWords(held.frame, held.id, "before", () => {});
-				// on the element while it is still held, and as a notice once the
-				// selection has moved on and there is nothing to draw it under
-				if (pickedRef.current.some((pick) => pick.frame === held.frame && pick.selector === held.selector)) {
-					setRefused({ frame: held.frame, selector: held.selector, refusal, attempted });
-				} else setNotice({ kind: "error", message: refusal.says });
+				// on the element, and only there: once the selection has moved on
+				// there is nothing to draw it under, and the words simply go back
+				showRefusal({
+					frame: held.frame,
+					selector: held.selector,
+					refusal,
+					asked: `Change the words of the ${stillHeld?.tag ?? "element"}`,
+					attempted,
+				});
 			};
 			if (fingerprint === undefined) {
 				refuse({ code: "unread", says: "the file was never read; select the element again" });
@@ -2796,7 +2705,7 @@ export function ProjectCanvas({
 				});
 			});
 		},
-		[fingerprintFor, holdReaders, project, restoreWords, setEdit, settled, walkKin],
+		[fingerprintFor, holdReaders, project, restoreWords, setEdit, settled, showRefusal, walkKin],
 	);
 
 	// --- delete (#317) ------------------------------------------------------------
@@ -2867,11 +2776,10 @@ export function ProjectCanvas({
 					refusal.line === undefined
 						? undefined
 						: { path: `design/${source.replace(/:\d+:\d+$/, "")}`, line: refusal.line };
-				setRefused({
+				showRefusal({
 					frame: pick.frame,
 					selector: pick.selector,
 					refusal,
-					attempted: asked,
 					asked,
 					...(file === undefined ? {} : { file }),
 					...(instead === undefined ? {} : { instead }),
@@ -2896,7 +2804,7 @@ export function ProjectCanvas({
 			};
 			alterWaiters.current.set(id, ({ ok, owner }) => {
 				if (!ok) {
-					showRefusal(pick.frame, pick.selector, GONE);
+					showRefusal({ frame: pick.frame, selector: pick.selector, refusal: GONE, asked });
 					return;
 				}
 				// the element's file may be a shared definition's; whether the change
@@ -2932,7 +2840,9 @@ export function ProjectCanvas({
 				"*",
 			);
 			setTimeout(() => {
-				if (alterWaiters.current.delete(id)) showRefusal(pick.frame, pick.selector, GONE);
+				if (alterWaiters.current.delete(id)) {
+					showRefusal({ frame: pick.frame, selector: pick.selector, refusal: GONE, asked });
+				}
 			}, PICK_REPLY_MS);
 		},
 		[fingerprintFor, holdParent, holdReaders, project, restoreWords, settled, showRefusal],
@@ -2951,11 +2861,12 @@ export function ProjectCanvas({
 		(picks: readonly PickedSelection[]) => {
 			const first = picks[0];
 			if (first === undefined) return;
+			const asked = deleteAsk(picks.map((held) => held.tag));
 			const sources: string[] = [];
 			for (const pick of picks) {
 				const stamp = stampOf(pick);
 				if (typeof stamp !== "string") {
-					showRefusal(pick.frame, pick.selector, stamp);
+					showRefusal({ frame: pick.frame, selector: pick.selector, refusal: stamp, asked });
 					return;
 				}
 				sources.push(stamp);
@@ -2966,9 +2877,11 @@ export function ProjectCanvas({
 			// of quietly becoming them.
 			const files = new Set(sources.map((stamp) => stamp.replace(/:\d+:\d+$/, "")));
 			if (files.size > 1 || new Set(picks.map((pick) => pick.frame)).size > 1) {
-				showRefusal(first.frame, first.selector, {
-					code: "spread",
-					says: "these are written in different files; delete them one at a time",
+				showRefusal({
+					frame: first.frame,
+					selector: first.selector,
+					refusal: { code: "spread", says: "these are written in different files; delete them one at a time" },
+					asked,
 				});
 				return;
 			}
@@ -2978,9 +2891,11 @@ export function ProjectCanvas({
 					? read.fingerprint
 					: fingerprintFor(first.frame, sources[0] ?? "");
 			if (fingerprint === undefined) {
-				showRefusal(first.frame, first.selector, {
-					code: "unread",
-					says: "the file was never read; select the element again",
+				showRefusal({
+					frame: first.frame,
+					selector: first.selector,
+					refusal: { code: "unread", says: "the file was never read; select the element again" },
+					asked,
 				});
 				return;
 			}
@@ -3003,13 +2918,19 @@ export function ProjectCanvas({
 
 	// A refusal is about the element it was refused on, so it goes when the
 	// selection moves rather than sitting over whatever comes next. The keys
-	// rather than the array: a click at the scope re-picks the same element and
-	// hands back a fresh list, and that is the selection standing still.
+	// rather than the array: a click on the element already held re-picks it
+	// and hands back a fresh list, and that is the selection standing still.
 	const pickedKeys = picked.map((pick) => pickKey(pick.frame, pick.selector)).join("\n");
 	// biome-ignore lint/correctness/useExhaustiveDependencies(pickedKeys): the selection moving is the whole trigger
 	useEffect(() => {
 		setRefused(null);
 	}, [pickedKeys]);
+	// and it goes by itself after a moment (#339): a note, not a state
+	useEffect(() => {
+		if (refused === null) return;
+		const timer = setTimeout(() => setRefused(null), REFUSAL_MS);
+		return () => clearTimeout(timer);
+	}, [refused]);
 
 	// Letting go pays every reload the hold deferred, behind the frame's own
 	// outgoing paint: the frames the hand saved (#314, rule 4) and the frames
@@ -3049,14 +2970,14 @@ export function ProjectCanvas({
 	}, []);
 
 	/**
-	 * Shift-click's toggle (#37): the at-depth target in or out of the picked
-	 * set — with ⌘, the deepest. A toggle in moves the anchor; membership is
+	 * ⇧-click's toggle (#37, #339): the deepest element under the pointer in
+	 * or out of the selection. A toggle in moves the anchor; membership is
 	 * (frame, selector) identity.
 	 */
 	const togglePickAt = useCallback(
-		(frame: string, local: Point, deepest: boolean) => {
+		(frame: string, local: Point) => {
 			beginPick(frame, local, (chain) => {
-				const target = deepest ? chain[chain.length - 1] : atRung(chain, scopeIn(frame), frameBox(frame));
+				const target = deepest(chain);
 				if (target === undefined) return; // frame background: nothing to toggle
 				const current = pickedRef.current;
 				const held = current.filter((pick) => !(pick.frame === frame && pick.selector === target.selector));
@@ -3069,7 +2990,7 @@ export function ProjectCanvas({
 				setSelected([]);
 			});
 		},
-		[beginPick, frameBox, holdChain, scopeIn],
+		[beginPick, holdChain],
 	);
 
 	/** The tree grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
@@ -3489,6 +3410,12 @@ export function ProjectCanvas({
 					waiter?.(message.chain);
 					return;
 				}
+				case "generation": {
+					const waiter = generationWaiters.current.get(message.id);
+					generationWaiters.current.delete(message.id);
+					waiter?.({ chain: message.chain, hits: message.hits });
+					return;
+				}
 				// the in-place edit (#255): the frame says it has opened, and later
 				// says how it ended. A reply carrying another ask is a dead edit —
 				// its element has moved on, and writing what it says would land on
@@ -3498,7 +3425,15 @@ export function ProjectCanvas({
 					if (held === null || held.id !== message.id) return;
 					if (!message.ok) {
 						setEdit(null);
-						showRefusal(held.frame, held.selector, GONE);
+						const tag = pickedRef.current.find(
+							(pick) => pick.frame === held.frame && pick.selector === held.selector,
+						)?.tag;
+						showRefusal({
+							frame: held.frame,
+							selector: held.selector,
+							refusal: GONE,
+							asked: `Change the words of the ${tag ?? "element"}`,
+						});
 						return;
 					}
 					setEdit({ ...held, start: message.text });
@@ -3793,20 +3728,19 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * The hover rings (#37, #254), on throttled pointer-move. With elements as
-	 * the working object the ring is on whenever the pointer is over a readable
-	 * frame, not only under ⌘ or an open scope. Edit draws two — the rung a
-	 * click takes, and dashed under it the rung its double-click descends to.
-	 * Select draws that second one never, because it has no gesture that takes
-	 * it, and the first only where a scope is already open.
+	 * The hover outline (#37, #339), on throttled pointer-move: the element a
+	 * click would take, which is the deepest one under the pointer. Only where
+	 * a click takes elements at all — in Edit, and in Select while ⌘ borrows
+	 * it. Select's own hover is the frame's, which draws its own ring, so it
+	 * asks the frame nothing.
 	 *
-	 * A field of live documents each drawing rings is a busier surface than the
-	 * one that ships, so only the frame under the pointer ever draws.
+	 * A field of live documents each drawing outlines is a busier surface than
+	 * the one that ships, so only the frame under the pointer ever draws.
 	 */
-	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean) => {
-		if (frame === null) {
-			hoverPoint.current = null;
-			hoverChain.current = null;
+	const hoverPickAt = (frame: string | null, world: Point, accel: boolean) => {
+		const reaching = () => toolRef.current === "edit" || (toolRef.current === "select" && accelDownRef.current);
+		if (frame === null || !(toolRef.current === "edit" || accel)) {
+			hoverPoint.current = frame === null ? null : { frame, world };
 			setPreview(null);
 			return;
 		}
@@ -3822,47 +3756,35 @@ export function ProjectCanvas({
 			local,
 			(chain) => {
 				hoverBusy.current = false;
-				hoverChain.current = chain.length === 0 ? null : { frame, chain };
-				if (gesture.current.kind !== "idle" || toolRef.current === "hand") return;
-				// a deep hover is ⌘'s: let go while the frame was answering and
-				// the answer is stale, so it must not redraw the rings
-				if (deepest !== accelDownRef.current) return;
-				const scope = scopeIn(frame);
-				const editing = toolRef.current === "edit";
-				// In Select with no rung open a click takes the frame, whose own ring
-				// already says so. Edit always points at an element, so it always
-				// draws one — and the rung under it dashed, because that is where
-				// its double-click descends to.
-				const box = frameBox(frame);
-				const target = deepest
-					? chain[chain.length - 1]
-					: editing || scope !== null
-						? atRung(chain, scope, box)
-						: undefined;
-				const under = deepest || !editing ? undefined : oneDown(chain, scope, box);
-				const ring = (hit: PickedHit | undefined): ElementPreview | null =>
-					hit === undefined
+				if (gesture.current.kind !== "idle") return;
+				// ⌘ let go while the frame was answering: the answer is stale, and
+				// Select's own hover is the frame's ring
+				if (!reaching()) {
+					setPreview(null);
+					return;
+				}
+				const target = deepest(chain);
+				setPreview(
+					target === undefined
 						? null
 						: {
 								frame,
-								selector: hit.selector,
-								rect: hit.rect,
-								...(hit.rects === undefined ? {} : { rects: hit.rects }),
-								radius: hit.radius,
-							};
-				const click = ring(target);
-				const beneath = under?.selector === target?.selector ? null : ring(under);
-				setPreview(click === null && beneath === null ? null : { click, under: beneath });
+								selector: target.selector,
+								rect: target.rect,
+								...(target.rects === undefined ? {} : { rects: target.rects }),
+								radius: target.radius,
+							},
+				);
 			},
 			() => {
 				hoverBusy.current = false;
 			},
-			// a hover draws rings and deletes nothing (#323)
+			// a hover draws an outline and deletes nothing (#323)
 			false,
 		);
 	};
 
-	/** Redraw the rings where the pointer already rests — ⌘ changes what they mean. */
+	/** Redraw the outline where the pointer already rests — ⌘ changes what it means. */
 	refreshRings.current = () => {
 		const at = hoverPoint.current;
 		if (at === null || toolRef.current === "hand" || gesture.current.kind !== "idle") {
@@ -3978,13 +3900,6 @@ export function ProjectCanvas({
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
 		const p = localPoint(event);
-		// A descent waiting on a frame belongs to the double-click whose own
-		// presses these are, and those land on the very point it was made at
-		// (#323). A press anywhere else is a different gesture and abandons it.
-		const flight = descending.current;
-		if (flight !== null && (Math.abs(flight.at.x - p.x) > 4 || Math.abs(flight.at.y - p.y) > 4)) {
-			descending.current = null;
-		}
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		pressOnHeld.current = null;
@@ -4086,11 +4001,16 @@ export function ProjectCanvas({
 		// the other way a mark clears: pressing a frame is going to it
 		markRead([hit]);
 
-		// inside an element scope, shift toggles membership (#37): the at-depth
-		// target under the cursor, or with accel the deepest
-		if (toolRef.current !== "hand" && event.shiftKey && pickedRef.current.length > 0 && label === null) {
+		// ⇧-click in Edit, or among elements already held, puts the deepest
+		// element under the pointer in or out of the selection (#37, #339)
+		if (
+			toolRef.current !== "hand" &&
+			event.shiftKey &&
+			label === null &&
+			(toolRef.current === "edit" || pickedRef.current.length > 0)
+		) {
 			const local = frameLocalAt(hit, world);
-			if (local !== null) togglePickAt(hit, local, accelPressed(event));
+			if (local !== null) togglePickAt(hit, local);
 			return;
 		}
 
@@ -4101,41 +4021,30 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// accel-click deep-selects the element under the cursor (Figma): in Select
-		// it is the borrow of Edit, in Edit the leap past every rung between. The
+		// ⌘ in Select borrows Edit for as long as it is held (#339): the click
+		// takes the deepest element under the pointer, and nothing more. The
 		// modifier is exclusive, never a union: on the Mac ctrl-click is the
 		// context menu's, so accepting either would fire both.
-		if (toolRef.current !== "hand" && accelPressed(event) && label === null) {
+		if (toolRef.current === "select" && accelPressed(event) && label === null) {
 			const local = frameLocalAt(hit, world);
-			if (local !== null) deepSelectAt(hit, local);
+			if (local !== null) selectDeepestAt(hit, local);
 			return;
 		}
 
-		// In Select a bare click takes the frame and nothing inside it: elements
-		// are ⌘'s. The one exception is an element scope already open on this
-		// frame — there, plain clicks keep moving the selection at that depth
-		// (#37). In Edit every click is that click, landing on the frame's root
-		// element until a descent opens a deeper scope. Either can promote to a
-		// frame move once the pointer crosses the drag threshold.
-		const anchor = pickedRef.current[pickedRef.current.length - 1];
-		if (toolRef.current !== "hand" && label === null) {
-			const scoped = toolRef.current === "edit" || (anchor !== undefined && anchor.frame === hit);
-			if (scoped) {
-				const local = frameLocalAt(hit, world);
-				// a press on the element that was already held is the second click
-				// the text gesture is (#255) — noted here and acted on at pointer-up,
-				// because until then it may yet turn out to be a drag of the frame
-				if (local !== null) {
-					const again = secondClick(pickedRef.current, hit, local);
-					pressOnHeld.current = again === undefined ? null : { pick: again, local };
-					scopedSelectAt(hit, local);
-				}
+		// In Edit every click is the deepest element under the pointer (#339).
+		// It can still promote to a frame move once the pointer crosses the drag
+		// threshold.
+		if (toolRef.current === "edit" && label === null) {
+			const local = frameLocalAt(hit, world);
+			// a press on the element that was already held is the second click
+			// the text gesture is (#255) — noted here and acted on at pointer-up,
+			// because until then it may yet turn out to be a drag of the frame
+			if (local !== null) {
+				const again = secondClick(pickedRef.current, hit, local);
+				pressOnHeld.current = again === undefined ? null : { pick: again, local };
+				selectDeepestAt(hit, local);
 			}
 			const names = selectedRef.current.includes(hit) ? [...selectedRef.current] : [hit];
-			if (!scoped) {
-				setSelected(names);
-				setPicked([]);
-			}
 			gesture.current = { kind: "pending", names, origins: originsOf(names), start: p };
 			return;
 		}
@@ -4375,14 +4284,16 @@ export function ProjectCanvas({
 
 	/**
 	 * Double-click, which each pointing tool spends on its own subject: Select
-	 * goes inside the frame, Edit steps one rung down the ladder.
+	 * goes inside the frame, Edit opens the element under the pointer — its
+	 * words, or its children where it is a group (#339). ⌘ borrows Edit for
+	 * the double-click too.
 	 *
 	 * Keeping them apart is what lets both be the plain gesture. Running a
 	 * frame is the constant act on this canvas and takes no modifier for it;
-	 * descending is constant too, but only once you have said you are editing,
-	 * which is what picking up the tool says. Edit has no door into a live
-	 * frame at all (#321), the label included: a tool for changing a page must
-	 * never hand the page the pointer by accident.
+	 * opening an element is constant too, but only once you have said you are
+	 * editing, which is what picking up the tool says. Edit has no door into a
+	 * live frame at all (#321), the label included: a tool for changing a page
+	 * must never hand the page the pointer by accident.
 	 */
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
@@ -4406,13 +4317,13 @@ export function ProjectCanvas({
 		}
 		if (hit === enteredRef.current) return;
 		cancelGesture();
-		if (toolRef.current === "select") {
+		if (toolRef.current === "select" && !accelPressed(event)) {
 			enterFrame(hit);
 			return;
 		}
-		if (label !== null) return; // the label has no rung under it to descend to
+		if (label !== null) return; // the label is the frame's, and it has no words
 		const local = frameLocalAt(hit, world);
-		if (local !== null) descendAt(hit, local);
+		if (local !== null) openAt(hit, local);
 	};
 
 	const onContextMenu = (event: React.MouseEvent) => {
@@ -4487,9 +4398,8 @@ export function ProjectCanvas({
 	 */
 	const litOut = !pointerTool
 		? null
-		: preview?.click != null &&
-				picked.some((pick) => pick.frame === preview.click?.frame && pick.selector === preview.click?.selector)
-			? pickKey(preview.click.frame, preview.click.selector)
+		: preview !== null && picked.some((pick) => pick.frame === preview.frame && pick.selector === preview.selector)
+			? pickKey(preview.frame, preview.selector)
 			: hovered !== null && (selected.includes(hovered.frame) || entered === hovered.frame)
 				? hovered.frame
 				: null;
@@ -4702,32 +4612,16 @@ export function ProjectCanvas({
 					animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
 				}
 			},
-			/**
-			 * The words of the rung held, from the keyboard (#323).
-			 *
-			 * The pointer's way in is a click on what is already held, which
-			 * depends on the frame answering a pick and on the press landing in
-			 * the box it drew. Neither is true often enough on a page heavy
-			 * enough to be worth editing, so the rung that is held has a door of
-			 * its own: F2, the rename key the sidebar already uses, and ⏎, which
-			 * `canvas.enter` hands over below before it means anything else.
-			 */
+			// F2: the words of the one element held, and nothing else (#323)
 			"canvas.words": () => openWords(),
-			// ⏎ goes inside, from the frame or from a rung within it; the ladder's
-			// own descent is ⌘⏎, and the climb ⇧⏎ (#254). In Edit ⏎ is that
-			// descent itself, because that tool has no way inside at all (#321)
+			// ⏎ is Edit's before it is Select's (#339): with an element held, or
+			// in Edit, it opens the words or selects the children; only a frame
+			// held in Select goes inside
 			"canvas.enter": (event) => {
-				// a rung with words of its own is what ⏎ means before anything
-				// else: the rename idiom, on the element rather than on a row
-				if (openWords()) {
-					event?.preventDefault();
-					return;
-				}
-				if (toolRef.current === "edit") {
+				if (editingRef.current !== null) return;
+				if (pickedRef.current.length > 0 || toolRef.current === "edit") {
 					if (enteredRef.current !== null) return;
-					event?.preventDefault();
-					setPreview(null);
-					descendKey();
+					if (openHeld()) event?.preventDefault();
 					return;
 				}
 				const targets = verbTarget();
@@ -4736,36 +4630,45 @@ export function ProjectCanvas({
 				event?.preventDefault();
 				enterFrame(only);
 			},
+			// ⌘⏎ is ⏎ with Edit borrowed: into the words or the children, from a
+			// frame held in Select as much as from an element
 			"canvas.descend": (event) => {
 				if (enteredRef.current !== null) return;
 				event?.preventDefault();
 				setPreview(null);
-				descendKey();
+				openHeld();
 			},
 			"canvas.ascend": (event) => {
 				if (enteredRef.current !== null) return;
 				event?.preventDefault();
 				cancelPicks();
 				setPreview(null);
-				climbRung();
+				selectParent();
 			},
-			// Tab is the browser's focus key until a rung is held: claiming it
-			// only where the ladder can answer leaves the chrome reachable
+			// Tab is the browser's focus key until one element is held: claiming
+			// it only where the selection can answer leaves the chrome reachable
 			"canvas.sibling": (event) => {
 				if (walkSibling(event?.shiftKey === true ? "previous" : "next")) event?.preventDefault();
+			},
+			// ⌘A takes every sibling of what is held (#339), and is the browser's
+			// own select-all anywhere else
+			"canvas.select-siblings": (event) => {
+				if (editingRef.current !== null) return;
+				if (selectSiblings()) event?.preventDefault();
 			},
 			"canvas.escape": () => {
 				cancelPicks();
 				setPreview(null);
+				// Esc finishes the words and saves them, as Enter does (#339)
 				if (editingRef.current !== null) {
-					endEditRef.current(false);
+					endEditRef.current(true);
 					return;
 				}
 				if (!gestureStill()) cancelGesture();
 				else if (menuOpenRef.current) setMenu(null);
 				else if (enteredRef.current !== null) exitEntered(true);
-				// Esc leaves first, then climbs the same rungs ⇧⏎ climbs
-				else climbRung();
+				// Esc leaves first, then climbs to the parent the way ⇧⏎ does
+				else selectParent();
 			},
 		} satisfies Record<HotkeyIdFor<"canvas">, HotkeyHandler>;
 		const detachDialog = attachHotkeyLayer({
@@ -4793,8 +4696,8 @@ export function ProjectCanvas({
 		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
-			// releasing accel turns the deep ring back into the ladder's two, under
-			// a pointer that has not moved since (#254)
+			// releasing accel puts the borrowed Edit down, and the outline it drew
+			// goes from under a pointer that has not moved since (#254, #339)
 			if (event.key === accelKeyName()) {
 				setAccelDown(false);
 				accelDownRef.current = false;
@@ -4838,8 +4741,9 @@ export function ProjectCanvas({
 		playFrame,
 		jumpBack,
 		jumpForward,
-		descendKey,
-		climbRung,
+		openHeld,
+		selectParent,
+		selectSiblings,
 		walkSibling,
 		openWords,
 	]);
@@ -5184,6 +5088,7 @@ export function ProjectCanvas({
 							 */
 							lit={lit}
 							preview={pointerTool ? preview : null}
+							editing={editing}
 							refused={refused}
 							onAsk={() => askAgent(refused ?? undefined)}
 							onOpenFile={(path, line) => copySourcePath(`${path}:${line}`)}
@@ -5320,12 +5225,10 @@ export function ProjectCanvas({
 				properties={(width, shut) => (
 					<PropertiesRail
 						held={railHeld}
-						rungs={railRungs}
 						width={width}
 						onCollapse={shut}
 						acts={{
 							onAsk: askAgent,
-							onRung: takeRung,
 							onGeometry: setFrameGeometry,
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,

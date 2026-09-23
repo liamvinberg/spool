@@ -8,12 +8,12 @@ import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
 /**
- * The selection ladder out on the canvas (#254). The pointer walks it in the
- * Edit tool, where a click takes the rung the scope is open on and a
- * double-click steps down one; ⌘-click lands on the deepest rung from either
- * tool, and ⌘⏎, Tab and ⇧⏎ reach every rung with no pointer at all. In Select
- * a double-click goes inside the frame instead, which is the whole reason the
- * two tools are two.
+ * The Edit tool out on the canvas (#339). A click takes the deepest element
+ * under the pointer, in one go; the keys step from what is held — ⏎ and a
+ * double-click into the words or the children, Esc and ⇧⏎ to the parent, Tab
+ * round the siblings, ⌘A to all of them. ⌘ held in Select borrows the click.
+ * In Select a double-click goes inside the frame instead, which is the whole
+ * reason the two tools are two.
  *
  * The frame answers every one of these, so each test plays the frame: it reads
  * the ask off the posted message and replies with an ancestry of its own.
@@ -25,11 +25,12 @@ const ACCEL = ACCEL_KEY === "Meta" ? { metaKey: true } : { ctrlKey: true };
 // wide enough to be readable at zoom 1, so the document stays mounted throughout
 const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480 }];
 
-/** An ancestry the shim would answer with, root element first. */
+/** An ancestry the shim would answer with, root element first, each one named. */
 const ancestry = (...selectors: readonly string[]): PickedHit[] =>
 	selectors.map((selector, depth) => ({
 		selector,
 		tag: "div",
+		name: "Group",
 		outerHtml: `<div class="${selector}" />`,
 		rect: { x: depth * 4, y: depth * 4, w: 100 - depth * 8, h: 80 - depth * 8 },
 		radius: 0,
@@ -37,12 +38,16 @@ const ancestry = (...selectors: readonly string[]): PickedHit[] =>
 		generated: false,
 	}));
 
-/** screen › footer › pay, the ancestry under the pointer in every test here. */
-const CHAIN = ancestry("screen", "footer", "pay");
-/** screen › header › title, which leaves that one a rung below the root. */
-const HEADER = ancestry("screen", "header", "title");
+/** screen › footer › pay, the ancestry under the pointer in most tests here. */
+const CHAIN = ancestry("screen", "screen > footer", "screen > footer > pay");
+/** The same ancestry, with words of their own at the bottom of it. */
+const WORDS = CHAIN.map((hit, depth) =>
+	depth === 2 ? { ...hit, tag: "button", name: "PayButton", words: true, source: "frames/home/frame.tsx:9:5" } : hit,
+);
+/** The footer's children: the pay button and the row beside it. */
+const FOOTER_KIDS = ancestry("screen", "screen > footer", "screen > footer > pay", "screen > footer > note").slice(2);
 
-it("goes inside on a double-click, on the frame's body as much as on its label", async () => {
+it("goes inside on a double-click in Select, on the frame's body as much as on its label", async () => {
 	const { host, canvas } = await readyCanvas();
 
 	await clickAt(canvas, 40, 40);
@@ -51,7 +56,7 @@ it("goes inside on a double-click, on the frame's body as much as on its label",
 
 	await doubleClickAt(canvas, 40, 40);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
-	// going inside is not a descent: no rung is taken on the way in
+	// going inside is not a selection: nothing inside is taken on the way in
 	expect(await heldElements()).toBeUndefined();
 
 	await press("Escape", ACCEL);
@@ -65,200 +70,232 @@ it("goes inside on a double-click, on the frame's body as much as on its label",
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
 });
 
-it("takes an element on a plain click in Edit, and descends one rung per double-click", async () => {
+it("takes the deepest element on a plain click in Edit, and never goes inside", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await press("e");
 
-	// with no scope open the click lands on the frame's root element, which is
-	// rung one: in Edit the pointer never takes the frame itself
 	await clickAt(canvas, 40, 40);
 	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["screen"]);
+	expect(await heldElements()).toEqual(["screen > footer > pay"]);
 
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["footer"]);
+	// a click on the frame's background is the frame
+	await clickAt(canvas, 40, 40);
+	await frame.answer([]);
+	expect(await heldFrames()).toEqual(["home"]);
 
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["pay"]);
-
-	// the leaf: the ladder ends rather than running off the end of the ancestry
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["pay"]);
-
-	// and none of those double-clicks went inside, which is Select's meaning
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 });
 
-it("draws the rung under the pointer's own, dashed, only where Edit descends to it", async () => {
-	const { host, canvas, frame } = await readyCanvas();
-
-	await act(async () => {
-		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
-	});
-	await frame.answer(CHAIN);
-	// Select: a click takes the frame, which draws its own ring, and no gesture
-	// of Select's descends, so there is nothing beneath to promise
-	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
-	expect(host.querySelectorAll(".border-dashed")).toHaveLength(0);
-
-	await press("e");
-	await clickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["screen"]);
-
-	// hover picks are throttled, so let the window pass before asking again
-	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
-	await act(async () => {
-		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 41, clientY: 41, pointerId: 1 }));
-	});
-	await frame.answer(CHAIN);
-
-	// the rung a click takes is the one already held, which wears the ring
-	// rather than a preview of itself — so what is left is the dashed rung
-	// beneath, which is where this pointer's double-click goes next
-	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
-	expect(host.querySelectorAll(".border-dashed")).toHaveLength(1);
-});
-
-it("lands on the deepest rung on ⌘-click, which is the pointer's whole ladder", async () => {
+it("lands on the deepest element on ⌘-click from Select, which borrows Edit", async () => {
 	const { canvas, frame } = await readyCanvas();
 
 	await deepClickAt(canvas, 40, 40);
 	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["pay"]);
+	expect(await heldElements()).toEqual(["screen > footer > pay"]);
 });
 
-it("takes the frame's root element on ⌘⏎, then the first child of what is held", async () => {
+it("opens the words on a double-click, and the children of a group", async () => {
 	const { canvas, frame } = await readyCanvas();
-	await clickAt(canvas, 40, 40);
+	await press("e");
 
-	await press("Enter", ACCEL);
-	expect(frame.lastKin()).toEqual({ selector: "", step: "child" });
-	await frame.answer(CHAIN.slice(0, 1));
+	// the deepest element has words of its own: the two clicks mean them
+	await clickAt(canvas, 40, 40, 91);
+	await frame.answer(WORDS);
+	await clickAt(canvas, 40, 40, 92);
+	await frame.answer(WORDS);
+	await act(async () => {
+		canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 40, clientY: 40 }));
+	});
+	await frame.answer(WORDS);
+	expect(frame.lastAsk("edit")).toMatchObject({ selector: "screen > footer > pay" });
+	await press("Escape");
+
+	// a group has none, so a double-click on it takes everything inside it
+	await doubleClickAt(canvas, 40, 40);
+	await frame.answer(CHAIN.slice(0, 2));
+	expect(frame.lastAsk("family")).toMatchObject({ selector: "screen > footer", of: "children" });
+	await frame.generation(CHAIN.slice(0, 2), FOOTER_KIDS);
+	expect(await heldElements()).toEqual(["screen > footer > pay", "screen > footer > note"]);
+});
+
+it("opens with ⏎: the words after the last of them, the children, or the frame's top", async () => {
+	const { canvas, frame } = await readyCanvas();
+	await press("e");
+
+	// the frame held and nothing inside it: ⏎ takes its top-level elements
+	await clickAt(canvas, 40, 40);
+	await frame.answer([]);
+	await press("Enter");
+	expect(frame.lastAsk("family")).toMatchObject({ selector: "", of: "children" });
+	await frame.generation([], CHAIN.slice(0, 1));
 	expect(await heldElements()).toEqual(["screen"]);
 
-	await press("Enter", ACCEL);
-	expect(frame.lastKin()).toEqual({ selector: "screen", step: "child" });
-	await frame.answer(CHAIN.slice(0, 2));
-	expect(await heldElements()).toEqual(["footer"]);
-});
+	// a group: its children
+	await press("Enter");
+	expect(frame.lastAsk("family")).toMatchObject({ selector: "screen", of: "children" });
 
-it("walks the row with Tab, and back with ⇧Tab", async () => {
-	const { canvas, frame } = await readyCanvas();
+	// words: the caret after them, with no point to put it at
 	await clickAt(canvas, 40, 40);
-	await press("Enter", ACCEL);
-	await frame.answer(CHAIN.slice(0, 1));
-
-	await press("Tab");
-	expect(frame.lastKin()).toEqual({ selector: "screen", step: "next" });
-
-	await press("Tab", { shiftKey: true });
-	expect(frame.lastKin()).toEqual({ selector: "screen", step: "previous" });
+	await frame.answer(WORDS);
+	await press("Enter");
+	expect(frame.lastAsk("edit")).toMatchObject({ selector: "screen > footer > pay", x: null, y: null });
 });
 
-it("leaves Tab to the browser while no rung is held", async () => {
-	const { canvas, frame } = await readyCanvas();
-	await clickAt(canvas, 40, 40);
-
-	const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
-	await act(async () => {
-		window.dispatchEvent(event);
-	});
-	expect(event.defaultPrevented).toBe(false);
-	expect(frame.lastKin()).toBeUndefined();
-});
-
-it("climbs a rung on ⇧⏎, and stops playing no flow on the way", async () => {
+it("climbs to the parent on Esc and ⇧⏎, then to the frame, then to nothing", async () => {
 	const { host, canvas, frame } = await readyCanvas();
+	await press("e");
 	await clickAt(canvas, 40, 40);
-	await press("Enter", ACCEL);
-	await frame.answer(CHAIN.slice(0, 1));
-	await press("Enter", ACCEL);
-	await frame.answer(CHAIN.slice(0, 2));
-	expect(await heldElements()).toEqual(["footer"]);
+	await frame.answer(CHAIN);
 
+	await press("Escape");
+	expect(await heldElements()).toEqual(["screen > footer"]);
 	await press("Enter", { shiftKey: true });
 	expect(await heldElements()).toEqual(["screen"]);
 
 	// the root element's parent is the frame, and the frame's is nothing
-	await press("Enter", { shiftKey: true });
+	await press("Escape");
 	expect(await heldFrames()).toEqual(["home"]);
-	await press("Enter", { shiftKey: true });
+	await press("Escape");
 	expect(await heldFrames()).toEqual([]);
 
-	// ⇧⏎ is the climb now, so it never opens a play tab
+	// ⇧⏎ is the climb, so it never opens a play tab
 	expect(host.ownerDocument.defaultView?.open).not.toHaveBeenCalled();
 });
 
-it("draws the rung a click takes, and nothing at all with no rung open", async () => {
-	const { host, canvas, frame } = await readyCanvas();
+it("walks round the siblings with Tab, and leaves Tab to the browser with nothing held", async () => {
+	const { canvas, frame } = await readyCanvas();
+	await press("e");
 
+	const loose = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
 	await act(async () => {
-		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
+		window.dispatchEvent(loose);
 	});
+	expect(loose.defaultPrevented).toBe(false);
+	expect(frame.lastAsk("kin")).toBeUndefined();
+
+	await clickAt(canvas, 40, 40);
 	await frame.answer(CHAIN);
-
-	// with no rung open a click takes the frame, which draws its own ring, and
-	// there is no rung beneath to promise: no pointer gesture descends one
-	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
-
-	// hold the footer, then point at a branch that leaves it: a click takes the
-	// divergence point, and that is the one ring the hover draws
-	await press("Enter", ACCEL);
-	await frame.answer(CHAIN.slice(0, 1));
-	await press("Enter", ACCEL);
-	await frame.answer(CHAIN.slice(0, 2));
-	// hover picks are throttled, so let the window pass before asking again
-	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
-	await act(async () => {
-		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 41, clientY: 41, pointerId: 1 }));
-	});
-	await frame.answer(HEADER);
-
-	expect(host.querySelectorAll(".opacity-50")).toHaveLength(1);
+	await press("Tab");
+	expect(frame.lastAsk("kin")).toMatchObject({ selector: "screen > footer > pay", step: "next" });
+	await press("Tab", { shiftKey: true });
+	expect(frame.lastAsk("kin")).toMatchObject({ selector: "screen > footer > pay", step: "previous" });
 });
 
-it("draws again after a press voided the hover ask that was in flight", async () => {
+it("takes every sibling on ⌘A, and climbs from all of them to the parent they share", async () => {
+	const { canvas, frame } = await readyCanvas();
+	await press("e");
+	await clickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+
+	const all = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true, ...ACCEL });
+	await act(async () => {
+		window.dispatchEvent(all);
+	});
+	expect(all.defaultPrevented).toBe(true);
+	expect(frame.lastAsk("family")).toMatchObject({ selector: "screen > footer > pay", of: "siblings" });
+	await frame.generation(CHAIN.slice(0, 2), FOOTER_KIDS);
+	expect(await heldElements()).toEqual(["screen > footer > pay", "screen > footer > note"]);
+
+	await press("Escape");
+	expect(await heldElements()).toEqual(["screen > footer"]);
+});
+
+it("adds the deepest element on ⇧-click", async () => {
+	const { canvas, frame } = await readyCanvas();
+	await press("e");
+	await clickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+
+	await act(async () => {
+		canvas.dispatchEvent(
+			new PointerEvent("pointerdown", {
+				bubbles: true,
+				button: 0,
+				clientX: 60,
+				clientY: 60,
+				pointerId: 5,
+				shiftKey: true,
+			}),
+		);
+		canvas.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 60, clientY: 60, pointerId: 5 }),
+		);
+	});
+	await frame.answer(ancestry("screen", "screen > header", "screen > header > title"));
+	expect(await heldElements()).toEqual(["screen > footer > pay", "screen > header > title"]);
+});
+
+it("outlines the element a click would take, and names the one held", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 
-	// a rung has to be held for a hover to draw one at all
-	await clickAt(canvas, 40, 40);
-	await press("Enter", ACCEL);
-	await frame.answer(CHAIN.slice(0, 1));
-	await press("Enter", ACCEL);
-	await frame.answer(CHAIN.slice(0, 2));
-
-	// a move, then a press before the frame has answered it: the press voids
-	// every outstanding pick, so that hover's answer never arrives. The ring
-	// has to survive it — an ask that is dropped must not latch it off.
-	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+	// Select points at frames: a hover asks the frame nothing and outlines nothing
 	await act(async () => {
 		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
 	});
-	await clickAt(canvas, 40, 40);
+	expect(frame.lastAsk("pick")).toBeUndefined();
+	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
 
+	await press("e");
 	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
 	await act(async () => {
 		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 41, clientY: 41, pointerId: 1 }));
 	});
-	await frame.answer(HEADER);
+	await frame.answer(WORDS);
+	// one outline, the deepest element's, and no second one promising a step
 	expect(host.querySelectorAll(".opacity-50")).toHaveLength(1);
+	expect(host.querySelectorAll(".border-dashed")).toHaveLength(0);
+	expect(host.querySelector("[data-name-label]")).toBeNull();
+
+	await clickAt(canvas, 40, 40);
+	await frame.answer(WORDS);
+	expect(host.querySelector("[data-name-label]")?.textContent).toBe("PayButton");
+});
+
+it("says a refusal on the element, with the door to the agent, and lets it go", async () => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+	onTestFinished(() => {
+		vi.useRealTimers();
+	});
+	const { host, canvas, frame } = await readyCanvas({
+		rungs: [
+			{ source: "frames/home/frame.tsx:9:5", words: { code: "expression-text", says: "{label} is an expression" } },
+		],
+	});
+	await press("e");
+	await clickAt(canvas, 40, 40);
+	await frame.answer(WORDS);
+	// the selection's read of the file lands before the words are asked for
+	await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+
+	await press("Enter");
+	const note = () => host.querySelector("[data-hand-refusal]");
+	expect(note()?.textContent).toContain("{label} is an expression");
+	expect(note()?.querySelector("[data-hand-ask]")?.textContent).toBe("Ask the agent");
+	// nothing was opened, and the strip says nothing
+	expect(frame.lastAsk("edit")).toBeUndefined();
+	expect(host.querySelector('[role="alert"], [role="status"]')).toBeNull();
+
+	await act(async () => {
+		vi.advanceTimersByTime(4100);
+	});
+	expect(note()).toBeNull();
 });
 
 // --- the harness -------------------------------------------------------------
 
 interface FramePlayer {
-	/** The ancestry this frame answers the outstanding ask with. */
+	/** The ancestry this frame answers the outstanding pick or kin ask with. */
 	answer: (chain: readonly PickedHit[]) => Promise<void>;
-	/** The last kin ask, which is the keyboard's half of the ladder. */
-	lastKin: () => { selector: string; step: string } | undefined;
+	/** A whole generation, answering the outstanding family ask: the parent's ancestry and its members. */
+	generation: (chain: readonly PickedHit[], hits: readonly PickedHit[]) => Promise<void>;
+	/** The last ask of one kind the canvas sent the frame. */
+	lastAsk: (kind: string) => Record<string, unknown> | undefined;
 }
 
-async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElement; frame: FramePlayer }> {
-	stubCanvasApis();
+async function readyCanvas(
+	options: { rungs?: readonly Record<string, unknown>[] } = {},
+): Promise<{ host: HTMLDivElement; canvas: HTMLElement; frame: FramePlayer }> {
+	stubCanvasApis(options.rungs ?? []);
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
@@ -326,10 +363,19 @@ async function readyCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElemen
 					);
 				});
 			},
-			lastKin: () => {
-				const kin = asks(["kin"]).at(-1);
-				return kin === undefined ? undefined : { selector: String(kin.selector), step: String(kin.step) };
+			generation: async (chain, hits) => {
+				const ask = asks(["family"]).at(-1);
+				expect(ask).toBeDefined();
+				await act(async () => {
+					window.dispatchEvent(
+						new MessageEvent("message", {
+							data: { spool: "generation", frame: "home", id: ask?.id, chain, hits },
+							source: live(),
+						}),
+					);
+				});
 			},
+			lastAsk: (kind) => asks([kind]).at(-1),
 		},
 	};
 }
@@ -345,7 +391,7 @@ async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1)
 	});
 }
 
-/** ⌘-click: the deepest rung of whatever ancestry the frame answers with. */
+/** ⌘-click from Select: the deepest element of whatever ancestry the frame answers with. */
 async function deepClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
 	await act(async () => {
 		canvas.dispatchEvent(
@@ -394,7 +440,7 @@ async function heldFrames(): Promise<string[] | undefined> {
 	return (await served()).frames;
 }
 
-function stubCanvasApis(): void {
+function stubCanvasApis(rungs: readonly Record<string, unknown>[]): void {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal("open", vi.fn());
 	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
@@ -424,6 +470,7 @@ function stubCanvasApis(): void {
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
 			}
+			if (url.pathname.endsWith("/rungs")) return Response.json({ rungs });
 			return Response.json({});
 		}),
 	);

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { COVER_DEVICE_SCALE, COVER_QUALITY, LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
 import { collapsedWords } from "./edit-words";
+import { elementName } from "./element-name";
 import { PROJECT_LAYER } from "./tailwind";
 
 /**
@@ -1104,10 +1105,13 @@ const canvasShimJs = `(() => {
 		let radius = 0;
 		try { radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch {}
 		let item = null;
+		let name = null;
 		// a hover asks for a chain many times a second and deletes nothing, so
-		// it walks no fibers: the item context is the selection's alone
+		// it walks no fibers: the item context and the name label are the
+		// selection's alone
 		if (selects) {
 			try { item = itemOf(el); } catch {}
+			try { name = nameOf(el); } catch {}
 		}
 		// an inline element that wraps is drawn as one box per line, and the box
 		// around all of them is a shape it has nowhere on screen (#321)
@@ -1142,6 +1146,7 @@ const canvasShimJs = `(() => {
 			rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
 			...(lines.length > 1 ? { rects: lines } : {}),
 			words: hasWords(el),
+			...(name === null ? {} : { name }),
 			radius,
 			...(item === null ? {} : { item }),
 			...(spills.length === 0 ? {} : { spills }),
@@ -1161,11 +1166,33 @@ const canvasShimJs = `(() => {
 		return line.map(function (node) { return hitOf(node, selects); });
 	}
 
-	// the ancestry at the point
+	// what the name label calls an element (#339), written and tested once in
+	// daemon/element-name.ts
+	var nameOf = ${elementName.toString()};
+
+	// the outermost svg an element is drawn inside, or the element itself: the
+	// paths of an icon are the icon's, never something a hand picks one by one
+	function outsideSvg(el) {
+		let at = el;
+		for (let up = el; up && up.nodeType === 1; up = up.parentElement) {
+			if (up.namespaceURI === "http://www.w3.org/2000/svg" && up.localName === "svg") at = up;
+		}
+		return at;
+	}
+
+	// an element a selection may stand on: not the frame's own scaffolding, not
+	// a line break, and not a piece of an icon
+	function selectable(el) {
+		if (!el || el.nodeType !== 1 || el === document.documentElement || el === document.body || el.id === "root") return false;
+		if (el.localName === "br" || el.localName === "script" || el.localName === "style" || el.localName === "template") return false;
+		return outsideSvg(el) === el;
+	}
+
+	// the ancestry at the point, down to the deepest element under it (#339)
 	function pickChain(x, y, selects) {
-		const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
-		if (!el || el === document.documentElement || el === document.body || el.id === "root") return [];
-		return chainOf(el, selects);
+		const hit = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+		if (!hit || hit === document.documentElement || hit === document.body || hit.id === "root") return [];
+		return chainOf(outsideSvg(hit), selects);
 	}
 
 	// A selector back to its element. cssPath stops at the boot root and takes a
@@ -1183,22 +1210,47 @@ const canvasShimJs = `(() => {
 		return found;
 	}
 
-	// the ancestry of one element's kin (#254): the keyboard's rung, named by
-	// kinship because there is no pointer to name it by position
+	// the elements a selection can stand on directly inside one, in order
+	function familyOf(el) {
+		if (!el || outsideSvg(el) !== el || (el.namespaceURI === "http://www.w3.org/2000/svg" && el.localName === "svg")) return [];
+		return Array.from(el.children).filter(selectable);
+	}
+
+	// the boot root, which is the frame: what a selector of nothing stands for
+	function bootRoot() {
+		return document.getElementById("root") || document.body;
+	}
+
+	// the ancestry of one element's kin (#254, #339): the keyboard's step, named
+	// by kinship because there is no pointer to name it by position. Tab walks
+	// round the row, so the last sibling's next is the first
 	function kinChain(selector, step, selects) {
-		const from = selector ? elementFor(selector) : (document.getElementById("root") || document.body);
+		const from = selector ? elementFor(selector) : bootRoot();
 		if (!from) return [];
-		const kin = step === "self"
-			? from
-			: step === "child"
-				? from.firstElementChild
-				: step === "next"
-					? from.nextElementSibling
-					: step === "previous"
-						? from.previousElementSibling
-						: null;
-		if (!kin || kin === document.documentElement || kin === document.body || kin.id === "root") return [];
+		let kin = null;
+		if (step === "self") kin = from;
+		else if (step === "child") kin = familyOf(from)[0] || null;
+		else if (step === "next" || step === "previous") {
+			const row = familyOf(from.parentElement);
+			const at = row.indexOf(from);
+			if (at >= 0 && row.length > 1) kin = row[(at + (step === "next" ? 1 : row.length - 1)) % row.length];
+		}
+		if (!selectable(kin)) return [];
 		return chainOf(kin, selects);
+	}
+
+	// A whole generation at once (#339): the children of a group, which Enter
+	// and a double-click on one select, or the siblings of an element, which ⌘A
+	// does. The answer is the ancestry of the parent they share, empty where
+	// that parent is the frame, and each of them as a hit of its own.
+	function familyAt(selector, of) {
+		const from = selector ? elementFor(selector) : bootRoot();
+		if (!from) return null;
+		const parent = of === "children" ? from : from.parentElement;
+		if (!parent) return null;
+		const root = parent === bootRoot() || parent === document.body || parent === document.documentElement;
+		if (!root && !selectable(parent)) return null;
+		return { chain: root ? [] : chainOf(parent, true), hits: familyOf(parent).map((el) => hitOf(el, true)) };
 	}
 
 	/**
@@ -1312,6 +1364,9 @@ const canvasShimJs = `(() => {
 		if (held.editable === null) el.removeAttribute("contenteditable"); else el.setAttribute("contenteditable", held.editable);
 		if (held.spellcheck === null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", held.spellcheck);
 		unpinLayout(el, held.pinned);
+		// the focus leaving is the edit's own, and the page hears it no more
+		// than it heard the focus arrive
+		quiet = true;
 		try { el.blur(); } catch {}
 		quiet = false;
 		// a commit leaves the typed words standing, because the DOM is the
@@ -1366,9 +1421,6 @@ const canvasShimJs = `(() => {
 			if (node.nodeType === 3) nodes.push({ text: node.nodeValue || "" });
 			else if (node.nodeType === 1) nodes.push({ tag: node.localName, nodes: node.localName === "br" ? [] : nodesOf(node) });
 		}
-		// the focus leaving is the edit's own, and the page hears it no more
-		// than it heard the focus arrive
-		quiet = true;
 		return nodes;
 	}
 
@@ -1508,9 +1560,12 @@ const canvasShimJs = `(() => {
 				}
 			}
 		}
+		// no point, or one outside the words: the caret goes after the last of
+		// them, and never as a selection of them all (#339)
 		if (!range || !el.contains(range.startContainer)) {
 			range = document.createRange();
 			range.selectNodeContents(el);
+			range.collapse(false);
 		}
 		selection.removeAllRanges();
 		selection.addRange(range);
@@ -1541,6 +1596,19 @@ const canvasShimJs = `(() => {
 		addEventListener(kind, swallowWhileEditing, true);
 	}
 
+	// The Edit tool is inert (#339): while the words are open the pointer is
+	// over them and nothing else, and the page hears none of it — no hover
+	// handler, no focus handler on the element the caret went into, nothing
+	// that would run the prototype under the hand. Only the listeners are
+	// kept out; the default actions still place the caret.
+	var quiet = false;
+	var keepOut = (event) => {
+		if (editing || quiet) event.stopImmediatePropagation();
+	};
+	for (const kind of ["pointermove", "pointerover", "pointerout", "pointerenter", "pointerleave", "mousemove", "mouseover", "mouseout", "mouseenter", "mouseleave", "focusin", "focusout", "focus"]) {
+		addEventListener(kind, keepOut, true);
+	}
+
 	// The other way a form under the words goes off, which no click carries.
 	addEventListener("submit", (event) => {
 		if (!editing) return;
@@ -1565,7 +1633,6 @@ const canvasShimJs = `(() => {
 		if (held.finish) setTimeout(() => { if (editing === held) endEdit(true); }, 0);
 	}, true);
 	for (const kind of ["beforeinput", "input", "keypress", "submit"]) addEventListener(kind, (event) => {
-			range.collapse(false);
 		if (!editing) return;
 		event.stopImmediatePropagation();
 		if (kind === "submit") event.preventDefault();
@@ -1597,19 +1664,6 @@ const canvasShimJs = `(() => {
 		const byStamp = new Map();
 		const stamped = Array.from(document.querySelectorAll("[data-spool-source]"));
 		for (const el of stamped) {
-	// The Edit tool is inert (#339): while the words are open the pointer is
-	// over them and nothing else, and the page hears none of it — no hover
-	// handler, no focus handler on the element the caret went into, nothing
-	// that would run the prototype under the hand. Only the listeners are
-	// kept out; the default actions still place the caret.
-	var quiet = false;
-	var keepOut = (event) => {
-		if (editing || quiet) event.stopImmediatePropagation();
-	};
-	for (const kind of ["pointermove", "pointerover", "pointerout", "pointerenter", "pointerleave", "mousemove", "mouseover", "mouseout", "mouseenter", "mouseleave", "focusin", "focusout", "focus"]) {
-		addEventListener(kind, keepOut, true);
-	}
-
 			const stamp = el.getAttribute("data-spool-source");
 			if (stamp && !byStamp.has(stamp)) byStamp.set(stamp, el);
 		}
@@ -1802,6 +1856,13 @@ const canvasShimJs = `(() => {
 			let chain = [];
 			try { chain = kinChain(m.selector, m.step, m.selects === true); } catch {}
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
+			return;
+		}
+		if (m.spool === "family") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let found = null;
+			try { found = familyAt(m.selector, m.of === "children" ? "children" : "siblings"); } catch {}
+			parent.postMessage({ spool: "generation", frame, id: m.id, chain: found ? found.chain : [], hits: found ? found.hits : [] }, "*");
 			return;
 		}
 		if (m.spool === "edit" || m.spool === "edit-end") {
@@ -2011,15 +2072,15 @@ const canvasShimJs = `(() => {
 	addEventListener("keydown", (event) => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
-		// an open in-place edit owns the keyboard (#255): Enter commits, Esc
-		// puts back, and every other key is the edit's rather than the
-		// prototype's — the default action still types the character
+		// an open in-place edit owns the keyboard (#255): Enter and Esc both
+		// finish it and save (#339), and every other key is the edit's rather
+		// than the prototype's — the default action still types the character
 		if (editing) {
 			editingKeys.add(event.key);
 			if ((event.key === "Escape" && !event.isComposing && !editing.composing) || (event.key === "Enter" && !event.shiftKey && !event.isComposing && !editing.composing && event.keyCode !== 229)) {
 				event.preventDefault();
 				event.stopImmediatePropagation();
-				endEdit(event.key === "Enter");
+				endEdit(true);
 				return;
 			}
 			// A space is the element's own key before it is the text's: a button

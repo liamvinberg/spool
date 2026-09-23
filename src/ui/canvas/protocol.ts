@@ -43,6 +43,13 @@ export interface PickedHit {
 	 */
 	words?: boolean;
 	/**
+	 * What the name label calls the element (#339): the component whose whole
+	 * output it is, otherwise a word for its tag. Read off React's fiber by the
+	 * frame, because only the running document has one. Present only where a
+	 * selection asked for it, like the item below.
+	 */
+	name?: string;
+	/**
 	 * The row of a list this element is drawn as (#324).
 	 *
 	 * A `.map()` renders one JSX element once per entry, so the stamp is every
@@ -185,6 +192,7 @@ export type FrameMessage =
 	| FrameZoomMessage
 	| FrameScrollMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
+	| { spool: "generation"; frame: string; id: number; chain: PickedHit[]; hits: PickedHit[] }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; nodes: EditedNode[]; owner: string | null }
 	| { spool: "restored"; frame: string; id: number; ok: boolean }
@@ -252,6 +260,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "picked":
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
+		case "generation":
+			return Array.isArray(m.chain) && Array.isArray(m.hits) && typeof m.id === "number"
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "edit-open":
 			return typeof m.id === "number" && typeof m.ok === "boolean" && typeof m.text === "string"
 				? (m as unknown as FrameMessage)
@@ -410,22 +422,34 @@ export const captureMessage = (id: string, targetWidth: number, settleMs: number
 export const pickMessage = (x: number, y: number, id: number, selects = false) =>
 	({ spool: "pick", x, y, id, selects }) as const;
 /**
- * The keyboard half of the selection ladder (#254): the pointer names a rung
- * by where it is, and ⌘⏎ and Tab have to name one by kinship instead. An empty
+ * The keyboard's half of the selection (#254, #339): the pointer names an
+ * element by where it is, and Tab has to name one by kinship instead. An empty
  * selector stands for the boot root, so `child` off nothing is the frame's own
- * root element — the rung a descent from the frame lands on.
+ * root element. `next` and `previous` walk round the row, so the last
+ * sibling's next is the first.
  *
  * `self` is the element itself, which is how a selection survives its own edit
  * (#322): an edit moves the box the ring is drawn round, and the same selector
- * asked for again is the rung the hand was just on.
+ * asked for again is the element the hand was just on.
  *
  * The answer is a `picked` reply and nothing new: the ancestry of the kin, so
  * the canvas learns the target and the chain it now holds in one message, and
- * an empty chain is a rung that does not exist.
+ * an empty chain is an element that does not exist.
  */
 export type KinStep = "child" | "next" | "previous" | "self";
 export const kinMessage = (selector: string, step: KinStep, id: number, selects = false) =>
 	({ spool: "kin", selector, step, id, selects }) as const;
+
+/**
+ * A whole generation at once (#339): the children of a group, which Enter and
+ * a double-click select, or the siblings of an element, which ⌘A selects. An
+ * empty selector is the boot root, so the children of nothing are the frame's
+ * top-level elements. The frame answers `generation` with the ancestry of the
+ * parent they share (empty where that parent is the frame) and a hit for each.
+ */
+export type Family = "children" | "siblings";
+export const familyMessage = (selector: string, of: Family, id: number) =>
+	({ spool: "family", selector, of, id }) as const;
 
 /**
  * The in-place text edit (#255): the element's own words become the field,
