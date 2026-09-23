@@ -458,8 +458,10 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * {spool:"edited"} once Enter, Esc or a click away has ended it, carrying the
  * element's child nodes and the call site one owner up (#314), and
  * {spool:"edit-end", commit} ends one from the canvas side (#255);
- * {spool:"alter", id, selectors, act} takes the elements out of the document
- * and answers {spool:"altered"} with the call one owner up (#317);
+ * {spool:"alter", id, selectors, act, place} takes the elements out of the
+ * document, or puts the first beside the second (#340), and answers
+ * {spool:"altered"} with the call one owner up (#317) and, for a move, the
+ * moved element's new ancestry;
  * {spool:"restore", id, way, ask} puts one committed edit's words or one
  * alteration back or forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
  * moves the stamps a save shifted on their line, since the document is not
@@ -1106,12 +1108,15 @@ const canvasShimJs = `(() => {
 		try { radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch {}
 		let item = null;
 		let name = null;
+		let owner = null;
 		// a hover asks for a chain many times a second and deletes nothing, so
-		// it walks no fibers: the item context and the name label are the
-		// selection's alone
+		// it walks no fibers: the item context, the name label and the call one
+		// owner up, which a move addresses instead of a whole return (#340), are
+		// the selection's alone
 		if (selects) {
 			try { item = itemOf(el); } catch {}
 			try { name = nameOf(el); } catch {}
+			try { owner = ownerOf(el); } catch {}
 		}
 		// an inline element that wraps is drawn as one box per line, and the box
 		// around all of them is a shape it has nowhere on screen (#321)
@@ -1149,6 +1154,7 @@ const canvasShimJs = `(() => {
 			...(name === null ? {} : { name }),
 			radius,
 			...(item === null ? {} : { item }),
+			...(owner === null ? {} : { owner }),
 			...(spills.length === 0 ? {} : { spills }),
 			source,
 			generated: stamped !== el,
@@ -1497,7 +1503,7 @@ const canvasShimJs = `(() => {
 	// where it stood rather than a copy React would go on updating blind.
 	var alters = new Map();
 
-	function alterElement(id, selectors, act) {
+	function alterElement(id, selectors, act, place) {
 		const found = [];
 		for (let i = 0; i < selectors.length; i++) {
 			const one = elementFor(selectors[i]);
@@ -1507,6 +1513,19 @@ const canvasShimJs = `(() => {
 		const el = found[0];
 		if (!el) return { ok: false, owner: null };
 		const owner = ownerOf(el);
+		// a move the file has already taken (#340): the element beside its
+		// sibling, here too, so the document held in front of the reload shows
+		// the new order and the ring can follow it there
+		if (act === "move") {
+			const beside = found[1];
+			const parent = el.parentNode;
+			if (!beside || !parent || beside.parentNode !== parent) return { ok: false, owner: owner };
+			const from = el.nextSibling;
+			parent.insertBefore(el, place === "before" ? beside : beside.nextSibling);
+			alters.set(id, { kind: "moved", el: el, parent: parent, from: from, to: el.nextSibling });
+			evictOldest(alters);
+			return { ok: true, owner: owner, chain: chainOf(el, true) };
+		}
 		if (act !== "delete") return { ok: false, owner: owner };
 		// a multi-pick goes as one alteration, so undo puts every node back
 		// under one press. Taken in document order and put back in reverse,
@@ -1528,6 +1547,12 @@ const canvasShimJs = `(() => {
 	function unalter(id, way) {
 		const held = alters.get(id);
 		if (!held) return false;
+		if (held.kind === "moved") {
+			const next = way === "before" ? held.from : held.to;
+			if (!held.parent.isConnected || (next && next.parentNode !== held.parent)) return false;
+			try { held.parent.insertBefore(held.el, next); } catch { return false; }
+			return true;
+		}
 		if (way !== "before") {
 			for (let i = 0; i < held.gone.length; i++) {
 				if (held.gone[i].el.isConnected) held.gone[i].el.remove();
@@ -1896,8 +1921,8 @@ const canvasShimJs = `(() => {
 			if (event.source !== parent || event.origin !== config.controlOrigin) return;
 			if (m.spool === "alter") {
 				let answer = { ok: false, owner: null };
-				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act); } catch {}
-				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner }, "*");
+				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act, m.place); } catch {}
+				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner, ...(answer.chain ? { chain: answer.chain } : {}) }, "*");
 				return;
 			}
 			if (m.spool === "restamp") {

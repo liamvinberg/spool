@@ -116,6 +116,12 @@ export type HistoryEntry =
 			 * Absent for the one-element gestures, which `selector` says.
 			 */
 			readonly picks?: readonly string[];
+			/**
+			 * Where a moved element stands after the move (#340). A move changes
+			 * the element's place among its siblings, so the ring goes back on
+			 * `selector` for an undo and on this for a redo.
+			 */
+			readonly movedTo?: string;
 			readonly edit: number;
 			readonly patch: HeldPatch;
 			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */

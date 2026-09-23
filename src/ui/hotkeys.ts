@@ -232,7 +232,7 @@ export const HOTKEYS = [
 		id: "canvas.nudge",
 		scope: "canvas",
 		group: "Selection",
-		label: "Nudge the selection 1 px",
+		label: "Nudge the frames 1 px, or move the element held one step",
 		keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"],
 		shown: ["←↑→↓"],
 	},

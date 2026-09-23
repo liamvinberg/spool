@@ -95,6 +95,7 @@ export function SelectionOverlay({
 	onAsk,
 	marks,
 	marquee,
+	dropLine = null,
 	shellRadius,
 }: {
 	camera: Camera;
@@ -137,6 +138,8 @@ export function SelectionOverlay({
 	marks: SnapMarks;
 	/** Normalized screen-space rect while a marquee drag is live. */
 	marquee: Box | null;
+	/** Where an element being dragged would land (#340): the line between two siblings, frame-local. */
+	dropLine?: { frame: string; box: Box } | null;
 	shellRadius: number;
 }) {
 	const k = camera.k;
@@ -451,6 +454,24 @@ export function SelectionOverlay({
 								</button>
 							)}
 						</div>
+					);
+				})()}
+
+			{dropLine !== null &&
+				(() => {
+					const box = elementBox(dropLine.frame, dropLine.box);
+					if (box === undefined) return null;
+					return (
+						<div
+							data-drop-line=""
+							className="absolute rounded-full bg-thread"
+							style={{
+								left: box.x,
+								top: box.y,
+								width: Math.max(box.w, 2),
+								height: Math.max(box.h, 2),
+							}}
+						/>
 					);
 				})()}
 

@@ -29,6 +29,7 @@ import {
 	fetchEnginePreference,
 	fetchFlows,
 	fetchProjection,
+	type MoveAsk,
 	postCaptureFailure,
 	postSeen,
 	postTrash,
@@ -78,6 +79,7 @@ import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
+import { type Drop, dropAt, type Place as MovePlace, moveAsk } from "./element-move";
 import { deepest, openingOf, parentOf, wordsAsk } from "./element-selection";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
@@ -158,6 +160,7 @@ import {
 	familyMessage,
 	type KinStep,
 	kinMessage,
+	moveMessage,
 	type PickedHit,
 	parseFrameMessage,
 	pickKey,
@@ -223,6 +226,27 @@ type Gesture =
 	// click, movement promotes to a move
 	| { kind: "pending"; names: string[]; origins: Map<string, Point>; start: Point }
 	| { kind: "move"; names: string[]; origins: Map<string, Point>; start: Point }
+	// a press in Edit (#340): a clean release is a click, and a drag moves the
+	// element grabbed among its siblings, or the frame where nothing was grabbed
+	| {
+			kind: "element-pending";
+			frame: string;
+			local: Point;
+			names: string[];
+			origins: Map<string, Point>;
+			start: Point;
+	  }
+	| {
+			kind: "element-drag";
+			frame: string;
+			names: string[];
+			origins: Map<string, Point>;
+			start: Point;
+			/** the element grabbed and its row of siblings, once the frame has said */
+			grab?: { subject: PickedSelection; row: readonly PickedHit[]; at: number };
+			/** where letting go would put it */
+			drop?: Drop;
+	  }
 	// a page object's own press and drag (#265). One page rather than a set: a
 	// page is picked on its own, and nothing moves with it but itself
 	| { kind: "page-pending"; page: string; origin: Point; start: Point }
@@ -402,6 +426,8 @@ export function ProjectCanvas({
 	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
 	// the reason the last hand gesture was refused, drawn on the element it was about
 	const [refused, setRefused] = useState<ShownRefusal | null>(null);
+	// where an element being dragged would land (#340), as the line drawn there
+	const [dropLine, setDropLine] = useState<{ frame: string; box: Box } | null>(null);
 	// the in-place text edit that is open (#314), which is what hands the frame its pointer
 	const [editing, setEditing] = useState<HandEdit | null>(null);
 	// how many times the hand has saved each frame without reloading it (#314):
@@ -622,8 +648,34 @@ export function ProjectCanvas({
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/** the frame's answer to putting one edit's words back (#314) */
 	const restoreWaiters = useRef(new Map<number, (ok: boolean) => void>());
-	/** the frame's answer to a delete (#317) */
-	const alterWaiters = useRef(new Map<number, (answer: { ok: boolean; owner: string | null }) => void>());
+	/** the frame's answer to a delete (#317), and to a move with where the element went (#340) */
+	const alterWaiters = useRef(
+		new Map<number, (answer: { ok: boolean; owner: string | null; chain?: PickedHit[] }) => void>(),
+	);
+	/**
+	 * The frames the canvas has reloaded whose new document has not said
+	 * loaded yet (#340), and what waits on it: a ring put back on an element
+	 * asks the document it is in, and a document still booting answers nobody.
+	 */
+	const reloading = useRef(new Set<string>());
+	const loadWaiters = useRef(new Map<string, (() => void)[]>());
+	/**
+	 * The reorder in flight (#340). One move at a time, because the next one
+	 * is addressed by stamps only the reloaded document has; presses made
+	 * meanwhile wait their turn, each still its own write and its own step.
+	 */
+	const moveRun = useRef<{ busy: boolean; queue: (() => void)[]; timer?: ReturnType<typeof setTimeout> }>({
+		busy: false,
+		queue: [],
+	});
+	/**
+	 * Each file as the hand's last write or step left it (#340). A move
+	 * lands on a new stamp, and the selection's read of it is a round trip
+	 * behind; until it catches up this is what the next move is measured
+	 * against. Something else writing the file since makes it stale, which
+	 * is the refusal it should be.
+	 */
+	const handPrints = useRef(new Map<string, string>());
 	/** the frame's answer to a whole generation: children or siblings (#339) */
 	const generationWaiters = useRef(new Map<number, (answer: { chain: PickedHit[]; hits: PickedHit[] }) => void>());
 	// the open edit as the handlers read it, a paint earlier than the render
@@ -844,6 +896,7 @@ export function ProjectCanvas({
 			// bound, because a document that never arrives must not leave a dead
 			// one standing in front of it
 			const was = docNoncesRef.current[frame] ?? 0;
+			reloading.current.add(frame);
 			// the mirror moves now rather than at the next render, so a second
 			// reload in the same tick holds the document it actually replaced
 			docNoncesRef.current = { ...docNoncesRef.current, [frame]: was + 1 };
@@ -1926,6 +1979,7 @@ export function ProjectCanvas({
 			written: { path: string; fingerprint: string; shifts: StampShift[] | null },
 		): void => {
 			setSaves((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
+			handPrints.current.set(written.path, written.fingerprint);
 			if (written.shifts === null || !frameHeld(frame)) {
 				saved.current.delete(frame);
 				holdNext.current.add(frame);
@@ -1982,7 +2036,7 @@ export function ProjectCanvas({
 				/** the sentence for a write that never reached the daemon at all */
 				failed: string;
 				/** what this gesture's entry carries beyond the patch */
-				entry?: Pick<Extract<HistoryEntry, { kind: "hand" }>, "picks">;
+				entry?: Pick<Extract<HistoryEntry, { kind: "hand" }>, "picks" | "movedTo">;
 				/** the write landed */
 				onLanded?: () => void;
 			},
@@ -2025,11 +2079,33 @@ export function ProjectCanvas({
 		[landed, recordEntry, releaseReaders, sharedWrite],
 	);
 
+	/**
+	 * Run once the frame's document is there to ask (#340): now, or when a
+	 * reload the canvas caused has loaded. A frame with no document mounted
+	 * has nothing to wait for, and one that never loads is waited on no
+	 * longer than its held paint stands.
+	 */
+	const whenLoaded = useCallback((frame: string, then: () => void) => {
+		if (!reloading.current.has(frame) || !iframes.current.has(frame)) {
+			then();
+			return;
+		}
+		let ran = false;
+		const once = () => {
+			if (ran) return;
+			ran = true;
+			then();
+		};
+		loadWaiters.current.set(frame, [...(loadWaiters.current.get(frame) ?? []), once]);
+		setTimeout(once, HOLD_PAINT_MS);
+	}, []);
+
 	/** The DOM half of undo and redo: the frame puts one edit's words back itself, and says whether it could. */
 	const restoreWords = useCallback(
 		(frame: string, edit: number, way: "before" | "after", then: (ok: boolean) => void) => {
 			const target = iframes.current.get(frame)?.contentWindow;
-			if (target == null) {
+			// a document still booting holds no edit of the one before it (#340)
+			if (target == null || reloading.current.has(frame)) {
 				then(false);
 				return;
 			}
@@ -2072,14 +2148,18 @@ export function ProjectCanvas({
 				setPicked([]);
 				setSelected([entry.frame]);
 			};
-			const rering = () => {
-				const held = entry.picks;
-				if (held !== undefined && held.length > 1) {
-					repickRef.current(entry.frame, held, lost);
-					return;
-				}
-				walkKinRef.current(entry.frame, entry.selector, "self", lost);
-			};
+			const rering = () =>
+				whenLoaded(entry.frame, () => {
+					const held = entry.picks;
+					if (held !== undefined && held.length > 1) {
+						repickRef.current(entry.frame, held, lost);
+						return;
+					}
+					// a move's element stands where the step left it: back where it
+					// was for an undo, where it went for a redo (#340)
+					const selector = way === "redo" && entry.movedTo !== undefined ? entry.movedTo : entry.selector;
+					walkKinRef.current(entry.frame, selector, "self", lost);
+				});
 			const readers = entry.frames ?? [];
 			holdReaders(entry.frame, readers);
 			void revertPatch(project, entry.patch).then((reverted) => {
@@ -2113,7 +2193,17 @@ export function ProjectCanvas({
 				restoreWords(entry.frame, entry.edit, way === "undo" ? "before" : "after", held);
 			});
 		},
-		[holdChain, holdReaders, landed, project, releaseReaders, reloadFrameDocument, restoreWords, updateHistory],
+		[
+			holdChain,
+			holdReaders,
+			landed,
+			project,
+			releaseReaders,
+			reloadFrameDocument,
+			restoreWords,
+			updateHistory,
+			whenLoaded,
+		],
 	);
 
 	/**
@@ -2916,6 +3006,295 @@ export function ProjectCanvas({
 		[alterElement, fingerprintFor, showRefusal],
 	);
 
+	// --- move (#340) --------------------------------------------------------------
+
+	/** The next move waiting its turn, once the one before it has settled. */
+	const nextMove = useCallback(() => {
+		const run = moveRun.current;
+		clearTimeout(run.timer);
+		run.busy = false;
+		run.queue.shift()?.();
+	}, []);
+	/** A move has begun: later ones wait, and a document that never answers holds none of them for long. */
+	const claimMove = useCallback(() => {
+		const run = moveRun.current;
+		run.busy = true;
+		clearTimeout(run.timer);
+		run.timer = setTimeout(nextMove, HOLD_PAINT_MS);
+	}, [nextMove]);
+
+	/**
+	 * One move, in the file and then in the document (#340).
+	 *
+	 * The file goes first, because only the planner knows whether the sibling
+	 * on screen is one the file writes beside it; a refusal leaves the page
+	 * untouched and sits under the element. Once the file has taken it the
+	 * frame moves the very node, so the document held in front of the reload
+	 * already shows the new order, and the ring follows the element there. The
+	 * reload behind it is what puts the stamps right, and the ring is read off
+	 * the new document once it has loaded.
+	 *
+	 * A row of a list moves as its entry in the array. An element that is the
+	 * whole of what a component returns carries the call that renders it, and
+	 * the lane moves the call.
+	 */
+	const moveBeside = useCallback(
+		(subject: PickedSelection, beside: PickedHit, place: MovePlace) => {
+			const frame = subject.frame;
+			claimMove();
+			const asked = moveAsk(subject.tag, place, beside.tag);
+			const refuse = (refusal: Refusal) => {
+				nextMove();
+				// the file moved under the last move's answer, so it says nothing now
+				if (refusal.code === "stale-file") handPrints.current.clear();
+				const file =
+					refusal.line === undefined || typeof stampOf(subject) !== "string"
+						? undefined
+						: { path: `design/${(subject.source ?? "").replace(/:\d+:\d+$/, "")}`, line: refusal.line };
+				showRefusal({
+					frame,
+					selector: subject.selector,
+					refusal,
+					asked,
+					...(file === undefined ? {} : { file }),
+				});
+			};
+			const stamp = stampOf(subject);
+			if (typeof stamp !== "string") {
+				refuse(stamp);
+				return;
+			}
+			/** the file a stamp is in, as it was when the selection read it or the last move left it */
+			const printOf = (stamped: string): string | undefined => {
+				const read = heldReadRef.current;
+				if (read?.source === stamped) return read.fingerprint;
+				return (
+					handPrints.current.get(`design/${stamped.replace(/:\d+:\d+$/, "")}`) ?? fingerprintFor(frame, stamped)
+				);
+			};
+			const fingerprint = printOf(stamp);
+			if (fingerprint === undefined) {
+				refuse({ code: "unread", says: "the file was never read; select the element again" });
+				return;
+			}
+			let ask: MoveAsk;
+			const row =
+				subject.item !== undefined && subject.item.selector === subject.selector ? subject.item : undefined;
+			if (row !== undefined) {
+				if (beside.item === undefined || beside.item.map !== row.map) {
+					refuse({ code: "not-siblings", says: "the one next to it is not a row of this list; ask the agent" });
+					return;
+				}
+				const rowPrint = printOf(row.map);
+				if (rowPrint === undefined) {
+					refuse({ code: "unread", says: "the file was never read; select the element again" });
+					return;
+				}
+				ask = {
+					act: "move",
+					sources: [stamp],
+					fingerprint,
+					place,
+					item: { source: row.map, index: row.index, target: beside.item.index, fingerprint: rowPrint },
+				};
+			} else {
+				const target = stampOf({ frame, ...beside });
+				if (typeof target !== "string") {
+					refuse(target);
+					return;
+				}
+				const ownerPrint = subject.owner === undefined ? undefined : printOf(subject.owner);
+				ask = {
+					act: "move",
+					sources: [stamp],
+					fingerprint,
+					place,
+					target: { source: target, ...(beside.owner === undefined ? {} : { owner: beside.owner }) },
+					...(subject.owner === undefined || ownerPrint === undefined
+						? {}
+						: { owner: { source: subject.owner, fingerprint: ownerPrint } }),
+				};
+			}
+			setRefused(null);
+			const read = heldReadRef.current;
+			const readers = read?.source === stamp ? (read.shared?.frames ?? []) : [];
+			holdReaders(frame, readers);
+			const id = ++pickSeq.current;
+			void writeElement(project, frame, ask).then((written) => {
+				const settle = (movedTo: string | undefined, chain: PickedHit[] | undefined) =>
+					settled(written, {
+						frame,
+						selector: subject.selector,
+						readers,
+						edit: id,
+						readAt: () => stamp,
+						refuse,
+						failed: "the move did not reach the file",
+						...(movedTo === undefined ? {} : { entry: { movedTo } }),
+						onLanded: () => {
+							const moved = chain?.[chain.length - 1];
+							if (chain === undefined || moved === undefined) {
+								holdFrame(frame);
+								whenLoaded(frame, nextMove);
+								return;
+							}
+							// the ring stays on the element where it went, and is read
+							// again off the reloaded document, stamps and all
+							holdChain({ frame, chain });
+							setSelected([]);
+							setPicked([{ frame, ...moved }]);
+							whenLoaded(frame, () => {
+								walkKin(frame, moved.selector, "self", () => holdFrame(frame));
+								nextMove();
+							});
+						},
+					});
+				if (written?.ok !== true) {
+					settle(undefined, undefined);
+					return;
+				}
+				// the element already stood there as the file has it: no step
+				if (wroteNothing(written.undo)) {
+					releaseReaders(frame, readers);
+					nextMove();
+					return;
+				}
+				const target = iframes.current.get(frame)?.contentWindow;
+				if (target == null) {
+					settle(undefined, undefined);
+					return;
+				}
+				alterWaiters.current.set(id, ({ ok, chain }) => {
+					const moved = ok ? chain?.[chain.length - 1] : undefined;
+					settle(moved?.selector, ok ? chain : undefined);
+				});
+				target.postMessage(moveMessage(id, subject.selector, beside.selector, place), "*");
+				setTimeout(() => {
+					if (alterWaiters.current.delete(id)) settle(undefined, undefined);
+				}, PICK_REPLY_MS);
+			});
+		},
+		[
+			claimMove,
+			fingerprintFor,
+			holdChain,
+			holdFrame,
+			holdReaders,
+			nextMove,
+			project,
+			releaseReaders,
+			settled,
+			showRefusal,
+			walkKin,
+			whenLoaded,
+		],
+	);
+
+	/**
+	 * The arrow keys on a held element (#340): one step among its siblings,
+	 * earlier for ↑ and ←, later for ↓ and →. The frame names the siblings as
+	 * they stand now; the end of the row is as far as a step goes. Each press
+	 * is one write and one step of undo, and a press made while a move is
+	 * still settling waits its turn.
+	 */
+	const moveStep = useCallback(
+		(step: -1 | 1): boolean => {
+			if (enteredRef.current !== null || editingRef.current !== null) return false;
+			const picks = pickedRef.current;
+			const first = picks[0];
+			if (first === undefined) return false;
+			const run = moveRun.current;
+			if (run.busy) {
+				if (run.queue.length < 8) run.queue.push(() => moveStepRef.current(step));
+				return true;
+			}
+			if (picks.length > 1) {
+				showRefusal({
+					frame: first.frame,
+					selector: first.selector,
+					refusal: { code: "several", says: "move one element at a time" },
+					asked: `Move ${picks.length} elements`,
+				});
+				return true;
+			}
+			claimMove();
+			askFrame(
+				first.frame,
+				generationWaiters.current,
+				(id) => familyMessage(first.selector, "siblings", id),
+				({ hits }) => {
+					const at = hits.findIndex((hit) => hit.selector === first.selector);
+					const own = hits[at];
+					const beside = hits[at + step];
+					// the end of the row: there is nowhere further to go
+					if (own === undefined || beside === undefined) {
+						nextMove();
+						return;
+					}
+					moveBeside({ frame: first.frame, ...own }, beside, step > 0 ? "after" : "before");
+				},
+				nextMove,
+			);
+			return true;
+		},
+		[askFrame, claimMove, moveBeside, nextMove, showRefusal],
+	);
+	const moveStepRef = useRef(moveStep);
+	moveStepRef.current = moveStep;
+
+	/**
+	 * A drag in Edit has crossed the threshold (#340): the element grabbed is
+	 * the deepest one under the press, or the row of a list it is inside,
+	 * because a drag that starts in a row moves the row. It is held, and the
+	 * frame names its siblings and where each is drawn, which is what the drop
+	 * is worked out against. A press on the frame's background grabbed no
+	 * element, and the drag moves the frame as it always has.
+	 */
+	const beginGrab = useCallback(
+		(frame: string, local: Point) => {
+			beginPick(
+				frame,
+				local,
+				(chain) => {
+					const active = gesture.current;
+					if (active.kind !== "element-drag") return;
+					const target = deepest(chain);
+					if (target === undefined) {
+						cancelPicks();
+						setSelected(active.names);
+						setPicked([]);
+						gesture.current = { kind: "move", names: active.names, origins: active.origins, start: active.start };
+						return;
+					}
+					const rowAt =
+						target.item === undefined ? -1 : chain.findIndex((hit) => hit.selector === target.item?.selector);
+					const held = rowAt === -1 ? chain : chain.slice(0, rowAt + 1);
+					const subject = held[held.length - 1] ?? target;
+					applyPick(frame, held, subject);
+					askFrame(
+						frame,
+						generationWaiters.current,
+						(id) => familyMessage(subject.selector, "siblings", id),
+						({ hits }) => {
+							const now = gesture.current;
+							if (now.kind !== "element-drag") return;
+							const at = hits.findIndex((hit) => hit.selector === subject.selector);
+							if (at === -1) return;
+							gesture.current = {
+								...now,
+								grab: { subject: { frame, ...(hits[at] ?? subject) }, row: hits, at },
+							};
+						},
+					);
+				},
+				() => {
+					if (gesture.current.kind === "element-drag") gesture.current = { kind: "idle" };
+				},
+			);
+		},
+		[applyPick, askFrame, beginPick, cancelPicks],
+	);
+
 	// A refusal is about the element it was refused on, so it goes when the
 	// selection moves rather than sitting over whatever comes next. The keys
 	// rather than the array: a click on the element already held re-picks it
@@ -3338,6 +3717,11 @@ export function ProjectCanvas({
 				}
 				case "loaded": {
 					lifecycleRef.current.noteLoaded(message.frame);
+					// what waited on this document being there can ask it now (#340)
+					reloading.current.delete(message.frame);
+					const waiting = loadWaiters.current.get(message.frame) ?? [];
+					loadWaiters.current.delete(message.frame);
+					for (const then of waiting) then();
 					// a completed boot retires its walk cover — later reboots are honest
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
 					// the keyboard follows the walk: an entered frame owns it (#28)
@@ -3454,7 +3838,11 @@ export function ProjectCanvas({
 				case "altered": {
 					const waiter = alterWaiters.current.get(message.id);
 					alterWaiters.current.delete(message.id);
-					waiter?.({ ok: message.ok, owner: message.owner });
+					waiter?.({
+						ok: message.ok,
+						owner: message.owner,
+						...(message.chain === undefined ? {} : { chain: message.chain }),
+					});
 					return;
 				}
 				case "site-boxes": {
@@ -3854,6 +4242,7 @@ export function ProjectCanvas({
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
 		dropResize();
+		setDropLine(null);
 		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
@@ -4031,9 +4420,8 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// In Edit every click is the deepest element under the pointer (#339).
-		// It can still promote to a frame move once the pointer crosses the drag
-		// threshold.
+		// In Edit every click is the deepest element under the pointer (#339),
+		// and a drag moves that element among its siblings (#340).
 		if (toolRef.current === "edit" && label === null) {
 			const local = frameLocalAt(hit, world);
 			// a press on the element that was already held is the second click
@@ -4045,7 +4433,10 @@ export function ProjectCanvas({
 				selectDeepestAt(hit, local);
 			}
 			const names = selectedRef.current.includes(hit) ? [...selectedRef.current] : [hit];
-			gesture.current = { kind: "pending", names, origins: originsOf(names), start: p };
+			gesture.current =
+				local === null
+					? { kind: "pending", names, origins: originsOf(names), start: p }
+					: { kind: "element-pending", frame: hit, local, names, origins: originsOf(names), start: p };
 			return;
 		}
 
@@ -4110,6 +4501,36 @@ export function ProjectCanvas({
 			setPicked([]);
 			gesture.current = { kind: "move", names: active.names, origins: active.origins, start: active.start };
 			onPointerMove(event);
+			return;
+		}
+
+		if (active.kind === "element-pending") {
+			if (Math.hypot(p.x - active.start.x, p.y - active.start.y) < DRAG_THRESHOLD_PX) return;
+			// a drag is not the second click on what was held
+			pressOnHeld.current = null;
+			gesture.current = {
+				kind: "element-drag",
+				frame: active.frame,
+				names: active.names,
+				origins: active.origins,
+				start: active.start,
+			};
+			beginGrab(active.frame, active.local);
+			return;
+		}
+
+		if (active.kind === "element-drag") {
+			const grab = active.grab;
+			const local = frameLocalAt(active.frame, toWorld(p, cam));
+			if (grab === undefined || local === null) return;
+			const drop = dropAt(
+				grab.row.map((hit) => hit.rect),
+				grab.at,
+				local,
+			);
+			const { drop: _was, ...rest } = active;
+			gesture.current = drop === undefined ? rest : { ...rest, drop };
+			setDropLine(drop === undefined ? null : { frame: active.frame, box: drop.line });
 			return;
 		}
 
@@ -4276,10 +4697,19 @@ export function ProjectCanvas({
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
+		if (active.kind === "element-drag") {
+			setDropLine(null);
+			const beside = active.drop === undefined ? undefined : active.grab?.row[active.drop.beside];
+			if (active.grab !== undefined && active.drop !== undefined && beside !== undefined) {
+				moveBeside(active.grab.subject, beside, active.drop.place);
+			}
+		}
 		// the press never became a drag, so the second click meant the words (#255)
 		const again = pressOnHeld.current;
 		pressOnHeld.current = null;
-		if (active.kind === "pending" && again !== null) beginTextEdit(again.pick, again.local);
+		if ((active.kind === "pending" || active.kind === "element-pending") && again !== null) {
+			beginTextEdit(again.pick, again.local);
+		}
 	};
 
 	/**
@@ -4476,6 +4906,12 @@ export function ProjectCanvas({
 		};
 		const nudgeArrow = (event: KeyboardEvent | undefined, step: number) => {
 			if (event === undefined) return;
+			// a held element moves one step among its siblings instead (#340)
+			if (selectedRef.current.length === 0 && pickedRef.current.length > 0) {
+				const earlier = event.key === "ArrowUp" || event.key === "ArrowLeft";
+				if (moveStep(earlier ? -1 : 1)) event.preventDefault();
+				return;
+			}
 			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
 			event.preventDefault();
 			const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
@@ -4725,6 +5161,7 @@ export function ProjectCanvas({
 		resetZoom,
 		animateCamera,
 		deleteElement,
+		moveStep,
 		exitEntered,
 		enterFrame,
 		nudge,
@@ -5094,6 +5531,7 @@ export function ProjectCanvas({
 							onOpenFile={(path, line) => copySourcePath(`${path}:${line}`)}
 							marks={marks}
 							marquee={marquee}
+							dropLine={dropLine}
 							shellRadius={shellRadius}
 						/>
 						{/* the agent's hand (#214), in the same screen space as the furniture

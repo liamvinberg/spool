@@ -60,6 +60,13 @@ export interface PickedHit {
 	 */
 	item?: { map: string; index: number; selector: string };
 	/**
+	 * The call one owner up (#340): the stamp of the call that rendered the
+	 * nearest component above the element. A move of an element that is the
+	 * whole of what a component returns moves this call instead, because the
+	 * call is what its parent writes. Present only where a selection asked.
+	 */
+	owner?: string;
+	/**
 	 * The sides what is in the element runs past the box it is in (#324).
 	 *
 	 * A width written under the content's own min-content width leaves the
@@ -196,7 +203,7 @@ export type FrameMessage =
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; nodes: EditedNode[]; owner: string | null }
 	| { spool: "restored"; frame: string; id: number; ok: boolean }
-	| { spool: "altered"; frame: string; id: number; ok: boolean; owner: string | null }
+	| { spool: "altered"; frame: string; id: number; ok: boolean; owner: string | null; chain?: PickedHit[] }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| { spool: "external"; frame: string; href: string }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord; id?: number }
@@ -280,7 +287,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "altered":
 			return typeof m.id === "number" &&
 				typeof m.ok === "boolean" &&
-				(m.owner === null || typeof m.owner === "string")
+				(m.owner === null || typeof m.owner === "string") &&
+				(m.chain === undefined || Array.isArray(m.chain))
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "site-boxes":
@@ -489,6 +497,15 @@ export const alterMessage = (
 	selectors: readonly string[],
 	act: "delete",
 ) => ({ spool: "alter", id, selectors, act }) as const;
+
+/**
+ * A move the file has taken, in the document (#340): the first element put
+ * before or after the second, its sibling. The frame answers `altered` with
+ * the moved element's new ancestry, so the ring follows it, and the move is
+ * held under its id like a delete so undo can put the very node back.
+ */
+export const moveMessage = (id: number, moved: string, beside: string, place: "before" | "after") =>
+	({ spool: "alter", id, selectors: [moved, beside], act: "move", place }) as const;
 
 /** How a save moved the stamps on its line, for a document that is not reloaded for it (#314). */
 export const restampMessage = (file: string, shifts: readonly { line: number; column: number; delta: number }[]) =>
