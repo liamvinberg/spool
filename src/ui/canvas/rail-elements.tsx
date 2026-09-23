@@ -154,6 +154,7 @@ export function useElementTree(input: ElementTreeInput): ElementTree {
 			frame: target,
 			height: Math.min(treeHeight(rows), TREE_MOST),
 			open: editOn,
+			held: mine.size > 0,
 			content: (
 				<TreeRows
 					rows={rows}

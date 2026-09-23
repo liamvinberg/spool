@@ -231,6 +231,8 @@ export interface RailUnder {
 	readonly frame: string;
 	readonly height: number;
 	readonly open: boolean;
+	/** one of the frame's elements is held, which lights the frame's row */
+	readonly held: boolean;
 	readonly content: ReactNode;
 }
 
@@ -397,6 +399,8 @@ export function CanvasSidebar({
 
 	const belowFrame = under?.open === true ? under.frame : null;
 	const belowHeight = under?.open === true ? under.height : 0;
+	/** the frame whose element is held stays lit, the way a selected frame is */
+	const holding = under?.open === true && under.held ? under.frame : null;
 	const rows = useMemo(
 		() =>
 			railRows(
@@ -1678,6 +1682,7 @@ export function CanvasSidebar({
 										activePage={activePage}
 										litPage={litPage}
 										selected={row.kind === "frame" && selected.includes(row.name)}
+										holding={row.kind === "frame" && row.name === holding}
 										mark={
 											row.kind === "frame"
 												? unseen.get(row.name)
@@ -1933,6 +1938,7 @@ function TreeRow({
 	activePage,
 	litPage,
 	selected,
+	holding,
 	mark,
 	cursored,
 	lifted,
@@ -1951,6 +1957,8 @@ function TreeRow({
 	activePage: string;
 	litPage: string | null;
 	selected: boolean;
+	/** one of this frame's elements is held: lit as if selected, without being so */
+	holding: boolean;
 	/** nobody has looked at this frame, or at something inside this shut page */
 	mark: Unseen | undefined;
 	cursored: boolean;
@@ -1972,6 +1980,7 @@ function TreeRow({
 		row.kind === "page" ? { kind: "page", page: row.page } : { kind: "frame", name: row.name };
 	const active = row.kind === "page" && row.page === activePage;
 	const lit = row.kind === "page" && row.page === litPage;
+	const chosen = selected || holding;
 
 	return (
 		<RowShell row={row} lifted={lifted}>
@@ -1989,8 +1998,8 @@ function TreeRow({
 				data-page-lit={lit ? "" : undefined}
 				className={cn(
 					"group/row relative flex h-full items-center pr-1.5",
-					(selected || active || cursored || lit) && "bg-surface",
-					!selected && !active && !cursored && !into && "hover:bg-surface/60",
+					(chosen || active || cursored || lit) && "bg-surface",
+					!chosen && !active && !cursored && !into && "hover:bg-surface/60",
 					into && "-outline-offset-1 outline-1 outline-thread/70",
 				)}
 				// a page's own rows step in one INDENT per level; a frame's spine and
@@ -2091,7 +2100,7 @@ function TreeRow({
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
 								<FrameIcon
-									className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread-strong" : "text-muted")}
+									className={cn("h-3.5 w-3.5 shrink-0", chosen ? "text-thread-strong" : "text-muted")}
 								/>
 								<span
 									className={cn(
@@ -2099,7 +2108,7 @@ function TreeRow({
 										// its tail takes the last stretch of it with it
 										"min-w-0 flex-1 truncate type-value",
 										"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
-										selected || cursored || mark !== undefined ? "text-text" : "text-muted",
+										chosen || cursored || mark !== undefined ? "text-text" : "text-muted",
 									)}
 								>
 									{label}

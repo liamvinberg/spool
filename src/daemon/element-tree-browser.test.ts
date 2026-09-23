@@ -171,6 +171,7 @@ it("keeps a long tree to its own scroll, and scrolls the held row into view insi
 		return all.length === 0 ? "nothing" : all.map((one) => one.selector ?? one.kind).join(", ");
 	};
 	const rail = page.locator("aside").first();
+	const frameRow = rail.locator('button[aria-label="grid frame"]').locator('xpath=ancestor::*[@role="treeitem"][1]');
 	const box = rail.locator("[data-element-tree]");
 	const last = rail.locator('[data-element-row="main > p:nth-of-type(48)"]');
 
@@ -196,4 +197,7 @@ it("keeps a long tree to its own scroll, and scrolls the held row into view insi
 			}),
 		)
 		.toBe(true);
+	// and the frame's row is lit while one of its elements is held
+	expect(await frameRow.getAttribute("class")).toContain("bg-surface");
+	expect(await rail.locator('button[aria-label="grid frame"]').getAttribute("aria-pressed")).toBe("false");
 });

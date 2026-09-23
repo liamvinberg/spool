@@ -135,7 +135,7 @@ describe("page tree", () => {
 		const shopTop = (host: HTMLElement) =>
 			host.querySelector('button[aria-label="shop page"]')?.closest<HTMLElement>(".absolute")?.style.transform;
 		const { host, rerender } = await render({
-			under: { frame: "shop/checkout", height: 72, open: true, content: tree },
+			under: { frame: "shop/checkout", height: 72, open: true, held: false, content: tree },
 		});
 		// the frame's page opens so its row is there to open under
 		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
@@ -143,11 +143,11 @@ describe("page tree", () => {
 		expect(room?.style.height).toBe("72px");
 		expect(room?.hasAttribute("inert")).toBe(false);
 
-		await rerender({ under: { frame: "home", height: 72, open: true, content: tree } });
+		await rerender({ under: { frame: "home", height: 72, open: true, held: false, content: tree } });
 		// the rows after it move down by the room it takes
 		expect(shopTop(host)).toBe("translateY(100px)");
 
-		await rerender({ under: { frame: "home", height: 72, open: false, content: tree } });
+		await rerender({ under: { frame: "home", height: 72, open: false, held: false, content: tree } });
 		expect(shopTop(host)).toBe("translateY(28px)");
 		const folded = host.querySelector("#element-tree")?.parentElement?.parentElement;
 		expect(folded?.style.height).toBe("0px");
@@ -157,16 +157,33 @@ describe("page tree", () => {
 		expect(host.querySelector("#element-tree")).toBeNull();
 	});
 
+	it("lights a frame's row while one of its elements is held, without selecting the frame (#342)", async () => {
+		const tree = createElement("p", { id: "element-tree" }, "<main>");
+		const row = (host: HTMLElement) => host.querySelector('button[aria-label="home frame"]');
+		const { host, rerender } = await render({
+			under: { frame: "home", height: 72, open: true, held: false, content: tree },
+		});
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface")).toBe(false);
+
+		await rerender({ under: { frame: "home", height: 72, open: true, held: true, content: tree } });
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface")).toBe(true);
+		expect(row(host)?.getAttribute("aria-pressed")).toBe("false");
+
+		// folding with Edit put down, the row goes back to how Select draws it
+		await rerender({ under: { frame: "home", height: 72, open: false, held: true, content: tree } });
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface")).toBe(false);
+	});
+
 	it("shuts a page the tree opened once the tree has folded away, so Edit on and off leaves the rail as it was (#342)", async () => {
 		const tree = createElement("p", { id: "element-tree" }, "<main>");
 		const checkout = (host: HTMLElement) => host.querySelector('button[aria-label="checkout frame"]');
 		const { host, rerender } = await render();
 		expect(checkout(host)).toBeNull();
 
-		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, content: tree } });
+		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, held: false, content: tree } });
 		expect(checkout(host)).not.toBeNull();
 		// still open while the room folds, so the fold is seen under its row
-		await rerender({ under: { frame: "shop/checkout", height: 72, open: false, content: tree } });
+		await rerender({ under: { frame: "shop/checkout", height: 72, open: false, held: false, content: tree } });
 		expect(checkout(host)).not.toBeNull();
 
 		await rerender({ under: null });
@@ -178,11 +195,14 @@ describe("page tree", () => {
 		const tree = createElement("p", { id: "element-tree" }, "<main>");
 		const checkout = (host: HTMLElement) => host.querySelector('button[aria-label="checkout frame"]');
 		const { host, rerender } = await render();
-		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, content: tree } });
+		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, held: false, content: tree } });
 		await rerender({ under: null, selected: ["shop/checkout"] });
 		expect(checkout(host)).not.toBeNull();
 
-		await rerender({ under: { frame: "shop/checkout", height: 72, open: true, content: tree }, selected: [] });
+		await rerender({
+			under: { frame: "shop/checkout", height: 72, open: true, held: false, content: tree },
+			selected: [],
+		});
 		await rerender({ under: null, selected: [] });
 		expect(checkout(host)).not.toBeNull();
 	});
