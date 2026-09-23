@@ -4881,24 +4881,36 @@ export function ProjectCanvas({
 		// a page is held on its own, and the selection never holds both (#265)
 		const page = pageObjects.find((object) => object.page === selectedPage);
 		if (page !== undefined) return { kind: "page", page: page.page, name: page.name, count: page.count };
+		/** a frame's own box, which is what the rail shows for it and for what is in it */
+		const geometryOf = (name: string): Geometry | null => {
+			const found = frames.find((frame) => frame.name === name);
+			return found === undefined ? null : { x: found.x, y: found.y, w: found.w, h: found.h };
+		};
 		if (picked.length > 1) {
 			// one frame's picks read and write as one gesture (#323); spread over
 			// two they are a count and nothing else
 			const frame = picked[0]?.frame ?? "";
 			const one = picked.every((pick) => pick.frame === frame);
-			return { kind: "elements", count: picked.length, frame: one ? frame : null, picks: one ? picked : [] };
+			return {
+				kind: "elements",
+				count: picked.length,
+				frame: one ? frame : null,
+				geometry: one ? geometryOf(frame) : null,
+				picks: one ? picked : [],
+			};
 		}
 		const rung = picked[0];
 		if (rung !== undefined) {
 			const chain = chainDrawn?.frame === rung.frame ? chainDrawn.chain : [rung];
-			return { kind: "element", frame: rung.frame, chain, selector: rung.selector };
+			const geometry = geometryOf(rung.frame);
+			return geometry === null
+				? null
+				: { kind: "element", frame: rung.frame, geometry, chain, selector: rung.selector };
 		}
 		if (selected.length > 1) return { kind: "frames", count: selected.length };
 		const name = selected[0];
-		const only = name === undefined ? undefined : frames.find((frame) => frame.name === name);
-		return only === undefined
-			? null
-			: { kind: "frame", name: only.name, geometry: { x: only.x, y: only.y, w: only.w, h: only.h } };
+		const geometry = name === undefined ? null : geometryOf(name);
+		return name === undefined || geometry === null ? null : { kind: "frame", name, geometry };
 	})();
 	const railFrame =
 		railHeld?.kind === "element"

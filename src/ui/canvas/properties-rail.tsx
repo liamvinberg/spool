@@ -18,9 +18,11 @@ import { PanelCaret } from "./sidebar";
  * head's caret shuts the column.
  *
  * What it says about a frame is the frame's own geometry, which is
- * `frame.json` and never source. What it says about an element is where it
- * sits: the crumbs, read off the file rather than off the document, so a
- * crumb says the name the author wrote.
+ * `frame.json` and never source. An element says the same about the frame it
+ * is in, and where it sits in it: the crumbs, read off the file rather than off
+ * the document, so a crumb says the name the author wrote. Nothing about the
+ * element itself is set here — its words are typed on the canvas, and the
+ * rest is the agent's.
  */
 
 /** the smallest a frame may be dragged or typed to, which is the canvas's own floor */
@@ -40,16 +42,30 @@ export type Held =
 	// is its folder, its place is the drag, and its size is derived from what is
 	// inside it — so what the rail can say is what it is and how much is in it
 	| { kind: "page"; page: string; name: string; count: number }
-	| { kind: "element"; frame: string; chain: readonly PickedHit[]; selector: string }
+	| {
+			kind: "element";
+			frame: string;
+			/** the frame the element is in, whose own fields the rail shows */
+			geometry: Geometry;
+			chain: readonly PickedHit[];
+			selector: string;
+	  }
 	/**
 	 * Several elements held at once (#323).
 	 *
 	 * Their stamps are read together, which is where a delete of all of them
 	 * finds the file it is measured against — and it is one frame's, because a
 	 * selection spread over two is two writes. `picks` is empty where they are
-	 * spread, which is the count and nothing else.
+	 * spread, which is the count and nothing else; where they are one frame's,
+	 * the rail shows that frame's own fields.
 	 */
-	| { kind: "elements"; count: number; frame: string | null; picks: readonly PickedHit[] };
+	| {
+			kind: "elements";
+			count: number;
+			frame: string | null;
+			geometry: Geometry | null;
+			picks: readonly PickedHit[];
+	  };
 
 export interface PropertiesActs {
 	onAsk?: () => void;
@@ -197,9 +213,13 @@ function Body({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 	if (held === null) return <Empty says="select an element" />;
 	if (held.kind === "frames") return <Empty says={`${held.count} frames`} />;
 	if (held.kind === "page") return <PageFacts held={held} />;
-	if (held.kind === "frame")
-		return <FrameGeometry key={held.name} name={held.name} geometry={held.geometry} acts={acts} />;
-	return null;
+	// an element, or several in one frame, shows the frame it is in (#338):
+	// that frame's own geometry is all the rail sets
+	const name = held.kind === "frame" ? held.name : held.frame;
+	const geometry = held.geometry;
+	if (name === null || geometry === null)
+		return <Empty says={`${held.kind === "elements" ? held.count : 1} elements`} />;
+	return <FrameGeometry key={name} name={name} geometry={geometry} acts={acts} />;
 }
 
 function Empty({ says }: { says: string }) {
