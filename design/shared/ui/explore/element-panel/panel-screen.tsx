@@ -33,7 +33,7 @@ import { SpoolShell } from "shared/ui/spool/shell";
 export type Take = "path" | "outline" | "tree" | "source" | "lean" | "foot";
 export type Pick = "words" | "group" | "row" | "component" | "frame";
 /** where the tree stands: under the details in one panel, or somewhere of its own */
-export type Layout = "panel" | "dock" | "left" | "float" | "summon" | "columns";
+export type Layout = "panel" | "dock" | "left" | "float" | "summon" | "columns" | "rail";
 
 /** where each state's selection starts */
 const PICKS: Record<Exclude<Pick, "frame">, string> = {
@@ -55,7 +55,22 @@ const K_PANEL = 0.56;
 /** what the hand holds: an element, the frame itself, or nothing */
 type Held = Element | "frame" | null;
 
-export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Take; pick: Pick; layout?: Layout }) {
+export function ElementPanelScreen({
+	take,
+	pick,
+	layout = "panel",
+	start = "edit",
+}: {
+	take: Take;
+	pick: Pick;
+	layout?: Layout;
+	/** the tool the frame opens on; `rail` folds its tree away under Select */
+	start?: "edit" | "select";
+}) {
+	const [tool, setTool] = useState<"edit" | "select">(start);
+	/** a refusal, said on the element it was about, and gone after a moment */
+	const [refusal, setRefusal] = useState<{ el: Element; says: string } | null>(null);
+	const undos = useRef<(() => void)[]>([]);
 	// the frame gives up room to a tree standing beside or under it
 	const K = layout === "float" ? 0.4 : layout === "columns" ? 0.44 : K_PANEL;
 	const lean = take === "lean" || take === "foot" || layout !== "panel";
@@ -141,6 +156,13 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 	}, [editing]);
 
 	useEffect(() => {
+		if (refusal === null) return;
+		const timer = setTimeout(() => setRefusal(null), 4000);
+		return () => clearTimeout(timer);
+	}, [refusal]);
+	useEffect(() => setRefusal(null), [held]);
+
+	useEffect(() => {
 		if (saved === null) return;
 		const timer = setTimeout(() => setSaved(null), 2200);
 		return () => clearTimeout(timer);
@@ -158,6 +180,66 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 				return;
 			}
 			const root = doc.current;
+			if (layout === "rail") {
+				const key = event.key.toLowerCase();
+				if (key === "e" && !event.metaKey) {
+					setTool("edit");
+					return;
+				}
+				if (key === "v" && !event.metaKey) {
+					setTool("select");
+					setHeld("frame");
+					return;
+				}
+				if (key === "z" && event.metaKey) {
+					event.preventDefault();
+					undos.current.pop()?.();
+					redraw();
+					return;
+				}
+				if (tool === "select") return;
+				if (held instanceof Element && root !== null) {
+					const now = readElement(held, root);
+					const refuse = (what: string, says: string) =>
+						setRefusal({ el: held, says: `Can’t ${what}: ${says.replace(/;? ?(edit it in code or )?ask the agent$/, "")}.` });
+					if (event.key === "Backspace" || event.key === "Delete") {
+						event.preventDefault();
+						if (!now.remove.ok) return refuse("delete", now.remove.says);
+						const el = held as HTMLElement;
+						const up = parentOf(el, root);
+						el.style.display = "none";
+						undos.current.push(() => {
+							el.style.display = "";
+							select(el);
+						});
+						setSaved(`removed · ${now.remove.where ?? ""} · ⌘Z undoes`);
+						select(up ?? "frame");
+						return;
+					}
+					if (event.key.startsWith("Arrow")) {
+						event.preventDefault();
+						if (!now.move.ok) return refuse("move", now.move.says);
+						const back = event.key === "ArrowUp" || event.key === "ArrowLeft";
+						const parent = held.parentElement;
+						const other = back ? held.previousElementSibling : held.nextElementSibling;
+						if (parent === null || other === null) return;
+						const was = held.nextElementSibling;
+						parent.insertBefore(held, back ? other : other.nextElementSibling);
+						const el = held;
+						undos.current.push(() => {
+							parent.insertBefore(el, was);
+							select(el);
+						});
+						setSaved(`moved · ${fileName(now.stamp?.file ?? "")} · ⌘Z undoes`);
+						redraw();
+						return;
+					}
+					if (event.key === "Enter" && !event.shiftKey && now.text !== null && !now.text.ok) {
+						event.preventDefault();
+						return refuse("edit the words", now.text.says);
+					}
+				}
+			}
 			if (layout === "summon" && (event.key === "l" || event.key === "L")) {
 				setSummoned((on) => !on);
 				return;
@@ -195,7 +277,7 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 		};
 		window.addEventListener("keydown", down);
 		return () => window.removeEventListener("keydown", down);
-	}, [held, select, editing, finish, begin, canType, lean, layout, summoned]);
+	}, [held, select, editing, finish, begin, canType, lean, layout, summoned, tool, redraw]);
 
 	const hitAt = (x: number, y: number): Element | null => {
 		const root = doc.current;
@@ -230,7 +312,29 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 		</div>
 	);
 	const pages: readonly PageRow[] =
-		layout === "left" && tree !== null
+		layout === "rail" && tree !== null
+			? PAGES.map((page) =>
+					page.name === "site"
+						? {
+								...page,
+								under: {
+									"landing-current": (
+										<div
+											className={cn(
+												"grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+												tool === "edit" ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+											)}
+										>
+											<div className="min-h-0 overflow-hidden">
+												<div className="max-h-[600px] overflow-y-auto py-1 pl-4">{tree}</div>
+											</div>
+										</div>
+									),
+								},
+							}
+						: page,
+				)
+			: layout === "left" && tree !== null
 			? PAGES.map((page) =>
 					page.name === "site"
 						? {
@@ -253,6 +357,12 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 	const railFor = (): ReactNode => {
 		if (root === null) return null;
 		if (layout === "dock") return surface === "layers" ? <div className="h-full overflow-y-auto bg-bg py-1">{tree}</div> : details;
+		if (layout === "rail")
+			return (
+				<div className="flex h-full min-h-0 flex-col bg-bg">
+					<Details read={null} frame />
+				</div>
+			);
 		if (layout !== "panel") return details;
 		if (take === "path") return <PathPanel read={read} root={root} acts={acts} />;
 		if (take === "outline") return <OutlinePanel read={read} root={root} acts={acts} />;
@@ -266,7 +376,12 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 			<CanvasChrome
 				pages={pages}
 				selected="landing-current"
-				tool="edit"
+				tool={layout === "rail" ? tool : "edit"}
+				onTool={(next) => {
+					if (next === "hand") return;
+					setTool(next);
+					if (next === "select") setHeld("frame");
+				}}
 				railWidth={300}
 				railLabel={layout === "dock" ? surface : "properties"}
 				layers={layout === "dock"}
@@ -301,7 +416,9 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 						<div
 							ref={glass}
 							className={cn("absolute inset-0", editing === null ? "cursor-default" : "cursor-text")}
-							onPointerMove={(event) => editing === null && setHover(hitAt(event.clientX, event.clientY))}
+							onPointerMove={(event) =>
+								editing === null && !(layout === "rail" && tool === "select") && setHover(hitAt(event.clientX, event.clientY))
+							}
 							onPointerLeave={() => setHover(null)}
 							onPointerDown={(event) => {
 								if (editing === null) return;
@@ -312,11 +429,21 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 							}}
 							onClick={(event) => {
 								if (editing !== null) return;
+								if (layout === "rail" && tool === "select") {
+									select("frame");
+									return;
+								}
 								select(hitAt(event.clientX, event.clientY));
 							}}
 							onDoubleClick={(event) => {
 								if (!lean || editing !== null) return;
 								const hit = hitAt(event.clientX, event.clientY);
+								// Select goes inside the frame on a double-click, which is Edit
+								if (layout === "rail" && tool === "select") {
+									setTool("edit");
+									select(hit);
+									return;
+								}
 								if (hit === null || doc.current === null) return;
 								const answer = readElement(hit, doc.current).text;
 								if (answer?.ok === true) {
@@ -355,6 +482,20 @@ export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Tak
 							{tree}
 						</div>
 					) : null}
+					{refusal === null || box(refusal.el) === null ? null : (
+						<div
+							className="absolute z-10 flex max-w-[360px] items-baseline gap-2 rounded-md border border-border-raised bg-raised px-3 py-1.5 type-label"
+							style={{
+								left: Math.max(0, box(refusal.el)?.left ?? 0),
+								top: (box(refusal.el)?.top ?? 0) + (box(refusal.el)?.height ?? 0) + 8,
+							}}
+						>
+							<span className="text-text">{refusal.says}</span>
+							<button type="button" className="shrink-0 cursor-pointer text-thread hover:underline">
+								Ask the agent
+							</button>
+						</div>
+					)}
 					{saved === null ? null : (
 						<span className="absolute left-0 mt-2 text-muted type-detail" style={{ top: 22 + DOC_H * K }}>
 							{saved}

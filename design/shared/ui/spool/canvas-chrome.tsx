@@ -78,6 +78,7 @@ export function CanvasChrome({
 	holding,
 	layers = false,
 	onGlyph,
+	onTool,
 	children,
 }: {
 	pages: readonly PageRow[];
@@ -108,6 +109,8 @@ export function CanvasChrome({
 	/** a layers surface in the strip beside properties, and what a glyph press asks for (spool-cloud#188) */
 	layers?: boolean | undefined;
 	onGlyph?: ((surface: DockSurface) => void) | undefined;
+	/** a tool press, for a proposal that switches tools (spool-cloud#188) */
+	onTool?: ((tool: CanvasTool) => void) | undefined;
 	children?: ReactNode;
 }) {
 	const shut = rail === null || railWidth === 0;
@@ -118,7 +121,7 @@ export function CanvasChrome({
 			<PagesRail pages={pages} selected={selected} targets={targets} holding={holding} />
 			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
 				{children}
-				{tool === "none" ? null : <CanvasTools tool={tool} />}
+				{tool === "none" ? null : <CanvasTools tool={tool} onTool={onTool} />}
 			</div>
 			<Dock lit={lit} width={shut ? 0 : rail === undefined ? PROPERTIES_W : railWidth} life={life} layers={layers} onGlyph={onGlyph}>
 				{rail === undefined ? <FrameHeld name={selected} /> : rail}
