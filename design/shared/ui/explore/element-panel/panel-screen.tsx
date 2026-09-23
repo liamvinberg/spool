@@ -30,7 +30,7 @@ import { SpoolShell } from "shared/ui/spool/shell";
  * nothing on the page answers a click.
  */
 
-export type Take = "path" | "outline" | "tree" | "source" | "lean";
+export type Take = "path" | "outline" | "tree" | "source" | "lean" | "foot";
 export type Pick = "words" | "group" | "row" | "component" | "frame";
 
 /** where each state's selection starts */
@@ -162,7 +162,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 			}
 			if (event.key === "Escape" || (event.key === "Enter" && event.shiftKey)) {
 				event.preventDefault();
-				select(parentOf(held, root) ?? (take === "lean" ? "frame" : held));
+				select(parentOf(held, root) ?? (take === "lean" || take === "foot" ? "frame" : held));
 			} else if (event.key === "Tab") {
 				event.preventDefault();
 				const row = siblingsOf(held, root);
@@ -171,7 +171,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 				if (next !== undefined) select(next);
 			} else if (event.key === "Enter") {
 				event.preventDefault();
-				if (take === "lean" && canType) begin(held);
+				if ((take === "lean" || take === "foot") && canType) begin(held);
 				else {
 					const first = childrenOf(held)[0];
 					if (first !== undefined) select(first);
@@ -213,7 +213,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 					) : take === "source" ? (
 						<SourcePanel read={read} root={root} acts={acts} />
 					) : (
-						<LeanPanel read={read} frame={held === "frame"} root={root} acts={acts} />
+						<LeanPanel read={read} frame={held === "frame"} root={root} acts={acts} foot={take === "foot"} />
 					)
 				}
 			>
@@ -257,7 +257,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 								select(hitAt(event.clientX, event.clientY));
 							}}
 							onDoubleClick={(event) => {
-								if (take !== "lean" || editing !== null) return;
+								if ((take !== "lean" && take !== "foot") || editing !== null) return;
 								const hit = hitAt(event.clientX, event.clientY);
 								if (hit === null || doc.current === null) return;
 								const answer = readElement(hit, doc.current).text;
@@ -775,7 +775,20 @@ function SourcePanel({ read, root, acts }: { read: ElementRead | null; root: Ele
  * lives on the canvas: words edit in place, ⌫ deletes, arrows move. The tree
  * underneath reads like the code. A frame shows its own geometry over the same tree.
  */
-function LeanPanel({ read, frame, root, acts }: { read: ElementRead | null; frame: boolean; root: Element; acts: Acts }) {
+function LeanPanel({
+	read,
+	frame,
+	root,
+	acts,
+	foot = false,
+}: {
+	read: ElementRead | null;
+	frame: boolean;
+	root: Element;
+	acts: Acts;
+	/** the details under the tree, so the tree never moves when their height does */
+	foot?: boolean;
+}) {
 	const { open, toggle, setOpen } = useOpen(read, root);
 	// a frame held opens its tree two levels, so the rows under it say what the page is
 	useEffect(() => {
@@ -787,8 +800,8 @@ function LeanPanel({ read, frame, root, acts }: { read: ElementRead | null; fram
 	const refused = read === null ? [] : ([["words", read.text], ["delete", read.remove], ["move", read.move]] as const).filter(
 		(entry): entry is readonly [string, Extract<Answer, { ok: false }>] => entry[1] !== null && !entry[1].ok,
 	);
-	return (
-		<div className="flex h-full min-h-0 flex-col bg-bg">
+	const head = (
+		<div className={cn("shrink-0", foot ? "border-border border-t" : "")}>
 			{frame ? (
 				<div className="shrink-0">
 					<div className="flex h-9 items-center gap-2 border-border border-b px-2.5">
@@ -813,9 +826,9 @@ function LeanPanel({ read, frame, root, acts }: { read: ElementRead | null; fram
 					</Section>
 				</div>
 			) : read === null ? (
-				<div className="flex h-9 shrink-0 items-center border-border border-b px-2.5 text-muted type-value">no selection</div>
+				<div className={cn("flex h-9 items-center px-2.5 text-muted type-value", foot ? "" : "border-border border-b")}>no selection</div>
 			) : (
-				<div className="shrink-0 border-border border-b pb-1.5">
+				<div className={cn("pb-1.5", foot ? "" : "border-border border-b")}>
 					<div className="flex h-9 items-center gap-2 px-2.5">
 						<span className="shrink-0 text-text type-value">{read.name}</span>
 						{read.row === null ? null : (
@@ -841,9 +854,15 @@ function LeanPanel({ read, frame, root, acts }: { read: ElementRead | null; fram
 					))}
 				</div>
 			)}
+		</div>
+	);
+	return (
+		<div className="flex h-full min-h-0 flex-col bg-bg">
+			{foot ? null : head}
 			<div className="min-h-0 flex-1 overflow-y-auto py-1">
 				<SourceRows read={read} root={root} acts={acts} open={open} toggle={toggle} />
 			</div>
+			{foot ? head : null}
 		</div>
 	);
 }
