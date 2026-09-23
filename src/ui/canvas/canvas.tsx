@@ -2860,12 +2860,10 @@ export function ProjectCanvas({
 	 */
 	const holdParent = useCallback(
 		(pick: PickedSelection) => {
-			const chain = pickedChain.current;
-			const rung = chain?.frame === pick.frame ? chain.chain.findIndex((hit) => hit.selector === pick.selector) : -1;
-			const parent = chain !== null && rung > 0 ? chain.chain[rung - 1] : undefined;
-			if (chain !== null && parent !== undefined) {
-				holdChain({ frame: pick.frame, chain: chain.chain.slice(0, rung) });
-				setPicked([{ frame: pick.frame, ...parent }]);
+			const up = parentOf({ picks: [pick], chain: pickedChain.current });
+			if (up !== undefined && up.hit !== null) {
+				holdChain({ frame: up.frame, chain: [...up.chain] });
+				setPicked([{ frame: up.frame, ...up.hit }]);
 				return;
 			}
 			holdChain(null);
