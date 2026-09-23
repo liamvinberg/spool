@@ -128,6 +128,9 @@ export function askText(refused: ShownRefusal, pick: PickedSelection | undefined
 /** How long a refusal note stays under its element before it goes by itself (#339). */
 export const REFUSAL_MS = 4000;
 
+/** The file a stamp points into, as the daemon names it: `frames/cart/frame.tsx:4:9` is `design/frames/cart/frame.tsx`. */
+export const stampPath = (stamp: string): string => `design/${stamp.replace(/:\d+:\d+$/, "")}`;
+
 /** The stamp a gesture on this pick would act on, or why there is none. */
 export function stampOf(pick: PickedSelection): string | Refusal {
 	if (pick.generated) return GENERATED;

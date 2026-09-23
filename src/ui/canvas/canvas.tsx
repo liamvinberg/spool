@@ -106,6 +106,7 @@ import {
 	type ShownRefusal,
 	secondClick,
 	stampOf,
+	stampPath,
 	wordsOf,
 } from "./hand-edit";
 import {
@@ -1921,9 +1922,9 @@ export function ProjectCanvas({
 	 * the daemon's fresh read of it the first anybody has seen.
 	 */
 	const fingerprintFor = useCallback((frame: string, stamp: string): string | undefined => {
-		const path = `design/${stamp.replace(/:\d+:\d+$/, "")}`;
+		const path = stampPath(stamp);
 		const own = saved.current.get(frame);
-		if (own !== undefined && `design/${own.source.replace(/:\d+:\d+$/, "")}` === path) return own.fingerprint;
+		if (own !== undefined && stampPath(own.source) === path) return own.fingerprint;
 		for (const read of railRungsRef.current ?? []) {
 			if (read?.path === path && read.fingerprint !== undefined) return read.fingerprint;
 		}
@@ -2841,8 +2842,7 @@ export function ProjectCanvas({
 					edit: held.id,
 					// the stamp in the file that was written: the element's own, or
 					// the call site's when the words were supplied there
-					readAt: (path) =>
-						(path === `design/${held.source.replace(/:\d+:\d+$/, "")}` ? held.source : owner) ?? held.source,
+					readAt: (path) => (path === stampPath(held.source) ? held.source : owner) ?? held.source,
 					refuse,
 					failed: "the words did not reach the file",
 				});
@@ -2913,10 +2913,7 @@ export function ProjectCanvas({
 			const asked = deleteAsk(picks.map((held) => held.tag));
 			const refuse = (refusal: Refusal, instead?: ShownRefusal["instead"]) => {
 				restoreWords(pick.frame, id, "before", () => {});
-				const file =
-					refusal.line === undefined
-						? undefined
-						: { path: `design/${source.replace(/:\d+:\d+$/, "")}`, line: refusal.line };
+				const file = refusal.line === undefined ? undefined : { path: stampPath(source), line: refusal.line };
 				showRefusal({
 					frame: pick.frame,
 					selector: pick.selector,
@@ -3016,7 +3013,7 @@ export function ProjectCanvas({
 			// multi-pick delete one press of undo (#323). A selection spread over
 			// two files would be two writes and two steps, so it says so instead
 			// of quietly becoming them.
-			const files = new Set(sources.map((stamp) => stamp.replace(/:\d+:\d+$/, "")));
+			const files = new Set(sources.map(stampPath));
 			if (files.size > 1 || new Set(picks.map((pick) => pick.frame)).size > 1) {
 				showRefusal({
 					frame: first.frame,
@@ -3101,7 +3098,7 @@ export function ProjectCanvas({
 				const file =
 					refusal.line === undefined || typeof stampOf(subject) !== "string"
 						? undefined
-						: { path: `design/${(subject.source ?? "").replace(/:\d+:\d+$/, "")}`, line: refusal.line };
+						: { path: stampPath(subject.source ?? ""), line: refusal.line };
 				showRefusal({
 					frame,
 					selector: subject.selector,
@@ -3119,9 +3116,7 @@ export function ProjectCanvas({
 			const printOf = (stamped: string): string | undefined => {
 				const read = heldReadRef.current;
 				if (read?.source === stamped) return read.fingerprint;
-				return (
-					handPrints.current.get(`design/${stamped.replace(/:\d+:\d+$/, "")}`) ?? fingerprintFor(frame, stamped)
-				);
+				return handPrints.current.get(stampPath(stamped)) ?? fingerprintFor(frame, stamped);
 			};
 			const fingerprint = printOf(stamp);
 			if (fingerprint === undefined) {
