@@ -131,6 +131,13 @@ export const REFUSAL_MS = 4000;
 /** The file a stamp points into, as the daemon names it: `frames/cart/frame.tsx:4:9` is `design/frames/cart/frame.tsx`. */
 export const stampPath = (stamp: string): string => `design/${stamp.replace(/:\d+:\d+$/, "")}`;
 
+/** The line of a stamp's file a refusal points at, when it names one and there is a stamp to read the file off. */
+export function refusedIn(refusal: Refusal, stamp: string | undefined): Pick<ShownRefusal, "file"> {
+	return refusal.line === undefined || stamp === undefined
+		? {}
+		: { file: { path: stampPath(stamp), line: refusal.line } };
+}
+
 /** The stamp a gesture on this pick would act on, or why there is none. */
 export function stampOf(pick: PickedSelection): string | Refusal {
 	if (pick.generated) return GENERATED;

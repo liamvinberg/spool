@@ -103,6 +103,7 @@ import {
 	OPENING_MS,
 	REFUSAL_MS,
 	type Refusal,
+	refusedIn,
 	restamped,
 	type ShownRefusal,
 	secondClick,
@@ -2914,13 +2915,12 @@ export function ProjectCanvas({
 			const asked = deleteAsk(picks.map((held) => held.tag));
 			const refuse = (refusal: Refusal, instead?: ShownRefusal["instead"]) => {
 				restoreWords(pick.frame, id, "before", () => {});
-				const file = refusal.line === undefined ? undefined : { path: stampPath(source), line: refusal.line };
 				showRefusal({
 					frame: pick.frame,
 					selector: pick.selector,
 					refusal,
 					asked,
-					...(file === undefined ? {} : { file }),
+					...refusedIn(refusal, source),
 					...(instead === undefined ? {} : { instead }),
 				});
 			};
@@ -3096,16 +3096,13 @@ export function ProjectCanvas({
 				nextMove();
 				// the file moved under the last move's answer, so it says nothing now
 				if (refusal.code === "stale-file") handPrints.current.clear();
-				const file =
-					refusal.line === undefined || typeof stampOf(subject) !== "string"
-						? undefined
-						: { path: stampPath(subject.source ?? ""), line: refusal.line };
+				const stamped = stampOf(subject);
 				showRefusal({
 					frame,
 					selector: subject.selector,
 					refusal,
 					asked,
-					...(file === undefined ? {} : { file }),
+					...refusedIn(refusal, typeof stamped === "string" ? stamped : undefined),
 				});
 			};
 			const stamp = stampOf(subject);
