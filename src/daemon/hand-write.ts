@@ -233,6 +233,14 @@ export const STALE_STAMP: PatchRefusal = { code: "stale-stamp", says: "the stamp
 export interface ElementRead {
 	/** what the source calls it: `CartRow` for a component, `li` for a tag */
 	name: string;
+	/**
+	 * Why a hand may not type into this element's words, when the file alone
+	 * says so (#339): the refusal a text write here would meet, asked before
+	 * the words are opened, so Enter on them can say it on the element rather
+	 * than after the typing. Absent where the file allows it, and where the
+	 * answer is a call site's: words a caller passes are the call's to allow.
+	 */
+	words?: PatchRefusal;
 }
 
 /** One read per position asked about, in order; nothing where the stamp hits nothing. */
@@ -251,8 +259,25 @@ export function readElements(
 	return at.map(({ line, column }) => {
 		const element = elementAt(program, line, column, rel);
 		if (element === undefined) return undefined;
-		return { name: rawOf(source, element.node.openingElement.name) };
+		const words = wordsRefusal(source, element);
+		return { name: rawOf(source, element.node.openingElement.name), ...(words === undefined ? {} : { words }) };
 	});
+}
+
+/**
+ * The file's own answer to typing into an element's words, before anything
+ * is typed (#339): the same rule a text write runs, minus the words.
+ *
+ * A self-closing element has none to type into, and children that are code
+ * refuse by name. Words a call site supplies are left to the write, because
+ * whether the call wrote a literal is a fact about another file.
+ */
+function wordsRefusal(source: string, element: Element): PatchRefusal | undefined {
+	if (element.selfClosing) return { code: "no-text", says: "no text of its own" };
+	const children = spoken(source, element.children);
+	const only = children.length === 1 ? children[0] : undefined;
+	if (only?.type === "JSXExpressionContainer" && only.expression.type === "Identifier") return undefined;
+	return textRule(source, element.children);
 }
 
 /**

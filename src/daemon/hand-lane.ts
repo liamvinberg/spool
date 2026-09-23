@@ -50,6 +50,8 @@ export interface RungRead {
 	line?: number;
 	/** the stamp hits nothing any more */
 	refusal?: PatchRefusal;
+	/** why its words may not be typed into, when the file alone says so (#339) */
+	words?: PatchRefusal;
 	/**
 	 * The stamp's file is outside the frame's own folder (#318), and the frames
 	 * the import graph reaches it from: how far an edit reaches, and who has to
@@ -132,6 +134,7 @@ export async function readRungs(
 			name: read.name,
 			path: `design/${stamp.rel}`,
 			line: stamp.line,
+			...(read.words === undefined ? {} : { words: read.words }),
 			...(stamp.rel.startsWith(folder) ? {} : { shared: await sharedUse(deps, stamp.rel) }),
 			...(held?.fingerprint === undefined ? {} : { fingerprint: held.fingerprint }),
 		});

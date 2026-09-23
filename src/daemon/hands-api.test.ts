@@ -478,6 +478,8 @@ describe("the rungs read", () => {
 				name: "main",
 				path: "design/frames/cart/frame.tsx",
 				line: 5,
+				// a heading is no inline text, so the main's own children are not words a hand types into
+				words: { code: "no-text", says: "<h1> is not inline text; edit it in code or ask the agent" },
 			},
 			{
 				source: stampFor(cartTsx, "<button"),

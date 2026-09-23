@@ -397,6 +397,19 @@ describe("readElements", () => {
 		expect(read("<main", "<Card").map((one) => one?.name)).toEqual(["main", "Card"]);
 	});
 
+	it("says before any typing whether the words are the file's to take (#339)", () => {
+		const [heading, button, img, state, count] = read("<h1", "<button", "<img", "<p className={busy", "<span");
+		expect(heading?.words).toBeUndefined();
+		expect(button?.words).toBeUndefined();
+		expect(state?.words).toBeUndefined();
+		expect(img?.words).toEqual({ code: "no-text", says: "no text of its own" });
+		// a lone identifier is words a caller may pass, which is the call's to answer
+		expect(count?.words).toBeUndefined();
+		expect(read("<li")[0]?.words).toBeUndefined();
+		const [code] = readElements("const x = <p>{count + 1} items</p>;", [{ line: 1, column: 11 }]);
+		expect(code?.words?.code).toBe("expression-text");
+	});
+
 	it("answers with nothing where the stamp hits nothing", () => {
 		expect(readElements(FRAME, [{ line: 2, column: 1 }])).toEqual([undefined]);
 		expect(readElements("const x = (", [{ line: 1, column: 1 }])).toEqual([undefined]);
