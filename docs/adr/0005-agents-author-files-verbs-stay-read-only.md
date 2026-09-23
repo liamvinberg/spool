@@ -20,6 +20,12 @@
 > verification and the agent's coordinated file tools. The stamp-addressed
 > lane below is the one path again; the bundled agent's file tools write
 > ordinary files directly, as every other agent's do.
+>
+> Amended by #338. The lane's ops are three again: an element's words, words
+> a call site supplies it, and the element out of the file. Class tokens, the
+> `hidden` class, string attributes and image imports are the agent's, so the
+> asset swap below is gone and no hand op writes a file beside the frame. See
+> [ADR-0009](./0009-hand-edits-write-the-tsx-where-it-is-written.md).
 
 There is no `spool new` or frame-authoring write verb: a frame is born by writing `frames/<name>/frame.tsx`, and the project read verbs only observe (`selection`, `flows`, `shot`, `logs`, `url`, `skill`) (#6). Lifecycle commands are separate: `init` and `open` register and open a project, while `remove` forgets one registered root without touching its files. Spool serializes those machine-global registry and session writes.
 

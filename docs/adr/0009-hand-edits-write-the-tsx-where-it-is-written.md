@@ -1,0 +1,13 @@
+# Hand edits write the TSX where it is written
+
+A hand edit changes the frame's TSX file in place. The compile-time stamp says which file, line and column wrote the element, the planner in `src/daemon/hand-write.ts` decides whether the edit can be written honestly, and the write splices only the characters involved (#338). The file an agent wrote stays the only record of the frame. There is no separate page document for the canvas to keep in step with it, no controls a component has to declare before a hand may touch it, and no step that registers a frame or a component with spool.
+
+**What a hand does.** It changes an element's words, including words a caller passes to a component, which are written in the caller's file. It deletes elements, and a row a `.map()` renders goes from the array literal behind it. Reordering an element among the siblings its file writes beside it is the third, planned as one more op in the same planner rather than a new mechanism. A shared component is edited where it is defined, so the change reaches every frame that renders it.
+
+**What a hand does not do.** Styling, layout, images, attributes and hiding are the agent's, and so are adding an element and moving one into another container. The properties rail sets a frame's own geometry and nothing about its source. When the planner refuses an edit, the canvas says why on the element and offers the edit to the agent in one press. Nothing is sent to the agent on its own.
+
+**Why not a page document or declared controls.** Both would make agents write pages in a shape spool dictates, and both would make every existing project migrate before a hand could touch it. The everyday edits did not need either: words, delete and reorder are all answered by reading the file at the stamp. Class editing was the part that pulled toward a model of its own, a property panel over Tailwind that had to know the project's theme, fold utilities into rows and write tokens back, and it is the part that went. An agent changes how a page looks by changing its code, which is the same thing it already does to make the page.
+
+**What agents owe.** Named components, words written as JSX text, and lists written as literal arrays, so a hand can change the words, delete a row and move one. A page written any other way still renders and still works; the hand simply refuses more of it, and says why.
+
+This narrows [ADR-0005](./0005-agents-author-files-verbs-stay-read-only.md)'s write lane to those ops and leaves the rest of it standing: one lane, addressed by the stamp, measured against the file the canvas read, with the undo the canvas already keeps.
