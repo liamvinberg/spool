@@ -18,7 +18,7 @@ export interface Refusal {
 	says: string;
 	/** what the file says instead, when naming it is the whole of the answer */
 	expression?: string;
-	/** the line the sentence points at, when editing the file there is the answer (#315) */
+	/** the line the sentence points at, when editing the file there is the answer (#317) */
 	line?: number;
 }
 
@@ -41,9 +41,9 @@ export interface ShownRefusal {
 	selector: string;
 	refusal: Refusal;
 	attempted?: string;
-	/** what the hand tried, in plain words, when it was not typing words (#315, #317) */
+	/** what the hand tried, in plain words, when it was not typing words (#317) */
 	asked?: string;
-	/** the file the refusal points at, for the link that hands its path out (#315) */
+	/** the file the refusal points at, for the link that hands its path out (#317) */
 	file?: { path: string; line: number };
 	/**
 	 * The one gesture the refusal offers in place of what was asked (#317).

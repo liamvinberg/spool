@@ -43,16 +43,6 @@ export interface PickedHit {
 	 */
 	words?: boolean;
 	/**
-	 * What the element is actually drawn with, for the rows the rail shows
-	 * (#323).
-	 *
-	 * The rail's first source is the class literal parsed at the stamp; this is
-	 * the second, and it is the only one that can answer for a property a
-	 * project's own stylesheet set. Present only where a selection asked for it
-	 * — a hover asks for a chain many times a second and draws none of it.
-	 */
-	computed?: Readonly<Record<string, string>>;
-	/**
 	 * The row of a list this element is drawn as (#324).
 	 *
 	 * A `.map()` renders one JSX element once per entry, so the stamp is every
@@ -65,10 +55,10 @@ export interface PickedHit {
 	/**
 	 * The sides what is in the element runs past the box it is in (#324).
 	 *
-	 * A width a hand wrote under the content's own min-content width leaves the
+	 * A width written under the content's own min-content width leaves the
 	 * words standing outside their box. The ring keeps the border box, because
-	 * that is what the handles drag and what the file says; this is what makes
-	 * the difference visible instead of leaving it as a ring that looks wrong.
+	 * that is what the file says; this is what makes the difference visible
+	 * instead of leaving it as a ring that looks wrong.
 	 */
 	spills?: readonly ("right" | "bottom")[];
 	/** Nearest data-spool-source stamp, "frames/…/frame.tsx:line:col". */
@@ -198,7 +188,6 @@ export type FrameMessage =
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; nodes: EditedNode[]; owner: string | null }
 	| { spool: "restored"; frame: string; id: number; ok: boolean }
-	| { spool: "classed"; frame: string; id: number; ok: boolean }
 	| { spool: "altered"; frame: string; id: number; ok: boolean; owner: string | null }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| { spool: "external"; frame: string; href: string }
@@ -275,7 +264,6 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "restored":
-		case "classed":
 			return typeof m.id === "number" && typeof m.ok === "boolean" ? (m as unknown as FrameMessage) : undefined;
 		case "altered":
 			return typeof m.id === "number" &&
@@ -414,9 +402,13 @@ export const arriveMessage = (settleMs: number) => ({ spool: "arrive", settleMs 
  */
 export const captureMessage = (id: string, targetWidth: number, settleMs: number) =>
 	({ spool: "capture", id, targetWidth, settleMs }) as const;
-/** `computed` is a selection asking for the drawn style of each rung it answers with (#323). */
-export const pickMessage = (x: number, y: number, id: number, computed = false) =>
-	({ spool: "pick", x, y, id, computed }) as const;
+/**
+ * `selects` is a pick that ends in a selection rather than a hover (#323), and
+ * the frame answers it with what only a selection needs: which row of a list
+ * each rung is, and which sides its content spills past.
+ */
+export const pickMessage = (x: number, y: number, id: number, selects = false) =>
+	({ spool: "pick", x, y, id, selects }) as const;
 /**
  * The keyboard half of the selection ladder (#254): the pointer names a rung
  * by where it is, and ⌘⏎ and Tab have to name one by kinship instead. An empty
@@ -424,16 +416,16 @@ export const pickMessage = (x: number, y: number, id: number, computed = false) 
  * root element — the rung a descent from the frame lands on.
  *
  * `self` is the element itself, which is how a selection survives its own edit
- * (#258): the rail's write reloads the document out from under the pick, and
- * the same selector asked for again is the rung the fields were just in.
+ * (#322): an edit moves the box the ring is drawn round, and the same selector
+ * asked for again is the rung the hand was just on.
  *
  * The answer is a `picked` reply and nothing new: the ancestry of the kin, so
  * the canvas learns the target and the chain it now holds in one message, and
  * an empty chain is a rung that does not exist.
  */
 export type KinStep = "child" | "next" | "previous" | "self";
-export const kinMessage = (selector: string, step: KinStep, id: number, computed = false) =>
-	({ spool: "kin", selector, step, id, computed }) as const;
+export const kinMessage = (selector: string, step: KinStep, id: number, selects = false) =>
+	({ spool: "kin", selector, step, id, selects }) as const;
 
 /**
  * The in-place text edit (#255): the element's own words become the field,
@@ -477,21 +469,6 @@ export const alterMessage = (
 export const restampMessage = (file: string, shifts: readonly { line: number; column: number; delta: number }[]) =>
 	({ spool: "restamp", file, shifts }) as const;
 
-/**
- * The rail's preview (#315): CSS declarations set inline on the element the
- * moment a value is typed or stepped, and lifted again with `null`. Nothing
- * leaves the canvas for the daemon while this is happening.
- */
-export const styleMessage = (selector: string, declarations: Readonly<Record<string, string | null>> | null) =>
-	({ spool: "style", selector, declarations }) as const;
-
-/**
- * The file has the class (#315): the literal as it was and as it is, so the
- * frame swaps the tokens that changed on the element, the stylesheet the
- * document now compiles to, and the ask the frame's `classed` answers.
- */
-export const classMessage = (selector: string, was: string, now: string, css: string | undefined, id: number) =>
-	({ spool: "class", selector, was, now, css, id }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;
 
 /** The page's state handed to a sibling frame after one of them wrote. */

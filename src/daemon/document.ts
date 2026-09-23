@@ -421,7 +421,7 @@ export function assembleFrameDocument({
 		`<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame, projectCapability, controlOrigin })}</script>
 <script>${escapeInlineScript(canvasShimJs)}</script>
 <style>html, body, #root { height: 100%; }</style>
-<style id="spool-compiled-css">${escapeInlineStyle(css)}</style>
+<style>${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
 `,
 		`<div id="root"></div>
@@ -457,18 +457,12 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * {spool:"edited"} once Enter, Esc or a click away has ended it, carrying the
  * element's child nodes and the call site one owner up (#314), and
  * {spool:"edit-end", commit} ends one from the canvas side (#255);
- * {spool:"alter", id, selector, act, name, value} takes the element out of the
- * document, hides it, shows it or sets one attribute on it, and answers
- * {spool:"altered"} with the call one owner up (#317);
+ * {spool:"alter", id, selectors, act} takes the elements out of the document
+ * and answers {spool:"altered"} with the call one owner up (#317);
  * {spool:"restore", id, way, ask} puts one committed edit's words or one
  * alteration back or forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
  * moves the stamps a save shifted on their line, since the document is not
- * reloaded for its own save; {spool:"style", selector, declarations} previews
- * a rail value as inline style on the element, and {spool:"class", selector,
- * was, now, css, id} is the file catching up (#315): the tokens the write
- * took off and put on are swapped on the element's class list, the compiled
- * stylesheet is replaced, the preview is cleared, and {spool:"classed"} says
- * whether the element was still there to take it;
+ * reloaded for its own save;
  * {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
@@ -1073,40 +1067,6 @@ const canvasShimJs = `(() => {
 		return false;
 	}
 
-	// The second source every rail row reads (#323): what this element is
-	// actually drawn with, whatever wrote it — a class, a stylesheet the
-	// project imported, or the browser's own default. The rail's first source
-	// is the class literal at the stamp, and a row the literal says nothing
-	// about used to show an empty field beside a unit it never had.
-	//
-	// Read only where a selection asks for it. A hover asks for a chain many
-	// times a second and draws none of these, so it pays for none of them.
-	var DRAWN = [
-		"font-size", "line-height", "letter-spacing", "font-weight", "font-family",
-		"text-align", "font-variant-numeric", "text-transform", "text-decoration-line",
-		"color", "background-color", "opacity", "box-shadow",
-		"border-top-left-radius", "border-top-right-radius",
-		"border-bottom-right-radius", "border-bottom-left-radius",
-		"padding-top", "padding-right", "padding-bottom", "padding-left",
-		"margin-top", "margin-right", "margin-bottom", "margin-left",
-		"column-gap", "row-gap",
-		"border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
-		"border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
-		"display", "flex-direction", "align-items", "justify-content", "flex-wrap",
-		"position", "z-index", "overflow", "rotate", "scale",
-		"transition-duration", "transition-timing-function"
-	];
-
-	function drawnStyle(el) {
-		const style = getComputedStyle(el);
-		const read = {};
-		for (let i = 0; i < DRAWN.length; i++) {
-			const value = style.getPropertyValue(DRAWN[i]);
-			if (value !== "" && value !== null) read[DRAWN[i]] = String(value);
-		}
-		return read;
-	}
-
 	// Which row of a list this element is drawn as (#324).
 	//
 	// A map call renders one JSX element once per entry, so the stamp under the
@@ -1134,7 +1094,7 @@ const canvasShimJs = `(() => {
 		return null;
 	}
 
-	function hitOf(el, computed) {
+	function hitOf(el, selects) {
 		let stamped = el;
 		while (stamped && stamped.nodeType === 1 && !stamped.hasAttribute("data-spool-source")) {
 			stamped = stamped.parentElement;
@@ -1143,13 +1103,10 @@ const canvasShimJs = `(() => {
 		const rect = el.getBoundingClientRect();
 		let radius = 0;
 		try { radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch {}
-		let drawn = null;
 		let item = null;
 		// a hover asks for a chain many times a second and deletes nothing, so
-		// it walks no fibers: the item context is the selection's, like the
-		// drawn style beside it
-		if (computed) {
-			try { drawn = drawnStyle(el); } catch {}
+		// it walks no fibers: the item context is the selection's alone
+		if (selects) {
 			try { item = itemOf(el); } catch {}
 		}
 		// an inline element that wraps is drawn as one box per line, and the box
@@ -1164,7 +1121,7 @@ const canvasShimJs = `(() => {
 		// what is in it is wider or taller than the box it is in (#324): the ring
 		// stays the element's own box and says so along the side it runs past
 		const spills = [];
-		if (computed) {
+		if (selects) {
 			try {
 				if (el.scrollWidth > el.clientWidth + 0.5) spills.push("right");
 				if (el.scrollHeight > el.clientHeight + 0.5) spills.push("bottom");
@@ -1186,7 +1143,6 @@ const canvasShimJs = `(() => {
 			...(lines.length > 1 ? { rects: lines } : {}),
 			words: hasWords(el),
 			radius,
-			...(drawn === null ? {} : { computed: drawn }),
 			...(item === null ? {} : { item }),
 			...(spills.length === 0 ? {} : { spills }),
 			source,
@@ -1195,21 +1151,21 @@ const canvasShimJs = `(() => {
 	}
 
 	// the ancestry of one element, top-level element first, deepest last
-	function chainOf(el, computed) {
+	function chainOf(el, selects) {
 		const line = [];
 		let node = el;
 		while (node && node.nodeType === 1 && node !== document.documentElement && node !== document.body && node.id !== "root") {
 			line.unshift(node);
 			node = node.parentElement;
 		}
-		return line.map(function (node) { return hitOf(node, computed); });
+		return line.map(function (node) { return hitOf(node, selects); });
 	}
 
 	// the ancestry at the point
-	function pickChain(x, y, computed) {
+	function pickChain(x, y, selects) {
 		const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
 		if (!el || el === document.documentElement || el === document.body || el.id === "root") return [];
-		return chainOf(el, computed);
+		return chainOf(el, selects);
 	}
 
 	// A selector back to its element. cssPath stops at the boot root and takes a
@@ -1229,7 +1185,7 @@ const canvasShimJs = `(() => {
 
 	// the ancestry of one element's kin (#254): the keyboard's rung, named by
 	// kinship because there is no pointer to name it by position
-	function kinChain(selector, step, computed) {
+	function kinChain(selector, step, selects) {
 		const from = selector ? elementFor(selector) : (document.getElementById("root") || document.body);
 		if (!from) return [];
 		const kin = step === "self"
@@ -1242,7 +1198,7 @@ const canvasShimJs = `(() => {
 						? from.previousElementSibling
 						: null;
 		if (!kin || kin === document.documentElement || kin === document.body || kin.id === "root") return [];
-		return chainOf(kin, computed);
+		return chainOf(kin, selects);
 	}
 
 	/**
@@ -1432,55 +1388,6 @@ const canvasShimJs = `(() => {
 			return typeof site === "string" ? stampNow(site) : null;
 		}
 		return null;
-	}
-
-	// The rail's preview (#315): a value typed or stepped lands on the element
-	// as inline style at once, and what the inline style said before is kept
-	// so the preview can be lifted again — when the file's class arrives, or
-	// when the gesture is cancelled — without a reload.
-	var previewed = new WeakMap();
-
-	function previewStyle(selector, declarations) {
-		const el = elementFor(selector);
-		if (!el) return;
-		let held = previewed.get(el);
-		if (declarations === null) {
-			if (!held) return;
-			for (const [property, was] of held) {
-				if (was.value === "") el.style.removeProperty(property);
-				else el.style.setProperty(property, was.value, was.priority);
-			}
-			previewed.delete(el);
-			return;
-		}
-		if (!held) { held = new Map(); previewed.set(el, held); }
-		for (const property of Object.keys(declarations)) {
-			if (!held.has(property)) {
-				held.set(property, { value: el.style.getPropertyValue(property), priority: el.style.getPropertyPriority(property) });
-			}
-			const value = declarations[property];
-			if (value === null || value === "") el.style.removeProperty(property);
-			else el.style.setProperty(property, value);
-		}
-	}
-
-	// The file has the class now (#315): the tokens the write took off come
-	// off the element and the ones it put on go on, which keeps whatever a
-	// cn() call added beside the literal; the sheet is swapped for the one the
-	// file compiles to, and the inline preview that stood in for it is lifted.
-	function applyClass(selector, was, now, css) {
-		const el = elementFor(selector);
-		if (!el) return false;
-		const before = String(was || "").split(/\\s+/).filter(Boolean);
-		const after = String(now || "").split(/\\s+/).filter(Boolean);
-		for (const token of before) if (!after.includes(token)) el.classList.remove(token);
-		for (const token of after) if (!before.includes(token)) el.classList.add(token);
-		if (typeof css === "string") {
-			const sheet = document.getElementById("spool-compiled-css");
-			if (sheet) sheet.textContent = css;
-		}
-		previewStyle(selector, null);
-		return true;
 	}
 
 	// A write moved the stamps on its line, and this document is not reloaded
@@ -1867,14 +1774,14 @@ const canvasShimJs = `(() => {
 		if (m.spool === "pick") {
 			const frame = (window.__SPOOL__ || {}).frame;
 			let chain = [];
-			try { chain = pickChain(m.x, m.y, m.computed === true); } catch {}
+			try { chain = pickChain(m.x, m.y, m.selects === true); } catch {}
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
 			return;
 		}
 		if (m.spool === "kin") {
 			const frame = (window.__SPOOL__ || {}).frame;
 			let chain = [];
-			try { chain = kinChain(m.selector, m.step, m.computed === true); } catch {}
+			try { chain = kinChain(m.selector, m.step, m.selects === true); } catch {}
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
 			return;
 		}
@@ -1894,13 +1801,7 @@ const canvasShimJs = `(() => {
 			}
 			return;
 		}
-		if (
-			m.spool === "restore" ||
-			m.spool === "restamp" ||
-			m.spool === "style" ||
-			m.spool === "class" ||
-			m.spool === "alter"
-		) {
+		if (m.spool === "restore" || m.spool === "restamp" || m.spool === "alter") {
 			// all of them change the document, so the same door
 			const config = window.__SPOOL__ || {};
 			if (event.source !== parent || event.origin !== config.controlOrigin) return;
@@ -1912,17 +1813,6 @@ const canvasShimJs = `(() => {
 			}
 			if (m.spool === "restamp") {
 				try { restamp(m.file, Array.isArray(m.shifts) ? m.shifts : []); } catch {}
-				return;
-			}
-			if (m.spool === "style") {
-				const declarations = m.declarations !== null && typeof m.declarations === "object" ? m.declarations : null;
-				try { previewStyle(m.selector, declarations); } catch {}
-				return;
-			}
-			if (m.spool === "class") {
-				let ok = false;
-				try { ok = applyClass(m.selector, m.was, m.now, m.css); } catch {}
-				parent.postMessage({ spool: "classed", frame: config.frame, id: m.id, ok }, "*");
 				return;
 			}
 			let ok = false;

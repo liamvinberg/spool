@@ -3,7 +3,6 @@ import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
 import { frameSourcePath } from "./pages";
-import { FileLink } from "./properties-fields";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
 import { lineBoxes } from "./ring";
 import type { SnapMarks } from "./snap";
@@ -138,7 +137,7 @@ export function SelectionOverlay({
 	refused?: ShownRefusal | null;
 	/** The door to the agent a refusal of typed words offers (#314): the composer, prefilled. */
 	onAsk?: () => void;
-	/** The file a refusal points at (#315), handed out by path. */
+	/** The file a refusal points at (#317), handed out by path. */
 	onOpenFile?: (path: string, line: number) => void;
 	marks: SnapMarks;
 	/** Normalized screen-space rect while a marquee drag is live. */
@@ -619,6 +618,34 @@ function ElementOutline({
 				borderRadius: radius + 2,
 			}}
 		/>
+	);
+}
+
+/**
+ * The file a refusal points at (#317): `frame.tsx:12`, and a press hands the
+ * path out the way the frame's own source path is handed out — copied, never
+ * opened in an editor spool would have to choose.
+ */
+function FileLink({
+	path,
+	line,
+	onOpen,
+}: {
+	path: string;
+	line: number;
+	onOpen: (path: string, line: number) => void;
+}) {
+	return (
+		<button
+			type="button"
+			data-hand-file={`${path}:${line}`}
+			title={`Copy ${path}:${line}`}
+			className="pointer-events-auto shrink-0 text-thread-strong hover:underline text-muted type-detail"
+			onPointerDown={(event) => event.stopPropagation()}
+			onClick={() => onOpen(path, line)}
+		>
+			{path.slice(path.lastIndexOf("/") + 1)}:{line}
+		</button>
 	);
 }
 

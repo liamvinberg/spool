@@ -1,16 +1,15 @@
 import { expect, it, onTestFinished } from "vitest";
 import { sseReader } from "../test-helpers";
-import { apiRequests, handCanvas } from "./hand-browser-helpers";
+import { handCanvas } from "./hand-browser-helpers";
 
 /**
  * Shared components, edited from one frame and shown in every frame (#318).
  *
  * The fixture is the shaders project's shape: one surface component in
  * `shared/ui/`, rendered by three frames, two of them on screen and one far
- * off it, plus a button that takes its label from the call. A person selects
- * the surface in one frame, reads how far an edit reaches, changes its radius
- * and its own words, edits a label, and undoes. What they see is the frames
- * and what the file says is the file.
+ * off it, plus a button that takes its label from the call. A person edits a
+ * label, then the surface's own words in one frame, and undoes. What they see
+ * is the frames and what the file says is the file.
  */
 
 const UTILS = `export function cn(...inputs: (string | false | null | undefined)[]) {
@@ -78,15 +77,6 @@ it("edits a shared component from one frame and every frame follows", { timeout:
 	const { page, frame } = f;
 	const second = page.frameLocator('iframe[title="second"]');
 	await expect.poll(() => second.locator("div.surface").count(), { timeout: 30_000 }).toBe(1);
-	const requests = apiRequests(page, f.project.name);
-	const rail = page.locator("[data-properties-rail]");
-	const row = (name: string) => page.locator(`[data-properties-row="${name}"]`);
-	const field = (name: string) => row(name).locator("input").first();
-	const radius = (where: typeof frame) =>
-		where
-			.locator("div.surface")
-			.first()
-			.evaluate((el) => getComputedStyle(el).borderRadius);
 	const note = (where: typeof frame) => where.locator("em.surface-note").first().textContent();
 	const marked = (where: typeof frame, name: string) =>
 		where
@@ -178,51 +168,6 @@ it("edits a shared component from one frame and every frame follows", { timeout:
 		expect(await swaps()).toEqual({ swaps: expected, heldAtSwap: expected, covered: false, blank: false });
 	};
 
-	// selecting the surface names its file and how far an edit reaches
-	await f.select("div.surface");
-	const shared = rail.locator("[data-properties-shared]");
-	await expect.poll(() => shared.textContent(), { timeout: 15_000 }).toContain("used in 3 frames");
-	expect(await shared.textContent()).toContain("surface.tsx");
-	await expect.poll(() => field("border-radius").count()).toBe(1);
-
-	// the radius from this frame: one write, to the shared file
-	await mark(frame, "sameDocument");
-	await mark(second, "otherDocument");
-	await watchSwaps();
-	await requests.quiet();
-	await field("border-radius").fill("12px");
-	await expect.poll(() => radius(frame)).toBe("12px");
-	await commit("/class");
-	expect(f.bytes("shared/ui/surface.tsx")).toContain("cn('surface rounded-[12px]', className)");
-	expect(f.bytes()).toBe(HOME);
-	expect(f.bytes("frames/second/frame.tsx")).toBe(SECOND);
-	const written = requests.taken().filter((sent) => sent.startsWith("POST") && !sent.endsWith("/selection"));
-	expect(written.filter((sent) => sent.endsWith("/class"))).toHaveLength(1);
-	expect(written.filter((sent) => sent.endsWith("/text") || sent.endsWith("/revert"))).toEqual([]);
-
-	// the other mounted frame reloads behind its held paint, and shows the change
-	await sharedEcho();
-	await settledSwap(1);
-	await expect.poll(() => radius(second), { timeout: 15_000 }).toBe("12px");
-	expect(await marked(second, "otherDocument")).toBe(false);
-	// the edited frame is the same document, showing the change it already made
-	expect(await marked(frame, "sameDocument")).toBe(true);
-	expect(await radius(frame)).toBe("12px");
-
-	// the far frame, off screen, comes up showing the change when it mounts
-	await page.mouse.move(300, 300);
-	await page.mouse.wheel(4900, 0);
-	const far = page.frameLocator('iframe[title="far"]');
-	await expect.poll(() => far.locator("div.surface").count(), { timeout: 30_000 }).toBe(1);
-	await expect.poll(() => radius(far), { timeout: 15_000 }).toBe("12px");
-	await page.mouse.wheel(-4900, 0);
-	await expect.poll(() => frame.locator("div.surface").count(), { timeout: 30_000 }).toBe(1);
-
-	// letting go is when the edited frame reloads, behind its own paint
-	await deselect();
-	await expect.poll(() => marked(frame, "sameDocument"), { timeout: 15_000 }).toBe(false);
-	await expect.poll(() => radius(frame), { timeout: 15_000 }).toBe("12px");
-
 	// a label supplied at the call edits that call alone: the frame's own file,
 	// the definition untouched, the other frames' labels their own
 	await mark(frame, "labelDocument");
@@ -233,7 +178,7 @@ it("edits a shared component from one frame and every frame follows", { timeout:
 	await page.keyboard.type("Explore the work");
 	await commit("/text");
 	await fileHas("frames/home/frame.tsx", '<Button className="bordered">Explore the work</Button>');
-	expect(f.bytes("shared/ui/surface.tsx")).toContain("cn('surface rounded-[12px]', className)");
+	expect(f.bytes("shared/ui/surface.tsx")).toBe(SURFACE);
 	expect(f.bytes("frames/second/frame.tsx")).toBe(SECOND);
 	expect(await second.locator("button.action").textContent()).toBe("Take a moment");
 	await deselect();
@@ -263,15 +208,9 @@ it("edits a shared component from one frame and every frame follows", { timeout:
 	await sharedEcho();
 	await settledSwap(2);
 	await expect.poll(() => note(second), { timeout: 15_000 }).toBe("Rendered live");
-	// the label, then the radius: the shared file is byte for byte what it was
+	// then the label: both files are byte for byte what they were
 	await f.history();
 	await fileHas("frames/home/frame.tsx", "Explore the studio");
-	await f.history();
-	await expect.poll(() => f.bytes("shared/ui/surface.tsx"), { timeout: 15_000 }).toBe(SURFACE);
 	expect(f.bytes()).toBe(HOME);
-	await sharedEcho();
-	await settledSwap(3);
-	await expect.poll(() => radius(second), { timeout: 15_000 }).toBe("6px");
-	await expect.poll(() => radius(frame), { timeout: 15_000 }).toBe("6px");
-	requests.stop();
+	expect(f.bytes("shared/ui/surface.tsx")).toBe(SURFACE);
 });

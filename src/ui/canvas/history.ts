@@ -92,9 +92,8 @@ export type HistoryEntry =
 	// the frame moves it happens among, because one press has to walk all of it
 	// — a hand that moved a frame and then a page undoes them in that order
 	| { readonly kind: "place"; readonly places: Places }
-	// one thing a hand did to a frame's source (#314, #315, #317): words typed,
-	// an element taken out, hidden, shown, an attribute set, a class changed, a
-	// picture swapped. The patch to run next, in whichever direction this entry
+	// one thing a hand did to a frame's source (#314, #317): words typed, or
+	// elements taken out. The patch to run next, in whichever direction this entry
 	// currently sits, and the ask the frame holds the DOM half under. Running the
 	// patch answers with its own inverse, and the entry is amended with what came
 	// back, because a file that has just changed has a new fingerprint and the old
@@ -104,9 +103,9 @@ export type HistoryEntry =
 			readonly frame: string;
 			/**
 			 * The element the hand changed (#322). Walking the entry puts the ring
-			 * back on it, with its box read again — a class or a word put back
-			 * moves the box it is drawn in — and lets the pick go when the step
-			 * took the element away.
+			 * back on it, with its box read again — a word put back moves the box
+			 * it is drawn in — and lets the pick go when the step took the element
+			 * away.
 			 */
 			readonly selector: string;
 			/**
@@ -121,11 +120,6 @@ export type HistoryEntry =
 			readonly patch: HeldPatch;
 			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */
 			readonly readAt: string;
-			// a class change is swapped on the element by hand rather than reloaded
-			// (#315), so the entry carries the literal the element wears and the one
-			// running this entry leaves it wearing, flipped with the patch when it is
-			// amended
-			readonly classes?: readonly { readonly selector: string; readonly from: string; readonly to: string }[];
 			/** the other frames rendering a shared file the patch is on (#318), whose paint a run holds */
 			readonly frames?: readonly string[];
 	  }
@@ -275,19 +269,6 @@ export function drop(history: History, way: Way): History {
 	return way === "undo"
 		? { undo: history.undo, redo: history.redo.slice(0, -1) }
 		: { undo: history.undo.slice(0, -1), redo: history.redo };
-}
-
-/**
- * The entry a gesture wrote and then put back itself (#259).
- *
- * A resize is measured after it applies, and a size the layout would not take
- * is reverted on the spot. What it leaves behind is a file that never changed,
- * so the entry it pushed is not a step anybody should be able to undo — it is
- * withdrawn rather than dropped, which is the same slice for a different
- * reason and reads as one at the call site.
- */
-export function withdraw(history: History): History {
-	return { undo: history.undo.slice(0, -1), redo: history.redo };
 }
 
 /**

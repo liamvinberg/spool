@@ -418,10 +418,8 @@ describe("the rungs read", () => {
 	interface RungAnswer {
 		source: string;
 		name?: string;
-		className: string;
 		path?: string;
 		line?: number;
-		mapped?: true;
 		refusal?: { code: string; says: string; expression?: string };
 		fingerprint?: string;
 		shared?: { frames?: string[] };
@@ -468,7 +466,7 @@ describe("the rungs read", () => {
 		expect(read?.fingerprint).toBe(fingerprintOf(cartTsx));
 	});
 
-	it("reads a whole ancestry in rung order: the authored name, the literal, and where it is written", async () => {
+	it("reads a whole ancestry in rung order: the authored name, and where it is written", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "cart", cartTsx);
@@ -478,38 +476,16 @@ describe("the rungs read", () => {
 			{
 				source: stampFor(cartTsx, "<main"),
 				name: "main",
-				className: "flex flex-col gap-2 p-4",
 				path: "design/frames/cart/frame.tsx",
 				line: 5,
 			},
 			{
 				source: stampFor(cartTsx, "<button"),
 				name: "button",
-				className: "rounded-md px-3 py-2",
 				path: "design/frames/cart/frame.tsx",
 				line: 7,
 			},
 		]);
-	});
-
-	it("carries the refusal a write would have given rather than going quiet", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "cart", cartTsx);
-		const app = makeApp(spoolDir);
-
-		const [computed, mapped] = await rungs(app, name, [
-			stampFor(cartTsx, "<p className={busy"),
-			stampFor(cartTsx, "<li"),
-		]);
-		expect(computed?.refusal).toEqual({
-			code: "computed-class",
-			says: "class is computed here; edit frames/cart/frame.tsx line 10 or ask the agent",
-			expression: '{busy ? "opacity-50" : "opacity-100"}',
-			line: 10,
-		});
-		expect(computed?.className).toBe("");
-		expect(mapped).toMatchObject({ className: "px-2", mapped: true });
 	});
 
 	it("reads an element a shared file defines as a shared definition, and says how far an edit reaches", async () => {
@@ -531,7 +507,6 @@ describe("the rungs read", () => {
 			{
 				source: "shared/ui/card.tsx:2:9",
 				name: "div",
-				className: "p-2",
 				path: "design/shared/ui/card.tsx",
 				line: 2,
 				shared: { frames: ["bag", "cart"] },
@@ -550,7 +525,6 @@ describe("the rungs read", () => {
 		expect(await rungs(app, name, ["frames/cart/frame.tsx:2:1"])).toEqual([
 			{
 				source: "frames/cart/frame.tsx:2:1",
-				className: "",
 				path: "design/frames/cart/frame.tsx",
 				line: 2,
 				refusal: { code: "stale-stamp", says: "the stamp hits nothing" },
@@ -572,145 +546,6 @@ describe("the rungs read", () => {
 		expect((await app.request(`/api/p/${name}/rungs`, jsonPost({ frame: "ghost", sources: [source] }))).status).toBe(
 			404,
 		);
-	});
-});
-
-describe("the class write", () => {
-	const voiceTsx = `import { cn } from "../../shared/lib/utils";
-
-export default function Frame({ open }: { open: boolean }) {
-	return (
-		<main className="flex flex-col gap-2 p-4">
-			<div className={cn("flex gap-3 px-5 py-4", open && "border-l")}>a</div>
-			<p className={busy ? "opacity-50" : "opacity-100"}>state</p>
-		</main>
-	);
-}
-`;
-	const utils = `export function cn(...inputs: (string | false | null | undefined)[]) { return inputs.filter(Boolean).join(" "); }\n`;
-
-	function stampIn(source: string, snippet: string): string {
-		const at = source.indexOf(snippet);
-		const before = source.slice(0, at);
-		return `frames/voice/frame.tsx:${before.split("\n").length}:${at - (before.lastIndexOf("\n") + 1) + 1}`;
-	}
-
-	async function served(root: string, name: string, app: ReturnType<typeof makeApp>) {
-		// a frame document served first, which is what a canvas has done before any hand touches it
-		const res = await app.request(`/p/${name}/frames/voice`);
-		expect(res.status).toBe(200);
-		return fingerprintOf(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8"));
-	}
-
-	it("writes one class change at the stamp and answers with the literal and the sheet", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/lib/utils.ts", utils);
-		writeFrame(root, "voice", voiceTsx);
-		const app = makeApp(spoolDir);
-		const fingerprint = await served(root, name, app);
-
-		const res = await app.request(
-			`/api/p/${name}/class`,
-			jsonPost({
-				frame: "voice",
-				sources: [stampIn(voiceTsx, "<main")],
-				edits: [{ token: "w-[700px]", scope: "" }],
-				fingerprint,
-			}),
-		);
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as {
-			ok: true;
-			classNames: { source: string; was: string; now: string }[];
-			css: string;
-			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
-			shifts: unknown[];
-		};
-		expect(body.classNames).toEqual([
-			{
-				source: stampIn(voiceTsx, "<main"),
-				was: "flex flex-col gap-2 p-4",
-				now: "flex flex-col gap-2 p-4 w-[700px]",
-			},
-		]);
-		expect(body.css).toContain("700px");
-		expect(body.shifts).toEqual([{ line: 5, column: 43, delta: 10, taken: 0 }]);
-		const written = readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8");
-		expect(written).toContain('<main className="flex flex-col gap-2 p-4 w-[700px]">');
-		expect(body.undo.fingerprint).toBe(fingerprintOf(written));
-
-		// the put-back, named a frame, carries the sheet the file now compiles to
-		const back = await app.request(`/api/p/${name}/revert`, jsonPost({ ...body.undo, frame: "voice" }));
-		expect(back.status).toBe(200);
-		const reverted = (await back.json()) as { ok: true; css: string };
-		expect(reverted.css).not.toContain("700px");
-		expect(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8")).toBe(voiceTsx);
-	});
-
-	it("edits the first string of a cn call and keeps the condition", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/lib/utils.ts", utils);
-		writeFrame(root, "voice", voiceTsx);
-		const app = makeApp(spoolDir);
-		const fingerprint = await served(root, name, app);
-
-		const res = await app.request(
-			`/api/p/${name}/class`,
-			jsonPost({
-				frame: "voice",
-				sources: [stampIn(voiceTsx, "<div")],
-				edits: [{ token: "px-8", scope: "" }],
-				fingerprint,
-			}),
-		);
-		expect(res.status).toBe(200);
-		expect(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8")).toContain(
-			'<div className={cn("flex gap-3 py-4 px-8", open && "border-l")}>',
-		);
-	});
-
-	it("refuses a computed class with the file and line, and a file that moved underneath", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/lib/utils.ts", utils);
-		writeFrame(root, "voice", voiceTsx);
-		const app = makeApp(spoolDir);
-		const fingerprint = await served(root, name, app);
-
-		const computed = await app.request(
-			`/api/p/${name}/class`,
-			jsonPost({
-				frame: "voice",
-				sources: [stampIn(voiceTsx, "<p")],
-				edits: [{ token: "p-2", scope: "" }],
-				fingerprint,
-			}),
-		);
-		expect(computed.status).toBe(409);
-		expect(await computed.json()).toEqual({
-			ok: false,
-			refusal: {
-				code: "computed-class",
-				says: "class is computed here; edit frames/voice/frame.tsx line 7 or ask the agent",
-				expression: '{busy ? "opacity-50" : "opacity-100"}',
-				line: 7,
-			},
-		});
-		const stale = await app.request(
-			`/api/p/${name}/class`,
-			jsonPost({
-				frame: "voice",
-				sources: [stampIn(voiceTsx, "<main")],
-				edits: [{ token: "p-2", scope: "" }],
-				fingerprint: "0".repeat(64),
-			}),
-		);
-		expect(stale.status).toBe(409);
-		expect(((await stale.json()) as { refusal: { code: string } }).refusal.code).toBe("stale-file");
-		expect(readFileSync(join(root, "design/frames/voice/frame.tsx"), "utf8")).toBe(voiceTsx);
-		expect((await app.request(`/api/p/${name}/class`, jsonPost({ frame: "voice", edits: [] }))).status).toBe(400);
 	});
 });
 
@@ -755,33 +590,29 @@ export default () => <Card>Keep going</Card>;
 		return { root, name, app, read };
 	}
 
-	it("writes a class change to the shared file once, and puts it back", async () => {
+	it("writes to the shared file once, and puts it back", async () => {
 		const { name, app, read } = project();
 		const res = await app.request(
-			`/api/p/${name}/class`,
+			`/api/p/${name}/text`,
 			jsonPost({
 				frame: "cart",
-				sources: [stampIn("shared/ui/card.tsx", card, "<div")],
-				edits: [{ token: "rounded-[12px]", scope: "" }],
+				source: stampIn("shared/ui/card.tsx", card, "<em"),
+				nodes: [{ text: "Rendered later" }],
 				fingerprint: fingerprintOf(card),
 			}),
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			path: string;
-			classNames: { source: string; was: string; now: string }[];
 			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
 		};
 		expect(body.path).toBe("design/shared/ui/card.tsx");
-		expect(body.classNames).toEqual([
-			{ source: stampIn("shared/ui/card.tsx", card, "<div"), was: "rounded-md p-2", now: "p-2 rounded-[12px]" },
-		]);
-		expect(read("shared/ui/card.tsx")).toContain('cn("p-2 rounded-[12px]", className)');
+		expect(read("shared/ui/card.tsx")).toContain("<em>Rendered later</em>");
 		expect(read("frames/cart/frame.tsx")).toBe(cart);
 		expect(read("frames/bag/frame.tsx")).toBe(bag);
 
 		// undo puts the shared file back
-		const back = await app.request(`/api/p/${name}/revert`, jsonPost({ ...body.undo, frame: "cart" }));
+		const back = await app.request(`/api/p/${name}/revert`, jsonPost(body.undo));
 		expect(back.status).toBe(200);
 		expect(read("shared/ui/card.tsx")).toBe(card);
 	});
@@ -863,11 +694,11 @@ export default () => <Card>Keep going</Card>;
 	it("keeps the fingerprint guard on a shared file, and the revert scope to source", async () => {
 		const { name, app, read } = project();
 		const stale = await app.request(
-			`/api/p/${name}/class`,
+			`/api/p/${name}/text`,
 			jsonPost({
 				frame: "cart",
-				sources: [stampIn("shared/ui/card.tsx", card, "<div")],
-				edits: [{ token: "p-4", scope: "" }],
+				source: stampIn("shared/ui/card.tsx", card, "<em"),
+				nodes: [{ text: "Rendered later" }],
 				fingerprint: "0".repeat(64),
 			}),
 		);

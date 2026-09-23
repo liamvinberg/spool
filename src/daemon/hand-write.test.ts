@@ -73,94 +73,6 @@ function refusal(ops: readonly HandOp[], source = FRAME) {
 	return planned.refusal;
 }
 
-describe("set-class", () => {
-	it("rewrites the literal and leaves every other character alone", () => {
-		const text = written([{ kind: "set-class", source: stamp(FRAME, "<main"), token: "p-6", scope: "" }]);
-		expect(text).toContain('<main className="flex flex-col gap-2 p-6">');
-		expect(text.replace('gap-2 p-6"', 'gap-2 p-4"')).toBe(FRAME);
-	});
-
-	it("folds two ops on one element into one patch, so a corner drag is one edit", () => {
-		const source = stamp(FRAME, "<button");
-		const text = written([
-			{ kind: "set-class", source, token: "pt-4", scope: "" },
-			{ kind: "set-class", source, token: "pb-4", scope: "" },
-		]);
-		expect(text).toContain('className="rounded-md bg-thread py-4 px-3"');
-	});
-
-	it("touches only the token that changed, so a literal keeps the shape its author gave it", () => {
-		const source = 'const x = (\n\t<div\n\t\tclassName="flex flex-col\n\t\t\titems-center gap-2"\n\t/>\n);\n';
-		const text = written([{ kind: "set-class", source: stamp(source, "<div"), token: "gap-4", scope: "" }], source);
-		expect(text).toBe(source.replace("gap-2", "gap-4"));
-	});
-
-	it("writes a className onto an element that has none", () => {
-		const text = written([{ kind: "set-class", source: stamp(FRAME, "<ul"), token: "gap-2", scope: "" }]);
-		expect(text).toContain('<ul className="flex flex-col gap-2">');
-	});
-
-	it("refuses a computed className, naming the expression and where to edit it", () => {
-		expect(
-			refusal([{ kind: "set-class", source: stamp(FRAME, "<p className={busy"), token: "p-2", scope: "" }]),
-		).toEqual({
-			code: "computed-class",
-			says: "class is computed here; edit frames/cart/frame.tsx line 13 or ask the agent",
-			expression: '{busy ? "opacity-50" : "opacity-100"}',
-			line: 13,
-		});
-	});
-
-	it("writes into the first string of a cn call and keeps the condition (#315)", () => {
-		const source = `const x = <div className={cn("flex gap-3 px-5 py-4", tone === "right" && "border-l")}>a</div>;\n`;
-		const text = written([{ kind: "set-class", source: stamp(source, "<div"), token: "px-8", scope: "" }], source);
-		expect(text).toBe(
-			`const x = <div className={cn("flex gap-3 py-4 px-8", tone === "right" && "border-l")}>a</div>;\n`,
-		);
-	});
-
-	it("keeps a JS literal's own quote and escapes into it", () => {
-		const source = "const x = <p className={'p-2'}>a</p>;\n";
-		const text = written(
-			[{ kind: "set-class", source: stamp(source, "<p"), token: "content-['x']", scope: "" }],
-			source,
-		);
-		expect(text).toBe("const x = <p className={'p-2 content-[\\'x\\']'}>a</p>;\n");
-	});
-
-	it("refuses when an inline style pins the element", () => {
-		expect(refusal([{ kind: "set-class", source: stamp(FRAME, "<p style"), token: "p-4", scope: "" }]).code).toBe(
-			"inline-style",
-		);
-	});
-
-	it("refuses spread props with no literal to write into", () => {
-		expect(refusal([{ kind: "set-class", source: stamp(FRAME, "<div {...rest}"), token: "p-4", scope: "" }])).toEqual(
-			{
-				code: "spread-props",
-				says: "spread props with no literal",
-			},
-		);
-	});
-
-	it("refuses a base class a screen variant would beat", () => {
-		const source = `const x = <div className="w-56 md:w-96" />;\n`;
-		expect(refusal([{ kind: "set-class", source: stamp(source, "<div"), token: "w-72", scope: "" }], source)).toEqual(
-			{
-				code: "variant-conflict",
-				says: "variant-prefixed conflict",
-				expression: "md:w-96",
-			},
-		);
-	});
-
-	it("writes a mapped row, and says that is what it did", () => {
-		const planned = plan([{ kind: "set-class", source: stamp(FRAME, "<li"), token: "px-4", scope: "" }]);
-		expect(planned.ok && planned.mapped).toBe(true);
-		expect(planned.ok && planned.text).toContain('<li key={item} className="px-4">');
-	});
-});
-
 const text = (words: string) => [{ text: words }];
 
 describe("set-text", () => {
@@ -358,30 +270,25 @@ export function Link({ children }: { children: ReactNode }) {
 
 describe("the stamp", () => {
 	it("refuses a stamp that hits nothing", () => {
-		expect(refusal([{ kind: "set-class", source: "frames/cart/frame.tsx:99:3", token: "p-4", scope: "" }])).toEqual({
+		expect(refusal([{ kind: "delete", source: "frames/cart/frame.tsx:99:3" }])).toEqual({
 			code: "stale-stamp",
 			says: "the stamp hits nothing",
 		});
-		expect(refusal([{ kind: "set-class", source: "frames/cart/frame.tsx:3:1", token: "p-4", scope: "" }]).code).toBe(
-			"stale-stamp",
-		);
+		expect(refusal([{ kind: "delete", source: "frames/cart/frame.tsx:3:1" }]).code).toBe("stale-stamp");
 	});
 
 	it("refuses a file that does not parse rather than guessing at it", () => {
-		expect(
-			refusal(
-				[{ kind: "set-class", source: "frames/cart/frame.tsx:1:1", token: "p-4", scope: "" }],
-				"const x = <div",
-			).code,
-		).toBe("unparsable");
+		expect(refusal([{ kind: "delete", source: "frames/cart/frame.tsx:1:1" }], "const x = <div").code).toBe(
+			"unparsable",
+		);
 	});
 });
 
 describe("all of them or none", () => {
 	it("writes nothing when the second op refuses", () => {
 		const planned = plan([
-			{ kind: "set-class", source: stamp(FRAME, "<main"), token: "p-6", scope: "" },
-			{ kind: "set-class", source: stamp(FRAME, "<p className={busy"), token: "p-2", scope: "" },
+			{ kind: "set-text", source: stamp(FRAME, "<h1"), nodes: text("Basket") },
+			{ kind: "set-text", source: stamp(FRAME, '<span className="tabular-nums"'), nodes: text("3") },
 		]);
 		expect(planned.ok).toBe(false);
 	});
@@ -389,21 +296,22 @@ describe("all of them or none", () => {
 	it("applies two ops on two elements against the offsets the canvas read", () => {
 		const after = written([
 			{ kind: "set-text", source: stamp(FRAME, "<h1"), nodes: text("Basket") },
-			{ kind: "set-class", source: stamp(FRAME, "<main"), token: "p-8", scope: "" },
+			{ kind: "delete", source: stamp(FRAME, "<img") },
 		]);
 		expect(after).toContain(">Basket</h1>");
-		expect(after).toContain("gap-2 p-8");
+		expect(after).not.toContain("<img");
 	});
 });
 
 describe("the patch a gesture stores", () => {
 	it("is the run between the common ends, and puts the file back", () => {
 		const before = FRAME;
-		const text = written([{ kind: "set-class", source: stamp(FRAME, "<main"), token: "p-6", scope: "" }]);
-		const undo = spanBetween(before, text);
+		const after = written([{ kind: "set-text", source: stamp(FRAME, "<h1"), nodes: text("Card") }]);
+		const undo = spanBetween(before, after);
 		// the run between the common ends and no wider: one character changed
-		expect(undo).toEqual({ start: before.indexOf("p-4") + 2, end: before.indexOf("p-4") + 3, text: "4" });
-		expect(applySpan(text, undo)).toBe(before);
+		const at = before.indexOf("Cart</h1>") + 3;
+		expect(undo).toEqual({ start: at, end: at + 1, text: "t" });
+		expect(applySpan(after, undo)).toBe(before);
 	});
 
 	it("hashes the bytes it was taken of", () => {
@@ -473,9 +381,7 @@ describe("the round trip an edit makes", () => {
  * touched.
  *
  * It is the same parse the write runs, asked a different question, and that is
- * the whole point of it — a crumb says the name the author wrote, the source
- * line says the literal a splice would land in, and a row greys for exactly
- * the reason a write would have refused rather than for one of its own.
+ * the whole point of it — a crumb says the name the author wrote.
  */
 describe("readElements", () => {
 	/** The reads for a snippet's element, in the order they were asked for. */
@@ -489,30 +395,6 @@ describe("readElements", () => {
 
 	it("names an element the way its author wrote it, tag or component", () => {
 		expect(read("<main", "<Card").map((one) => one?.name)).toEqual(["main", "Card"]);
-	});
-
-	it("hands back the literal className, and an empty one where there is none", () => {
-		expect(read("<main")[0]?.className).toBe("flex flex-col gap-2 p-4");
-		expect(read("<div {...rest}")[0]?.className).toBe("");
-	});
-
-	it("refuses a computed className with the expression the file says instead", () => {
-		const [one] = read("<p className={busy");
-		expect(one?.refusal?.code).toBe("computed-class");
-		expect(one?.refusal?.line).toBe(13);
-		expect(one?.refusal?.expression).toBe('{busy ? "opacity-50" : "opacity-100"}');
-		expect(one?.className).toBe("");
-	});
-
-	it("refuses an inline style and spread props with no literal, as the write does", () => {
-		expect(read("<p style=")[0]?.refusal?.code).toBe("inline-style");
-		expect(read("<Card")[0]?.refusal).toBeUndefined();
-		expect(read("<div {...rest}")[0]?.refusal?.code).toBe("spread-props");
-	});
-
-	it("says when the literal is one row of many", () => {
-		expect(read("<li")[0]?.mapped).toBe(true);
-		expect(read("<main")[0]?.mapped).toBe(false);
 	});
 
 	it("answers with nothing where the stamp hits nothing", () => {

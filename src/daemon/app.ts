@@ -43,7 +43,6 @@ import {
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
-import type { ClassEdit } from "./class-write";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -73,7 +72,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { classSite, elementSite, readRungs, revertTarget, STALE_FILE, textSite, type WriteSite } from "./hand-lane";
+import { elementSite, readRungs, revertTarget, STALE_FILE, textSite, type WriteSite } from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
 import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
@@ -121,7 +120,6 @@ import {
 } from "./session";
 import { createSettingsStore } from "./settings";
 import { createShotTaker } from "./shots";
-import { classThemeFor, compileClasses, readTheme } from "./theme";
 import {
 	createThumbHealer,
 	isCoverHash,
@@ -651,80 +649,18 @@ export function createDaemonApp({
 	});
 
 	/**
-	 * One class change (#315): the tokens the rail wants on or off, each under
-	 * its scope, on the element at one stamp. A handful, because one gesture
-	 * decides one property or two.
-	 */
-	const classBody = validator("json", (value, c) => {
-		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const stamps = parseStamps(body.sources);
-		const edits =
-			Array.isArray(body.edits) && body.edits.length > 0 && body.edits.length <= 16 ? body.edits : undefined;
-		const shaped = edits?.every(
-			(edit) =>
-				typeof edit === "object" &&
-				edit !== null &&
-				typeof (edit as { token?: unknown }).token === "string" &&
-				typeof (edit as { scope?: unknown }).scope === "string" &&
-				((edit as { remove?: unknown }).remove === undefined || (edit as { remove?: unknown }).remove === true),
-		);
-		if (
-			typeof body.frame !== "string" ||
-			!isFramePath(body.frame) ||
-			stamps?.[0] === undefined ||
-			edits === undefined ||
-			shaped !== true ||
-			typeof body.fingerprint !== "string"
-		) {
-			return c.text(
-				'a class edit is { "frame", "sources": [ "…:12:4" ], "edits": [{ "token", "scope", "remove"? }], "fingerprint" }',
-				400,
-			);
-		}
-		// a multi-pick writes the same tokens to every element it holds, as one
-		// write: one file, one fingerprint, one span (#323)
-		if (new Set(stamps.map((stamped) => stamped.replace(/:\d+:\d+$/, ""))).size > 1) {
-			return c.text("a class edit is one file's", 400);
-		}
-		return {
-			frame: body.frame,
-			sources: stamps,
-			edits: edits as ClassEdit[],
-			fingerprint: body.fingerprint,
-		};
-	});
-
-	/**
 	 * The patch that puts a hand edit back (#314): the run, and the file it
-	 * was taken of. It names the frame it was made in when the frame needs the
-	 * stylesheet the put-back file compiles to (#315).
+	 * was taken of.
 	 */
 	const revertBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const { path, start, end, text, fingerprint, frame } = body;
+		const { path, start, end, text, fingerprint } = body;
 		const spans = typeof start === "number" && typeof end === "number" && Number.isInteger(start);
 		if (typeof path !== "string" || !spans || typeof text !== "string" || typeof fingerprint !== "string") {
-			return c.text('a revert is { "path", "start", "end", "text", "fingerprint", "frame"? }', 400);
+			return c.text('a revert is { "path", "start", "end", "text", "fingerprint" }', 400);
 		}
 		if (!Number.isInteger(end) || start < 0 || end < start) return c.text("not a span", 400);
-		if (frame !== undefined && (typeof frame !== "string" || !isFramePath(frame))) return c.text("not a frame", 400);
-		return { path, start, end, text, fingerprint, ...(typeof frame === "string" ? { frame } : {}) };
-	});
-
-	/**
-	 * The rail's free class field (#257): candidates put to the compiler.
-	 *
-	 * A handful at a time — the field asks about what a person is typing and
-	 * about the seeds it offers beside it, and a list longer than that is not a
-	 * question about one field any more.
-	 */
-	const classesBody = validator("json", (value, c) => {
-		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const tokens = body.tokens;
-		if (!Array.isArray(tokens) || tokens.length > 64 || tokens.some((token) => typeof token !== "string")) {
-			return c.text('a compile is { "tokens": ["mt-4", "md:hidden"] }, at most 64', 400);
-		}
-		return { tokens: tokens as string[] };
+		return { path, start, end, text, fingerprint };
 	});
 
 	const frameAuthority = (root: string) => ({
@@ -2497,9 +2433,9 @@ export function createDaemonApp({
 		/*
 		 * The read half (#256). The properties rail draws an element before
 		 * anybody touches it, so it asks the same file the write lane parses:
-		 * the name the author wrote, the literal className, and the refusal a
-		 * write would have given. Nothing here writes, and a refusal is part of
-		 * the answer rather than an error.
+		 * the name the author wrote, where it is written, and the fingerprint a
+		 * write is measured against. Nothing here writes, and a stamp that hits
+		 * nothing is part of the answer rather than an error.
 		 */
 		.post("/api/p/:project/rungs", rungsBody, async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
@@ -2539,36 +2475,14 @@ export function createDaemonApp({
 			return c.json(written(project.root, site));
 		})
 		/*
-		 * The write half of a class change (#315). The frame already shows it
-		 * as an inline style; this plans the tokens through the class planner
-		 * at the stamp, writes once, and answers with the literal before and
-		 * after and the stylesheet the file now compiles to, so the frame sets
-		 * the attribute, swaps the sheet and drops the preview without a
-		 * reload. A refusal is the lane's own no and comes back as one.
-		 */
-		.post("/api/p/:project/class", classBody, async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { frame, ...ask } = c.req.valid("json");
-			const theme = await classThemeFor(project.root);
-			const site = classSite(project.root, frame, ask, theme);
-			if (site.kind === "error") return c.text(site.message, site.status);
-			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
-			const landed = written(project.root, site);
-			const css = site.text === site.source ? undefined : await compiler.stylesheet(project.root, frame);
-			return c.json({ ...landed, classNames: site.classNames, ...(css === undefined ? {} : { css }) });
-		})
-		/*
 		 * Undo and redo (#314): the characters put back, and refused rather
 		 * than clobbered if the file moved since. Its own inverse comes back,
-		 * so a redo is the same call again. Named a frame, it answers with the
-		 * stylesheet that frame's document now compiles to (#315), for a frame
-		 * that swaps a class back without reloading.
+		 * so a redo is the same call again.
 		 */
 		.post("/api/p/:project/revert", revertBody, async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const { path, start, end, text, fingerprint, frame } = c.req.valid("json");
+			const { path, start, end, text, fingerprint } = c.req.valid("json");
 			const target = revertTarget(project.root, path);
 			if ("message" in target) return c.text(target.message, target.status);
 			let source: string;
@@ -2583,48 +2497,13 @@ export function createDaemonApp({
 			const next = applySpan(source, patch);
 			if (next !== source) writeAtomic(target.file, next);
 			const after = fingerprintOf(next);
-			const css =
-				frame === undefined || next === source ? undefined : await compiler.stylesheet(project.root, frame);
 			return c.json({
 				ok: true,
 				path,
 				fingerprint: after,
 				shifts: shiftsOf(source, [patch]),
 				undo: { path, start, end: start + text.length, text: source.slice(start, end), fingerprint: after },
-				...(css === undefined ? {} : { css }),
 			});
-		})
-		/*
-		 * The compiled theme (#257). Every properties menu reads it, because a
-		 * menu that offers Tailwind's defaults while the project's tokens.css
-		 * says otherwise is lying about the project. It is the same stylesheets
-		 * a frame is compiled against, read through the same pinned Tailwind.
-		 */
-		.get("/api/p/:project/theme", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			try {
-				return c.json({ theme: await readTheme(project.root) });
-			} catch (error) {
-				// a tokens.css that will not compile is the project's answer, and
-				// the rail draws its rows without menus rather than not at all
-				return c.text(error instanceof Error ? error.message : "the theme did not compile", 422);
-			}
-		})
-		/*
-		 * The compiler as the gate on the free class field (#257). A token lands
-		 * only when Tailwind has a utility for it, and what it compiles to is
-		 * shown beside it; one that does not carries the reason.
-		 */
-		.post("/api/p/:project/theme/classes", classesBody, async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { tokens } = c.req.valid("json");
-			try {
-				return c.json({ compiled: await compileClasses(project.root, tokens) });
-			} catch (error) {
-				return c.text(error instanceof Error ? error.message : "the theme did not compile", 422);
-			}
 		})
 		/*
 		 * The explorer's verbs (#228). Every one of them moves or copies a

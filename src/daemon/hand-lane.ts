@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ClassEdit, ClassTheme } from "./class-write";
 import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import {
 	type EditedNode,
@@ -32,29 +31,25 @@ export interface LaneDeps {
 }
 
 /**
- * One rung as the file has it (#256): what the author called it, the literal
- * it carries, and why no hand may write that literal when none may.
+ * One rung as the file has it (#256): what the author called it, where it is
+ * written, and the file a write about it is measured against.
  *
  * The properties rail draws before anything is touched, so it needs the read
- * half of the lane's answer: the crumbs are authored names, the scope bar is
- * the variant chains the literal carries, and the source line is the literal.
- * A rung whose stamp points outside the frame's own folder is a shared
- * definition (#318): it reads and writes exactly as the frame's own do, and
- * says how many frames render it, because that is how far an edit reaches.
+ * half of the lane's answer: the crumbs are authored names. A rung whose stamp
+ * points outside the frame's own folder is a shared definition (#318): it
+ * reads and writes exactly as the frame's own do, and says how many frames
+ * render it, because that is how far an edit reaches.
  */
 export interface RungRead {
 	/** the stamp asked about, which is what pairs a reply with its rung */
 	source: string;
 	/** what the file calls it; absent when the stamp hits nothing any more */
 	name?: string;
-	/** the literal className, empty when the element carries none */
-	className: string;
 	/** where it is written: `design/frames/cart/frame.tsx` */
 	path?: string;
 	line?: number;
+	/** the stamp hits nothing any more */
 	refusal?: PatchRefusal;
-	/** the element sits inside a `map`: one literal, every rendered row */
-	mapped?: true;
 	/**
 	 * The stamp's file is outside the frame's own folder (#318), and the frames
 	 * the import graph reaches it from: how far an edit reaches, and who has to
@@ -121,7 +116,7 @@ export async function readRungs(
 	for (const [index, stamp] of stamps.entries()) {
 		const source = sources[index] ?? "";
 		if (stamp === undefined) {
-			rungs.push({ source, className: "", refusal: STALE_STAMP });
+			rungs.push({ source, refusal: STALE_STAMP });
 			continue;
 		}
 		const at = taken.get(stamp.file) ?? 0;
@@ -129,17 +124,14 @@ export async function readRungs(
 		const held = byFile.get(stamp.file);
 		const read = held?.reads[at];
 		if (read === undefined) {
-			rungs.push({ source, className: "", path: `design/${stamp.rel}`, line: stamp.line, refusal: STALE_STAMP });
+			rungs.push({ source, path: `design/${stamp.rel}`, line: stamp.line, refusal: STALE_STAMP });
 			continue;
 		}
 		rungs.push({
 			source,
 			name: read.name,
-			className: read.className,
 			path: `design/${stamp.rel}`,
 			line: stamp.line,
-			...(read.refusal === undefined ? {} : { refusal: read.refusal }),
-			...(read.mapped ? { mapped: true as const } : {}),
 			...(stamp.rel.startsWith(folder) ? {} : { shared: await sharedUse(deps, stamp.rel) }),
 			...(held?.fingerprint === undefined ? {} : { fingerprint: held.fingerprint }),
 		});
@@ -235,85 +227,6 @@ export function textSite(root: string, frame: string, ask: TextAsk): WriteSite {
 	return planned(call.stamp, callSource, [
 		{ kind: "set-supplied", source: ask.owner, prop: owner.prop, text: flatText(ask.nodes) },
 	]);
-}
-
-/**
- * One class change as the rail sends it (#315): the element's stamp, the
- * tokens it wants on or off under their scopes, and the fingerprint of the
- * file the rung was read from. Several edits are one write, because one
- * gesture can decide two properties.
- */
-export interface ClassAsk {
-	/**
-	 * The stamps the same edits land on (#323).
-	 *
-	 * One for a single rung, several when a multi-pick writes a row: the same
-	 * tokens go to each held element, and they are one file's, so the whole of
-	 * it is one write, one span and one press of undo.
-	 */
-	sources: readonly string[];
-	edits: readonly ClassEdit[];
-	fingerprint: string;
-}
-
-export type ClassSite =
-	| (Extract<WriteSite, { kind: "ok" }> & {
-			/** the literal before and after per stamp, which is what the frame swaps on each element */
-			classNames: readonly { source: string; was: string; now: string }[];
-	  })
-	| Exclude<WriteSite, { kind: "ok" }>;
-
-/**
- * Where a class write lands (#315): the element's file, at its stamp, through
- * the Tailwind class planner — the frame's own or a shared definition's
- * (#318), which is the same write with more frames behind it. The frame
- * already shows the change as an inline style; this is the one write behind
- * it, and the answer is the literal as it was and as it is, so the frame can
- * set the attribute and drop the preview without a reload.
- */
-export function classSite(root: string, frame: string, ask: ClassAsk, theme: ClassTheme | undefined): ClassSite {
-	const first = ask.sources[0];
-	if (first === undefined) return { kind: "error", status: 400, message: "a class edit names a stamp" };
-	const place = siteAt(root, frame, first, ask.fingerprint);
-	if ("kind" in place) return place;
-	const { at, source } = place;
-	const places = ask.sources.map((stamped) => parseStamp(root, stamped));
-	const marks = places.map((stamp) => ({ line: stamp?.line ?? 0, column: stamp?.column ?? 0 }));
-	const before = readElements(source, marks, at.rel);
-	for (const read of before) {
-		if (read === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-		if (read.refusal !== undefined) return { kind: "refusal", refusal: read.refusal };
-	}
-	const site = planned(
-		at,
-		source,
-		ask.sources.flatMap((stamped) =>
-			ask.edits.map((edit) => ({ kind: "set-class" as const, source: stamped, ...edit })),
-		),
-		theme,
-	);
-	if (site.kind !== "ok") return site;
-	// the stamps on a line move with what the write put there, so each literal
-	// is read back where the shifts say it now stands
-	const moved = marks.map((mark) => ({ line: mark.line, column: shiftedColumn(mark, site.shifts ?? []) }));
-	const after = readElements(site.text, moved, at.rel);
-	return {
-		...site,
-		classNames: ask.sources.map((stamped, index) => ({
-			source: stamped,
-			was: before[index]?.className ?? "",
-			now: after[index]?.className ?? before[index]?.className ?? "",
-		})),
-	};
-}
-
-/** Where a stamp's column stands after a write moved the ones before it on its line (#323). */
-function shiftedColumn(at: { line: number; column: number }, shifts: readonly StampShift[]): number {
-	let moved = at.column;
-	for (const shift of shifts) {
-		if (shift.line === at.line && shift.column + shift.taken <= moved) moved += shift.delta;
-	}
-	return moved;
 }
 
 /**
@@ -457,9 +370,8 @@ function applyAll(source: string, patches: readonly { start: number; end: number
 }
 
 /** The ops planned against one file, the frame's own or a shared definition's alike (#318). */
-function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1], theme?: ClassTheme): WriteSite {
-	const plan = planOps(source, ops, theme);
-
+function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1]): WriteSite {
+	const plan = planOps(source, ops);
 	if (!plan.ok) return { kind: "refusal", refusal: plan.refusal };
 	return spliced(stamp, source, plan);
 }

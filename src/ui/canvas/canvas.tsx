@@ -44,7 +44,6 @@ import {
 	revertPatch,
 	saveCanvasState,
 	subscribeSse,
-	writeClass,
 	writeElement,
 	writeText,
 } from "../api";
@@ -148,11 +147,9 @@ import {
 	stateCameraSlots,
 	switchPage,
 } from "./pages";
-import { type Held, PropertiesRail, rungOf, useRungs, useTheme } from "./properties-rail";
-import { classEditsOf, type PropertyControls, type PropertyValue } from "./property-controls";
+import { type Held, PropertiesRail, rungOf, useRungs } from "./properties-rail";
 import {
 	alterMessage,
-	classMessage,
 	clipboardCopyAllowed,
 	type EditedNode,
 	editMessage,
@@ -170,7 +167,6 @@ import {
 	sessionReply,
 	sharedStateMessage,
 	sitesMessage,
-	styleMessage,
 	walkRejectionReason,
 } from "./protocol";
 import { CanvasSharing, useSharingAvailable } from "./sharing";
@@ -779,39 +775,6 @@ export function ProjectCanvas({
 	// pointing at anything (#172).
 	const hoveredFrame = hovered?.visible === true ? hovered.frame : null;
 
-	/**
-	 * The frame a hand gesture is drawing in right now (#322).
-	 *
-	 * The hand holding an element holds every live frame still (#319), which is
-	 * right until the hand starts moving one: a document that never gets an
-	 * animation frame cannot redraw what the drag is changing, and a canvas
-	 * element clears itself the moment its size changes and stays black. So the
-	 * one frame under a scrubbed number animates while the gesture lasts, and
-	 * the rest of the field stays held.
-	 */
-	const [gesturing, setGesturing] = useState<string | null>(null);
-	const restTick = useRef<number | null>(null);
-	const drawWhile = useCallback((frame: string) => {
-		if (restTick.current !== null) cancelAnimationFrame(restTick.current);
-		restTick.current = null;
-		setGesturing((held) => (held === frame ? held : frame));
-	}, []);
-	/**
-	 * The gesture is over. One more tick, so the document draws what the write
-	 * left it wearing, and then it holds again under the pick that is still on
-	 * it — a frame refrozen the same instant would keep the half-drawn box the
-	 * last sample gave it.
-	 */
-	const drawOnce = useCallback(() => {
-		if (restTick.current !== null) cancelAnimationFrame(restTick.current);
-		restTick.current = requestAnimationFrame(() => {
-			restTick.current = requestAnimationFrame(() => {
-				restTick.current = null;
-				setGesturing(null);
-			});
-		});
-	}, []);
-
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		allFramesRef,
@@ -822,7 +785,6 @@ export function ProjectCanvas({
 		hovered: hoveredFrame,
 		// the hand holding an element holds the whole field still (#319)
 		picking: picked.length > 0,
-		gesturing,
 		hasCover: hasCover,
 		onShot,
 		onCaptureFailure,
@@ -1959,13 +1921,13 @@ export function ProjectCanvas({
 			frame: string,
 			readAt: string,
 			written: { path: string; fingerprint: string; shifts: StampShift[] | null },
-		): boolean => {
+		): void => {
 			setSaves((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
 			if (written.shifts === null || !frameHeld(frame)) {
 				saved.current.delete(frame);
 				holdNext.current.add(frame);
 				reloadFrameDocument(frame);
-				return false;
+				return;
 			}
 			saved.current.set(frame, {
 				source: readAt,
@@ -1973,7 +1935,7 @@ export function ProjectCanvas({
 				own: !sharedWrite(frame, written.path),
 			});
 			const shifts = written.shifts;
-			if (!shifts.some((shift) => shift.delta !== 0)) return true;
+			if (!shifts.some((shift) => shift.delta !== 0)) return;
 			const file = written.path.replace(/^design\//, "");
 			iframes.current.get(frame)?.contentWindow?.postMessage(restampMessage(file, shifts), "*");
 			const move = (source: string | null) => (source === null ? null : restamped(source, file, shifts));
@@ -1984,7 +1946,6 @@ export function ProjectCanvas({
 			if (chain?.frame === frame) {
 				holdChain({ frame, chain: chain.chain.map((hit) => ({ ...hit, source: move(hit.source) })) });
 			}
-			return true;
 		},
 		[frameHeld, holdChain, reloadFrameDocument, sharedWrite],
 	);
@@ -1992,9 +1953,9 @@ export function ProjectCanvas({
 	/**
 	 * What every hand write does with its answer (#314–#318).
 	 *
-	 * The four gestures differ in what they send and in what they do with a
+	 * The gestures differ in what they send and in what they do with a
 	 * write that landed; everything between was the same thirty lines written
-	 * out four times. The readers held before the write go free the moment it
+	 * out for each. The readers held before the write go free the moment it
 	 * turns out not to have reached them; a refusal is shown where the gesture
 	 * was, and one about a file that moved underneath re-reads the rung; a
 	 * write that said what the file already said is no step at all; and a write
@@ -2018,11 +1979,9 @@ export function ProjectCanvas({
 				/** the sentence for a write that never reached the daemon at all */
 				failed: string;
 				/** what this gesture's entry carries beyond the patch */
-				entry?: Pick<Extract<HistoryEntry, { kind: "hand" }>, "classes" | "picks">;
-				/** the write said what the file already said */
-				nothing?: () => void;
-				/** the write landed, and whether the frame kept the document it is showing */
-				onLanded?: (kept: boolean) => void;
+				entry?: Pick<Extract<HistoryEntry, { kind: "hand" }>, "picks">;
+				/** the write landed */
+				onLanded?: () => void;
 			},
 		) => {
 			const { frame, readers } = about;
@@ -2042,12 +2001,9 @@ export function ProjectCanvas({
 			}
 			const shared = sharedWrite(frame, written.path);
 			if (!shared || wroteNothing(written.undo)) releaseReaders(frame, readers);
-			if (wroteNothing(written.undo)) {
-				about.nothing?.();
-				return;
-			}
+			if (wroteNothing(written.undo)) return;
 			const readAt = about.readAt(written.path);
-			const kept = landed(frame, readAt, written);
+			landed(frame, readAt, written);
 			recordEntry({
 				kind: "hand",
 				frame,
@@ -2058,39 +2014,12 @@ export function ProjectCanvas({
 				...(about.entry ?? {}),
 				...(shared ? { frames: readers } : {}),
 			});
-			about.onLanded?.(kept);
+			about.onLanded?.();
 			if (written.uncaught === true) {
 				setNotice({ kind: "success", message: "No history here: nothing is catching hand edits" });
 			}
 		},
 		[landed, recordEntry, releaseReaders, sharedWrite],
-	);
-
-	/**
-	 * The DOM half of a class change (#315): the frame swaps the tokens that
-	 * changed on the element, takes the sheet the file now compiles to, and
-	 * lifts the inline preview. It says whether the element was still there.
-	 */
-	const swapClass = useCallback(
-		(
-			frame: string,
-			selector: string,
-			change: { was: string; now: string; css?: string },
-			then: (ok: boolean) => void,
-		) => {
-			const target = iframes.current.get(frame)?.contentWindow;
-			if (target == null) {
-				then(false);
-				return;
-			}
-			const ask = ++pickSeq.current;
-			restoreWaiters.current.set(ask, then);
-			target.postMessage(classMessage(selector, change.was, change.now, change.css, ask), "*");
-			setTimeout(() => {
-				if (restoreWaiters.current.delete(ask)) then(false);
-			}, PICK_REPLY_MS);
-		},
-		[],
 	);
 
 	/** The DOM half of undo and redo: the frame puts one edit's words back itself, and says whether it could. */
@@ -2120,20 +2049,19 @@ export function ProjectCanvas({
 	const repickRef = useRef<(frame: string, selectors: readonly string[], gone: () => void) => void>(() => {});
 
 	/**
-	 * One hand entry, run either way (#314, #315). The patch goes back over the
+	 * One hand entry, run either way (#314, #317). The patch goes back over the
 	 * wire, the daemon re-checks the fingerprint, and what comes back is the
 	 * inverse this entry carries from here on. A refusal means the file moved
 	 * since — the step is dropped, and said so. The DOM half is the frame's own:
-	 * it puts the words back on its nodes, or swaps the class literal the entry
-	 * carries between the two it holds; one that no longer holds them reloads
-	 * behind its hold.
+	 * it puts the words or the elements back on its nodes; one that no longer
+	 * holds them reloads behind its hold.
 	 */
 	const walkHand = useCallback(
 		(entry: Extract<HistoryEntry, { kind: "hand" }>, way: Way, taking: History) => {
 			/**
 			 * The step is in the document: the ring goes back on the element it
-			 * was about (#322), its box read again because a class or a word put
-			 * back moves the box it is drawn in. A step that took the element
+			 * was about (#322), its box read again because a word put back moves
+			 * the box it is drawn in. A step that took the element
 			 * away has nothing to point at, and the frame is what is left held.
 			 */
 			const lost = () => {
@@ -2149,12 +2077,9 @@ export function ProjectCanvas({
 				}
 				walkKinRef.current(entry.frame, entry.selector, "self", lost);
 			};
-			const classes = entry.classes;
 			const readers = entry.frames ?? [];
 			holdReaders(entry.frame, readers);
-			// a class change is swapped on the element rather than reloaded, so the
-			// answer has to carry the sheet the frame now compiles to
-			void revertPatch(project, entry.patch, classes === undefined ? undefined : entry.frame).then((reverted) => {
+			void revertPatch(project, entry.patch).then((reverted) => {
 				// a press that landed after this one owns the stacks now
 				if (history.current !== taking) return;
 				if (reverted === undefined || !reverted.ok) {
@@ -2169,16 +2094,8 @@ export function ProjectCanvas({
 					});
 					return;
 				}
-				updateHistory(
-					amend(history.current, way, {
-						...entry,
-						patch: reverted.undo,
-						...(classes === undefined
-							? {}
-							: { classes: classes.map((one) => ({ ...one, from: one.to, to: one.from })) }),
-					}),
-				);
-				const kept = landed(entry.frame, entry.readAt, reverted);
+				updateHistory(amend(history.current, way, { ...entry, patch: reverted.undo }));
+				landed(entry.frame, entry.readAt, reverted);
 				const held = (ok: boolean) => {
 					if (!ok && saved.current.has(entry.frame)) {
 						saved.current.delete(entry.frame);
@@ -2190,38 +2107,10 @@ export function ProjectCanvas({
 					}
 					rering();
 				};
-				if (classes === undefined) {
-					restoreWords(entry.frame, entry.edit, way === "undo" ? "before" : "after", held);
-					return;
-				}
-				if (!kept) return;
-				// one step can be about several elements (#323): each one's literal
-				// is swapped back, and the ring goes on the whole selection once
-				let left = classes.length;
-				for (const one of classes) {
-					const change = {
-						was: one.from,
-						now: one.to,
-						...(reverted.css === undefined ? {} : { css: reverted.css }),
-					};
-					swapClass(entry.frame, one.selector, change, (ok) => {
-						left -= 1;
-						if (left === 0) held(ok);
-					});
-				}
+				restoreWords(entry.frame, entry.edit, way === "undo" ? "before" : "after", held);
 			});
 		},
-		[
-			holdChain,
-			holdReaders,
-			landed,
-			project,
-			releaseReaders,
-			reloadFrameDocument,
-			restoreWords,
-			swapClass,
-			updateHistory,
-		],
+		[holdChain, holdReaders, landed, project, releaseReaders, reloadFrameDocument, restoreWords, updateHistory],
 	);
 
 	/**
@@ -2304,8 +2193,8 @@ export function ProjectCanvas({
 	const cancelPicks = useCallback(() => {
 		pickGen.current++;
 		// the hover's own ask is one of the ones just voided, and its reply is
-		// what would have cleared this. Left standing it latches the rings — and
-		// the measurement (#261) — off for the rest of the session.
+		// what would have cleared this. Left standing it latches the rings off
+		// for the rest of the session.
 		hoverBusy.current = false;
 	}, []);
 
@@ -2379,10 +2268,10 @@ export function ProjectCanvas({
 	/**
 	 * The ancestry at a frame-local point: what every pointer verb asks for.
 	 *
-	 * A verb that ends in a selection asks for the drawn style of each rung
-	 * along with it (#323), which is the rail's second source and the only one
-	 * that can answer for a property the project's own stylesheet set. A hover
-	 * asks for a chain many times a second and draws none of it, so it does not.
+	 * A verb that ends in a selection asks for what only a selection needs
+	 * along with it (#323, #324): which row of a list each rung is, and which
+	 * sides its content spills past. A hover asks for a chain many times a
+	 * second and needs none of it, so it does not.
 	 */
 	const beginPick = useCallback(
 		(
@@ -2776,7 +2665,7 @@ export function ProjectCanvas({
 	 * the caret there at once (#314). Nothing is asked first — the frame makes
 	 * the element editable the moment the message lands, and whether the file
 	 * will take the words is the daemon's answer when the edit ends. The
-	 * fingerprint the write will carry is the one the ring's read holds for
+	 * fingerprint the write will carry is the one the selection's read holds for
 	 * this very rung, when that read has landed.
 	 */
 	const beginTextEdit = useCallback(
@@ -2904,210 +2793,6 @@ export function ProjectCanvas({
 		[fingerprintFor, holdReaders, project, restoreWords, setEdit, settled, walkKin],
 	);
 
-	// --- the class gesture (#315) ------------------------------------------------
-
-	/** the property gesture in flight: what the rail last previewed, which is what a scrub commits */
-	const propertyGesture = useRef<{ property: string; last: PropertyValue | null } | null>(null);
-
-	/** The inline preview on an element in its frame, put on or lifted; no daemon in it (rule 1). */
-	const previewStyle = useCallback(
-		(frame: string, selector: string, declarations: Readonly<Record<string, string | null>> | null) => {
-			// a preview is a gesture drawing, and the frame it draws in animates
-			// through it however tightly the rest of the field is held (#322)
-			if (declarations === null) drawOnce();
-			else drawWhile(frame);
-			iframes.current.get(frame)?.contentWindow?.postMessage(styleMessage(selector, declarations), "*");
-		},
-		[drawOnce, drawWhile],
-	);
-
-	/**
-	 * One class change, written (#315). The frame already shows it as inline
-	 * style; this is the write behind it, measured against the file the rung
-	 * was read from — the hand's own last save when it has one, the ring's
-	 * read otherwise. What comes back swaps the literal on the element and
-	 * the sheet under it and lifts the preview, with no reload. A refusal
-	 * lifts the preview too and sits under the element with the reason, the
-	 * file it points at, and the door to the agent.
-	 */
-	const commitClass = useCallback(
-		(picks: readonly PickedSelection[], values: readonly PropertyValue[]) => {
-			const pick = picks[0];
-			if (pick === undefined) return;
-			const stamp = stampOf(pick);
-			const lift = () => {
-				for (const held of picks) previewStyle(held.frame, held.selector, null);
-			};
-			const edits = values.flatMap(classEditsOf);
-			const attempted = edits.map((edit) => `${edit.remove ? "-" : "+"}${edit.scope}${edit.token}`).join(" ");
-			const refuse = (refusal: Refusal) => {
-				lift();
-				const file =
-					refusal.line === undefined || typeof stamp !== "string"
-						? undefined
-						: { path: `design/${stamp.replace(/:\d+:\d+$/, "")}`, line: refusal.line };
-				if (pickedRef.current.some((held) => held.frame === pick.frame && held.selector === pick.selector)) {
-					setRefused({
-						frame: pick.frame,
-						selector: pick.selector,
-						refusal,
-						attempted,
-						asked: `Change the classes of the ${pick.tag}: ${attempted}`,
-						...(file === undefined ? {} : { file }),
-					});
-				} else setNotice({ kind: "error", message: refusal.says });
-			};
-			if (typeof stamp !== "string") {
-				refuse(stamp);
-				return;
-			}
-			if (edits.length === 0) {
-				lift();
-				return;
-			}
-			// the same tokens go to every element held, as one write: one file,
-			// one fingerprint, one span and one press of undo (#323)
-			const stamps: string[] = [];
-			for (const held of picks) {
-				const one = stampOf(held);
-				if (typeof one !== "string") {
-					refuse(one);
-					return;
-				}
-				stamps.push(one);
-			}
-			const file = stamp.replace(/:\d+:\d+$/, "");
-			if (stamps.some((one) => one.replace(/:\d+:\d+$/, "") !== file)) {
-				refuse({ code: "spread", says: "these are written in different files; change them one at a time" });
-				return;
-			}
-			const own = saved.current.get(pick.frame);
-			const read = heldReadRef.current;
-			const fingerprint =
-				own !== undefined && own.source.replace(/:\d+:\d+$/, "") === file
-					? own.fingerprint
-					: read?.source === stamp
-						? read.fingerprint
-						: // a multi-pick has no one rung for the ring to have read, so the
-							// file is found among the rungs the rail did read (#323)
-							fingerprintFor(pick.frame, stamp);
-			if (fingerprint === undefined) {
-				refuse({ code: "unread", says: "the file was never read; select the element again" });
-				return;
-			}
-			// a shared definition's readers are held before the write leaves (#318)
-			const readers = read?.source === stamp ? (read.shared?.frames ?? []) : [];
-			holdReaders(pick.frame, readers);
-			void writeClass(project, pick.frame, { sources: stamps, edits, fingerprint }).then((written) => {
-				const ok = written?.ok === true ? written : undefined;
-				settled(written, {
-					frame: pick.frame,
-					selector: pick.selector,
-					readers,
-					edit: ++pickSeq.current,
-					readAt: () => stamp,
-					refuse,
-					failed: "the class did not reach the file",
-					...(ok === undefined
-						? {}
-						: {
-								entry: {
-									classes: ok.classNames.map((change, index) => ({
-										selector: picks[index]?.selector ?? pick.selector,
-										from: change.now,
-										to: change.was,
-									})),
-									...(picks.length === 1 ? {} : { picks: picks.map((held) => held.selector) }),
-								},
-							}),
-					nothing: lift,
-					onLanded: (kept) => {
-						if (!kept || ok === undefined) {
-							drawOnce();
-							return;
-						}
-						let left = ok.classNames.length;
-						for (const [index, change] of ok.classNames.entries()) {
-							const held = picks[index] ?? pick;
-							const swap = { ...change, ...(ok.css === undefined ? {} : { css: ok.css }) };
-							swapClass(pick.frame, held.selector, swap, (landedOn) => {
-								// the class is on: one more tick to draw it, then the hold
-								drawOnce();
-								left -= 1;
-								if (landedOn) {
-									// the class this wrote is a size, a gap or a turn as often
-									// as not, so the box the ring is drawn round moved with it
-									// — the same re-read the words get when an edit ends (#321)
-									if (
-										left === 0 &&
-										picks.length === 1 &&
-										pickedRef.current.some(
-											(one) => one.frame === pick.frame && one.selector === held.selector,
-										)
-									) {
-										walkKin(pick.frame, held.selector, "self");
-									}
-									return;
-								}
-								if (!saved.current.has(pick.frame)) return;
-								saved.current.delete(pick.frame);
-								holdNext.current.add(pick.frame);
-								reloadFrameDocument(pick.frame);
-							});
-						}
-					},
-				});
-			});
-		},
-		[drawOnce, fingerprintFor, holdReaders, previewStyle, project, reloadFrameDocument, settled, swapClass, walkKin],
-	);
-
-	/**
-	 * The rail's write lane for the one rung held (#315). Preview is the DOM:
-	 * a typed or stepped value goes on the element as inline style and nothing
-	 * leaves the canvas; Enter, blur or the end of a scrub is the one write.
-	 * Nothing when no single element with a stamp is held, and the rows draw
-	 * without a gesture.
-	 */
-	const propertyControls = useMemo<PropertyControls | null>(() => {
-		const pick = picked[0];
-		if (pick === undefined || picked.some((held) => typeof stampOf(held) !== "string")) return null;
-		// a multi-pick previews on every element it holds and writes to all of
-		// them in one go (#323); a selection spread over two frames has no one
-		// write to be, and the lane says so when the gesture ends
-		const onEach = (declarations: Readonly<Record<string, string | null>> | null) => {
-			for (const held of picked) previewStyle(held.frame, held.selector, declarations);
-		};
-		return {
-			begin: (property) => {
-				propertyGesture.current = { property, last: null };
-			},
-			preview: (property, value, sample) => {
-				const gesture = propertyGesture.current ?? { property, last: null };
-				gesture.last = value;
-				propertyGesture.current = gesture;
-				const css = sample ?? (value.kind === "custom" ? value.value : value.kind === "remove" ? "" : undefined);
-				if (css !== undefined) onEach({ [property]: css });
-			},
-			apply: (_property, value) => {
-				propertyGesture.current = null;
-				commitClass(picked, [value]);
-			},
-			applyFields: (changes) => {
-				propertyGesture.current = null;
-				commitClass(
-					picked,
-					changes.map((change) => change.value),
-				);
-			},
-			finish: (commit) => {
-				const held = propertyGesture.current;
-				propertyGesture.current = null;
-				if (commit && held?.last != null) commitClass(picked, [held.last]);
-				else onEach(null);
-			},
-		};
-	}, [commitClass, picked, previewStyle]);
 	// --- delete (#317) ------------------------------------------------------------
 
 	/**
@@ -3251,7 +2936,7 @@ export function ProjectCanvas({
 	/**
 	 * ⌫ on a held element (#317): it goes, here and in the file.
 	 *
-	 * The fingerprint is the one the ring's read holds for this very rung, which
+	 * The fingerprint is the one the selection's read holds for this very rung, which
 	 * is the file the document on screen was rendered from. Without it there is
 	 * nothing to measure the write against, and the honest answer is to say so
 	 * rather than to write against whatever the file says now.
@@ -3819,8 +3504,7 @@ export function ProjectCanvas({
 					finishEdit(held, message.commit, message.nodes, message.owner);
 					return;
 				}
-				case "restored":
-				case "classed": {
+				case "restored": {
 					const waiter = restoreWaiters.current.get(message.id);
 					restoreWaiters.current.delete(message.id);
 					waiter?.(message.ok);
@@ -4167,7 +3851,7 @@ export function ProjectCanvas({
 			() => {
 				hoverBusy.current = false;
 			},
-			// a hover draws rings and nothing the drawn style feeds (#323)
+			// a hover draws rings and deletes nothing (#323)
 			false,
 		);
 	};
@@ -5239,18 +4923,13 @@ export function ProjectCanvas({
 			? null
 			: (picked.find((held) => held.frame === editing.frame && held.selector === editing.selector)?.rect ?? null);
 	/**
-	 * The selection's one read, and the two clocks behind it.
-	 *
-	 * `reloads` is the held frame's document coming back: tokens.css is one of
-	 * its inputs, so it is the one thing that could have changed the theme.
-	 * `revision` adds the hand's own saves, because a save rewrites the very
-	 * literal this read is about without reloading the document — without it
-	 * the ring and the rows go on answering out of the file as it was (#306).
+	 * The selection's one read, and the clock behind it: the held frame's
+	 * document coming back, and the hand's own saves, because a save rewrites
+	 * the very file this read is about without reloading the document — without
+	 * it the next write would be measured against the file as it was (#306).
 	 */
-	const railReloads = railFrame === null ? 0 : (docNonces[railFrame] ?? 0);
-	const railRevision = railFrame === null ? 0 : railReloads + (saves[railFrame] ?? 0);
+	const railRevision = railFrame === null ? 0 : (docNonces[railFrame] ?? 0) + (saves[railFrame] ?? 0);
 	const railRungs = useRungs(project, railHeld, railRevision);
-	const railTheme = useTheme(project, railReloads);
 	// an element with no stamp of its own has nothing a write could be measured
 	// against, so it holds no read at all
 	heldReadRef.current =
@@ -5622,11 +5301,8 @@ export function ProjectCanvas({
 				onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
 				properties={(width, shut) => (
 					<PropertiesRail
-						project={project}
 						held={railHeld}
 						rungs={railRungs}
-						theme={railTheme}
-						reloads={railReloads}
 						width={width}
 						onCollapse={shut}
 						acts={{
@@ -5635,8 +5311,6 @@ export function ProjectCanvas({
 							onGeometry: setFrameGeometry,
 							onGeometryPreview: previewFrameGeometry,
 							onGeometryCommit: commitFrameGeometry,
-							property: propertyControls,
-							onOpenFile: (path, line) => copySourcePath(`${path}:${line}`),
 						}}
 					/>
 				)}

@@ -2,8 +2,6 @@ import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
 import type { JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
 import { parseStampRef } from "../stamp";
-import { classSlotOf } from "./class-literal";
-import { type ClassEdit, type ClassTheme, screenConflict, writeClass } from "./class-write";
 import { isLayoutOnly, readJsxText, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
 
@@ -33,15 +31,10 @@ export type HandOp =
 	| { kind: "set-text"; source: string; nodes: readonly EditedNode[] }
 	/** words a call site supplies to a component, written at that call (#314) */
 	| { kind: "set-supplied"; source: string; prop: string; text: string }
-	| { kind: "set-class"; source: string; token: string; scope: string; remove?: boolean }
 	/** the element out of the file, its own line with it when it stands alone (#317) */
 	| { kind: "delete"; source: string };
 
 export type RefusalCode =
-	| "computed-class"
-	| "inline-style"
-	| "spread-props"
-	| "variant-conflict"
 	| "stale-stamp"
 	| "expression-text"
 	| "no-text"
@@ -67,11 +60,11 @@ export type RefusalCode =
 
 export interface PatchRefusal {
 	code: RefusalCode;
-	/** the sentence the surface shows on the greyed control */
+	/** the sentence the surface shows on the element the gesture was about */
 	says: string;
 	/** what the file says instead, when naming it is the whole of the answer */
 	expression?: string;
-	/** the line the sentence points at, when editing the file there is the answer (#315) */
+	/** the line the sentence points at, when editing the file there is the answer (#317) */
 	line?: number;
 }
 
@@ -191,11 +184,9 @@ export function spanBetween(before: string, after: string): SpanPatch {
  *
  * Every stamp is resolved against the text as the canvas read it and the
  * splices are applied from the back, so an op never lands on offsets an
- * earlier op moved. Class edits on one element fold together into a single
- * write of that literal, which is how a corner drag writes width and height
- * as one patch.
+ * earlier op moved.
  */
-export function planOps(source: string, ops: readonly HandOp[], theme?: ClassTheme): Planned {
+export function planOps(source: string, ops: readonly HandOp[]): Planned {
 	let program: Node;
 	try {
 		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
@@ -205,29 +196,13 @@ export function planOps(source: string, ops: readonly HandOp[], theme?: ClassThe
 
 	const patches: SpanPatch[] = [];
 	let mapped = false;
-	const classEdits = new Map<Node, { element: Element; edits: ClassEdit[] }>();
 
 	for (const op of ops) {
 		const stamp = parseStampRef(op.source);
 		const element = stamp === undefined ? undefined : elementAt(program, stamp.line, stamp.column, stamp.rel);
 		if (element === undefined) return { ok: false, refusal: STALE_STAMP };
 		if (element.mapped) mapped = true;
-		if (op.kind === "set-class") {
-			const held = classEdits.get(element.node);
-			if (held !== undefined) {
-				held.edits.push(op);
-				continue;
-			}
-			classEdits.set(element.node, { element, edits: [op] });
-			continue;
-		}
 		const planned = planOne(source, element, op);
-		if ("refusal" in planned) return { ok: false, refusal: planned.refusal };
-		patches.push(...planned.patches);
-	}
-
-	for (const { element, edits } of classEdits.values()) {
-		const planned = planClass(source, element, edits, theme);
 		if ("refusal" in planned) return { ok: false, refusal: planned.refusal };
 		patches.push(...planned.patches);
 	}
@@ -252,28 +227,19 @@ export const STALE_STAMP: PatchRefusal = { code: "stale-stamp", says: "the stamp
  * before anybody touches it (#256).
  *
  * The properties rail reads rather than writes: the crumbs want the name the
- * author wrote, the scope bar wants the variant chains the literal carries,
- * and the source line wants the literal itself. All three are facts about the
- * file, so they are parsed out of it the same way an op is — fresh, never from
- * a mirror — and a literal no hand may write comes back as the refusal a write
- * would have given rather than as an absence.
+ * author wrote. That is a fact about the file, so it is parsed out of it the
+ * same way an op is — fresh, never from a mirror.
  */
 export interface ElementRead {
 	/** what the source calls it: `CartRow` for a component, `li` for a tag */
 	name: string;
-	/** the literal className, empty when the element carries none */
-	className: string;
-	/** why no hand may write that literal, when none may */
-	refusal?: PatchRefusal;
-	/** the element sits inside a `map`: one literal, every rendered row */
-	mapped: boolean;
 }
 
 /** One read per position asked about, in order; nothing where the stamp hits nothing. */
 export function readElements(
 	source: string,
 	at: readonly { line: number; column: number }[],
-	/** how the file is named to a person: what a refusal points at */
+	/** how the file is named to a person */
 	rel = "",
 ): (ElementRead | undefined)[] {
 	let program: Node;
@@ -285,10 +251,7 @@ export function readElements(
 	return at.map(({ line, column }) => {
 		const element = elementAt(program, line, column, rel);
 		if (element === undefined) return undefined;
-		const name = rawOf(source, element.node.openingElement.name);
-		const literal = literalOf(source, element);
-		if ("refusal" in literal) return { name, className: "", refusal: literal.refusal, mapped: element.mapped };
-		return { name, className: literal.className, mapped: element.mapped };
+		return { name: rawOf(source, element.node.openingElement.name) };
 	});
 }
 
@@ -301,8 +264,7 @@ export function readElements(
  */
 export type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
 
-/** Every op but a class edit, which `planOps` folds together per element before it gets here. */
-function planOne(source: string, element: Element, op: Exclude<HandOp, { kind: "set-class" }>): OnePlan {
+function planOne(source: string, element: Element, op: HandOp): OnePlan {
 	switch (op.kind) {
 		case "set-text":
 			return planText(source, element, op.nodes);
@@ -314,56 +276,6 @@ function planOne(source: string, element: Element, op: Exclude<HandOp, { kind: "
 }
 
 /* ---------- the ops ---------- */
-
-/**
- * The className the file holds for this element, or the reason it holds none
- * that a hand may touch.
- *
- * Both the write and the rail's read come through here, which is what keeps
- * them from drifting: the rail greys a row for exactly the reason the write
- * would have refused, and the literal it prints on the source line is the one
- * a splice would land in. Where the literal is — an attribute, a `cn()`
- * call's first string, nowhere yet — is `class-literal.ts`'s answer (#315).
- */
-function literalOf(
-	source: string,
-	element: Element,
-): { slot: Slot | undefined; className: string } | { refusal: PatchRefusal } {
-	if (attributeNamed(element, "style") !== undefined) {
-		return { refusal: { code: "inline-style", says: "inline style pins it" } };
-	}
-	const slot = classSlotOf(source, element.node.openingElement);
-	if (slot.kind === "computed") {
-		return {
-			refusal: {
-				code: "computed-class",
-				says: `class is computed here; edit ${element.rel} line ${slot.line} or ask the agent`,
-				expression: slot.expression,
-				line: slot.line,
-			},
-		};
-	}
-	if (slot.kind === "none") {
-		if (element.spread) return { refusal: { code: "spread-props", says: "spread props with no literal" } };
-		return { slot: undefined, className: "" };
-	}
-	return { slot, className: slot.kind === "literal" ? slot.value : "" };
-}
-
-function planClass(source: string, element: Element, edits: readonly ClassEdit[], theme?: ClassTheme): OnePlan {
-	const literal = literalOf(source, element);
-	if ("refusal" in literal) return literal;
-	const { slot } = literal;
-	let className = literal.className;
-	for (const edit of edits) {
-		const conflict = screenConflict(className === "" ? null : className, edit, theme);
-		if (conflict !== undefined) {
-			return { refusal: { code: "variant-conflict", says: "variant-prefixed conflict", expression: conflict } };
-		}
-		className = writeClass(className === "" ? null : className, edit, theme);
-	}
-	return { patches: [fill(element, "className", className, slot)] };
-}
 
 /**
  * The words, in place (#314).
@@ -466,8 +378,8 @@ function planSupplied(source: string, call: Element, prop: string, text: string)
 		const literal = held.value.expression;
 		return { patches: [{ start: nodeStart(literal), end: nodeEnd(literal), text: jsonString(text) }] };
 	}
-	const slot = slotOf(source, held);
-	if (slot?.kind !== "literal") return computed;
+	const slot = literalSlotOf(source, held);
+	if (slot === undefined) return computed;
 	// a raw line break in an attribute is legal, and it would move the stamp of
 	// every element under it, so typed ones are written as the entity
 	const escaped = escapeAttribute(text).replaceAll("\n", "&#10;").replaceAll("\r", "&#13;");
@@ -737,30 +649,12 @@ function jsonString(text: string): string {
 }
 
 /**
- * Where the value goes: inside the quotes it already has, after the bare name
- * that has none, or in a whole new attribute straight after the tag name,
- * which is where a hand would have written it.
- */
-function fill(element: Element, name: string, value: string, slot: Slot | undefined): SpanPatch {
-	if (slot?.kind === "literal") {
-		return narrowed(
-			slot.start,
-			slot.raw,
-			slot.quote === undefined ? escapeAttribute(value) : escapeJs(value, slot.quote),
-		);
-	}
-	if (slot?.kind === "bare") return { start: slot.at, end: slot.at, text: `="${escapeAttribute(value)}"` };
-	return { start: element.nameEnd, end: element.nameEnd, text: ` ${name}="${escapeAttribute(value)}"` };
-}
-
-/**
  * The same replacement, trimmed to the characters that differ.
  *
- * A class write rewrites a whole literal, and most of what it writes is what
- * was already there. Narrowing to the run between the common ends keeps the
- * promise the lane is built on: the file comes back byte-identical outside the
- * characters the edit touched, so a literal an author spread over three lines
- * keeps its shape when one token in it changes.
+ * Supplied words rewrite a whole attribute string, and most of what they write
+ * is what was already there. Narrowing to the run between the common ends
+ * keeps the promise the lane is built on: the file comes back byte-identical
+ * outside the characters the edit touched.
  */
 function narrowed(at: number, was: string, now: string): SpanPatch {
 	const inverse = spanBetween(was, now);
@@ -779,11 +673,6 @@ function escapeAttribute(value: string): string {
 	return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
-/** A JS string literal keeps its own quote: a class inside `cn("…")` is written the way JS reads it. */
-function escapeJs(value: string, quote: '"' | "'"): string {
-	return value.replaceAll("\\", "\\\\").replaceAll(quote, `\\${quote}`).replaceAll("\n", "\\n");
-}
-
 /* ---------- the element a stamp points at ---------- */
 
 interface Element {
@@ -797,11 +686,7 @@ interface Element {
 	ancestors: readonly Node[];
 	/** an ancestor is a `map` call: one literal here, every rendered row moved */
 	mapped: boolean;
-	/** the element takes props it cannot see, so an absent attribute may exist */
-	spread: boolean;
 	selfClosing: boolean;
-	/** just past the opening tag's name, where a new attribute goes */
-	nameEnd: number;
 	/** just past the opening tag's `>`, where an element's own words begin */
 	openEnd: number;
 	/** the file as a person names it, which is what a refusal points at */
@@ -829,9 +714,7 @@ function elementAt(program: Node, line: number, column: number, rel = ""): Eleme
 			parent: ancestors[ancestors.length - 1],
 			ancestors: [...ancestors],
 			mapped: ancestors.some(isMapCall),
-			spread: opening.attributes.some((attribute) => attribute.type === "JSXSpreadAttribute"),
 			selfClosing: opening.selfClosing,
-			nameEnd: nodeEnd(opening.name),
 			openEnd: nodeEnd(opening),
 			rel,
 		};
@@ -1015,34 +898,16 @@ function attributeNamed(element: Element, name: string): JSXAttribute | undefine
 	);
 }
 
-/** Where an attribute's value is written, when it is written literally at all. */
-type Slot =
-	/** the characters between the quotes, as the file spells them; a JS string says which quote */
-	| { kind: "literal"; value: string; raw: string; start: number; end: number; quote?: '"' | "'" }
-	| { kind: "bare"; at: number };
-
 /**
- * The string a literal attribute holds, and where its characters sit. A
- * literal in braces counts: `className={"a b"}` is still typed in the file,
- * and the splice lands inside the quotes either way. A bare attribute has no
- * value yet and so has a place for one rather than a span.
+ * The characters between an attribute string's quotes, and where they start:
+ * the span supplied words are written into. Nothing where the attribute is no
+ * string written in the file.
  */
-function slotOf(source: string, attribute: JSXAttribute): Slot | undefined {
+function literalSlotOf(source: string, attribute: JSXAttribute): { raw: string; start: number } | undefined {
 	const value = attribute.value;
-	if (value == null) return { kind: "bare", at: nodeEnd(attribute) };
-	const held = value.type === "JSXExpressionContainer" ? value.expression : value;
-	if (held.type !== "StringLiteral") return undefined;
-	const start = nodeStart(held) + 1;
-	const end = nodeEnd(held) - 1;
-	const quote = value.type === "JSXExpressionContainer" ? (source[nodeStart(held)] === "'" ? "'" : '"') : undefined;
-	return {
-		kind: "literal",
-		value: held.value,
-		raw: source.slice(start, end),
-		start,
-		end,
-		...(quote === undefined ? {} : { quote }),
-	};
+	if (value?.type !== "StringLiteral") return undefined;
+	const start = nodeStart(value) + 1;
+	return { raw: source.slice(start, nodeEnd(value) - 1), start };
 }
 
 function rawOf(source: string, node: Node): string {

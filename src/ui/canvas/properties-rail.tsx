@@ -1,64 +1,26 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { splitClass } from "../../daemon/class-write";
 import { pageName } from "../../page-path";
-import type { RowElement } from "../../properties/rows";
-import type { CompiledTheme, Geometry, RungRead } from "../api";
-import { fetchTheme, readRungs } from "../api";
+import type { Geometry, RungRead } from "../api";
+import { readRungs } from "../api";
 import { cn } from "../cn";
 import { MenuItem } from "./context-menu";
-import { useCompiler } from "./properties-compile";
-import {
-	FAINT,
-	FileLink,
-	LABEL,
-	Menu,
-	NumField,
-	popoverAt,
-	Row,
-	Section,
-	useCloseOnPressAway,
-	VALUE,
-} from "./properties-fields";
-import {
-	BASE,
-	type Scope,
-	sameScope,
-	scopedClass,
-	scopeKey,
-	scopeLabel,
-	scopesOf,
-	scopeWhen,
-	type TokenState,
-	tokenState,
-	variantsOf,
-} from "./properties-scope";
-import { AddClassRow, PropertySections, spellingControls, type View } from "./properties-sections";
-import type { PropertyControls, PropertyValue } from "./property-controls";
 import type { PickedHit } from "./protocol";
+import { FAINT, NumField, popoverAt, Row, Section, useCloseOnPressAway, VALUE } from "./rail-fields";
 import { PanelCaret } from "./sidebar";
 
 /**
- * The properties rail (#256): the right column, back, and holding one thing.
+ * The properties rail (#256): the right column, holding one thing.
  *
- * The canvas lost its inspector — `agent-rail.tsx` still says "elements died
- * with the inspector" — and direct manipulation wants that column again, so
- * properties are what the column shows by default. Never a tab row: the agent
- * rail killed its own on purpose, and two rails side by side do not fit — 300
- * plus 420 leaves 472px of field at 1440. Where this surface stands, how wide
- * it is and how it is reached are all `dock.tsx`'s; what arrives here is a
- * width and one act, which is that the head's caret shuts the column.
+ * Properties are what the column shows by default. Never a tab row: the agent
+ * rail killed its own on purpose, and two rails side by side do not fit.
+ * Where this surface stands, how wide it is and how it is reached are all
+ * `dock.tsx`'s; what arrives here is a width and one act, which is that the
+ * head's caret shuts the column.
  *
- * This is the shell: the crumbs, the scope bar, the empty states and the
- * source line. What every row reads and writes is the property model (#257),
- * which is also where the compiled theme reaches the canvas — the scope bar's
- * breakpoints are this project's own because of it. The rows between them, and
- * the seven primitives they need, are #258.
- *
- * Everything it draws about an element is read off the file rather than off
- * the document, through the same fresh parse the write lane runs. That is what
- * lets a crumb say the name the author wrote, the source line show the literal
- * a splice would land in, and a refusal read as the reason a write would have
- * given rather than as an absence.
+ * What it says about a frame is the frame's own geometry, which is
+ * `frame.json` and never source. What it says about an element is where it
+ * sits: the crumbs, read off the file rather than off the document, so a
+ * crumb says the name the author wrote.
  */
 
 /** the smallest a frame may be dragged or typed to, which is the canvas's own floor */
@@ -82,36 +44,15 @@ export type Held =
 	/**
 	 * Several elements held at once (#323).
 	 *
-	 * The rail draws the rows they share and says "Mixed" where they disagree,
-	 * and a write from it goes to every one of them. That needs each pick's own
-	 * literal, so the ask is their stamps rather than one ancestry — and it is
-	 * one frame's, because a selection spread over two is two writes. `picks` is
-	 * empty where they are spread, which is the count and nothing else.
+	 * Their stamps are read together, which is where a delete of all of them
+	 * finds the file it is measured against — and it is one frame's, because a
+	 * selection spread over two is two writes. `picks` is empty where they are
+	 * spread, which is the count and nothing else.
 	 */
 	| { kind: "elements"; count: number; frame: string | null; picks: readonly PickedHit[] };
 
-/**
- * A gesture in flight on the canvas, as the rail reads it (#259).
- *
- * A resize writes nothing until it is let go, so the fields would sit still
- * through the whole drag if they read only the file. The canvas supplies the
- * measured box while the drag is live.
- */
-export interface RailPreview {
-	box: { w: number; h: number };
-}
-
 export interface PropertiesActs {
 	onAsk?: () => void;
-	/**
-	 * The class write lane for the rung held (#315): a value previews on the
-	 * element in the frame at once and lands in the file as one class change
-	 * on Enter or blur. Nothing when no rung is held that the canvas can
-	 * address, and the rows draw without a gesture.
-	 */
-	property?: PropertyControls | null;
-	/** the file a refusal names, handed out the way the frame's own source path is */
-	onOpenFile?: (path: string, line: number) => void;
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
 	/** the frame's own geometry, which is `frame.json` and never source */
@@ -124,28 +65,17 @@ export interface PropertiesActs {
 
 export function PropertiesRail({
 	recovery,
-	project,
 	held,
 	rungs,
-	theme,
 	acts,
-	reloads,
-	preview = null,
 	width,
 	onCollapse,
 }: {
 	recovery?: ReactNode;
-	project: string;
 	held: Held | null;
 	/** the selection's one read (#256), indexed by rung; the canvas owns it */
 	rungs: (RungRead | undefined)[] | null;
-	/** the compiled theme every menu in the rail offers, read once per project */
-	theme: CompiledTheme | null;
 	acts: PropertiesActs;
-	/** the canvas gesture in flight, which the fields tick in until it lands */
-	preview?: RailPreview | null;
-	/** bumps only on a reload, which is the one thing that could have changed the theme */
-	reloads: number;
 	/** what the dock has given this surface, which is its own remembered width */
 	width: number;
 	/** the caret in the head: it shuts the column rather than this rail (`dock.tsx`) */
@@ -158,16 +88,10 @@ export function PropertiesRail({
 			style={{ width }}
 			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
 		>
-			<Body
-				project={project}
-				held={held}
-				rungs={rungs}
-				theme={theme}
-				acts={acts}
-				reloads={reloads}
-				preview={preview}
-				onCollapse={onCollapse}
-			/>
+			<Head held={held} rungs={rungs} acts={acts} onCollapse={onCollapse} />
+			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
+				<Body held={held} acts={acts} />
+			</div>
 			{recovery}
 		</section>
 	);
@@ -218,15 +142,15 @@ export function stampsOf(held: Held | null): { frame: string; sources: string[];
  * The one read behind everything a selection draws (#256, #259).
  *
  * The whole ancestry in one ask, answered once per selection and shared by
- * every reader of it: the rail's crumbs, scope bar and rows, and the ring's
- * own question of which handles the file leaves live. Two reads of the same
- * rungs was two round trips saying the same thing.
+ * every reader of it: the rail's crumbs, and the fingerprint every hand write
+ * on the held element is measured against. Two reads of the same rungs was two
+ * round trips saying the same thing.
  *
  * What comes back is scattered back onto the chain, so a caller indexes it by
  * rung and gets nothing where a rung had no stamp to ask about. A read in
  * flight is nothing rather than the last rung's answer: crumbs fall back to
- * the live tags for a beat, and a ring wearing the previous element's answer
- * would offer a handle this one may not have.
+ * the live tags for a beat, and a write measured against the previous
+ * element's file would land somewhere wrong.
  */
 export function useRungs(project: string, held: Held | null, revision: number): (RungRead | undefined)[] | null {
 	const [answered, setAnswered] = useState<{ asked: string; on: string; rungs: RungRead[] } | null>(null);
@@ -259,205 +183,23 @@ export function useRungs(project: string, held: Held | null, revision: number): 
 	}, [project, asked, on]);
 	if (ask === null || answered === null) return null;
 	// A re-read of the element already answered for is the hand's own write
-	// coming back, and its rows go on saying what they said until it lands
-	// (#321). Blanking there took every reading off the rail and every handle
-	// off the ring for a round trip after each property change — a flash that
-	// reads as the frame reloading, on the one gesture that reloads nothing.
+	// coming back, and the crumbs go on saying what they said until it lands
+	// (#321): blanking there would flash them for a round trip after each save.
 	if (answered.asked !== asked && (on === "" || answered.on !== on)) return null;
 	const byRung: (RungRead | undefined)[] = [];
 	for (const [index, rung] of ask.rungs.entries()) byRung[rung] = answered.rungs[index];
 	return byRung;
 }
 
-/**
- * The compiled theme, which is what every menu in the rail offers (#257).
- *
- * One read per project, kept for as long as the canvas is open, and asked
- * again only when a held frame's document reloads: tokens.css is one of that
- * document's own inputs, so a theme edit is a reload. A hand's own save is
- * not — it writes a class into frame source and leaves the theme alone — so
- * nothing about committing an edit asks for this again.
- */
-export function useTheme(project: string, reloads: number): CompiledTheme | null {
-	const [theme, setTheme] = useState<CompiledTheme | null>(null);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `reloads` is not read in here, it is the trigger — a document that reloaded may have reloaded because tokens.css changed
-	useEffect(() => {
-		let live = true;
-		void fetchTheme(project).then((read) => {
-			if (live && read !== undefined) setTheme(read);
-		});
-		return () => {
-			live = false;
-		};
-	}, [project, reloads]);
-	return theme;
-}
-
 /* ---------- the rail itself ---------- */
 
-function Body({
-	project,
-	held,
-	rungs,
-	theme,
-	acts,
-	reloads,
-	preview,
-	onCollapse,
-}: {
-	project: string;
-	held: Held | null;
-	rungs: (RungRead | undefined)[] | null;
-	theme: CompiledTheme | null;
-	acts: PropertiesActs;
-	reloads: number;
-	preview: RailPreview | null;
-	onCollapse: () => void;
-}) {
-	const compiler = useCompiler(project, reloads);
-	const [scope, setScope] = useState<Scope>(BASE);
-	/** a scope opened by the `+` and not yet written to: it stands until it is filled or left */
-	const [opened, setOpened] = useState<Scope[]>([]);
-
-	const element = held?.kind === "element" ? held : null;
-	/**
-	 * Several elements held at once (#323), when they are one frame's.
-	 *
-	 * The rail draws one set of rows over all of them: the anchor's reading is
-	 * what a row shows, and where the others disagree the row says "Mixed". The
-	 * anchor is the last pick, which is the one a ⇧-click just added.
-	 */
-	const several = held?.kind === "elements" && held.frame !== null && held.picks.length > 1 ? held : null;
-	const anchor = several === null ? -1 : several.picks.length - 1;
-	const rung = several === null ? rungOf(held) : anchor;
-	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
-	const literal = read?.className ?? "";
-	const identity =
-		several !== null
-			? `${several.frame} ${several.picks.map((hit) => hit.selector).join(" ")}`
-			: element === null
-				? ""
-				: `${element.frame} ${element.selector}`;
-
-	// the scope is the element's, not the rail's: a fresh rung starts at the base
-	const before = useRef(identity);
-	if (before.current !== identity) {
-		before.current = identity;
-		if (scope.length > 0) setScope(BASE);
-		if (opened.length > 0) setOpened([]);
-	}
-
-	/**
-	 * The literal this rung was holding when it was picked.
-	 *
-	 * A token that is not in it is one the hands put there, and the source line
-	 * reads it in thread colour — which is how you tell what you changed from
-	 * what the agent wrote. It is taken from the first read of a rung and held
-	 * until another rung is picked, because a write of your own re-reads the
-	 * file and the answer must not become "everything is original again".
-	 */
-	const written = useRef<{ identity: string; tokens: ReadonlySet<string> }>({ identity: "", tokens: new Set() });
-	if (read !== undefined && written.current.identity !== identity) {
-		written.current = { identity, tokens: new Set(splitClass(literal)) };
-	}
-	/** true once the file's own literal is known, which is what a splice is measured against */
-	const knownOriginal = written.current.identity === identity;
-	const original = knownOriginal ? written.current.tokens : new Set<string>();
-
-	const carried = scopesOf(literal);
-	const scopes = [...carried];
-	for (const extra of opened) if (!scopes.some((known) => sameScope(known, extra))) scopes.push(extra);
-	const live = scopes.some((known) => sameScope(known, scope)) ? scope : BASE;
-
-	/** the rung a row reads: the one held, or a multi-pick's anchor */
-	const hit = several !== null ? several.picks[anchor] : element === null ? undefined : element.chain[rung];
-	const rowElement: RowElement = {
-		tag: hit?.tag ?? "div",
-		className: literal,
-		...(read?.refusal === undefined ? {} : { refusal: read.refusal }),
-		...(read?.mapped === true ? { mapped: true } : {}),
-	};
-	const rect = hit?.rect;
-	/** what the frame draws this rung with, which is the rail's second source (#323) */
-	const computed = hit?.computed;
-	/**
-	 * The elements held beside the anchor, as a row reads them (#323).
-	 *
-	 * Each one's own literal under the live scope and its own drawn style, which
-	 * is what tells a shared value from a "Mixed" one. Empty for a single rung,
-	 * where every row is about one element and nothing can disagree.
-	 */
-	const others =
-		several === null
-			? []
-			: several.picks.slice(0, anchor).map((pick, index) => ({
-					scoped: scopedClass(rungs?.[index]?.className ?? "", live),
-					computed: pick.computed ?? null,
-				}));
-	const spelling = { scope: live, scoped: scopedClass(literal, live), theme };
-	// the rows write through the canvas's lane once the file has been read
-	// (#315): a write is measured against that read, so there is no gesture
-	// to offer before it lands
-	const lastPreviewed = useRef<{ property: string; value: PropertyValue } | null>(null);
-	const view: View = {
-		property: read === undefined ? null : spellingControls(spelling, acts.property ?? null, lastPreviewed),
-		scope: live,
-		scoped: spelling.scoped,
-		base: scopedClass(literal, BASE),
-		theme,
-		element: rowElement,
-		box: preview === null ? { w: rect?.w ?? 0, h: rect?.h ?? 0 } : preview.box,
-		computed: computed ?? null,
-		others,
-		compiler,
-		/**
-		 * A token the hands put there rather than the file's author.
-		 *
-		 * It has to be one the literal actually carries: a row's reading may name a
-		 * token the element does not wear verbatim — `border-x-2` read as the right
-		 * edge answers `border-r-2` — and calling that a splice would paint the
-		 * author's own work in thread colour.
-		 */
-		fresh: (token) =>
-			knownOriginal &&
-			token !== null &&
-			splitClass(scopedClass(literal, live)).includes(token) &&
-			!original.has(`${scopeKey(live)}${token}`),
-	};
-
-	return (
-		<>
-			<Head held={held} rungs={rungs} acts={acts} onCollapse={onCollapse} />
-			{element === null ? null : (
-				<ScopeBar
-					scopes={scopes}
-					variants={variantsOf(theme)}
-					scope={live}
-					ok={read?.refusal?.expression === undefined}
-					onScope={setScope}
-					onAdd={(next) => {
-						setOpened((standing) => [...standing, next]);
-						setScope(next);
-					}}
-				/>
-			)}
-			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
-				{held === null ? <Empty says="select an element" /> : null}
-				{held?.kind === "frames" ? <Empty says={`${held.count} frames`} /> : null}
-				{held?.kind === "elements" && several === null ? <Empty says={`${held.count} elements`} /> : null}
-				{held?.kind === "frame" ? (
-					<FrameGeometry key={held.name} name={held.name} geometry={held.geometry} acts={acts} />
-				) : null}
-				{held?.kind === "page" ? <PageFacts held={held} /> : null}
-				{/* keyed on the rung: a fold left open on one element is not an opinion
-				    about the next one */}
-				{(element === null && several === null) || read === undefined ? null : (
-					<PropertySections key={identity} view={view} />
-				)}
-				{element === null ? null : <SourceLine read={read} scope={live} original={original} view={view} />}
-			</div>
-		</>
-	);
+function Body({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
+	if (held === null) return <Empty says="select an element" />;
+	if (held.kind === "frames") return <Empty says={`${held.count} frames`} />;
+	if (held.kind === "page") return <PageFacts held={held} />;
+	if (held.kind === "frame")
+		return <FrameGeometry key={held.name} name={held.name} geometry={held.geometry} acts={acts} />;
+	return null;
 }
 
 function Empty({ says }: { says: string }) {
@@ -494,7 +236,6 @@ function Head({
 	const rung = rungOf(held);
 	const walked = element === null || rung < 0 ? [] : element.chain.slice(0, rung + 1);
 	const frame = element?.frame ?? (held?.kind === "frame" ? held.name : null);
-	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const steps: Step[] =
 		frame === null
 			? []
@@ -521,47 +262,64 @@ function Head({
 					<Trail steps={steps} />
 				)}
 				{element === null ? null : <span className={cn("shrink-0", FAINT)}>{element.chain[rung]?.tag ?? ""}</span>}
-				{acts.onAsk && held ? (
-					<Menu
-						label="Element actions"
-						current={{ name: "⋯", token: null }}
-						options={[{ name: "Ask agent", token: "ask" }]}
-						ok
-						onPick={() => acts.onAsk?.()}
-						className="w-6 shrink-0"
-					/>
-				) : null}
+				{acts.onAsk && held ? <Actions onAsk={acts.onAsk} /> : null}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
-			{read?.shared === undefined || read.path === undefined || read.line === undefined ? null : (
-				// a shared definition (#318): the file it is written in, and how far
-				// an edit to it reaches, said before anything is touched
-				<div data-properties-shared="" className="flex h-5 items-center gap-2 px-2.5 pb-1">
-					{acts.onOpenFile === undefined ? (
-						<span className={cn("shrink-0", FAINT)}>{read.path.slice(read.path.lastIndexOf("/") + 1)}</span>
-					) : (
-						<FileLink path={read.path} line={read.line} onOpen={acts.onOpenFile} />
-					)}
-					{read.shared.frames === undefined ? null : (
-						<span className={cn("min-w-0 truncate", FAINT)}>{usedIn(read.shared.frames.length)}</span>
-					)}
-				</div>
-			)}
-			{read?.refusal === undefined ? null : (
-				<div className="flex h-5 items-center gap-2 px-2.5 pb-1">
-					<span className={cn("min-w-0 truncate", FAINT)}>{read.refusal.says}</span>
-					{read.refusal.line === undefined || read.path === undefined || acts.onOpenFile === undefined ? null : (
-						<FileLink path={read.path} line={read.refusal.line} onOpen={acts.onOpenFile} />
-					)}
-				</div>
-			)}
 		</div>
 	);
 }
 
-/** How far an edit to a shared definition reaches, as the import graph counts it. */
-export function usedIn(frames: number): string {
-	return `used in ${frames} frame${frames === 1 ? "" : "s"}`;
+/**
+ * The `⋯` beside the crumbs: what can be done about the thing held, which is
+ * to hand it to the agent. It opens the canvas's own menu (`context-menu.tsx`)
+ * rather than a list this surface invented.
+ */
+function Actions({ onAsk }: { onAsk: () => void }) {
+	const opener = useRef<HTMLButtonElement | null>(null);
+	const list = useRef<HTMLDivElement | null>(null);
+	const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+	const shut = useCallback(() => setAt(null), []);
+	useCloseOnPressAway(at !== null, shut, list, opener);
+	const show = () => {
+		const rect = opener.current?.getBoundingClientRect();
+		if (rect !== undefined) setAt(popoverAt(rect, MENU_WIDTH, MENU_ROW + MENU_PAD));
+	};
+	return (
+		<>
+			<button
+				ref={opener}
+				type="button"
+				aria-label="Element actions"
+				aria-expanded={at !== null}
+				onClick={() => (at === null ? show() : shut())}
+				className={cn(
+					"flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-xs text-text hover:bg-surface focus:outline-none",
+					VALUE,
+					at !== null && "bg-surface",
+				)}
+			>
+				⋯
+			</button>
+			{at === null ? null : (
+				<div
+					ref={list}
+					role="menu"
+					aria-label="Element actions"
+					style={{ left: at.left, top: at.top }}
+					className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+					onPointerDown={(event) => event.stopPropagation()}
+				>
+					<MenuItem
+						label="Ask agent"
+						onClick={() => {
+							shut();
+							onAsk();
+						}}
+					/>
+				</div>
+			)}
+		</>
+	);
 }
 
 /** one crumb's worth of the trail: a name, and the rung a press on it climbs to */
@@ -785,122 +543,6 @@ function CollapseCaret({ onCollapse }: { onCollapse: () => void }) {
 	);
 }
 
-/* ---------- the scope bar ---------- */
-
-/**
- * `base · hover: · md: · +`, and the rail edits under whichever is lit.
- *
- * It wraps to a second line past the rail's width rather than scrolling
- * sideways or growing an arrow: a chip you cannot see is a state you forget you
- * are in. The lit chip carries an `×` that drops every token under it at once,
- * because abandoning a hover state should not mean removing tokens one at a
- * time; a scope emptied of its last token stops being one and the selection
- * falls back to the base.
- */
-function ScopeBar({
-	scopes,
-	variants,
-	scope,
-	ok,
-	onScope,
-	onAdd,
-	onRemove,
-}: {
-	scopes: readonly Scope[];
-	/** what this project's own theme has, which is where its breakpoints come from */
-	variants: readonly { prefix: string; when: string }[];
-	scope: Scope;
-	ok: boolean;
-	onScope: (scope: Scope) => void;
-	onAdd: (scope: Scope) => void;
-	/** take every token under a scope away; a rail with nothing to write through offers none */
-	onRemove?: ((scope: Scope) => void) | undefined;
-}) {
-	const [opening, setOpening] = useState(false);
-	const free = variants.filter((variant) => !scopes.some((known) => sameScope(known, [variant.prefix])));
-	return (
-		<div className="relative flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-border border-b px-2.5 py-1.5">
-			{scopes.map((candidate) => {
-				const on = sameScope(candidate, scope);
-				const when = scopeWhen(candidate);
-				return (
-					<span key={scopeLabel(candidate)} className="flex shrink-0 items-center">
-						<button
-							type="button"
-							data-scope-chip=""
-							aria-pressed={on}
-							{...(when === undefined ? {} : { title: when })}
-							onClick={() => onScope(candidate)}
-							className={cn(
-								"h-5 shrink-0 rounded-xs border px-1.5 focus:outline-none focus-visible:bg-control",
-								LABEL,
-								ok ? "cursor-pointer" : "cursor-default",
-								on ? "border-border-raised bg-control text-text" : "border-transparent text-muted/60",
-								ok && !on && "hover:border-border hover:text-text",
-								!ok && "text-muted/35",
-								!ok && on && "bg-surface",
-							)}
-						>
-							{scopeLabel(candidate)}
-						</button>
-						{on && ok && onRemove !== undefined && candidate.length > 0 ? (
-							<button
-								type="button"
-								aria-label={`remove ${scopeLabel(candidate)}`}
-								title={`remove every ${scopeLabel(candidate)} token`}
-								onClick={() => onRemove(candidate)}
-								className={cn("shrink-0 cursor-pointer rounded-xs px-0.5 text-muted/50 hover:text-text", VALUE)}
-							>
-								×
-							</button>
-						) : null}
-					</span>
-				);
-			})}
-			{/* a refused literal keeps its `+` and loses its box: a control that
-			    vanishes reads as a bug, and a greyed one teaches you the shape of
-			    your own code (#256) */}
-			{free.length === 0 ? null : (
-				<button
-					type="button"
-					aria-label="Open a scope"
-					aria-expanded={opening}
-					disabled={!ok}
-					onClick={() => setOpening((open) => !open)}
-					className={cn(
-						"h-5 shrink-0 rounded-xs px-1.5",
-						LABEL,
-						ok ? "cursor-pointer text-muted/50 hover:text-text" : "cursor-default text-muted/25",
-					)}
-				>
-					+
-				</button>
-			)}
-			{opening ? (
-				<div className="absolute top-full right-2.5 z-40 max-h-64 overflow-y-auto rounded-sm border border-border-raised bg-surface py-1 shadow-none">
-					{free.map((variant) => (
-						<button
-							key={variant.prefix}
-							type="button"
-							onClick={() => {
-								setOpening(false);
-								onAdd([variant.prefix]);
-							}}
-							className={cn(
-								"flex w-full cursor-pointer items-center gap-3 whitespace-nowrap px-2.5 py-1 text-left text-muted hover:bg-control hover:text-text",
-								VALUE,
-							)}
-						>
-							<span className="flex-1">{`${variant.prefix}:`}</span>
-							<span className={FAINT}>{variant.when}</span>
-						</button>
-					))}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
 /* ---------- the frame: frame.json, in raw pixels ---------- */
 
 const AXES = [
@@ -952,7 +594,6 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 							<NumField
 								value={String(Math.round(geometry[axis.key]))}
 								readout="px"
-								ok
 								onCommit={(typed) => {
 									const next = Number.parseInt(typed, 10);
 									if (!Number.isNaN(next)) write(axis.key, next);
@@ -989,85 +630,6 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
 					<span className={cn("min-w-0 truncate", VALUE)}>{value}</span>
 				</Row>
 			))}
-		</Section>
-	);
-}
-
-/* ---------- the source line ---------- */
-
-/**
- * The element's literal, token by token, and where it is written.
- *
- * What is out of the live scope reads dim, so the bar above is visibly a lens
- * over one literal rather than a filter that hides the rest of it. A className
- * the hands may not write says so instead of showing a literal nobody can
- * touch: the expression is the whole of the answer there.
- */
-/** the ink each reading takes: the thread for what the hands wrote, quiet for the rest */
-const INK: Readonly<Record<TokenState, string>> = {
-	spliced: "text-thread-strong",
-	"in-scope": "text-muted",
-	"out-of-scope": "text-muted/40",
-};
-
-/**
- * The literal's words, each with something to be known by.
- *
- * A className is a list rather than a set — nothing stops an author writing the
- * same word twice — so a token's identity is itself and which time it is said.
- */
-function tokensWritten(className: string): { token: string; at: string }[] {
-	const said = new Map<string, number>();
-	return className
-		.split(/\s+/)
-		.filter((token) => token !== "")
-		.map((token) => {
-			const time = (said.get(token) ?? 0) + 1;
-			said.set(token, time);
-			return { token, at: `${token}#${time}` };
-		});
-}
-
-function SourceLine({
-	read,
-	scope,
-	original,
-	view,
-}: {
-	read: RungRead | undefined;
-	scope: Scope;
-	/** the tokens the file was written with; anything else is the hands' own */
-	original: ReadonlySet<string>;
-	view: View;
-}) {
-	if (read === undefined) return null;
-	const tokens = tokensWritten(read.className);
-	const where = read.line === undefined ? read.path : `${read.path}:${read.line}`;
-	return (
-		<Section name="className" {...(read.mapped === true ? { reason: "one row of many" } : {})}>
-			<div className="flex flex-col gap-1.5 px-2.5 py-2">
-				<p data-properties-source="" className={cn("break-all", VALUE)}>
-					{read.refusal?.expression !== undefined ? (
-						<span className="text-muted">{read.refusal.expression}</span>
-					) : tokens.length === 0 ? (
-						<span className="text-muted">null</span>
-					) : (
-						tokens.map(({ token, at }, index) => {
-							const ink = INK[tokenState(token, scope, original)];
-							return (
-								<span key={at}>
-									{index > 0 ? " " : ""}
-									<span className={ink}>{token}</span>
-								</span>
-							);
-						})
-					)}
-				</p>
-				<div className="flex items-center gap-2">
-					<AddClassRow view={view} taken={new Set(tokens.map((held) => held.token))} />
-					{where === undefined ? null : <span className={cn("min-w-0 truncate", FAINT)}>{where}</span>}
-				</div>
-			</div>
 		</Section>
 	);
 }

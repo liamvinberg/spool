@@ -10,7 +10,6 @@ import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
 import type { CanvasPlaces, Place } from "../daemon/canvas-places";
-import type { ClassEdit } from "../daemon/class-write";
 import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
@@ -21,7 +20,6 @@ import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
-import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
@@ -40,8 +38,6 @@ export type {
 	CanvasOrder,
 	CanvasPlaces,
 	CanvasState,
-	CompiledClass,
-	CompiledTheme,
 	Cover,
 	EdgeSite,
 	FlowEdge,
@@ -62,7 +58,6 @@ export type {
 	SelectionEntry,
 	SelectionPut,
 	ServedThread,
-	ThemeToken,
 	ThreadPut,
 };
 
@@ -341,15 +336,6 @@ export async function writeText(
 	}
 }
 
-export type ClassWritten =
-	| (Extract<TextWritten, { ok: true }> & {
-			/** the literal before and after per stamp, which is what the frame swaps on each element */
-			classNames: readonly { source: string; was: string; now: string }[];
-			/** the stylesheet the frame's document now compiles to; absent when nothing changed */
-			css?: string;
-	  })
-	| { ok: false; refusal: PatchRefusal };
-
 /**
  * A structural write (#317): what the hand did, where, and the file it was
  * measured against. An element that is all of a component refuses: deleting
@@ -376,44 +362,17 @@ export async function writeElement(
 	}
 }
 
-/**
- * The write half of a class change (#315): the tokens the rail decided, on
- * the element at one stamp, and the fingerprint of the file the rung was
- * read from. The frame already shows the change; this is the file catching
- * up, and what comes back is what the frame needs to show it for real.
- */
-export async function writeClass(
-	project: string,
-	frame: string,
-	ask: { sources: readonly string[]; edits: readonly ClassEdit[]; fingerprint: string },
-): Promise<ClassWritten | undefined> {
-	try {
-		const res = await client.api.p[":project"].class.$post({
-			param: { project },
-			json: { frame, ...ask, sources: [...ask.sources], edits: [...ask.edits] },
-		});
-		if (!res.ok && res.status !== 409) return undefined;
-		return (await res.json()) as ClassWritten;
-	} catch {
-		return undefined;
-	}
-}
-
 export type Reverted =
-	| { ok: true; path: string; fingerprint: string; shifts: StampShift[] | null; undo: HeldPatch; css?: string }
+	| { ok: true; path: string; fingerprint: string; shifts: StampShift[] | null; undo: HeldPatch }
 	| { ok: false; refusal: PatchRefusal };
 
 /**
  * Undo and redo (#314): the held patch run, refused rather than clobbered if
- * the file moved. Named a frame, the answer carries the stylesheet that
- * frame now compiles to (#315).
+ * the file moved.
  */
-export async function revertPatch(project: string, patch: HeldPatch, frame?: string): Promise<Reverted | undefined> {
+export async function revertPatch(project: string, patch: HeldPatch): Promise<Reverted | undefined> {
 	try {
-		const res = await client.api.p[":project"].revert.$post({
-			param: { project },
-			json: { ...patch, ...(frame === undefined ? {} : { frame }) },
-		});
+		const res = await client.api.p[":project"].revert.$post({ param: { project }, json: { ...patch } });
 		if (!res.ok && res.status !== 409) return undefined;
 		return (await res.json()) as Reverted;
 	} catch {
@@ -435,9 +394,8 @@ export async function putGeometry(project: string, frames: Record<string, Geomet
  * draws from, before anything is touched.
  *
  * It is the write lane's own parse, asked a different question — so the name on
- * a crumb is the name the author wrote, the literal on the source line is the
- * one a splice would land in, and a row greys for exactly the reason a write
- * would have refused. Nothing comes back for a frame the daemon has lost.
+ * a crumb is the name the author wrote, and the fingerprint is the file a write
+ * is measured against. Nothing comes back for a frame the daemon has lost.
  */
 export async function readRungs(
 	project: string,
@@ -456,14 +414,6 @@ export async function readRungs(
 	}
 }
 
-/**
- * The theme the frames are compiled against (#257), which is what every
- * properties menu offers.
- *
- * Nothing comes back for a project whose tokens.css will not compile, and the
- * rail draws its rows without menus rather than not at all: a broken stylesheet
- * is the project's own answer, not a reason for the surface to disappear.
- */
 /** Whether the daemon can open this workspace in the local ChatGPT app. */
 export async function fetchAgentAppAvailable(project: string): Promise<boolean> {
 	try {
@@ -522,30 +472,6 @@ export async function putSettings(
 		return { ok: true, readings: (await res.json()) as SettingReading[] };
 	} catch (error) {
 		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
-	}
-}
-
-export async function fetchTheme(project: string): Promise<CompiledTheme | undefined> {
-	try {
-		const res = await client.api.p[":project"].theme.$get({ param: { project } });
-		if (!res.ok) return undefined;
-		return ((await res.json()) as { theme: CompiledTheme }).theme;
-	} catch {
-		return undefined;
-	}
-}
-
-/** What the compiler says about typed classes: the CSS each lands, or why none does. */
-export async function compileClasses(project: string, tokens: readonly string[]): Promise<CompiledClass[] | undefined> {
-	try {
-		const res = await client.api.p[":project"].theme.classes.$post({
-			param: { project },
-			json: { tokens: [...tokens] },
-		});
-		if (!res.ok) return undefined;
-		return ((await res.json()) as { compiled: CompiledClass[] }).compiled;
-	} catch {
-		return undefined;
 	}
 }
 

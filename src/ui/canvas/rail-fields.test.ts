@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 
-import { act, createElement, type ReactNode, useState } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { NumField, Row, scrubStep } from "./properties-fields";
+import { NumField, Row, scrubStep } from "./rail-fields";
 
 async function mount(content: ReactNode) {
 	const host = document.createElement("div");
@@ -37,85 +37,51 @@ async function key(field: EventTarget, key: string, shiftKey = false) {
 
 async function number() {
 	const onCommit = vi.fn(),
-		onBegin = vi.fn(),
-		onPreview = vi.fn(),
-		onCancel = vi.fn(),
 		onStep = vi.fn();
-	const mounted = await mount(
-		createElement(NumField, {
-			value: "1.25rem",
-			ok: true,
-			onCommit,
-			onBegin,
-			onPreview,
-			onCancel,
-			onStep,
-		}),
-	);
+	const mounted = await mount(createElement(NumField, { value: "990", readout: "px", onCommit, onStep }));
 	const field = mounted.host.querySelector("input");
 	if (!field) throw new Error("missing numeric field");
-	return { ...mounted, field, onCommit, onBegin, onPreview, onCancel, onStep };
+	return { ...mounted, field, onCommit, onStep };
 }
 
-it("begins before a preview and commits the exact fractional unit once across Enter and blur", async () => {
+it("commits what was typed once across Enter and blur", async () => {
 	const f = await number();
-	await type(f.field, "-.333rem");
-	expect(f.onBegin).toHaveBeenCalledTimes(1);
-	expect(f.onPreview).toHaveBeenCalledExactlyOnceWith("-.333rem");
-	expect(f.onBegin.mock.invocationCallOrder[0]).toBeLessThan(f.onPreview.mock.invocationCallOrder[0]!);
+	await type(f.field, "-12");
 	await key(f.field, "Enter");
 	expect(document.activeElement).not.toBe(f.field);
-	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith("-.333rem");
-	expect(f.onCancel).not.toHaveBeenCalled();
+	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith("-12");
+	await act(() => f.field.blur());
+	expect(f.onCommit).toHaveBeenCalledTimes(1);
 });
 
-it("Escape cancels the original field session before blur can commit the draft", async () => {
+it("Escape puts the file's value back before blur can commit the draft", async () => {
 	const f = await number();
-	await type(f.field, "7.999px");
+	await type(f.field, "7");
 	await key(f.field, "Escape");
 	expect(f.onCommit).not.toHaveBeenCalled();
-	expect(f.onCancel).toHaveBeenCalledTimes(1);
-	expect(f.field.value).toBe("1.25rem");
+	expect(f.field.value).toBe("990");
 	await act(() => f.field.blur());
-	expect(f.onCancel).toHaveBeenCalledTimes(1);
+	expect(f.onCommit).not.toHaveBeenCalled();
 });
 
-it("completes against the original value when owned preview has already updated its rendered value", async () => {
-	const onCommit = vi.fn(),
-		onCancel = vi.fn();
-	function Previewed() {
-		const [value, setValue] = useState("1.25rem");
-		return createElement(NumField, { value, ok: true, onPreview: setValue, onCommit, onCancel });
-	}
-	const f = await mount(createElement(Previewed));
-	const field = f.host.querySelector("input");
-	if (!field) throw new Error("missing field");
-	await type(field, ".333rem");
-	await key(field, "Enter");
-	expect(onCommit).toHaveBeenCalledExactlyOnceWith(".333rem");
-	expect(onCancel).not.toHaveBeenCalled();
-});
-
-it("commits normal blur once and cancels an abandoned draft on unmount", async () => {
+it("commits a normal blur once, and nothing for a value it already has", async () => {
 	const f = await number();
-	await type(f.field, "7.999px");
+	await type(f.field, "640");
 	await act(() => f.field.blur());
-	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith("7.999px");
-	await type(f.field, "2.25em");
-	await f.unmount();
+	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith("640");
+	await type(f.field, "990");
+	await act(() => f.field.blur());
 	expect(f.onCommit).toHaveBeenCalledTimes(1);
-	expect(f.onCancel).toHaveBeenCalledTimes(1);
 });
 
-it("arrows forward 1/10 steps without committing a stale typed draft on later blur", async () => {
+it("arrows step 1 and 10 without committing a stale typed draft on later blur", async () => {
 	const f = await number();
-	await type(f.field, ".125rem");
+	await type(f.field, "12");
 	await key(f.field, "ArrowUp");
 	await key(f.field, "ArrowDown", true);
 	await act(() => f.field.blur());
 	expect(f.onStep.mock.calls).toEqual([[1], [-10]]);
 	expect(f.onCommit).not.toHaveBeenCalled();
-	expect(f.onCancel).not.toHaveBeenCalled();
 });
 
 async function pointer(target: EventTarget, type: string, clientX: number, pointerId = 7) {
@@ -126,10 +92,9 @@ async function pointer(target: EventTarget, type: string, clientX: number, point
 
 async function scrub() {
 	const onScrub = vi.fn(),
-		onScrubStart = vi.fn(),
 		onScrubEnd = vi.fn(),
 		onScrubCancel = vi.fn();
-	const props = { name: "font-size", onScrub, onScrubStart, onScrubEnd, onScrubCancel, children: "12.5px" };
+	const props = { name: "w", onScrub, onScrubEnd, onScrubCancel, children: "990px" };
 	const mounted = await mount(createElement(Row, props));
 	const label = mounted.host.querySelector("span");
 	if (!label) throw new Error("missing scrub label");
@@ -139,7 +104,7 @@ async function scrub() {
 			throw new DOMException("capture unavailable");
 		},
 	});
-	return { ...mounted, label, onScrub, onScrubStart, onScrubEnd, onScrubCancel };
+	return { ...mounted, label, onScrub, onScrubEnd, onScrubCancel };
 }
 
 it("carries the pixels left over by a step, and sends ten of them under shift", () => {
@@ -157,14 +122,12 @@ it("carries the pixels left over by a step, and sends ten of them under shift", 
 
 it("scrubs the row's value from the number field itself, leaving the press to focus it", async () => {
 	const onScrub = vi.fn(),
-		onScrubStart = vi.fn(),
 		onScrubEnd = vi.fn();
 	const props = {
-		name: "width",
+		name: "w",
 		onScrub,
-		onScrubStart,
 		onScrubEnd,
-		children: createElement(NumField, { value: "990", ok: true, onCommit: vi.fn() }),
+		children: createElement(NumField, { value: "990", onCommit: vi.fn() }),
 	};
 	const mounted = await mount(createElement(Row, props));
 	const field = mounted.host.querySelector("input");
@@ -183,7 +146,6 @@ it("scrubs the row's value from the number field itself, leaving the press to fo
 	expect(press.defaultPrevented).toBe(false);
 	// and nothing has been scrubbed until the pointer has travelled a step
 	await pointer(document, "pointermove", 102, 3);
-	expect(onScrubStart).not.toHaveBeenCalled();
 	expect(onScrub).not.toHaveBeenCalled();
 
 	await pointer(document, "pointermove", 110, 3);
@@ -191,7 +153,6 @@ it("scrubs the row's value from the number field itself, leaving the press to fo
 	await act(() => field.dispatchEvent(nativeDrag));
 	expect(nativeDrag.defaultPrevented).toBe(true);
 	await pointer(document, "pointerup", 110, 3);
-	expect(onScrubStart).toHaveBeenCalledTimes(1);
 	expect(onScrub.mock.calls).toEqual([[2]]);
 	expect(onScrubEnd).toHaveBeenCalledTimes(1);
 });
@@ -207,7 +168,6 @@ it("scrubs outside its label without capture and completes once for the initiati
 	await pointer(document, "pointermove", 22);
 	await pointer(document, "pointerup", 22);
 	await pointer(document, "pointerup", 22);
-	expect(f.onScrubStart).toHaveBeenCalledTimes(1);
 	expect(f.onScrub.mock.calls).toEqual([[2], [1]]);
 	expect(f.onScrubEnd).toHaveBeenCalledTimes(1);
 	expect(f.onScrubCancel).not.toHaveBeenCalled();

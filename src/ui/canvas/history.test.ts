@@ -480,27 +480,22 @@ describe("entries about a nested page", () => {
 	});
 });
 
-describe("class entries", () => {
+describe("hand entries", () => {
 	const changed: HistoryEntry = {
 		kind: "hand",
 		frame: "home",
-		selector: "div.veil-art",
+		selector: "h1",
 		edit: 9,
-		patch: { path: "design/frames/home/frame.tsx", start: 300, end: 305, text: "990", fingerprint: "a" },
+		patch: { path: "design/frames/home/frame.tsx", start: 300, end: 305, text: "Cart", fingerprint: "a" },
 		readAt: "frames/home/frame.tsx:8:5",
-		classes: [{ selector: "div.veil-art", from: "veil-art w-[700px]", to: "veil-art w-[990px]" }],
 	};
 
-	it("runs while the frame is there, and is amended with the inverse and the literals the other way round", () => {
+	it("runs while the frame is there, and is amended with the inverse", () => {
 		const history = record(emptyHistory(), changed);
 		const undone = takeUndo(history, alive("home"));
 		expect(undone?.entry).toEqual(changed);
-		if (changed.kind !== "hand" || changed.classes === undefined) throw new Error("not a class entry");
-		const back = {
-			...changed,
-			patch: { ...changed.patch, text: "700", fingerprint: "b" },
-			classes: changed.classes.map((one) => ({ ...one, from: one.to, to: one.from })),
-		};
+		if (changed.kind !== "hand") throw new Error("not a hand entry");
+		const back = { ...changed, patch: { ...changed.patch, text: "Basket", fingerprint: "b" } };
 		const amended = amend(undone?.history ?? history, "undo", back);
 		expect(takeRedo(amended, alive("home"))?.entry).toEqual(back);
 		expect(takeUndo(record(emptyHistory(), changed), alive("cart"))).toBeUndefined();

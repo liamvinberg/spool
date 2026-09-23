@@ -57,13 +57,11 @@ export interface DesignStylesheets {
 }
 
 /**
- * The one way into a project's stylesheets, shared by the frame compile and
- * the theme read (#257).
+ * The one way into a project's stylesheets.
  *
  * It is where the pin lives: "tailwindcss" resolves into spool's own install
  * and nowhere else, a relative import resolves inside design/ or is refused,
- * and anything else is not an import this daemon serves. Both callers want the
- * same rules and the same list of what was read, so there is one of it.
+ * and anything else is not an import this daemon serves.
  */
 export function designStylesheets(designDir: string): DesignStylesheets {
 	const stylesheets = new Set<string>();
