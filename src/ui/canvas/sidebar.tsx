@@ -127,6 +127,8 @@ const EDGE_SPEED = 14;
 const SPRING_MS = 450;
 /** how long a typed jump keeps collecting letters */
 const TYPED_MS = 700;
+/** the house curve, which every rail transition already wears */
+const CURVE = "cubic-bezier(0.23,1,0.32,1)";
 
 export interface SelectModifiers {
 	shift: boolean;
@@ -1695,8 +1697,9 @@ export function CanvasSidebar({
 							{under === null || underRow?.kind !== "frame" ? null : (
 								<div
 									// the room folds on the house curve over 300ms and moves with its
-									// row; reduced motion puts it there at once
-									className="absolute inset-x-0 overflow-clip bg-bg [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),height_300ms_cubic-bezier(0.23,1,0.32,1)] motion-reduce:[transition:none]"
+									// row; reduced motion opens and folds it at once, and it still
+									// slides with its row the way every row does
+									className="absolute inset-x-0 overflow-clip bg-bg [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),height_300ms_cubic-bezier(0.23,1,0.32,1)] motion-reduce:[transition:transform_280ms_cubic-bezier(0.23,1,0.32,1)]"
 									style={{
 										transform: `translateY(${underRow.top + underRow.height}px)`,
 										height: underRow.below,
@@ -1858,12 +1861,11 @@ function RowShell({ row, lifted = false, children }: { row: RailRow; lifted?: bo
 	return (
 		<div
 			role="presentation"
-			// reduced motion puts a row where it goes at once, as it does the tree
-			// that opens between rows (#342)
-			className="absolute inset-x-0 animate-find-in [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),opacity_140ms_ease-out] motion-reduce:[transition:none]"
+			className="absolute inset-x-0 animate-find-in"
 			style={{
 				height: row.height,
 				transform: `translateY(${row.top}px)`,
+				transition: `transform 280ms ${CURVE}, opacity 140ms ease-out`,
 				opacity: lifted ? 0.3 : 1,
 			}}
 		>
