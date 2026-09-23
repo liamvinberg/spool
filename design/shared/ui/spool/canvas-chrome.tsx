@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import type { Life } from "shared/lib/spool/agent-threads";
 import { cn } from "shared/lib/utils";
 import { type CanvasTool, CanvasTools } from "shared/ui/spool/canvas-tools";
@@ -55,6 +55,8 @@ export interface PageRow {
 	ruled?: boolean | undefined;
 	/** docked against the bottom of the rail instead of listed with the pages */
 	foot?: boolean | undefined;
+	/** drawn under a frame's row, by frame name: a proposal's element tree (spool-cloud#188) */
+	under?: Readonly<Record<string, ReactNode>> | undefined;
 	/**
 	 * Frames on this page nobody has looked at yet, by name. Collapsed, the row
 	 * says only *that* something on it is unseen — the same restraint the walk
@@ -74,6 +76,8 @@ export function CanvasChrome({
 	life,
 	targets,
 	holding,
+	layers = false,
+	onGlyph,
 	children,
 }: {
 	pages: readonly PageRow[];
@@ -101,10 +105,14 @@ export function CanvasChrome({
 	 * (spool-cloud#30, the `rail` take).
 	 */
 	holding?: readonly string[] | undefined;
+	/** a layers surface in the strip beside properties, and what a glyph press asks for (spool-cloud#188) */
+	layers?: boolean | undefined;
+	onGlyph?: ((surface: DockSurface) => void) | undefined;
 	children?: ReactNode;
 }) {
 	const shut = rail === null || railWidth === 0;
-	const lit: DockSurface | null = shut ? null : railLabel.toLowerCase() === "agent" ? "agent" : "properties";
+	const label = railLabel.toLowerCase();
+	const lit: DockSurface | null = shut ? null : label === "agent" ? "agent" : label === "layers" ? "layers" : "properties";
 	return (
 		<div className="flex h-full w-full overflow-hidden bg-bg">
 			<PagesRail pages={pages} selected={selected} targets={targets} holding={holding} />
@@ -112,7 +120,7 @@ export function CanvasChrome({
 				{children}
 				{tool === "none" ? null : <CanvasTools tool={tool} />}
 			</div>
-			<Dock lit={lit} width={shut ? 0 : rail === undefined ? PROPERTIES_W : railWidth} life={life}>
+			<Dock lit={lit} width={shut ? 0 : rail === undefined ? PROPERTIES_W : railWidth} life={life} layers={layers} onGlyph={onGlyph}>
 				{rail === undefined ? <FrameHeld name={selected} /> : rail}
 			</Dock>
 		</div>
@@ -241,8 +249,8 @@ function PageBlock({
 					{page.frames.map((frame) => {
 						const target = reached.get(frame);
 						return (
+							<Fragment key={frame}>
 							<div
-								key={frame}
 								className={cn("relative flex h-7 items-center", frame === selected && "bg-surface")}
 							>
 								<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
@@ -275,6 +283,8 @@ function PageBlock({
 									/>
 								)}
 							</div>
+							{page.under?.[frame] ?? null}
+							</Fragment>
 						);
 					})}
 				</div>
@@ -355,7 +365,7 @@ export function RailTabs({ tabs, active }: { tabs: readonly string[]; active: st
 	);
 }
 
-type DockSurface = "properties" | "agent";
+type DockSurface = "properties" | "layers" | "agent";
 
 const AXES = [
 	{ key: "x", of: "position" },
@@ -411,11 +421,15 @@ function Dock({
 	lit,
 	width,
 	life,
+	layers = false,
+	onGlyph,
 	children,
 }: {
 	lit: DockSurface | null;
 	width: number;
 	life?: Life | undefined;
+	layers?: boolean;
+	onGlyph?: ((surface: DockSurface) => void) | undefined;
 	children: ReactNode;
 }) {
 	return (
@@ -440,10 +454,15 @@ function Dock({
 				className="flex h-full shrink-0 flex-col items-center gap-1 border-border border-l bg-bg pt-1.5"
 				style={{ width: STRIP_W }}
 			>
-				<Glyph label="properties" lit={lit === "properties"}>
+				<Glyph label="properties" lit={lit === "properties"} onPress={onGlyph}>
 					<PropertiesIcon className="h-4 w-4" />
 				</Glyph>
-				<Glyph label="agent" lit={lit === "agent"} life={life}>
+				{layers ? (
+					<Glyph label="layers" lit={lit === "layers"} onPress={onGlyph}>
+						<LayersIcon className="h-4 w-4" />
+					</Glyph>
+				) : null}
+				<Glyph label="agent" lit={lit === "agent"} life={life} onPress={onGlyph}>
 					<AgentIcon className="h-4 w-4" />
 				</Glyph>
 			</div>
@@ -461,16 +480,19 @@ function Glyph({
 	label,
 	lit,
 	life,
+	onPress,
 	children,
 }: {
 	label: DockSurface;
 	lit: boolean;
 	life?: Life | undefined;
+	onPress?: ((surface: DockSurface) => void) | undefined;
 	children: ReactNode;
 }) {
 	return (
 		<button
 			type="button"
+			onClick={onPress === undefined ? undefined : () => onPress(label)}
 			// a project may hold a page called `agent`, and the pages rail labels its
 			// row's chevron "Expand agent" too, so the glyph carries a hook of its own
 			data-dock-glyph={label}
@@ -499,5 +521,14 @@ function Glyph({
 				/>
 			) : null}
 		</button>
+	);
+}
+
+/** layers — three stacked rows stepping in, for a proposal's element tree (spool-cloud#188) */
+function LayersIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<path d="M2.5 3.5h8M5 8h8.5M5 12.5h8.5M3 4v8.5h2M3 8h2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+		</svg>
 	);
 }

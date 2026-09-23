@@ -32,6 +32,8 @@ import { SpoolShell } from "shared/ui/spool/shell";
 
 export type Take = "path" | "outline" | "tree" | "source" | "lean" | "foot";
 export type Pick = "words" | "group" | "row" | "component" | "frame";
+/** where the tree stands: under the details in one panel, or somewhere of its own */
+export type Layout = "panel" | "dock" | "left" | "float" | "summon" | "columns";
 
 /** where each state's selection starts */
 const PICKS: Record<Exclude<Pick, "frame">, string> = {
@@ -48,12 +50,17 @@ const PAGES: readonly PageRow[] = [
 
 const DOC_W = 1440;
 const DOC_H = 1000;
-const K = 0.56;
+const K_PANEL = 0.56;
 
 /** what the hand holds: an element, the frame itself, or nothing */
 type Held = Element | "frame" | null;
 
-export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
+export function ElementPanelScreen({ take, pick, layout = "panel" }: { take: Take; pick: Pick; layout?: Layout }) {
+	// the frame gives up room to a tree standing beside or under it
+	const K = layout === "float" ? 0.4 : layout === "columns" ? 0.44 : K_PANEL;
+	const lean = take === "lean" || take === "foot" || layout !== "panel";
+	const [surface, setSurface] = useState<"properties" | "layers">("layers");
+	const [summoned, setSummoned] = useState(true);
 	const stage = useRef<HTMLDivElement>(null);
 	const scroller = useRef<HTMLDivElement>(null);
 	const glass = useRef<HTMLDivElement>(null);
@@ -75,7 +82,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 		// only when none of it is on screen: a parent bigger than the view is already in it
 		if (r.bottom < s.top + 20 || r.top > s.bottom - 20)
 			box.scrollTop = Math.max(0, top - DOC_H / 2 + Math.min(r.height / K, DOC_H) / 2);
-	}, []);
+	}, [K]);
 
 	const select = useCallback(
 		(next: Held) => {
@@ -151,6 +158,14 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 				return;
 			}
 			const root = doc.current;
+			if (layout === "summon" && (event.key === "l" || event.key === "L")) {
+				setSummoned((on) => !on);
+				return;
+			}
+			if (layout === "summon" && summoned && event.key === "Escape") {
+				setSummoned(false);
+				return;
+			}
 			if (root === null || held === null) return;
 			if (held === "frame") {
 				if (event.key === "Enter") {
@@ -162,7 +177,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 			}
 			if (event.key === "Escape" || (event.key === "Enter" && event.shiftKey)) {
 				event.preventDefault();
-				select(parentOf(held, root) ?? (take === "lean" || take === "foot" ? "frame" : held));
+				select(parentOf(held, root) ?? (lean ? "frame" : held));
 			} else if (event.key === "Tab") {
 				event.preventDefault();
 				const row = siblingsOf(held, root);
@@ -171,7 +186,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 				if (next !== undefined) select(next);
 			} else if (event.key === "Enter") {
 				event.preventDefault();
-				if ((take === "lean" || take === "foot") && canType) begin(held);
+				if (lean && canType) begin(held);
 				else {
 					const first = childrenOf(held)[0];
 					if (first !== undefined) select(first);
@@ -180,7 +195,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 		};
 		window.addEventListener("keydown", down);
 		return () => window.removeEventListener("keydown", down);
-	}, [held, select, editing, finish, begin, canType, take]);
+	}, [held, select, editing, finish, begin, canType, lean, layout, summoned]);
 
 	const hitAt = (x: number, y: number): Element | null => {
 		const root = doc.current;
@@ -192,30 +207,73 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 		return null;
 	};
 
-	const acts: Acts = { select, hover: setHover };
+	const acts: Acts = {
+		select: (el) => {
+			select(el);
+			if (layout === "summon") setSummoned(false);
+		},
+		hover: setHover,
+	};
 	const frameName = FRAME.split("/").at(-1) ?? FRAME;
+	const frameHeld = held === "frame";
+	const tree = root === null ? null : <Tree read={read} frame={frameHeld} root={root} acts={acts} />;
+	const details = (
+		<div className="flex h-full min-h-0 flex-col bg-bg">
+			<Details read={read} frame={frameHeld} />
+			{layout === "summon" ? (
+				<p className="px-2.5 py-2 text-muted type-detail">
+					<button type="button" onClick={() => setSummoned((on) => !on)} className="cursor-pointer hover:text-text">
+						tree · L
+					</button>
+				</p>
+			) : null}
+		</div>
+	);
+	const pages: readonly PageRow[] =
+		layout === "left" && tree !== null
+			? PAGES.map((page) =>
+					page.name === "site"
+						? {
+								...page,
+								under: {
+									"landing-current": (
+										<div className="max-h-[600px] overflow-y-auto border-border border-y bg-bg py-1 pl-4">{tree}</div>
+									),
+								},
+							}
+						: page,
+				)
+			: PAGES;
+	const box = (el: Element) => {
+		const s = stage.current?.getBoundingClientRect();
+		const r = el.getBoundingClientRect();
+		return s === undefined ? null : { left: r.left - s.left, top: r.top - s.top, width: r.width, height: r.height };
+	};
+	const anchor = read === null ? null : box(read.el);
+	const railFor = (): ReactNode => {
+		if (root === null) return null;
+		if (layout === "dock") return surface === "layers" ? <div className="h-full overflow-y-auto bg-bg py-1">{tree}</div> : details;
+		if (layout !== "panel") return details;
+		if (take === "path") return <PathPanel read={read} root={root} acts={acts} />;
+		if (take === "outline") return <OutlinePanel read={read} root={root} acts={acts} />;
+		if (take === "tree") return <TreePanel read={read} root={root} acts={acts} />;
+		if (take === "source") return <SourcePanel read={read} root={root} acts={acts} />;
+		return <LeanPanel read={read} frame={frameHeld} root={root} acts={acts} foot={take === "foot"} />;
+	};
 
 	return (
 		<SpoolShell activeTab="spool" tabs={["spool"]} zoom="52%">
 			<CanvasChrome
-				pages={PAGES}
+				pages={pages}
 				selected="landing-current"
 				tool="edit"
 				railWidth={300}
-				railLabel="properties"
-				rail={
-					root === null ? null : take === "path" ? (
-						<PathPanel read={read} root={root} acts={acts} />
-					) : take === "outline" ? (
-						<OutlinePanel read={read} root={root} acts={acts} />
-					) : take === "tree" ? (
-						<TreePanel read={read} root={root} acts={acts} />
-					) : take === "source" ? (
-						<SourcePanel read={read} root={root} acts={acts} />
-					) : (
-						<LeanPanel read={read} frame={held === "frame"} root={root} acts={acts} foot={take === "foot"} />
-					)
-				}
+				railLabel={layout === "dock" ? surface : "properties"}
+				layers={layout === "dock"}
+				onGlyph={(glyph) => {
+					if (glyph === "properties" || glyph === "layers") setSurface(glyph);
+				}}
+				rail={railFor()}
 			>
 				<div ref={stage} className="absolute top-[56px] left-[20px]">
 					<button
@@ -257,7 +315,7 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 								select(hitAt(event.clientX, event.clientY));
 							}}
 							onDoubleClick={(event) => {
-								if ((take !== "lean" && take !== "foot") || editing !== null) return;
+								if (!lean || editing !== null) return;
 								const hit = hitAt(event.clientX, event.clientY);
 								if (hit === null || doc.current === null) return;
 								const answer = readElement(hit, doc.current).text;
@@ -273,6 +331,30 @@ export function ElementPanelScreen({ take, pick }: { take: Take; pick: Pick }) {
 						{held === "frame" ? <span className="pointer-events-none absolute inset-0 rounded-[6px] border-[1.5px] border-thread" /> : null}
 					</div>
 					<Marks stage={stage.current} hover={hover === selected ? null : hover} read={read} editing={editing !== null} />
+					{layout === "float" && tree !== null ? (
+						<div
+							className="absolute overflow-y-auto rounded-[6px] border border-border bg-bg py-1"
+							style={{ left: DOC_W * K + 16, top: 24, width: 250, height: DOC_H * K }}
+						>
+							{tree}
+						</div>
+					) : null}
+					{layout === "columns" && root !== null ? (
+						<div className="absolute" style={{ left: 0, top: 24 + DOC_H * K + 20, width: DOC_W * K, height: 200 }}>
+							<Columns read={read} root={root} acts={acts} />
+						</div>
+					) : null}
+					{layout === "summon" && summoned && tree !== null ? (
+						<div
+							className="absolute z-10 max-h-[320px] w-[300px] overflow-y-auto rounded-[6px] border border-border-raised bg-bg py-1"
+							style={{
+								left: Math.min(Math.max(0, anchor?.left ?? 0), DOC_W * K - 300),
+								top: Math.min((anchor === null ? 0 : anchor.top + anchor.height) + 10, 24 + DOC_H * K - 120),
+							}}
+						>
+							{tree}
+						</div>
+					) : null}
 					{saved === null ? null : (
 						<span className="absolute left-0 mt-2 text-muted type-detail" style={{ top: 22 + DOC_H * K }}>
 							{saved}
@@ -772,35 +854,20 @@ function SourcePanel({ read, root, acts }: { read: ElementRead | null; root: Ele
 /**
  * What survived the takes (spool-cloud#188): the panel says what the selection is,
  * where it is written, and only what the hand cannot do and why. What it can do
- * lives on the canvas: words edit in place, ⌫ deletes, arrows move. The tree
- * underneath reads like the code. A frame shows its own geometry over the same tree.
+ * lives on the canvas: words edit in place, ⌫ deletes, arrows move. The tree reads
+ * like the code. A frame shows its own geometry. The `layout/` takes put these two
+ * pieces, the details and the tree, in different places.
  */
-function LeanPanel({
-	read,
-	frame,
-	root,
-	acts,
-	foot = false,
-}: {
-	read: ElementRead | null;
-	frame: boolean;
-	root: Element;
-	acts: Acts;
-	/** the details under the tree, so the tree never moves when their height does */
-	foot?: boolean;
-}) {
-	const { open, toggle, setOpen } = useOpen(read, root);
-	// a frame held opens its tree two levels, so the rows under it say what the page is
-	useEffect(() => {
-		if (!frame) return;
-		const top = childrenOf(root)[0];
-		if (top === undefined) return;
-		setOpen((held) => new Set([...held, top, ...childrenOf(top)]));
-	}, [frame, root, setOpen]);
-	const refused = read === null ? [] : ([["words", read.text], ["delete", read.remove], ["move", read.move]] as const).filter(
-		(entry): entry is readonly [string, Extract<Answer, { ok: false }>] => entry[1] !== null && !entry[1].ok,
-	);
-	const head = (
+
+/** what the selection is and what the hand cannot do to it */
+function Details({ read, frame, foot = false }: { read: ElementRead | null; frame: boolean; foot?: boolean }) {
+	const refused =
+		read === null
+			? []
+			: ([["words", read.text], ["delete", read.remove], ["move", read.move]] as const).filter(
+					(entry): entry is readonly [string, Extract<Answer, { ok: false }>] => entry[1] !== null && !entry[1].ok,
+				);
+	return (
 		<div className={cn("shrink-0", foot ? "border-border border-t" : "")}>
 			{frame ? (
 				<div className="shrink-0">
@@ -826,7 +893,9 @@ function LeanPanel({
 					</Section>
 				</div>
 			) : read === null ? (
-				<div className={cn("flex h-9 items-center px-2.5 text-muted type-value", foot ? "" : "border-border border-b")}>no selection</div>
+				<div className={cn("flex h-9 items-center px-2.5 text-muted type-value", foot ? "" : "border-border border-b")}>
+					no selection
+				</div>
 			) : (
 				<div className={cn("pb-1.5", foot ? "" : "border-border border-b")}>
 					<div className="flex h-9 items-center gap-2 px-2.5">
@@ -841,7 +910,9 @@ function LeanPanel({
 						</span>
 					</div>
 					{read.shared.length === 0 ? null : (
-						<p className="px-2.5 pb-1 text-muted type-detail">also in {read.shared.map((f) => f.split("/").at(-1)).join(", ")}</p>
+						<p className="px-2.5 pb-1 text-muted type-detail">
+							also in {read.shared.map((f) => f.split("/").at(-1)).join(", ")}
+						</p>
 					)}
 					{refused.map(([what, answer]) => (
 						<p key={what} className="px-2.5 pt-1 text-muted type-label">
@@ -856,13 +927,112 @@ function LeanPanel({
 			)}
 		</div>
 	);
+}
+
+/** the tree in code labels, opened down to the selection, two levels open when a frame is held */
+function Tree({ read, frame, root, acts }: { read: ElementRead | null; frame: boolean; root: Element; acts: Acts }) {
+	const { open, toggle, setOpen } = useOpen(read, root);
+	useEffect(() => {
+		if (!frame) return;
+		const top = childrenOf(root)[0];
+		if (top === undefined) return;
+		setOpen((held) => new Set([...held, top, ...childrenOf(top)]));
+	}, [frame, root, setOpen]);
+	return <SourceRows read={read} root={root} acts={acts} open={open} toggle={toggle} />;
+}
+
+function LeanPanel({
+	read,
+	frame,
+	root,
+	acts,
+	foot = false,
+}: {
+	read: ElementRead | null;
+	frame: boolean;
+	root: Element;
+	acts: Acts;
+	/** the details under the tree, so the tree never moves when their height does */
+	foot?: boolean;
+}) {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-bg">
-			{foot ? null : head}
+			{foot ? null : <Details read={read} frame={frame} />}
 			<div className="min-h-0 flex-1 overflow-y-auto py-1">
-				<SourceRows read={read} root={root} acts={acts} open={open} toggle={toggle} />
+				<Tree read={read} frame={frame} root={root} acts={acts} />
 			</div>
-			{foot ? head : null}
+			{foot ? <Details read={read} frame={frame} foot /> : null}
+		</div>
+	);
+}
+
+/* ---------- the layout takes: the tree somewhere other than under the details ---------- */
+
+/** a row's label, the way the code writes it */
+function CodeLabel({ el }: { el: Element }) {
+	const tag = componentOf(el) ?? el.localName;
+	const words = ownWords(el);
+	return (
+		<>
+			<span className={cn("shrink-0 type-value", tag === el.localName ? "" : "text-text")}>{`<${tag}>`}</span>
+			{words === null ? null : <span className="min-w-0 truncate text-text/80 type-detail">{words.replace(/\n/g, " ")}</span>}
+		</>
+	);
+}
+
+function ColumnRow({ el, current, onPath, acts }: { el: Element; current: boolean; onPath: boolean; acts: Acts }) {
+	return (
+		<div
+			ref={current || onPath ? (row) => row?.scrollIntoView({ block: "nearest" }) : undefined}
+			className={cn(
+				"flex h-6 shrink-0 cursor-default items-center gap-1 px-2",
+				current ? "bg-thread/15 text-text" : onPath ? "bg-surface text-text" : "text-muted hover:bg-surface hover:text-text",
+			)}
+			onPointerEnter={() => acts.hover(el)}
+			onPointerLeave={() => acts.hover(null)}
+			onClick={() => acts.select(el)}
+		>
+			<CodeLabel el={el} />
+			{childrenOf(el).length === 0 ? null : (
+				<svg viewBox="0 0 8 8" className="ml-auto h-2 w-2 shrink-0 text-muted" aria-hidden="true">
+					<path d="M2.5 1.5 5.5 4l-3 2.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+				</svg>
+			)}
+		</div>
+	);
+}
+
+/** Finder's column view: the parent's row, the selection's row, and what is inside it */
+function Columns({ read, root, acts }: { read: ElementRead | null; root: Element; acts: Acts }) {
+	const el = read?.el ?? null;
+	const parent = el === null ? null : parentOf(el, root);
+	const cols: { items: Element[]; mark: Element | null; current: boolean }[] =
+		el === null
+			? [{ items: childrenOf(root), mark: null, current: false }]
+			: [
+					...(parent === null ? [] : [{ items: siblingsOf(parent, root), mark: parent, current: false }]),
+					{ items: siblingsOf(el, root), mark: el, current: true },
+					{ items: childrenOf(el), mark: null, current: false },
+				];
+	return (
+		<div className="grid h-full grid-cols-3 divide-x divide-border overflow-hidden rounded-[6px] border border-border bg-bg">
+			{cols.map((col, index) => (
+				<div key={index} className="flex min-h-0 min-w-0 flex-col overflow-y-auto py-1">
+					{col.items.length === 0 ? (
+						<span className="px-2 py-1 text-muted/70 type-detail">nothing inside</span>
+					) : (
+						col.items.map((item, at) => (
+							<ColumnRow
+								key={at}
+								el={item}
+								current={col.current && item === col.mark}
+								onPath={!col.current && item === col.mark}
+								acts={acts}
+							/>
+						))
+					)}
+				</div>
+			))}
 		</div>
 	);
 }
