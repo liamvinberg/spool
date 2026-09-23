@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { splitClass } from "../../daemon/class-write";
 import { pageName } from "../../page-path";
 import type { RowElement } from "../../properties/rows";
@@ -6,10 +6,8 @@ import type { CompiledTheme, Geometry, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { cn } from "../cn";
 import { MenuItem } from "./context-menu";
-import { blocksFields, fieldsFor } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
 import {
-	BOX,
 	FAINT,
 	FileLink,
 	LABEL,
@@ -18,7 +16,6 @@ import {
 	popoverAt,
 	Row,
 	Section,
-	TextField,
 	useCloseOnPressAway,
 	VALUE,
 } from "./properties-fields";
@@ -123,19 +120,6 @@ export interface PropertiesActs {
 	onGeometryPreview: (name: string, patch: Partial<Geometry>) => void;
 	/** the scrub let go: one write and one undo slot for the whole gesture */
 	onGeometryCommit: (name: string, before: Geometry) => void;
-	/**
-	 * A structural write (#317): hide, show, or one attribute.
-	 *
-	 * It carries the fingerprint this rung was read out of, because that is the
-	 * file the row drew — the same promise every other op in the lane keeps.
-	 */
-	onElement: (
-		frame: string,
-		selector: string,
-		at: { source: string; fingerprint: string },
-		act: "hide" | "show" | "attribute",
-		attribute?: { name: string; value: string },
-	) => void;
 }
 
 export function PropertiesRail({
@@ -469,20 +453,6 @@ function Body({
 				    about the next one */}
 				{(element === null && several === null) || read === undefined ? null : (
 					<PropertySections key={identity} view={view} />
-				)}
-				{element === null || read === undefined ? null : (
-					<Attributes
-						html={element.chain[rung]?.outerHtml ?? ""}
-						key={`${identity} attributes`}
-						read={read}
-						tag={rowElement.tag}
-						hidden={splitClass(scopedClass(literal, BASE)).includes("hidden")}
-						write={(act, attribute) => {
-							if (read.fingerprint === undefined) return;
-							const at = { source: read.source, fingerprint: read.fingerprint };
-							acts.onElement(element.frame, element.selector, at, act, attribute);
-						}}
-					/>
 				)}
 				{element === null ? null : <SourceLine read={read} scope={live} original={original} view={view} />}
 			</div>
@@ -1020,96 +990,6 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
 				</Row>
 			))}
 		</Section>
-	);
-}
-
-/* ---------- the string fields (#260) ---------- */
-
-/**
- * The attributes section: `alt`, `href`, `placeholder`, `title` and their kin.
- *
- * Read off the same fresh parse the crumbs are, so a value that is not written
- * literally shows the expression named rather than disappearing.
- */
-function Attributes({
-	html,
-	read,
-	tag,
-	hidden,
-	write,
-}: {
-	html: string;
-	read: RungRead;
-	tag: string;
-	/** what the file says about this element being shown, which is the token itself */
-	hidden: boolean;
-	write: (act: "hide" | "show" | "attribute", attribute?: { name: string; value: string }) => void;
-}) {
-	const fields = useMemo(() => {
-		const node = new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
-		const attributes = [...(read.attributes ?? [])];
-		for (const attribute of node?.attributes ?? [])
-			if (
-				!attribute.name.startsWith("data-spool-") &&
-				!["class", "style"].includes(attribute.name) &&
-				!attributes.some((item) => item.name === attribute.name)
-			)
-				attributes.push({ name: attribute.name, value: attribute.value });
-		return fieldsFor(tag, attributes, read.refusal);
-	}, [tag, read.attributes, read.refusal, html]);
-	// the element's own refusals — it is defined somewhere this frame does not
-	// own, the stamp hits nothing, the file will not parse — are the ones that
-	// stop a hide as well as a field
-	const blocked = blocksFields(read.refusal);
-	return (
-		<Section name="attributes" {...(read.mapped === true ? { reason: "all rows" } : {})}>
-			<Row name="hidden" ok={blocked === undefined}>
-				<HiddenField hidden={hidden} ok={blocked === undefined} onToggle={() => write(hidden ? "show" : "hide")} />
-				{blocked === undefined ? null : (
-					<span className={cn("ml-auto min-w-0 shrink truncate pl-1", FAINT)}>{blocked}</span>
-				)}
-			</Row>
-			{fields.map((field) => (
-				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
-					<TextField
-						value={field.expression ?? field.value}
-						ok={field.reason === undefined}
-						placeholder="none"
-						onCommit={(typed) => write("attribute", { name: field.name, value: typed })}
-					/>
-					{field.reason === undefined ? null : (
-						<span className={cn("ml-auto min-w-0 shrink truncate pl-1", FAINT)}>{field.reason}</span>
-					)}
-				</Row>
-			))}
-		</Section>
-	);
-}
-
-/**
- * Hide and show, as one word you press (#317).
- *
- * Not a checkbox: the row says what the element is right now, and pressing it
- * makes it the other thing. What lands in the file is the `hidden` token, and
- * what happens in the frame happens before the write leaves.
- */
-function HiddenField({ hidden, ok, onToggle }: { hidden: boolean; ok: boolean; onToggle: () => void }) {
-	if (!ok) {
-		return (
-			<span className={cn("flex min-w-0 flex-1 items-center px-1 text-muted", VALUE)}>
-				{hidden ? "hidden" : "shown"}
-			</span>
-		);
-	}
-	return (
-		<button
-			type="button"
-			data-hidden-toggle={hidden ? "hidden" : "shown"}
-			onClick={onToggle}
-			className={cn("flex min-w-0 flex-1 items-center px-1 text-left hover:text-text", BOX, VALUE)}
-		>
-			{hidden ? "hidden" : "shown"}
-		</button>
 	);
 }
 

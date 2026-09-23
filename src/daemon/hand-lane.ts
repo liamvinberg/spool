@@ -3,7 +3,6 @@ import { join } from "node:path";
 import type { ClassEdit, ClassTheme } from "./class-write";
 import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import {
-	type AttributeRead,
 	type EditedNode,
 	type ElementRead,
 	fingerprintOf,
@@ -63,15 +62,12 @@ export interface RungRead {
 	 * not the same as nobody rendering it.
 	 */
 	shared?: { frames?: string[] };
-	/** every other attribute the tag carries, as the file writes it (#260) */
-	attributes?: AttributeRead[];
 	/**
 	 * The hash of the file this rung was read out of.
 	 *
-	 * A gesture that forms its op from what a row shows carries this, so the
-	 * write is measured against the file the rail actually drew — the same
-	 * promise every other op keeps, made from the read rather than from a
-	 * second round trip (#260).
+	 * A write carries this, so it is measured against the file the surface
+	 * actually drew — the same promise every other op keeps, made from the read
+	 * rather than from a second round trip (#260).
 	 */
 	fingerprint?: string;
 }
@@ -145,7 +141,6 @@ export async function readRungs(
 			...(read.refusal === undefined ? {} : { refusal: read.refusal }),
 			...(read.mapped ? { mapped: true as const } : {}),
 			...(stamp.rel.startsWith(folder) ? {} : { shared: await sharedUse(deps, stamp.rel) }),
-			...(read.attributes.length === 0 ? {} : { attributes: read.attributes }),
 			...(held?.fingerprint === undefined ? {} : { fingerprint: held.fingerprint }),
 		});
 	}
@@ -326,20 +321,16 @@ function shiftedColumn(at: { line: number; column: number }, shifts: readonly St
  * the fingerprint of the file the rung was read from.
  */
 export interface ElementAsk {
-	act: "delete" | "hide" | "show" | "attribute";
+	act: "delete";
 	/**
 	 * The stamps the gesture is about (#323).
 	 *
-	 * One for every act but a delete, which a multi-pick makes several of. They
-	 * are one file's, because one write is one fingerprint and one span — the
-	 * lane's own law — and `planOps` orders the patches itself, so nothing here
-	 * has to sort them bottom-up to keep the later stamps from shifting under
-	 * the earlier ones.
+	 * Several when a multi-pick is deleted. They are one file's, because one
+	 * write is one fingerprint and one span — the lane's own law — and
+	 * `planOps` orders the patches itself, so nothing here has to sort them
+	 * bottom-up to keep the later stamps from shifting under the earlier ones.
 	 */
 	sources: readonly string[];
-	/** the attribute an `attribute` ask writes, and what it writes there */
-	name?: string;
-	value?: string;
 	fingerprint: string;
 	/**
 	 * The row a delete is about (#324).
@@ -355,7 +346,7 @@ export interface ElementAsk {
 }
 
 /**
- * Where a delete, a hide, a show or an attribute lands (#317).
+ * Where a delete lands (#317).
  *
  * The same promise every other write in the lane makes: the file is parsed
  * fresh at the stamp, measured against the fingerprint the surface read it out
@@ -367,31 +358,18 @@ export interface ElementAsk {
  * file, rather than one this quietly makes for them.
  */
 export function elementSite(root: string, frame: string, ask: ElementAsk): WriteSite {
-	const [first, ...rest] = ask.sources;
+	const [first] = ask.sources;
 	if (first === undefined) return { kind: "error", status: 400, message: "an element write names a stamp" };
-	if (rest.length > 0 && ask.act !== "delete") {
-		return { kind: "error", status: 400, message: "only a delete is about more than one element" };
-	}
 	const place = siteAt(root, frame, first, ask.fingerprint);
 	if ("kind" in place) return place;
 	const { at, source } = place;
-	if (ask.act === "delete" && ask.item !== undefined) return itemSite(root, frame, ask.item);
-	if (ask.act === "delete") {
-		const here = planOps(
-			source,
-			ask.sources.map((stamped) => ({ kind: "delete" as const, source: stamped })),
-		);
-		if (!here.ok) return { kind: "refusal", refusal: here.refusal };
-		return spliced(at, source, here);
-	}
-	if (ask.act === "attribute") {
-		const { name, value } = ask;
-		if (name === undefined || value === undefined) {
-			return { kind: "error", status: 400, message: "an attribute write names one and says what it holds" };
-		}
-		return planned(at, source, [{ kind: "set-attribute", source: first, name, value }]);
-	}
-	return planned(at, source, [{ kind: "set-hidden", source: first, hidden: ask.act === "hide" }]);
+	if (ask.item !== undefined) return itemSite(root, frame, ask.item);
+	const here = planOps(
+		source,
+		ask.sources.map((stamped) => ({ kind: "delete" as const, source: stamped })),
+	);
+	if (!here.ok) return { kind: "refusal", refusal: here.refusal };
+	return spliced(at, source, here);
 }
 
 /**

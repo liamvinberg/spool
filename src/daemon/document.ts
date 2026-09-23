@@ -1528,22 +1528,12 @@ const canvasShimJs = `(() => {
 		return at.file + ":" + at.line + ":" + movedColumn(at, shifted.get(at.file) || []);
 	}
 
-	// The structural gestures (#317): the element out of the document, hidden,
-	// shown, or one attribute set on it. Each is held by the ask that made it,
-	// so undo and redo put the very node back where it stood rather than a copy
-	// React would go on updating blind.
+	// The structural gesture (#317): the element out of the document. Each is
+	// held by the ask that made it, so undo and redo put the very node back
+	// where it stood rather than a copy React would go on updating blind.
 	var alters = new Map();
 
-	function displayOf(el) {
-		return { display: el.style.display, hidden: el.classList.contains("hidden") };
-	}
-
-	function showAs(el, held) {
-		el.style.display = held.display;
-		if (held.hidden) el.classList.add("hidden"); else el.classList.remove("hidden");
-	}
-
-	function alterElement(id, selectors, act, name, value) {
+	function alterElement(id, selectors, act) {
 		const found = [];
 		for (let i = 0; i < selectors.length; i++) {
 			const one = elementFor(selectors[i]);
@@ -1553,29 +1543,18 @@ const canvasShimJs = `(() => {
 		const el = found[0];
 		if (!el) return { ok: false, owner: null };
 		const owner = ownerOf(el);
-		if (act === "delete") {
-			// a multi-pick goes as one alteration, so undo puts every node back
-			// under one press. Taken in document order and put back in reverse,
-			// which is what keeps each one's next sibling connected when it is (#323)
-			const gone = [];
-			for (let i = 0; i < found.length; i++) {
-				const parent = found[i].parentNode;
-				if (!parent) return { ok: false, owner: owner };
-				gone.push({ el: found[i], parent: parent, next: found[i].nextSibling });
-			}
-			for (let i = 0; i < gone.length; i++) gone[i].parent.removeChild(gone[i].el);
-			alters.set(id, { kind: "gone", gone: gone });
-		} else if (act === "attribute") {
-			alters.set(id, { kind: "attribute", el: el, name: name, before: el.getAttribute(name), after: value });
-			el.setAttribute(name, value);
-		} else {
-			const before = displayOf(el);
-			// hiding is the inline none the file's own class is about to say; showing
-			// takes both away, so an element the agent wrote hidden comes back too
-			if (act === "hide") el.style.display = "none";
-			else { el.classList.remove("hidden"); el.style.display = ""; }
-			alters.set(id, { kind: "shown", el: el, before: before, after: displayOf(el) });
+		if (act !== "delete") return { ok: false, owner: owner };
+		// a multi-pick goes as one alteration, so undo puts every node back
+		// under one press. Taken in document order and put back in reverse,
+		// which is what keeps each one's next sibling connected when it is (#323)
+		const gone = [];
+		for (let i = 0; i < found.length; i++) {
+			const parent = found[i].parentNode;
+			if (!parent) return { ok: false, owner: owner };
+			gone.push({ el: found[i], parent: parent, next: found[i].nextSibling });
 		}
+		for (let i = 0; i < gone.length; i++) gone[i].parent.removeChild(gone[i].el);
+		alters.set(id, { kind: "gone", gone: gone });
 		evictOldest(alters);
 		return { ok: true, owner: owner };
 	}
@@ -1585,27 +1564,17 @@ const canvasShimJs = `(() => {
 	function unalter(id, way) {
 		const held = alters.get(id);
 		if (!held) return false;
-		if (held.kind === "gone") {
-			if (way !== "before") {
-				for (let i = 0; i < held.gone.length; i++) {
-					if (held.gone[i].el.isConnected) held.gone[i].el.remove();
-				}
-				return true;
-			}
-			for (let i = held.gone.length - 1; i >= 0; i--) {
-				const one = held.gone[i];
-				if (!one.parent.isConnected) return false;
-				try { one.parent.insertBefore(one.el, one.next && one.next.isConnected ? one.next : null); } catch { return false; }
+		if (way !== "before") {
+			for (let i = 0; i < held.gone.length; i++) {
+				if (held.gone[i].el.isConnected) held.gone[i].el.remove();
 			}
 			return true;
 		}
-		if (!held.el.isConnected) return false;
-		if (held.kind === "attribute") {
-			const value = way === "before" ? held.before : held.after;
-			if (value === null) held.el.removeAttribute(held.name); else held.el.setAttribute(held.name, value);
-			return true;
+		for (let i = held.gone.length - 1; i >= 0; i--) {
+			const one = held.gone[i];
+			if (!one.parent.isConnected) return false;
+			try { one.parent.insertBefore(one.el, one.next && one.next.isConnected ? one.next : null); } catch { return false; }
 		}
-		showAs(held.el, way === "before" ? held.before : held.after);
 		return true;
 	}
 
@@ -1937,7 +1906,7 @@ const canvasShimJs = `(() => {
 			if (event.source !== parent || event.origin !== config.controlOrigin) return;
 			if (m.spool === "alter") {
 				let answer = { ok: false, owner: null };
-				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act, m.name, m.value); } catch {}
+				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act); } catch {}
 				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner }, "*");
 				return;
 			}

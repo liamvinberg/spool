@@ -356,49 +356,6 @@ export function Link({ children }: { children: ReactNode }) {
 	});
 });
 
-describe("set-attribute", () => {
-	it("replaces one string literal and nothing else on the tag", () => {
-		const text = written([{ kind: "set-attribute", source: stamp(FRAME, "<img"), name: "alt", value: "a latte" }]);
-		expect(text).toContain('<img src="/a.png" alt="a latte" />');
-	});
-
-	it("writes an attribute the element does not carry yet", () => {
-		const text = written([{ kind: "set-attribute", source: stamp(FRAME, "<h1"), name: "title", value: "the cart" }]);
-		expect(text).toContain('<h1 title="the cart" className="text-lg">');
-	});
-
-	it("writes a quote as the entity a JSX attribute reads back", () => {
-		const text = written([
-			{ kind: "set-attribute", source: stamp(FRAME, "<img"), name: "alt", value: 'a "latte" & bun' },
-		]);
-		expect(text).toContain('alt="a &quot;latte&quot; &amp; bun"');
-	});
-
-	it("refuses an expression value and names it", () => {
-		const source = `const x = <img alt={item.name} />;\n`;
-		expect(
-			refusal([{ kind: "set-attribute", source: stamp(source, "<img"), name: "alt", value: "x" }], source),
-		).toEqual({
-			code: "expression-attribute",
-			says: "alt is an expression",
-			expression: "{item.name}",
-		});
-	});
-
-	it("refuses a walk target, because the arrow it draws is edited in flows", () => {
-		const source = `const x = <button data-go="checkout">Pay</button>;\n`;
-		expect(
-			refusal([{ kind: "set-attribute", source: stamp(source, "<button"), name: "data-go", value: "cart" }], source),
-		).toEqual({ code: "walk-target", says: "walk target, edit in flows" });
-	});
-
-	it("refuses style, which pins whatever a class would say", () => {
-		expect(
-			refusal([{ kind: "set-attribute", source: stamp(FRAME, "<h1"), name: "style", value: "color:red" }]).code,
-		).toBe("inline-style");
-	});
-});
-
 describe("the stamp", () => {
 	it("refuses a stamp that hits nothing", () => {
 		expect(refusal([{ kind: "set-class", source: "frames/cart/frame.tsx:99:3", token: "p-4", scope: "" }])).toEqual({
@@ -564,39 +521,6 @@ describe("readElements", () => {
 	});
 });
 
-/** The read half the rail's source section draws from (#260). */
-describe("the attributes a rung reads", () => {
-	function readOne(source: string, snippet: string) {
-		const [, line, column] = stamp(source, snippet).split(":");
-		const read = readElements(source, [{ line: Number(line), column: Number(column) }])[0];
-		if (read === undefined) throw new Error("no read");
-		return read;
-	}
-
-	it("reads a string attribute as the characters between its quotes", () => {
-		expect(readOne(FRAME, "<img").attributes).toEqual([
-			{ name: "src", value: "/a.png" },
-			{ name: "alt", value: "a" },
-		]);
-	});
-
-	it("names what the file says instead where the value is no literal", () => {
-		expect(readOne(FRAME, "<button").attributes).toEqual([{ name: "onClick", expression: "{() => pay()}" }]);
-	});
-
-	it("leaves className and style out: each has a surface of its own", () => {
-		expect(readOne(FRAME, "<p style").attributes).toEqual([]);
-	});
-
-	it("reads a bare attribute as a place for a value", () => {
-		const source = `const x = <input disabled placeholder="name" />;\n`;
-		expect(readOne(source, "<input").attributes).toEqual([
-			{ name: "disabled", value: "" },
-			{ name: "placeholder", value: "name" },
-		]);
-	});
-});
-
 describe("delete", () => {
 	const PAGE = `export default function Still() {
 	return (
@@ -667,76 +591,6 @@ describe("delete", () => {
 				source,
 			).code,
 		).toBe("expression-child");
-	});
-});
-
-describe("set-hidden", () => {
-	const HIDE = `const a = <p className="small">one</p>;
-const b = <p>two</p>;
-const c = <p className={cn("small", tall && "leading-8")}>three</p>;
-const d = <p className={LABEL}>four</p>;
-`;
-
-	it("adds and removes the token, so hide then show leaves the file as it was", () => {
-		const at = stamp(HIDE, '<p className="small"');
-		const hidden = written([{ kind: "set-hidden", source: at, hidden: true }], HIDE);
-		expect(hidden).toContain('<p className="small hidden">one</p>');
-		expect(written([{ kind: "set-hidden", source: at, hidden: false }], hidden)).toBe(HIDE);
-	});
-
-	it("writes a className onto an element that carries none, and takes it back out", () => {
-		const text = written([{ kind: "set-hidden", source: stamp(HIDE, "<p>two"), hidden: true }], HIDE);
-		expect(text).toContain('<p className="hidden">two</p>');
-		expect(
-			written([{ kind: "set-hidden", source: stamp(text, '<p className="hidden">two'), hidden: false }], text),
-		).toBe(HIDE);
-	});
-
-	it("writes the literal part of a cn() call and keeps the condition", () => {
-		const text = written([{ kind: "set-hidden", source: stamp(HIDE, "<p className={cn("), hidden: true }], HIDE);
-		expect(text).toContain('cn("small hidden", tall && "leading-8")');
-	});
-
-	it("refuses a computed className and says where it is written", () => {
-		expect(
-			refusal([{ kind: "set-hidden", source: stamp(HIDE, "<p className={LABEL}"), hidden: true }], HIDE),
-		).toEqual({
-			code: "computed-class",
-			says: "class is computed here; edit frames/cart/frame.tsx line 4 or ask the agent",
-			expression: "{LABEL}",
-			line: 4,
-		});
-	});
-
-	it("shows an element the file never hid by writing nothing at all", () => {
-		expect(written([{ kind: "set-hidden", source: stamp(HIDE, "<p>two"), hidden: false }], HIDE)).toBe(HIDE);
-	});
-});
-
-describe("the attributes a hand may type", () => {
-	it("writes a literal href where the file has one", () => {
-		const source = `const x = <a className="optional" href="#details">Our philosophy</a>;\n`;
-		const text = written(
-			[{ kind: "set-attribute", source: stamp(source, "<a"), name: "href", value: "#practice" }],
-			source,
-		);
-		expect(text).toContain('href="#practice"');
-	});
-
-	it("refuses an href that is an expression, by name", () => {
-		const source = `const x = <a href={url}>Our philosophy</a>;\n`;
-		expect(
-			refusal([{ kind: "set-attribute", source: stamp(source, "<a"), name: "href", value: "#x" }], source),
-		).toEqual({ code: "expression-attribute", says: "href is an expression", expression: "{url}" });
-	});
-
-	it("writes an aria attribute the file spells literally", () => {
-		const source = `const x = <button aria-label="Close">×</button>;\n`;
-		const text = written(
-			[{ kind: "set-attribute", source: stamp(source, "<button"), name: "aria-label", value: "Dismiss" }],
-			source,
-		);
-		expect(text).toContain('aria-label="Dismiss"');
 	});
 });
 

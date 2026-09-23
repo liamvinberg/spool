@@ -595,7 +595,7 @@ export function createDaemonApp({
 	});
 
 	/**
-	 * A structural change (#317): a delete, a hide, a show, or one attribute.
+	 * A structural change (#317): a delete.
 	 *
 	 * The same shape as a text commit and for the same reasons — a stamp is a
 	 * place in a file the daemon is about to open, and the fingerprint is the
@@ -606,14 +606,11 @@ export function createDaemonApp({
 	const elementBody = validator("json", (value, c) => {
 		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 		const stamps = parseStamps(body.sources);
-		const act = body.act;
-		const acts = ["delete", "hide", "show", "attribute"];
-		const says = 'an element write is { "frame", "act", "sources": [ "…:12:4" ], "name"?, "value"?, "fingerprint" }';
+		const says = 'an element write is { "frame", "act": "delete", "sources": [ "…:12:4" ], "fingerprint" }';
 		if (
 			typeof body.frame !== "string" ||
 			!isFramePath(body.frame) ||
-			typeof act !== "string" ||
-			!acts.includes(act) ||
+			body.act !== "delete" ||
 			stamps === undefined ||
 			typeof body.fingerprint !== "string"
 		) {
@@ -621,27 +618,17 @@ export function createDaemonApp({
 		}
 		// A multi-pick deletes as one write, so its stamps are one file's: one
 		// write is one fingerprint and one span, which is what makes it one
-		// press of undo (#323). Nothing else is ever about more than one.
+		// press of undo (#323).
 		const files = new Set(stamps.map((stamped) => stamped.replace(/:\d+:\d+$/, "")));
 		if (files.size > 1) return c.text("an element write is one file's", 400);
-		if (stamps.length > 1 && act !== "delete") return c.text(says, 400);
-		if (act === "attribute" && (typeof body.name !== "string" || typeof body.value !== "string")) {
-			return c.text(says, 400);
-		}
-		if (typeof body.name === "string" && (body.name.length === 0 || body.name.length > 64)) {
-			return c.text(says, 400);
-		}
-		if (typeof body.value === "string" && body.value.length > 4096) return c.text(says, 400);
 		// The row a delete is about (#324): the stamp of the JSX a `.map()`
 		// renders, where in the array it stood, and the fingerprint of that
-		// stamp's own file. Only a delete has one, and a body carrying half of
-		// one has not decided.
+		// stamp's own file. A body carrying half of one has not decided.
 		const held = typeof body.item === "object" && body.item !== null ? (body.item as Record<string, unknown>) : null;
 		let item: { source: string; index: number; fingerprint: string } | undefined;
 		if (held !== null) {
 			const index = held.index;
 			if (
-				act !== "delete" ||
 				typeof held.source !== "string" ||
 				parseStamps([held.source]) === undefined ||
 				typeof index !== "number" ||
@@ -656,12 +643,10 @@ export function createDaemonApp({
 		}
 		return {
 			frame: body.frame,
-			act: act as "delete" | "hide" | "show" | "attribute",
+			act: "delete" as const,
 			sources: stamps,
 			fingerprint: body.fingerprint,
 			...(item === undefined ? {} : { item }),
-			...(typeof body.name === "string" ? { name: body.name } : {}),
-			...(typeof body.value === "string" ? { value: body.value } : {}),
 		};
 	});
 
@@ -2540,7 +2525,7 @@ export function createDaemonApp({
 			return c.json(written(project.root, site));
 		})
 		/*
-		 * The structural writes (#317): a delete, a hide, a show, one attribute.
+		 * The structural write (#317): a delete.
 		 * The frame already shows what happened; this puts it in the file, once,
 		 * and answers with the patch that takes it back.
 		 */

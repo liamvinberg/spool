@@ -423,7 +423,6 @@ describe("the rungs read", () => {
 		line?: number;
 		mapped?: true;
 		refusal?: { code: string; says: string; expression?: string };
-		attributes?: { name: string; value?: string; expression?: string }[];
 		fingerprint?: string;
 		shared?: { frames?: string[] };
 	}
@@ -469,24 +468,6 @@ describe("the rungs read", () => {
 		expect(read?.fingerprint).toBe(fingerprintOf(cartTsx));
 	});
 
-	it("reads the string attributes the tag carries, and names the ones that are not literals", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		const frame = `import hero from "./hero.png";\nexport default function Frame() {\n\treturn (\n\t\t<main>\n\t\t\t<img src={hero} alt="a latte" />\n\t\t\t<button data-go="checkout" onClick={() => pay()}>Pay</button>\n\t\t</main>\n\t);\n}\n`;
-		writeFrame(root, "cart", frame);
-		const app = makeApp(spoolDir);
-
-		const [image, button] = await rungs(app, name, [stampFor(frame, "<img"), stampFor(frame, "<button")]);
-		expect(image?.attributes).toEqual([
-			{ name: "src", expression: "{hero}" },
-			{ name: "alt", value: "a latte" },
-		]);
-		expect(button?.attributes).toEqual([
-			{ name: "data-go", value: "checkout" },
-			{ name: "onClick", expression: "{() => pay()}" },
-		]);
-	});
-
 	it("reads a whole ancestry in rung order: the authored name, the literal, and where it is written", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
@@ -507,7 +488,6 @@ describe("the rungs read", () => {
 				className: "rounded-md px-3 py-2",
 				path: "design/frames/cart/frame.tsx",
 				line: 7,
-				attributes: [{ name: "onClick", expression: "{() => pay()}" }],
 			},
 		]);
 	});

@@ -35,10 +35,7 @@ export type HandOp =
 	| { kind: "set-supplied"; source: string; prop: string; text: string }
 	| { kind: "set-class"; source: string; token: string; scope: string; remove?: boolean }
 	/** the element out of the file, its own line with it when it stands alone (#317) */
-	| { kind: "delete"; source: string }
-	/** the `hidden` token in or out of the class literal, and nothing else (#317) */
-	| { kind: "set-hidden"; source: string; hidden: boolean }
-	| { kind: "set-attribute"; source: string; name: string; value: string };
+	| { kind: "delete"; source: string };
 
 export type RefusalCode =
 	| "computed-class"
@@ -50,8 +47,6 @@ export type RefusalCode =
 	| "no-text"
 	| "text-shape"
 	| "supplied-text"
-	| "expression-attribute"
-	| "class-attribute"
 	// the element is the whole of what a component returns, so taking it out
 	// would take the component with it (#317)
 	| "whole-return"
@@ -64,7 +59,6 @@ export type RefusalCode =
 	// it is written inside an expression rather than standing as a child, so
 	// its characters are not a thing that can simply go (#317)
 	| "expression-child"
-	| "walk-target"
 	| "unparsable"
 	| "overlapping-ops"
 	// the one the caller answers, because only it can: the file moved under
@@ -99,9 +93,6 @@ export interface SpanPatch {
 	end: number;
 	text: string;
 }
-
-/** The one attribute no hand edit writes: its value is a walk target (#260). */
-export const WALK_TARGET = "data-go";
 
 /**
  * One child node of an edited element, as the frame hands it back (#314): a
@@ -276,54 +267,6 @@ export interface ElementRead {
 	refusal?: PatchRefusal;
 	/** the element sits inside a `map`: one literal, every rendered row */
 	mapped: boolean;
-	/** every other attribute the tag carries, as the file writes it (#260) */
-	attributes: AttributeRead[];
-}
-
-/**
- * One attribute as the file has it (#260).
- *
- * The rail's source section turns string attributes into fields, so it needs
- * the same answer the write lane would give: the characters between the quotes
- * where they are typed literally, and what the file says instead where they
- * are not. A name with neither is a bare attribute — `<input disabled />` —
- * which has a place for a value rather than a value.
- */
-export interface AttributeRead {
-	name: string;
-	/** the string it holds, when it holds one literally */
-	value?: string;
-	/** what the file says instead, when the value is no literal a hand may write */
-	expression?: string;
-}
-
-/** The two the rail has surfaces of their own for, so neither is a string field. */
-const NOT_A_FIELD: ReadonlySet<string> = new Set(["className", "style"]);
-/** How many attributes one element reports, and how much of an expression is named. */
-const ATTRIBUTE_CAP = 32;
-const EXPRESSION_CAP = 240;
-
-function attributesOf(source: string, element: Element): AttributeRead[] {
-	const reads: AttributeRead[] = [];
-	for (const attribute of element.attributes) {
-		if (reads.length >= ATTRIBUTE_CAP) break;
-		if (attribute.type !== "JSXAttribute") continue;
-		const name = attribute.name.type === "JSXIdentifier" ? attribute.name.name : undefined;
-		if (name === undefined || NOT_A_FIELD.has(name)) continue;
-		const slot = slotOf(source, attribute);
-		if (slot?.kind === "literal") {
-			reads.push({ name, value: slot.value });
-			continue;
-		}
-		if (slot?.kind === "bare") {
-			reads.push({ name, value: "" });
-			continue;
-		}
-		const held = attribute.value;
-		const said = held == null ? "" : source.slice(nodeStart(held), nodeEnd(held));
-		reads.push({ name, expression: said.slice(0, EXPRESSION_CAP) });
-	}
-	return reads;
 }
 
 /** One read per position asked about, in order; nothing where the stamp hits nothing. */
@@ -343,12 +286,9 @@ export function readElements(
 		const element = elementAt(program, line, column, rel);
 		if (element === undefined) return undefined;
 		const name = rawOf(source, element.node.openingElement.name);
-		const attributes = attributesOf(source, element);
 		const literal = literalOf(source, element);
-		if ("refusal" in literal) {
-			return { name, className: "", refusal: literal.refusal, mapped: element.mapped, attributes };
-		}
-		return { name, className: literal.className, mapped: element.mapped, attributes };
+		if ("refusal" in literal) return { name, className: "", refusal: literal.refusal, mapped: element.mapped };
+		return { name, className: literal.className, mapped: element.mapped };
 	});
 }
 
@@ -370,10 +310,6 @@ function planOne(source: string, element: Element, op: Exclude<HandOp, { kind: "
 			return planSupplied(source, element, op.prop, op.text);
 		case "delete":
 			return planDelete(source, element);
-		case "set-hidden":
-			return planHidden(source, element, op.hidden);
-		case "set-attribute":
-			return planAttribute(source, element, op.name, op.value);
 	}
 }
 
@@ -630,43 +566,6 @@ function cutOut(source: string, start: number, end: number): SpanPatch {
 	return { start: lineStart, end: after + 1, text: "" };
 }
 
-/**
- * Hide and show (#317): the `hidden` token, in or out of the class literal.
- *
- * Nothing else moves. A hide adds the token where the file has a literal to
- * add it to and a whole `className` where it has none; a show takes it out
- * again, so hide then show leaves the file byte for byte as it was. The
- * literal is the one every other class write lands in, which is what makes a
- * `cn("…", cond && "…")` component as hideable as a plain one.
- */
-function planHidden(source: string, element: Element, hidden: boolean): OnePlan {
-	const literal = literalOf(source, element);
-	if ("refusal" in literal) return literal;
-	const tokens = literal.className.split(/\s+/).filter((token) => token !== "");
-	const next = hidden
-		? tokens.includes(HIDDEN)
-			? tokens
-			: [...tokens, HIDDEN]
-		: tokens.filter((token) => token !== HIDDEN);
-	const written = next.join(" ");
-	if (written === literal.className) return { patches: [] };
-	// the class was only ever the `hidden` a hide wrote: showing takes the whole
-	// attribute back out, so hide then show leaves the file byte for byte as it
-	// was rather than leaving an empty className behind
-	const held = attributeNamed(element, "className");
-	const value = held?.value;
-	const inner = value?.type === "JSXExpressionContainer" ? value.expression : value;
-	if (written === "" && held !== undefined && inner?.type === "StringLiteral") {
-		let start = nodeStart(held);
-		while (start > 0 && (source[start - 1] === " " || source[start - 1] === "\t")) start -= 1;
-		return { patches: [{ start, end: nodeEnd(held), text: "" }] };
-	}
-	return { patches: [fill(element, "className", written, literal.slot)] };
-}
-
-/** The one token hide and show write, which is Tailwind's own `display: none`. */
-const HIDDEN = "hidden";
-
 type Child = JSXElement["children"][number];
 
 /** The children the frame draws: layout whitespace and JSX comments are neither words nor nodes. */
@@ -835,46 +734,6 @@ function plainText(text: string): string {
 /** A string literal as JS spells it, kept on one line: a raw separator would move every stamp under it. */
 function jsonString(text: string): string {
 	return JSON.stringify(text).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
-}
-
-function planAttribute(source: string, element: Element, name: string, value: string): OnePlan {
-	if (name === "style") return { refusal: { code: "inline-style", says: "inline style pins it" } };
-	// className is a list of tokens with a fold behind it, never one string to
-	// overwrite: `set-class` is the op that writes it, one token at a time
-	if (name === "className") {
-		return { refusal: { code: "class-attribute", says: "className is written one token at a time" } };
-	}
-	// a walk target is an arrow on the flows surface rather than a string on an
-	// element, so it is read wherever elements are read and written only there
-	if (name === WALK_TARGET) {
-		return { refusal: { code: "walk-target", says: "walk target, edit in flows" } };
-	}
-	const held = attributeNamed(element, name);
-	const slot = held === undefined ? undefined : slotOf(source, held);
-	if (held !== undefined && slot === undefined) {
-		const says = held.value == null ? "" : source.slice(nodeStart(held.value), nodeEnd(held.value));
-		return { refusal: { code: "expression-attribute", says: `${name} is an expression`, expression: says } };
-	}
-	if (held === undefined && element.spread) {
-		return { refusal: { code: "spread-props", says: "spread props with no literal" } };
-	}
-	if (held?.value?.type === "JSXExpressionContainer" && held.value.expression.type === "StringLiteral") {
-		const literal = held.value.expression;
-		return {
-			patches: [
-				{
-					start: nodeStart(literal),
-					end: nodeEnd(literal),
-					text: jsonString(value),
-				},
-			],
-		};
-	}
-	if (held?.value?.type === "StringLiteral") {
-		const literal = held.value;
-		return { patches: [{ start: nodeStart(literal), end: nodeEnd(literal), text: `"${escapeAttribute(value)}"` }] };
-	}
-	return { patches: [fill(element, name, value, slot)] };
 }
 
 /**

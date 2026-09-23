@@ -55,17 +55,9 @@ export interface ShownRefusal {
 	instead?: { says: string; act: () => void };
 }
 
-/** What a structural gesture was, said the way a person would say it (#317). */
-export function alterAsk(
-	act: "delete" | "hide" | "show" | "attribute",
-	tag: string,
-	attribute?: { name: string; value: string },
-): string {
-	if (act === "attribute" && attribute !== undefined) {
-		return `Set ${attribute.name} to ${JSON.stringify(attribute.value)} on the ${tag}`;
-	}
-	if (act === "delete") return `Delete the ${tag}`;
-	return `${act === "hide" ? "Hide" : "Show"} the ${tag}`;
+/** What a delete was, said the way a person would say it (#317, #323). */
+export function deleteAsk(tags: readonly string[]): string {
+	return tags.length === 1 ? `Delete the ${tags[0]}` : `Delete ${tags.length} elements: ${tags.join(", ")}`;
 }
 
 /**

@@ -461,19 +461,17 @@ export const restoreMessage = (id: number, way: "before" | "after", ask: number)
 	({ spool: "restore", id, way, ask }) as const;
 
 /**
- * A structural gesture, in the document (#317): the element out of it, hidden,
- * shown, or one attribute set. The frame answers with whether it could and with
- * the call one owner up, which is the only place that knows it — a delete of
- * something that is all of a shared component lands on that call instead.
+ * A structural gesture, in the document (#317): the element out of it. The
+ * frame answers with whether it could and with the call one owner up, which
+ * is the only place that knows it — a delete of something that is all of a
+ * shared component offers that call instead.
  */
 export const alterMessage = (
 	id: number,
-	/** several only for a delete of a multi-pick, which is one ask and one undo (#323) */
+	/** several for a delete of a multi-pick, which is one ask and one undo (#323) */
 	selectors: readonly string[],
-	act: "delete" | "hide" | "show" | "attribute",
-	name?: string,
-	value?: string,
-) => ({ spool: "alter", id, selectors, act, name, value }) as const;
+	act: "delete",
+) => ({ spool: "alter", id, selectors, act }) as const;
 
 /** How a save moved the stamps on its line, for a document that is not reloaded for it (#314). */
 export const restampMessage = (file: string, shifts: readonly { line: number; column: number; delta: number }[]) =>

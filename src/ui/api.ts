@@ -16,7 +16,7 @@ import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows"
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { RungRead } from "../daemon/hand-lane";
-import type { AttributeRead, EditedNode, PatchRefusal, StampShift } from "../daemon/hand-write";
+import type { EditedNode, PatchRefusal, StampShift } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
@@ -36,7 +36,6 @@ declare global {
 
 export type {
 	AgentEvent,
-	AttributeRead,
 	Camera,
 	CanvasOrder,
 	CanvasPlaces,
@@ -360,11 +359,9 @@ export async function writeElement(
 	project: string,
 	frame: string,
 	ask: {
-		act: "delete" | "hide" | "show" | "attribute";
-		/** several only for a delete of a multi-pick, and all in one file (#323) */
+		act: "delete";
+		/** several for a delete of a multi-pick, and all in one file (#323) */
 		sources: string[];
-		name?: string;
-		value?: string;
 		fingerprint: string;
 		/** the row a delete is about, when the document could say which one (#324) */
 		item?: { source: string; index: number; fingerprint: string };

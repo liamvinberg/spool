@@ -93,8 +93,8 @@ import {
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import {
-	alterAsk,
 	askText,
+	deleteAsk,
 	GONE,
 	type HandEdit,
 	OPENING_MS,
@@ -619,21 +619,16 @@ export function ProjectCanvas({
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	/** the frame's answer to putting one edit's words back (#314) */
 	const restoreWaiters = useRef(new Map<number, (ok: boolean) => void>());
-	/** the frame's answer to a delete, a hide, a show or an attribute (#317) */
+	/** the frame's answer to a delete (#317) */
 	const alterWaiters = useRef(new Map<number, (answer: { ok: boolean; owner: string | null }) => void>());
 	// the open edit as the handlers read it, a paint earlier than the render
 	const editingRef = useRef<HandEdit | null>(null);
 	const endEditRef = useRef<(commit: boolean) => void>(() => {});
 	/** the text gesture, reached from the descent above it in the file (#321) */
 	const beginTextEditRef = useRef<(pick: PickedSelection, local: Point) => void>(() => {});
-	/** the structural gesture as its own refusal reaches for it: a delete that offers the call */
+	/** the delete as its own refusal reaches for it: a delete that offers the call */
 	const alterElementRef = useRef<
-		(
-			picks: readonly PickedSelection[],
-			act: "delete" | "hide" | "show" | "attribute",
-			at: { sources: readonly string[]; fingerprint: string },
-			attribute?: { name: string; value: string },
-		) => void
+		(picks: readonly PickedSelection[], at: { sources: readonly string[]; fingerprint: string }) => void
 	>(() => {});
 	// a press on the element already held, acted on at pointer-up (#255)
 	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
@@ -3113,7 +3108,7 @@ export function ProjectCanvas({
 			},
 		};
 	}, [commitClass, picked, previewStyle]);
-	// --- delete, hide, show and attributes (#317) --------------------------------
+	// --- delete (#317) ------------------------------------------------------------
 
 	/**
 	 * What the hand holds once an element is gone: the rung above it, or the
@@ -3138,7 +3133,7 @@ export function ProjectCanvas({
 	);
 
 	/**
-	 * One structural gesture, in the frame and then in the file.
+	 * One delete, in the frame and then in the file.
 	 *
 	 * The frame changes first and answers with whether it could and with the
 	 * call one owner up — the only place that knows it. Then one write in the
@@ -3156,13 +3151,11 @@ export function ProjectCanvas({
 	const alterElement = useCallback(
 		(
 			picks: readonly PickedSelection[],
-			act: "delete" | "hide" | "show" | "attribute",
 			at: {
 				sources: readonly string[];
 				fingerprint: string;
 				item?: { source: string; index: number; fingerprint: string };
 			},
-			attribute?: { name: string; value: string },
 		) => {
 			const pick = picks[0];
 			const source = at.sources[0];
@@ -3176,10 +3169,7 @@ export function ProjectCanvas({
 			if (target == null) return;
 			const id = ++pickSeq.current;
 			setRefused(null);
-			const asked =
-				picks.length === 1
-					? alterAsk(act, pick.tag, attribute)
-					: `Delete ${picks.length} elements: ${picks.map((held) => held.tag).join(", ")}`;
+			const asked = deleteAsk(picks.map((held) => held.tag));
 			const refuse = (refusal: Refusal, instead?: ShownRefusal["instead"]) => {
 				restoreWords(pick.frame, id, "before", () => {});
 				const file =
@@ -3203,14 +3193,14 @@ export function ProjectCanvas({
 			 * that call is in, because then there is nothing to measure it against.
 			 */
 			const insteadDeleteCall = (refusal: Refusal, call: string | null) => {
-				if (act !== "delete" || picks.length !== 1 || refusal.code !== "whole-return" || call === null) {
+				if (picks.length !== 1 || refusal.code !== "whole-return" || call === null) {
 					return undefined;
 				}
 				const fingerprint = fingerprintFor(pick.frame, call);
 				if (fingerprint === undefined) return undefined;
 				return {
 					says: "Delete the call",
-					act: () => alterElementRef.current(picks, "delete", { sources: [call], fingerprint }),
+					act: () => alterElementRef.current(picks, { sources: [call], fingerprint }),
 				};
 			};
 			alterWaiters.current.set(id, ({ ok, owner }) => {
@@ -3225,10 +3215,9 @@ export function ProjectCanvas({
 				const readers = read?.source === source ? (read.shared?.frames ?? []) : [];
 				holdReaders(pick.frame, readers);
 				void writeElement(project, pick.frame, {
-					act,
+					act: "delete",
 					sources: [...at.sources],
 					fingerprint: at.fingerprint,
-					...(attribute ?? {}),
 					...(at.item === undefined ? {} : { item: at.item }),
 				}).then((written) => {
 					settled(written, {
@@ -3243,20 +3232,12 @@ export function ProjectCanvas({
 						// hand holds now, and it holds it only once the write has
 						// actually landed, so a refusal still has them to sit under
 						...(picks.length === 1 ? {} : { entry: { picks: picks.map((held) => held.selector) } }),
-						onLanded: () => {
-							if (act === "delete") holdParent(gone);
-						},
+						onLanded: () => holdParent(gone),
 					});
 				});
 			});
 			target.postMessage(
-				alterMessage(
-					id,
-					at.item === undefined ? picks.map((held) => held.selector) : [gone.selector],
-					act,
-					attribute?.name,
-					attribute?.value,
-				),
+				alterMessage(id, at.item === undefined ? picks.map((held) => held.selector) : [gone.selector], "delete"),
 				"*",
 			);
 			setTimeout(() => {
@@ -3324,25 +3305,9 @@ export function ProjectCanvas({
 				row === undefined || rowPrint === undefined
 					? undefined
 					: { source: row.map, index: row.index, fingerprint: rowPrint };
-			alterElement(picks, "delete", { sources, fingerprint, ...(item === undefined ? {} : { item }) });
+			alterElement(picks, { sources, fingerprint, ...(item === undefined ? {} : { item }) });
 		},
 		[alterElement, fingerprintFor, showRefusal],
-	);
-
-	/** The rail's own structural writes (#317): hide, show, and one attribute. */
-	const railAlter = useCallback(
-		(
-			frame: string,
-			selector: string,
-			at: { source: string; fingerprint: string },
-			act: "hide" | "show" | "attribute",
-			attribute?: { name: string; value: string },
-		) => {
-			const pick = pickedRef.current.find((held) => held.frame === frame && held.selector === selector);
-			if (pick === undefined) return;
-			alterElement([pick], act, { sources: [at.source], fingerprint: at.fingerprint }, attribute);
-		},
-		[alterElement],
 	);
 
 	// A refusal is about the element it was refused on, so it goes when the
@@ -5672,7 +5637,6 @@ export function ProjectCanvas({
 							onGeometryCommit: commitFrameGeometry,
 							property: propertyControls,
 							onOpenFile: (path, line) => copySourcePath(`${path}:${line}`),
-							onElement: railAlter,
 						}}
 					/>
 				)}

@@ -2,12 +2,12 @@ import { expect, it } from "vitest";
 import { apiRequests, handCanvas } from "./hand-browser-helpers";
 
 /**
- * Deleting, hiding and editing attributes, on a real landing page (#317).
+ * Deleting, on a real landing page (#317).
  *
  * The fixture is the shaders project's still page with its shared page parts
- * and its shader surface. A person selects an element and presses ⌫, or
- * presses the rail's own rows; what they see is the frame and what the file
- * says is the file, and nothing in between is asserted.
+ * and its shader surface. A person selects an element and presses ⌫; what
+ * they see is the frame and what the file says is the file, and nothing in
+ * between is asserted.
  */
 
 const UTILS = `export function cn(...inputs: (string | false | null | undefined)[]) {
@@ -73,7 +73,7 @@ const FILES = {
 	"shared/ui/shader.tsx": SHADER,
 };
 
-it("deletes, hides and retypes on the still page", { timeout: 240_000 }, async () => {
+it("deletes on the still page", { timeout: 240_000 }, async () => {
 	const f = await handCanvas(FILES, STILL, { w: 900, h: 700 });
 	const { page, frame } = f;
 	// File bytes and DOM previews can arrive before the save enters Undo history.
@@ -137,50 +137,5 @@ it("deletes, hides and retypes on the still page", { timeout: 240_000 }, async (
 	await f.history();
 	await says("<Shader");
 	await shows(".shader-surface", 1);
-
-	// hide and show: the frame stops drawing it at once, the file says the token,
-	// and showing it again leaves the file byte for byte as it was
-	const before = f.bytes();
-	await hold("#details h3");
-	const toggle = page.locator("[data-hidden-toggle]");
-	const changeVisibility = () => write(() => toggle.click());
-	await expect.poll(() => toggle.count(), { timeout: 15_000 }).toBe(1);
-	await changeVisibility();
-	await says('<h3 className="hidden">Start with one breath.</h3>');
-	await expect.poll(() => frame.locator("#details h3").evaluate((el) => getComputedStyle(el).display)).toBe("none");
-	await expect.poll(() => toggle.getAttribute("data-hidden-toggle")).toBe("hidden");
-	await changeVisibility();
-	await expect.poll(() => f.bytes(), { timeout: 15_000 }).toBe(before);
-	await expect
-		.poll(() => frame.locator("#details h3").evaluate((el) => getComputedStyle(el).display))
-		.not.toBe("none");
-
-	// and a hide undoes like anything else: the token out of the file and the
-	// element drawn again
-	await changeVisibility();
-	await says('<h3 className="hidden">');
-	await f.history();
-	await expect.poll(() => f.bytes(), { timeout: 15_000 }).toBe(before);
-	await expect
-		.poll(() => frame.locator("#details h3").evaluate((el) => getComputedStyle(el).display))
-		.not.toBe("none");
-
-	// a literal href is typed where it is written; the frame carries it before
-	// the file does
-	await hold("a.optional");
-	const href = page.locator('[data-properties-row="href"] input');
-	await expect.poll(() => href.count(), { timeout: 15_000 }).toBe(1);
-	await href.fill("#practice");
-	await write(() => href.press("Enter"));
-	await says('<a className="optional" href="#practice">Our philosophy</a>');
-	expect(await frame.locator("a.optional").getAttribute("href")).toBe("#practice");
-	await f.history();
-	await says('<a className="optional" href="#details">Our philosophy</a>');
-
-	// an href that is an expression is named rather than typed over
-	await hold("a.computed");
-	const computed = page.locator('[data-properties-row="href"]');
-	await expect.poll(() => computed.textContent(), { timeout: 15_000 }).toContain("href is an expression");
-	expect(await computed.locator("input").count()).toBe(0);
 	requests.stop();
 });
