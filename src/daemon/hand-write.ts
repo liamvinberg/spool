@@ -32,7 +32,12 @@ export type HandOp =
 	/** words a call site supplies to a component, written at that call (#314) */
 	| { kind: "set-supplied"; source: string; prop: string; text: string }
 	/** the element out of the file, its own line with it when it stands alone (#317) */
-	| { kind: "delete"; source: string };
+	| { kind: "delete"; source: string }
+	/** the element before or after a sibling written in the same parent (#340) */
+	| { kind: "move"; source: string; target: string; place: Place };
+
+/** Which side of the sibling a move lands on (#340). */
+export type Place = "before" | "after";
 
 export type RefusalCode =
 	| "stale-stamp"
@@ -52,6 +57,11 @@ export type RefusalCode =
 	// it is written inside an expression rather than standing as a child, so
 	// its characters are not a thing that can simply go (#317)
 	| "expression-child"
+	// a move whose neighbour is not written beside it in the same parent (#340):
+	// another container, another file, or across words
+	| "not-siblings"
+	// a move across something the file computes: a condition, a list, a spread (#340)
+	| "sibling-expression"
 	| "unparsable"
 	| "overlapping-ops"
 	// the one the caller answers, because only it can: the file moved under
@@ -202,7 +212,7 @@ export function planOps(source: string, ops: readonly HandOp[]): Planned {
 		const element = stamp === undefined ? undefined : elementAt(program, stamp.line, stamp.column, stamp.rel);
 		if (element === undefined) return { ok: false, refusal: STALE_STAMP };
 		if (element.mapped) mapped = true;
-		const planned = planOne(source, element, op);
+		const planned = planOne(source, program, element, op);
 		if ("refusal" in planned) return { ok: false, refusal: planned.refusal };
 		patches.push(...planned.patches);
 	}
@@ -289,7 +299,7 @@ function wordsRefusal(source: string, element: Element): PatchRefusal | undefine
  */
 export type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
 
-function planOne(source: string, element: Element, op: HandOp): OnePlan {
+function planOne(source: string, program: Node, element: Element, op: HandOp): OnePlan {
 	switch (op.kind) {
 		case "set-text":
 			return planText(source, element, op.nodes);
@@ -297,7 +307,20 @@ function planOne(source: string, element: Element, op: HandOp): OnePlan {
 			return planSupplied(source, element, op.prop, op.text);
 		case "delete":
 			return planDelete(source, element);
+		case "move":
+			return planMove(source, element, targetOf(program, op), op.place);
 	}
+}
+
+/** The sibling a move names, or why it names none: nothing there, or a place in another file. */
+function targetOf(program: Node, op: Extract<HandOp, { kind: "move" }>): Element | PatchRefusal {
+	const from = parseStampRef(op.source);
+	const to = parseStampRef(op.target);
+	if (to === undefined) return STALE_STAMP;
+	if (from?.rel !== to.rel) {
+		return { code: "not-siblings", says: "the one next to it is written in another file; ask the agent" };
+	}
+	return elementAt(program, to.line, to.column, to.rel) ?? STALE_STAMP;
 }
 
 /* ---------- the ops ---------- */
@@ -501,6 +524,144 @@ function cutOut(source: string, start: number, end: number): SpanPatch {
 	// one above it and leaves the line before it ending where it did
 	if (after >= source.length) return { start: lineStart === 0 ? 0 : lineStart - 1, end: after, text: "" };
 	return { start: lineStart, end: after + 1, text: "" };
+}
+
+/**
+ * The element before or after a sibling (#340).
+ *
+ * Both have to be children the same parent JSX writes, with nothing the file
+ * computes between them, because only then is the order on screen the order
+ * in the file. The elements in the run between them change places and every
+ * character between two of them stays where it was, so the indentation, the
+ * line breaks and a space between two inline siblings all keep their places.
+ * The splice is the one run from the first of them to the last.
+ */
+function planMove(source: string, element: Element, target: Element | PatchRefusal, place: Place): OnePlan {
+	const rows = mapCallOver(element.ancestors);
+	if (rows !== undefined) {
+		return {
+			refusal: {
+				code: "mapped-template",
+				says: `these rows come from \`${rows.callee}\`; move one item, or ask the agent`,
+				expression: rows.callee,
+				line: element.node.loc?.start.line ?? 0,
+			},
+		};
+	}
+	const parent = element.parent;
+	if (parent?.type !== "JSXElement" && parent?.type !== "JSXFragment") {
+		const owner = returnedFrom(element);
+		return {
+			refusal:
+				owner === undefined
+					? { code: "expression-child", says: "it is written inside an expression; ask the agent" }
+					: {
+							code: "whole-return",
+							says:
+								owner === ""
+									? "it is the whole of what a function returns; ask the agent"
+									: `it is all of ${owner}; the call that renders it is what moves`,
+							line: element.node.loc?.start.line ?? 0,
+						},
+		};
+	}
+	if ("code" in target) return { refusal: target };
+	const children = parent.children;
+	const from = children.indexOf(element.node);
+	const to = children.indexOf(target.node as Child);
+	if (to === -1) {
+		// written inside an expression that is itself a child of this parent: the
+		// sibling on screen is something the file computes
+		const held = children.find((child) => child.type === "JSXExpressionContainer" && contains(child, target.node));
+		if (held?.type === "JSXExpressionContainer") return { refusal: computedSibling(source, held) };
+		return {
+			refusal: { code: "not-siblings", says: "they are not written side by side in one container; ask the agent" },
+		};
+	}
+	const low = Math.min(from, to);
+	const high = Math.max(from, to);
+	const slots: Node[] = [];
+	for (const child of children.slice(low, high + 1)) {
+		if (child.type === "JSXElement" || child.type === "JSXFragment") {
+			slots.push(child);
+			continue;
+		}
+		if (child.type === "JSXText") {
+			// a space between two inline siblings is a gap, and it stays put
+			if (rawOf(source, child).trim() === "") continue;
+			return { refusal: { code: "not-siblings", says: "there are words between them; ask the agent" } };
+		}
+		if (child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression") continue;
+		if (child.type === "JSXExpressionContainer") return { refusal: computedSibling(source, child) };
+		return { refusal: { code: "sibling-expression", says: "a spread sits between them; ask the agent" } };
+	}
+	return rotated(source, slots, element.node, target.node, place);
+}
+
+/** Why a sibling the file computes cannot be moved past, named the way a person would. */
+function computedSibling(source: string, held: Extract<Child, { type: "JSXExpressionContainer" }>): PatchRefusal {
+	const expression = held.expression;
+	const what =
+		expression.type === "LogicalExpression" || expression.type === "ConditionalExpression"
+			? "a condition"
+			: expression.type === "CallExpression" && isMapCall(expression)
+				? "a list"
+				: "an expression";
+	const said = rawOf(source, held);
+	const shown = said.length > 40 ? `${said.slice(0, 37)}…}` : said;
+	return {
+		code: "sibling-expression",
+		says: `the one next to it comes from ${what}; ask the agent`,
+		expression: shown,
+	};
+}
+
+function contains(outer: Node, inner: Node): boolean {
+	return nodeStart(outer) <= nodeStart(inner) && nodeEnd(inner) <= nodeEnd(outer);
+}
+
+/**
+ * One run of siblings with one of them moved (#340): the slots change order
+ * and the characters between two slots stay where they were. Nothing moves
+ * when the element already stands where it would land.
+ */
+function rotated(source: string, slots: readonly Node[], moved: Node, target: Node, place: Place): OnePlan {
+	const order = slots.filter((slot) => slot !== moved);
+	const at = order.indexOf(target);
+	if (at === -1) return { patches: [] };
+	order.splice(place === "before" ? at : at + 1, 0, moved);
+	if (order.every((slot, index) => slot === slots[index])) return { patches: [] };
+	const first = slots[0];
+	const last = slots[slots.length - 1];
+	if (first === undefined || last === undefined) return { patches: [] };
+	let text = "";
+	for (const [index, slot] of order.entries()) {
+		text += rawOf(source, slot);
+		const next = slots[index + 1];
+		const here = slots[index];
+		if (next !== undefined && here !== undefined) text += source.slice(nodeEnd(here), nodeStart(next));
+	}
+	const start = nodeStart(first);
+	return { patches: [narrowed(start, source.slice(start, nodeEnd(last)), text)] };
+}
+
+/**
+ * Whether the element at a stamp is the whole of what a component returns
+ * (#340). A move of one addresses the call that renders it instead, because
+ * the call is what the parent writes beside its siblings.
+ */
+export function wholeReturnAt(source: string, at: { line: number; column: number }): boolean {
+	let program: Node;
+	try {
+		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+	} catch {
+		return false;
+	}
+	const element = elementAt(program, at.line, at.column);
+	if (element === undefined) return false;
+	const parent = element.parent;
+	if (parent?.type === "JSXElement" || parent?.type === "JSXFragment") return false;
+	return returnedFrom(element) !== undefined;
 }
 
 type Child = JSXElement["children"][number];
@@ -885,6 +1046,44 @@ export function planItemRemoval(source: string, name: string, index: number): On
 	const entry = literal.elements[index];
 	if (entry === undefined || entry === null) return { refusal: STALE_STAMP };
 	return { patches: [cutEntry(source, nodeStart(entry), nodeEnd(entry))] };
+}
+
+/**
+ * One entry of an array literal moved before or after another (#340): the
+ * list-row half of a move. The entries in the run between them change places
+ * and the commas, breaks and comments between two entries stay put, so the
+ * array keeps its own spelling. A spread or a hole in the run has no place a
+ * hand could name, so it refuses.
+ */
+export function planItemMove(source: string, name: string, index: number, target: number, place: Place): OnePlan {
+	let program: Node;
+	try {
+		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+	} catch {
+		return { refusal: { code: "unparsable", says: "the file does not parse" } };
+	}
+	let literal: Node | undefined;
+	walkNodes(program, [], (node) => {
+		if (literal !== undefined) return;
+		if (node.type !== "VariableDeclarator" || node.id.type !== "Identifier" || node.id.name !== name) return;
+		if (node.init?.type === "ArrayExpression") literal = node.init;
+	});
+	if (literal === undefined || literal.type !== "ArrayExpression") return { refusal: fromExpression(name) };
+	const entries = literal.elements;
+	const moved = entries[index];
+	const beside = entries[target];
+	if (moved == null || beside == null) return { refusal: STALE_STAMP };
+	const run = entries.slice(Math.min(index, target), Math.max(index, target) + 1);
+	const slots: Node[] = [];
+	for (const entry of run) {
+		if (entry === null || entry.type === "SpreadElement") {
+			return {
+				refusal: { code: "sibling-expression", says: `\`${name}\` spreads or skips an entry here; ask the agent` },
+			};
+		}
+		slots.push(entry);
+	}
+	return rotated(source, slots, moved, beside, place);
 }
 
 /** The characters one array entry takes with it: its own, its comma, and its line when it has one. */

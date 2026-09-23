@@ -4,12 +4,14 @@ import {
 	fingerprintOf,
 	type HandOp,
 	mappedArrayAt,
+	planItemMove,
 	planItemRemoval,
 	planOps,
 	readElements,
 	shiftsOf,
 	spanBetween,
 	textOwner,
+	wholeReturnAt,
 } from "./hand-write";
 import { readJsxText } from "./jsx-text";
 
@@ -614,5 +616,154 @@ export default function Frame() {
 			expression: "experience",
 			line: 8,
 		});
+	});
+});
+
+/**
+ * Reorder (#340): one element before or after a sibling the same parent
+ * writes, and one entry of a list before or after another. The elements trade
+ * places; every character between two of them stays where it was.
+ */
+describe("move", () => {
+	const NAV = `export function Nav() {
+	return (
+		<nav>
+			<a href="/docs">Docs</a>
+			<a href="/code">GitHub</a>
+			<a className="get" href="#start">
+				Get spool
+			</a>
+		</nav>
+	);
+}
+`;
+	const move = (source: string, from: string, to: string, place: "before" | "after"): HandOp => ({
+		kind: "move",
+		source: stamp(source, from),
+		target: stamp(source, to),
+		place,
+	});
+
+	it("moves an element after its next sibling, taking its own line along", () => {
+		const text = written([move(NAV, '<a href="/docs"', '<a href="/code"', "after")], NAV);
+		expect(text).toBe(
+			NAV.replace(
+				'\t\t\t<a href="/docs">Docs</a>\n\t\t\t<a href="/code">GitHub</a>\n',
+				'\t\t\t<a href="/code">GitHub</a>\n\t\t\t<a href="/docs">Docs</a>\n',
+			),
+		);
+	});
+
+	it("moves a sibling written over several lines past two others, as one run", () => {
+		const text = written([move(NAV, '<a className="get"', '<a href="/docs"', "before")], NAV);
+		expect(text).toContain(
+			'<nav>\n\t\t\t<a className="get" href="#start">\n\t\t\t\tGet spool\n\t\t\t</a>\n\t\t\t<a href="/docs">Docs</a>\n\t\t\t<a href="/code">GitHub</a>\n\t\t</nav>',
+		);
+	});
+
+	it("is one span the undo puts back, and byte-identical outside it", () => {
+		const text = written([move(NAV, '<a href="/code"', '<a href="/docs"', "before")], NAV);
+		expect(applySpan(text, spanBetween(NAV, text))).toBe(NAV);
+		expect(text.startsWith("export function Nav() {\n\treturn (\n\t\t<nav>\n")).toBe(true);
+		expect(text.endsWith("\t\t</nav>\n\t);\n}\n")).toBe(true);
+	});
+
+	it("keeps the space between inline siblings where it was", () => {
+		const source = `const x = <p><b>one</b> <i>two</i></p>;\n`;
+		expect(written([move(source, "<b>", "<i>", "after")], source)).toBe(`const x = <p><i>two</i> <b>one</b></p>;\n`);
+	});
+
+	it("writes nothing when the element already stands there", () => {
+		const planned = plan([move(NAV, '<a href="/docs"', '<a href="/code"', "before")], NAV);
+		expect(planned.ok && planned.text).toBe(NAV);
+	});
+
+	it("refuses a sibling a condition writes, and names it", () => {
+		const source = `const x = (\n\t<div>\n\t\t<h1>a</h1>\n\t\t{open && <p>b</p>}\n\t</div>\n);\n`;
+		expect(refusal([move(source, "<h1>", "<p>", "after")], source)).toEqual({
+			code: "sibling-expression",
+			says: "the one next to it comes from a condition; ask the agent",
+			expression: "{open && <p>b</p>}",
+		});
+	});
+
+	it("refuses to move past a computed list or a spread between the two", () => {
+		const list = `const x = (\n\t<ul>\n\t\t<li>a</li>\n\t\t{rows.map((row) => <li key={row}>{row}</li>)}\n\t\t<li>z</li>\n\t</ul>\n);\n`;
+		expect(refusal([move(list, "<li>a", "<li>z", "after")], list).says).toBe(
+			"the one next to it comes from a list; ask the agent",
+		);
+		const spread = `const x = (\n\t<ul>\n\t\t<li>a</li>\n\t\t{...rest}\n\t\t<li>z</li>\n\t</ul>\n);\n`;
+		expect(refusal([move(spread, "<li>a", "<li>z", "after")], spread).code).toBe("sibling-expression");
+	});
+
+	it("refuses siblings on screen the file writes in different containers", () => {
+		const source = `const x = (\n\t<div>\n\t\t<section><h2>a</h2></section>\n\t\t<h3>b</h3>\n\t</div>\n);\n`;
+		expect(refusal([move(source, "<h2>", "<h3>", "after")], source).code).toBe("not-siblings");
+	});
+
+	it("refuses a neighbour written in another file", () => {
+		const op: HandOp = {
+			kind: "move",
+			source: stamp(NAV, '<a href="/docs"'),
+			target: "shared/ui/other.tsx:3:3",
+			place: "after",
+		};
+		expect(refusal([op], NAV)).toEqual({
+			code: "not-siblings",
+			says: "the one next to it is written in another file; ask the agent",
+		});
+	});
+
+	it("refuses words between the two, which would be scrambled", () => {
+		const source = `const x = <p><b>one</b> and then <i>two</i></p>;\n`;
+		expect(refusal([move(source, "<b>", "<i>", "after")], source).says).toBe(
+			"there are words between them; ask the agent",
+		);
+	});
+
+	it("refuses one literal a map draws for every row, and points at the row", () => {
+		const source = `const rows = ["a", "b"];\nexport const X = () => <ul>{rows.map((row) => <li key={row}><b>{row}</b><i>x</i></li>)}</ul>;\n`;
+		expect(refusal([move(source, "<b>", "<i>", "after")], source)).toEqual({
+			code: "mapped-template",
+			says: "these rows come from `rows`; move one item, or ask the agent",
+			expression: "rows",
+			line: 2,
+		});
+	});
+
+	it("refuses the whole of a component's return, and says the call is what moves", () => {
+		const shared = `export function Card() {\n\treturn <div className="card" />;\n}\n`;
+		const op: HandOp = { kind: "move", source: stamp(shared, "<div"), target: stamp(shared, "<div"), place: "after" };
+		expect(refusal([op], shared)).toEqual({
+			code: "whole-return",
+			says: "it is all of Card; the call that renders it is what moves",
+			line: 2,
+		});
+		expect(wholeReturnAt(shared, { line: 2, column: 9 })).toBe(true);
+		expect(wholeReturnAt(NAV, { line: 4, column: 4 })).toBe(false);
+	});
+
+	it("moves one entry of a list after another and keeps the commas where they were", () => {
+		const source = `const rows = [\n\t{ a: 1 },\n\t{ a: 2 },\n\t{ a: 3 }\n];\n`;
+		const planned = planItemMove(source, "rows", 0, 1, "after");
+		if ("refusal" in planned) throw new Error(planned.refusal.says);
+		const text = applySpan(source, planned.patches[0] ?? { start: 0, end: 0, text: "" });
+		expect(text).toBe(`const rows = [\n\t{ a: 2 },\n\t{ a: 1 },\n\t{ a: 3 }\n];\n`);
+		expect(applySpan(text, spanBetween(source, text))).toBe(source);
+		const last = planItemMove(source, "rows", 2, 0, "before");
+		if ("refusal" in last) throw new Error(last.refusal.says);
+		expect(applySpan(source, last.patches[0] ?? { start: 0, end: 0, text: "" })).toBe(
+			`const rows = [\n\t{ a: 3 },\n\t{ a: 1 },\n\t{ a: 2 }\n];\n`,
+		);
+	});
+
+	it("refuses an entry the array spreads in, an index it lacks, and a list that is not a literal", () => {
+		const source = `const rows = ["a", ...more, "z"];\n`;
+		const spread = planItemMove(source, "rows", 0, 2, "after");
+		expect("refusal" in spread && spread.refusal.code).toBe("sibling-expression");
+		const missing = planItemMove(source, "rows", 0, 9, "after");
+		expect("refusal" in missing && missing.refusal.code).toBe("stale-stamp");
+		const computed = planItemMove(`const rows = load();\n`, "rows", 0, 1, "after");
+		expect("refusal" in computed && computed.refusal.code).toBe("mapped-expression");
 	});
 });
