@@ -423,7 +423,7 @@ describe("the rungs read", () => {
 		line?: number;
 		mapped?: true;
 		refusal?: { code: string; says: string; expression?: string };
-		attributes?: { name: string; value?: string; expression?: string; asset?: string }[];
+		attributes?: { name: string; value?: string; expression?: string }[];
 		fingerprint?: string;
 		shared?: { frames?: string[] };
 	}
@@ -477,9 +477,8 @@ describe("the rungs read", () => {
 		const app = makeApp(spoolDir);
 
 		const [image, button] = await rungs(app, name, [stampFor(frame, "<img"), stampFor(frame, "<button")]);
-		// a src bound to an image import is the picture it draws, not an expression
 		expect(image?.attributes).toEqual([
-			{ name: "src", asset: "./hero.png" },
+			{ name: "src", expression: "{hero}" },
 			{ name: "alt", value: "a latte" },
 		]);
 		expect(button?.attributes).toEqual([

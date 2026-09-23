@@ -21,18 +21,6 @@ import type { AttributeRead, PatchRefusal } from "../api";
 
 /** What a hand writes on any element, because HTML defines them on any element. */
 
-/**
- * The elements a picture can be swapped on, which is `<img>` and nothing else.
- *
- * Said once because four surfaces ask it: the write lane gating the op, this
- * map deciding which field is a menu, the canvas deciding which selection arms
- * a drop, and the rail deciding whether to read the project's pictures at all.
- * A second tag would otherwise be four edits in four files.
- */
-export function swappable(tag: string): boolean {
-	return tag === "img";
-}
-
 /** The sentence a walk target carries, which is the lane's own refusal for it. */
 export const WALK_REASON = "walk target, edit in flows";
 export { WALK_TARGET };
@@ -71,10 +59,6 @@ export interface AttributeField {
 	expression?: string;
 	/** why this field cannot be written, when it cannot */
 	reason?: string;
-	/** a `src` on an image is a picture rather than a string: it is chosen, never typed */
-	asset?: true;
-	/** the import the picture is written as: `./hero.png` */
-	specifier?: string;
 }
 
 /**
@@ -97,16 +81,10 @@ export function fieldsFor(
 		.filter((attribute) => !known.includes(attribute.name) && !HANDLER.test(attribute.name))
 		.map((attribute) => attribute.name)
 		.sort((a, b) => a.localeCompare(b));
-	return [...known, ...extra].map((name) => field(name, tag, held.get(name), blocked));
+	return [...known, ...extra].map((name) => field(name, held.get(name), blocked));
 }
 
-function field(
-	name: string,
-	tag: string,
-	read: AttributeRead | undefined,
-	blocked: string | undefined,
-): AttributeField {
-	const asset = name === "src" && swappable(tag) ? { asset: true as const } : {};
+function field(name: string, read: AttributeRead | undefined, blocked: string | undefined): AttributeField {
 	if (name === WALK_TARGET) {
 		return {
 			name,
@@ -115,23 +93,10 @@ function field(
 			...(read?.expression === undefined ? {} : { expression: read.expression }),
 		};
 	}
-	if (read?.asset !== undefined) {
-		// an identifier bound to an image import is the picture, not an expression
-		// — and off an image there is nowhere to swap it, so it reads and never
-		// writes: typing over it would put a URL where the asset rule wants an import
-		const reason = blocked ?? (asset.asset === true ? undefined : `${name} is an import`);
-		return {
-			name,
-			value: read.asset,
-			specifier: read.asset,
-			...(reason === undefined ? {} : { reason }),
-			...asset,
-		};
-	}
 	if (read?.expression !== undefined) {
 		// the expression is the whole of the answer: what a hand would overwrite
 		// is not a string, and naming it is what teaches the shape of the file
-		return { name, value: "", expression: read.expression, reason: `${name} is an expression`, ...asset };
+		return { name, value: "", expression: read.expression, reason: `${name} is an expression` };
 	}
-	return { name, value: read?.value ?? "", ...(blocked === undefined ? {} : { reason: blocked }), ...asset };
+	return { name, value: read?.value ?? "", ...(blocked === undefined ? {} : { reason: blocked }) };
 }

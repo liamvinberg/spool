@@ -73,18 +73,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { ASSET_REQUEST_CAP, base64Length, listAssets } from "./hand-asset";
-import {
-	type AssetPut,
-	assetSite,
-	classSite,
-	elementSite,
-	readRungs,
-	revertTarget,
-	STALE_FILE,
-	textSite,
-	type WriteSite,
-} from "./hand-lane";
+import { classSite, elementSite, readRungs, revertTarget, STALE_FILE, textSite, type WriteSite } from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
 import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
@@ -674,47 +663,6 @@ export function createDaemonApp({
 			...(typeof body.name === "string" ? { name: body.name } : {}),
 			...(typeof body.value === "string" ? { value: body.value } : {}),
 		};
-	});
-
-	/**
-	 * The asset swap (#260): one `<img>`, and the picture it is to draw.
-	 *
-	 * Either a file a hand just dropped — its name and its bytes, because a
-	 * browser never reveals a dropped file's path — or one the project already
-	 * holds, named the way the canvas spells every path. Exactly one of the two:
-	 * a body carrying both is a client that has not decided.
-	 */
-	const assetBody = validator("json", (value, c) => {
-		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const { frame, source, fingerprint, file, asset } = body;
-		const says = 'a swap is { "frame", "source", "fingerprint", and one of "file" or "asset" }';
-		if (typeof frame !== "string" || !isFramePath(frame) || typeof source !== "string") return c.text(says, 400);
-		if (parseStamps([source]) === undefined) return c.text(says, 400);
-		if (typeof fingerprint !== "string" || fingerprint === "") {
-			return c.text("a swap carries the fingerprint it was formed against", 400);
-		}
-		const swap: {
-			frame: string;
-			source: string;
-			fingerprint: string;
-			asset: string | undefined;
-			file: { name: string; data: string } | undefined;
-		} = { frame, source, fingerprint, asset: undefined, file: undefined };
-		if (typeof asset === "string" && file === undefined) {
-			if (asset.length === 0 || asset.length > 512) return c.text(says, 400);
-			swap.asset = asset;
-			return swap;
-		}
-		if (typeof file !== "object" || file === null || asset !== undefined) return c.text(says, 400);
-		const { name, data } = file as Record<string, unknown>;
-		if (typeof name !== "string" || typeof data !== "string") return c.text(says, 400);
-		if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
-			return c.text("not a file spool can read", 400);
-		// the budget is the real ceiling and the lane says so in the project's own
-		// words; this is only a bound on what one request may carry at all
-		if (data.length > base64Length(ASSET_REQUEST_CAP)) return c.text("not a file spool can read", 400);
-		swap.file = { name, data };
-		return swap;
 	});
 
 	/**
@@ -2606,27 +2554,6 @@ export function createDaemonApp({
 			return c.json(written(project.root, site));
 		})
 		/*
-		 * The asset swap (#260): the picture and the import it is written as.
-		 *
-		 * The bytes land before the source, because a document that reloads
-		 * between the two writes must never find an import of a file that is not
-		 * there yet.
-		 */
-		.post("/api/p/:project/asset", assetBody, async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { frame, source, fingerprint, file, asset } = c.req.valid("json");
-			const put: AssetPut =
-				file === undefined
-					? { kind: "held", path: asset ?? "" }
-					: { kind: "new", name: file.name, bytes: Buffer.from(file.data, "base64") };
-			const site = assetSite(project.root, frame, source, put, fingerprint);
-			if (site.kind === "error") return c.text(site.message, site.status);
-			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
-			if (site.asset.bytes !== undefined) writeAtomic(site.asset.file, site.asset.bytes);
-			return c.json({ ...written(project.root, site), asset: `design/${site.asset.path}` });
-		})
-		/*
 		 * The write half of a class change (#315). The frame already shows it
 		 * as an inline style; this plans the tokens through the class planner
 		 * at the stamp, writes once, and answers with the literal before and
@@ -2714,34 +2641,6 @@ export function createDaemonApp({
 				return c.text(error instanceof Error ? error.message : "the theme did not compile", 422);
 			}
 		})
-		/*
-		 * The imports the swap may choose from: what sits beside this frame, and
-		 * what `shared/assets/` holds. A menu rather than an index — the point of
-		 * choose-an-import is that a `src` is never typed.
-		 */
-		.get(
-			"/api/p/:project/assets",
-			validator("query", (value, c) => {
-				const frame = (value as { frame?: unknown }).frame;
-				if (typeof frame !== "string" || !isFramePath(frame)) {
-					return c.text("an asset listing is for one frame", 400);
-				}
-				return { frame };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { frame } = c.req.valid("query");
-				const found = lookupFrame(project.root, frame);
-				if (found.kind !== "found") return c.text(`no frame "${frame}"`, 404);
-				try {
-					return c.json({ assets: listAssets(project.root, found.dir) });
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-			},
-		)
 		/*
 		 * The explorer's verbs (#228). Every one of them moves or copies a
 		 * folder, so the law that the canvas never writes frame source stands: a

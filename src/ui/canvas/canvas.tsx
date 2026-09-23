@@ -29,7 +29,6 @@ import {
 	fetchEnginePreference,
 	fetchFlows,
 	fetchProjection,
-	fileAsAsset,
 	postCaptureFailure,
 	postSeen,
 	postTrash,
@@ -45,7 +44,6 @@ import {
 	revertPatch,
 	saveCanvasState,
 	subscribeSse,
-	swapAsset,
 	writeClass,
 	writeElement,
 	writeText,
@@ -156,7 +154,6 @@ import {
 	alterMessage,
 	classMessage,
 	clipboardCopyAllowed,
-	dropTargetMessage,
 	type EditedNode,
 	editMessage,
 	endEditMessage,
@@ -3116,7 +3113,7 @@ export function ProjectCanvas({
 			},
 		};
 	}, [commitClass, picked, previewStyle]);
-	// --- delete, hide, show, attributes and pictures (#317) ----------------------
+	// --- delete, hide, show and attributes (#317) --------------------------------
 
 	/**
 	 * What the hand holds once an element is gone: the rung above it, or the
@@ -3347,71 +3344,6 @@ export function ProjectCanvas({
 		},
 		[alterElement],
 	);
-
-	/**
-	 * The asset swap (#260), which is the rail's write with a file in front of it.
-	 *
-	 * The picture and the splice land in one call, carrying the fingerprint the
-	 * surface read the element out of. The undo it records is the source half:
-	 * the picture stays in the folder, because a file spool put in somebody's
-	 * repo is theirs to keep or delete, and an undo that took it away again
-	 * would be spool deleting a file nobody asked it to.
-	 */
-	const swapPicture = useCallback(
-		(
-			frame: string,
-			selector: string,
-			at: { source: string; fingerprint: string },
-			put: { file: File } | { asset: string },
-		) => {
-			setRefused(null);
-			// a shared definition's readers are held before the write leaves (#318)
-			const read = heldReadRef.current;
-			const readers = read?.source === at.source ? (read.shared?.frames ?? []) : [];
-			holdReaders(frame, readers);
-			const bytes = "file" in put ? fileAsAsset(put.file).then((file) => ({ file })) : Promise.resolve(put);
-			void bytes
-				.then((body) => swapAsset(project, frame, at.source, at.fingerprint, body))
-				.then((written) => {
-					settled(written, {
-						frame,
-						selector,
-						readers,
-						edit: ++pickSeq.current,
-						readAt: () => at.source,
-						refuse: (refusal) =>
-							refusal.code === "failed"
-								? setNotice({ kind: "error", message: "The picture did not reach the file" })
-								: setRefused({ frame, selector, refusal, attempted: "a picture" }),
-						failed: "the picture did not reach the file",
-					});
-				});
-		},
-		[holdReaders, project, settled],
-	);
-
-	/**
-	 * The drop half of the asset swap (#260): the frame is armed, never open.
-	 *
-	 * A file dragged onto an image lands inside that frame's own document, so
-	 * the shim is the only thing that can catch it — and it catches nothing
-	 * until the canvas names one element, because the parity law says a frame
-	 * with a drop zone of its own must behave exactly as its bare document
-	 * does. One selected image is the whole of the arming, and it is taken back
-	 * the moment the selection moves.
-	 */
-	const armedDrop = useRef<string | null>(null);
-	useEffect(() => {
-		const only = picked.length === 1 ? picked[0] : undefined;
-		const target = only !== undefined && only.tag === "img" && !only.generated ? only : undefined;
-		const was = armedDrop.current;
-		if (was !== null && was !== target?.frame) {
-			iframes.current.get(was)?.contentWindow?.postMessage(dropTargetMessage(null), "*");
-		}
-		armedDrop.current = target?.frame ?? null;
-		if (target === undefined) return;
-		iframes.current.get(target.frame)?.contentWindow?.postMessage(dropTargetMessage(target.selector), "*");
-	}, [picked]);
 
 	// A refusal is about the element it was refused on, so it goes when the
 	// selection moves rather than sitting over whatever comes next. The keys
@@ -3935,24 +3867,6 @@ export function ProjectCanvas({
 					waiter?.({ ok: message.ok, owner: message.owner });
 					return;
 				}
-				// a picture dropped on the one image the canvas armed (#260). The
-				// swap is measured against the file the surface read, like every
-				// other write, so the stamp's own rung is asked for first — a drop
-				// is the one gesture that arrives with no read behind it
-				case "dropped": {
-					const pick = pickedRef.current.find(
-						(candidate) => candidate.frame === message.frame && candidate.selector === message.selector,
-					);
-					const stamp = pick === undefined ? undefined : stampOf(pick);
-					if (pick === undefined || typeof stamp !== "string") return;
-					const file = message.file;
-					void readRungs(project, message.frame, [stamp]).then((rungs) => {
-						const fingerprint = rungs?.[0]?.fingerprint;
-						if (fingerprint === undefined) return;
-						swapPicture(message.frame, pick.selector, { source: stamp, fingerprint }, { file });
-					});
-					return;
-				}
 				case "site-boxes": {
 					// only the newest request per frame applies — a slow reply from a
 					// superseded document must not re-anchor arrows to dead geometry
@@ -4099,7 +4013,6 @@ export function ProjectCanvas({
 		finishEdit,
 		setEdit,
 		showRefusal,
-		swapPicture,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -5748,7 +5661,6 @@ export function ProjectCanvas({
 						held={railHeld}
 						rungs={railRungs}
 						theme={railTheme}
-						revision={railRevision}
 						reloads={railReloads}
 						width={width}
 						onCollapse={shut}
@@ -5761,7 +5673,6 @@ export function ProjectCanvas({
 							property: propertyControls,
 							onOpenFile: (path, line) => copySourcePath(`${path}:${line}`),
 							onElement: railAlter,
-							onSwap: swapPicture,
 						}}
 					/>
 				)}

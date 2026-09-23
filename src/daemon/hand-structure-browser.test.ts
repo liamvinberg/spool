@@ -2,14 +2,12 @@ import { expect, it } from "vitest";
 import { apiRequests, handCanvas } from "./hand-browser-helpers";
 
 /**
- * Deleting, hiding, editing attributes and replacing pictures, on a real
- * landing page (#317).
+ * Deleting, hiding and editing attributes, on a real landing page (#317).
  *
  * The fixture is the shaders project's still page with its shared page parts
- * and its shader surface, plus the one thing that project has nowhere: an
- * `img` whose `src` is written literally. A person selects an element and
- * presses ⌫, or presses the rail's own rows; what they see is the frame and
- * what the file says is the file, and nothing in between is asserted.
+ * and its shader surface. A person selects an element and presses ⌫, or
+ * presses the rail's own rows; what they see is the frame and what the file
+ * says is the file, and nothing in between is asserted.
  */
 
 const UTILS = `export function cn(...inputs: (string | false | null | undefined)[]) {
@@ -28,7 +26,6 @@ p { font-size: 15px; line-height: 1.4; margin: 0 0 10px; }
 .action { display: inline-flex; gap: 6px; align-items: center; }
 .shader-surface { height: 90px; background: #b9a6c9; margin: 12px 0; }
 .page-footer { display: flex; gap: 20px; font-size: 13px; margin-top: 18px; }
-img { display: block; width: 200px; height: 60px; background: #ddd; }
 `;
 
 /** `shared/ui/page-parts.tsx` as the shaders project writes it. */
@@ -53,7 +50,7 @@ export function Shader({ effect, className, label }: { effect: string; className
 }
 `;
 
-/** The still page: the paragraph beside an h3, a `Link` call, a `Shader` call, and a literal `src`. */
+/** The still page: the paragraph beside an h3, a `Link` call and a `Shader` call. */
 const STILL = `import { Footer, Link } from '../../shared/ui/page-parts';
 import { Shader } from '../../shared/ui/shader';
 
@@ -64,7 +61,6 @@ export default function Still() {
     <header className="nav"><a className="brand" href="#top">still.</a><nav aria-label="Main"><a className="optional" href="#details">Our philosophy</a></nav></header>
     <section className="still-copy"><h1 className="serif">A little less<br/>noise.</h1><Link className="solid" href="#practice">Take a moment</Link><Shader className="still-orb" effect="pearl" label="A softly breathing pearl"/></section>
     <section className="still-detail" id="details"><h3>Start with one breath.</h3><p>Let your shoulders fall. Take a slow breath in, then a longer breath out.</p><a className="computed" href={url}>Take a moment</a></section>
-    <img id="hero" src="/hero.png" alt="a still room" width="200" height="60"/>
     <Footer name="still." note="Room for a slower rhythm."/>
   </main>;
 }
@@ -77,7 +73,7 @@ const FILES = {
 	"shared/ui/shader.tsx": SHADER,
 };
 
-it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }, async () => {
+it("deletes, hides and retypes on the still page", { timeout: 240_000 }, async () => {
 	const f = await handCanvas(FILES, STILL, { w: 900, h: 700 });
 	const { page, frame } = f;
 	// File bytes and DOM previews can arrive before the save enters Undo history.
@@ -186,19 +182,5 @@ it("deletes, hides, retypes and reswaps on the still page", { timeout: 240_000 }
 	const computed = page.locator('[data-properties-row="href"]');
 	await expect.poll(() => computed.textContent(), { timeout: 15_000 }).toContain("href is an expression");
 	expect(await computed.locator("input").count()).toBe(0);
-
-	// a picture dropped on the image writes the file beside the frame, the
-	// import, and the `src` that reads it
-	await hold("img#hero");
-	await requests.quiet();
-	const carrier = await frame.locator("body").evaluateHandle(() => {
-		const data = new DataTransfer();
-		data.items.add(new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" }));
-		return data;
-	});
-	await frame.locator("img#hero").dispatchEvent("drop", { dataTransfer: carrier });
-	await says('import shot from "./shot.png";');
-	await says("src={shot}");
-	expect(f.bytes("frames/home/shot.png").length).toBeGreaterThan(0);
 	requests.stop();
 });

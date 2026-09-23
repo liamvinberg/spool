@@ -68,22 +68,6 @@ describe("the fields an element offers", () => {
 			reason: WALK_REASON,
 		});
 	});
-
-	it("marks an image's src a picture, because it is chosen rather than typed", () => {
-		expect(fieldsFor("img", [])[0]).toEqual({ name: "src", value: "", asset: true });
-		expect(fieldsFor("iframe", [])[0]?.asset).toBeUndefined();
-	});
-});
-
-describe("an import off an image", () => {
-	it("reads and never writes, because a string there would be a URL", () => {
-		expect(fieldsFor("iframe", [{ name: "src", asset: "./hero.png" }])[0]).toEqual({
-			name: "src",
-			value: "./hero.png",
-			specifier: "./hero.png",
-			reason: "src is an import",
-		});
-	});
 });
 
 describe("the refusals that reach a string field", () => {
@@ -97,16 +81,5 @@ describe("the refusals that reach a string field", () => {
 	it("leaves them alone for a refusal that is about the classes", () => {
 		expect(blocksFields({ code: "computed-class", says: "className is an expression" })).toBeUndefined();
 		expect(blocksFields({ code: "inline-style", says: "inline style pins it" })).toBeUndefined();
-	});
-});
-
-describe("a src the file writes as an import", () => {
-	it("reads as the picture it draws rather than as an expression", () => {
-		expect(fieldsFor("img", [{ name: "src", asset: "./hero.png" }])[0]).toEqual({
-			name: "src",
-			value: "./hero.png",
-			specifier: "./hero.png",
-			asset: true,
-		});
 	});
 });

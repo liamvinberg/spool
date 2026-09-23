@@ -2,11 +2,11 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { splitClass } from "../../daemon/class-write";
 import { pageName } from "../../page-path";
 import type { RowElement } from "../../properties/rows";
-import type { CompiledTheme, Geometry, ProjectAsset, RungRead } from "../api";
-import { fetchTheme, listAssets, readRungs } from "../api";
+import type { CompiledTheme, Geometry, RungRead } from "../api";
+import { fetchTheme, readRungs } from "../api";
 import { cn } from "../cn";
 import { MenuItem } from "./context-menu";
-import { type AttributeField, blocksFields, fieldsFor } from "./properties-attributes";
+import { blocksFields, fieldsFor } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
 import {
 	BOX,
@@ -15,7 +15,6 @@ import {
 	LABEL,
 	Menu,
 	NumField,
-	type Option,
 	popoverAt,
 	Row,
 	Section,
@@ -137,19 +136,6 @@ export interface PropertiesActs {
 		act: "hide" | "show" | "attribute",
 		attribute?: { name: string; value: string },
 	) => void;
-	/**
-	 * The asset swap (#260): the one hand edit that writes a file.
-	 *
-	 * The picture and the splice land together, so it carries the fingerprint
-	 * rather than being asked about first — a gate would answer about a file the
-	 * swap is about to rewrite anyway.
-	 */
-	onSwap: (
-		frame: string,
-		selector: string,
-		at: { source: string; fingerprint: string },
-		put: { file: File } | { asset: string },
-	) => void;
 }
 
 export function PropertiesRail({
@@ -159,7 +145,6 @@ export function PropertiesRail({
 	rungs,
 	theme,
 	acts,
-	revision,
 	reloads,
 	preview = null,
 	width,
@@ -175,8 +160,6 @@ export function PropertiesRail({
 	acts: PropertiesActs;
 	/** the canvas gesture in flight, which the fields tick in until it lands */
 	preview?: RailPreview | null;
-	/** bumps on the held frame's reloads and on the hand's own saves: what the folder holds moved */
-	revision: number;
 	/** bumps only on a reload, which is the one thing that could have changed the theme */
 	reloads: number;
 	/** what the dock has given this surface, which is its own remembered width */
@@ -197,7 +180,6 @@ export function PropertiesRail({
 				rungs={rungs}
 				theme={theme}
 				acts={acts}
-				revision={revision}
 				reloads={reloads}
 				preview={preview}
 				onCollapse={onCollapse}
@@ -335,7 +317,6 @@ function Body({
 	rungs,
 	theme,
 	acts,
-	revision,
 	reloads,
 	preview,
 	onCollapse,
@@ -345,7 +326,6 @@ function Body({
 	rungs: (RungRead | undefined)[] | null;
 	theme: CompiledTheme | null;
 	acts: PropertiesActs;
-	revision: number;
 	reloads: number;
 	preview: RailPreview | null;
 	onCollapse: () => void;
@@ -430,9 +410,6 @@ function Body({
 					scoped: scopedClass(rungs?.[index]?.className ?? "", live),
 					computed: pick.computed ?? null,
 				}));
-	// the imports the swap may choose from, asked for only where a rung has a
-	// picture on it at all
-	const assets = useAssets(project, element?.frame ?? null, rowElement.tag === "img", revision);
 	const spelling = { scope: live, scoped: scopedClass(literal, live), theme };
 	// the rows write through the canvas's lane once the file has been read
 	// (#315): a write is measured against that read, so there is no gesture
@@ -499,21 +476,11 @@ function Body({
 						key={`${identity} attributes`}
 						read={read}
 						tag={rowElement.tag}
-						assets={assets}
 						hidden={splitClass(scopedClass(literal, BASE)).includes("hidden")}
 						write={(act, attribute) => {
 							if (read.fingerprint === undefined) return;
 							const at = { source: read.source, fingerprint: read.fingerprint };
 							acts.onElement(element.frame, element.selector, at, act, attribute);
-						}}
-						onSwap={(put) => {
-							if (read.fingerprint === undefined) return;
-							acts.onSwap(
-								element.frame,
-								element.selector,
-								{ source: read.source, fingerprint: read.fingerprint },
-								put,
-							);
 						}}
 					/>
 				)}
@@ -1062,26 +1029,21 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
  * The attributes section: `alt`, `href`, `placeholder`, `title` and their kin.
  *
  * Read off the same fresh parse the crumbs are, so a value that is not written
- * literally shows the expression named rather than disappearing. `src` on an
- * image is the import it is written as, never a URL.
+ * literally shows the expression named rather than disappearing.
  */
 function Attributes({
 	html,
 	read,
 	tag,
-	assets,
 	hidden,
 	write,
-	onSwap,
 }: {
 	html: string;
 	read: RungRead;
 	tag: string;
-	assets: readonly ProjectAsset[];
 	/** what the file says about this element being shown, which is the token itself */
 	hidden: boolean;
 	write: (act: "hide" | "show" | "attribute", attribute?: { name: string; value: string }) => void;
-	onSwap: (put: { file: File } | { asset: string }) => void;
 }) {
 	const fields = useMemo(() => {
 		const node = new DOMParser().parseFromString(html, "text/html").body.firstElementChild;
@@ -1109,16 +1071,12 @@ function Attributes({
 			</Row>
 			{fields.map((field) => (
 				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
-					{field.asset === true ? (
-						<AssetField field={field} assets={assets} onSwap={onSwap} />
-					) : (
-						<TextField
-							value={field.expression ?? field.value}
-							ok={field.reason === undefined}
-							placeholder="none"
-							onCommit={(typed) => write("attribute", { name: field.name, value: typed })}
-						/>
-					)}
+					<TextField
+						value={field.expression ?? field.value}
+						ok={field.reason === undefined}
+						placeholder="none"
+						onCommit={(typed) => write("attribute", { name: field.name, value: typed })}
+					/>
 					{field.reason === undefined ? null : (
 						<span className={cn("ml-auto min-w-0 shrink truncate pl-1", FAINT)}>{field.reason}</span>
 					)}
@@ -1153,90 +1111,6 @@ function HiddenField({ hidden, ok, onToggle }: { hidden: boolean; ok: boolean; o
 			{hidden ? "hidden" : "shown"}
 		</button>
 	);
-}
-
-/** The picture, chosen — never typed, because the op has to write an import. */
-function AssetField({
-	field,
-	assets,
-	onSwap,
-}: {
-	field: AttributeField;
-	assets: readonly ProjectAsset[];
-	onSwap: (put: { file: File } | { asset: string }) => void;
-}) {
-	const picker = useRef<HTMLInputElement | null>(null);
-	const held = field.specifier ?? "";
-	const options: Option[] = [
-		// the one row that is not a picture: the OS file dialog, which carries its
-		// own act rather than a token the pick has to recognise
-		{ kind: "action", name: "choose a file…", act: () => picker.current?.click() },
-		...assets.map((asset) => ({
-			token: asset.path,
-			name: asset.path.split("/").at(-1) ?? asset.path,
-			value: `${Math.ceil(asset.bytes / 1024)} KB`,
-			group: asset.path.startsWith("shared/") ? "shared" : "beside the frame",
-		})),
-	];
-	return (
-		<>
-			<Menu
-				current={{
-					token: held === "" ? null : held,
-					name: held === "" ? "none" : (held.split("/").at(-1) ?? held),
-				}}
-				options={options}
-				ok={field.reason === undefined}
-				label="image"
-				filter={assets.length > 8}
-				onPick={(token) => {
-					if (token === null) return;
-					onSwap({ asset: token });
-				}}
-			/>
-			{/* the OS dialog, which is the other half of choose-an-import: a browser
-			    never reveals a dropped or chosen file's path, so the bytes are what
-			    travels and the daemon decides where they land */}
-			<input
-				ref={picker}
-				type="file"
-				accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
-				className="hidden"
-				onChange={(event) => {
-					const file = event.target.files?.[0];
-					event.target.value = "";
-					if (file !== undefined) onSwap({ file });
-				}}
-			/>
-		</>
-	);
-}
-
-/**
- * The imports this frame may choose from, read once per frame.
- *
- * Asked for only where a rung actually has a picture on it, because most
- * elements do not and a menu nobody opens should cost no round trip. Re-read
- * on a reload, since a swap of its own puts a new file in the folder the menu
- * lists.
- */
-function useAssets(project: string, frame: string | null, wanted: boolean, revision: number): ProjectAsset[] {
-	const [assets, setAssets] = useState<ProjectAsset[]>([]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a swap of its own puts a new file in the folder this lists
-	useEffect(() => {
-		if (frame === null || !wanted) {
-			setAssets([]);
-			return;
-		}
-		let live = true;
-		void listAssets(project, frame).then((read) => {
-			if (live) setAssets(read ?? []);
-		});
-		return () => {
-			live = false;
-		};
-	}, [project, frame, wanted, revision]);
-	return assets;
 }
 
 /* ---------- the source line ---------- */

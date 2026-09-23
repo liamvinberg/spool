@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import type { ClassEdit, ClassTheme } from "./class-write";
 import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
-import { assetChosen, assetDestination, assetName, identifierHint, overBudget, specifierFrom } from "./hand-asset";
 import {
 	type AttributeRead,
 	type EditedNode,
@@ -496,98 +495,6 @@ function spliced(stamp: Stamp, source: string, plan: Extract<ReturnType<typeof p
 		text: plan.text,
 		shifts: shiftsOf(source, plan.patches),
 	};
-}
-
-/* ---------- the picture on an image (#260, back on the lane for #317) ---------- */
-
-/** Whether an import written into this file lands on something still inside design/. */
-function reachesAsset(root: string, file: string, specifier: string): boolean {
-	try {
-		const designDir = realDesignDir(root);
-		resolveDesignPath(designDir, resolve(dirname(file), specifier));
-		return true;
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) return false;
-		throw error;
-	}
-}
-
-/** The picture an asset swap points at: bytes a hand just dropped, or a file the project already holds. */
-export type AssetPut = { kind: "new"; name: string; bytes: Buffer } | { kind: "held"; path: string };
-
-export type AssetSite =
-	| (Extract<WriteSite, { kind: "ok" }> & {
-			/** the picture, and whether its bytes still have to be put on disk */
-			asset: { file: string; path: string; write: boolean; bytes: Buffer | undefined };
-	  })
-	| { kind: "refusal"; refusal: PatchRefusal }
-	| { kind: "error"; status: 400 | 404; message: string };
-
-/**
- * The asset swap, from the picture to the characters (#260).
- *
- * Everything the write lane cannot know: where the file goes, what the import
- * may be called, and whether one document can carry it. What comes back is the
- * file as the swap would leave it and the bytes still owed to disk, so the
- * caller writes the picture first and the source second — a document that
- * reloads between them must never find an import of a file that is not there
- * yet. A shared definition's picture is swapped where it is defined (#318);
- * the file itself still lands beside the frame the hand was in.
- */
-export function assetSite(
-	root: string,
-	frame: string,
-	stampedAt: string,
-	put: AssetPut,
-	fingerprint: string,
-): AssetSite {
-	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const place = siteAt(root, frame, stampedAt, fingerprint);
-	if ("kind" in place) return place;
-	const { at, source } = place;
-
-	const asset = resolveAsset(root, found.dir, put);
-	if ("refusal" in asset) return { kind: "refusal", refusal: asset.refusal };
-	if ("message" in asset) return { kind: "error", status: asset.status, message: asset.message };
-	const specifier = specifierFrom(at.file, asset.file);
-	// a specifier is a path, and every path a hand names is checked against
-	// design/'s own boundary before anything is written through it
-	if (!reachesAsset(root, at.file, specifier)) {
-		return { kind: "error", status: 400, message: "an import reaches a project asset" };
-	}
-	const site = planned(at, source, [
-		{ kind: "set-asset", source: stampedAt, specifier, hint: identifierHint(asset.name) },
-	]);
-	if (site.kind !== "ok") return site;
-	return { ...site, asset: { file: asset.file, path: asset.path, write: asset.write, bytes: asset.bytes } };
-}
-
-type ResolvedAsset =
-	| { file: string; path: string; name: string; write: boolean; bytes: Buffer | undefined }
-	| { refusal: PatchRefusal }
-	| { status: 400 | 404; message: string };
-
-function resolveAsset(root: string, frameDir: string, put: AssetPut): ResolvedAsset {
-	try {
-		if (put.kind === "held") {
-			const chosen = assetChosen(root, put.path);
-			if (chosen === undefined) return { status: 404, message: `no image at design/${put.path}` };
-			const over = overBudget(chosen.bytes);
-			if (over !== undefined) return { refusal: over };
-			const name = put.path.split("/").at(-1) ?? put.path;
-			return { file: chosen.file, path: put.path, name, write: false, bytes: undefined };
-		}
-		const name = assetName(put.name);
-		if (name === undefined) return { status: 400, message: `"${put.name}" is not an image spool writes` };
-		const over = overBudget(put.bytes.length);
-		if (over !== undefined) return { refusal: over };
-		const where = assetDestination(root, frameDir, name, put.bytes);
-		return { ...where, name, bytes: where.write ? put.bytes : undefined };
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
-		throw error;
-	}
 }
 
 /**
