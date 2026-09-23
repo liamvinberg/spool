@@ -1042,11 +1042,14 @@ const canvasShimJs = `(() => {
 		return { svg: source, width: W, height: H, dpr, targetWidth };
 	}
 
-	// selector below the boot root: tags with :nth-of-type where siblings repeat
+	// selector below the boot root: tags with :nth-of-type where siblings repeat.
+	// The whole way up, because a path cut short names every element that ends
+	// the same way: a page that repeats a card deep down is one selector for
+	// all of its copies, and a hand on the second would act on the first (#342)
 	function cssPath(el) {
 		const parts = [];
 		let node = el;
-		while (node && node.nodeType === 1 && node !== document.body && node.id !== "root" && parts.length < 8) {
+		while (node && node.nodeType === 1 && node !== document.body && node.id !== "root") {
 			if (node.id) { parts.unshift("#" + node.id); return parts.join(" > "); }
 			let seg = node.tagName.toLowerCase();
 			const parent = node.parentElement;

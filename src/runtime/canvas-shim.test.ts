@@ -553,6 +553,24 @@ describe("the canvas shim", () => {
 		expect(reply.chain.map((rung) => rung.selector)).toEqual(["main", "main > button"]);
 	});
 
+	it("names a deep element by its whole path, so a repeated card is not its first copy", async () => {
+		const shim = await servedShim();
+		onTestFinished(runShim(shim));
+		const card = `<div><div><div><div><div><div><div><div><button>Pay</button></div></div></div></div></div></div></div></div>`;
+		document.body.innerHTML = `<div id="root"><main><section>${card}</section><section>${card}</section></main></div>`;
+		const second = document.querySelectorAll("button")[1] as Element;
+		document.elementFromPoint = () => second;
+		const picked = nextPicked();
+		window.postMessage({ spool: "pick", x: 1, y: 1, id: 5 }, "*");
+		const selector = ((await picked) as { chain: { selector: string }[] }).chain.at(-1)?.selector ?? "";
+		expect(selector.startsWith("main > section:nth-of-type(2) > ")).toBe(true);
+
+		const again = nextPicked();
+		window.postMessage({ spool: "kin", selector, step: "self", id: 6 }, "*");
+		const found = ((await again) as { chain: { selector: string }[] }).chain.map((hit) => hit.selector);
+		expect(found[1]).toBe("main > section:nth-of-type(2)");
+	});
+
 	it("takes an icon whole, and names what a selection lands on (#339)", async () => {
 		const shim = await servedShim();
 		onTestFinished(runShim(shim));
