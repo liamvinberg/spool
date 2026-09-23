@@ -351,7 +351,7 @@ export function RegistryCanvas({
 		>
 			<div className="flex h-full w-full overflow-hidden bg-bg">
 				<aside className="flex w-[248px] shrink-0 flex-col border-border border-r bg-bg">
-					{inProject ? <ProjectPagesWithRegistry page={page} selected={selected} /> : <RegistryTree page={page} selected={selected} />}
+					{inProject ? <ProjectPagesWithRegistry page={page} selected={selected} /> : <RegistryTree page={page} selected={selected} bare={take === "nav"} />}
 				</aside>
 				<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
 					{inProject ? <ReadOnlyBand /> : null}
@@ -362,7 +362,11 @@ export function RegistryCanvas({
 				</div>
 				<aside className="flex h-full shrink-0">
 					<div className="flex h-full w-[300px] flex-col border-border border-l bg-bg">
-						<About item={item} frame={frame} take={take} handTarget={handTarget} copied={copied} />
+						{take === "nav" ? (
+							<FramePanel item={item} frame={frame} selected={selected} />
+						) : (
+							<About item={item} frame={frame} take={take} handTarget={handTarget} copied={copied} />
+						)}
 					</div>
 					<div className="flex h-full w-[44px] flex-col items-center gap-1 border-border border-l bg-bg pt-1.5">
 						<span className="flex h-8 w-8 items-center justify-center rounded-md bg-raised text-text">
@@ -379,7 +383,7 @@ export function RegistryCanvas({
 }
 
 /** the registry's own pages rail: the category tree #181 agreed, a revision instead of a page count */
-function RegistryTree({ page, selected }: { page: string; selected: string }) {
+function RegistryTree({ page, selected, bare = false }: { page: string; selected: string; bare?: boolean }) {
 	return (
 		<>
 			<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-3 pl-3.5">
@@ -389,13 +393,14 @@ function RegistryTree({ page, selected }: { page: string; selected: string }) {
 				</span>
 			</div>
 			<div className="py-2">
-				<Tree page={page} selected={selected} depth={0} />
+				<Tree page={page} selected={selected} depth={0} bare={bare} />
 			</div>
 		</>
 	);
 }
 
-function Tree({ page, selected, depth }: { page: string; selected: string; depth: number }) {
+/** `bare` draws the tree with nothing the source does not already say: no purpose marks */
+function Tree({ page, selected, depth, bare = false }: { page: string; selected: string; depth: number; bare?: boolean }) {
 	return (
 		<>
 			{CATEGORIES.map((category) => {
@@ -416,7 +421,7 @@ function Tree({ page, selected, depth }: { page: string; selected: string; depth
 												active={here}
 												name={item.name}
 												count={item.frames.length}
-												purpose={item.purpose}
+												purpose={bare ? undefined : item.purpose}
 											/>
 											{here
 												? item.frames.map((frame) => (
@@ -583,6 +588,33 @@ function ReadOnlyTools() {
 				</span>
 			</div>
 		</div>
+	);
+}
+
+/**
+ * take `nav`: the panel any project shows for a selected frame, read-only. Only
+ * what spool already knows: the name you say to your agent, and the size. Purpose,
+ * if the contribution standard asks for it, is the frame's own top comment.
+ */
+function FramePanel({ item, frame, selected }: { item: Collection; frame: string; selected: string }) {
+	const size = item.frames.find((candidate) => candidate.name === selected);
+	return (
+		<>
+			<div className="flex h-9 shrink-0 items-center border-border border-b px-3">
+				<span className="truncate type-value">{frame}</span>
+			</div>
+			{size === undefined ? null : (
+				<div className="border-border border-b px-3 py-3">
+					<div className="mb-2 flex items-baseline justify-between">
+						<span className="text-muted type-detail">size</span>
+						<span className="text-muted type-detail">read-only</span>
+					</div>
+					<span className="type-value">
+						{size.w} × {size.h}
+					</span>
+				</div>
+			)}
+		</>
 	);
 }
 
