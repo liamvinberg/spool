@@ -223,6 +223,9 @@ export const FrameShell = memo(function FrameShell({
 						sandbox="allow-scripts"
 						src={frameDocumentUrl(project, name, docNonce)}
 						className="block h-full w-full border-0 bg-white"
+						// a frame that does not own the pointer does not take the keyboard
+						// either: Tab out on the canvas must never land inside one (#339)
+						tabIndex={interactive ? undefined : -1}
 						style={{ pointerEvents: interactive ? "auto" : "none" }}
 					/>
 				</div>

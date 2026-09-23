@@ -1313,8 +1313,10 @@ const canvasShimJs = `(() => {
 		if (held.spellcheck === null) el.removeAttribute("spellcheck"); else el.setAttribute("spellcheck", held.spellcheck);
 		unpinLayout(el, held.pinned);
 		try { el.blur(); } catch {}
-		// Esc puts the words back; a commit leaves the typed ones standing, because
-		// the DOM is the preview and the file is about to say the same thing
+		quiet = false;
+		// a commit leaves the typed words standing, because the DOM is the
+		// preview and the file is about to say the same thing; only an edit the
+		// canvas abandons puts them back
 		if (!commit) restore(el, held.before);
 		else {
 			edits.set(held.id, { el, before: held.before, after: snapshotOf(el) });
@@ -1364,6 +1366,9 @@ const canvasShimJs = `(() => {
 			if (node.nodeType === 3) nodes.push({ text: node.nodeValue || "" });
 			else if (node.nodeType === 1) nodes.push({ tag: node.localName, nodes: node.localName === "br" ? [] : nodesOf(node) });
 		}
+		// the focus leaving is the edit's own, and the page hears it no more
+		// than it heard the focus arrive
+		quiet = true;
 		return nodes;
 	}
 
@@ -1532,7 +1537,7 @@ const canvasShimJs = `(() => {
 		event.preventDefault();
 		if (event.type === "pointerdown") { swallowUntilClick = true; endEdit(true); }
 	};
-	for (const kind of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick"]) {
+	for (const kind of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick", "auxclick", "contextmenu"]) {
 		addEventListener(kind, swallowWhileEditing, true);
 	}
 
@@ -1591,6 +1596,19 @@ const canvasShimJs = `(() => {
 		const byStamp = new Map();
 		const stamped = Array.from(document.querySelectorAll("[data-spool-source]"));
 		for (const el of stamped) {
+	// The Edit tool is inert (#339): while the words are open the pointer is
+	// over them and nothing else, and the page hears none of it — no hover
+	// handler, no focus handler on the element the caret went into, nothing
+	// that would run the prototype under the hand. Only the listeners are
+	// kept out; the default actions still place the caret.
+	var quiet = false;
+	var keepOut = (event) => {
+		if (editing || quiet) event.stopImmediatePropagation();
+	};
+	for (const kind of ["pointermove", "pointerover", "pointerout", "pointerenter", "pointerleave", "mousemove", "mouseover", "mouseout", "mouseenter", "mouseleave", "focusin", "focusout", "focus"]) {
+		addEventListener(kind, keepOut, true);
+	}
+
 			const stamp = el.getAttribute("data-spool-source");
 			if (stamp && !byStamp.has(stamp)) byStamp.set(stamp, el);
 		}
