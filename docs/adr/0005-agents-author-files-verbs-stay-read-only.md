@@ -26,6 +26,11 @@
 > `hidden` class, string attributes and image imports are the agent's, so the
 > asset swap below is gone and no hand op writes a file beside the frame. See
 > [ADR-0009](./0009-hand-edits-write-the-tsx-where-it-is-written.md).
+>
+> Amended by #340. A hand moves an element before or after a sibling its
+> parent writes beside it, and a row of a list within its array literal, so
+> the ops are four. Moving an element into another container and adding one
+> stay the agent's.
 
 There is no `spool new` or frame-authoring write verb: a frame is born by writing `frames/<name>/frame.tsx`, and the project read verbs only observe (`selection`, `flows`, `shot`, `logs`, `url`, `skill`) (#6). Lifecycle commands are separate: `init` and `open` register and open a project, while `remove` forgets one registered root without touching its files. Spool serializes those machine-global registry and session writes.
 

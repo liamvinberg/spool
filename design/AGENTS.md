@@ -5,7 +5,7 @@ This folder is a [spool](https://spool.page) project: live TSX frames on an infi
 Run `pnpm dev skill` before working here, this repo's checkout CLI, never the installed `spool`. It is the complete contract: if it isn't in there, spool doesn't do it. Topics: `pnpm dev skill frames|flows|scenarios|styling|verbs`.
 
 - A frame is born by writing `frames/<page>/<name>/frame.tsx` default-exporting one React component. No registration, no `spool new`.
-- The one law: never write app-owned files. `canvas.json` and `.spool/` are spool's. Hands write frame source only as span patches, gated, with the same undo surface geometry already has: an element's words, or the element taken out. Styling, layout, images, attributes and hiding are the agent's.
+- The one law: never write app-owned files. `canvas.json` and `.spool/` are spool's. Hands write frame source only as span patches, gated, with the same undo surface geometry already has: an element's words, the element taken out, or the element moved beside a sibling its parent writes. Styling, layout, images, attributes, hiding and moving into another container are the agent's.
 - History is off here. The daemon never commits `design/` for this project, so every change under it is yours to commit: atomic, lowercase, terse, before handoff.
 - This file is orientation, not a ledger. A decision's story lives in its ticket and a component's behavior in its file. Keep the tables below to pointers and never append session summaries here.
 
