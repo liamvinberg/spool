@@ -50,6 +50,7 @@ import {
 	writeText,
 } from "../api";
 import { desktopBridge } from "../desktop-bridge";
+import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { ProjectEmpty } from "../project-empty";
@@ -2572,7 +2573,7 @@ export function ProjectCanvas({
 	 */
 	const treeHover = useRef<string | null>(null);
 	const elementTree = useElementTree({
-		editOn,
+		editOn: editOn && experimentOn("element-tree"),
 		frame: picked.at(-1)?.frame ?? (selected.length === 1 ? (selected[0] ?? null) : null),
 		held: picked,
 		frameHeld: picked.length === 0 && selected.length === 1,

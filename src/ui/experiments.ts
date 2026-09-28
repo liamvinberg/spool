@@ -19,9 +19,11 @@ declare global {
  * neither is one written for an older spool naming a flag that has since
  * graduated. `agent-panel` is that: the agent is a surface the canvas has now
  * (#268), nothing asks about the name any more, and a machine still carrying it
- * in config.json boots exactly as it did.
+ * in config.json boots exactly as it did. `element-tree` holds the pages rail's
+ * element tree back while its direction is still open: off, Edit leaves the
+ * rail exactly as Select does.
  */
-export type Experiment = "agent-panel";
+export type Experiment = "agent-panel" | "element-tree";
 
 export function experimentOn(name: Experiment): boolean {
 	const enabled = typeof window === "undefined" ? undefined : window.__SPOOL_EXPERIMENTS__;

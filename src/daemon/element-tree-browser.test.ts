@@ -46,7 +46,7 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 }, async () => {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir });
+	const project = await serveProject({ uiDir, experiments: ["element-tree"] });
 	writeFrame(project.root, "store", FRAME);
 	writeDesignFile(project.root, "shared/finishes.tsx", FINISHES);
 	writeDesignFile(project.root, "frames/store/frame.json", '{ "x": 0, "y": 0, "w": 800, "h": 600 }\n');
@@ -136,6 +136,33 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 	await expect.poll(() => rail.innerText()).toBe(plain);
 });
 
+it("leaves the rail as Select has it when the element-tree experiment is off", { timeout: 180_000 }, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir });
+	writeFrame(project.root, "store", FRAME);
+	writeDesignFile(project.root, "shared/finishes.tsx", FINISHES);
+	writeDesignFile(project.root, "frames/store/frame.json", '{ "x": 0, "y": 0, "w": 800, "h": 600 }\n');
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
+
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	const store = page.frameLocator('iframe[title="store"]');
+	await expect.poll(() => store.locator("button").count(), { timeout: 60_000 }).toBe(2);
+	const rail = page.locator("aside").first();
+	const oxblood = await store.locator("button").nth(1).boundingBox();
+	if (oxblood === null) throw new Error("the store drew no finishes");
+	await page.mouse.click(oxblood.x + 4, oxblood.y + oxblood.height / 2);
+	const plain = await rail.innerText();
+
+	// Edit still selects the deepest element; the rail simply never opens
+	await page.keyboard.press("e");
+	await page.mouse.click(oxblood.x + 4, oxblood.y + oxblood.height / 2);
+	await page.waitForTimeout(600);
+	expect(await rail.locator("[data-element-row]").count()).toBe(0);
+	expect(await rail.innerText()).toBe(plain);
+});
+
 const LONG = `export default function Frame() {
 	return (
 		<main style={{ display: "grid", gridTemplateColumns: "repeat(2, 120px)" }}>
@@ -154,7 +181,7 @@ it("keeps a long tree to its own scroll, and scrolls the held row into view insi
 }, async () => {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir });
+	const project = await serveProject({ uiDir, experiments: ["element-tree"] });
 	writeFrame(project.root, "grid", LONG);
 	writeDesignFile(project.root, "frames/grid/frame.json", '{ "x": 0, "y": 0, "w": 800, "h": 600 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
