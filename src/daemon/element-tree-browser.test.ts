@@ -91,7 +91,9 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 			"2 <button> oxblood",
 			"<p> fine print",
 		]);
-	expect((await rail.innerText()).replace(/\s+/g, " ")).toContain(".map ×2 1 <button> aluminium 2 <button> oxblood");
+	await expect
+		.poll(async () => (await rail.innerText()).replace(/\s+/g, " "))
+		.toContain(".map ×2 1 <button> aluminium 2 <button> oxblood");
 
 	// a canvas click selects the deepest element, and its row is the one lit
 	await page.mouse.click(oxblood.x + 4, oxblood.y + oxblood.height / 2);
@@ -131,7 +133,7 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 	await expect.poll(() => rows.count()).toBe(0);
 	await page.mouse.click(oxblood.x + 4, oxblood.y + oxblood.height / 2);
 	await expect.poll(held).toBe("frame");
-	expect(await rail.innerText()).toBe(plain);
+	await expect.poll(() => rail.innerText()).toBe(plain);
 });
 
 const LONG = `export default function Frame() {
