@@ -1,0 +1,48 @@
+/* the prototype's own motion: everything enters from where it means something
+ * and eases out, nothing longer than 240ms except the work it stands for */
+.sl-ring-track {
+	stroke: var(--color-border-raised);
+}
+.sl-ring-fill {
+	stroke: currentColor;
+	transition: stroke-dashoffset 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.sl-spin {
+	animation: sl-spin 1.15s linear infinite;
+	transform-origin: center;
+}
+@keyframes sl-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+/* the link field's own bottom edge is the progress: it fills left to right as
+ * the files land, then the fill fades once the link opens */
+.sl-hairline {
+	transform-origin: left;
+	transition:
+		transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		opacity 400ms ease-out 200ms;
+}
+/* the agent writing into the frame: the same plate the hand draws, shortened */
+.sl-writing {
+	animation: sl-writing 1100ms cubic-bezier(0.22, 0.61, 0.36, 1) infinite alternate;
+}
+@keyframes sl-writing {
+	from {
+		opacity: 0.35;
+	}
+	to {
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.sl-spin,
+	.sl-writing {
+		animation: none;
+	}
+	.sl-ring-fill,
+	.sl-hairline {
+		transition: none;
+	}
+}
