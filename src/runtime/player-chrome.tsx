@@ -99,7 +99,8 @@ export function Player({
 		writeBarHidden(next);
 		setHidden(next);
 	};
-	// the external-link dialog is modal: it owns the moment, chrome and all
+	// the external-link dialog is modal: it owns the moment, chrome and all. The
+	// share popover is not, but a put-away bar stays out while it hangs from it.
 	const blocked = externalHref !== null || share.open;
 	const { peeked, enter, leave } = usePeek(desk === null && hidden && !blocked);
 	// A bar that went away takes its open switcher with it.
@@ -144,7 +145,6 @@ export function Player({
 			onWalk={controller.walk}
 			loading={loading}
 			share={share.trigger}
-			blocked={share.open}
 			{...(desk === null
 				? {
 						hidden,
@@ -165,7 +165,6 @@ export function Player({
 				// so the shell's iframe is exactly the box the runtime inside it will
 				// measure, which is what the geometry handshake compares against.
 				style={{ width: Math.min(viewport.vw, w) }}
-				inert={share.open}
 			>
 				{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
 			</div>
@@ -177,7 +176,6 @@ export function Player({
 				/>
 			)}
 			{share.surface}
-			{share.tray}
 			{desk === null && hidden ? (
 				// The strip the put-away bar left behind. The bar is inside it, so the
 				// browser's own hover says when the hand is on either: nothing crosses
@@ -429,7 +427,6 @@ function TopBar({
 	onWalk,
 	loading,
 	share,
-	blocked,
 	desk,
 	hidden,
 	away,
@@ -447,7 +444,6 @@ function TopBar({
 	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
 	loading: boolean;
 	share: ReactNode;
-	blocked: boolean;
 	/** The app's window, when this is its title bar. */
 	desk?: DeskWindow;
 	/** Tab only: whether the bar is put away, so the eye knows which way it faces. */
@@ -470,7 +466,7 @@ function TopBar({
 		<div
 			className={["spool-top", desk === undefined ? "" : "is-desk", away === true ? "is-away" : ""].join(" ").trim()}
 			style={{ height: DESK_BAR_PX }}
-			inert={away === true || blocked}
+			inert={away === true}
 		>
 			<FrameSwitcher
 				frame={frame}

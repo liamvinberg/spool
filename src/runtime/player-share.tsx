@@ -1,18 +1,29 @@
-import { motion, useReducedMotion } from "motion/react";
-import type { ReactNode, RefObject } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import type { ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
 	PlayerPublicationClient,
 	PlayerPublicationJob,
 	PlayerPublicationModel,
 } from "./player-publication-client";
-import { ShareProgress, SharingPanel } from "./share-panel";
+import { jobFraction, type ShareAccessMode, type ShareChip, ShareChipButton, SharePanel } from "./share-panel";
 import { shareStyles } from "./share-styles";
 
+export { shareStyles };
+
 export interface PlayerShareView {
-	show(): void;
-	status: string | undefined;
-	tray: ReactNode;
+	/** open the popover; `stop` opens it already asking to stop the link */
+	show(view?: "stop"): void;
+	close(): void;
+	/**
+	 * One press from a menu: copy the link, making it first when there is none.
+	 * A frame never shared before reuses the last access this machine chose, and
+	 * opens the popover to ask only when there is nothing to reuse.
+	 */
+	copyShare(): void;
+	chip: ShareChip | undefined;
+	/** the link is out there or on its way: the menu offers its verbs */
+	shared: boolean;
 	available: boolean;
 	connected: string[] | undefined;
 	open: boolean;
@@ -20,80 +31,169 @@ export interface PlayerShareView {
 	surface: ReactNode;
 }
 
-export function usePlayerShare(client: PlayerPublicationClient | undefined): PlayerShareView {
-	const [mode, setMode] = useState<"invited" | "public">("invited");
+export interface PlayerShareOptions {
+	/** what the popover stands beside; it follows the element while open */
+	anchor?: () => Element | null;
+	/** `beside` sits right of the anchor (a frame), `below` hangs under it (a bar button) */
+	placement?: "beside" | "below";
+}
+
+const COPIED_MS = 1600;
+const UPDATED_MS = 2400;
+const ACCESS_KEY = "spool:share-access";
+
+interface LastAccess {
+	mode: ShareAccessMode;
+	emails: string[];
+}
+
+function readLastAccess(): LastAccess | undefined {
+	try {
+		const value: unknown = JSON.parse(localStorage.getItem(ACCESS_KEY) ?? "null");
+		if (typeof value !== "object" || value === null) return;
+		const { mode, emails } = value as Record<string, unknown>;
+		if (
+			(mode !== "invited" && mode !== "public") ||
+			!Array.isArray(emails) ||
+			!emails.every((email) => typeof email === "string")
+		)
+			return;
+		if (mode === "invited" && emails.length === 0) return;
+		return { mode, emails };
+	} catch {
+		return;
+	}
+}
+function writeLastAccess(access: LastAccess): void {
+	try {
+		localStorage.setItem(ACCESS_KEY, JSON.stringify(access));
+	} catch {}
+}
+
+/**
+ * The clipboard write is asked for inside the press, before the link has an
+ * address: a first share learns its URL only once the cloud has made the
+ * publication. A promised ClipboardItem keeps the press's permission while the
+ * address arrives; where that is unsupported the write waits and tries plainly.
+ */
+async function writeWhenReady(url: Promise<string>): Promise<boolean> {
+	try {
+		if (typeof ClipboardItem !== "undefined" && typeof navigator.clipboard?.write === "function") {
+			await navigator.clipboard.write([
+				new ClipboardItem({ "text/plain": url.then((value) => new Blob([value], { type: "text/plain" })) }),
+			]);
+			return true;
+		}
+	} catch {}
+	try {
+		await navigator.clipboard.writeText(await url);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function usePlayerShare(
+	client: PlayerPublicationClient | undefined,
+	options: PlayerShareOptions = {},
+): PlayerShareView {
+	const [mode, setMode] = useState<ShareAccessMode>("invited");
 	const [starting, setStarting] = useState(false);
 	const pendingStart = useRef(false);
 	const [model, setModel] = useState<PlayerPublicationModel>();
-	const [title, setTitle] = useState("prototype");
 	const [open, setOpen] = useState(false);
-	const [instant, setInstant] = useState(false);
-	const [email, setEmail] = useState("");
+	const [recipients, setRecipients] = useState<string[]>([]);
 	const [job, setJob] = useState<PlayerPublicationJob>();
 	const [problem, setProblem] = useState("");
 	const [copied, setCopied] = useState(false);
-	const [dismissedJob, setDismissedJob] = useState<string>();
+	const [fresh, setFresh] = useState(false);
+	const [stopping, setStopping] = useState(false);
 	const [authorityUncertain, setAuthorityUncertain] = useState(false);
 	const [mutation, setMutation] = useState<"grant" | "stop">();
-	const trigger = useRef<HTMLButtonElement>(null);
+	const trigger = useRef<HTMLSpanElement>(null);
 	const freshness = useRef(0);
 	const refreshing = useRef<Promise<PlayerPublicationModel | undefined> | undefined>(undefined);
 	const trailing = useRef(false);
 	const uncertainStop = useRef<string | undefined>(undefined);
 	const draftIdentity = useRef("");
 	const wasAvailable = useRef(false);
+	const pendingCopy = useRef<{ resolve: (url: string) => void; reject: () => void } | undefined>(undefined);
+	const pendingInstant = useRef(false);
+	const lastEntry = useRef<string | undefined>(undefined);
 
-	const apply = useCallback((next: PlayerPublicationModel) => {
-		const uncertainPublicationId = uncertainStop.current;
-		uncertainStop.current = undefined;
-		setAuthorityUncertain(false);
-		setTitle(next.title);
-		const identity = `${next.available}:${next.publication?.id ?? next.association}:${next.publication?.state ?? ""}`;
-		if (draftIdentity.current !== identity) {
-			draftIdentity.current = identity;
-			setEmail(next.recipients.join(", "));
-			setMode(next.access?.mode ?? "invited");
+	const settleCopy = useCallback((url: string | undefined, failed = false) => {
+		const pending = pendingCopy.current;
+		if (pending === undefined) return;
+		if (url !== undefined) {
+			pendingCopy.current = undefined;
+			pending.resolve(url);
+		} else if (failed) {
+			pendingCopy.current = undefined;
+			pending.reject();
 		}
-		if (!next.available || next.association === "mismatched" || next.association === "superseded") {
-			setEmail("");
-			setCopied(false);
-		}
-		if (
-			uncertainPublicationId !== undefined &&
-			(next.publication?.id !== uncertainPublicationId || next.publication.state !== "active")
-		) {
-			setOpen(false);
-		}
-		setModel((current) => {
-			const sameRunningJob =
-				next.available &&
-				next.association === "current" &&
-				next.job?.state === "running" &&
-				current?.job?.state === "running" &&
-				next.job.id === current.job.id;
-			return sameRunningJob && next.publication === undefined && current?.publication !== undefined
-				? { ...next, publication: current.publication, source: "unavailable" }
-				: next;
-		});
-		setJob((current) => {
-			if (next.available && next.association === "current" && next.job === undefined && current?.state === "running")
-				return current;
-			if (
-				next.available &&
-				current?.state === "succeeded" &&
-				next.publication?.id === current.publication.id &&
-				next.publication.state === "active"
-			)
-				return current;
-			return next.job;
-		});
-		if (next.job !== undefined && "email" in next.job && next.job.email !== undefined) setEmail(next.job.email);
-		setProblem(next.job?.state === "failed" ? next.job.message : (next.problem ?? ""));
-		if (!next.available && wasAvailable.current) {
-			setOpen(false);
-		}
-		wasAvailable.current = next.available;
 	}, []);
+
+	const apply = useCallback(
+		(next: PlayerPublicationModel) => {
+			const uncertainPublicationId = uncertainStop.current;
+			uncertainStop.current = undefined;
+			setAuthorityUncertain(false);
+			const identity = `${next.available}:${next.publication?.id ?? next.association}:${next.publication?.state ?? ""}`;
+			if (draftIdentity.current !== identity) {
+				draftIdentity.current = identity;
+				const last = next.recipients.length === 0 && next.access === undefined ? readLastAccess() : undefined;
+				setRecipients(next.recipients.length > 0 ? next.recipients : (last?.emails ?? []));
+				setMode(next.access?.mode ?? last?.mode ?? "invited");
+			}
+			if (!next.available || next.association === "mismatched" || next.association === "superseded") {
+				setRecipients([]);
+				setCopied(false);
+			}
+			if (
+				uncertainPublicationId !== undefined &&
+				(next.publication?.id !== uncertainPublicationId || next.publication.state !== "active")
+			) {
+				setOpen(false);
+			}
+			setModel((current) => {
+				const sameRunningJob =
+					next.available &&
+					next.association === "current" &&
+					next.job?.state === "running" &&
+					current?.job?.state === "running" &&
+					next.job.id === current.job.id;
+				return sameRunningJob && next.publication === undefined && current?.publication !== undefined
+					? { ...next, publication: current.publication, source: "unavailable" }
+					: next;
+			});
+			setJob((current) => {
+				if (
+					next.available &&
+					next.association === "current" &&
+					next.job === undefined &&
+					current?.state === "running"
+				)
+					return current;
+				if (
+					next.available &&
+					current?.state === "succeeded" &&
+					next.publication?.id === current.publication.id &&
+					next.publication.state === "active"
+				)
+					return current;
+				return next.job;
+			});
+			if (next.job !== undefined && "email" in next.job && next.job.email !== undefined)
+				setRecipients(next.job.email.split(/[\s,;]+/u).filter(Boolean));
+			setProblem(next.job?.state === "failed" ? next.job.message : (next.problem ?? ""));
+			if (next.publication?.state === "active") settleCopy(next.publication.url);
+			if (!next.available && wasAvailable.current) {
+				setOpen(false);
+			}
+			wasAvailable.current = next.available;
+		},
+		[settleCopy],
+	);
 
 	const refresh = useCallback(
 		(force = false): Promise<PlayerPublicationModel | undefined> => {
@@ -121,7 +221,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 									setAuthorityUncertain(true);
 									setModel(undefined);
 									setJob(undefined);
-									setEmail("");
+									setRecipients([]);
 									setCopied(false);
 									setOpen(true);
 								} else {
@@ -179,6 +279,7 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 			try {
 				const next = await client.job(runningJobId);
 				if (cancelled) return;
+				if (next.state === "running" && next.url !== undefined) settleCopy(next.url);
 				if (request !== freshness.current) {
 					if (next.state !== "running") void refresh();
 					schedule();
@@ -191,9 +292,14 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 				}
 				// A model captured before completion cannot replace the completed publication.
 				freshness.current++;
-				if (next.state === "failed") setProblem(next.message);
+				if (next.state === "failed") {
+					setProblem(next.message);
+					settleCopy(undefined, true);
+				}
 				if (next.state === "succeeded") {
 					setProblem("");
+					settleCopy(next.publication.url);
+					if (next.kind === "update") setFresh(true);
 					setModel((current) =>
 						current === undefined ||
 						!current.available ||
@@ -227,29 +333,42 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 			cancelled = true;
 			window.clearTimeout(timer);
 		};
-	}, [client, runningJobId, refresh]);
+	}, [client, runningJobId, refresh, settleCopy]);
 
-	const close = (immediate: boolean) => {
-		setInstant(immediate);
+	useEffect(() => {
+		if (!copied) return;
+		const timer = window.setTimeout(() => setCopied(false), COPIED_MS);
+		return () => window.clearTimeout(timer);
+	}, [copied]);
+	useEffect(() => {
+		if (!fresh) return;
+		const timer = window.setTimeout(() => setFresh(false), UPDATED_MS);
+		return () => window.clearTimeout(timer);
+	}, [fresh]);
+
+	const close = useCallback(() => {
 		setOpen(false);
-	};
+		setStopping(false);
+	}, []);
 	const active = model?.association === "current" && model.publication?.state === "active";
+	const running = starting || job?.state === "running";
 	const updating = job?.kind === "update" && job.state === "running";
 	const retrying = job?.kind === "update" && job.state === "failed";
-	const changed = active && (updating || model.source !== "current" || retrying);
+	const changed = active && !updating && (model.source === "changed" || retrying);
 	const continuingUnavailable = model?.association === "current" && model.publication === undefined;
+	// a link that already has an address keeps it through an update or a restart
+	const url = active
+		? model.publication?.url
+		: ((job?.state === "running" ? job.url : undefined) ?? model?.publication?.url);
 
-	async function publish(recipients?: string[]): Promise<void> {
-		if (client === undefined || model === undefined || pendingStart.current) return;
-		const invited = recipients?.join(", ") ?? email.trim();
+	async function publish(list?: string[], accessMode?: ShareAccessMode): Promise<boolean> {
+		if (client === undefined || model === undefined || pendingStart.current) return false;
+		const chosen = accessMode ?? mode;
 		const needsInvitation = !active && !continuingUnavailable && model.recipients.length === 0;
-		const addresses = invited.split(/[\s,;]+/u).filter(Boolean);
-		if (
-			(needsInvitation && mode !== "public" && addresses.length === 0) ||
-			addresses.some((value) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value))
-		) {
-			setProblem("Enter valid email addresses.");
-			return;
+		const addresses = list ?? [];
+		if (needsInvitation && chosen !== "public" && addresses.length === 0) {
+			setProblem("Add at least one email address.");
+			return false;
 		}
 		pendingStart.current = true;
 		setStarting(true);
@@ -257,19 +376,58 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 		setCopied(false);
 		const request = freshness.current;
 		try {
-			const started = await client.start(invited === "" ? undefined : invited, active ? undefined : mode);
+			const started = await client.start(
+				addresses.length === 0 ? undefined : addresses.join(", "),
+				active ? undefined : chosen,
+			);
+			if (!active) writeLastAccess({ mode: chosen, emails: addresses });
+			if (started.state === "running" && started.url !== undefined) settleCopy(started.url);
 			if (request === freshness.current) {
 				setJob(started);
 				setModel((current) => (current === undefined ? current : { ...current, job: started }));
 			} else void refresh();
+			return true;
 		} catch (error) {
-			if (request !== freshness.current) return;
+			settleCopy(undefined, true);
+			if (request !== freshness.current) return false;
 			const current = await refresh(true);
 			if (current?.available === true)
 				setProblem(error instanceof Error ? error.message : "The link could not be published. Try again.");
+			return false;
 		} finally {
 			pendingStart.current = false;
 			setStarting(false);
+		}
+	}
+
+	/** Ask for the clipboard now, and hand it the address whenever it exists. */
+	function copyWhenReady(): void {
+		if (url !== undefined && (active || running)) {
+			void copyNow(url);
+			return;
+		}
+		settleCopy(undefined, true);
+		const address = new Promise<string>((resolve, reject) => {
+			pendingCopy.current = { resolve, reject };
+		});
+		void writeWhenReady(address).then((ok) => {
+			if (ok) {
+				setCopied(true);
+				setProblem("");
+			} else if (pendingCopy.current === undefined) {
+				// the share itself went wrong, or the page lost the press: the popover says which
+				setOpen(true);
+			}
+		});
+	}
+	async function copyNow(value: string): Promise<void> {
+		try {
+			await navigator.clipboard.writeText(value);
+			setCopied(true);
+			setProblem("");
+		} catch {
+			setProblem("Select the link to copy it. Clipboard access was unavailable.");
+			setOpen(true);
 		}
 	}
 	async function stop(): Promise<void> {
@@ -283,347 +441,324 @@ export function usePlayerShare(client: PlayerPublicationClient | undefined): Pla
 			uncertainStop.current = publicationId;
 			const current = await refresh(true);
 			if (current?.available === true && current.publication?.state === "stopped") {
-				close(false);
+				close();
 			} else if (current?.available === true && current.publication?.id !== publicationId) {
-				close(true);
+				close();
 			} else if (current === undefined || current.available) {
 				setProblem("Sharing may have stopped, but it could not be confirmed. Try again.");
 			}
 		} catch (error) {
 			uncertainStop.current = publicationId;
 			const current = await refresh(true);
-			if (current?.available === true && current.publication?.id !== publicationId) close(true);
+			if (current?.available === true && current.publication?.id !== publicationId) close();
 			else if (current === undefined || current.available)
 				setProblem(error instanceof Error ? error.message : "Sharing could not be stopped. Try again.");
 		} finally {
 			setMutation(undefined);
 		}
 	}
-	async function copyLink(): Promise<void> {
-		const publication = active ? model?.publication : undefined;
-		if (publication === undefined) return;
-		try {
-			await navigator.clipboard.writeText(publication.url);
-			setCopied(true);
-			setProblem("");
-		} catch {
-			setProblem("Select the link to copy it. Clipboard access was unavailable.");
+
+	const show = useCallback(
+		(view?: "stop") => {
+			setOpen(true);
+			setStopping(view === "stop");
+			void refresh(true);
+		},
+		[refresh],
+	);
+
+	// A menu press can land before this entry's model has loaded; it waits for it.
+	useEffect(() => {
+		if (!pendingInstant.current || model === undefined) return;
+		pendingInstant.current = false;
+		instant();
+	});
+	function instant(): void {
+		if (model === undefined) {
+			pendingInstant.current = true;
+			void refresh(true);
+			return;
 		}
+		if (!model.available) {
+			show();
+			return;
+		}
+		if (active || running) {
+			copyWhenReady();
+			return;
+		}
+		const last = readLastAccess();
+		if (last === undefined || !model.ready || job?.state === "failed") {
+			show();
+			return;
+		}
+		setMode(last.mode);
+		setRecipients(last.emails);
+		copyWhenReady();
+		void publish(last.emails, last.mode).then((started) => {
+			if (!started) {
+				settleCopy(undefined, true);
+				setOpen(true);
+			}
+		});
 	}
 
-	const show = useCallback(() => {
-		setOpen(true);
-		void refresh(true);
-	}, [refresh]);
+	if (model !== undefined) lastEntry.current = model.entry;
 	const available = model?.available === true;
 	const blocked = authorityUncertain || model?.association === "superseded" || model?.association === "mismatched";
+	const chip: ShareChip | undefined = !available
+		? undefined
+		: copied
+			? { kind: "copied" }
+			: starting
+				? { kind: "preparing" }
+				: job?.state === "running"
+					? job.kind === "update"
+						? { kind: "updating", fraction: jobFraction(job) }
+						: job.phase === "capturing"
+							? { kind: "preparing" }
+							: { kind: "uploading", fraction: jobFraction(job) }
+					: job?.state === "failed" && (active || job.kind === "create")
+						? { kind: "interrupted" }
+						: active
+							? changed
+								? { kind: "changed" }
+								: fresh
+									? { kind: "updated" }
+									: { kind: "shared" }
+							: undefined;
+
 	return {
 		show,
-		status: starting
-			? "starting share"
-			: job?.state === "running"
-				? job.phase === "uploading"
-					? `uploading${job.upload && job.upload.totalBytes > 0 ? ` · ${Math.floor((job.upload.completedBytes / job.upload.totalBytes) * 100)}%` : ""}`
-					: job.phase === "capturing"
-						? "preparing frames"
-						: "making link ready"
-				: job?.state === "failed"
-					? "share interrupted"
-					: active
-						? changed
-							? "unpublished changes"
-							: "shared"
-						: undefined,
-		tray:
-			!open && (starting || (job !== undefined && job.id !== dismissedJob)) ? (
-				<aside className="spool-share-tray" aria-label="Share progress">
-					<div className="spool-share-between spool-share-tray-title">
-						<span>{model?.entry ?? title}</span>
-						<button type="button" className="spool-share-text" onClick={() => setOpen(true)}>
-							Details
-						</button>
-					</div>
-					{starting || job?.state === "running" ? (
-						<>
-							<ShareProgress job={job} starting={starting} />
-							<p className="spool-share-muted">Keep working. Sharing continues in the background.</p>
-						</>
-					) : job?.state === "failed" ? (
-						<>
-							<strong>Sharing was interrupted.</strong>
-							<p role="status">{job.message}</p>
-							<button type="button" className="spool-share-primary" onClick={() => setOpen(true)}>
-								Review and retry
-							</button>
-						</>
-					) : (
-						<>
-							<strong>Your link is ready</strong>
-							<p className="spool-share-muted">
-								{model?.access?.mode === "public"
-									? "Anyone with the link can open it."
-									: "Send the link to the people you added."}
-							</p>
-							<button
-								type="button"
-								className="spool-share-primary"
-								disabled={!active}
-								onClick={() => void copyLink()}
-							>
-								{copied ? "Copied" : "Copy link"}
-							</button>
-							<button type="button" className="spool-share-text" onClick={() => setDismissedJob(job?.id)}>
-								Dismiss
-							</button>
-						</>
-					)}
-				</aside>
-			) : null,
+		close,
+		copyShare: instant,
+		chip,
+		shared: active || running,
 		available,
 		connected: available ? model.included : undefined,
 		open,
 		trigger: available ? (
-			<>
-				{active &&
-					(changed ? (
-						<button
-							type="button"
-							className="spool-bar-share spool-bar-update"
-							disabled={updating || blocked}
-							onClick={() => void publish()}
-						>
-							{updating ? "Updating…" : retrying ? "Retry update" : "Update link"}
-						</button>
-					) : (
-						<span className="spool-bar-status" role="status">
-							Up to date
-						</span>
-					))}
+			<span ref={trigger} className="spool-bar-sharing">
+				{chip !== undefined && (
+					<ShareChipButton chip={chip} expanded={open} onOpen={() => (open ? close() : show())} />
+				)}
 				<button
 					type="button"
-					ref={trigger}
 					className="spool-bar-share"
-					aria-label={active ? (changed ? "Share · changes" : "Share ↗") : "Share"}
 					aria-expanded={open}
 					aria-haspopup="dialog"
-					onClick={(event) => {
-						setInstant(event.detail === 0);
-						setOpen(true);
-						void refresh(true);
-					}}
+					onClick={() => (open ? close() : show())}
 				>
 					Share
 				</button>
-			</>
+			</span>
 		) : null,
 		surface: (
 			<>
 				<style>{shareStyles}</style>
-				<ShareSurface
-					starting={starting}
-					mode={mode}
-					onMode={setMode}
-					onAccess={async (input) => {
-						if (!client?.setAccess || mutation !== undefined) return false;
-						setMutation("grant");
-						setProblem("");
-						try {
-							await client.setAccess(input);
-							await refresh(true);
-							return true;
-						} catch (error) {
-							await refresh(true);
-							setProblem(error instanceof Error ? error.message : "Access could not be saved.");
-							return false;
-						} finally {
-							setMutation(undefined);
-						}
-					}}
+				<SharePopover
 					open={open}
-					instant={instant}
-					model={model}
-					title={title}
-					job={job}
-					active={active}
-					changed={changed}
-					email={email}
-					problem={problem}
-					copied={copied}
-					mutation={mutation}
-					blocked={blocked}
-					trigger={trigger}
-					onEmail={setEmail}
+					entry={lastEntry.current}
+					anchor={options.anchor ?? (() => trigger.current)}
+					placement={options.placement ?? "below"}
 					onClose={close}
-					onPublish={(recipients) => void publish(recipients)}
-					onCopy={() => void copyLink()}
-					onStop={() => void stop()}
-					onCheck={() => void refresh(true)}
-				/>
+				>
+					<SharePanel
+						model={model}
+						entry={lastEntry.current}
+						job={job}
+						starting={starting}
+						active={active}
+						changed={changed}
+						url={url}
+						mode={mode}
+						onMode={setMode}
+						recipients={recipients}
+						onRecipients={setRecipients}
+						copied={copied}
+						problem={problem}
+						blocked={blocked}
+						mutating={mutation !== undefined}
+						stopping={stopping}
+						onStopping={setStopping}
+						onCreate={(list) => {
+							copyWhenReady();
+							void publish(list).then((started) => {
+								if (!started) settleCopy(undefined, true);
+							});
+						}}
+						onUpdate={() => void publish()}
+						onCopy={() => {
+							if (url !== undefined) void copyNow(url);
+						}}
+						onAccess={async (input) => {
+							if (!client?.setAccess || mutation !== undefined) return false;
+							setMutation("grant");
+							setProblem("");
+							try {
+								await client.setAccess(input);
+								writeLastAccess({ mode: input.mode, emails: input.emails });
+								await refresh(true);
+								return true;
+							} catch (error) {
+								await refresh(true);
+								setProblem(error instanceof Error ? error.message : "Access could not be saved.");
+								return false;
+							} finally {
+								setMutation(undefined);
+							}
+						}}
+						onStop={() => void stop()}
+						onCheck={() => void refresh(true)}
+					/>
+				</SharePopover>
 			</>
 		),
 	};
 }
 
-function ShareSurface({
-	starting,
-	mode,
-	onMode,
-	onAccess,
+const WIDTH = 312;
+const GAP = 12;
+const MARGIN = 12;
+
+/**
+ * Beside what it is about, never over the middle of the screen. It is not
+ * modal: the canvas or the page stays live, a press anywhere else closes it,
+ * and while it is open it keeps to its anchor, so a frame panned under it
+ * carries it along.
+ */
+function SharePopover({
 	open,
-	instant,
-	model,
-	title,
-	job,
-	active,
-	changed,
-	email,
-	problem,
-	copied,
-	mutation,
-	blocked,
-	trigger,
-	onEmail,
+	entry,
+	anchor,
+	placement,
 	onClose,
-	onPublish,
-	onCopy,
-	onStop,
-	onCheck,
+	children,
 }: {
-	starting: boolean;
-	mode: "invited" | "public";
-	onMode: (mode: "invited" | "public") => void;
-	onAccess: (input: { mode: "invited" | "public"; emails: string[]; expectedGeneration: number }) => Promise<boolean>;
 	open: boolean;
-	instant: boolean;
-	model: PlayerPublicationModel | undefined;
-	title: string;
-	job: PlayerPublicationJob | undefined;
-	active: boolean;
-	changed: boolean;
-	email: string;
-	problem: string;
-	copied: boolean;
-	mutation: "grant" | "stop" | undefined;
-	blocked: boolean;
-	trigger: RefObject<HTMLButtonElement | null>;
-	onEmail(value: string): void;
-	onClose(immediate: boolean): void;
-	onPublish(recipients?: string[]): void;
-	onCopy(): void;
-	onStop(): void;
-	onCheck(): void;
+	entry: string | undefined;
+	anchor: () => Element | null;
+	placement: "beside" | "below";
+	onClose: () => void;
+	children: ReactNode;
 }) {
-	const panel = useRef<HTMLElement>(null);
+	const reduced = useReducedMotion() ?? false;
+	const panel = useRef<HTMLElement | null>(null);
 	const body = useRef<HTMLDivElement>(null);
 	const [height, setHeight] = useState<number>();
-	const reduced = useReducedMotion();
+	const [place, setPlace] = useState<{ left: number; top: number; origin: string } | undefined>();
+	const anchorRef = useRef(anchor);
+	anchorRef.current = anchor;
+	const closeRef = useRef(onClose);
+	closeRef.current = onClose;
+
+	useLayoutEffect(() => {
+		if (!open) return;
+		let frame = 0;
+		const follow = () => {
+			const target = anchorRef.current();
+			const box = target?.getBoundingClientRect();
+			const tall = panel.current?.offsetHeight ?? 0;
+			const vw = window.innerWidth;
+			const vh = window.innerHeight;
+			let left: number;
+			let top: number;
+			let origin = "top left";
+			if (box === undefined) {
+				left = (vw - WIDTH) / 2;
+				top = Math.max(MARGIN, (vh - tall) / 2);
+			} else if (placement === "below") {
+				left = box.right - WIDTH;
+				top = box.bottom + 8;
+				origin = "top right";
+			} else {
+				left = box.right + GAP;
+				top = box.top;
+				if (left + WIDTH > vw - MARGIN) {
+					left = box.left - GAP - WIDTH;
+					origin = "top right";
+				}
+			}
+			left = Math.min(Math.max(MARGIN, left), vw - MARGIN - Math.min(WIDTH, vw - 2 * MARGIN));
+			top = Math.min(Math.max(MARGIN, top), Math.max(MARGIN, vh - MARGIN - tall));
+			setPlace((current) =>
+				current?.left === left && current.top === top && current.origin === origin
+					? current
+					: { left, top, origin },
+			);
+			frame = requestAnimationFrame(follow);
+		};
+		follow();
+		return () => cancelAnimationFrame(frame);
+	}, [open, placement]);
+
 	useEffect(() => {
 		const node = body.current;
-		if (!node) return;
-		const measure = () => setHeight(node.getBoundingClientRect().height + 2);
+		if (!open || node === null) return;
+		// offsetHeight rather than the box: the box is scaled while the popover grows in
+		const measure = () => setHeight(node.offsetHeight + 2);
 		measure();
 		const observer = new ResizeObserver(measure);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, []);
-	const close = useRef(onClose);
-	close.current = onClose;
+	}, [open]);
+
 	useEffect(() => {
 		if (!open) return;
+		const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		const node = panel.current;
-		(node?.querySelector<HTMLElement>("input") ?? node?.querySelector<HTMLElement>("button"))?.focus({
-			preventScroll: true,
-		});
-		const keydown = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				event.preventDefault();
-				event.stopPropagation();
-				close.current(true);
-			}
-			if (event.key !== "Tab" || node === null) return;
-			const items = Array.from(
-				node.querySelectorAll<HTMLElement>(
-					'button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]',
-				),
-			).filter((item) => item.getClientRects().length > 0 && !item.closest("[inert]"));
-			const first = items[0];
-			const last = items.at(-1);
-			if (event.shiftKey && (document.activeElement === first || !node.contains(document.activeElement))) {
-				event.preventDefault();
-				last?.focus();
-			} else if (!event.shiftKey && (document.activeElement === last || !node.contains(document.activeElement))) {
-				event.preventDefault();
-				first?.focus();
-			}
+		requestAnimationFrame(() =>
+			(
+				node?.querySelector<HTMLElement>("[data-autofocus]:not(:disabled)") ??
+				node?.querySelector<HTMLElement>("button:not(:disabled)")
+			)?.focus({ preventScroll: true }),
+		);
+		const key = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			event.stopPropagation();
+			closeRef.current();
 		};
-		document.addEventListener("keydown", keydown, true);
+		const press = (event: PointerEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node)) return;
+			if (panel.current?.contains(target) || anchorRef.current()?.contains(target)) return;
+			closeRef.current();
+		};
+		document.addEventListener("keydown", key, true);
+		document.addEventListener("pointerdown", press, true);
 		return () => {
-			document.removeEventListener("keydown", keydown, true);
-			trigger.current?.focus({ preventScroll: true });
+			document.removeEventListener("keydown", key, true);
+			document.removeEventListener("pointerdown", press, true);
+			if (panel.current?.contains(document.activeElement ?? null) || document.activeElement === document.body)
+				returnTo?.focus({ preventScroll: true });
 		};
-	}, [open, trigger]);
+	}, [open]);
 
 	return (
-		<div className="spool-sharing-surface" data-open={open} data-instant={instant} inert={!open} aria-hidden={!open}>
-			<button
-				type="button"
-				className="spool-sharing-scrim"
-				aria-label="Dismiss sharing"
-				tabIndex={-1}
-				onClick={(event) => onClose(event.detail === 0)}
-			/>
-			<motion.section
-				initial={false}
-				animate={{ height: height ?? "auto" }}
-				transition={{ duration: instant || reduced ? 0 : 0.18, ease: [0.23, 1, 0.32, 1] }}
-				ref={panel}
-				className="spool-sharing-panel"
-				role="dialog"
-				aria-modal="true"
-				aria-label={`Share ${title}`}
-			>
-				<div ref={body} className="spool-sharing-measure">
-					<header className="spool-sharing-header">
-						<h1>Share {title}</h1>
-						<div>
-							<span>esc closes</span>
-							<button type="button" aria-label="Close sharing" onClick={(event) => onClose(event.detail === 0)}>
-								<CloseIcon />
-							</button>
-						</div>
-					</header>
-					<SharingPanel
-						model={model}
-						job={job}
-						starting={starting}
-						active={active}
-						changed={changed}
-						email={email}
-						onEmail={onEmail}
-						mode={mode}
-						onMode={onMode}
-						copied={copied}
-						problem={problem}
-						blocked={blocked}
-						mutation={mutation !== undefined}
-						onPublish={onPublish}
-						onCopy={onCopy}
-						onClose={() => onClose(false)}
-						onAccess={onAccess}
-						onStop={onStop}
-						onCheck={onCheck}
-						instant={instant}
-					/>
-				</div>
-			</motion.section>
-		</div>
-	);
-}
-
-function CloseIcon() {
-	return (
-		<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-			<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
-		</svg>
+		<AnimatePresence>
+			{open && (
+				<motion.section
+					key="share"
+					ref={panel}
+					role="dialog"
+					aria-label={entry === undefined ? "Share" : `Share ${entry.split("/").at(-1)}`}
+					className="spool-share-popover"
+					style={{
+						left: place?.left ?? -9999,
+						top: place?.top ?? -9999,
+						transformOrigin: place?.origin ?? "top left",
+					}}
+					initial={{ opacity: 0, scale: reduced ? 1 : 0.97 }}
+					animate={{ opacity: 1, scale: 1, ...(height === undefined ? {} : { height }) }}
+					exit={{ opacity: 0, scale: reduced ? 1 : 0.98, transition: { duration: reduced ? 0 : 0.12 } }}
+					transition={{ duration: reduced ? 0 : 0.2, ease: [0.22, 0.61, 0.36, 1] }}
+					onPointerDown={(event) => event.stopPropagation()}
+					onContextMenu={(event) => event.stopPropagation()}
+				>
+					<div ref={body}>{children}</div>
+				</motion.section>
+			)}
+		</AnimatePresence>
 	);
 }

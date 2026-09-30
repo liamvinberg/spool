@@ -53,7 +53,7 @@ function result(ownerId: string): PublishResult {
 
 async function openShare(page: Page): Promise<void> {
 	await page.getByRole("button", { name: "Share", exact: true }).click();
-	await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
+	await page.getByRole("dialog", { name: "Share menu" }).waitFor();
 }
 
 it("ports the accepted player share sheet and original-entry picker into the trusted shell", {
@@ -142,66 +142,54 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await page.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await page.getByRole("button", { name: "Share", exact: true }).waitFor();
-	const evidence = process.env.SPOOL_174_EVIDENCE;
-	if (evidence !== undefined) {
-		mkdirSync(evidence, { recursive: true });
-		await page.screenshot({ path: join(evidence, "share-closed-1440.png") });
-	}
+	const evidence = process.env.SPOOL_SHARE_EVIDENCE;
+	if (evidence !== undefined) mkdirSync(evidence, { recursive: true });
 
 	await page.frameLocator("#spool-player").getByRole("button", { name: "Cart" }).click();
 	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("cart");
 	await openShare(page);
+	const dialog = page.getByRole("dialog", { name: "Share menu" });
 	await page.evaluate(() => document.fonts.ready);
-	await page.waitForTimeout(220);
-	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 515, width: 410 });
+	await page.waitForTimeout(260);
+	// the popover hangs from the bar's share button, right edges together
+	const button = await page.getByRole("button", { name: "Share", exact: true }).boundingBox();
+	const panel = await dialog.boundingBox();
+	expect(button).not.toBeNull();
+	expect(panel).not.toBeNull();
+	if (button !== null && panel !== null) {
+		expect(panel.width).toBe(312);
+		expect(Math.abs(panel.x + panel.width - (button.x + button.width))).toBeLessThan(2);
+		expect(panel.y).toBeGreaterThan(button.y + button.height);
+	}
 	expect(
-		await page.locator(".spool-sharing-panel").evaluate((node) => {
+		await dialog.evaluate((node) => {
 			const style = getComputedStyle(node);
 			return { opacity: style.opacity, background: style.backgroundColor, color: style.color };
 		}),
 	).toEqual({ opacity: "1", background: "rgb(40, 40, 40)", color: "rgb(240, 239, 237)" });
 	expect(await page.locator(".spool-top").evaluate((node) => getComputedStyle(node).height)).toBe("30px");
-	expect(await page.locator(".spool-top").evaluate((node) => getComputedStyle(node).backgroundColor)).toBe(
-		"rgb(40, 40, 40)",
-	);
-	expect(await page.locator(".spool-sharing-panel").evaluate((node) => getComputedStyle(node).fontFamily)).toContain(
-		"Instrument Sans Variable",
-	);
-	expect(
-		await page.getByRole("textbox", { name: "Email addresses" }).evaluate((node) => node === document.activeElement),
-	).toBe(true);
-	expect(await page.locator(".spool-screen").getAttribute("inert")).not.toBeNull();
-	expect(await page.locator(".spool-top").getAttribute("inert")).not.toBeNull();
+	expect(await dialog.evaluate((node) => getComputedStyle(node).fontFamily)).toContain("Instrument Sans Variable");
+	await expect
+		.poll(() =>
+			dialog.getByRole("textbox", { name: "Email addresses" }).evaluate((node) => node === document.activeElement),
+		)
+		.toBe(true);
+	// the popover is not modal: the page under it stays live
+	expect(await page.locator(".spool-screen").getAttribute("inert")).toBeNull();
+	expect(await page.locator(".spool-top").getAttribute("inert")).toBeNull();
+	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "player-compose.png") });
 
-	await page.keyboard.press("Shift+Tab");
-	expect(await page.getByLabel("Who can open this link?").evaluate((node) => node === document.activeElement)).toBe(
-		true,
-	);
-	await page.getByRole("button", { name: "Create link", exact: true }).focus();
-	await page.keyboard.press("Tab");
-	expect(
-		await page.getByRole("button", { name: "Close sharing" }).evaluate((node) => node === document.activeElement),
-	).toBe(true);
-
-	if (evidence !== undefined) {
-		await page.screenshot({ path: join(evidence, "share-open-1440.png") });
-	}
-
-	await page.getByRole("button", { name: "What they can see" }).click();
-	const included = page.getByRole("region", { name: "Included frames" });
+	await dialog.getByRole("button", { name: "What they can see" }).click();
+	const included = dialog.getByRole("region", { name: "Included frames" });
 	await expect
 		.poll(() => included.locator("code").evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim())))
 		.toEqual(["menu", "cart", "rewards"]);
 	expect(await included.textContent()).not.toContain("draft");
-	expect(await page.getByText("A playable journey, starting from menu.").textContent()).toContain("menu");
-
-	if (evidence !== undefined) {
-		await page.screenshot({ path: join(evidence, "share-open-details-1440.png") });
-	}
-	await page.getByRole("button", { name: "What they can see" }).click();
+	expect(await dialog.getByText("from menu · 3 frames").count()).toBe(1);
+	await dialog.getByRole("button", { name: "What they can see" }).click();
 
 	await page.keyboard.press("Escape");
-	await expect.poll(() => page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
+	await expect.poll(() => page.getByRole("dialog").count()).toBe(0);
 	expect(
 		await page
 			.getByRole("button", { name: "Share", exact: true })
@@ -221,25 +209,18 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	expect(await page.locator("#spool-switcher").evaluate((node) => node === document.activeElement)).toBe(true);
 
 	await page.setViewportSize({ width: 2322, height: 1191 });
-	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "share-closed-2322.png") });
 	await openShare(page);
-	expect(
-		await page.locator(".spool-sharing-panel").evaluate((node) => getComputedStyle(node).transitionDuration),
-	).toBe("0.1s, 0.18s");
-	expect(
-		await page.locator(".spool-sharing-scrim").evaluate((node) => getComputedStyle(node).transitionDuration),
-	).toBe("0.12s");
-	await page.waitForTimeout(220);
-	expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 956, width: 410 });
-	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "share-open-2322.png") });
-	await page.getByRole("button", { name: "Close sharing" }).click();
-	expect(
-		await page.locator(".spool-sharing-panel").evaluate((node) => getComputedStyle(node).transitionDuration),
-	).toBe("0.1s, 0.18s");
+	await page.waitForTimeout(260);
+	const wide = await dialog.boundingBox();
+	const wideButton = await page.getByRole("button", { name: "Share", exact: true }).boundingBox();
+	if (wide !== null && wideButton !== null)
+		expect(Math.abs(wide.x + wide.width - (wideButton.x + wideButton.width))).toBeLessThan(2);
+	// a press on the page outside closes it, and so does the button that opened it
+	await page.mouse.click(40, 600);
+	await expect.poll(() => page.getByRole("dialog").count()).toBe(0);
+	await openShare(page);
 	await page.getByRole("button", { name: "Share", exact: true }).click();
-	await page.getByRole("button", { name: "Dismiss sharing" }).click({ position: { x: 8, y: 8 } });
-	await page.getByRole("button", { name: "Share", exact: true }).click();
-	await page.getByRole("button", { name: "Close sharing" }).click();
+	await expect.poll(() => page.getByRole("dialog").count()).toBe(0);
 
 	const mac = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await mac.addInitScript(() => {
@@ -249,19 +230,20 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await mac.getByRole("button", { name: "Share", exact: true }).waitFor();
 	expect(await mac.locator(".spool-top.is-desk").evaluate((node) => getComputedStyle(node).paddingLeft)).toBe("76px");
 	expect(await mac.locator(".spool-bar-back, #spool-bar-eye, #spool-close").count()).toBe(0);
-	if (evidence !== undefined) await mac.screenshot({ path: join(evidence, "share-mac-closed-1440.png") });
 	await openShare(mac);
-	await mac.waitForTimeout(220);
-	if (evidence !== undefined) await mac.screenshot({ path: join(evidence, "share-mac-open-1440.png") });
 
 	const reducedContext = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1440, height: 900 } });
 	const reduced = await reducedContext.newPage();
 	await reduced.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await reduced.getByRole("button", { name: "Share", exact: true }).waitFor();
 	await openShare(reduced);
+	// reduced motion lands the popover at once, at its full size and opacity
 	expect(
-		await reduced.locator(".spool-sharing-panel").evaluate((node) => getComputedStyle(node).transitionDuration),
-	).toBe("0s");
+		await reduced.getByRole("dialog").evaluate((node) => ({
+			opacity: getComputedStyle(node).opacity,
+			transform: getComputedStyle(node).transform,
+		})),
+	).toEqual({ opacity: "1", transform: "none" });
 
 	const expired = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 	await expired.goto(`${daemon.url}/play/Kaffe?frame=menu`);
@@ -294,7 +276,7 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await expect.poll(() => heldModel).toBeDefined();
 	await expired.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
 	expect(modelRequests).toBe(1);
-	expect(await expired.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(1);
+	expect(await expired.getByRole("dialog").count()).toBe(1);
 	await heldModel?.fulfill({
 		contentType: "application/json",
 		body: JSON.stringify({
@@ -321,8 +303,8 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await openShare(expiringForm);
 	await expiringForm.getByRole("textbox", { name: "Email addresses" }).fill("alex@example.com");
 	publisher = undefined;
-	await expiringForm.getByRole("button", { name: "Create link" }).click();
-	await expect.poll(() => expiringForm.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
+	await expiringForm.getByRole("button", { name: "Create and copy link" }).click();
+	await expect.poll(() => expiringForm.getByRole("dialog").count()).toBe(0);
 	await expect.poll(() => expiringForm.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
 	publisher = "owner";
 	await expiringForm.waitForTimeout(300);
@@ -343,14 +325,14 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	await workflow.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await workflow.getByRole("button", { name: "Share", exact: true }).waitFor();
 	await openShare(workflow);
-	await workflow.getByRole("button", { name: "Create link" }).click();
+	await workflow.getByRole("button", { name: "Create and copy link" }).click();
 	await workflow.getByText("Add at least one email address.").waitFor();
 	await workflow.getByRole("textbox", { name: "Email addresses" }).fill("alex@example.com");
-	await workflow.getByRole("button", { name: "Create link" }).click();
-	await workflow.getByText("uploading", { exact: true }).waitFor();
+	await workflow.getByRole("button", { name: "Create and copy link" }).click();
+	await workflow.getByRole("button", { name: /^Sharing: (preparing link|uploading)/ }).waitFor();
 	expect(services.publish).toHaveBeenCalledTimes(1);
 	publisher = undefined;
-	await expect.poll(() => workflow.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
+	await expect.poll(() => workflow.getByRole("dialog").count()).toBe(0);
 	await expect.poll(() => workflow.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
 	publisher = "owner";
 	await workflow.waitForTimeout(300);
@@ -414,16 +396,17 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 	writeFileSync(associationFile, JSON.stringify(association));
 	await recovered.getByRole("button", { name: "Retry" }).click();
 	await recovered.getByRole("button", { name: "Copy link" }).waitFor();
-	expect(await recovered.getByLabel("Shared link").inputValue()).toBe(
-		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
-	);
-	await recovered.getByText("1 person has access.", { exact: true }).waitFor();
+	await expect
+		.poll(() => recovered.getByLabel("Shared link").inputValue())
+		.toBe("https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page");
+	await recovered.getByRole("button", { name: /^Invited people\s*1 person$/ }).waitFor();
+	if (evidence !== undefined) await recovered.screenshot({ path: join(evidence, "player-recovered.png") });
 	const openLink = recovered.getByRole("link", { name: "Open link" });
 	expect(await openLink.getAttribute("href")).toBe("https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page");
 	expect(await openLink.getAttribute("target")).toBe("_blank");
 	await recovered.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: daemon.url });
 	await recovered.getByRole("button", { name: "Copy link" }).click();
-	await recovered.getByRole("button", { name: "Copied" }).waitFor();
+	await recovered.getByRole("button", { name: "Copied", exact: true }).waitFor();
 	expect(await recovered.evaluate(() => navigator.clipboard.readText())).toBe(
 		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 	);
@@ -435,7 +418,7 @@ it("ports the accepted player share sheet and original-entry picker into the tru
 			},
 		});
 	});
-	await recovered.getByRole("button", { name: "Copied" }).click();
+	await recovered.getByRole("button", { name: /^(Copy link|Copied)$/ }).click();
 	await recovered.getByText("Select the link to copy it. Clipboard access was unavailable.").waitFor();
 	expect(services.publish).toHaveBeenCalledTimes(2);
 });

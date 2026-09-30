@@ -151,7 +151,7 @@ Repeat publish from the same checkout, entry and scenario to update its continui
 
 \`spool cloud list\` and \`spool cloud status <id>\` inspect remote state; status also compares available local source. Unavailable source is not proof that the link is up to date. \`spool cloud invite <id> <email>\`, \`spool cloud revoke <id> <email>\` and \`spool cloud stop <id>\` manage access. These commands return JSON; failures exit nonzero. Revocation blocks new protected requests but cannot recall bytes someone already received.
 
-The local player's Share sheet uses the same publication and daemon-owned job. Closing the player leaves an upload running. Update link publishes the original journey, even after navigating elsewhere within it.`,
+The canvas and the local player share through the same publication and daemon-owned job: a frame's right-click menu copies its link, its label reports the link's state, and a popover beside it manages access, updates and stopping. Closing the canvas or the player leaves an upload running. Update link publishes the original journey, even after navigating elsewhere within it.`,
 
 	scenarios:
 		() => `shared/scenarios/<name>.json = { "state": { ... } } — one named way the app can be. state seeds ui.state at session start. The key is optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.

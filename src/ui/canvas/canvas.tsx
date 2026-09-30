@@ -179,7 +179,7 @@ import {
 	walkRejectionReason,
 } from "./protocol";
 import { useElementTree } from "./rail-elements";
-import { CanvasSharing, useSharingAvailable } from "./sharing";
+import { useCanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
@@ -362,15 +362,7 @@ export function ProjectCanvas({
 	onSettings?: (() => void) | undefined;
 }) {
 	const sharingAvailable = useSharingAvailable();
-	const [shareEntry, setShareEntry] = useState<{ entry: string; request: number } | null>(null);
-	const [shareStatus, setShareStatus] = useState<string | undefined>();
-	const openShare = (entry: string) => setShareEntry((current) => ({ entry, request: (current?.request ?? 0) + 1 }));
-	useEffect(() => {
-		if (!sharingAvailable) {
-			setShareEntry(null);
-			setShareStatus(undefined);
-		}
-	}, [sharingAvailable]);
+	const sharing = useCanvasSharing(project, sharingAvailable);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
@@ -4831,7 +4823,10 @@ export function ProjectCanvas({
 		// A context click acts on the existing frame selection. Element picking
 		// belongs to Select's click, double-click and ⌘-click gestures.
 		cancelPicks();
-		const menuSize = contextMenuSize(!elementSelection, sharingAvailable);
+		const menuSize = contextMenuSize(
+			!elementSelection,
+			!sharingAvailable ? 0 : (sharing.state(hit)?.shared ?? sharing.listed(hit)) ? 3 : 1,
+		);
 		const viewport = viewportRef.current;
 		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - menuSize.w - 8);
 		const y = viewport === null ? p.y : Math.min(p.y, viewport.clientHeight - menuSize.h - 8);
@@ -5523,11 +5518,12 @@ export function ProjectCanvas({
 										selected={isSelected}
 										hovered={isHovered}
 										unseen={unseen.get(frame.name)}
-										sharing={
-											sharingAvailable && shareEntry?.entry === frame.name && shareStatus
-												? { status: shareStatus, open: () => openShare(frame.name) }
-												: undefined
-										}
+										sharing={(() => {
+											const state = sharing.state(frame.name);
+											return state?.chip === undefined
+												? undefined
+												: { chip: state.chip, expanded: state.open, open: () => sharing.show(frame.name) };
+										})()}
 										onPlay={() => playFrame(frame.name)}
 									/>
 								</div>
@@ -5623,11 +5619,22 @@ export function ProjectCanvas({
 										},
 									}
 						}
-						onShare={
+						share={
 							sharingAvailable
-								? () => {
-										openShare(menu.frame);
-										setMenu(null);
+								? {
+										shared: sharing.state(menu.frame)?.shared ?? sharing.listed(menu.frame),
+										onCopy: () => {
+											sharing.copy(menu.frame);
+											setMenu(null);
+										},
+										onManage: () => {
+											sharing.show(menu.frame);
+											setMenu(null);
+										},
+										onStop: () => {
+											sharing.show(menu.frame, "stop");
+											setMenu(null);
+										},
 									}
 								: undefined
 						}
@@ -5779,15 +5786,7 @@ export function ProjectCanvas({
 					/>
 				)}
 			/>
-			{sharingAvailable && shareEntry && (
-				<CanvasSharing
-					key={shareEntry.entry}
-					project={project}
-					entry={shareEntry.entry}
-					request={shareEntry.request}
-					onStatus={setShareStatus}
-				/>
-			)}
+			{sharing.node}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

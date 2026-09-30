@@ -1,7 +1,7 @@
 /**
  * The right-click menu (#23), the second door to decided actions only (#7),
- * Play from here / Copy path / Reload / Tidy / adaptive export / Move to
- * Trash. Export exists only for a frame selection: one frame downloads
+ * Play from here / Copy path / Reload / Tidy / adaptive export / the frame's
+ * link / Move to Trash. Export exists only for a frame selection: one frame downloads
  * immediately; a multi-selection opens the format choice. Tidy is always here —
  * it lays out the field, so it answers to no one frame.
  * Play is the player's door (#13/#24); the player owns cinema in its own tab.
@@ -23,11 +23,26 @@ const MENU_WIDTH = 200;
 const MENU_HEIGHT_WITH_EXPORT = 222;
 const MENU_HEIGHT_WITHOUT_EXPORT = 192;
 
-export function contextMenuSize(canExport: boolean, canShare = false): { w: number; h: number } {
+/** `shareRows` is the sharing verbs the menu carries: none, the one that makes a link, or a live link's three. */
+export function contextMenuSize(canExport: boolean, shareRows: 0 | 1 | 3 = 0): { w: number; h: number } {
 	return {
 		w: MENU_WIDTH,
-		h: (canExport ? MENU_HEIGHT_WITH_EXPORT : MENU_HEIGHT_WITHOUT_EXPORT) + (canShare ? 30 : 0),
+		h:
+			(canExport ? MENU_HEIGHT_WITH_EXPORT : MENU_HEIGHT_WITHOUT_EXPORT) +
+			(shareRows === 0 ? 0 : 1 + shareRows * 30),
 	};
+}
+
+/**
+ * The frame's link. Before it exists it is one row that copies a new one; after,
+ * the row becomes the three verbs a live link has, so ending it is never buried
+ * inside the popover that made it.
+ */
+export interface MenuShare {
+	shared: boolean;
+	onCopy: () => void;
+	onManage: () => void;
+	onStop: () => void;
 }
 
 /**
@@ -75,7 +90,7 @@ export function ContextMenu({
 	tidyLabel,
 	onTidy,
 	onPlay,
-	onShare,
+	share,
 	onCopyPath,
 	onReload,
 	onTrash,
@@ -85,7 +100,7 @@ export function ContextMenu({
 	tidyLabel: string;
 	onTidy: () => void;
 	onPlay: () => void;
-	onShare?: (() => void) | undefined;
+	share?: MenuShare | undefined;
 	onCopyPath: () => void;
 	onReload: () => void;
 	onTrash: () => void;
@@ -99,7 +114,6 @@ export function ContextMenu({
 			onContextMenu={(event) => event.preventDefault()}
 		>
 			<MenuItem label="Play from here" keys={hotkeyKey("canvas.play")} onClick={onPlay} />
-			{onShare && <MenuItem label="Share link…" onClick={onShare} />}
 			<MenuItem label="Copy path" onClick={onCopyPath} />
 			<MenuItem label="Reload frame" keys={hotkeyKey("canvas.reload")} onClick={onReload} />
 			<MenuRule />
@@ -112,6 +126,20 @@ export function ContextMenu({
 					onClick={exportAction.onSelect}
 				/>
 			) : null}
+			{share !== undefined && (
+				<>
+					<MenuRule />
+					{share.shared ? (
+						<>
+							<MenuItem label="Copy link" onClick={share.onCopy} />
+							<MenuItem label="Sharing…" onClick={share.onManage} />
+							<MenuItem label="Stop sharing…" onClick={share.onStop} />
+						</>
+					) : (
+						<MenuItem label="Copy share link" onClick={share.onCopy} />
+					)}
+				</>
+			)}
 			<MenuRule />
 			<MenuItem label="Move to Trash" keys={hotkeyKey("canvas.trash")} onClick={onTrash} />
 		</div>

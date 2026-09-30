@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Page } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { CloudPublication, PublishResult } from "../cloud-publication";
 import { initProject } from "../init";
@@ -19,6 +20,16 @@ function deferred<T>() {
 		reject = fail;
 	});
 	return { promise, resolve, reject };
+}
+
+const chip = (page: Page, word: string | RegExp) =>
+	page.getByRole("button", { name: typeof word === "string" ? `Sharing: ${word}` : word, exact: true });
+const SHARED = /^Sharing: (shared|updated)$/u;
+
+async function openShare(page: Page): Promise<void> {
+	if ((await page.getByRole("dialog", { name: "Share menu" }).count()) === 0)
+		await page.getByRole("button", { name: "Share", exact: true }).click();
+	await page.getByRole("dialog", { name: "Share menu" }).waitFor();
 }
 
 it("keeps update, grants, stop, and restore in the accepted player surface", { timeout: 60_000 }, async () => {
@@ -139,41 +150,29 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	await page.goto(`${daemon.url}/play/Kaffe?frame=menu`);
 	await page.frameLocator("#spool-player").getByText("Menu", { exact: true }).waitFor();
 
-	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
-	const evidence = process.env.SPOOL_175_EVIDENCE;
+	await chip(page, "changed").waitFor();
+	const evidence = process.env.SPOOL_SHARE_EVIDENCE;
 	if (evidence !== undefined) {
 		mkdirSync(evidence, { recursive: true });
-		await page.screenshot({ path: join(evidence, "update-closed-1440.png") });
-		await page.getByRole("button", { name: "Share · changes", exact: true }).click();
-		await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
-		await page.evaluate(() => document.fonts.ready);
-		await page.waitForTimeout(220);
-		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 515, width: 410 });
-		await page.screenshot({ path: join(evidence, "update-open-1440.png") });
-		await page.getByRole("button", { name: "Close sharing" }).click();
-		await page.setViewportSize({ width: 2322, height: 1191 });
-		await page.getByRole("button", { name: "Share · changes", exact: true }).click();
-		await page.waitForTimeout(220);
-		expect(await page.locator(".spool-sharing-panel").boundingBox()).toMatchObject({ x: 956, width: 410 });
-		await page.screenshot({ path: join(evidence, "update-open-2322.png") });
-		await page.getByRole("button", { name: "Close sharing" }).click();
-		await page.setViewportSize({ width: 1440, height: 900 });
-
-		const mac = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-		await mac.addInitScript(() => {
-			Object.defineProperty(window, "spoolPlayWindow", { value: { restored: false, reset() {} } });
-		});
-		await mac.goto(`${daemon.url}/play/Kaffe?frame=menu`);
-		await mac.frameLocator("#spool-player").getByText("Menu", { exact: true }).waitFor();
-		await mac.getByRole("button", { name: "Update link", exact: true }).waitFor();
-		expect(await mac.locator(".spool-top.is-desk").evaluate((node) => getComputedStyle(node).paddingLeft)).toBe(
-			"76px",
-		);
-		await mac.screenshot({ path: join(evidence, "update-mac-closed-1440.png") });
-		await mac.close();
+		await page.screenshot({ path: join(evidence, "player-changed.png") });
 	}
+	await chip(page, "changed").click();
+	const dialog = page.getByRole("dialog", { name: "Share menu" });
+	await dialog.waitFor();
+	await page.evaluate(() => document.fonts.ready);
+	await page.waitForTimeout(260);
+	// it hangs from the bar's share controls, right edges together
+	const share = await page.locator(".spool-bar-sharing").boundingBox();
+	const panel = await dialog.boundingBox();
+	expect(share).not.toBeNull();
+	expect(panel).not.toBeNull();
+	if (share !== null && panel !== null) {
+		expect(Math.abs(panel.x + panel.width - (share.x + share.width))).toBeLessThan(2);
+		expect(panel.y).toBeGreaterThan(share.y + share.height);
+	}
+	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "player-changed-open.png") });
 	await page.getByRole("button", { name: "Update link", exact: true }).click();
-	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
+	await chip(page, "updating").waitFor();
 	services.status = vi.fn(async () => {
 		throw new Error("status temporarily unavailable");
 	});
@@ -189,7 +188,7 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	await page.evaluate(
 		() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
 	);
-	expect(await page.getByRole("button", { name: "Updating…", exact: true }).count()).toBe(1);
+	expect(await chip(page, "updating").count()).toBe(1);
 	const heldRefresh = deferred<{
 		publication: CloudPublication;
 		operations: [];
@@ -247,7 +246,7 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		localSource: source,
 	}));
 	await page.getByRole("button", { name: "Update link", exact: true }).click();
-	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
+	await chip(page, "updating").waitFor();
 	current = {
 		...current,
 		revision: 3,
@@ -255,23 +254,27 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	};
 	source = "current";
 	publishes[1]?.resolve(publishResult(current, "current"));
-	await page.getByText("Up to date", { exact: true }).waitFor();
+	await chip(page, "updated").waitFor();
+	await chip(page, "shared").waitFor();
 
 	const positionRead = vi.mocked(services.status).mock.calls.length;
 	writeDesignFile(root, join("frames", "menu", "frame.json"), '{ "x": 220, "y": 140, "w": 1440, "h": 900 }\n');
 	await expect.poll(() => vi.mocked(services.status).mock.calls.length).toBeGreaterThan(positionRead);
-	await page.getByText("Up to date", { exact: true }).waitFor();
+	await chip(page, "shared").waitFor();
 
 	source = "changed";
 	const sizeRead = vi.mocked(services.status).mock.calls.length;
 	writeDesignFile(root, join("frames", "menu", "frame.json"), '{ "x": 220, "y": 140, "w": 1200, "h": 900 }\n');
 	await expect.poll(() => vi.mocked(services.status).mock.calls.length).toBeGreaterThan(sizeRead);
-	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
+	await chip(page, "changed").waitFor();
+	await openShare(page);
 	await page.getByRole("button", { name: "Update link", exact: true }).click();
 	publishes[2]?.reject(new Error("The upload was interrupted. Try again."));
-	await page.getByRole("button", { name: "Retry update", exact: true }).waitFor();
-	await page.getByRole("button", { name: "Retry update", exact: true }).click();
-	await page.getByRole("button", { name: "Updating…", exact: true }).waitFor();
+	await chip(page, "interrupted").waitFor();
+	await dialog.getByText("The upload was interrupted. Try again.").waitFor();
+	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "player-interrupted.png") });
+	await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+	await chip(page, "updating").waitFor();
 	current = {
 		...current,
 		revision: 4,
@@ -279,26 +282,26 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	};
 	source = "current";
 	publishes[3]?.resolve(publishResult(current, "current"));
-	await page.getByText("Up to date", { exact: true }).waitFor();
+	await chip(page, SHARED).waitFor();
 
-	await page.getByRole("button", { name: "Share ↗", exact: true }).click();
-	await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
-	await page.getByRole("button", { name: "Manage access" }).click();
-	await page.getByRole("textbox", { name: "Email addresses" }).fill("sam@example.com");
-	await page.getByRole("button", { name: "Add", exact: true }).click();
-	await page.getByRole("button", { name: "Remove sam@example.com" }).waitFor();
-	await page.getByRole("button", { name: "Remove alex@example.com", exact: true }).click();
-	await expect.poll(() => page.getByText("alex@example.com", { exact: true }).count()).toBe(0);
-	await page.getByRole("button", { name: "Save access" }).click();
-	await page.getByRole("button", { name: "Manage access" }).waitFor();
+	await openShare(page);
+	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "player-shared-open.png") });
+	const people = dialog.getByRole("button", { name: /^Invited people/ });
+	await people.click();
+	await dialog.getByRole("textbox", { name: "Email addresses" }).fill("sam@example.com");
+	await dialog.getByRole("textbox", { name: "Email addresses" }).press("Enter");
+	await dialog.getByRole("button", { name: "Remove sam@example.com" }).waitFor();
+	await dialog.getByRole("button", { name: "Remove alex@example.com", exact: true }).click();
+	await expect.poll(() => dialog.getByText("alex@example.com", { exact: true }).count()).toBe(0);
+	await dialog.getByRole("button", { name: "Save access" }).click();
+	await expect.poll(() => people.getAttribute("aria-expanded")).toBe("false");
 
-	await page.getByRole("button", { name: "Stop sharing…", exact: true }).click();
-	await page.getByText("Stop this link from opening? Your local work stays here.", { exact: true }).waitFor();
-	await page.getByRole("button", { name: "Keep sharing", exact: true }).click();
-	await expect
-		.poll(() => page.getByText("Stop this link from opening? Your local work stays here.", { exact: true }).count())
-		.toBe(0);
-	await page.getByRole("button", { name: "Stop sharing…", exact: true }).click();
+	await dialog.getByRole("button", { name: "Stop sharing", exact: true }).click();
+	await dialog.getByText("Stop it for everyone?", { exact: true }).waitFor();
+	if (evidence !== undefined) await page.screenshot({ path: join(evidence, "player-stopping.png") });
+	await dialog.getByRole("button", { name: "Keep", exact: true }).click();
+	await expect.poll(() => dialog.getByText("Stop it for everyone?", { exact: true }).count()).toBe(0);
+	await dialog.getByRole("button", { name: "Stop sharing", exact: true }).click();
 	services.stop = vi.fn(async () => {
 		throw new Error("Stopping could not be confirmed. Try again.");
 	});
@@ -309,7 +312,7 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		await failedRead.promise;
 		await route.abort("connectionfailed");
 	});
-	const uncertainStop = page.getByRole("button", { name: "Stop sharing", exact: true }).click();
+	const uncertainStop = dialog.getByRole("button", { name: "Stop link", exact: true }).click();
 	await expect.poll(() => failedReads).toBe(1);
 	publisher = undefined;
 	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
@@ -318,14 +321,14 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	await uncertainStop;
 	await page.getByText("Sharing could not be completed. Try again.", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Check status", exact: true }).waitFor();
-	expect(await page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(1);
+	expect(await page.getByRole("dialog", { name: "Share menu" }).count()).toBe(1);
 	expect(failedReads).toBe(2);
 	expect(await page.getByRole("textbox", { name: "Shared link" }).count()).toBe(0);
 	expect(await page.getByRole("button", { name: "Remove sam@example.com" }).count()).toBe(0);
 	await page.unroute("**/publication?*");
 	await page.getByRole("button", { name: "Check status", exact: true }).click();
-	await expect.poll(() => page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
-	await expect.poll(() => page.getByRole("button", { name: "Share ↗", exact: true }).count()).toBe(0);
+	await expect.poll(() => page.getByRole("dialog").count()).toBe(0);
+	await expect.poll(() => page.getByRole("button", { name: "Share", exact: true }).count()).toBe(0);
 	publisher = "owner";
 	services.status = vi.fn(async () => ({
 		publication: current,
@@ -338,21 +341,20 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		current = { ...current, state: "stopped", accessGeneration: current.accessGeneration + 1 };
 	});
 	await page.evaluate(() => window.dispatchEvent(new CustomEvent("spool-player-publication-change")));
-	await page.getByRole("button", { name: "Share ↗", exact: true }).waitFor();
-	await page.getByRole("button", { name: "Share ↗", exact: true }).click();
-	await page.getByRole("button", { name: /What they can see/ }).click();
-	await page.getByRole("button", { name: "Stop sharing…", exact: true }).click();
-	await page.getByRole("button", { name: "Stop sharing", exact: true }).click();
-	await expect.poll(() => page.getByRole("dialog", { name: "Share Kaffe" }).count()).toBe(0);
+	await chip(page, SHARED).waitFor();
+	await openShare(page);
+	await dialog.getByRole("button", { name: /What they can see/ }).click();
+	await dialog.getByRole("button", { name: "Stop sharing", exact: true }).click();
+	await dialog.getByRole("button", { name: "Stop link", exact: true }).click();
+	await expect.poll(() => page.getByRole("dialog").count()).toBe(0);
 	await page.getByRole("button", { name: "Share", exact: true }).waitFor();
-	expect(await page.getByText("Up to date", { exact: true }).count()).toBe(0);
+	expect(await page.getByRole("button", { name: /^Sharing: / }).count()).toBe(0);
 
-	await page.getByRole("button", { name: "Share", exact: true }).click();
-	await page.getByRole("dialog", { name: "Share Kaffe" }).waitFor();
-	expect(await page.getByRole("textbox", { name: "Shared link" }).count()).toBe(0);
-	expect(await page.getByRole("button", { name: "Remove sam@example.com" }).count()).toBe(1);
-	await page.getByRole("button", { name: "Create link", exact: true }).click();
-	await page.getByText("uploading", { exact: true }).waitFor();
+	await openShare(page);
+	expect(await dialog.getByRole("textbox", { name: "Shared link" }).count()).toBe(0);
+	expect(await dialog.getByRole("button", { name: "Remove sam@example.com" }).count()).toBe(1);
+	await dialog.getByRole("button", { name: "Create and copy link", exact: true }).click();
+	await page.getByRole("button", { name: /^Sharing: (preparing link|uploading|updating)/ }).waitFor();
 	current = {
 		...current,
 		state: "active",
@@ -360,8 +362,9 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 		currentVersion: { id: "version-5", contentIdentity: "e".repeat(64) },
 	};
 	publishes[4]?.resolve(publishResult(current, "current"));
-	await page.getByRole("button", { name: "Copy link", exact: true }).waitFor();
-	expect(await page.getByRole("textbox", { name: "Shared link" }).inputValue()).toBe(
+	await chip(page, SHARED).waitFor();
+	await dialog.getByRole("button", { name: "Copy link", exact: true }).waitFor();
+	expect(await dialog.getByRole("textbox", { name: "Shared link" }).inputValue()).toBe(
 		"https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
 	);
 	expect(services.publish).toHaveBeenCalledTimes(5);

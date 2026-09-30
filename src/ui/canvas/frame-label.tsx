@@ -1,5 +1,6 @@
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
+import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
 import { UnseenMark } from "./unseen-mark";
 
 export function FrameLabel({
@@ -14,7 +15,8 @@ export function FrameLabel({
 	sharing,
 }: {
 	name: string;
-	sharing?: { status: string; open: () => void } | undefined;
+	/** the frame's link, said at the one size the canvas keeps legible at any zoom */
+	sharing?: { chip: ShareChip; open: () => void; expanded: boolean } | undefined;
 	frameWidth: number;
 	k: number;
 	entered: boolean;
@@ -61,19 +63,7 @@ export function FrameLabel({
 					{/* the selection's own verb, at the far end of its own row: no
 					    travelling to a corner of the chrome to act on what is right
 					    here. Ghost until wanted — the label is not a toolbar. */}
-					{sharing && (
-						<button
-							type="button"
-							className="text-muted type-detail"
-							onPointerDown={(event) => event.stopPropagation()}
-							onClick={(event) => {
-								event.stopPropagation();
-								sharing.open();
-							}}
-						>
-							{sharing.status}
-						</button>
-					)}
+					{sharing && <ShareChipButton chip={sharing.chip} expanded={sharing.expanded} onOpen={sharing.open} />}
 					{selected && onPlay !== undefined && (
 						<button
 							type="button"
