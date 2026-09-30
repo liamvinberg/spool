@@ -1507,6 +1507,19 @@ export function canvasPublicationClient(project: string, entry: string) {
 	});
 }
 
+/** The frames of a project that have a link; empty when it cannot be read. */
+export async function fetchSharedEntries(project: string): Promise<string[]> {
+	try {
+		const response = await client.api.p[":project"].publications.$get({ param: { project } });
+		if (!response.ok) return [];
+		const body: unknown = await response.json();
+		const entries = typeof body === "object" && body !== null && "entries" in body ? body.entries : undefined;
+		return Array.isArray(entries) ? entries.filter((entry): entry is string => typeof entry === "string") : [];
+	} catch {
+		return [];
+	}
+}
+
 export async function fetchSharingAvailable(): Promise<boolean> {
 	try {
 		const response = await client.api.cloud.session.$get();

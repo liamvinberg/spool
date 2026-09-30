@@ -2956,6 +2956,13 @@ export function createDaemonApp({
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
 		})
+		// every entry of this project with a link, so the canvas can mark each one
+		.get("/api/p/:project/publications", async (c) => {
+			const name = c.req.param("project");
+			const project = resolveProject(c, name);
+			if ("response" in project) return project.response;
+			return c.json({ entries: await publicationJobs.published(project.root, "default") });
+		})
 		.get(
 			"/api/p/:project/publication",
 			validator("query", (value, c) => {

@@ -165,8 +165,12 @@ describe("Cloud publication client", () => {
 		let count = 0;
 		let uploadStarted = 0;
 		let uploadFinished = 0;
+		// the address a share hands out before its files land
+		let publishedBeforeUpload: string | undefined;
+		let addressed: string | undefined;
 		const fetch = async (input: string | URL | Request, init?: RequestInit) => {
 			if (init?.method !== "PUT") return cloud.fetch(input, init);
+			if (count === 0) publishedBeforeUpload = addressed;
 			if (count++ === 0) uploadStarted = performance.now();
 			active++;
 			peak = Math.max(peak, active);
@@ -190,7 +194,11 @@ describe("Cloud publication client", () => {
 			progress: (_message, value) => {
 				if (value) progress.push(value);
 			},
+			published: (publication) => {
+				addressed = publication.url;
+			},
 		});
+		expect(publishedBeforeUpload).toMatch(/^https:\/\/p[a-f0-9]{32}-beta\.onspool\.page\/?$/u);
 		expect(progress.at(0)?.completedBytes).toBe(0);
 		const final = progress.at(-1);
 		expect(final?.completedBytes).toBe(final?.totalBytes);

@@ -15,6 +15,7 @@ import {
 import { SpoolError } from "../errors";
 import {
 	associationIdentity,
+	listPublishedEntries,
 	type PublicationAssociation,
 	readAssociation,
 	readUpdateIntent,
@@ -55,6 +56,8 @@ export type PublicationJobView =
 			phase: PublicationJobPhase;
 			upload?: UploadProgress;
 			email?: string;
+			/** the link's address, once the cloud has made the publication: copyable before the upload ends */
+			url?: string;
 	  }
 	| {
 			id: string;
@@ -99,6 +102,7 @@ export interface PublicationJobServices {
 		version: string;
 		publicationId?: string;
 		progress(message: string, upload?: UploadProgress): void;
+		published?(publication: CloudPublication): void;
 	}): Promise<Awaited<ReturnType<typeof publishWebsite>>>;
 	grant(
 		spoolDir: string,
@@ -474,7 +478,15 @@ export function createPublicationJobs({
 						phase: phaseOf(message),
 						...(upload === undefined ? {} : { upload }),
 						...(job.view.email === undefined ? {} : { email: job.view.email }),
+						...(job.view.url === undefined ? {} : { url: job.view.url }),
 					};
+					job.updatedAt = now();
+				},
+				published: (publication) => {
+					const picked = playerPublication(publication);
+					if (job.view.state !== "running" || picked === undefined || publication.ownerId !== job.publisherId)
+						return;
+					job.view = { ...job.view, url: picked.url };
 					job.updatedAt = now();
 				},
 			});
@@ -592,7 +604,17 @@ export function createPublicationJobs({
 			return false;
 		}
 	}
-	return { model, start, read, grant, stop, access, available };
+	/** The entries of a root with a link, for the canvas to mark; empty while signed out. */
+	async function published(root: string, scenario: string): Promise<string[]> {
+		let account: { publisherId: string };
+		try {
+			account = await services.account(spoolDir);
+		} catch {
+			return [];
+		}
+		return listPublishedEntries(spoolDir, services.origin(), account.publisherId, root, scenario);
+	}
+	return { model, start, read, grant, stop, access, available, published };
 }
 
 function defaultServices(): PublicationJobServices {

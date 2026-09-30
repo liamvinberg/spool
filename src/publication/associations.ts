@@ -164,6 +164,48 @@ export function findPublicationAssociation(
 	return found;
 }
 
+/**
+ * The entries of one project root this publisher has a link for, as this
+ * machine remembers them: a local read, so a canvas can mark every shared
+ * frame without asking the cloud about frames that were never shared. A
+ * record that cannot be read is left to the verbs that would use it.
+ */
+export function listPublishedEntries(
+	spoolDir: string,
+	authority: string,
+	publisherId: string,
+	root: string,
+	scenario: string,
+): string[] {
+	const directory = dirname(associationPath(spoolDir, "placeholder"));
+	if (!existsSync(directory)) return [];
+	const origin = new URL(authority).origin;
+	const instance = realpathSync(resolve(spoolDir));
+	const project = realpathSync(resolve(root));
+	const entries = new Set<string>();
+	for (const name of readdirSync(directory)) {
+		if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
+		let record: PublicationAssociation;
+		try {
+			record = readRecord(join(directory, name));
+		} catch {
+			continue;
+		}
+		if (
+			record.key === identityKey(record.identity) &&
+			record.supersededBy === undefined &&
+			record.publicationId !== undefined &&
+			record.identity.authority === origin &&
+			record.identity.publisherId === publisherId &&
+			record.identity.instance === instance &&
+			record.identity.root === project &&
+			record.identity.scenario === scenario
+		)
+			entries.add(record.identity.entry);
+	}
+	return [...entries].sort();
+}
+
 export function claimAssociation(
 	spoolDir: string,
 	identity: PublicationAssociationIdentity,

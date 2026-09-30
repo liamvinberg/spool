@@ -27,6 +27,8 @@ export type PlayerPublicationJob =
 			phase: "capturing" | "uploading" | "sealing" | "activating";
 			upload?: PlayerUpload;
 			email?: string;
+			/** the link's address, once the cloud has made the publication it belongs to */
+			url?: string;
 	  }
 	| {
 			id: string;
@@ -205,6 +207,7 @@ function jobOf(value: unknown): PlayerPublicationJob | undefined {
 	if (
 		value.state === "running" &&
 		(value.email === undefined || typeof value.email === "string") &&
+		(value.url === undefined || typeof value.url === "string") &&
 		(value.phase === "capturing" ||
 			value.phase === "uploading" ||
 			value.phase === "sealing" ||
@@ -217,6 +220,7 @@ function jobOf(value: unknown): PlayerPublicationJob | undefined {
 			phase: value.phase,
 			...(value.upload === undefined ? {} : { upload: uploadSchema.parse(value.upload) }),
 			...(value.email === undefined ? {} : { email: value.email }),
+			...(value.url === undefined ? {} : { url: value.url }),
 		};
 	if (value.state === "succeeded") {
 		const publication = playerPublication(value.publication);

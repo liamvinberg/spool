@@ -147,6 +147,8 @@ export interface PublishOptions extends PublicationAuthOptions {
 	title?: string;
 	publicationId?: string;
 	progress?: (message: string, upload?: UploadProgress) => void;
+	/** The publication exists and has its address, before any file has landed. */
+	published?: (publication: CloudPublication) => void;
 }
 
 export async function publishWebsite(options: PublishOptions): Promise<PublishResult> {
@@ -405,6 +407,7 @@ async function publishUnderLock(
 	const captured = readCapture(options.spoolDir, association.intent.operationId);
 	let current = recovered ?? (await createOrRecover(options.spoolDir, association, captured, cloudOptions));
 	association = rememberPublication(options.spoolDir, association, current.publication, { state: "pending" });
+	options.published?.(current.publication);
 	if (terminal(current.operation)) {
 		const finished = finish(current);
 		association = rememberPublication(

@@ -1,5 +1,10 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { PublishResult } from "../cloud-publication";
+import { associationIdentity } from "../publication/associations";
+import { canonicalJson } from "../publication/manifest";
 import { makeProject, makeTempDir } from "../test-helpers";
 import { createPublicationJobs, type PublicationJobServices } from "./publication-jobs";
 
@@ -185,5 +190,111 @@ describe("daemon publication jobs", () => {
 		await vi.waitFor(async () => expect((await jobs.read(project.root, started.id))?.state).toBe("succeeded"));
 		now = 31 * 60_000;
 		expect(await jobs.read(project.root, started.id)).toBeUndefined();
+	});
+	it("hands out the link's address as soon as the publication exists, before the upload ends", async () => {
+		const spoolDir = makeTempDir();
+		const project = makeProject(spoolDir);
+		const upload = deferred<PublishResult>();
+		const capture = deferred<void>();
+		const created = deferred<void>();
+		const services: PublicationJobServices = {
+			account: async () => ({ publisherId: "owner" }),
+			readiness: async () => ready,
+			status: async () => {
+				throw new Error("no publication");
+			},
+			publish: async (options) => {
+				options.progress("capturing website");
+				await capture.promise;
+				options.published?.(publication("owner"));
+				options.progress("uploading 1/4", {
+					completedBytes: 1,
+					totalBytes: 4,
+					completedObjects: 1,
+					totalObjects: 4,
+				});
+				created.resolve();
+				return upload.promise;
+			},
+			grant: async () => {},
+			stop: async () => {},
+			origin: () => "https://cloud.test",
+		};
+		const jobs = createPublicationJobs({ spoolDir, version: "test", services });
+		const started = await jobs.start({
+			root: project.root,
+			project: "Kaffe",
+			entry: "menu",
+			scenario: "default",
+			emails: ["alex@example.com"],
+		});
+		expect(await jobs.read(project.root, started.id)).not.toHaveProperty("url");
+		capture.resolve();
+		await created.promise;
+		expect(await jobs.read(project.root, started.id)).toMatchObject({
+			state: "running",
+			phase: "uploading",
+			url: "https://paaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-beta.onspool.page",
+		});
+		upload.resolve(publishResult("owner"));
+	});
+
+	it("lists the entries of a root that have a link, for this publisher only", async () => {
+		const spoolDir = makeTempDir();
+		const project = makeProject(spoolDir);
+		let publisher: string | undefined = "owner";
+		const services: PublicationJobServices = {
+			account: async () => {
+				if (publisher === undefined) throw new Error("signed out");
+				return { publisherId: publisher };
+			},
+			readiness: async () => ready,
+			status: async () => {
+				throw new Error("no publication");
+			},
+			publish: async () => publishResult("owner"),
+			grant: async () => {},
+			stop: async () => {},
+			origin: () => "https://cloud.test",
+		};
+		const remember = (entry: string, publisherId: string, publicationId?: string) => {
+			const identity = associationIdentity(
+				spoolDir,
+				"https://cloud.test",
+				publisherId,
+				project.root,
+				entry,
+				"default",
+			);
+			const key = createHash("sha256").update(canonicalJson(identity)).digest("hex");
+			const directory = join(spoolDir, "publications", "associations");
+			mkdirSync(directory, { recursive: true });
+			writeFileSync(
+				join(directory, `${key}.json`),
+				JSON.stringify({
+					key,
+					identity,
+					projectId: "11111111-1111-4111-8111-111111111111",
+					title: "Kaffe",
+					...(publicationId === undefined ? {} : { publicationId }),
+					intent: {
+						kind: "create",
+						operationId: "22222222-2222-4222-8222-222222222222",
+						contentIdentity: "a".repeat(64),
+						inputIdentity: "input",
+						invitedEmails: ["alex@example.com"],
+					},
+				}),
+			);
+		};
+		remember("menu", "owner", "publication");
+		remember("cart", "owner", "publication-cart");
+		remember("draft", "owner");
+		remember("rewards", "someone-else", "publication-rewards");
+		const jobs = createPublicationJobs({ spoolDir, version: "test", services });
+		expect(await jobs.published(project.root, "default")).toEqual(["cart", "menu"]);
+		expect(await jobs.published(project.root, "rainy")).toEqual([]);
+		publisher = undefined;
+		expect(await jobs.published(project.root, "default")).toEqual([]);
 	});
 });
