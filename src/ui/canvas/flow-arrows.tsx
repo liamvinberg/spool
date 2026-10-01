@@ -79,24 +79,11 @@ export function anchorKeyOf(path: string, anchor: { line: number; col: number })
 }
 
 /**
- * Lay out every drawable arrow: tails out of their elements, heads spread at
- * the target edge. Pure world-space geometry — the seam the tests hold.
- */
-export function routeArrows(
-	edges: FlowEdge[],
-	frames: ProjectedFrame[],
-	siteBoxes: SiteBoxesByFrame,
-	k: number,
-): RoutedArrow[] {
-	return placeArrows(edges, frames, siteBoxes).map((arrow) => drawArrow(arrow, k));
-}
-
-/**
  * Where each arrow touches its two frames, which no zoom changes. Only the
  * head and the bow are screen measures, so routing runs when the graph or the
  * frames move and a zoom step only redraws (#81).
  */
-interface PlacedArrow {
+export interface PlacedArrow {
 	key: string;
 	tail: Point;
 	tip: Point;
@@ -105,11 +92,16 @@ interface PlacedArrow {
 	faint: boolean;
 }
 
-function drawArrow({ key, tail, tip, exit, entry, faint }: PlacedArrow, k: number): RoutedArrow {
+/** One arrow's stroke and head at a zoom, where `placeArrows` put it. */
+export function drawArrow({ key, tail, tip, exit, entry, faint }: PlacedArrow, k: number): RoutedArrow {
 	return { key, tail, tip, faint, ...draw(tail, tip, exit, entry, k) };
 }
 
-function placeArrows(edges: FlowEdge[], frames: ProjectedFrame[], siteBoxes: SiteBoxesByFrame): PlacedArrow[] {
+/**
+ * Lay out every drawable arrow: tails out of their elements, heads spread at
+ * the target edge. Pure world-space geometry — the seam the tests hold.
+ */
+export function placeArrows(edges: FlowEdge[], frames: ProjectedFrame[], siteBoxes: SiteBoxesByFrame): PlacedArrow[] {
 	const byName = new Map(frames.map((frame) => [frame.name, frame]));
 	const specs: Spec[] = [];
 

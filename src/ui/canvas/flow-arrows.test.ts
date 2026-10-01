@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlowEdge, ProjectedFrame } from "../api";
-import { routeArrows } from "./flow-arrows";
+import { drawArrow, placeArrows } from "./flow-arrows";
 
 /**
  * The arrow layout (#34): one arrow per directed frame edge, anchored to the
@@ -29,7 +29,11 @@ const site = (line: number, col = 4, conditional = false) => ({
 
 const anchorKey = (line: number, col = 4) => `frames/a/frame.tsx:${line}:${col}`;
 
-describe("routeArrows", () => {
+/** Placed, then drawn at a zoom: what the layer draws for one camera. */
+const routeArrows = (...[edges, frames, siteBoxes, k]: [...Parameters<typeof placeArrows>, number]) =>
+	placeArrows(edges, frames, siteBoxes).map((arrow) => drawArrow(arrow, k));
+
+describe("placeArrows and drawArrow", () => {
 	it("draws one arrow for an edge claimed by multiple sites", () => {
 		const frames = [frame("a", 0, 0), frame("b", 1000, 0)];
 		const edges = [edge("a", "b", [site(4), site(9)])];
