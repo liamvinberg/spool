@@ -89,27 +89,29 @@
 .fp-end h2,
 .fp-footer > p {
 	margin: 0;
-	font-family: "Instrument Serif", Georgia, serif;
-	font-weight: 400;
-	letter-spacing: -0.012em;
+	font-family: "Bricolage Grotesque", "Familjen Grotesk", sans-serif;
+	font-optical-sizing: auto;
+	font-weight: 450;
+	letter-spacing: -0.035em;
 	text-wrap: balance;
 }
 .fp-panel h2 {
 	position: absolute;
 	left: 6vw;
-	max-width: 11em;
-	font-size: clamp(38px, 4.7vw, 70px);
-	line-height: 1.02;
+	max-width: 13em;
+	font-size: clamp(32px, 3.7vw, 56px);
+	line-height: 1.04;
 }
 
 .fp-opening h1 {
 	position: absolute;
 	top: 22vh;
 	left: 6vw;
-	max-width: 6em;
-	font-size: clamp(64px, 10.8vw, 168px);
-	line-height: 0.88;
-	letter-spacing: -0.025em;
+	max-width: 7em;
+	font-size: clamp(56px, 8.8vw, 134px);
+	font-weight: 500;
+	line-height: 0.9;
+	letter-spacing: -0.055em;
 }
 .fp-opening p {
 	position: absolute;
@@ -124,7 +126,7 @@
 
 .fp-writing h2 {
 	bottom: 14vh;
-	max-width: 9.5em;
+	max-width: 11em;
 }
 .fp-writing pre {
 	position: absolute;
@@ -191,7 +193,7 @@
 	top: 30vh;
 	left: 9vw;
 	max-width: 12em;
-	font-size: clamp(44px, 5.6vw, 84px);
+	font-size: clamp(38px, 4.5vw, 68px);
 }
 
 .fp-keep h2 {
@@ -282,8 +284,10 @@
 	visibility: hidden;
 }
 .fp-end h2 {
-	font-size: clamp(48px, 6.6vw, 100px);
-	line-height: 0.95;
+	font-size: clamp(44px, 5.6vw, 84px);
+	font-weight: 500;
+	line-height: 0.96;
+	letter-spacing: -0.05em;
 }
 .fp-actions {
 	display: flex;
@@ -340,8 +344,8 @@
 .fp-footer > p {
 	max-width: 17em;
 	padding-bottom: 96px;
-	font-size: clamp(28px, 2.8vw, 40px);
-	line-height: 1.12;
+	font-size: clamp(24px, 2.3vw, 33px);
+	line-height: 1.18;
 }
 .fp-footer > p a {
 	text-decoration: underline;
@@ -385,11 +389,11 @@
 	}
 	.fp-panel h2 {
 		max-width: 88vw;
-		font-size: clamp(32px, 9.4vw, 42px);
+		font-size: clamp(28px, 8vw, 36px);
 	}
 	.fp-opening h1 {
 		top: 18vh;
-		font-size: clamp(60px, 18vw, 80px);
+		font-size: clamp(50px, 14.6vw, 66px);
 	}
 	.fp-opening p {
 		right: 6vw;
@@ -424,7 +428,7 @@
 		font-size: 11px;
 	}
 	.fp-end h2 {
-		font-size: clamp(42px, 12vw, 54px);
+		font-size: clamp(38px, 10.6vw, 48px);
 	}
 	.fp-download,
 	.fp-command {
