@@ -19,9 +19,9 @@ import type { SnapMarks } from "./snap";
  * The frame's knobs render on corners only — the sides carry invisible grab
  * bands, Figma's pattern for single-axis resize.
  *
- * Screen space means placed for a camera, and the camera moves without a
+ * Screen space means measured for a camera, and the camera moves without a
  * render (#81). So each piece of furniture is rendered for what it is and
- * placed by `Follow`, which writes its box straight to the element in the same
+ * sized by `Follow`, which writes its box straight to the element in the same
  * frame the field moves in: a ring never trails the frame it is round.
  */
 
@@ -87,48 +87,46 @@ const CORNERS = ["nw", "ne", "sw", "se"] as const;
 
 const SIDES = ["n", "e", "s", "w"] as const;
 
-/** A box of furniture's place for one camera, in CSS pixels. */
-type Place = Partial<Record<"left" | "top" | "width" | "height" | "borderRadius", number>>;
+/** The five properties a piece of furniture's box is written as. */
+const SCREEN_KEYS = ["left", "top", "width", "height", "borderRadius"] as const;
 
-const PLACED = ["left", "top", "width", "height", "borderRadius"] as const;
+/** A piece of furniture's box for one camera, in CSS pixels. */
+type ScreenBox = Partial<Record<(typeof SCREEN_KEYS)[number], number>>;
 
 /**
  * One piece of screen-space furniture, following the camera on its own (#81).
  *
- * React renders what it is, and `place` says where it stands for a camera. The
- * place is written to the element directly: now, after any render that moved
- * it, and at every drawn frame of the camera, which is the same frame the
- * field moves in. React never writes those five properties, so a render can
- * never put back a place the camera has already left.
+ * React renders what it is, and `screen` says how big and where it is for a
+ * camera. That box is written to the element directly: now, after any render
+ * that moved it, and at every drawn frame of the camera, which is the same
+ * frame the field moves in. React never writes those five properties, and its
+ * `style` cannot name them, so a render can never put back a box the camera
+ * has already left.
  */
 function Follow({
 	camera,
-	place,
+	screen,
 	...rest
 }: {
 	camera: CameraStore;
-	place: (camera: Camera) => Place;
-} & Omit<HTMLAttributes<HTMLDivElement>, "style"> & { style?: CSSProperties }) {
+	screen: (camera: Camera) => ScreenBox;
+	style?: Omit<CSSProperties, (typeof SCREEN_KEYS)[number]>;
+} & Omit<HTMLAttributes<HTMLDivElement>, "style">) {
 	const box = useRef<HTMLDivElement | null>(null);
 	useCameraFollow(
 		camera,
 		(at) => {
 			const el = box.current;
 			if (el === null) return;
-			const placed = place(at);
-			for (const key of PLACED) {
-				const value = placed[key];
+			const sized = screen(at);
+			for (const key of SCREEN_KEYS) {
+				const value = sized[key];
 				if (value !== undefined) el.style[key] = `${value}px`;
 			}
 		},
-		[place],
+		[screen],
 	);
 	return <div ref={box} {...rest} />;
-}
-
-/** A world box on screen, for one camera. */
-function onScreen(camera: Camera, box: Box): Box {
-	return { x: box.x * camera.k + camera.x, y: box.y * camera.k + camera.y, w: box.w * camera.k, h: box.h * camera.k };
 }
 
 /**
@@ -144,13 +142,18 @@ function inFrame(camera: Camera, rect: Box): Box {
 	return { x: rect.x * camera.k, y: rect.y * camera.k, w: rect.w * camera.k, h: rect.h * camera.k };
 }
 
+/** A world box on screen, for one camera. */
+function onScreen(camera: Camera, box: Box): Box {
+	return { x: box.x * camera.k + camera.x, y: box.y * camera.k + camera.y, w: box.w * camera.k, h: box.h * camera.k };
+}
+
 /** The ring's radius: the shell's own corner on screen, two pixels out. */
 function ringRadius(k: number): number {
 	return Math.min(12, shellRadius(k) * k) + 2;
 }
 
 /** A frame's ring, 3px outside it. */
-function ringPlace(camera: Camera, frame: Box): Place {
+function ringBox(camera: Camera, frame: Box): ScreenBox {
 	const rect = onScreen(camera, frame);
 	return {
 		left: rect.x - 3,
@@ -162,7 +165,7 @@ function ringPlace(camera: Camera, frame: Box): Place {
 }
 
 /** The clip a frame's element rings are drawn inside, padded by their reach. */
-function clipPlace(camera: Camera, frame: Box): Place {
+function clipBox(camera: Camera, frame: Box): ScreenBox {
 	const rect = onScreen(camera, frame);
 	return {
 		left: rect.x - RING_REACH,
@@ -172,9 +175,9 @@ function clipPlace(camera: Camera, frame: Box): Place {
 	};
 }
 
-/** The frame's own box inside that clip. */
-function framePlace(camera: Camera, frame: Box): Place {
-	return { width: frame.w * camera.k, height: frame.h * camera.k };
+/** The frame's own box inside that clip, set back from its edge by the reach. */
+function frameInClip(camera: Camera, frame: Box): ScreenBox {
+	return { left: RING_REACH, top: RING_REACH, width: frame.w * camera.k, height: frame.h * camera.k };
 }
 
 export function SelectionOverlay({
@@ -267,7 +270,7 @@ export function SelectionOverlay({
 				<Follow
 					key={`v${x}`}
 					camera={camera}
-					place={(at) => ({ left: x * at.k + at.x })}
+					screen={(at) => ({ left: x * at.k + at.x })}
 					className="absolute inset-y-0 w-px bg-thread"
 				/>
 			))}
@@ -275,7 +278,7 @@ export function SelectionOverlay({
 				<Follow
 					key={`h${y}`}
 					camera={camera}
-					place={(at) => ({ top: y * at.k + at.y })}
+					screen={(at) => ({ top: y * at.k + at.y })}
 					className="absolute inset-x-0 h-px bg-thread"
 				/>
 			))}
@@ -286,7 +289,7 @@ export function SelectionOverlay({
 			{hoveredFrame !== undefined && (
 				<Follow
 					camera={camera}
-					place={(at) => ringPlace(at, hoveredFrame)}
+					screen={(at) => ringBox(at, hoveredFrame)}
 					data-frame-hover={hoveredFrame.name}
 					className="absolute border border-border-raised"
 					style={{
@@ -303,7 +306,7 @@ export function SelectionOverlay({
 					<Follow
 						key={`ring-${name}`}
 						camera={camera}
-						place={(at) => ringPlace(at, frame)}
+						screen={(at) => ringBox(at, frame)}
 						// the ring's own strength is the system page's law and does not move; the
 						// cursor on this frame's chip fills the box instead, which is the same
 						// thing a lit element outline does one level down (#116)
@@ -319,7 +322,7 @@ export function SelectionOverlay({
 							key={side}
 							camera={camera}
 							// invisible 10px bands along the ring, inset past the corner zones
-							place={(at) => {
+							screen={(at) => {
 								const rect = onScreen(at, single);
 								return side === "n" || side === "s"
 									? {
@@ -344,7 +347,7 @@ export function SelectionOverlay({
 						<Follow
 							key={corner}
 							camera={camera}
-							place={(at) => {
+							screen={(at) => {
 								const rect = onScreen(at, single);
 								const cx = corner.includes("w") ? rect.x - 3 : rect.x + rect.w + 3;
 								const cy = corner.includes("n") ? rect.y - 3 : rect.y + rect.h + 3;
@@ -359,7 +362,7 @@ export function SelectionOverlay({
 					))}
 					<Follow
 						camera={camera}
-						place={(at) => {
+						screen={(at) => {
 							const rect = onScreen(at, single);
 							return { left: rect.x + rect.w / 2, top: rect.y + rect.h + 14 };
 						}}
@@ -381,16 +384,11 @@ export function SelectionOverlay({
 					<Follow
 						key={`picked-${name}`}
 						camera={camera}
-						place={(at) => clipPlace(at, frame)}
+						screen={(at) => clipBox(at, frame)}
 						data-frame-clip={name}
 						className="absolute overflow-hidden"
 					>
-						<Follow
-							camera={camera}
-							place={(at) => framePlace(at, frame)}
-							className="absolute"
-							style={{ left: RING_REACH, top: RING_REACH }}
-						>
+						<Follow camera={camera} screen={(at) => frameInClip(at, frame)} className="absolute">
 							{drawn.flatMap(({ pick, rects }) => {
 								const key = pickKey(pick.frame, pick.selector);
 								return rects.map((box) => (
@@ -419,7 +417,7 @@ export function SelectionOverlay({
 								// says the extent of the selection
 								<Follow
 									camera={camera}
-									place={(at) => {
+									screen={(at) => {
 										const box = inFrame(at, unionOf(drawn.flatMap((one) => one.rects)));
 										return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
 									}}
@@ -444,13 +442,8 @@ export function SelectionOverlay({
 					const frame = frames.find((f) => f.name === previewShown.frame);
 					if (frame === undefined) return null;
 					return (
-						<Follow camera={camera} place={(at) => clipPlace(at, frame)} className="absolute overflow-hidden">
-							<Follow
-								camera={camera}
-								place={(at) => framePlace(at, frame)}
-								className="absolute"
-								style={{ left: RING_REACH, top: RING_REACH }}
-							>
+						<Follow camera={camera} screen={(at) => clipBox(at, frame)} className="absolute overflow-hidden">
+							<Follow camera={camera} screen={(at) => frameInClip(at, frame)} className="absolute">
 								{lineBoxes(previewShown).map((box) => (
 									<ElementOutline
 										key={`${box.y}-${box.x}`}
@@ -473,7 +466,7 @@ export function SelectionOverlay({
 					return (
 						<Follow
 							camera={camera}
-							place={(at) => {
+							screen={(at) => {
 								const box = elementBox(at, frame, pick.rect);
 								return { left: box.x - 2, top: box.y + box.h + 8 };
 							}}
@@ -525,7 +518,7 @@ export function SelectionOverlay({
 					return (
 						<Follow
 							camera={camera}
-							place={(at) => {
+							screen={(at) => {
 								const box = elementBox(at, frame, dropLine.box);
 								return { left: box.x, top: box.y, width: Math.max(box.w, 2), height: Math.max(box.h, 2) };
 							}}
@@ -555,7 +548,7 @@ function SpanBar({ camera, span }: { camera: CameraStore; span: SnapMarks["spans
 	return (
 		<Follow
 			camera={camera}
-			place={(at) => {
+			screen={(at) => {
 				// screen space: where the bar starts along its axis, how long, and its line
 				const from = span.from * at.k + (flat ? at.x : at.y);
 				const length = (span.to - span.from) * at.k;
@@ -586,7 +579,7 @@ function NameLabel({ camera, name, rect }: { camera: CameraStore; name: string; 
 	return (
 		<Follow
 			camera={camera}
-			place={(at) => {
+			screen={(at) => {
 				const box = inFrame(at, rect);
 				return { left: box.x - 2, top: box.y - 2 };
 			}}
@@ -672,7 +665,7 @@ function SpillMark({ camera, rect, side }: { camera: CameraStore; rect: Box; sid
 	return (
 		<Follow
 			camera={camera}
-			place={(at) => {
+			screen={(at) => {
 				const box = inFrame(at, rect);
 				return side === "right"
 					? { left: box.x + box.w, top: box.y - 2, width: 2, height: box.h + 4 }
@@ -712,7 +705,7 @@ function ElementOutline({
 	return (
 		<Follow
 			camera={camera}
-			place={(at) => {
+			screen={(at) => {
 				const box = inFrame(at, rect);
 				return {
 					left: box.x - 2,
