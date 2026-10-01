@@ -374,8 +374,13 @@ export function ProjectCanvas({
 	/** the dock's cog (#282): the sheet is the shell's, so the door only asks */
 	onSettings?: (() => void) | undefined;
 }) {
+	/**
+	 * The camera (#81): one value outside React, drawn once per animation frame
+	 * by whatever follows it. A wheel tick moves it and renders nothing.
+	 */
+	const [camera] = useState(createCameraStore);
 	const sharingAvailable = useSharingAvailable();
-	const sharing = useCanvasSharing(project, sharingAvailable);
+	const sharing = useCanvasSharing(project, sharingAvailable, camera);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
@@ -384,11 +389,6 @@ export function ProjectCanvas({
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
-	/**
-	 * The camera (#81): one value outside React, drawn once per animation frame
-	 * by whatever follows it. A wheel tick moves it and renders nothing.
-	 */
-	const [camera] = useState(createCameraStore);
 	/**
 	 * The camera as React knows it: there from the moment it is, and moved only
 	 * once it has come to rest. What is decided at rest reads this — which

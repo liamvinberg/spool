@@ -36,6 +36,14 @@ export interface PlayerShareOptions {
 	anchor?: () => Element | null;
 	/** `beside` sits right of the anchor (a frame), `below` hangs under it (a bar button) */
 	placement?: "beside" | "below";
+	/**
+	 * What moves the anchor, when something other than the page itself does: a
+	 * subscription that calls back in the very frame the anchor moved, and
+	 * returns its unsubscribe. The canvas's camera is one (#81), and following it
+	 * keeps the popover on its frame through a pan rather than a frame behind
+	 * it. Without one the popover looks for its anchor once per animation frame.
+	 */
+	follow?: (moved: () => void) => () => void;
 }
 
 const COPIED_MS = 1600;
@@ -561,6 +569,7 @@ export function usePlayerShare(
 					entry={lastEntry.current}
 					anchor={options.anchor ?? (() => trigger.current)}
 					placement={options.placement ?? "below"}
+					follow={options.follow}
 					onClose={close}
 				>
 					<SharePanel
@@ -626,12 +635,17 @@ const MARGIN = 12;
  * modal: the canvas or the page stays live, a press anywhere else closes it,
  * and while it is open it keeps to its anchor, so a frame panned under it
  * carries it along.
+ *
+ * Where it stands is written straight to the panel rather than rendered: a pan
+ * moves it every frame, and a render per frame of a dialog is a render per
+ * frame of everything in it.
  */
 function SharePopover({
 	open,
 	entry,
 	anchor,
 	placement,
+	follow,
 	onClose,
 	children,
 }: {
@@ -639,6 +653,7 @@ function SharePopover({
 	entry: string | undefined;
 	anchor: () => Element | null;
 	placement: "beside" | "below";
+	follow: ((moved: () => void) => () => void) | undefined;
 	onClose: () => void;
 	children: ReactNode;
 }) {
@@ -646,19 +661,18 @@ function SharePopover({
 	const panel = useRef<HTMLElement | null>(null);
 	const body = useRef<HTMLDivElement>(null);
 	const [height, setHeight] = useState<number>();
-	const [place, setPlace] = useState<{ left: number; top: number; origin: string } | undefined>();
 	const anchorRef = useRef(anchor);
 	anchorRef.current = anchor;
 	const closeRef = useRef(onClose);
 	closeRef.current = onClose;
 
 	useLayoutEffect(() => {
-		if (!open) return;
-		let frame = 0;
-		const follow = () => {
+		const el = panel.current;
+		if (!open || el === null) return;
+		const place = () => {
 			const target = anchorRef.current();
 			const box = target?.getBoundingClientRect();
-			const tall = panel.current?.offsetHeight ?? 0;
+			const tall = el.offsetHeight;
 			const vw = window.innerWidth;
 			const vh = window.innerHeight;
 			let left: number;
@@ -681,16 +695,29 @@ function SharePopover({
 			}
 			left = Math.min(Math.max(MARGIN, left), vw - MARGIN - Math.min(WIDTH, vw - 2 * MARGIN));
 			top = Math.min(Math.max(MARGIN, top), Math.max(MARGIN, vh - MARGIN - tall));
-			setPlace((current) =>
-				current?.left === left && current.top === top && current.origin === origin
-					? current
-					: { left, top, origin },
-			);
-			frame = requestAnimationFrame(follow);
+			el.style.left = `${left}px`;
+			el.style.top = `${top}px`;
+			el.style.transformOrigin = origin;
 		};
-		follow();
-		return () => cancelAnimationFrame(frame);
-	}, [open, placement]);
+		place();
+		// it grows as its panel does, and a taller panel may have to stand higher
+		const resized = new ResizeObserver(place);
+		resized.observe(el);
+		window.addEventListener("resize", place);
+		let frame = 0;
+		const look = () => {
+			place();
+			frame = requestAnimationFrame(look);
+		};
+		const unfollow = follow?.(place);
+		if (unfollow === undefined) frame = requestAnimationFrame(look);
+		return () => {
+			resized.disconnect();
+			window.removeEventListener("resize", place);
+			cancelAnimationFrame(frame);
+			unfollow?.();
+		};
+	}, [open, placement, follow]);
 
 	useEffect(() => {
 		const node = body.current;
@@ -744,11 +771,6 @@ function SharePopover({
 					role="dialog"
 					aria-label={entry === undefined ? "Share" : `Share ${entry.split("/").at(-1)}`}
 					className="spool-share-popover"
-					style={{
-						left: place?.left ?? -9999,
-						top: place?.top ?? -9999,
-						transformOrigin: place?.origin ?? "top left",
-					}}
 					initial={{ opacity: 0, scale: reduced ? 1 : 0.97 }}
 					animate={{ opacity: 1, scale: 1, ...(height === undefined ? {} : { height }) }}
 					exit={{ opacity: 0, scale: reduced ? 1 : 0.98, transition: { duration: reduced ? 0 : 0.12 } }}

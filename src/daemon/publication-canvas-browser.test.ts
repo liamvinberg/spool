@@ -180,6 +180,56 @@ it("makes a link beside its frame, copies it before the upload ends, and reuses 
 	await about.getByRole("button", { name: /^Sharing: / }).waitFor();
 });
 
+/**
+ * The popover follows its frame through a pan in the frame the frame is drawn
+ * in (#81): it listens to the camera rather than looking for its label once per
+ * animation frame, which ran before the camera's own frame and left it a frame
+ * behind the label it stands beside for the whole of a gesture.
+ */
+it("keeps the popover beside its frame in every frame of a pan", { timeout: 180_000 }, async () => {
+	const project = await serveProject({ uiDir: await builtUi() });
+	writeFrame(project.root, "home", "export default function Home() { return <main>Home</main> }");
+	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":320,"h":240}');
+	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":100,"y":100,"k":1}}');
+	const browser = await testBrowser();
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	await page.route("**/api/cloud/session", (route) => route.fulfill({ json: { available: true } }));
+	await page.route("**/publication?*", (route) => route.fulfill({ json: modelFor(project.name, "home") }));
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	const home = page.locator('[data-frame-label="home"]');
+	await home.waitFor();
+	await home.click({ button: "right" });
+	await page.getByRole("menuitem", { name: "Copy share link" }).click();
+	const dialog = page.getByRole("dialog", { name: "Share home" });
+	await dialog.waitFor();
+
+	// after every frame has drawn: the popover's left edge against the label's right
+	await page.evaluate(() => {
+		const offsets: number[] = [];
+		(globalThis as unknown as { __offsets: number[] }).__offsets = offsets;
+		const look = () => {
+			setTimeout(() => {
+				const label = document.querySelector('[data-frame-label="home"]')?.getBoundingClientRect();
+				const panel = document.querySelector('[role="dialog"]')?.getBoundingClientRect();
+				if (label !== undefined && panel !== undefined) offsets.push(panel.left - label.right);
+			}, 0);
+			requestAnimationFrame(look);
+		};
+		requestAnimationFrame(look);
+	});
+	const before = await home.boundingBox();
+	await page.mouse.move(900, 700);
+	for (let tick = 0; tick < 16; tick++) await page.mouse.wheel(12, 0);
+	await page.waitForTimeout(200);
+
+	const offsets = await page.evaluate(() => (globalThis as unknown as { __offsets: number[] }).__offsets);
+	const label = await home.boundingBox();
+	// the pan really carried the label, and the popover stood 12px beside it in every frame
+	expect((before?.x ?? 0) - (label?.x ?? 0)).toBeGreaterThan(100);
+	expect(offsets.length).toBeGreaterThan(10);
+	expect(Math.max(...offsets.map((offset) => Math.abs(offset - 12)))).toBeLessThan(1);
+});
+
 it("keeps share settings editable when a journey cannot be published", { timeout: 180_000 }, async () => {
 	const project = await serveProject({ uiDir: await builtUi() });
 	writeFrame(project.root, "home", "export default function Home() { return <main>Home</main> }");

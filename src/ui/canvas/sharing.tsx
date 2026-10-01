@@ -3,6 +3,7 @@ import { type PlayerShareView, shareStyles, usePlayerShare } from "../../runtime
 import type { ShareChip } from "../../runtime/share-panel";
 import { canvasPublicationClient, fetchSharedEntries, fetchSharingAvailable } from "../api";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
+import type { CameraStore } from "./camera-store";
 
 export interface FrameShareState {
 	chip: ShareChip | undefined;
@@ -28,9 +29,11 @@ export interface CanvasSharing {
  * Sharing on the canvas: the link belongs to the frame. Every frame this
  * machine has a link for gets a controller of its own, so its label can say
  * what the link is doing at any zoom, and a frame asked for its first link
- * joins them. Each controller owns one popover, anchored to its frame's label.
+ * joins them. Each controller owns one popover, anchored to its frame's label,
+ * and it follows the camera: a label moves when the camera does, and nothing
+ * else on the canvas moves it while the popover is open.
  */
-export function useCanvasSharing(project: string, available: boolean): CanvasSharing {
+export function useCanvasSharing(project: string, available: boolean, camera: CameraStore): CanvasSharing {
 	const [listedEntries, setListedEntries] = useState<string[]>([]);
 	const [requested, setRequested] = useState<string[]>([]);
 	const [states, setStates] = useState<Record<string, FrameShareState>>({});
@@ -112,7 +115,14 @@ export function useCanvasSharing(project: string, available: boolean): CanvasSha
 			<>
 				<style>{shareStyles}</style>
 				{entries.map((entry) => (
-					<FrameShare key={entry} project={project} entry={entry} onHandle={register} onState={report} />
+					<FrameShare
+						key={entry}
+						project={project}
+						entry={entry}
+						camera={camera}
+						onHandle={register}
+						onState={report}
+					/>
 				))}
 			</>
 		) : null,
@@ -126,18 +136,29 @@ export function useCanvasSharing(project: string, available: boolean): CanvasSha
 function FrameShare({
 	project,
 	entry,
+	camera,
 	onHandle,
 	onState,
 }: {
 	project: string;
 	entry: string;
+	camera: CameraStore;
 	onHandle: (entry: string, handle: PlayerShareView | undefined) => void;
 	onState: (entry: string, state: FrameShareState | undefined) => void;
 }) {
 	const client = useMemo(() => canvasPublicationClient(project, entry), [project, entry]);
+	// in the frame the label is drawn moved, after it has been (#81)
+	const follow = useCallback(
+		(moved: () => void) =>
+			camera.subscribe((at) => {
+				if (at !== null) moved();
+			}),
+		[camera],
+	);
 	const share = usePlayerShare(client, {
 		anchor: () => document.querySelector(`[data-frame-label="${CSS.escape(entry)}"]`),
 		placement: "beside",
+		follow,
 	});
 	// the canvas holds one handle for the frame's whole life, so it forwards to the latest render's verbs
 	const latest = useRef(share);
