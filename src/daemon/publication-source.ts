@@ -1,6 +1,5 @@
-import { createRequire } from "node:module";
 import { extname, join } from "node:path";
-import type { NodePath, default as Traverse } from "@babel/traverse";
+import traverseModule, { type NodePath } from "@babel/traverse";
 import type { Node, Program } from "@babel/types";
 import { ASSET_EXTENSIONS, TEXT_EXTENSIONS } from "./assets";
 import { designRelativePath } from "./design-path";
@@ -8,7 +7,12 @@ import type { FrameGraph } from "./flows";
 import { createSourcePass, type NavSite, resolveFrameDir, type UnreadableSite } from "./nav-sites";
 import { componentInputs, targets } from "./publication-values";
 
-const { default: traverse } = createRequire(import.meta.url)("@babel/traverse") as { default: typeof Traverse };
+// CommonJS with an `exports.default`: Node and the published bundle import the
+// whole module object, vitest unwraps it to the function.
+const traverse: typeof traverseModule =
+	typeof traverseModule === "function"
+		? traverseModule
+		: (traverseModule as unknown as { default: typeof traverseModule }).default;
 export interface PublicationSource {
 	sites: NavSite[];
 	unreadable: UnreadableSite[];
