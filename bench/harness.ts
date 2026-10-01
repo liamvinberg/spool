@@ -147,6 +147,7 @@ export interface FrameBox extends Box {
 }
 
 const COVER_SETUP_TIMEOUT_MS = 600_000;
+const COVER_SETUP_MS_PER_FRAME = 1500;
 const CURRENT_COVER = /^[0-9a-f]{32}\.(?:jpg|png)$/;
 
 /** Remove only the copied project's cover store. The source project is never passed here. */
@@ -207,21 +208,26 @@ export async function prepareCurrentCovers(
 	const page = await context.newPage();
 	try {
 		await page.goto(url, { waitUntil: "domcontentloaded" });
-		const deadline = Date.now() + COVER_SETUP_TIMEOUT_MS;
+		const started = Date.now();
+		// a ceiling, not an estimate: an idle M1 Pro makes 200 covers in about a
+		// minute, a loaded one several times slower, and n1000 is five times 200
+		const timeoutMs = Math.max(COVER_SETUP_TIMEOUT_MS, frames.length * COVER_SETUP_MS_PER_FRAME);
 		let missing = missingCurrentCoverNames(root, frames);
-		while (missing.length > 0 && Date.now() < deadline) {
+		while (missing.length > 0 && Date.now() < started + timeoutMs) {
 			await page.waitForTimeout(250);
 			missing = missingCurrentCoverNames(root, frames);
 		}
 		if (missing.length > 0) {
 			const sample = missing.slice(0, 6).join(", ");
 			throw new Error(
-				`cover setup timed out after ${COVER_SETUP_TIMEOUT_MS / 1000} s: ` +
+				`cover setup timed out after ${timeoutMs / 1000} s: ` +
 					`${missing.length} of ${frames.length} frames still lacked one current image` +
 					` (${sample}${missing.length > 6 ? ", …" : ""})`,
 			);
 		}
-		process.stderr.write(`bench: prepared ${frames.length} current covers on page "${pageName}"\n`);
+		process.stderr.write(
+			`bench: prepared ${frames.length} current covers on page "${pageName}" in ${((Date.now() - started) / 1000).toFixed(0)} s\n`,
+		);
 	} finally {
 		await context.close();
 		// A closing canvas can still have its camera save in flight. Let it land
