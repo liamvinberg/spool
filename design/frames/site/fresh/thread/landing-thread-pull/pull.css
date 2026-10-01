@@ -1,0 +1,365 @@
+/* Take B, pull: one rope stitched through the full stops, there to be grabbed. */
+
+.tp-page {
+	padding-inline: max(80px, calc((100% - 1280px) / 2));
+	font-family: var(--font-body);
+}
+
+/* The rope runs behind the words and over the page; it takes no pointer events itself. */
+.tp-canvas {
+	position: fixed;
+	inset: 0;
+	width: 100vw;
+	height: 100vh;
+	z-index: 1;
+	pointer-events: none;
+}
+.tp-page :is(.tp-hero h1, .tp-hero-foot, .tp-section h2, .tp-section > p, .tp-close-copy) {
+	position: relative;
+	z-index: 3;
+}
+:root[data-rope="near"] {
+	cursor: grab;
+}
+:root[data-rope="held"],
+:root[data-rope="held"] * {
+	cursor: grabbing !important;
+	user-select: none;
+}
+
+.tp-page :is(h1, h2) {
+	font-family: var(--font-display);
+	font-variation-settings: "opsz" 96;
+	font-weight: 560;
+	letter-spacing: -0.055em;
+	color: var(--color-text);
+}
+
+/* the full stop keeps its glyph for layout and reading; the hole sits on it */
+.tp-stop {
+	color: transparent;
+}
+.tp-stop i {
+	display: inline-block;
+	vertical-align: baseline;
+	width: 0.13em;
+	height: 0.13em;
+	margin-left: -0.2em;
+	margin-right: 0.07em;
+	border-radius: 50%;
+	background: #050505;
+	border: 1px solid #2c2926;
+}
+
+/* nav */
+.tp-nav {
+	position: relative;
+	z-index: 4;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 104px;
+}
+.tp-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font: 600 22px/1 var(--font-display);
+	letter-spacing: -0.04em;
+	color: var(--color-text);
+}
+.tp-mark {
+	display: inline-block;
+	width: 17px;
+	height: 22px;
+	color: var(--color-thread);
+}
+.tp-mark svg {
+	width: 100%;
+	height: 100%;
+}
+.tp-nav nav {
+	display: flex;
+	gap: 36px;
+	font-size: 15px;
+}
+.tp-nav nav a {
+	color: var(--color-soft);
+	padding-block: 14px;
+	transition: color 200ms ease;
+}
+.tp-nav nav a:hover {
+	color: var(--color-text);
+}
+
+/* hero */
+.tp-hero {
+	position: relative;
+	padding-top: 96px;
+	padding-bottom: 140px;
+}
+.tp-hero h1 {
+	font-size: 224px;
+	line-height: 0.84;
+}
+.tp-spool {
+	position: absolute;
+	right: 120px;
+	top: 70px;
+	width: 180px;
+	height: 250px;
+}
+.tp-hint {
+	position: absolute;
+	z-index: 3;
+	right: 140px;
+	top: 26px;
+	width: 140px;
+	text-align: center;
+	font-size: 14px;
+	color: var(--color-muted);
+}
+.tp-hero-foot {
+	margin-top: 120px;
+	max-width: 500px;
+}
+.tp-hero-foot p {
+	font-size: 21px;
+	line-height: 1.5;
+	color: var(--color-soft);
+	text-wrap: pretty;
+}
+.tp-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	column-gap: 28px;
+	margin-top: 40px;
+}
+.tp-download {
+	display: inline-flex;
+	align-items: center;
+	min-height: 50px;
+	padding: 0 26px;
+	border-radius: 999px;
+	background: var(--color-thread);
+	color: #fff;
+	font: 500 16px/1 var(--font-body);
+	transition:
+		background-color 200ms ease,
+		transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tp-download:hover {
+	background: #ff4a2b;
+}
+.tp-download:active {
+	transform: scale(0.98);
+}
+
+/* sections: headings alternate sides, the words always on the left */
+.tp-section {
+	position: relative;
+	padding-block: 150px 170px;
+}
+.tp-section h2 {
+	font-size: 136px;
+	line-height: 0.88;
+}
+.tp-section[data-side="right"] h2 {
+	text-align: right;
+}
+.tp-section > p,
+.tp-close-copy {
+	max-width: 460px;
+	margin-top: 56px;
+}
+.tp-section p {
+	font-size: 19px;
+	line-height: 1.58;
+	color: var(--color-soft);
+	text-wrap: pretty;
+}
+.tp-section code {
+	font: 0.86em var(--font-mono);
+	color: var(--color-text);
+}
+.tp-close {
+	padding-bottom: 200px;
+}
+.tp-close h2 {
+	padding-right: 120px;
+}
+.tp-terminal {
+	display: flex;
+	flex-direction: column;
+	margin-top: 28px;
+	padding-top: 10px;
+	border-top: 1px solid #1f1e1d;
+}
+.tp-terminal .th-line {
+	min-height: 36px;
+	padding-block: 6px;
+}
+
+/* tags hung on the rope */
+.tp-charms {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 2;
+}
+.tp-tag {
+	position: absolute;
+	left: 0;
+	top: 0;
+	transform-origin: 50% 0;
+	padding: 14px 14px 9px;
+	border-radius: 7px;
+	background: #191817;
+	border: 1px solid #2f2c29;
+	font: 12px/16px var(--font-mono);
+	font-feature-settings: "calt" 0;
+	color: var(--color-soft);
+	white-space: nowrap;
+	will-change: transform;
+}
+.tp-tag::before {
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 4px;
+	width: 5px;
+	height: 5px;
+	margin-left: -2.5px;
+	border-radius: 50%;
+	background: #0b0b0b;
+	border: 1px solid #3a3633;
+}
+.tp-tag-download {
+	pointer-events: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	padding: 22px 22px 16px;
+	border-radius: 10px;
+	background: var(--color-text);
+	border-color: var(--color-text);
+	color: #141210;
+	font: 500 16px/1 var(--font-body);
+	transition: background-color 200ms ease;
+}
+.tp-tag-download::before {
+	top: 7px;
+	width: 7px;
+	height: 7px;
+	margin-left: -3.5px;
+	background: #101010;
+	border: 0;
+}
+.tp-tag-download:hover {
+	background: #ffffff;
+}
+
+/* footer */
+.tp-footer {
+	position: relative;
+	z-index: 4;
+	display: flex;
+	align-items: center;
+	gap: 40px;
+	padding-block: 56px 64px;
+	border-top: 1px solid #1d1c1b;
+	font-size: 14px;
+	color: var(--color-muted);
+	background: var(--color-bg);
+}
+.tp-footer .tp-brand {
+	font-size: 18px;
+}
+.tp-footer .tp-mark {
+	width: 13px;
+	height: 17px;
+}
+.tp-footer p a {
+	color: var(--color-soft);
+}
+.tp-footer a:hover {
+	color: var(--color-text);
+}
+.tp-footer nav {
+	display: flex;
+	gap: 28px;
+	margin-left: auto;
+}
+
+@media (max-width: 760px) {
+	.tp-page {
+		padding-inline: 20px;
+	}
+	.tp-nav {
+		height: 76px;
+	}
+	.tp-nav nav {
+		gap: 20px;
+		font-size: 14px;
+	}
+	.tp-nav nav a:first-child {
+		display: none;
+	}
+	.tp-hero {
+		padding-top: 200px;
+		padding-bottom: 80px;
+	}
+	.tp-hero h1 {
+		font-size: 84px;
+	}
+	.tp-spool {
+		right: 24px;
+		top: 70px;
+		width: 96px;
+		height: 140px;
+	}
+	.tp-hint {
+		display: none;
+	}
+	.tp-close h2 {
+		padding-right: 0;
+		text-align: left !important;
+	}
+	.tp-close .tp-close-copy {
+		margin-top: 200px;
+	}
+	.tp-hero-foot {
+		margin-top: 72px;
+	}
+	.tp-hero-foot p {
+		font-size: 18px;
+	}
+	.tp-section {
+		padding-block: 96px 150px;
+	}
+	.tp-section h2 {
+		font-size: 60px;
+	}
+	.tp-section > p,
+	.tp-close-copy {
+		margin-top: 32px;
+		max-width: 100%;
+	}
+	.tp-section p {
+		font-size: 17px;
+	}
+	.tp-tag {
+		font-size: 11px;
+	}
+	.tp-close {
+		padding-bottom: 260px;
+	}
+	.tp-footer {
+		flex-wrap: wrap;
+		gap: 20px;
+	}
+	.tp-footer nav {
+		margin-left: 0;
+	}
+}

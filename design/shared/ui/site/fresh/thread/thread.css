@@ -1,0 +1,77 @@
+/* The thread family: the site's token values and the type both takes set in. */
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300..700&display=swap");
+
+/* The page scrolls with the browser, the canvas pinned over it. */
+html,
+body,
+#root {
+	height: auto;
+	min-height: 100%;
+}
+
+.th-page {
+	--color-bg: #101010;
+	--color-raised: #1a1a1a;
+	--color-border: #262626;
+	--color-text: #f0efed;
+	--color-soft: #aaa6a1;
+	--color-muted: #7d7a76;
+	--color-thread: #f5391a;
+	--font-mono: "Fragment Mono", ui-monospace, monospace;
+	--font-serif: "Instrument Serif", Georgia, serif;
+	--font-body: "Inter Tight", system-ui, sans-serif;
+	--font-display: "Bricolage Grotesque", system-ui, sans-serif;
+	position: relative;
+	isolation: isolate;
+	min-height: 100vh;
+	overflow-x: clip;
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-family: var(--font-body);
+	-webkit-font-smoothing: antialiased;
+}
+
+.th-page ::selection {
+	background: #f5391a55;
+}
+
+.th-page a,
+.th-page button {
+	-webkit-tap-highlight-color: transparent;
+}
+
+.th-page :focus-visible {
+	outline: 1.5px solid var(--color-thread);
+	outline-offset: 3px;
+	border-radius: 4px;
+}
+
+/* A copyable shell line. */
+.th-line {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 12px;
+	min-height: 44px;
+	padding: 12px 0;
+	font: 13px/20px var(--font-mono);
+	font-feature-settings: "calt" 0;
+	color: var(--color-soft);
+	text-align: left;
+	cursor: copy;
+}
+.th-line code {
+	color: var(--color-text);
+	user-select: text;
+}
+.th-line-prompt {
+	color: var(--color-muted);
+}
+.th-line-state {
+	margin-left: auto;
+	padding-left: 20px;
+	color: var(--color-muted);
+	transition: color 200ms ease;
+}
+.th-line:hover .th-line-state {
+	color: var(--color-text);
+}
