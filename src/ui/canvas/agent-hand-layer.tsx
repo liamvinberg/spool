@@ -1,6 +1,8 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type { Camera, ProjectedFrame } from "../api";
 import { type Hand, type HandMark, PLATE_DRAWN } from "./agent-hand";
+import { type CameraStore, useCameraFollow } from "./camera-store";
+import { shellRadius } from "./frame-shell";
 
 /**
  * The five objects of the agent's hand, drawn over the field (#214).
@@ -138,75 +140,98 @@ function cornerPaths(rect: { x: number; y: number; w: number; h: number }, radiu
 	];
 }
 
+/** A frame's box on screen, for one camera. */
+function onScreen(camera: Camera, frame: ProjectedFrame): { x: number; y: number; w: number; h: number } {
+	return {
+		x: frame.x * camera.k + camera.x,
+		y: frame.y * camera.k + camera.y,
+		w: frame.w * camera.k,
+		h: frame.h * camera.k,
+	};
+}
+
 export function AgentHandLayer({
 	camera,
 	frames,
 	hand,
 	marks,
-	shellRadius,
 }: {
-	camera: Camera;
+	/**
+	 * Every object here stands where a frame is on screen, so each one follows the
+	 * camera and is never rendered by it (#81): a pan writes places, not React.
+	 */
+	camera: CameraStore;
 	frames: readonly ProjectedFrame[];
 	/** where the agent is, or null when nobody is at any frame */
 	hand: Hand | null;
 	/** every located write still on screen, in the order they landed */
 	marks: readonly HandMark[];
-	shellRadius: number;
 }) {
-	const k = camera.k;
 	const held = useWindOff(hand);
 	const byName = new Map(frames.map((frame) => [frame.name, frame]));
-	const screenRect = (frame: ProjectedFrame) => ({
-		x: frame.x * k + camera.x,
-		y: frame.y * k + camera.y,
-		w: frame.w * k,
-		h: frame.h * k,
-	});
 
 	return (
 		<div className="pointer-events-none absolute inset-0" aria-hidden="true" data-agent-hand="">
 			{marks.map((mark) => {
 				const frame = byName.get(mark.frame);
 				if (frame === undefined) return null;
-				const rect = screenRect(frame);
-				const top = rect.y + mark.box.y * k;
-				const height = mark.box.h * k;
-				return (
-					<div key={mark.key}>
-						{/* the plate: the block itself, tinted and drained. The one place the hand
-						    puts ink on the design rather than in the seam beside it, which is why
-						    it is severable — see `PLATE_DRAWN` */}
-						{PLATE_DRAWN ? (
-							<span
-								data-hand-plate={mark.frame}
-								className="animate-hand-plate absolute block rounded-[3px]"
-								style={{ background: TINT, left: rect.x + mark.box.x * k, top, width: mark.box.w * k, height }}
-							/>
-						) : null}
-						{/* the lane: the run's ledger, at the height the write landed at. Ink
-						    carries the age and width carries it again, so a stale mark reads as
-						    residue rather than as a live one somebody drew faintly */}
-						<span
-							data-hand-lane={mark.frame}
-							className="animate-hand-lane absolute block rounded-[1px] bg-text"
-							style={{ left: rect.x - MARK_IN - MARK_W, top, height: Math.max(4, height), width: MARK_W }}
-						/>
-					</div>
-				);
+				return <Located key={mark.key} camera={camera} frame={frame} mark={mark} />;
 			})}
 			{held.map((one) => {
 				const at = byName.get(one.hand.frame);
 				if (at === undefined) return null;
-				return (
-					<Held
-						key={one.hand.frame}
-						hand={one.hand}
-						going={one.going}
-						rect={screenRect(at)}
-						radius={Math.min(12, shellRadius * k)}
-					/>
-				);
+				return <Held key={one.hand.frame} camera={camera} hand={one.hand} going={one.going} frame={at} />;
 			})}
+		</div>
+	);
+}
+
+/** One located write: the plate on the block it changed, and its lane on the wall. */
+function Located({ camera, frame, mark }: { camera: CameraStore; frame: ProjectedFrame; mark: HandMark }) {
+	const plate = useRef<HTMLSpanElement | null>(null);
+	const lane = useRef<HTMLSpanElement | null>(null);
+	useCameraFollow(
+		camera,
+		(at) => {
+			const rect = onScreen(at, frame);
+			const top = rect.y + mark.box.y * at.k;
+			const height = mark.box.h * at.k;
+			if (plate.current !== null) {
+				plate.current.style.left = `${rect.x + mark.box.x * at.k}px`;
+				plate.current.style.top = `${top}px`;
+				plate.current.style.width = `${mark.box.w * at.k}px`;
+				plate.current.style.height = `${height}px`;
+			}
+			if (lane.current !== null) {
+				lane.current.style.left = `${rect.x - MARK_IN - MARK_W}px`;
+				lane.current.style.top = `${top}px`;
+				lane.current.style.height = `${Math.max(4, height)}px`;
+			}
+		},
+		[frame, mark],
+	);
+	return (
+		<div>
+			{/* the plate: the block itself, tinted and drained. The one place the hand
+			    puts ink on the design rather than in the seam beside it, which is why
+			    it is severable — see `PLATE_DRAWN` */}
+			{PLATE_DRAWN ? (
+				<span
+					ref={plate}
+					data-hand-plate={mark.frame}
+					className="animate-hand-plate absolute block rounded-[3px]"
+					style={{ background: TINT }}
+				/>
+			) : null}
+			{/* the lane: the run's ledger, at the height the write landed at. Ink
+			    carries the age and width carries it again, so a stale mark reads as
+			    residue rather than as a live one somebody drew faintly */}
+			<span
+				ref={lane}
+				data-hand-lane={mark.frame}
+				className="animate-hand-lane absolute block rounded-[1px] bg-text"
+				style={{ width: MARK_W }}
+			/>
 		</div>
 	);
 }
@@ -219,30 +244,66 @@ export function AgentHandLayer({
  * amplitude is the pull and moves at the pace a call opens. Both live inside the path,
  * which is why the sample count is fixed — `d` interpolates between paths of the same
  * shape and jumps between paths of different ones.
+ *
+ * What the turn says is rendered; where the frame is on screen is followed (#81). The
+ * wall's place, the corners and the node are written at every drawn frame of the
+ * camera, and the thread's shape only when its length or its pull changed — which a
+ * zoom does to a whole-height thread, and a pan never does.
  */
 function Held({
+	camera,
 	hand,
 	going,
-	rect,
-	radius,
+	frame,
 }: {
+	camera: CameraStore;
 	hand: Hand;
 	/** the turn is over: the thread is winding back onto the node */
 	going: boolean;
-	rect: { x: number; y: number; w: number; h: number };
-	radius: number;
+	frame: ProjectedFrame;
 }) {
-	const wall = wallOf(rect);
 	const live = hand.verb !== null;
-	// a photograph takes the ink off the wall entirely and puts it around the frame
-	const length = hand.picturing ? 0 : hand.hold === "whole" ? rect.h : Math.min(PART, rect.h);
 	// a write is a pluck on a line that is already taut, never a change of length: the
 	// posture channel says what kind of hold this is and an event must not spend it
 	const struck = usePluck(hand.count) && live;
 	const amp = struck ? PLUCK : live ? 0 : SLACK;
-	const ms = usePace(length, struck, live);
 
-	const corners = cornerPaths(rect, radius);
+	const wall = useRef<SVGGElement | null>(null);
+	const threads = useRef(new Map<1 | -1, SVGPathElement>());
+	const corners = useRef<(SVGPathElement | null)[]>([]);
+	const node = useRef<HTMLSpanElement | null>(null);
+	/** the thread as last drawn, which is what tells a posture change from a pull */
+	const drawn = useRef<{ length: number; amp: number } | null>(null);
+
+	useCameraFollow(
+		camera,
+		(at) => {
+			const rect = onScreen(at, frame);
+			const place = wallOf(rect);
+			wall.current?.setAttribute("transform", `translate(${place.line} ${place.mid})`);
+			// a photograph takes the ink off the wall entirely and puts it around the frame
+			const length = hand.picturing ? 0 : hand.hold === "whole" ? rect.h : Math.min(PART, rect.h);
+			const was = drawn.current;
+			if (was === null || was.length !== length || was.amp !== amp) {
+				drawn.current = { length, amp };
+				const ms = paceOf(was !== null && was.length !== length, struck, live);
+				for (const [dir, path] of threads.current) {
+					const d = halfPath(length, amp, dir);
+					path.setAttribute("d", d);
+					path.style.setProperty("d", `path("${d}")`);
+					path.style.setProperty("--hand-pace", `${ms}ms`);
+				}
+			}
+			cornerPaths(rect, Math.min(12, shellRadius(at.k) * at.k)).forEach((d, index) => {
+				corners.current[index]?.setAttribute("d", d);
+			});
+			if (node.current !== null) {
+				node.current.style.left = `${place.line - NODE / 2}px`;
+				node.current.style.top = `${place.mid - NODE / 2}px`;
+			}
+		},
+		[frame, hand, amp, struck, live],
+	);
 
 	return (
 		<>
@@ -254,36 +315,37 @@ function Held({
 				{/* the thread stands here and is shaped in its own coordinates: the place is a
 				    transform and moves with the camera on the frame it moves, and only the shape
 				    is inside the eased path */}
-				<g data-hand-wall={hand.frame} transform={`translate(${wall.line} ${wall.mid})`}>
-					{([1, -1] as const).map((dir) => {
-						const d = halfPath(length, amp, dir);
-						return (
-							<path
-								key={dir}
-								className="animate-hand-wind"
-								data-hand-thread={dir}
-								d={d}
-								// `pathLength` normalizes the dash to the run, so one rule winds a
-								// full-height thread and a 76px one at the same pace
-								pathLength={1}
-								strokeDasharray={1}
-								strokeDashoffset={going ? 1 : 0}
-								stroke="var(--color-text)"
-								strokeOpacity={INK}
-								strokeWidth={THREAD}
-								strokeLinecap="round"
-								style={{ d: `path("${d}")`, "--hand-pace": `${ms}ms` } as CSSProperties}
-							/>
-						);
-					})}
+				<g ref={wall} data-hand-wall={hand.frame}>
+					{([1, -1] as const).map((dir) => (
+						<path
+							key={dir}
+							ref={(path) => {
+								if (path === null) threads.current.delete(dir);
+								else threads.current.set(dir, path);
+							}}
+							className="animate-hand-wind"
+							data-hand-thread={dir}
+							// `pathLength` normalizes the dash to the run, so one rule winds a
+							// full-height thread and a 76px one at the same pace
+							pathLength={1}
+							strokeDasharray={1}
+							strokeDashoffset={going ? 1 : 0}
+							stroke="var(--color-text)"
+							strokeOpacity={INK}
+							strokeWidth={THREAD}
+							strokeLinecap="round"
+						/>
+					))}
 				</g>
 				{/* the `shot` posture: four corners at their own stand-off, struck on from their
 				    arms and never closing */}
-				{corners.map((path) => (
+				{CORNER_ARMS.map((arm, index) => (
 					<path
-						key={path}
+						key={arm}
+						ref={(path) => {
+							corners.current[index] = path;
+						}}
 						data-hand-corner=""
-						d={path}
 						stroke="var(--color-text)"
 						strokeOpacity={0.75}
 						strokeWidth={1.5}
@@ -298,13 +360,12 @@ function Held({
 			{/* the node: the participant itself, drawn last so nothing crosses it. It never
 			    changes, because being at a frame is not a state with degrees */}
 			<span
+				ref={node}
 				data-hand-node={hand.frame}
 				className="animate-hand-node absolute rounded-[2px] border border-muted bg-canvas"
 				style={{
 					width: NODE,
 					height: NODE,
-					left: wall.line - NODE / 2,
-					top: wall.mid - NODE / 2,
 					opacity: going ? 0 : 1,
 					transform: going ? "scale(0.4)" : undefined,
 				}}
@@ -312,6 +373,9 @@ function Held({
 		</>
 	);
 }
+
+/** the four corners, in the order `cornerPaths` draws them */
+const CORNER_ARMS = ["nw", "ne", "se", "sw"] as const;
 
 /**
  * The hands on screen: the one that has hold, and the one still letting go.
@@ -366,10 +430,7 @@ function useWindOff(hand: Hand | null): { hand: Hand; going: boolean }[] {
  * calls in the capture run under 320ms and a symmetric channel blinks twelve times in
  * thirty-seven seconds. A pluck is faster than either.
  */
-function usePace(length: number, struck: boolean, live: boolean): number {
-	const before = useRef(length);
-	const moved = before.current !== length;
-	before.current = length;
+function paceOf(moved: boolean, struck: boolean, live: boolean): number {
 	if (struck) return PLUCK_MS / 2;
 	if (moved) return POSTURE_MS;
 	return live ? TAUT_MS : SLACK_MS;

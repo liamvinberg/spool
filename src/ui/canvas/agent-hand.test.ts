@@ -20,6 +20,7 @@ import {
 import { AgentHandLayer } from "./agent-hand-layer";
 import type { AgentTurn } from "./agent-stream";
 import type { AgentEntry, AgentRow } from "./agent-transcript";
+import { type CameraStore, createCameraStore } from "./camera-store";
 
 /**
  * The agent's hand on a frame (#214): where it is, and what it has just changed.
@@ -219,6 +220,24 @@ const mark = (over: Partial<HandMark> = {}): HandMark => ({
 	...over,
 });
 
+/**
+ * A camera standing where it is told, drawn the moment it moves: the layer follows the
+ * camera rather than rendering with it (#81), so a display frame has to come for it to
+ * move, and here one comes at once.
+ */
+function cameraAt(camera: Camera): CameraStore {
+	vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+		callback(performance.now());
+		return 1;
+	});
+	onTestFinished(() => {
+		vi.unstubAllGlobals();
+	});
+	const store = createCameraStore();
+	store.set(camera);
+	return store;
+}
+
 function draw(props: Parameters<typeof AgentHandLayer>[0]): HTMLElement {
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -232,7 +251,7 @@ function draw(props: Parameters<typeof AgentHandLayer>[0]): HTMLElement {
 }
 
 const layer = (over: Partial<Parameters<typeof AgentHandLayer>[0]> = {}) =>
-	draw({ camera: CAMERA, frames: FRAMES, hand: null, marks: [], shellRadius: 12, ...over });
+	draw({ camera: cameraAt(CAMERA), frames: FRAMES, hand: null, marks: [], ...over });
 
 describe("what the canvas draws", () => {
 	it("draws nothing at all when nobody is at a frame and nothing has changed", () => {
@@ -255,12 +274,9 @@ describe("what the canvas draws", () => {
 			act(() => root.unmount());
 			host.remove();
 		});
+		const camera = cameraAt(CAMERA);
 		const at = (one: Hand | null) =>
-			act(() =>
-				root.render(
-					createElement(AgentHandLayer, { camera: CAMERA, frames: FRAMES, hand: one, marks: [], shellRadius: 12 }),
-				),
-			);
+			act(() => root.render(createElement(AgentHandLayer, { camera, frames: FRAMES, hand: one, marks: [] })));
 
 		at(hand({ frame: "home" }));
 		expect(nodes(host)).toEqual(["home"]);
@@ -289,14 +305,10 @@ describe("what the canvas draws", () => {
 			act(() => root.unmount());
 			host.remove();
 		});
-		const at = (camera: Camera) =>
-			act(() =>
-				root.render(
-					createElement(AgentHandLayer, { camera, frames: FRAMES, hand: hand(), marks: [], shellRadius: 12 }),
-				),
-			);
+		const camera = cameraAt(CAMERA);
+		act(() => root.render(createElement(AgentHandLayer, { camera, frames: FRAMES, hand: hand(), marks: [] })));
+		const at = (next: Camera) => act(() => camera.set(next));
 
-		at(CAMERA);
 		const shape = paths(host);
 		const wall = () => host.querySelector("[data-hand-wall]")?.getAttribute("transform");
 		expect(wall()).toBe("translate(88 522)");
@@ -350,12 +362,10 @@ describe("what the canvas draws", () => {
 
 	it("scales a located mark with the camera and leaves the presence hairline", () => {
 		const host = draw({
-			camera: { x: 0, y: 0, k: 0.5 },
+			camera: cameraAt({ x: 0, y: 0, k: 0.5 }),
 			frames: FRAMES,
 			hand: hand(),
 			marks: [mark()],
-			shellRadius: 12,
-			...{},
 		});
 		const plate = host.querySelector("[data-hand-plate]") as HTMLElement;
 		const node = host.querySelector("[data-hand-node]") as HTMLElement;

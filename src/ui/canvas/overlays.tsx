@@ -1,6 +1,9 @@
+import { type CSSProperties, type HTMLAttributes, useRef } from "react";
 import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
+import { type CameraStore, useCameraFollow } from "./camera-store";
+import { shellRadius } from "./frame-shell";
 import type { ShownRefusal } from "./hand-edit";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
@@ -15,6 +18,11 @@ import type { SnapMarks } from "./snap";
  * on-thread mono 10; element outline 1px thread at 2px offset, no handles.
  * The frame's knobs render on corners only — the sides carry invisible grab
  * bands, Figma's pattern for single-axis resize.
+ *
+ * Screen space means placed for a camera, and the camera moves without a
+ * render (#81). So each piece of furniture is rendered for what it is and
+ * placed by `Follow`, which writes its box straight to the element in the same
+ * frame the field moves in: a ring never trails the frame it is round.
  */
 
 export interface PickedSelection extends PickedHit {
@@ -79,6 +87,96 @@ const CORNERS = ["nw", "ne", "sw", "se"] as const;
 
 const SIDES = ["n", "e", "s", "w"] as const;
 
+/** A box of furniture's place for one camera, in CSS pixels. */
+type Place = Partial<Record<"left" | "top" | "width" | "height" | "borderRadius", number>>;
+
+const PLACED = ["left", "top", "width", "height", "borderRadius"] as const;
+
+/**
+ * One piece of screen-space furniture, following the camera on its own (#81).
+ *
+ * React renders what it is, and `place` says where it stands for a camera. The
+ * place is written to the element directly: now, after any render that moved
+ * it, and at every drawn frame of the camera, which is the same frame the
+ * field moves in. React never writes those five properties, so a render can
+ * never put back a place the camera has already left.
+ */
+function Follow({
+	camera,
+	place,
+	...rest
+}: {
+	camera: CameraStore;
+	place: (camera: Camera) => Place;
+} & Omit<HTMLAttributes<HTMLDivElement>, "style"> & { style?: CSSProperties }) {
+	const box = useRef<HTMLDivElement | null>(null);
+	useCameraFollow(
+		camera,
+		(at) => {
+			const el = box.current;
+			if (el === null) return;
+			const placed = place(at);
+			for (const key of PLACED) {
+				const value = placed[key];
+				if (value !== undefined) el.style[key] = `${value}px`;
+			}
+		},
+		[place],
+	);
+	return <div ref={box} {...rest} />;
+}
+
+/** A world box on screen, for one camera. */
+function onScreen(camera: Camera, box: Box): Box {
+	return { x: box.x * camera.k + camera.x, y: box.y * camera.k + camera.y, w: box.w * camera.k, h: box.h * camera.k };
+}
+
+/**
+ * A frame-local element rect inside its frame's own clipped box (#323).
+ *
+ * A frame is a window on a document that is usually taller than it, and an
+ * element laid out past the frame's height reports a rect the frame never
+ * draws. Drawn against the viewport that ring landed out on the canvas, over
+ * whatever sat beside the frame; drawn in here it is clipped exactly as the
+ * frame clips its own content, and `ClippedEdges` says which edge it ran past.
+ */
+function inFrame(camera: Camera, rect: Box): Box {
+	return { x: rect.x * camera.k, y: rect.y * camera.k, w: rect.w * camera.k, h: rect.h * camera.k };
+}
+
+/** The ring's radius: the shell's own corner on screen, two pixels out. */
+function ringRadius(k: number): number {
+	return Math.min(12, shellRadius(k) * k) + 2;
+}
+
+/** A frame's ring, 3px outside it. */
+function ringPlace(camera: Camera, frame: Box): Place {
+	const rect = onScreen(camera, frame);
+	return {
+		left: rect.x - 3,
+		top: rect.y - 3,
+		width: rect.w + 6,
+		height: rect.h + 6,
+		borderRadius: ringRadius(camera.k),
+	};
+}
+
+/** The clip a frame's element rings are drawn inside, padded by their reach. */
+function clipPlace(camera: Camera, frame: Box): Place {
+	const rect = onScreen(camera, frame);
+	return {
+		left: rect.x - RING_REACH,
+		top: rect.y - RING_REACH,
+		width: rect.w + RING_REACH * 2,
+		height: rect.h + RING_REACH * 2,
+	};
+}
+
+/** The frame's own box inside that clip. */
+function framePlace(camera: Camera, frame: Box): Place {
+	return { width: frame.w * camera.k, height: frame.h * camera.k };
+}
+
 export function SelectionOverlay({
 	camera,
 	frames,
@@ -96,9 +194,9 @@ export function SelectionOverlay({
 	marks,
 	marquee,
 	dropLine = null,
-	shellRadius,
 }: {
-	camera: Camera;
+	/** The furniture follows the camera rather than rendering with it (#81). */
+	camera: CameraStore;
 	frames: ProjectedFrame[];
 	selected: readonly string[];
 	entered: string | null;
@@ -140,38 +238,10 @@ export function SelectionOverlay({
 	marquee: Box | null;
 	/** Where an element being dragged would land (#340): the line between two siblings, frame-local. */
 	dropLine?: { frame: string; box: Box } | null;
-	shellRadius: number;
 }) {
-	const k = camera.k;
-	const screenRect = (box: Box): Box => ({
-		x: box.x * k + camera.x,
-		y: box.y * k + camera.y,
-		w: box.w * k,
-		h: box.h * k,
-	});
-	/**
-	 * A frame-local element rect inside its frame's own clipped box (#323).
-	 *
-	 * A frame is a window on a document that is usually taller than it, and an
-	 * element laid out past the frame's height reports a rect the frame never
-	 * draws. Drawn against the viewport that ring landed out on the canvas, over
-	 * whatever sat beside the frame; drawn in here it is clipped exactly as the
-	 * frame clips its own content, and `ClippedEdges` says which edge it ran
-	 * past.
-	 */
-	const localBox = (rect: { x: number; y: number; w: number; h: number }): Box => ({
-		x: rect.x * k,
-		y: rect.y * k,
-		w: rect.w * k,
-		h: rect.h * k,
-	});
-	/** A frame-local element rect on screen — undefined when the frame is gone. */
-	const elementBox = (name: string, rect: { x: number; y: number; w: number; h: number }): Box | undefined => {
-		const frame = frames.find((f) => f.name === name);
-		if (frame === undefined) return undefined;
-		return screenRect({ x: frame.x + rect.x, y: frame.y + rect.y, w: rect.w, h: rect.h });
-	};
-	const ringRadius = Math.min(12, shellRadius * k) + 2;
+	/** A frame-local element rect on screen. */
+	const elementBox = (at: Camera, frame: ProjectedFrame, rect: Box): Box =>
+		onScreen(at, { x: frame.x + rect.x, y: frame.y + rect.y, w: rect.w, h: rect.h });
 
 	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
 	const hoveredFrame =
@@ -194,141 +264,132 @@ export function SelectionOverlay({
 		<div className="pointer-events-none absolute inset-0">
 			{/* snap marks: alignment and spacing are meaning, so they carry the thread */}
 			{marks.v.map((x) => (
-				<div key={`v${x}`} className="absolute inset-y-0 w-px bg-thread" style={{ left: x * k + camera.x }} />
-			))}
-			{marks.h.map((y) => (
-				<div key={`h${y}`} className="absolute inset-x-0 h-px bg-thread" style={{ top: y * k + camera.y }} />
-			))}
-			{marks.spans.map((span) => (
-				<SpanBar
-					key={`${span.axis}${span.from}-${span.to}-${span.at}`}
-					axis={span.axis}
-					from={span.from * k + (span.axis === "x" ? camera.x : camera.y)}
-					length={(span.to - span.from) * k}
-					at={span.at * k + (span.axis === "x" ? camera.y : camera.x)}
+				<Follow
+					key={`v${x}`}
+					camera={camera}
+					place={(at) => ({ left: x * at.k + at.x })}
+					className="absolute inset-y-0 w-px bg-thread"
 				/>
 			))}
+			{marks.h.map((y) => (
+				<Follow
+					key={`h${y}`}
+					camera={camera}
+					place={(at) => ({ top: y * at.k + at.y })}
+					className="absolute inset-x-0 h-px bg-thread"
+				/>
+			))}
+			{marks.spans.map((span) => (
+				<SpanBar key={`${span.axis}${span.from}-${span.to}-${span.at}`} camera={camera} span={span} />
+			))}
 
-			{hoveredFrame !== undefined &&
-				(() => {
-					const rect = screenRect(hoveredFrame);
-					return (
-						<div
-							data-frame-hover={hoveredFrame.name}
-							className="absolute border border-border-raised"
-							style={{
-								left: rect.x - 3,
-								top: rect.y - 3,
-								width: rect.w + 6,
-								height: rect.h + 6,
-								borderRadius: ringRadius,
-								opacity: hovered?.visible === true ? 1 : 0,
-								transition: hovered?.visible === true ? "none" : "opacity 80ms ease-out",
-							}}
-						/>
-					);
-				})()}
+			{hoveredFrame !== undefined && (
+				<Follow
+					camera={camera}
+					place={(at) => ringPlace(at, hoveredFrame)}
+					data-frame-hover={hoveredFrame.name}
+					className="absolute border border-border-raised"
+					style={{
+						opacity: hovered?.visible === true ? 1 : 0,
+						transition: hovered?.visible === true ? "none" : "opacity 80ms ease-out",
+					}}
+				/>
+			)}
 
 			{ringed.map((name) => {
 				const frame = frames.find((f) => f.name === name);
 				if (frame === undefined) return null;
-				const rect = screenRect(frame);
 				return (
-					<div
+					<Follow
 						key={`ring-${name}`}
+						camera={camera}
+						place={(at) => ringPlace(at, frame)}
 						// the ring's own strength is the system page's law and does not move; the
 						// cursor on this frame's chip fills the box instead, which is the same
 						// thing a lit element outline does one level down (#116)
 						className={`absolute border-[1.5px] border-thread ${lit === name || lit === WHOLE_SELECTION ? "bg-thread/10" : ""}`}
-						style={{
-							left: rect.x - 3,
-							top: rect.y - 3,
-							width: rect.w + 6,
-							height: rect.h + 6,
-							borderRadius: ringRadius,
-						}}
 					/>
 				);
 			})}
 
-			{single !== undefined &&
-				(() => {
-					const rect = screenRect(single);
-					return (
-						<>
-							{SIDES.map((side) => {
-								// invisible 10px bands along the ring, inset past the corner zones
-								const place =
-									side === "n" || side === "s"
-										? {
-												left: rect.x + 5,
-												width: Math.max(rect.w - 10, 0),
-												top: side === "n" ? rect.y - 8 : rect.y + rect.h - 2,
-												height: 10,
-											}
-										: {
-												top: rect.y + 5,
-												height: Math.max(rect.h - 10, 0),
-												left: side === "w" ? rect.x - 8 : rect.x + rect.w - 2,
-												width: 10,
-											};
-								return (
-									<div
-										key={side}
-										data-handle={side}
-										className="pointer-events-auto absolute"
-										style={{ ...place, cursor: HANDLE_CURSORS[side] }}
-									/>
-								);
-							})}
-							{CORNERS.map((corner) => {
+			{single !== undefined && (
+				<>
+					{SIDES.map((side) => (
+						<Follow
+							key={side}
+							camera={camera}
+							// invisible 10px bands along the ring, inset past the corner zones
+							place={(at) => {
+								const rect = onScreen(at, single);
+								return side === "n" || side === "s"
+									? {
+											left: rect.x + 5,
+											width: Math.max(rect.w - 10, 0),
+											top: side === "n" ? rect.y - 8 : rect.y + rect.h - 2,
+											height: 10,
+										}
+									: {
+											top: rect.y + 5,
+											height: Math.max(rect.h - 10, 0),
+											left: side === "w" ? rect.x - 8 : rect.x + rect.w - 2,
+											width: 10,
+										};
+							}}
+							data-handle={side}
+							className="pointer-events-auto absolute"
+							style={{ cursor: HANDLE_CURSORS[side] }}
+						/>
+					))}
+					{CORNERS.map((corner) => (
+						<Follow
+							key={corner}
+							camera={camera}
+							place={(at) => {
+								const rect = onScreen(at, single);
 								const cx = corner.includes("w") ? rect.x - 3 : rect.x + rect.w + 3;
 								const cy = corner.includes("n") ? rect.y - 3 : rect.y + rect.h + 3;
-								return (
-									<div
-										key={corner}
-										data-handle={corner}
-										className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
-										style={{ left: cx - 8, top: cy - 8, cursor: HANDLE_CURSORS[corner] }}
-									>
-										<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
-									</div>
-								);
-							})}
-							<div
-								className="absolute flex items-center justify-center rounded-xs bg-thread-strong px-2 py-[3px]"
-								style={{ left: rect.x + rect.w / 2, top: rect.y + rect.h + 14, transform: "translateX(-50%)" }}
-							>
-								<span className="text-on-thread type-detail">
-									{`${Math.round(single.w)} × ${Math.round(single.h)}`}
-								</span>
-							</div>
-						</>
-					);
-				})()}
+								return { left: cx - 8, top: cy - 8 };
+							}}
+							data-handle={corner}
+							className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
+							style={{ cursor: HANDLE_CURSORS[corner] }}
+						>
+							<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
+						</Follow>
+					))}
+					<Follow
+						camera={camera}
+						place={(at) => {
+							const rect = onScreen(at, single);
+							return { left: rect.x + rect.w / 2, top: rect.y + rect.h + 14 };
+						}}
+						className="absolute flex items-center justify-center rounded-xs bg-thread-strong px-2 py-[3px]"
+						style={{ transform: "translateX(-50%)" }}
+					>
+						<span className="text-on-thread type-detail">{`${Math.round(single.w)} × ${Math.round(single.h)}`}</span>
+					</Follow>
+				</>
+			)}
 
 			{pickedFrames.map((name) => {
 				const frame = frames.find((f) => f.name === name);
 				if (frame === undefined) return null;
-				const rect = screenRect(frame);
 				const group = picked.filter((pick) => pick.frame === name);
 				// the ring is the element's own lines (#321)
 				const drawn = group.map((pick) => ({ pick, rects: lineBoxes(pick) }));
 				return (
-					<div
+					<Follow
 						key={`picked-${name}`}
+						camera={camera}
+						place={(at) => clipPlace(at, frame)}
 						data-frame-clip={name}
 						className="absolute overflow-hidden"
-						style={{
-							left: rect.x - RING_REACH,
-							top: rect.y - RING_REACH,
-							width: rect.w + RING_REACH * 2,
-							height: rect.h + RING_REACH * 2,
-						}}
 					>
-						<div
+						<Follow
+							camera={camera}
+							place={(at) => framePlace(at, frame)}
 							className="absolute"
-							style={{ left: RING_REACH, top: RING_REACH, width: rect.w, height: rect.h }}
+							style={{ left: RING_REACH, top: RING_REACH }}
 						>
 							{drawn.flatMap(({ pick, rects }) => {
 								const key = pickKey(pick.frame, pick.selector);
@@ -336,8 +397,9 @@ export function SelectionOverlay({
 									<ElementOutline
 										key={`${key}\u0000${box.y}\u0000${box.x}`}
 										mark
-										box={localBox(box)}
-										radius={pick.radius * k}
+										camera={camera}
+										rect={box}
+										radius={pick.radius}
 										lit={lit === key || lit === WHOLE_SELECTION}
 									/>
 								));
@@ -346,7 +408,8 @@ export function SelectionOverlay({
 								(pick.spills ?? []).map((side) => (
 									<SpillMark
 										key={`${pickKey(pick.frame, pick.selector)}\u0000${side}`}
-										box={localBox(pick.rect)}
+										camera={camera}
+										rect={pick.rect}
 										side={side}
 									/>
 								)),
@@ -354,14 +417,14 @@ export function SelectionOverlay({
 							{group.length < 2 ? null : (
 								// what several held elements are, as one box (#323): the ring
 								// says the extent of the selection
-								<div
+								<Follow
+									camera={camera}
+									place={(at) => {
+										const box = inFrame(at, unionOf(drawn.flatMap((one) => one.rects)));
+										return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
+									}}
 									data-element-union=""
 									className="absolute border border-thread border-dashed opacity-60"
-									style={(() => {
-										const union = unionOf(drawn.flatMap((one) => one.rects));
-										const box = localBox(union);
-										return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
-									})()}
 								/>
 							)}
 							<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
@@ -369,10 +432,10 @@ export function SelectionOverlay({
 							named.frame === name &&
 							named.name !== undefined &&
 							!(editing?.frame === named.frame && editing.selector === named.selector) ? (
-								<NameLabel name={named.name} box={localBox(unionOf(lineBoxes(named)))} />
+								<NameLabel camera={camera} name={named.name} rect={unionOf(lineBoxes(named))} />
 							) : null}
-						</div>
-					</div>
+						</Follow>
+					</Follow>
 				);
 			})}
 
@@ -380,47 +443,45 @@ export function SelectionOverlay({
 				(() => {
 					const frame = frames.find((f) => f.name === previewShown.frame);
 					if (frame === undefined) return null;
-					const rect = screenRect(frame);
 					return (
-						<div
-							className="absolute overflow-hidden"
-							style={{
-								left: rect.x - RING_REACH,
-								top: rect.y - RING_REACH,
-								width: rect.w + RING_REACH * 2,
-								height: rect.h + RING_REACH * 2,
-							}}
-						>
-							<div
+						<Follow camera={camera} place={(at) => clipPlace(at, frame)} className="absolute overflow-hidden">
+							<Follow
+								camera={camera}
+								place={(at) => framePlace(at, frame)}
 								className="absolute"
-								style={{ left: RING_REACH, top: RING_REACH, width: rect.w, height: rect.h }}
+								style={{ left: RING_REACH, top: RING_REACH }}
 							>
 								{lineBoxes(previewShown).map((box) => (
 									<ElementOutline
 										key={`${box.y}-${box.x}`}
-										box={localBox(box)}
-										radius={previewShown.radius * k}
+										camera={camera}
+										rect={box}
+										radius={previewShown.radius}
 										faded
 									/>
 								))}
-							</div>
-						</div>
+							</Follow>
+						</Follow>
 					);
 				})()}
 
 			{refused !== null &&
 				(() => {
 					const pick = picked.find((held) => held.frame === refused.frame && held.selector === refused.selector);
-					const box = pick === undefined ? undefined : elementBox(pick.frame, pick.rect);
-					if (box === undefined) return null;
+					const frame = pick === undefined ? undefined : frames.find((f) => f.name === pick.frame);
+					if (pick === undefined || frame === undefined) return null;
 					return (
-						<div
+						<Follow
+							camera={camera}
+							place={(at) => {
+								const box = elementBox(at, frame, pick.rect);
+								return { left: box.x - 2, top: box.y + box.h + 8 };
+							}}
 							data-hand-refusal={refused.refusal.code}
 							// the chip stands outside the element it is about, which is over
 							// whatever is drawn under that: it says its piece and takes no
 							// press of its own, only the two it offers as doors (#321)
 							className="pointer-events-none absolute flex max-w-[360px] items-baseline gap-2 rounded-md border border-border-raised bg-raised px-2 py-1 text-muted type-detail"
-							style={{ left: box.x - 2, top: box.y + box.h + 8 }}
 						>
 							<span className="truncate">
 								{refused.refusal.says}
@@ -453,24 +514,23 @@ export function SelectionOverlay({
 									Ask the agent
 								</button>
 							)}
-						</div>
+						</Follow>
 					);
 				})()}
 
 			{dropLine !== null &&
 				(() => {
-					const box = elementBox(dropLine.frame, dropLine.box);
-					if (box === undefined) return null;
+					const frame = frames.find((f) => f.name === dropLine.frame);
+					if (frame === undefined) return null;
 					return (
-						<div
+						<Follow
+							camera={camera}
+							place={(at) => {
+								const box = elementBox(at, frame, dropLine.box);
+								return { left: box.x, top: box.y, width: Math.max(box.w, 2), height: Math.max(box.h, 2) };
+							}}
 							data-drop-line=""
 							className="absolute rounded-full bg-thread"
-							style={{
-								left: box.x,
-								top: box.y,
-								width: Math.max(box.w, 2),
-								height: Math.max(box.h, 2),
-							}}
 						/>
 					);
 				})()}
@@ -489,36 +549,29 @@ export function SelectionOverlay({
  * The canvas's spacing mark: a bar the exact length of the distance between
  * two frames, ticked at both ends, no fill and no number of its own.
  */
-function SpanBar({
-	axis,
-	from,
-	length,
-	at,
-}: {
-	axis: "x" | "y";
-	/** screen-space: where the bar starts along its axis, how long, and its line */
-	from: number;
-	length: number;
-	at: number;
-}) {
-	const flat = axis === "x";
+function SpanBar({ camera, span }: { camera: CameraStore; span: SnapMarks["spans"][number] }) {
+	const flat = span.axis === "x";
 	const girth = SPAN_TICK_PX * 2;
-	const line = at - SPAN_TICK_PX;
 	return (
-		<div
-			data-snap-span={axis}
-			className={`absolute border-thread ${flat ? "border-r border-l" : "border-t border-b"}`}
-			style={
-				flat
+		<Follow
+			camera={camera}
+			place={(at) => {
+				// screen space: where the bar starts along its axis, how long, and its line
+				const from = span.from * at.k + (flat ? at.x : at.y);
+				const length = (span.to - span.from) * at.k;
+				const line = span.at * at.k + (flat ? at.y : at.x) - SPAN_TICK_PX;
+				return flat
 					? { left: from, top: line, width: length, height: girth }
-					: { left: line, top: from, width: girth, height: length }
-			}
+					: { left: line, top: from, width: girth, height: length };
+			}}
+			data-snap-span={span.axis}
+			className={`absolute border-thread ${flat ? "border-r border-l" : "border-t border-b"}`}
 		>
 			<div
 				className={`absolute bg-thread ${flat ? "inset-x-0 h-px" : "inset-y-0 w-px"}`}
 				style={flat ? { top: SPAN_TICK_PX } : { left: SPAN_TICK_PX }}
 			/>
-		</div>
+		</Follow>
 	);
 }
 
@@ -529,15 +582,19 @@ function SpanBar({
  * reads it (`daemon/element-name.ts`). Not a chip, which is the composer's
  * word for a selection entry.
  */
-function NameLabel({ name, box }: { name: string; box: Box }) {
+function NameLabel({ camera, name, rect }: { camera: CameraStore; name: string; rect: Box }) {
 	return (
-		<div
+		<Follow
+			camera={camera}
+			place={(at) => {
+				const box = inFrame(at, rect);
+				return { left: box.x - 2, top: box.y - 2 };
+			}}
 			data-name-label={name}
 			className="absolute -translate-y-full whitespace-nowrap rounded-t-[3px] bg-thread px-1.5 py-px text-on-thread type-detail"
-			style={{ left: box.x - 2, top: box.y - 2 }}
 		>
 			{name}
-		</div>
+		</Follow>
 	);
 }
 
@@ -611,12 +668,20 @@ function ClippedEdges({
  * it. The same two pixels of thread the frame clip already uses, on the side
  * it spills.
  */
-function SpillMark({ box, side }: { box: Box; side: "right" | "bottom" }) {
-	const place =
-		side === "right"
-			? { left: box.x + box.w, top: box.y - 2, width: 2, height: box.h + 4 }
-			: { left: box.x - 2, top: box.y + box.h, width: box.w + 4, height: 2 };
-	return <div data-ring-spill={side} className="absolute bg-thread" style={place} />;
+function SpillMark({ camera, rect, side }: { camera: CameraStore; rect: Box; side: "right" | "bottom" }) {
+	return (
+		<Follow
+			camera={camera}
+			place={(at) => {
+				const box = inFrame(at, rect);
+				return side === "right"
+					? { left: box.x + box.w, top: box.y - 2, width: 2, height: box.h + 4 }
+					: { left: box.x - 2, top: box.y + box.h, width: box.w + 4, height: 2 };
+			}}
+			data-ring-spill={side}
+			className="absolute bg-thread"
+		/>
+	);
 }
 
 /**
@@ -627,13 +692,17 @@ function SpillMark({ box, side }: { box: Box; side: "right" | "bottom" }) {
  * fill is the lightest thing that says *this one* among five identical outlines.
  */
 function ElementOutline({
-	box,
+	camera,
+	rect,
 	radius,
 	faded,
 	lit,
 	mark,
 }: {
-	box: Box;
+	camera: CameraStore;
+	/** the element's line box, frame-local */
+	rect: Box;
+	/** the element's own corner radius, in its document's pixels */
 	radius: number;
 	faded?: boolean;
 	lit?: boolean;
@@ -641,16 +710,20 @@ function ElementOutline({
 	mark?: boolean;
 }) {
 	return (
-		<div
+		<Follow
+			camera={camera}
+			place={(at) => {
+				const box = inFrame(at, rect);
+				return {
+					left: box.x - 2,
+					top: box.y - 2,
+					width: box.w + 4,
+					height: box.h + 4,
+					borderRadius: radius * at.k + 2,
+				};
+			}}
 			{...(mark === true ? { "data-element-ring": "" } : {})}
 			className={`absolute border border-thread ${faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
-			style={{
-				left: box.x - 2,
-				top: box.y - 2,
-				width: box.w + 4,
-				height: box.h + 4,
-				borderRadius: radius + 2,
-			}}
 		/>
 	);
 }

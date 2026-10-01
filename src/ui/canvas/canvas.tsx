@@ -5351,7 +5351,6 @@ export function ProjectCanvas({
 			: undefined;
 	railRungsRef.current = railRungs;
 	const k = camera?.k ?? 1;
-	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
 
 	return (
@@ -5555,7 +5554,7 @@ export function ProjectCanvas({
 				{camera !== null && (
 					<>
 						<SelectionOverlay
-							camera={camera}
+							camera={cameraStore}
 							frames={visibleFrames}
 							selected={selected}
 							entered={entered}
@@ -5589,18 +5588,11 @@ export function ProjectCanvas({
 							marks={marks}
 							marquee={marquee}
 							dropLine={dropLine}
-							shellRadius={shellRadius}
 						/>
 						{/* the agent's hand (#214), in the same screen space as the furniture
 						    beside it: presence on any visible frame at any zoom, and a located
 						    mark wherever a document was live enough to be measured */}
-						<AgentHandLayer
-							camera={camera}
-							frames={visibleFrames}
-							hand={hand}
-							marks={handMarks}
-							shellRadius={shellRadius}
-						/>
+						<AgentHandLayer camera={cameraStore} frames={visibleFrames} hand={hand} marks={handMarks} />
 					</>
 				)}
 
