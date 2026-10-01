@@ -1,12 +1,14 @@
+import { useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
+import { type CameraStore, useCameraFollow } from "./camera-store";
 import { UnseenMark } from "./unseen-mark";
 
 export function FrameLabel({
 	name,
 	frameWidth,
-	k,
+	camera,
 	entered,
 	selected,
 	hovered,
@@ -18,7 +20,8 @@ export function FrameLabel({
 	/** the frame's link, said at the one size the canvas keeps legible at any zoom */
 	sharing?: { chip: ShareChip; open: () => void; expanded: boolean } | undefined;
 	frameWidth: number;
-	k: number;
+	/** The label holds one size on screen through the zoom, so it follows the camera (#81). */
+	camera: CameraStore;
 	entered: boolean;
 	selected: boolean;
 	hovered: boolean;
@@ -32,17 +35,32 @@ export function FrameLabel({
 	/** Play this frame. Offered on the selection, where the attention already is. */
 	onPlay?: () => void;
 }) {
+	const label = useRef<HTMLDivElement | null>(null);
+	const drawn = useRef<{ k: number; width: number } | null>(null);
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
-	const width = frameWidth * k;
+	// Both are written here rather than rendered, and only when the zoom or the
+	// frame's width moved: a pan writes nothing, and a zoom step lays out the
+	// label again and nothing else.
+	useCameraFollow(
+		camera,
+		({ k }) => {
+			const el = label.current;
+			if (el === null || (drawn.current?.k === k && drawn.current.width === frameWidth)) return;
+			drawn.current = { k, width: frameWidth };
+			el.style.width = `${frameWidth * k}px`;
+			el.style.transform = `scale(${1 / k})`;
+		},
+		[frameWidth],
+	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);
 
 	return (
 		<div
+			ref={label}
 			data-frame-label={name}
 			className="pointer-events-auto absolute bottom-full left-0 origin-bottom-left whitespace-nowrap"
-			style={{ width, transform: `scale(${1 / k})` }}
 		>
 			{entered ? (
 				<div className="flex items-center pb-2.5">

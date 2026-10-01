@@ -77,6 +77,7 @@ import {
 	toWorld,
 	zoomAt,
 } from "./camera";
+import { createCameraStore } from "./camera-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
@@ -95,7 +96,7 @@ import {
 	pngFileName,
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
-import { FrameShell } from "./frame-shell";
+import { FrameShell, ShellClip } from "./frame-shell";
 import {
 	askText,
 	deleteAsk,
@@ -372,6 +373,12 @@ export function ProjectCanvas({
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
+	/**
+	 * The camera as what follows it reads it (#81): drawn once per animation
+	 * frame, so labels and corners move without a render of their own.
+	 */
+	const [cameraStore] = useState(createCameraStore);
+	useLayoutEffect(() => cameraStore.set(camera), [cameraStore, camera]);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
@@ -5431,7 +5438,7 @@ export function ProjectCanvas({
 								key={object.page}
 								project={project}
 								object={object}
-								k={k}
+								camera={cameraStore}
 								selected={selectedPage === object.page}
 								hovered={pointerTool && hoveredPage === object.page}
 							/>
@@ -5449,10 +5456,7 @@ export function ProjectCanvas({
 										height: frame.h,
 									}}
 								>
-									<div
-										className="relative h-full w-full overflow-hidden"
-										style={{ borderRadius: shellRadius }}
-									>
+									<ShellClip camera={cameraStore}>
 										<FrameShell
 											project={project}
 											name={frame.name}
@@ -5487,7 +5491,7 @@ export function ProjectCanvas({
 												onOpen={() => setExternalLink(null)}
 											/>
 										)}
-									</div>
+									</ShellClip>
 								</div>
 							);
 						})}
@@ -5513,7 +5517,7 @@ export function ProjectCanvas({
 									<FrameLabel
 										name={frame.name}
 										frameWidth={frame.w}
-										k={k}
+										camera={cameraStore}
 										entered={isEntered}
 										selected={isSelected}
 										hovered={isHovered}
@@ -5533,7 +5537,7 @@ export function ProjectCanvas({
 							<PageObjectLabel
 								key={`${object.page}:label`}
 								object={object}
-								k={k}
+								camera={cameraStore}
 								selected={selectedPage === object.page}
 								hovered={pointerTool && hoveredPage === object.page}
 							/>

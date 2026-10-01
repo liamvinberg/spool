@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
 import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
+import { type CameraStore, useCameraFollow } from "./camera-store";
 import type { FrameState } from "./lifecycle";
 
 /**
@@ -20,6 +21,42 @@ import type { FrameState } from "./lifecycle";
 
 /** How far past the edited element's own box the caret is still the frame's (#321). */
 const EDIT_SLACK_PX = 2;
+
+/**
+ * A shell's corner radius, in the frame's own units: twelve screen pixels close
+ * up, and never more than 24 of the frame's, so an overview of many reads as
+ * rounded rectangles rather than as pills.
+ */
+export function shellRadius(k: number): number {
+	return Math.min(12 / k, 24);
+}
+
+/**
+ * The shell's rounded clip, following the camera on its own (#81).
+ *
+ * The radius is written straight to the clip, and only when it changes: below
+ * half zoom it is the 24 a frame never exceeds, so a zoom across the overview
+ * writes nothing at all, where it used to repaint every corner on the page.
+ */
+export function ShellClip({ camera, children }: { camera: CameraStore; children: ReactNode }) {
+	const clip = useRef<HTMLDivElement | null>(null);
+	const drawn = useRef<number | null>(null);
+	useCameraFollow(
+		camera,
+		({ k }) => {
+			const radius = shellRadius(k);
+			if (clip.current === null || radius === drawn.current) return;
+			drawn.current = radius;
+			clip.current.style.borderRadius = `${radius}px`;
+		},
+		[],
+	);
+	return (
+		<div ref={clip} className="relative h-full w-full overflow-hidden">
+			{children}
+		</div>
+	);
+}
 
 export interface CoverPlan {
 	/** The cover layer sits fully opaque over the (missing or booting) frame. */
