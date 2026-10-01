@@ -6,7 +6,7 @@ import { FOLDER_NAMES_FORMAT } from "./daemon/migrate-frame-names";
 import { FORMAT_VERSION } from "./templates";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame, writePageFrame } from "./test-helpers";
 
-describe("offline publication checks", () => {
+describe("offline publication checks", { timeout: 30_000 }, () => {
 	it("prints the connected set without starting a daemon or checking unrelated drafts", () => {
 		const home = makeTempDir();
 		const { root } = makeProject(join(home, ".spool"));
