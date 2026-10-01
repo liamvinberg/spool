@@ -1,0 +1,36 @@
+/* What both films need from the document: the page scrolls with the browser,
+ * and the type the site already speaks. */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap");
+
+html,
+body,
+#root {
+	height: auto;
+	min-height: 100%;
+}
+
+.fm-page {
+	position: relative;
+	min-height: 100vh;
+	overflow: clip;
+	font-family: "Familjen Grotesk", Arial, sans-serif;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+.fm-page a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.fm-page code,
+.fm-page pre {
+	font-family: "Fragment Mono", ui-monospace, monospace;
+	font-feature-settings: "calt" 0;
+}
+
+.fm-page :focus-visible {
+	outline: 1.5px solid currentColor;
+	outline-offset: 4px;
+	border-radius: 2px;
+}
