@@ -30,7 +30,7 @@ function context(canvas: HTMLCanvasElement, caveat: boolean) {
 	});
 }
 
-export function createField(canvas: HTMLCanvasElement, fragment: string): Field | null {
+export function createField(canvas: HTMLCanvasElement, fragment: string, maxRatio = 1.5): Field | null {
 	let backend: Field["backend"] = "webgl";
 	let gl = context(canvas, true);
 	if (!gl) {
@@ -90,7 +90,7 @@ export function createField(canvas: HTMLCanvasElement, fragment: string): Field 
 		cssHeight = 1;
 	const applySize = () => {
 		const dpr = window.devicePixelRatio || 1;
-		const ratio = Math.min(dpr, 1.5, 2400 / Math.max(cssWidth, cssHeight)) * quality;
+		const ratio = Math.min(dpr, maxRatio, 2400 / Math.max(cssWidth, cssHeight)) * quality;
 		const width = Math.max(1, Math.round(cssWidth * ratio));
 		const height = Math.max(1, Math.round(cssHeight * ratio));
 		if (canvas.width === width && canvas.height === height) return;

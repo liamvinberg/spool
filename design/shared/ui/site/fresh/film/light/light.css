@@ -1,0 +1,232 @@
+.fl-page {
+	--fl-bg: #0b0a0a;
+	--fl-text: #f0ebe4;
+	--fl-muted: #a29b94;
+	--fl-red: #f5391a;
+	--fl-edge: clamp(20px, 5.6vw, 80px);
+	background: var(--fl-bg);
+	color: var(--fl-text);
+}
+
+.fl-stage {
+	position: sticky;
+	top: 0;
+	height: 100vh;
+	overflow: hidden;
+	isolation: isolate;
+	background: var(--fl-bg);
+}
+.fl-canvas {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+.fl-stage[data-backend="fallback"] .fl-canvas {
+	visibility: hidden;
+}
+.fl-stage::after {
+	content: "";
+	position: absolute;
+	inset: auto 0 0;
+	height: 18vh;
+	background: linear-gradient(to bottom, transparent, var(--fl-bg));
+	pointer-events: none;
+}
+
+/* The words as text: read by assistive technology always, seen only without WebGL. */
+.fl-shot {
+	position: absolute;
+	right: var(--fl-edge);
+	left: var(--fl-edge);
+	margin: 0;
+	font-family: "Inter Tight", sans-serif;
+	font-size: clamp(44px, 8vw, 120px);
+	font-weight: 600;
+	line-height: 0.98;
+	letter-spacing: -0.045em;
+	color: transparent;
+	pointer-events: none;
+	user-select: none;
+}
+.fl-shot[data-align="center"] {
+	text-align: center;
+}
+.fl-stage[data-backend="fallback"] .fl-shot {
+	color: var(--fl-text);
+	opacity: 0;
+}
+
+.fl-head {
+	position: absolute;
+	inset: 0 0 auto;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 28px var(--fl-edge);
+}
+.fl-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 9px;
+	font-size: 21px;
+	font-weight: 500;
+	letter-spacing: -0.025em;
+}
+.fl-mark {
+	width: 17px;
+	height: 22px;
+	color: var(--fl-red);
+}
+.fl-head nav {
+	display: flex;
+	gap: 30px;
+	font-size: 15px;
+	color: #c9c2ba;
+}
+.fl-head nav a:hover,
+.fl-footer nav a:hover {
+	color: var(--fl-text);
+}
+
+.fl-caption {
+	position: absolute;
+	bottom: clamp(48px, 9vh, 88px);
+	left: var(--fl-edge);
+	z-index: 3;
+	max-width: 520px;
+	opacity: 0;
+	visibility: hidden;
+}
+.fl-caption.fl-visible {
+	opacity: 1;
+	visibility: visible;
+}
+.fl-caption > p {
+	margin: 0;
+	font-size: 21px;
+	line-height: 1.4;
+	letter-spacing: -0.01em;
+	color: #d9d2ca;
+	text-wrap: pretty;
+}
+.fl-start {
+	max-width: none;
+}
+.fl-start > p {
+	margin-top: 20px;
+	font-size: 15px;
+	color: rgba(242, 228, 218, 0.75);
+}
+.fl-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+}
+.fl-download {
+	display: inline-flex;
+	align-items: center;
+	height: 56px;
+	padding: 0 30px;
+	border-radius: 4px;
+	background: #f0e8dc;
+	color: #1d0e09 !important;
+	font-size: 17px;
+	font-weight: 500;
+	transition: background 160ms ease;
+}
+.fl-download:hover {
+	background: #fff8ee;
+}
+.fl-command {
+	display: inline-flex;
+	align-items: center;
+	gap: 28px;
+	height: 56px;
+	padding: 0 20px;
+	border: 1px solid rgba(237, 198, 179, 0.3);
+	border-radius: 4px;
+	background: rgba(20, 10, 7, 0.3);
+	color: #f2e0d5;
+	font-size: 14px;
+	cursor: pointer;
+	transition: border-color 160ms ease;
+}
+.fl-command:hover {
+	border-color: rgba(237, 198, 179, 0.6);
+}
+.fl-command > span {
+	font: 12px "Fragment Mono", monospace;
+	color: rgba(242, 224, 213, 0.6);
+}
+
+.fl-footer {
+	display: flex;
+	flex-direction: column;
+	gap: 88px;
+	padding: 120px var(--fl-edge) 44px;
+	background: var(--fl-bg);
+}
+.fl-footer > p {
+	max-width: 22em;
+	margin: 0;
+	font-family: "Inter Tight", sans-serif;
+	font-size: clamp(26px, 2.6vw, 38px);
+	font-weight: 500;
+	line-height: 1.15;
+	letter-spacing: -0.035em;
+}
+.fl-footer > p a {
+	text-decoration: underline;
+	text-decoration-color: rgba(245, 57, 26, 0.6);
+	text-underline-offset: 6px;
+}
+.fl-footer nav {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 26px;
+	padding-top: 28px;
+	border-top: 1px solid rgba(240, 235, 228, 0.09);
+	font-size: 15px;
+	color: var(--fl-muted);
+}
+.fl-footer nav .fl-brand {
+	margin-right: auto;
+	color: var(--fl-text);
+}
+
+@media (max-width: 760px) {
+	.fl-head {
+		padding-block: 20px;
+	}
+	.fl-head nav {
+		gap: 20px;
+	}
+	.fl-head nav a:first-child {
+		display: none;
+	}
+	.fl-caption {
+		right: var(--fl-edge);
+	}
+	.fl-caption > p {
+		font-size: 17px;
+	}
+	.fl-download,
+	.fl-command {
+		width: 100%;
+		justify-content: space-between;
+	}
+	.fl-download {
+		justify-content: center;
+	}
+	.fl-footer {
+		gap: 56px;
+		padding-top: 80px;
+	}
+	.fl-footer nav .fl-brand {
+		width: 100%;
+	}
+}
