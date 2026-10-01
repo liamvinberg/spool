@@ -35,20 +35,46 @@ export interface FsListing {
 	dirs: FsEntry[];
 }
 
-export function listDirectory(requested: string | undefined): FsListing | undefined {
+/**
+ * The folders under home that macOS keeps behind a privacy prompt. Reading inside
+ * one asks the person, once per folder, on behalf of whichever app started the
+ * daemon, so a walk that enters them reads as Spool asking for their Music the
+ * moment it opens. They are listed by name and never entered or probed unless
+ * the picker is browsed into one, where the prompt answers a click. Other
+ * platforms ask nothing, so nothing is held back there.
+ */
+const PRIVACY_GUARDED: ReadonlySet<string> =
+	process.platform === "darwin"
+		? new Set(["Desktop", "Documents", "Downloads", "Movies", "Music", "Pictures"])
+		: new Set();
+
+export interface ListOptions {
+	home?: string;
+	guarded?: ReadonlySet<string>;
+}
+
+export function listDirectory(requested: string | undefined, options: ListOptions = {}): FsListing | undefined {
+	const home = options.home ?? homedir();
+	const guarded = options.guarded ?? PRIVACY_GUARDED;
 	let path: string;
 	try {
-		path = realpathSync(requested === undefined || requested === "" ? homedir() : expandHome(requested));
+		path = realpathSync(requested === undefined || requested === "" ? home : expandHome(requested));
 	} catch {
 		return undefined;
 	}
+	const atHome = path === realOrSelf(home);
 	let dirs: FsEntry[];
 	try {
 		dirs = readdirSync(path, { withFileTypes: true })
 			.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
 			.map((entry) => {
 				const full = join(path, entry.name);
-				return { name: entry.name, path: full, isProject: existsSync(join(full, "design", "canvas.json")) };
+				const probed = !(atHome && guarded.has(entry.name));
+				return {
+					name: entry.name,
+					path: full,
+					isProject: probed && existsSync(join(full, "design", "canvas.json")),
+				};
 			})
 			.sort((a, b) => a.name.localeCompare(b.name));
 	} catch {
@@ -143,6 +169,8 @@ let building: { readonly key: string; readonly promise: Promise<Index> } | undef
 export interface IndexOptions {
 	home: string;
 	spoolDir: string;
+	/** home's own folders the walk lists but never enters: `PRIVACY_GUARDED` unless a test says */
+	guarded?: ReadonlySet<string>;
 }
 
 export interface SearchOptions extends IndexOptions {
@@ -156,11 +184,11 @@ export interface SearchOptions extends IndexOptions {
  * calls it on open so a folder cloned since is in the next one. A search never
  * waits on this unless there is no index at all.
  */
-export function refreshIndex({ home, spoolDir }: IndexOptions): Promise<Index> {
+export function refreshIndex({ home, spoolDir, guarded = PRIVACY_GUARDED }: IndexOptions): Promise<Index> {
 	const real = realOrSelf(home);
 	const key = `${real}\0${spoolDir}`;
 	if (building?.key === key) return building.promise;
-	const promise = readTree(real, spoolDir)
+	const promise = readTree(real, spoolDir, guarded)
 		.then((dirs): Index => {
 			cached = { key, home: real, dirs };
 			return cached;
@@ -244,7 +272,7 @@ interface Level {
  * are also what dedupes it — a link to a folder already indexed is the same
  * folder, and it is listed once, under its own name.
  */
-async function readTree(home: string, spoolDir: string): Promise<readonly Indexed[]> {
+async function readTree(home: string, spoolDir: string, guarded: ReadonlySet<string>): Promise<readonly Indexed[]> {
 	const registry = registered(spoolDir);
 	const inside = `${home}${sep}`;
 	const seen = new Set<string>([home]);
@@ -270,11 +298,15 @@ async function readTree(home: string, spoolDir: string): Promise<readonly Indexe
 				found.push({ dir, name: entry.name, real });
 			}
 		}
-		const projects = await Promise.all(found.map(({ dir, name }) => isProject(join(dir.path, name))));
+		const held = ({ dir, name }: { dir: Level; name: string }) => dir.depth === 0 && guarded.has(name);
+		const projects = await Promise.all(
+			found.map((entry) => !held(entry) && isProject(join(entry.dir.path, entry.name))),
+		);
 		const next: Level[] = [];
 		found.forEach(({ dir, name, real }, index) => {
 			const path = join(dir.path, name);
 			const depth = dir.depth + 1;
+			const entered = !held({ dir, name }) && !NOT_DESCENDED.has(name);
 			const known = registry.get(real);
 			out.push({
 				name,
@@ -285,7 +317,7 @@ async function readTree(home: string, spoolDir: string): Promise<readonly Indexe
 				depth,
 				...(known === undefined ? {} : { openedAt: known.openedAt }),
 			});
-			if (depth < MAX_DEPTH && !NOT_DESCENDED.has(name)) next.push({ path, real, depth });
+			if (depth < MAX_DEPTH && entered) next.push({ path, real, depth });
 		});
 		level = next;
 	}

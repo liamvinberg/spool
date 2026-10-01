@@ -34,6 +34,16 @@ it.each(["", "..", "../escape", "nested/child", "nested\\child", ".hidden"])(
 	},
 );
 
+it("lists a guarded home folder without looking inside it", () => {
+	const home = makeHome(["Documents#", "work#"]);
+	const guarded = new Set(["Documents"]);
+	expect(listDirectory(undefined, { home, guarded })?.dirs).toMatchObject([
+		{ name: "Documents", isProject: false },
+		{ name: "work", isProject: true },
+	]);
+	expect(listDirectory(join(home, "Documents"), { home, guarded })?.isProject).toBe(true);
+});
+
 /** A home to search: every path is a directory, `#` marks a spool project. */
 function makeHome(paths: readonly string[]): string {
 	const home = makeTempDir();
@@ -111,6 +121,19 @@ describe("searchDirectories", () => {
 		expect(names(found)).not.toContain("nvim");
 		// app, node_modules, dist, src — and nothing from inside the two never entered
 		expect(found?.total).toBe(4);
+	});
+
+	it("names a guarded home folder but never walks into it", async () => {
+		const home = makeHome(["Music/kaffe#", "work/Music/kaffe#"]);
+		const found = await searchDirectories("kaffe", {
+			home,
+			spoolDir: join(makeTempDir(), ".spool"),
+			guarded: new Set(["Music"]),
+		});
+		expect(found?.hits.map((hit) => hit.parent)).toEqual([join(realpathSync(home), "work/Music")]);
+		expect(names(await searchDirectories("music", { home, spoolDir: join(makeTempDir(), ".spool") }))).toContain(
+			"Music",
+		);
 	});
 
 	it("stops at the depth cap rather than walking a home to the bottom", async () => {
