@@ -36,6 +36,14 @@ export const toWorld = (p: Point, camera: Camera): Point => ({
 	y: (p.y - camera.y) / camera.k,
 });
 
+/**
+ * Whether a world box is on screen for a camera, or near enough that a pan
+ * reaches it before the next frame or two (#81). What a follower there is one
+ * of per frame asks while the camera moves, so it can leave everything else
+ * for the camera's rest.
+ */
+export type NearScreen = (camera: Camera, box: Box) => boolean;
+
 export const intersects = (a: Box, b: Box): boolean =>
 	a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 

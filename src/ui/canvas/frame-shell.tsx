@@ -3,8 +3,8 @@ import type { Cover } from "../../cover";
 import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
-import type { Box } from "./camera";
-import { type CameraStore, type FieldView, useCameraFollow } from "./camera-store";
+import type { Box, NearScreen } from "./camera";
+import { type CameraStore, useCameraFollow } from "./camera-store";
 import type { FrameState } from "./lifecycle";
 
 /**
@@ -43,12 +43,13 @@ export function shellRadius(k: number): number {
  */
 export function ShellClip({
 	camera,
-	view,
+	near,
 	frame,
 	children,
 }: {
 	camera: CameraStore;
-	view: FieldView;
+	/** whether the corners are worth redrawing while the camera moves */
+	near: NearScreen;
 	/** the frame being clipped, in world units */
 	frame: Box;
 	children: ReactNode;
@@ -57,13 +58,13 @@ export function ShellClip({
 	const drawn = useRef<number | null>(null);
 	useCameraFollow(
 		camera,
-		(at) => {
+		(at, moving) => {
 			const radius = shellRadius(at.k);
-			if (clip.current === null || radius === drawn.current || !view.near(at, frame)) return;
+			if (clip.current === null || radius === drawn.current || (moving && !near(at, frame))) return;
 			drawn.current = radius;
 			clip.current.style.borderRadius = `${radius}px`;
 		},
-		[frame.x, frame.y, frame.w, frame.h, view],
+		[frame.x, frame.y, frame.w, frame.h, near],
 	);
 	return (
 		<div ref={clip} className="relative h-full w-full overflow-hidden">

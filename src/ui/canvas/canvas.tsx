@@ -74,11 +74,12 @@ import {
 	fitCamera,
 	intersects,
 	K_STEP,
+	type NearScreen,
 	toWorld,
 	visibleWorldRect,
 	zoomAt,
 } from "./camera";
-import { type CameraStore, createCameraStore, type FieldView, useCameraFollow } from "./camera-store";
+import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
@@ -274,7 +275,6 @@ interface ResizePaint {
 }
 
 const SETTLE_PERSIST_MS = 600;
-const LIFECYCLE_CAMERA_SETTLE_MS = 100;
 const DRAG_THRESHOLD_PX = 3;
 const SNAP_THRESHOLD_PX = 8;
 const MIN_FRAME_SIZE = 40;
@@ -616,7 +616,9 @@ export function ProjectCanvas({
 		setExportError(undefined);
 	}, [exportDialog, exportFrames.length]);
 	const gesture = useRef<Gesture>({ kind: "idle" });
-	const settledCameraRef = useRef<Camera | null>(null);
+	// where the camera rests, as the lifecycle's sweep reads it between renders
+	const restCameraRef = useRef(restCamera);
+	restCameraRef.current = restCamera;
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, exits, editor paths
@@ -874,7 +876,7 @@ export function ProjectCanvas({
 		hasCover: hasCover,
 		onShot,
 		onCaptureFailure,
-		cameraRef: settledCameraRef,
+		cameraRef: restCameraRef,
 		viewportRef,
 	});
 	const lifecycleRef = useRef(lifecycle);
@@ -1420,10 +1422,10 @@ export function ProjectCanvas({
 	const animateCamera = useCallback((to: Camera, ms?: number) => camera.fly(to, ms), [camera]);
 
 	/**
-	 * What the camera can see while it moves (`FieldView`). The viewport's size
-	 * is kept as the observer last measured it rather than read when asked: it
-	 * is asked in the middle of a frame's writes, where reading layout would
-	 * force it.
+	 * What the camera can see (`NearScreen`), asked by the followers there is
+	 * one of per frame while it moves. The viewport's size is kept as the
+	 * observer last measured it rather than read when asked: it is asked in the
+	 * middle of a frame's writes, where reading layout would force it.
 	 */
 	const viewSize = useRef({ width: 0, height: 0 });
 	useLayoutEffect(() => {
@@ -1437,11 +1439,8 @@ export function ProjectCanvas({
 		observer.observe(el);
 		return () => observer.disconnect();
 	}, []);
-	/** from the first frame the camera is drawn at until it settles */
-	const moving = useRef(false);
 	const seen = useRef<{ camera: Camera; rect: Box } | null>(null);
-	const near = useCallback((at: Camera, box: Box): boolean => {
-		if (!moving.current) return true;
+	const near = useCallback<NearScreen>((at, box) => {
 		// one rectangle per drawn camera, however many followers ask about it
 		if (seen.current?.camera !== at) {
 			const { width, height } = viewSize.current;
@@ -1449,7 +1448,6 @@ export function ProjectCanvas({
 		}
 		return intersects(box, seen.current.rect);
 	}, []);
-	const view = useMemo<FieldView>(() => ({ near, rest: restCamera }), [near, restCamera]);
 
 	const viewportCenter = useCallback((): Point => {
 		const el = viewportRef.current;
@@ -4142,52 +4140,31 @@ export function ProjectCanvas({
 		return () => el.removeEventListener("wheel", onWheel);
 	}, [stopAnimation, zoomAtPoint, panBy]);
 
-	// Camera motion is drawn and never rendered. The lifecycle reads where the
-	// camera stopped after this short quiet window, so frames mount where it came
-	// to rest rather than throughout the gesture, and the same window is the whole
-	// of "the camera is moving": live frames hold their animations across it
-	// (#171). Heard once per drawn frame, so a gesture costs this a timer; React
-	// hears the camera once, when it stops.
-	// The lifecycle's two verbs are read through a ref: subscribing again for a
-	// new identity would drop a settle already counting down, and a camera that
-	// never settles never mounts anything.
-	const restVerbs = useRef({ noteCameraMoving, sweepLifecycle });
-	restVerbs.current = { noteCameraMoving, sweepLifecycle };
-	useEffect(() => {
-		let settle: ReturnType<typeof setTimeout> | undefined;
-		const unsubscribe = camera.subscribe(() => {
-			moving.current = true;
-			restVerbs.current.noteCameraMoving(true);
-			clearTimeout(settle);
-			settle = setTimeout(() => {
-				const rest = camera.get();
-				if (rest === null) return;
-				moving.current = false;
-				settledCameraRef.current = rest;
-				restVerbs.current.noteCameraMoving(false);
-				restVerbs.current.sweepLifecycle();
-				setRestCamera(rest);
-			}, LIFECYCLE_CAMERA_SETTLE_MS);
-		});
-		return () => {
-			unsubscribe();
-			clearTimeout(settle);
-		};
-	}, [camera]);
+	// Camera motion is drawn and never rendered. Every drawn frame is the camera
+	// moving, which is the whole of what live frames hold their animations
+	// across (#171); the store's rest ends it, and is the one moment React hears
+	// the camera, so frames mount where it came to rest rather than throughout
+	// the gesture.
+	useEffect(
+		() =>
+			camera.subscribe((at, moving) => {
+				if (at === null) return;
+				noteCameraMoving(moving);
+				if (!moving) setRestCamera(at);
+			}),
+		[camera, noteCameraMoving],
+	);
 
 	/**
-	 * The canvas is open: it has somewhere to look from and something to look at.
-	 * The camera it opens on is not a gesture — it is where the canvas already
-	 * is — and the frames it opens on were not there yet when it landed. Left to
-	 * the settle and the sweep, the first documents wait out a window nobody
-	 * moved anything in, and then up to a sweep on top of it. This is the
-	 * opening: the rest is what it rests at, and the mounting starts now.
+	 * The lifecycle mounts against where the camera rests, and sweeps at once
+	 * whenever that or the field changes. The camera the canvas opens on is not
+	 * a gesture — it is where the canvas already is — so it counts from the
+	 * moment it is there, and the first documents mount the moment the frames
+	 * land rather than a quiet window and a sweep later.
 	 */
 	useEffect(() => {
-		if (restCamera === null || !loaded || settledCameraRef.current !== null) return;
-		settledCameraRef.current = camera.get();
-		sweepLifecycle();
-	}, [restCamera, loaded, sweepLifecycle, camera]);
+		if (restCamera !== null && loaded) sweepLifecycle();
+	}, [restCamera, loaded, sweepLifecycle]);
 
 	const readyForUpdate = loaded && restCamera !== null;
 	useEffect(() => {
@@ -5547,7 +5524,7 @@ export function ProjectCanvas({
 										height: frame.h,
 									}}
 								>
-									<ShellClip camera={camera} view={view} frame={frame}>
+									<ShellClip camera={camera} near={near} frame={frame}>
 										<FrameShell
 											project={project}
 											name={frame.name}
@@ -5608,7 +5585,7 @@ export function ProjectCanvas({
 									<FrameLabel
 										name={frame.name}
 										frame={frame}
-										view={view}
+										near={near}
 										camera={camera}
 										entered={isEntered}
 										selected={isSelected}

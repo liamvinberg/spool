@@ -4,10 +4,12 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Camera } from "../api";
-import { type CameraStore, createCameraStore, type FieldView } from "./camera-store";
+import type { NearScreen } from "./camera";
+import { type CameraStore, createCameraStore, REST_MS } from "./camera-store";
 import { FrameLabel } from "./frame-label";
 
 beforeEach(() => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	// a display frame, run the moment one is asked for
 	vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -17,6 +19,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
 
@@ -26,10 +29,10 @@ function cameraAt(camera: Camera): CameraStore {
 	return store;
 }
 
-/** a camera at rest: everything is drawn */
-const RESTING: FieldView = { near: () => true, rest: null };
+/** a label on screen, whatever the camera */
+const ON_SCREEN: NearScreen = () => true;
 
-function label(props: { name: string; frameWidth: number; camera: CameraStore; view?: FieldView }): {
+function label(props: { name: string; frameWidth: number; camera: CameraStore; near?: NearScreen }): {
 	el: HTMLElement;
 	root: Root;
 } {
@@ -46,12 +49,12 @@ function label(props: { name: string; frameWidth: number; camera: CameraStore; v
 	return { el: found, root };
 }
 
-function element({ name, frameWidth, camera, view = RESTING }: Parameters<typeof label>[0]) {
+function element({ name, frameWidth, camera, near = ON_SCREEN }: Parameters<typeof label>[0]) {
 	return createElement(FrameLabel, {
 		name,
 		frame: { x: 0, y: 0, w: frameWidth, h: 800 },
 		camera,
-		view,
+		near,
 		entered: false,
 		selected: false,
 		hovered: false,
@@ -83,16 +86,16 @@ describe("FrameLabel", () => {
 
 	it("leaves a label off screen alone while the camera moves, and catches it up once it rests", () => {
 		const camera = cameraAt({ x: 0, y: 0, k: 0.2 });
-		const moving: FieldView = { near: () => false, rest: null };
-		const { el, root } = label({ name: "landing", frameWidth: 1200, camera });
-		act(() => root.render(element({ name: "landing", frameWidth: 1200, camera, view: moving })));
+		act(() => vi.advanceTimersByTime(REST_MS));
+		const { el } = label({ name: "landing", frameWidth: 1200, camera, near: () => false });
+		// at rest everything is drawn, on screen or not
+		expect(el.style.width).toBe("240px");
 
+		// the very first frame of a gesture already skips it
 		act(() => camera.set({ x: 40, y: 0, k: 0.5 }));
 		expect(el.style.width).toBe("240px");
 
-		act(() =>
-			root.render(element({ name: "landing", frameWidth: 1200, camera, view: { ...RESTING, rest: camera.get() } })),
-		);
+		act(() => vi.advanceTimersByTime(REST_MS));
 		expect(el.style.width).toBe("600px");
 		expect(el.style.transform).toBe("scale(2)");
 	});

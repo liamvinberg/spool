@@ -2,15 +2,15 @@ import { useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
-import type { Box } from "./camera";
-import { type CameraStore, type FieldView, useCameraFollow } from "./camera-store";
+import type { Box, NearScreen } from "./camera";
+import { type CameraStore, useCameraFollow } from "./camera-store";
 import { UnseenMark } from "./unseen-mark";
 
 export function FrameLabel({
 	name,
 	frame,
 	camera,
-	view,
+	near,
 	entered,
 	selected,
 	hovered,
@@ -25,8 +25,8 @@ export function FrameLabel({
 	frame: Box;
 	/** The label holds one size on screen through the zoom, so it follows the camera (#81). */
 	camera: CameraStore;
-	/** what is worth drawing while the camera moves, and when to catch up */
-	view: FieldView;
+	/** whether the label is worth laying out while the camera moves */
+	near: NearScreen;
 	entered: boolean;
 	selected: boolean;
 	hovered: boolean;
@@ -49,15 +49,15 @@ export function FrameLabel({
 	// the labels on screen and nothing else, the rest once the camera rests.
 	useCameraFollow(
 		camera,
-		(at) => {
+		(at, moving) => {
 			const el = label.current;
 			if (el === null || (drawn.current?.k === at.k && drawn.current.width === frame.w)) return;
-			if (!view.near(at, frame)) return;
+			if (moving && !near(at, frame)) return;
 			drawn.current = { k: at.k, width: frame.w };
 			el.style.width = `${frame.w * at.k}px`;
 			el.style.transform = `scale(${1 / at.k})`;
 		},
-		[frame.x, frame.y, frame.w, frame.h, view],
+		[frame.x, frame.y, frame.w, frame.h, near],
 	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);

@@ -1,17 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Camera } from "../api";
-import { type CameraStore, createCameraStore, FLIGHT_MS } from "./camera-store";
+import { type CameraStore, createCameraStore, FLIGHT_MS, REST_MS } from "./camera-store";
 
 /**
- * The camera outside React (#81): one value that moves at once, and one frame
- * that draws it. The frames here are the test's own, so each one runs exactly
- * when the test says a display frame has come.
+ * The camera outside React (#81): one value that moves at once, one frame that
+ * draws it, and a rest once it has been left alone. The frames and the clock
+ * here are the test's own, so each one runs exactly when the test says.
  */
 
 let frames: FrameRequestCallback[] = [];
 let clock = 0;
 
 beforeEach(() => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 	frames = [];
 	clock = 1000;
 	vi.spyOn(performance, "now").mockImplementation(() => clock);
@@ -22,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 });
@@ -34,10 +36,12 @@ function frame(at = clock): void {
 	for (const callback of due) callback(at);
 }
 
-/** Every camera the store draws, in order. */
-function listen(store: CameraStore): Camera[] {
-	const drawn: Camera[] = [];
-	store.subscribe((camera) => drawn.push(camera));
+/** Every camera the store draws while it moves, in order: null where it went away. */
+function listen(store: CameraStore): (Camera | null)[] {
+	const drawn: (Camera | null)[] = [];
+	store.subscribe((camera, moving) => {
+		if (moving || camera === null) drawn.push(camera);
+	});
 	return drawn;
 }
 
@@ -67,7 +71,7 @@ describe("the camera store", () => {
 		const store = createCameraStore();
 		const first = listen(store);
 		const second: number[] = [];
-		const leave = store.subscribe((camera) => second.push(camera.x));
+		const leave = store.subscribe((camera) => second.push(camera?.x ?? Number.NaN));
 
 		store.set({ x: 1, y: 1, k: 1 });
 		frame();
@@ -75,7 +79,7 @@ describe("the camera store", () => {
 		store.set({ x: 2, y: 2, k: 1 });
 		frame();
 
-		expect(first.map((camera) => camera.x)).toEqual([1, 2]);
+		expect(first.map((camera) => camera?.x)).toEqual([1, 2]);
 		expect(second).toEqual([1]);
 	});
 
@@ -90,7 +94,7 @@ describe("the camera store", () => {
 		store.set({ x: 1, y: 0, k: 1 });
 		store.set({ x: 2, y: 0, k: 1 });
 
-		expect(drawn.map((camera) => camera.x)).toEqual([1, 2]);
+		expect(drawn.map((camera) => camera?.x)).toEqual([1, 2]);
 	});
 
 	it("flies on the cubic ease-out, drawing each frame of the flight", () => {
@@ -105,7 +109,7 @@ describe("the camera store", () => {
 		expect(store.get()).toEqual({ x: 87.5, y: 0, k: 1.875 });
 		frame(clock + 100);
 		expect(store.get()).toEqual({ x: 100, y: 0, k: 2 });
-		expect(drawn.map((camera) => camera.x)).toEqual([0, 87.5, 100]);
+		expect(drawn.map((camera) => camera?.x)).toEqual([0, 87.5, 100]);
 
 		// landed: the flight asks for no more frames
 		expect(frames).toHaveLength(0);
@@ -154,13 +158,75 @@ describe("the camera store", () => {
 		frame();
 		expect(drawn).toEqual([]);
 
-		// the same camera arriving again is an arrival, and is drawn again
+		// gone and back inside one frame was never anything else on screen
 		const back = { x: 5, y: 5, k: 1 };
 		store.set(back);
 		frame();
 		store.set(null);
 		store.set(back);
 		frame();
-		expect(drawn).toEqual([back, back]);
+		expect(drawn).toEqual([back]);
+
+		// gone for a frame is heard as gone, and the same camera after it is drawn again
+		store.set(null);
+		frame();
+		store.set(back);
+		frame();
+		expect(drawn).toEqual([back, null, back]);
+	});
+
+	it("says when the camera has been left alone, once, after the last frame it was drawn in", () => {
+		const store = createCameraStore();
+		const rests: Camera[] = [];
+		store.subscribe((camera, moving) => {
+			if (!moving && camera !== null) rests.push(camera);
+		});
+
+		store.set({ x: 1, y: 0, k: 1 });
+		frame();
+		vi.advanceTimersByTime(REST_MS - 1);
+		// still inside the window, and a pan carries on
+		store.set({ x: 2, y: 0, k: 1 });
+		frame();
+		vi.advanceTimersByTime(REST_MS - 1);
+		expect(rests).toEqual([]);
+		expect(store.rest()).toBeNull();
+
+		vi.advanceTimersByTime(1);
+		expect(rests).toEqual([{ x: 2, y: 0, k: 1 }]);
+		expect(store.rest()).toBe(store.get());
+		vi.advanceTimersByTime(REST_MS * 4);
+		expect(rests).toHaveLength(1);
+	});
+
+	it("keeps a quiet window going while a move waits for its frame", () => {
+		const store = createCameraStore();
+		const rests: Camera[] = [];
+		store.subscribe((camera, moving) => {
+			if (!moving && camera !== null) rests.push(camera);
+		});
+		store.set({ x: 1, y: 0, k: 1 });
+		frame();
+
+		// moved, but the frame that draws it has not come by the time the window ends
+		store.set({ x: 2, y: 0, k: 1 });
+		vi.advanceTimersByTime(REST_MS);
+		expect(rests).toEqual([]);
+
+		frame();
+		vi.advanceTimersByTime(REST_MS);
+		expect(rests).toEqual([{ x: 2, y: 0, k: 1 }]);
+	});
+
+	it("forgets a rest the moment the camera goes", () => {
+		const store = createCameraStore();
+		store.set({ x: 1, y: 0, k: 1 });
+		frame();
+		vi.advanceTimersByTime(REST_MS);
+		expect(store.rest()).not.toBeNull();
+
+		store.set(null);
+		frame();
+		expect(store.rest()).toBeNull();
 	});
 });

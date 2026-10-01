@@ -608,7 +608,8 @@ function ZoomReadout({ camera }: { camera: CameraStore }) {
 			if (readout.current !== null && readout.current.textContent !== text) readout.current.textContent = text;
 		};
 		write(camera.get()?.k);
-		return camera.subscribe((now) => write(now.k));
+		// a camera that went away reads as the 100% a field with nothing framed opens at
+		return camera.subscribe((now) => write(now?.k));
 	}, [camera]);
 	return <span ref={readout} className="min-w-9 text-right text-muted type-detail" />;
 }
