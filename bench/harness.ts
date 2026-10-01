@@ -135,9 +135,10 @@ export interface Box {
 
 /**
  * A frame as the benchmarks need it: where it sits, how big it was authored.
- * `name` is the bare leaf, because that is a frame's identity everywhere else —
- * the iframe's title, and the last segment of its document URL. The page it
- * sits on is a separate field, exactly as `projection.ts` keeps it.
+ * `name` is the full path under `frames/` (`n200/n200-001`), because that is a
+ * frame's identity everywhere since #336: the iframe's title, its label, its
+ * loaded report, its encoded document URL and its cover directory. The page it
+ * sits on is kept beside it for the camera.
  */
 export interface FrameBox extends Box {
 	name: string;
@@ -152,11 +153,11 @@ export function clearCopiedCovers(root: string): void {
 	rmSync(join(root, "design", ".spool", "thumbs"), { recursive: true, force: true });
 }
 
-function frameDirectory(root: string, frame: { name: string; page: string }): string {
-	return join(root, "design", "frames", ...(frame.page === ROOT_PAGE ? [] : [frame.page]), frame.name);
+function frameDirectory(root: string, frame: { name: string }): string {
+	return join(root, "design", "frames", frame.name);
 }
 
-function assertHtmlFrames(root: string, frames: readonly { name: string; page: string }[]): void {
+function assertHtmlFrames(root: string, frames: readonly { name: string }[]): void {
 	const terminals = frames.filter((frame) => existsSync(join(frameDirectory(root, frame), "term.tsx")));
 	if (terminals.length === 0) return;
 	const sample = terminals
@@ -169,14 +170,14 @@ function assertHtmlFrames(root: string, frames: readonly { name: string; page: s
 	);
 }
 
-function missingCurrentCoverNames(root: string, frames: readonly { name: string; page: string }[]): string[] {
+function missingCurrentCoverNames(root: string, frames: readonly { name: string }[]): string[] {
 	const thumbs = join(root, "design", ".spool", "thumbs");
 	const missing: string[] = [];
 	for (const frame of frames) {
 		let files: string[] = [];
 		try {
-			const path = frame.page === ROOT_PAGE ? frame.name : `${frame.page}/${frame.name}`;
-			files = readdirSync(join(thumbs, encodeURIComponent(path)));
+			// the daemon keeps a frame's covers under its whole path, encoded
+			files = readdirSync(join(thumbs, encodeURIComponent(frame.name)));
 		} catch {
 			files = [];
 		}
@@ -285,7 +286,7 @@ export function readPages(root: string): Page[] {
 		const boxes: FrameBox[] = [];
 		for (const child of nested) {
 			const box = readBox(join(dir, name, child, "frame.json"));
-			if (box !== undefined) boxes.push({ ...box, name: child, page: name });
+			if (box !== undefined) boxes.push({ ...box, name: `${name}/${child}`, page: name });
 		}
 		if (boxes.length > 0) pages.push({ page: name, frames: boxes });
 	}

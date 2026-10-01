@@ -169,7 +169,8 @@ function allFrames(root: string): Placed[] {
 		}
 		for (const child of nested) {
 			const box = read(join(dir, entry, child, "frame.json"));
-			if (box !== undefined) placed.push({ ...box, name: child, page: entry });
+			// a frame's name is its whole path, as the flow graph and the canvas spell it
+			if (box !== undefined) placed.push({ ...box, name: `${entry}/${child}`, page: entry });
 		}
 	}
 	return placed;

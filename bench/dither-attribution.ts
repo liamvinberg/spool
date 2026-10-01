@@ -118,7 +118,7 @@ function parseArgs(argv: string[]): Options {
 const K = 0.52;
 const PAGE_NAME = "dither";
 /** A frame confirmed live at K, used for the paint-behavior screenshot/hash check. */
-const SAMPLE_FRAME = "dither-atkinson";
+const SAMPLE_FRAME = `${PAGE_NAME}/dither-atkinson`;
 
 type Arm = "animated" | "frozen" | "static";
 const ARMS: readonly Arm[] = ["animated", "frozen", "static"];
