@@ -78,6 +78,11 @@ export function planUpgrade(realCliPath: string, io: PlanIo = {}): InstallPlan {
 			message: `the running spool is the development checkout (${realCliPath}) — run: git pull`,
 		};
 	}
+	// the Mac app's own copy, reached through the spool command it links: the app
+	// replaces itself, and an npm install beside it would fork two spools
+	if (realCliPath.includes(".app/Contents/Resources/cli/")) {
+		return { ok: false, message: "this spool came with the Spool app — update it from the app's Check for Updates" };
+	}
 	const packageDir = realCliPath.slice(0, -"/dist/cli.js".length);
 
 	// pnpm keeps version-stamped dirs under .pnpm; the stable door is

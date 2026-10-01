@@ -77,6 +77,14 @@ describe("planUpgrade", () => {
 		}
 	});
 
+	it("sends the Mac app's own copy to the app's updater", () => {
+		const plan = planUpgrade(
+			"/Applications/Spool.app/Contents/Resources/cli/spool/node_modules/spool.page/dist/cli.js",
+			{ isFile: () => true },
+		);
+		expect(plan).toEqual({ ok: false, message: expect.stringContaining("Check for Updates") });
+	});
+
 	it("refuses an unrecognized manager, printing what it resolved", () => {
 		const real = "/Users/liam/.bun/install/global/node_modules/spool.page/dist/cli.js";
 		const plan = planUpgrade(real, { isFile: () => true });
