@@ -23,6 +23,9 @@ export function bundledEnvironment(directory: string): NodeJS.ProcessEnv {
 		PI_CODING_AGENT_DIR: directory,
 		SPOOL_BUNDLED_STATE: directory,
 	};
+	// Bundled, pi would read spool's package.json as its own; the build leaves it one.
+	const piPackage = fileURLToPath(new URL("./pi", import.meta.url));
+	if (existsSync(join(piPackage, "package.json"))) env.PI_PACKAGE_DIR = piPackage;
 	for (const name of ["PATH", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"]) {
 		if (process.env[name] !== undefined) env[name] = process.env[name];
 	}

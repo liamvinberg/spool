@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
@@ -21,6 +21,16 @@ export default defineConfig([
 		onSuccess: async () => {
 			const renderer = fileURLToPath(new URL("./src/daemon/bundled-oauth-page.ts", import.meta.url));
 			await writeFile("dist/bundled-oauth-native.js", await buildBundledOAuth(renderer));
+			// pi reads its name, version and config directory from its package.json
+			// as it loads; agent-engine-spool points the host at this copy.
+			const pi = JSON.parse(
+				await readFile(new URL("../package.json", import.meta.resolve("@earendil-works/pi-coding-agent")), "utf8"),
+			);
+			await mkdir("dist/pi", { recursive: true });
+			await writeFile(
+				"dist/pi/package.json",
+				`${JSON.stringify({ name: pi.name, version: pi.version, piConfig: pi.piConfig }, null, "\t")}\n`,
+			);
 		},
 	},
 	{
