@@ -4029,18 +4029,21 @@ export function ProjectCanvas({
 					camera.stop();
 					setMenu(null);
 					if (message.kind === "wheel") {
-						const frame = framesRef.current.find((candidate) => candidate.name === message.frame);
+						const iframe = iframes.current.get(message.frame);
 						const viewport = viewportRef.current;
-						const cam = camera.get();
-						if (frame === undefined || viewport === null || cam === null) return;
-						// The document fills its frame one CSS pixel to one world unit, so
-						// the cursor is a world point and lands on screen through the
-						// camera as it is now. Measured off the iframe instead it would be
-						// read through the transform last drawn, which a pinch sending
-						// several ticks a frame has already moved past (#81).
+						if (iframe === undefined || viewport === null) return;
+						// The pointer is where the frame said it was inside its own box, and
+						// that box is where it was last drawn: measured, the two agree even
+						// while the camera is a few ticks ahead of the frame (#81), and the
+						// zoom pins the screen point the pointer is actually on.
+						const frameRect = iframe.getBoundingClientRect();
+						const viewportRect = viewport.getBoundingClientRect();
+						const cameraScale = camera.get()?.k ?? 1;
+						const scaleX = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : cameraScale;
+						const scaleY = iframe.clientHeight > 0 ? frameRect.height / iframe.clientHeight : cameraScale;
 						zoomAtPoint(
-							(frame.x + message.x) * cam.k + cam.x,
-							(frame.y + message.y) * cam.k + cam.y,
+							frameRect.left - viewportRect.left + message.x * scaleX,
+							frameRect.top - viewportRect.top + message.y * scaleY,
 							wheelZoomFactor(message.deltaY, message.deltaMode, viewport.clientHeight),
 						);
 						return;
