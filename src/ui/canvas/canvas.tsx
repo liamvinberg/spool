@@ -75,9 +75,10 @@ import {
 	intersects,
 	K_STEP,
 	toWorld,
+	visibleWorldRect,
 	zoomAt,
 } from "./camera";
-import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, createCameraStore, type FieldView, useCameraFollow } from "./camera-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
@@ -286,6 +287,12 @@ const HOVER_PICK_MS = 80;
 const COPY_CASCADE_PX = 24;
 /** how long a hand edit's outgoing document may stand before the still returns */
 const HOLD_PAINT_MS = 3000;
+/**
+ * How far past the viewport a follower keeps drawing while the camera moves,
+ * as a fraction of the viewport on every side: a pan reaches it a few frames
+ * before it reaches the screen (#81).
+ */
+const NEAR_MARGIN = 0.25;
 
 /** A write that said what the file already said: no characters moved, so it is no step. */
 function wroteNothing(undo: HeldPatch): boolean {
@@ -1411,6 +1418,38 @@ export function ProjectCanvas({
 	const stopAnimation = useCallback(() => camera.stop(), [camera]);
 
 	const animateCamera = useCallback((to: Camera, ms?: number) => camera.fly(to, ms), [camera]);
+
+	/**
+	 * What the camera can see while it moves (`FieldView`). The viewport's size
+	 * is kept as the observer last measured it rather than read when asked: it
+	 * is asked in the middle of a frame's writes, where reading layout would
+	 * force it.
+	 */
+	const viewSize = useRef({ width: 0, height: 0 });
+	useLayoutEffect(() => {
+		const el = viewportRef.current;
+		if (el === null) return;
+		const measure = () => {
+			viewSize.current = { width: el.clientWidth, height: el.clientHeight };
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+	/** from the first frame the camera is drawn at until it settles */
+	const moving = useRef(false);
+	const seen = useRef<{ camera: Camera; rect: Box } | null>(null);
+	const near = useCallback((at: Camera, box: Box): boolean => {
+		if (!moving.current) return true;
+		// one rectangle per drawn camera, however many followers ask about it
+		if (seen.current?.camera !== at) {
+			const { width, height } = viewSize.current;
+			seen.current = { camera: at, rect: visibleWorldRect(at, width, height, NEAR_MARGIN) };
+		}
+		return intersects(box, seen.current.rect);
+	}, []);
+	const view = useMemo<FieldView>(() => ({ near, rest: restCamera }), [near, restCamera]);
 
 	const viewportCenter = useCallback((): Point => {
 		const el = viewportRef.current;
@@ -4117,11 +4156,13 @@ export function ProjectCanvas({
 	useEffect(() => {
 		let settle: ReturnType<typeof setTimeout> | undefined;
 		const unsubscribe = camera.subscribe(() => {
+			moving.current = true;
 			restVerbs.current.noteCameraMoving(true);
 			clearTimeout(settle);
 			settle = setTimeout(() => {
 				const rest = camera.get();
 				if (rest === null) return;
+				moving.current = false;
 				settledCameraRef.current = rest;
 				restVerbs.current.noteCameraMoving(false);
 				restVerbs.current.sweepLifecycle();
@@ -5506,7 +5547,7 @@ export function ProjectCanvas({
 										height: frame.h,
 									}}
 								>
-									<ShellClip camera={camera}>
+									<ShellClip camera={camera} view={view} frame={frame}>
 										<FrameShell
 											project={project}
 											name={frame.name}
@@ -5566,7 +5607,8 @@ export function ProjectCanvas({
 										    state chip (#28). */}
 									<FrameLabel
 										name={frame.name}
-										frameWidth={frame.w}
+										frame={frame}
+										view={view}
 										camera={camera}
 										entered={isEntered}
 										selected={isSelected}

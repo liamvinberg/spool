@@ -1,6 +1,6 @@
 import { type DependencyList, useLayoutEffect, useRef } from "react";
 import type { Camera } from "../api";
-import { clamp } from "./camera";
+import { type Box, clamp } from "./camera";
 
 /**
  * The camera, kept outside React (#81).
@@ -42,6 +42,23 @@ export interface CameraStore {
 
 /** The flight every move that takes you somewhere makes, unless it says otherwise. */
 export const FLIGHT_MS = 220;
+
+/**
+ * What the camera can see, for the followers there is one of per frame (#81).
+ *
+ * A label or a corner off screen is drawn for nobody, and a zoom step that lays
+ * out every one of them pays for all the ones nobody sees. So while the camera
+ * moves, `near` holds a follower to what is on screen or a short way off it,
+ * which a pan reaches before it reaches the screen; once the camera rests,
+ * `near` says yes to everything, and a new `rest` is a follower's cue to catch
+ * up on whatever it skipped.
+ */
+export interface FieldView {
+	/** Whether a world box has to be drawn for this camera. */
+	near(camera: Camera, box: Box): boolean;
+	/** Where the camera last came to rest. */
+	rest: Camera | null;
+}
 
 export function createCameraStore(): CameraStore {
 	let camera: Camera | null = null;

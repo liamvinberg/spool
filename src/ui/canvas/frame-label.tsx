@@ -2,13 +2,15 @@ import { useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
-import { type CameraStore, useCameraFollow } from "./camera-store";
+import type { Box } from "./camera";
+import { type CameraStore, type FieldView, useCameraFollow } from "./camera-store";
 import { UnseenMark } from "./unseen-mark";
 
 export function FrameLabel({
 	name,
-	frameWidth,
+	frame,
 	camera,
+	view,
 	entered,
 	selected,
 	hovered,
@@ -19,9 +21,12 @@ export function FrameLabel({
 	name: string;
 	/** the frame's link, said at the one size the canvas keeps legible at any zoom */
 	sharing?: { chip: ShareChip; open: () => void; expanded: boolean } | undefined;
-	frameWidth: number;
+	/** the frame the label names, in world units */
+	frame: Box;
 	/** The label holds one size on screen through the zoom, so it follows the camera (#81). */
 	camera: CameraStore;
+	/** what is worth drawing while the camera moves, and when to catch up */
+	view: FieldView;
 	entered: boolean;
 	selected: boolean;
 	hovered: boolean;
@@ -40,18 +45,19 @@ export function FrameLabel({
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
 	// Both are written here rather than rendered, and only when the zoom or the
-	// frame's width moved: a pan writes nothing, and a zoom step lays out the
-	// label again and nothing else.
+	// frame's width moved: a pan writes nothing, and a zoom step lays out again
+	// the labels on screen and nothing else, the rest once the camera rests.
 	useCameraFollow(
 		camera,
-		({ k }) => {
+		(at) => {
 			const el = label.current;
-			if (el === null || (drawn.current?.k === k && drawn.current.width === frameWidth)) return;
-			drawn.current = { k, width: frameWidth };
-			el.style.width = `${frameWidth * k}px`;
-			el.style.transform = `scale(${1 / k})`;
+			if (el === null || (drawn.current?.k === at.k && drawn.current.width === frame.w)) return;
+			if (!view.near(at, frame)) return;
+			drawn.current = { k: at.k, width: frame.w };
+			el.style.width = `${frame.w * at.k}px`;
+			el.style.transform = `scale(${1 / at.k})`;
 		},
-		[frameWidth],
+		[frame.x, frame.y, frame.w, frame.h, view],
 	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);

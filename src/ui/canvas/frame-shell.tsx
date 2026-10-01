@@ -3,7 +3,8 @@ import type { Cover } from "../../cover";
 import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
-import { type CameraStore, useCameraFollow } from "./camera-store";
+import type { Box } from "./camera";
+import { type CameraStore, type FieldView, useCameraFollow } from "./camera-store";
 import type { FrameState } from "./lifecycle";
 
 /**
@@ -37,19 +38,32 @@ export function shellRadius(k: number): number {
  * The radius is written straight to the clip, and only when it changes: below
  * half zoom it is the 24 a frame never exceeds, so a zoom across the overview
  * writes nothing at all, where it used to repaint every corner on the page.
+ * Above it, a zoom step rounds the corners on screen and leaves the rest for
+ * when the camera rests.
  */
-export function ShellClip({ camera, children }: { camera: CameraStore; children: ReactNode }) {
+export function ShellClip({
+	camera,
+	view,
+	frame,
+	children,
+}: {
+	camera: CameraStore;
+	view: FieldView;
+	/** the frame being clipped, in world units */
+	frame: Box;
+	children: ReactNode;
+}) {
 	const clip = useRef<HTMLDivElement | null>(null);
 	const drawn = useRef<number | null>(null);
 	useCameraFollow(
 		camera,
-		({ k }) => {
-			const radius = shellRadius(k);
-			if (clip.current === null || radius === drawn.current) return;
+		(at) => {
+			const radius = shellRadius(at.k);
+			if (clip.current === null || radius === drawn.current || !view.near(at, frame)) return;
 			drawn.current = radius;
 			clip.current.style.borderRadius = `${radius}px`;
 		},
-		[],
+		[frame.x, frame.y, frame.w, frame.h, view],
 	);
 	return (
 		<div ref={clip} className="relative h-full w-full overflow-hidden">
