@@ -48,7 +48,7 @@ export default function Frame() {
 						<span data-stitch="10">
 							A canvas
 							<br />
-							for <em>working</em>
+							for working
 							<br />
 							things out.
 						</span>

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300..700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Young+Serif&family=Inter+Tight:wght@300..700&display=swap");
 
 /* The landing scrolls with the browser. */
 html,
@@ -18,7 +18,7 @@ body {
 	--toy-muted: var(--color-muted);
 	--toy-thread: var(--color-thread);
 	--toy-line: var(--color-border-raised);
-	--toy-serif: "Instrument Serif", Georgia, serif;
+	--toy-serif: "Young Serif", Georgia, serif;
 	--toy-sans: "Inter Tight", "Helvetica Neue", Arial, sans-serif;
 	--toy-grotesk: "Bricolage Grotesque", "Inter Tight", Arial, sans-serif;
 	--toy-mono: "Fragment Mono", ui-monospace, monospace;
