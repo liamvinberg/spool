@@ -76,12 +76,13 @@ if [ "$NOTARIZING" = true ]; then
 fi
 
 # One timestamp for every file, the same in every release. The zip carries each
-# file's time in its headers and an update downloads every block of the zip the
-# previous one did not have, so build-time stamps made 36,000 unchanged files
-# look new and every update fetched about 64MB, a patch included. The times are
-# not part of the signature. The bundle folder and its executable keep the
-# build time, because LaunchServices records both to notice a replaced app.
-find "$APP" -exec touch -h -t 202001010000 {} +
+# entry's time in its headers and an update downloads every block of the zip the
+# previous one did not have, so build-time stamps made 36,000 unchanged entries
+# look new and every update fetched about 64MB, a patch included. UTC because
+# touch reads the stamp in local time. The times are not part of the signature.
+# The bundle folder and its executable keep the build time, because
+# LaunchServices records both to notice a replaced app.
+TZ=UTC find "$APP" -exec touch -h -t 202001010000 {} +
 touch "$APP" "$APP/Contents/MacOS/Spool"
 
 # The update feed. electron-updater downloads a zip, not a dmg, and reads
