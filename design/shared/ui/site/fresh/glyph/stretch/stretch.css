@@ -1,0 +1,261 @@
+/* Mona Sans: a sturdy grotesk with a width axis (75 to 125) and a weight axis
+ * (200 to 900), which is what lets every letter breathe on its own. */
+@import url("https://fonts.googleapis.com/css2?family=Mona+Sans:wdth,wght@75..125,200..900&display=swap");
+
+.gs-page {
+	font-family: "Mona Sans", "Familjen Grotesk", Arial, sans-serif;
+	font-variation-settings: "wdth" 100;
+}
+
+/* With no light to show, the letters stay warm white. */
+.gs-stage {
+	background: #ece8e3;
+}
+.gs-stage[data-backend="fallback"] .gp-canvas {
+	visibility: hidden;
+}
+
+/* The type layer multiplies the light away everywhere but inside the letters,
+ * leaving black around them for the wall layer to light. */
+.gs-type {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	background: #000;
+	color: #fff;
+	mix-blend-mode: multiply;
+	pointer-events: none;
+}
+.gs-h {
+	position: absolute;
+	left: var(--gp-edge);
+	margin: 0;
+	font-weight: 400;
+	line-height: 0.88;
+	letter-spacing: -0.03em;
+	white-space: nowrap;
+	visibility: hidden;
+}
+.gs-line {
+	display: block;
+	width: max-content;
+}
+.gs-ch {
+	display: inline-block;
+	font-variation-settings: "wdth" 100, "wght" 500;
+	will-change: font-variation-settings;
+}
+
+.gs-h0 {
+	top: 15.5vh;
+	font-size: min(13.2vw, 23vh);
+	visibility: visible;
+}
+.gs-h1 {
+	top: 20vh;
+	font-size: min(11.6vw, 21vh);
+}
+.gs-h2 {
+	top: 50%;
+	transform: translateY(-58%);
+	font-size: min(17vw, 30vh);
+	letter-spacing: -0.02em;
+}
+.gs-h3 {
+	top: 22vh;
+	font-size: min(13vw, 23vh);
+}
+.gs-h4 {
+	top: 20vh;
+	font-size: min(12vw, 22vh);
+}
+.gs-h5 {
+	top: 15vh;
+	font-size: min(9.6vw, 16.5vh);
+	line-height: 0.92;
+}
+
+/* The wall behind the letters: the page's black, warmed where the light is.
+ * Lighten keeps whichever is brighter, so the letters always win. */
+.gs-wall {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	overflow: hidden;
+	background: var(--gp-bg);
+	mix-blend-mode: lighten;
+	pointer-events: none;
+}
+.gs-glow {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 1000px;
+	height: 1000px;
+	border-radius: 50%;
+	background: radial-gradient(
+		closest-side,
+		rgba(150, 30, 12, 0.46),
+		rgba(130, 26, 11, 0.3) 22%,
+		rgba(105, 21, 9, 0.16) 45%,
+		rgba(80, 16, 8, 0.06) 70%,
+		rgba(60, 12, 6, 0.015) 88%,
+		rgba(60, 12, 6, 0)
+	);
+	will-change: transform, opacity;
+}
+
+.gs-scene {
+	position: absolute;
+	inset: auto var(--gp-edge) clamp(48px, 9vh, 88px);
+	z-index: 3;
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 48px;
+	visibility: hidden;
+	opacity: 0;
+	will-change: transform, opacity;
+}
+.gs-scene > p {
+	max-width: 400px;
+	margin: 0;
+	font-size: 19px;
+	line-height: 1.42;
+	letter-spacing: -0.01em;
+	color: #bdb6ae;
+	text-wrap: pretty;
+}
+.gs-s0 {
+	visibility: visible;
+}
+.gs-quiet-link {
+	padding-bottom: 3px;
+	border-bottom: 1px solid rgba(240, 239, 237, 0.3);
+	font-size: 16px;
+	color: var(--gp-text);
+	transition: border-color 160ms ease;
+}
+.gs-quiet-link:hover {
+	border-color: var(--gp-text);
+}
+
+.gs-file {
+	position: relative;
+	display: block;
+	max-width: calc(var(--shown, 0) * 1ch + 1.2ch);
+	overflow: hidden;
+	white-space: pre;
+	font-size: 14px;
+	color: #ff9b7f;
+}
+.gs-file::after {
+	content: "";
+	display: inline-block;
+	width: 0.6ch;
+	height: 1.05em;
+	margin-left: 2px;
+	vertical-align: -0.15em;
+	background: var(--gp-red);
+}
+
+.gs-walk {
+	display: flex;
+	gap: 10px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 13px;
+}
+.gs-walk li {
+	padding: 7px 11px;
+	border: 1px solid rgba(240, 239, 237, 0.14);
+	border-radius: 3px;
+	color: var(--gp-faint);
+	transition:
+		color 220ms ease,
+		border-color 220ms ease,
+		background-color 220ms ease;
+}
+.gs-walk li[data-on="past"] {
+	color: var(--gp-muted);
+}
+.gs-walk li[data-on="true"] {
+	border-color: rgba(245, 57, 26, 0.7);
+	background: rgba(245, 57, 26, 0.12);
+	color: #ffd9cc;
+}
+
+.gs-log {
+	font-size: 14px;
+	line-height: 1.9;
+	color: #d6cfc7;
+}
+.gs-log p {
+	margin: 0 0 6px;
+	color: var(--gp-muted);
+}
+.gs-log ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.gs-log li {
+	opacity: 0;
+}
+.gs-log li span {
+	color: #ff7d5c;
+}
+
+.gs-s5 {
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: flex-end;
+	gap: 0;
+}
+.gs-s5 > .gp-fine {
+	max-width: none;
+	margin-top: 22px;
+	font-size: 15px;
+	color: rgba(242, 224, 213, 0.6);
+}
+
+@media (max-width: 760px) {
+	.gs-h {
+		line-height: 0.92;
+	}
+	.gs-h0 {
+		top: 19vh;
+		font-size: 18vw;
+	}
+	.gs-h1,
+	.gs-h3,
+	.gs-h4 {
+		top: 21vh;
+		font-size: 16vw;
+	}
+	.gs-h2 {
+		font-size: 18vw;
+	}
+	.gs-h5 {
+		top: 14vh;
+		font-size: 11.5vw;
+	}
+	.gs-scene {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 22px;
+	}
+	.gs-scene > p {
+		font-size: 16px;
+	}
+	.gs-walk {
+		flex-wrap: wrap;
+	}
+	.gs-log {
+		font-size: 12px;
+	}
+	.gs-s5 .gp-actions {
+		width: 100%;
+	}
+}
