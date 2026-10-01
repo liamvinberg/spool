@@ -32,6 +32,11 @@ export function shellRadius(k: number): number {
 	return Math.min(12 / k, 24);
 }
 
+/** The same corner in screen pixels, which is what anything drawn round a shell rounds to. */
+export function shellRadiusOnScreen(k: number): number {
+	return shellRadius(k) * k;
+}
+
 /**
  * The shell's rounded clip, following the camera on its own (#81).
  *

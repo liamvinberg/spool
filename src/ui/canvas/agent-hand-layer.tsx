@@ -1,8 +1,9 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import type { Camera, ProjectedFrame } from "../api";
+import type { ProjectedFrame } from "../api";
 import { type Hand, type HandMark, PLATE_DRAWN } from "./agent-hand";
+import { toScreen } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
-import { shellRadius } from "./frame-shell";
+import { shellRadiusOnScreen } from "./frame-shell";
 
 /**
  * The five objects of the agent's hand, drawn over the field (#214).
@@ -140,16 +141,6 @@ function cornerPaths(rect: { x: number; y: number; w: number; h: number }, radiu
 	];
 }
 
-/** A frame's box on screen, for one camera. */
-function onScreen(camera: Camera, frame: ProjectedFrame): { x: number; y: number; w: number; h: number } {
-	return {
-		x: frame.x * camera.k + camera.x,
-		y: frame.y * camera.k + camera.y,
-		w: frame.w * camera.k,
-		h: frame.h * camera.k,
-	};
-}
-
 export function AgentHandLayer({
 	camera,
 	frames,
@@ -193,7 +184,7 @@ function Located({ camera, frame, mark }: { camera: CameraStore; frame: Projecte
 	useCameraFollow(
 		camera,
 		(at) => {
-			const rect = onScreen(at, frame);
+			const rect = toScreen(frame, at);
 			const top = rect.y + mark.box.y * at.k;
 			const height = mark.box.h * at.k;
 			if (plate.current !== null) {
@@ -278,7 +269,7 @@ function Held({
 	useCameraFollow(
 		camera,
 		(at) => {
-			const rect = onScreen(at, frame);
+			const rect = toScreen(frame, at);
 			const place = wallOf(rect);
 			wall.current?.setAttribute("transform", `translate(${place.line} ${place.mid})`);
 			// a photograph takes the ink off the wall entirely and puts it around the frame
@@ -294,7 +285,7 @@ function Held({
 					path.style.setProperty("--hand-pace", `${ms}ms`);
 				}
 			}
-			cornerPaths(rect, Math.min(12, shellRadius(at.k) * at.k)).forEach((d, index) => {
+			cornerPaths(rect, shellRadiusOnScreen(at.k)).forEach((d, index) => {
 				corners.current[index]?.setAttribute("d", d);
 			});
 			if (node.current !== null) {

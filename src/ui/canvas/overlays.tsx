@@ -1,9 +1,9 @@
 import { type CSSProperties, type HTMLAttributes, useRef } from "react";
 import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
-import type { Box } from "./camera";
+import { type Box, toScreen } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
-import { shellRadius } from "./frame-shell";
+import { shellRadiusOnScreen } from "./frame-shell";
 import type { ShownRefusal } from "./hand-edit";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
@@ -142,31 +142,21 @@ function inFrame(camera: Camera, rect: Box): Box {
 	return { x: rect.x * camera.k, y: rect.y * camera.k, w: rect.w * camera.k, h: rect.h * camera.k };
 }
 
-/** A world box on screen, for one camera. */
-function onScreen(camera: Camera, box: Box): Box {
-	return { x: box.x * camera.k + camera.x, y: box.y * camera.k + camera.y, w: box.w * camera.k, h: box.h * camera.k };
-}
-
-/** The ring's radius: the shell's own corner on screen, two pixels out. */
-function ringRadius(k: number): number {
-	return Math.min(12, shellRadius(k) * k) + 2;
-}
-
-/** A frame's ring, 3px outside it. */
+/** A frame's ring, 3px outside it, its corner the shell's own two pixels out. */
 function ringBox(camera: Camera, frame: Box): ScreenBox {
-	const rect = onScreen(camera, frame);
+	const rect = toScreen(frame, camera);
 	return {
 		left: rect.x - 3,
 		top: rect.y - 3,
 		width: rect.w + 6,
 		height: rect.h + 6,
-		borderRadius: ringRadius(camera.k),
+		borderRadius: shellRadiusOnScreen(camera.k) + 2,
 	};
 }
 
 /** The clip a frame's element rings are drawn inside, padded by their reach. */
 function clipBox(camera: Camera, frame: Box): ScreenBox {
-	const rect = onScreen(camera, frame);
+	const rect = toScreen(frame, camera);
 	return {
 		left: rect.x - RING_REACH,
 		top: rect.y - RING_REACH,
@@ -244,7 +234,7 @@ export function SelectionOverlay({
 }) {
 	/** A frame-local element rect on screen. */
 	const elementBox = (at: Camera, frame: ProjectedFrame, rect: Box): Box =>
-		onScreen(at, { x: frame.x + rect.x, y: frame.y + rect.y, w: rect.w, h: rect.h });
+		toScreen({ x: frame.x + rect.x, y: frame.y + rect.y, w: rect.w, h: rect.h }, at);
 
 	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
 	const hoveredFrame =
@@ -323,7 +313,7 @@ export function SelectionOverlay({
 							camera={camera}
 							// invisible 10px bands along the ring, inset past the corner zones
 							screen={(at) => {
-								const rect = onScreen(at, single);
+								const rect = toScreen(single, at);
 								return side === "n" || side === "s"
 									? {
 											left: rect.x + 5,
@@ -348,7 +338,7 @@ export function SelectionOverlay({
 							key={corner}
 							camera={camera}
 							screen={(at) => {
-								const rect = onScreen(at, single);
+								const rect = toScreen(single, at);
 								const cx = corner.includes("w") ? rect.x - 3 : rect.x + rect.w + 3;
 								const cy = corner.includes("n") ? rect.y - 3 : rect.y + rect.h + 3;
 								return { left: cx - 8, top: cy - 8 };
@@ -363,7 +353,7 @@ export function SelectionOverlay({
 					<Follow
 						camera={camera}
 						screen={(at) => {
-							const rect = onScreen(at, single);
+							const rect = toScreen(single, at);
 							return { left: rect.x + rect.w / 2, top: rect.y + rect.h + 14 };
 						}}
 						className="absolute flex items-center justify-center rounded-xs bg-thread-strong px-2 py-[3px]"

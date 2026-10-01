@@ -36,6 +36,14 @@ export const toWorld = (p: Point, camera: Camera): Point => ({
 	y: (p.y - camera.y) / camera.k,
 });
 
+/** A world box on screen, for one camera: where furniture drawn in screen pixels stands. */
+export const toScreen = (box: Box, camera: Camera): Box => ({
+	x: box.x * camera.k + camera.x,
+	y: box.y * camera.k + camera.y,
+	w: box.w * camera.k,
+	h: box.h * camera.k,
+});
+
 /**
  * Whether a world box is on screen for a camera, or near enough that a pan
  * reaches it before the next frame or two (#81). What a follower there is one
