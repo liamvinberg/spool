@@ -160,10 +160,10 @@ daemon it was opened on; a daemon another terminal was already serving is
 adopted and left running. `pnpm start` here is still the window alone, for when
 the daemon is already up.
 
-The bundle is around 730MB and the compressed dmg around 270MB. Chromium is about
-275MB of that; the rest is the spool package with the dependency tree npm resolves
-for it, some 32,000 files. Nothing is pruned: the point is that the app runs the
-same `spool.page` npm ships, not a trimmed copy that behaves differently.
+The bundle is around 400MB and the compressed dmg around 175MB. Chromium is about
+275MB of that; the rest is the spool package and the few dependencies it installs
+as real files, some 2,300 files. Nothing is pruned: the point is that the app runs
+the same `spool.page` npm ships, not a trimmed copy that behaves differently.
 
 What goes into the bundle, and how:
 
