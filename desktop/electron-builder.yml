@@ -26,6 +26,9 @@ extraResources:
       - "**/*"
   - from: shim
     to: shim
+  # The spool command's launcher, which /usr/local/bin/spool links to.
+  - from: bin
+    to: bin
 asar: true
 # Not an upload instruction: publishing is publish.yml's, and build.sh passes
 # --publish never. This block is what electron-builder bakes into the bundle as

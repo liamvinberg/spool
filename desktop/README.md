@@ -20,6 +20,21 @@ No separate Node or agent CLI installation is required. Account connections,
 Linux/WSL CLI requirements and the limits of command isolation are covered in
 [agent requirements and permissions](../docs/agents.md).
 
+## The spool command
+
+The bundle carries a launcher at `Contents/Resources/bin/spool` that runs the
+bundled cli under the app's binary as node, the same way the daemon runs. On
+launch from Applications the app links `/usr/local/bin/spool` to it: silently
+when that directory is writable, otherwise by asking once and then going
+through macOS's administrator prompt. The app menu's Install Command Line Tool
+does the same on request. A link rather than a copy, so updating the app
+updates the command.
+
+A `spool` the app did not put there is left alone, and so is the whole offer
+when another `spool` is already on the login shell's PATH: someone who
+installed it with npm or pnpm keeps theirs. `spool upgrade` through the app's
+command points at Check for Updates rather than at a package manager.
+
 ## Do not also run `spool autostart`
 
 `spool autostart` installs a launchd job that starts the daemon at login. The app

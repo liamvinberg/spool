@@ -1,0 +1,9 @@
+#!/bin/sh
+# The spool command of a Spool.app install. /usr/local/bin/spool links here, so
+# the terminal runs the spool package inside the bundle under the app's own
+# binary as node, the way the app starts its daemon: one version on the machine,
+# and an app update updates the command too.
+resources="$(dirname "$(dirname "$(readlink -f "$0")")")"
+ELECTRON_RUN_AS_NODE=1 exec "$(dirname "$resources")/MacOS/Spool" \
+	-r "$resources/shim/electron-argv.js" \
+	"$resources/cli/spool/node_modules/spool.page/dist/cli.js" "$@"

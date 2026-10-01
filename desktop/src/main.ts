@@ -15,6 +15,7 @@ import {
 	shell,
 	Tray,
 } from "electron";
+import { LINK, launcherPath, linkAsAdministrator, linkDirectly, linkState, otherSpool } from "./cli-link";
 import * as daemon from "./daemon";
 import { directoryDialogOptions } from "./directory-dialog";
 import { log, openLog } from "./log";
@@ -446,6 +447,13 @@ function point(
 	);
 }
 
+/** The login shell's answer, asked at most once: the daemon and the command offer both want it. */
+let askedPath: { path: string | undefined } | undefined;
+function terminalPath(): string | undefined {
+	askedPath ??= { path: userPath() };
+	return askedPath.path;
+}
+
 async function startBundled(): Promise<
 	{ url: string; pid: number; version: string; controlToken: string } | undefined
 > {
@@ -464,7 +472,7 @@ async function startBundled(): Promise<
 	// the toolchain they already have, and a GUI launch hands this process a PATH
 	// that has neither on it. Asked here rather than at boot: an adopted daemon was
 	// started from a terminal and already has the answer.
-	const path = userPath();
+	const path = terminalPath();
 	log("path", path === undefined ? "as launched" : "from the login shell");
 	try {
 		const status = await daemon.start({
@@ -759,6 +767,7 @@ export function buildAppMenu(): Menu {
 						{ label: "Sign Out", click: () => void cloudAccount("logout") },
 					],
 				},
+				{ label: "Install Command Line Tool…", click: () => void installCommand() },
 				{ type: "separator" },
 				{ ...updateItem(), id: "app-update" },
 				{ type: "separator" },
@@ -1266,6 +1275,80 @@ async function offerApplicationsFolder(): Promise<void> {
 	if (!app.moveToApplicationsFolder()) log("boot", "the move was declined");
 }
 
+/**
+ * The spool command, linked on launch whenever that needs no question, and
+ * offered once when it needs the administrator prompt. Declined is declined, as
+ * with the move to Applications; the app menu has the same install for later.
+ */
+async function offerCommand(): Promise<void> {
+	if (process.platform !== "darwin" || !app.isPackaged || LANE) return;
+	// a link into a dmg or Downloads breaks the moment the app is moved
+	if (!app.isInApplicationsFolder()) return;
+	const launcher = launcherPath(process.resourcesPath);
+	if (!existsSync(launcher)) return;
+	const state = linkState(launcher);
+	if (state === "current" || state === "foreign") return;
+	if (state === "absent") {
+		const other = otherSpool(terminalPath() ?? process.env.PATH);
+		if (other !== undefined) {
+			log("command", "already on PATH", other);
+			return;
+		}
+	}
+	if (linkDirectly(launcher)) {
+		log("command", "linked", LINK);
+		return;
+	}
+	const offered = join(app.getPath("userData"), "command-offered");
+	if (existsSync(offered)) return;
+	try {
+		writeFileSync(offered, "");
+	} catch {
+		// asked again next launch, which is the worse of two small things
+	}
+	const answer = await dialog.showMessageBox({
+		type: "question",
+		message: "Add the spool command to your terminal?",
+		detail:
+			"Spool can put the spool command in /usr/local/bin, so you and your agents can drive the canvas from any terminal. macOS will ask for your password. You can also do this later from the Spool menu.",
+		buttons: ["Add Command", "Not Now"],
+		defaultId: 0,
+		cancelId: 1,
+	});
+	if (answer.response === 0) await installCommand();
+}
+
+async function installCommand(): Promise<void> {
+	const launcher = launcherPath(process.resourcesPath);
+	if (!existsSync(launcher)) {
+		tell("This copy of Spool has no spool command in it.", "Download Spool again from the releases page.", "error");
+		return;
+	}
+	if (!app.isInApplicationsFolder()) {
+		tell(
+			"Move Spool to the Applications folder first.",
+			"The command points into the app, so it would stop working the moment the app moved.",
+			"warning",
+		);
+		return;
+	}
+	const state = linkState(launcher);
+	if (state === "foreign") {
+		tell(
+			"Another spool command is already installed.",
+			`${LINK} was not put there by this app, so it is left alone.`,
+			"warning",
+		);
+		return;
+	}
+	if (state !== "current" && !linkDirectly(launcher) && !(await linkAsAdministrator(launcher))) {
+		log("command", "the administrator prompt was declined");
+		return;
+	}
+	log("command", "linked", LINK);
+	tell("The spool command is installed.", "Open a new terminal window and run spool.", "info");
+}
+
 /** Prepare while the canvas remains usable; only a verified bundle earns a restart offer. */
 async function prepareUpdate(target: string, manual = true): Promise<void> {
 	if (busy || shuttingDown) return;
@@ -1567,5 +1650,7 @@ export function boot(): void {
 		scheduleChecks();
 		await openCanvas();
 		documents.start();
+		// a convenience: nothing about it may stop a launch or escape as a rejection
+		void offerCommand().catch((error: unknown) => log("command", "FAIL", String(error)));
 	});
 }
