@@ -1934,7 +1934,7 @@ describe("a row that names a frame", () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "tidy the receipt");
-		const zoom = canvas.chrome.latest?.zoomPct;
+		const zoom = canvas.chrome.latest?.camera.get()?.k;
 
 		canvas.turn.push(ready);
 		canvas.turn.push(edit("t1", "site/receipt"));
@@ -1952,7 +1952,7 @@ describe("a row that names a frame", () => {
 			"true",
 		);
 		// and the zoom is the reader's, so following a row is not a navigation to undo
-		expect(canvas.chrome.latest?.zoomPct).toBe(zoom);
+		expect(canvas.chrome.latest?.camera.get()?.k).toBe(zoom);
 		// the press on the name is not the press on the disclosure
 		expect(canvas.host.querySelector('[aria-label="edit site/receipt"]')?.getAttribute("aria-expanded")).toBe(
 			"false",

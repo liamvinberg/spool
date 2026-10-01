@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
 import type { AgentEngineId } from "../../daemon/agent-engine";
@@ -77,7 +77,7 @@ import {
 	toWorld,
 	zoomAt,
 } from "./camera";
-import { createCameraStore } from "./camera-store";
+import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
@@ -200,7 +200,12 @@ import { WalkLayer, walksOf } from "./walk-layer";
  */
 
 export interface CanvasChrome {
-	zoomPct: number;
+	/**
+	 * The camera itself, for the zoom readout to follow (#81). A percentage
+	 * handed up here would re-render the whole window on every zoom tick, so the
+	 * readout subscribes and writes its own number instead.
+	 */
+	camera: CameraStore;
 	/** The threads toggle (#34): shown pressed while the map draws. */
 	arrowsOn: boolean;
 	toggleArrows: () => void;
@@ -372,13 +377,31 @@ export function ProjectCanvas({
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
-	const [camera, setCamera] = useState<Camera | null>(null);
 	/**
-	 * The camera as what follows it reads it (#81): drawn once per animation
-	 * frame, so labels and corners move without a render of their own.
+	 * The camera (#81): one value outside React, drawn once per animation frame
+	 * by whatever follows it. A wheel tick moves it and renders nothing.
 	 */
-	const [cameraStore] = useState(createCameraStore);
-	useLayoutEffect(() => cameraStore.set(camera), [cameraStore, camera]);
+	const [camera] = useState(createCameraStore);
+	/**
+	 * The camera as React knows it: there from the moment it is, and moved only
+	 * once it has come to rest. What is decided at rest reads this — which
+	 * documents mount, where the camera is remembered — and nothing that is
+	 * drawn does, because a render is far too late for a camera in motion.
+	 */
+	const [restCamera, setRestCamera] = useState<Camera | null>(null);
+	/**
+	 * Put the camera somewhere without flying there. The field only stands while
+	 * there is a camera to draw it from, so arriving at one or losing it is a
+	 * render, in the same commit as whatever caused it; moving one never is.
+	 */
+	const placeCamera = useCallback(
+		(next: Camera | null) => {
+			const was = camera.get();
+			camera.set(next);
+			if ((was === null) !== (next === null)) setRestCamera(next);
+		},
+		[camera],
+	);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
@@ -586,9 +609,6 @@ export function ProjectCanvas({
 		setExportError(undefined);
 	}, [exportDialog, exportFrames.length]);
 	const gesture = useRef<Gesture>({ kind: "idle" });
-	const animation = useRef(0);
-	const cameraRef = useRef<Camera | null>(null);
-	cameraRef.current = camera;
 	const settledCameraRef = useRef<Camera | null>(null);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
@@ -1176,19 +1196,19 @@ export function ProjectCanvas({
 				dwell.current.clear();
 				return;
 			}
-			const camera = cameraRef.current;
+			const cam = camera.get();
 			const viewport = viewportRef.current;
-			if (camera === null || viewport === null) return;
+			if (cam === null || viewport === null) return;
 			const vw = viewport.clientWidth;
 			const vh = viewport.clientHeight;
 			const looking = framesRef.current
-				.filter((frame) => unseenRef.current.has(frame.name) && looked(frame, camera, vw, vh))
+				.filter((frame) => unseenRef.current.has(frame.name) && looked(frame, cam, vw, vh))
 				.map((frame) => frame.name);
 			const crossed = advanceDwell(dwell.current, looking);
 			if (crossed.length > 0) markRead(crossed);
 		}, TICK_MS);
 		return () => window.clearInterval(timer);
-	}, [unseen.size, markRead]);
+	}, [unseen.size, markRead, camera]);
 
 	useEffect(() => {
 		const touch = () => {
@@ -1223,8 +1243,8 @@ export function ProjectCanvas({
 				cameras.current = camerasFromState(state);
 				const page = state.activePage ?? ROOT_PAGE;
 				setActivePage(page);
-				const camera = cameras.current[page];
-				if (camera !== undefined) setCamera(camera);
+				const stored = cameras.current[page];
+				if (stored !== undefined) placeCamera(stored);
 			}
 			// arrows arrive when they arrive (#109): the canvas opens on frames and
 			// cameras, and nothing on screen waits for the link graph
@@ -1245,7 +1265,7 @@ export function ProjectCanvas({
 		return () => {
 			alive = false;
 		};
-	}, [project, refetchFrames, refetchFlows]);
+	}, [project, refetchFrames, refetchFlows, placeCamera]);
 
 	// --- site boxes (#34, #214): where an arrow grows from, and where a write landed ---
 
@@ -1340,16 +1360,34 @@ export function ProjectCanvas({
 
 	// no stored camera: fit the field once both viewport and field exist
 	useLayoutEffect(() => {
-		if (camera !== null || !loaded) return;
+		if (restCamera !== null || !loaded) return;
 		const viewport = viewportRef.current;
 		if (viewport === null) return;
 		const boxes = fieldBoxes();
-		setCamera(
+		placeCamera(
 			boxes.length === 0
 				? { x: 0, y: 0, k: 1 }
 				: fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight),
 		);
-	}, [camera, loaded, fieldBoxes]);
+	}, [restCamera, loaded, fieldBoxes, placeCamera]);
+
+	/**
+	 * The camera a page switch lands on, held until the switch has rendered.
+	 *
+	 * The page is React's and the camera is not, so set together they would be
+	 * drawn apart: the camera at the next animation frame and the page whenever
+	 * its render runs, which a switch caused by a frame's message leaves for a
+	 * later task. Placed from here, the camera moves in the commit that swaps the
+	 * field, and the frame that draws it draws both. Declared before the shelf's
+	 * fit, which has to have the last word on a shelf.
+	 */
+	const arrival = useRef<{ page: string; camera: Camera | null } | null>(null);
+	useLayoutEffect(() => {
+		const landing = arrival.current;
+		if (landing === null || landing.page !== activePage) return;
+		arrival.current = null;
+		placeCamera(landing.camera);
+	}, [activePage, placeCamera]);
 
 	/**
 	 * A shelf is fitted on every arrival, stored camera or not. A page with no
@@ -1365,33 +1403,14 @@ export function ProjectCanvas({
 		if (framesRef.current.length > 0 || pageObjectsRef.current.length === 0) return;
 		const viewport = viewportRef.current;
 		if (viewport === null) return;
-		setCamera(fitCamera(boundsOf(fieldBoxes()), viewport.clientWidth, viewport.clientHeight));
-	}, [loaded, activePage, fieldBoxes]);
+		placeCamera(fitCamera(boundsOf(fieldBoxes()), viewport.clientWidth, viewport.clientHeight));
+	}, [loaded, activePage, fieldBoxes, placeCamera]);
 
 	// --- camera ---------------------------------------------------------------
 
-	const stopAnimation = useCallback(() => cancelAnimationFrame(animation.current), []);
+	const stopAnimation = useCallback(() => camera.stop(), [camera]);
 
-	const animateCamera = useCallback(
-		(to: Camera, ms = 220) => {
-			const from = cameraRef.current;
-			if (from === null) return;
-			stopAnimation();
-			const t0 = performance.now();
-			const step = (t: number) => {
-				const p = clamp((t - t0) / ms, 0, 1);
-				const e = 1 - (1 - p) ** 3;
-				setCamera({
-					x: from.x + (to.x - from.x) * e,
-					y: from.y + (to.y - from.y) * e,
-					k: from.k + (to.k - from.k) * e,
-				});
-				if (p < 1) animation.current = requestAnimationFrame(step);
-			};
-			animation.current = requestAnimationFrame(step);
-		},
-		[stopAnimation],
-	);
+	const animateCamera = useCallback((to: Camera, ms?: number) => camera.fly(to, ms), [camera]);
 
 	const viewportCenter = useCallback((): Point => {
 		const el = viewportRef.current;
@@ -1400,13 +1419,22 @@ export function ProjectCanvas({
 
 	const zoomAtPoint = useCallback(
 		(cx: number, cy: number, factor: number, animate = false) => {
-			const cam = cameraRef.current;
+			const cam = camera.get();
 			if (cam === null) return;
 			const next = zoomAt(cam, cx, cy, factor);
 			if (animate) animateCamera(next, 140);
-			else setCamera(next);
+			else camera.set(next);
 		},
-		[animateCamera],
+		[animateCamera, camera],
+	);
+
+	/** Move the field by a screen distance at the same zoom: every pan is this. */
+	const panBy = useCallback(
+		(dx: number, dy: number) => {
+			const cam = camera.get();
+			if (cam !== null) camera.set({ ...cam, x: cam.x + dx, y: cam.y + dy });
+		},
+		[camera],
 	);
 
 	const zoomFit = useCallback(() => {
@@ -1417,12 +1445,12 @@ export function ProjectCanvas({
 	}, [animateCamera, fieldBoxes]);
 
 	const resetZoom = useCallback(() => {
-		const cam = cameraRef.current;
+		const cam = camera.get();
 		if (cam === null) return;
 		const c = viewportCenter();
 		const w = toWorld(c, cam);
 		animateCamera({ k: 1, x: c.x - w.x, y: c.y - w.y });
-	}, [animateCamera, viewportCenter]);
+	}, [animateCamera, viewportCenter, camera]);
 
 	/**
 	 * The jump list's one rule (jumps.ts): a move that takes you somewhere — a
@@ -1434,7 +1462,7 @@ export function ProjectCanvas({
 	 * inside, and what you had chosen — so a jump can hand all of it back.
 	 */
 	const jumpSpot = useCallback((): JumpEntry | undefined => {
-		const cam = cameraRef.current;
+		const cam = camera.get();
 		if (cam === null) return undefined;
 		return {
 			page: activePageRef.current,
@@ -1443,7 +1471,7 @@ export function ProjectCanvas({
 			selected: [...selectedRef.current],
 			picked: [...pickedRef.current],
 		};
-	}, []);
+	}, [camera]);
 
 	const recordDeparture = useCallback(() => {
 		const from = jumpSpot();
@@ -1468,14 +1496,14 @@ export function ProjectCanvas({
 			// Center a frame that still fits on screen, but preserve a close-up.
 			// Entering never zooms out; the sidebar's explicit flight still fits.
 			const viewport = viewportRef.current;
-			const cam = cameraRef.current;
+			const cam = camera.get();
 			if (viewport === null || cam === null) return;
 			const next = entryCamera(cam, frame, viewport.clientWidth, viewport.clientHeight);
 			// standing still is not a flight: a 220ms animation to where you
 			// already are would fight a wheel that arrives inside it
 			if (next.x !== cam.x || next.y !== cam.y || next.k !== cam.k) animateCamera(next);
 		},
-		[animateCamera],
+		[animateCamera, camera],
 	);
 
 	const exitEntered = useCallback((retainFrame = false) => {
@@ -3475,13 +3503,16 @@ export function ProjectCanvas({
 	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
 
 	/** The camera that lands an arrival centered on its target, zoom kept. */
-	const arrivalAt = useCallback((frame: ProjectedFrame): Camera | undefined => {
-		const viewport = viewportRef.current;
-		const cam = cameraRef.current;
-		return viewport !== null && cam !== null
-			? centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight)
-			: undefined;
-	}, []);
+	const arrivalAt = useCallback(
+		(frame: ProjectedFrame): Camera | undefined => {
+			const viewport = viewportRef.current;
+			const cam = camera.get();
+			return viewport !== null && cam !== null
+				? centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight)
+				: undefined;
+		},
+		[camera],
+	);
 
 	/**
 	 * Switching saves the leaving page's camera, swaps the field, and restores
@@ -3500,12 +3531,13 @@ export function ProjectCanvas({
 			setMenu(null);
 			setExternalLink(null);
 			stopAnimation();
-			const next = switchPage(cameras.current, activePageRef.current, cameraRef.current, target, arriveAt);
+			const next = switchPage(cameras.current, activePageRef.current, camera.get(), target, arriveAt);
 			cameras.current = next.cameras;
 			setActivePage(target);
-			setCamera(next.camera);
+			// placed by the commit that swaps the field, so both are drawn by one frame
+			arrival.current = { page: target, camera: next.camera };
 		},
-		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation],
+		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation, camera],
 	);
 	leavePage.current = switchToPage;
 	/** Page-folder clicks return selection to the page, even when it is already active. */
@@ -3554,7 +3586,7 @@ export function ProjectCanvas({
 			setPicked([]);
 			const frame = framesRef.current.find((f) => f.name === target);
 			const viewport = viewportRef.current;
-			const cam = cameraRef.current;
+			const cam = camera.get();
 			if (frame !== undefined && viewport !== null && cam !== null) {
 				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
@@ -3568,7 +3600,7 @@ export function ProjectCanvas({
 			// screen scripts run fresh on every arrival — reboot even a warm target
 			setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
 		},
-		[recordDeparture, animateCamera, switchToPage, arrivalAt],
+		[recordDeparture, animateCamera, switchToPage, arrivalAt, camera],
 	);
 
 	/**
@@ -3949,7 +3981,7 @@ export function ProjectCanvas({
 					const dx = message.x - last.x;
 					const dy = message.y - last.y;
 					framePan.current = { x: message.x, y: message.y };
-					setCamera((c) => (c === null ? c : { ...c, x: c.x + dx, y: c.y + dy }));
+					panBy(dx, dy);
 					return;
 				}
 				case "zoom": {
@@ -3960,17 +3992,18 @@ export function ProjectCanvas({
 					stopAnimation();
 					setMenu(null);
 					if (message.kind === "wheel") {
-						const iframe = iframes.current.get(message.frame);
+						const frame = framesRef.current.find((candidate) => candidate.name === message.frame);
 						const viewport = viewportRef.current;
-						if (iframe === undefined || viewport === null) return;
-						const frameRect = iframe.getBoundingClientRect();
-						const viewportRect = viewport.getBoundingClientRect();
-						const cameraScale = cameraRef.current?.k ?? 1;
-						const scaleX = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : cameraScale;
-						const scaleY = iframe.clientHeight > 0 ? frameRect.height / iframe.clientHeight : cameraScale;
+						const cam = camera.get();
+						if (frame === undefined || viewport === null || cam === null) return;
+						// The document fills its frame one CSS pixel to one world unit, so
+						// the cursor is a world point and lands on screen through the
+						// camera as it is now. Measured off the iframe instead it would be
+						// read through the transform last drawn, which a pinch sending
+						// several ticks a frame has already moved past (#81).
 						zoomAtPoint(
-							frameRect.left - viewportRect.left + message.x * scaleX,
-							frameRect.top - viewportRect.top + message.y * scaleY,
+							(frame.x + message.x) * cam.k + cam.x,
+							(frame.y + message.y) * cam.k + cam.y,
 							wheelZoomFactor(message.deltaY, message.deltaMode, viewport.clientHeight),
 						);
 						return;
@@ -3989,13 +4022,8 @@ export function ProjectCanvas({
 					setMenu(null);
 					const dx = wheelPixels(message.deltaX, message.deltaMode, viewport.clientHeight);
 					const dy = wheelPixels(message.deltaY, message.deltaMode, viewport.clientHeight);
-					setCamera((c) =>
-						c === null
-							? c
-							: message.shiftKey && dx === 0
-								? { ...c, x: c.x - dy }
-								: { ...c, x: c.x - dx, y: c.y - dy },
-					);
+					if (message.shiftKey && dx === 0) panBy(-dy, 0);
+					else panBy(-dx, -dy);
 					return;
 				}
 				case "go":
@@ -4035,6 +4063,7 @@ export function ProjectCanvas({
 		walkTo,
 		stopAnimation,
 		zoomAtPoint,
+		panBy,
 		viewportCenter,
 		requestSiteBoxes,
 		strike,
@@ -4042,6 +4071,7 @@ export function ProjectCanvas({
 		finishEdit,
 		setEdit,
 		showRefusal,
+		camera,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -4063,30 +4093,46 @@ export function ProjectCanvas({
 					event.clientY - rect.top,
 					wheelZoomFactor(event.deltaY, event.deltaMode, el.clientHeight),
 				);
+			} else if (event.shiftKey && dx === 0) {
+				panBy(-dy, 0);
 			} else {
-				setCamera((c) =>
-					c === null ? c : event.shiftKey && dx === 0 ? { ...c, x: c.x - dy } : { ...c, x: c.x - dx, y: c.y - dy },
-				);
+				panBy(-dx, -dy);
 			}
 		};
 		el.addEventListener("wheel", onWheel, { passive: false });
 		return () => el.removeEventListener("wheel", onWheel);
-	}, [stopAnimation, zoomAtPoint]);
+	}, [stopAnimation, zoomAtPoint, panBy]);
 
-	// Camera motion is a React value for drawing only. The lifecycle reads its ref
-	// after this short quiet window, so frames mount where the camera stopped
-	// rather than throughout the gesture. The same window is the whole of "the
-	// camera is moving": live frames hold their animations across it (#171).
+	// Camera motion is drawn and never rendered. The lifecycle reads where the
+	// camera stopped after this short quiet window, so frames mount where it came
+	// to rest rather than throughout the gesture, and the same window is the whole
+	// of "the camera is moving": live frames hold their animations across it
+	// (#171). Heard once per drawn frame, so a gesture costs this a timer; React
+	// hears the camera once, when it stops.
+	// The lifecycle's two verbs are read through a ref: subscribing again for a
+	// new identity would drop a settle already counting down, and a camera that
+	// never settles never mounts anything.
+	const restVerbs = useRef({ noteCameraMoving, sweepLifecycle });
+	restVerbs.current = { noteCameraMoving, sweepLifecycle };
 	useEffect(() => {
-		if (camera === null) return;
-		noteCameraMoving(true);
-		const settle = setTimeout(() => {
-			settledCameraRef.current = camera;
-			noteCameraMoving(false);
-			sweepLifecycle();
-		}, LIFECYCLE_CAMERA_SETTLE_MS);
-		return () => clearTimeout(settle);
-	}, [camera, sweepLifecycle, noteCameraMoving]);
+		let settle: ReturnType<typeof setTimeout> | undefined;
+		const unsubscribe = camera.subscribe(() => {
+			restVerbs.current.noteCameraMoving(true);
+			clearTimeout(settle);
+			settle = setTimeout(() => {
+				const rest = camera.get();
+				if (rest === null) return;
+				settledCameraRef.current = rest;
+				restVerbs.current.noteCameraMoving(false);
+				restVerbs.current.sweepLifecycle();
+				setRestCamera(rest);
+			}, LIFECYCLE_CAMERA_SETTLE_MS);
+		});
+		return () => {
+			unsubscribe();
+			clearTimeout(settle);
+		};
+	}, [camera]);
 
 	/**
 	 * The canvas is open: it has somewhere to look from and something to look at.
@@ -4097,12 +4143,12 @@ export function ProjectCanvas({
 	 * opening: the rest is what it rests at, and the mounting starts now.
 	 */
 	useEffect(() => {
-		if (camera === null || !loaded || settledCameraRef.current !== null) return;
-		settledCameraRef.current = camera;
+		if (restCamera === null || !loaded || settledCameraRef.current !== null) return;
+		settledCameraRef.current = camera.get();
 		sweepLifecycle();
-	}, [camera, loaded, sweepLifecycle]);
+	}, [restCamera, loaded, sweepLifecycle, camera]);
 
-	const readyForUpdate = loaded && camera !== null;
+	const readyForUpdate = loaded && restCamera !== null;
 	useEffect(() => {
 		if (readyForUpdate) desktopBridge()?.ready?.();
 	}, [readyForUpdate]);
@@ -4112,8 +4158,11 @@ export function ProjectCanvas({
 			beforeUpdate(async () => {
 				flushNudge();
 				commitTrash();
-				if (camera === null) throw new Error("The canvas is still opening.");
-				cameras.current = { ...cameras.current, [activePage]: { x: camera.x, y: camera.y, k: camera.k } };
+				// where the camera is this instant, not where it last rested: an update
+				// asked for mid-gesture reopens on the view the hand was holding
+				const cam = camera.get();
+				if (cam === null) throw new Error("The canvas is still opening.");
+				cameras.current = { ...cameras.current, [activePage]: { x: cam.x, y: cam.y, k: cam.k } };
 				await saveCanvasState(project, {
 					arrows: arrowsOn,
 					...stateCameraSlots(cameras.current),
@@ -4123,13 +4172,18 @@ export function ProjectCanvas({
 		[camera, arrowsOn, project, activePage, flushNudge, commitTrash],
 	);
 
-	// persist arrows + the page bookkeeping on settle: last-settle wins
-	// the stored slot (#12); each page keeps its own camera, and the active
-	// page rides along so reopening resumes it (#39)
+	// persist arrows + the page bookkeeping once the camera has rested: last
+	// settle wins the stored slot (#12); each page keeps its own camera, and the
+	// active page rides along so reopening resumes it (#39). The camera is read
+	// when the write goes out rather than taken from the rest that armed it: a
+	// page switch re-arms this before the new page's camera has rested, and the
+	// camera standing then is the arriving page's, never the one it left.
 	useEffect(() => {
-		if (camera === null) return;
+		if (restCamera === null) return;
 		const settle = setTimeout(() => {
-			cameras.current = { ...cameras.current, [activePage]: { x: camera.x, y: camera.y, k: camera.k } };
+			const cam = camera.get();
+			if (cam === null) return;
+			cameras.current = { ...cameras.current, [activePage]: { x: cam.x, y: cam.y, k: cam.k } };
 			putCanvasState(project, {
 				arrows: arrowsOn,
 				...stateCameraSlots(cameras.current),
@@ -4137,7 +4191,7 @@ export function ProjectCanvas({
 			});
 		}, SETTLE_PERSIST_MS);
 		return () => clearTimeout(settle);
-	}, [camera, arrowsOn, project, activePage]);
+	}, [restCamera, arrowsOn, project, activePage, camera]);
 
 	// --- gestures ---------------------------------------------------------------
 
@@ -4333,7 +4387,7 @@ export function ProjectCanvas({
 
 	const onPointerDown = (event: React.PointerEvent) => {
 		if (findingRef.current || exportDialogRef.current !== null) return;
-		const cam = cameraRef.current;
+		const cam = camera.get();
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
 		setMenu(null);
@@ -4502,7 +4556,7 @@ export function ProjectCanvas({
 
 	const onPointerMove = (event: React.PointerEvent) => {
 		const active = gesture.current;
-		const cam = cameraRef.current;
+		const cam = camera.get();
 		if (cam === null) return;
 		const p = localPoint(event);
 
@@ -4540,7 +4594,7 @@ export function ProjectCanvas({
 			const dx = p.x - active.lastX;
 			const dy = p.y - active.lastY;
 			gesture.current = { ...active, lastX: p.x, lastY: p.y };
-			setCamera((c) => (c === null ? c : { ...c, x: c.x + dx, y: c.y + dy }));
+			panBy(dx, dy);
 			return;
 		}
 
@@ -4779,7 +4833,7 @@ export function ProjectCanvas({
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
 		if (toolRef.current === "hand") return;
-		const cam = cameraRef.current;
+		const cam = camera.get();
 		if (cam === null) return;
 		const label = datasetHit(event.target, "frame-label");
 		const world = toWorld(localPoint(event), cam);
@@ -4810,7 +4864,7 @@ export function ProjectCanvas({
 	const onContextMenu = (event: React.MouseEvent) => {
 		event.preventDefault();
 		if (exportDialogRef.current !== null) return;
-		const cam = cameraRef.current;
+		const cam = camera.get();
 		if (cam === null) return;
 		const p = localPoint(event);
 		const world = toWorld(p, cam);
@@ -4900,12 +4954,12 @@ export function ProjectCanvas({
 			setSelected([frame.name]);
 			frameAnchor.current = frame.name;
 			const viewport = viewportRef.current;
-			const cam = cameraRef.current;
+			const cam = camera.get();
 			if (viewport !== null && cam !== null) {
 				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
 		},
-		[recordDeparture, switchToPage, arrivalAt, animateCamera, holdChain],
+		[recordDeparture, switchToPage, arrivalAt, animateCamera, holdChain, camera],
 	);
 
 	/**
@@ -5097,7 +5151,7 @@ export function ProjectCanvas({
 				setSelected([target.name]);
 				setPicked([]);
 				const viewport = viewportRef.current;
-				const cam = cameraRef.current;
+				const cam = camera.get();
 				if (viewport !== null && cam !== null) {
 					animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
 				}
@@ -5237,20 +5291,20 @@ export function ProjectCanvas({
 		selectSiblings,
 		walkSibling,
 		openWords,
+		camera,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
 
-	const zoomPct = camera === null ? 100 : Math.round(camera.k * 100);
 	useEffect(() => {
 		onChrome({
-			zoomPct,
+			camera,
 			arrowsOn,
 			toggleArrows,
 			hasThreads,
 		});
 		return () => onChrome(null);
-	}, [arrowsOn, hasThreads, onChrome, toggleArrows, zoomPct]);
+	}, [arrowsOn, hasThreads, onChrome, toggleArrows, camera]);
 
 	// --- render -------------------------------------------------------------------
 
@@ -5350,7 +5404,6 @@ export function ProjectCanvas({
 			? railRungs?.[rungOf(railHeld)]
 			: undefined;
 	railRungsRef.current = railRungs;
-	const k = camera?.k ?? 1;
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
 
 	return (
@@ -5406,7 +5459,7 @@ export function ProjectCanvas({
 				// cancelled pointerdown takes the double-click with it (#314)
 				onMouseDown={(event) => {
 					const openEdit = editingRef.current;
-					const cam = cameraRef.current;
+					const cam = camera.get();
 					if (openEdit === null || openEdit.phase !== "opening" || cam === null) return;
 					if (frameAtWorld(toWorld(localPoint(event), cam)) === openEdit.frame) event.preventDefault();
 				}}
@@ -5420,15 +5473,11 @@ export function ProjectCanvas({
 				onDoubleClick={onDoubleClick}
 				onContextMenu={onContextMenu}
 			>
-				{camera !== null && (
-					<div
-						data-canvas-camera=""
-						className="absolute top-0 left-0"
-						style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
-					>
+				{restCamera !== null && (
+					<CameraField camera={camera}>
 						{/* the threads live under the frames: the map, never a hit target */}
 						{arrowsOn && (
-							<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={cameraStore} />
+							<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={camera} />
 						)}
 						{/* the pages standing on this field (#265). Under the frames,
 						    because a frame is a live document and a page is a picture of
@@ -5439,7 +5488,7 @@ export function ProjectCanvas({
 								key={object.page}
 								project={project}
 								object={object}
-								camera={cameraStore}
+								camera={camera}
 								selected={selectedPage === object.page}
 								hovered={pointerTool && hoveredPage === object.page}
 							/>
@@ -5457,7 +5506,7 @@ export function ProjectCanvas({
 										height: frame.h,
 									}}
 								>
-									<ShellClip camera={cameraStore}>
+									<ShellClip camera={camera}>
 										<FrameShell
 											project={project}
 											name={frame.name}
@@ -5518,7 +5567,7 @@ export function ProjectCanvas({
 									<FrameLabel
 										name={frame.name}
 										frameWidth={frame.w}
-										camera={cameraStore}
+										camera={camera}
 										entered={isEntered}
 										selected={isSelected}
 										hovered={isHovered}
@@ -5538,23 +5587,21 @@ export function ProjectCanvas({
 							<PageObjectLabel
 								key={`${object.page}:label`}
 								object={object}
-								camera={cameraStore}
+								camera={camera}
 								selected={selectedPage === object.page}
 								hovered={pointerTool && hoveredPage === object.page}
 							/>
 						))}
 						{/* the tags ride over the frames, because pressing one travels —
 						    the leaders under them are the map and take no pointer */}
-						{arrowsOn && (
-							<WalkLayer walks={walks} frames={visibleFrames} camera={cameraStore} onOpen={landOnFrame} />
-						)}
-					</div>
+						{arrowsOn && <WalkLayer walks={walks} frames={visibleFrames} camera={camera} onOpen={landOnFrame} />}
+					</CameraField>
 				)}
 
-				{camera !== null && (
+				{restCamera !== null && (
 					<>
 						<SelectionOverlay
-							camera={cameraStore}
+							camera={camera}
 							frames={visibleFrames}
 							selected={selected}
 							entered={entered}
@@ -5592,7 +5639,7 @@ export function ProjectCanvas({
 						{/* the agent's hand (#214), in the same screen space as the furniture
 						    beside it: presence on any visible frame at any zoom, and a located
 						    mark wherever a document was live enough to be measured */}
-						<AgentHandLayer camera={cameraStore} frames={visibleFrames} hand={hand} marks={handMarks} />
+						<AgentHandLayer camera={camera} frames={visibleFrames} hand={hand} marks={handMarks} />
 					</>
 				)}
 
@@ -5804,6 +5851,31 @@ export function ProjectCanvas({
 					onExport={(format) => void runExport(exportDialog, format)}
 				/>
 			) : null}
+		</div>
+	);
+}
+
+/**
+ * The field: everything that lives in world space, carried by one transform.
+ *
+ * The transform is the camera's to write (#81), once per drawn frame, and
+ * never React's: a render of the field is a render of its frames, and the
+ * camera moving is exactly when none of them has changed. No `will-change`
+ * either — promoting a layer holding hundreds of clipped, transformed frames
+ * costs Chrome more per frame in re-deciding layers than it saves in paint.
+ */
+function CameraField({ camera, children }: { camera: CameraStore; children: ReactNode }) {
+	const field = useRef<HTMLDivElement | null>(null);
+	useCameraFollow(
+		camera,
+		({ x, y, k }) => {
+			if (field.current !== null) field.current.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+		},
+		[],
+	);
+	return (
+		<div ref={field} data-canvas-camera="" className="absolute top-0 left-0" style={{ transformOrigin: "0 0" }}>
+			{children}
 		</div>
 	);
 }

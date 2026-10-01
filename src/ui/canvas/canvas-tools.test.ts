@@ -611,7 +611,12 @@ function stubCanvasApis(): void {
 			close() {}
 		},
 	);
-	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation(() => 1);
+	// the camera is drawn at the next display frame (#81), so a pan is only on
+	// the field once one has come; here it comes at once, past any flight's end
+	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+		callback(performance.now() + 1000);
+		return 1;
+	});
 	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
 }
 

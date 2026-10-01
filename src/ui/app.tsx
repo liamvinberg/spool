@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DaemonIdentity, ProjectCard } from "./api";
 import {
 	fetchDaemonIdentity,
@@ -13,6 +13,7 @@ import {
 	subscribeSse,
 	trashProject,
 } from "./api";
+import type { CameraStore } from "./canvas/camera-store";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
@@ -489,7 +490,7 @@ export function App() {
 								<EdgeIcon />
 							</button>
 						)}
-						<span className="min-w-9 text-right text-muted type-detail">{chrome.zoomPct}%</span>
+						<ZoomReadout camera={chrome.camera} />
 					</div>
 				)}
 			</header>
@@ -589,6 +590,27 @@ export function App() {
 			{settingsOpen && <SettingsSheet project={focusedTab?.name} onClose={closeSettings} />}
 		</div>
 	);
+}
+
+/**
+ * The canvas's zoom, as a percentage (#81).
+ *
+ * It follows the camera rather than being handed a number: the bar is the
+ * whole window's render, and a zoom tick that rendered it would render the
+ * canvas under it too. The number is written straight to the text, and only
+ * when the rounded percentage changes.
+ */
+function ZoomReadout({ camera }: { camera: CameraStore }) {
+	const readout = useRef<HTMLSpanElement | null>(null);
+	useLayoutEffect(() => {
+		const write = (k: number | undefined) => {
+			const text = `${k === undefined ? 100 : Math.round(k * 100)}%`;
+			if (readout.current !== null && readout.current.textContent !== text) readout.current.textContent = text;
+		};
+		write(camera.get()?.k);
+		return camera.subscribe((now) => write(now.k));
+	}, [camera]);
+	return <span ref={readout} className="min-w-9 text-right text-muted type-detail" />;
 }
 
 function basename(path: string): string {
