@@ -1417,10 +1417,6 @@ export function ProjectCanvas({
 
 	// --- camera ---------------------------------------------------------------
 
-	const stopAnimation = useCallback(() => camera.stop(), [camera]);
-
-	const animateCamera = useCallback((to: Camera, ms?: number) => camera.fly(to, ms), [camera]);
-
 	/**
 	 * What the camera can see (`NearScreen`), asked by the followers there is
 	 * one of per frame while it moves. The viewport's size is kept as the
@@ -1459,10 +1455,10 @@ export function ProjectCanvas({
 			const cam = camera.get();
 			if (cam === null) return;
 			const next = zoomAt(cam, cx, cy, factor);
-			if (animate) animateCamera(next, 140);
+			if (animate) camera.fly(next, 140);
 			else camera.set(next);
 		},
-		[animateCamera, camera],
+		[camera],
 	);
 
 	/** Move the field by a screen distance at the same zoom: every pan is this. */
@@ -1478,16 +1474,16 @@ export function ProjectCanvas({
 		const viewport = viewportRef.current;
 		const boxes = fieldBoxes();
 		if (viewport === null || boxes.length === 0) return;
-		animateCamera(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
-	}, [animateCamera, fieldBoxes]);
+		camera.fly(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
+	}, [fieldBoxes, camera]);
 
 	const resetZoom = useCallback(() => {
 		const cam = camera.get();
 		if (cam === null) return;
 		const c = viewportCenter();
 		const w = toWorld(c, cam);
-		animateCamera({ k: 1, x: c.x - w.x, y: c.y - w.y });
-	}, [animateCamera, viewportCenter, camera]);
+		camera.fly({ k: 1, x: c.x - w.x, y: c.y - w.y });
+	}, [viewportCenter, camera]);
 
 	/**
 	 * The jump list's one rule (jumps.ts): a move that takes you somewhere — a
@@ -1538,9 +1534,9 @@ export function ProjectCanvas({
 			const next = entryCamera(cam, frame, viewport.clientWidth, viewport.clientHeight);
 			// standing still is not a flight: a 220ms animation to where you
 			// already are would fight a wheel that arrives inside it
-			if (next.x !== cam.x || next.y !== cam.y || next.k !== cam.k) animateCamera(next);
+			if (next.x !== cam.x || next.y !== cam.y || next.k !== cam.k) camera.fly(next);
 		},
-		[animateCamera, camera],
+		[camera],
 	);
 
 	const exitEntered = useCallback((retainFrame = false) => {
@@ -3534,7 +3530,7 @@ export function ProjectCanvas({
 		const viewport = viewportRef.current;
 		if (frame === undefined || viewport === null) return;
 		recordDeparture();
-		animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+		camera.fly(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 	};
 
 	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
@@ -3567,14 +3563,14 @@ export function ProjectCanvas({
 			exitEntered();
 			setMenu(null);
 			setExternalLink(null);
-			stopAnimation();
+			camera.stop();
 			const next = switchPage(cameras.current, activePageRef.current, camera.get(), target, arriveAt);
 			cameras.current = next.cameras;
 			setActivePage(target);
 			// placed by the commit that swaps the field, so both are drawn by one frame
 			arrival.current = { page: target, camera: next.camera };
 		},
-		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation, camera],
+		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, camera],
 	);
 	leavePage.current = switchToPage;
 	/** Page-folder clicks return selection to the page, even when it is already active. */
@@ -3625,7 +3621,7 @@ export function ProjectCanvas({
 			const viewport = viewportRef.current;
 			const cam = camera.get();
 			if (frame !== undefined && viewport !== null && cam !== null) {
-				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
+				camera.fly(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
 			// The reboot must not read as a reload (#28), and nothing stands between
 			// the click and it (#110): the arrival's cover is the target's *stored*
@@ -3637,7 +3633,7 @@ export function ProjectCanvas({
 			// screen scripts run fresh on every arrival — reboot even a warm target
 			setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
 		},
-		[recordDeparture, animateCamera, switchToPage, arrivalAt, camera],
+		[recordDeparture, switchToPage, arrivalAt, camera],
 	);
 
 	/**
@@ -3657,7 +3653,7 @@ export function ProjectCanvas({
 				if (enteredRef.current !== null) exitEntered();
 				clearCanvasSelection();
 				setMenu(null);
-				animateCamera(entry.camera);
+				camera.fly(entry.camera);
 			}
 			const onPage = new Set(
 				allFramesRef.current.filter((frame) => pageOf(frame) === entry.page).map((frame) => frame.name),
@@ -3674,7 +3670,7 @@ export function ProjectCanvas({
 			// remounts takes it at its loaded report, the way a walk's target does
 			iframes.current.get(target)?.focus();
 		},
-		[switchToPage, exitEntered, clearCanvasSelection, animateCamera],
+		[switchToPage, exitEntered, clearCanvasSelection, camera],
 	);
 
 	const jumpBack = useCallback(() => {
@@ -4007,7 +4003,7 @@ export function ProjectCanvas({
 						return;
 					}
 					if (message.phase === "start") {
-						stopAnimation();
+						camera.stop();
 						setMenu(null);
 						framePan.current = { x: message.x, y: message.y };
 						setPanning(true);
@@ -4026,7 +4022,7 @@ export function ProjectCanvas({
 					// not cross an iframe boundary. The frame shim claims browser-zoom
 					// gestures and hands them back here as canvas camera intents.
 					if (enteredRef.current !== message.frame) return;
-					stopAnimation();
+					camera.stop();
 					setMenu(null);
 					if (message.kind === "wheel") {
 						const frame = framesRef.current.find((candidate) => candidate.name === message.frame);
@@ -4055,7 +4051,7 @@ export function ProjectCanvas({
 					if (enteredRef.current !== message.frame) return;
 					const viewport = viewportRef.current;
 					if (viewport === null) return;
-					stopAnimation();
+					camera.stop();
 					setMenu(null);
 					const dx = wheelPixels(message.deltaX, message.deltaMode, viewport.clientHeight);
 					const dy = wheelPixels(message.deltaY, message.deltaMode, viewport.clientHeight);
@@ -4098,7 +4094,6 @@ export function ProjectCanvas({
 	}, [
 		project,
 		walkTo,
-		stopAnimation,
 		zoomAtPoint,
 		panBy,
 		viewportCenter,
@@ -4119,7 +4114,7 @@ export function ProjectCanvas({
 			// Leave the finder's native list scrolling alone before cancelling the wheel.
 			if (findingRef.current) return;
 			event.preventDefault();
-			stopAnimation();
+			camera.stop();
 			setMenu(null);
 			const dx = wheelPixels(event.deltaX, event.deltaMode, el.clientHeight);
 			const dy = wheelPixels(event.deltaY, event.deltaMode, el.clientHeight);
@@ -4138,7 +4133,7 @@ export function ProjectCanvas({
 		};
 		el.addEventListener("wheel", onWheel, { passive: false });
 		return () => el.removeEventListener("wheel", onWheel);
-	}, [stopAnimation, zoomAtPoint, panBy]);
+	}, [zoomAtPoint, panBy, camera]);
 
 	// Camera motion is drawn and never rendered. Every drawn frame is the camera
 	// moving, which is the whole of what live frames hold their animations
@@ -4407,7 +4402,7 @@ export function ProjectCanvas({
 		if (findingRef.current || exportDialogRef.current !== null) return;
 		const cam = camera.get();
 		if (cam === null || event.button === 2) return;
-		stopAnimation();
+		camera.stop();
 		setMenu(null);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
@@ -4974,10 +4969,10 @@ export function ProjectCanvas({
 			const viewport = viewportRef.current;
 			const cam = camera.get();
 			if (viewport !== null && cam !== null) {
-				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
+				camera.fly(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
 		},
-		[recordDeparture, switchToPage, arrivalAt, animateCamera, holdChain, camera],
+		[recordDeparture, switchToPage, arrivalAt, holdChain, camera],
 	);
 
 	/**
@@ -5105,7 +5100,7 @@ export function ProjectCanvas({
 				const boxes = framesRef.current.filter((f) => names.includes(f.name));
 				const viewport = viewportRef.current;
 				if (boxes.length > 0 && viewport !== null) {
-					animateCamera(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
+					camera.fly(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
 				}
 			},
 			// ⇧A tidies the field; one ⌘Z puts every frame back where it was
@@ -5171,7 +5166,7 @@ export function ProjectCanvas({
 				const viewport = viewportRef.current;
 				const cam = camera.get();
 				if (viewport !== null && cam !== null) {
-					animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
+					camera.fly(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
 				}
 			},
 			// F2: the words of the one element held, and nothing else (#323)
@@ -5285,7 +5280,6 @@ export function ProjectCanvas({
 		zoomAtPoint,
 		zoomFit,
 		resetZoom,
-		animateCamera,
 		deleteElement,
 		moveStep,
 		exitEntered,
