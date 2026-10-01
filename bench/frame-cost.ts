@@ -3,7 +3,17 @@ import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { type Browser, type BrowserContext, type CDPSession, chromium, type Page } from "playwright-core";
-import { copyProject, densestPage, type FrameBox, freePort, ms, quantile, startDaemon, VIEWPORT } from "./harness.ts";
+import {
+	copyProject,
+	densestPage,
+	type FrameBox,
+	freePort,
+	ms,
+	namedPage,
+	quantile,
+	startDaemon,
+	VIEWPORT,
+} from "./harness.ts";
 
 /**
  * What one mounted frame costs (#85). `WARM_POOL_CAP = 24` exists on the belief
@@ -68,6 +78,8 @@ interface Options {
 	counts: number[];
 	headed: boolean;
 	out: string | undefined;
+	/** Which page's frames to mount; the densest one when unnamed. */
+	page: string | undefined;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -75,11 +87,15 @@ function parseArgs(argv: string[]): Options {
 	let counts = [1, 5, 10, 25, 50, 80];
 	let headed = false;
 	let out: string | undefined;
+	let page: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		const next = argv[i + 1];
 		if (arg === "--project" && next !== undefined) {
 			project = resolve(next);
+			i++;
+		} else if (arg === "--page" && next !== undefined) {
+			page = next;
 			i++;
 		} else if (arg === "--counts" && next !== undefined) {
 			counts = next.split(",").map((count) => Number(count.trim()));
@@ -97,7 +113,7 @@ function parseArgs(argv: string[]): Options {
 	}
 	if (project === "") throw new Error("--project <path to a spool project root> is required");
 	if (counts.some((count) => !Number.isInteger(count) || count < 1)) throw new Error("--counts takes integers >= 1");
-	return { project, counts, headed, out };
+	return { project, counts, headed, out, page };
 }
 
 // --- the host page --------------------------------------------------------
@@ -636,7 +652,7 @@ function frameUrl(renderUrl: string, project: string, frame: string): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { frames: boxes } = densestPage(root);
+	const { frames: boxes } = options.page === undefined ? densestPage(root) : namedPage(root, options.page);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);

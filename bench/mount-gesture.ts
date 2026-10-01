@@ -11,6 +11,7 @@ import {
 	freePort,
 	mountedCount,
 	ms,
+	namedPage,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
@@ -84,7 +85,7 @@ interface CaptureHostReply {
  * different day against a matmannen that has grown since.
  *
  *   pnpm build && node bench/mount-gesture.ts --project <spool-bench> --headed
- *   node bench/mount-gesture.ts --project <path> --caps 1,3,8,0 --arms jobs,cost
+ *   node bench/mount-gesture.ts --project <path> --page n200 --caps 1,3,8,0 --arms jobs,cost
  *
  * Run it with node's own type stripping, not tsx: the page scripts below are
  * serialized into the browser by playwright, and esbuild's keep-names transform
@@ -106,6 +107,8 @@ interface Options {
 	 */
 	throttle: number;
 	out: string | undefined;
+	/** Which page to measure; the densest one when unnamed. */
+	page: string | undefined;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -115,11 +118,15 @@ function parseArgs(argv: string[]): Options {
 	let headed = false;
 	let throttle = 1;
 	let out: string | undefined;
+	let page: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		const next = argv[i + 1];
 		if (arg === "--project" && next !== undefined) {
 			project = resolve(next);
+			i++;
+		} else if (arg === "--page" && next !== undefined) {
+			page = next;
 			i++;
 		} else if (arg === "--caps" && next !== undefined) {
 			caps = next.split(",").map((cap) => Number(cap.trim()));
@@ -148,7 +155,7 @@ function parseArgs(argv: string[]): Options {
 		if (arm !== "canvas" && arm !== "jobs" && arm !== "cost") throw new Error(`unknown arm ${arm}`);
 	}
 	if (!Number.isFinite(throttle) || throttle < 1) throw new Error("--throttle takes a rate >= 1");
-	return { project, caps, arms, headed, throttle, out };
+	return { project, caps, arms, headed, throttle, out, page };
 }
 
 interface Sample {
@@ -1008,7 +1015,8 @@ const frameUrl = (renderUrl: string, project: string, frame: string): string =>
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } = densestPage(root);
+	const { page: canvasPage, frames: boxes } =
+		options.page === undefined ? densestPage(root) : namedPage(root, options.page);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);

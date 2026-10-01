@@ -7,6 +7,7 @@ import {
 	densestPage,
 	freePort,
 	ms,
+	namedPage,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
@@ -58,7 +59,7 @@ import {
  * existing reload path.
  *
  *   pnpm build && node bench/reload.ts --project <spool-bench>
- *   node bench/reload.ts --project <path> --repeats 5 --out reload.json
+ *   node bench/reload.ts --project <path> --page n200 --repeats 5 --out reload.json
  *
  * Run it with node's own type stripping, not tsx: the watcher below is
  * serialized into the page by playwright, and esbuild's keep-names transform
@@ -71,6 +72,8 @@ interface Options {
 	headed: boolean;
 	zoom: number;
 	out: string | undefined;
+	/** Which page to measure; the densest one when unnamed. */
+	page: string | undefined;
 }
 
 /**
@@ -101,11 +104,15 @@ function parseArgs(argv: string[]): Options {
 	let headed = true;
 	let zoom = DEFAULT_ZOOM;
 	let out: string | undefined;
+	let page: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		const next = argv[i + 1];
 		if (arg === "--project" && next !== undefined) {
 			project = resolve(next);
+			i++;
+		} else if (arg === "--page" && next !== undefined) {
+			page = next;
 			i++;
 		} else if (arg === "--repeats" && next !== undefined) {
 			repeats = Number(next);
@@ -126,7 +133,7 @@ function parseArgs(argv: string[]): Options {
 	}
 	if (project === "") throw new Error("--project <path to a spool project> is required");
 	if (!Number.isFinite(repeats) || repeats < 1) throw new Error("--repeats must be a positive integer");
-	return { project, repeats, headed, zoom, out };
+	return { project, repeats, headed, zoom, out, page };
 }
 
 interface CoverMark {
@@ -584,7 +591,8 @@ function report(runs: Run[], expected: string[], page: string): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } = densestPage(root);
+	const { page: canvasPage, frames: boxes } =
+		options.page === undefined ? densestPage(root) : namedPage(root, options.page);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const frameNames = boxes.map((box) => box.name);
 	const camera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zoom);
