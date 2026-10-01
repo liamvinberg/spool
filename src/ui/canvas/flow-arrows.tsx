@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { FlowEdge, ProjectedFrame } from "../api";
 import { clamp } from "./camera";
+import { type CameraStore, useCameraFollow } from "./camera-store";
 import type { SiteBoxes } from "./protocol";
 
 /**
@@ -87,6 +88,28 @@ export function routeArrows(
 	siteBoxes: SiteBoxesByFrame,
 	k: number,
 ): RoutedArrow[] {
+	return placeArrows(edges, frames, siteBoxes).map((arrow) => drawArrow(arrow, k));
+}
+
+/**
+ * Where each arrow touches its two frames, which no zoom changes. Only the
+ * head and the bow are screen measures, so routing runs when the graph or the
+ * frames move and a zoom step only redraws (#81).
+ */
+interface PlacedArrow {
+	key: string;
+	tail: Point;
+	tip: Point;
+	exit: Side;
+	entry: Side;
+	faint: boolean;
+}
+
+function drawArrow({ key, tail, tip, exit, entry, faint }: PlacedArrow, k: number): RoutedArrow {
+	return { key, tail, tip, faint, ...draw(tail, tip, exit, entry, k) };
+}
+
+function placeArrows(edges: FlowEdge[], frames: ProjectedFrame[], siteBoxes: SiteBoxesByFrame): PlacedArrow[] {
 	const byName = new Map(frames.map((frame) => [frame.name, frame]));
 	const specs: Spec[] = [];
 
@@ -133,11 +156,14 @@ export function routeArrows(
 
 	spreadTouchPoints(specs);
 
-	return specs.map((spec) => {
-		const tail = onEdge(spec.from, spec.exit, spec.tail.at);
-		const tip = onEdge(spec.to, spec.entry, spec.tip.at);
-		return { key: spec.key, tail, tip, faint: spec.faint, ...draw(tail, tip, spec.exit, spec.entry, k) };
-	});
+	return specs.map((spec) => ({
+		key: spec.key,
+		tail: onEdge(spec.from, spec.exit, spec.tail.at),
+		tip: onEdge(spec.to, spec.entry, spec.tip.at),
+		exit: spec.exit,
+		entry: spec.entry,
+		faint: spec.faint,
+	}));
 }
 
 /**
@@ -241,18 +267,42 @@ export function FlowArrows({
 	frames,
 	edges,
 	siteBoxes,
-	k,
+	camera,
 }: {
 	frames: ProjectedFrame[];
 	edges: FlowEdge[];
 	siteBoxes: SiteBoxesByFrame;
-	k: number;
+	/** The weight, the head and the bow are screen measures, so the drawing follows the camera (#81). */
+	camera: CameraStore;
 }) {
-	const arrows = useMemo(() => routeArrows(edges, frames, siteBoxes, k), [edges, frames, siteBoxes, k]);
+	const arrows = useMemo(() => placeArrows(edges, frames, siteBoxes), [edges, frames, siteBoxes]);
+	const layer = useRef<SVGSVGElement | null>(null);
+	const drawn = useRef<{ k: number; arrows: PlacedArrow[] } | null>(null);
+	// Rendered once per route and drawn here once per zoom step: the groups are
+	// React's and in the order of `arrows`, the strokes are the camera's.
+	useCameraFollow(
+		camera,
+		({ k }) => {
+			const svg = layer.current;
+			if (svg === null || (drawn.current?.k === k && drawn.current.arrows === arrows)) return;
+			drawn.current = { k, arrows };
+			arrows.forEach((arrow, index) => {
+				const group = svg.children[index];
+				const [line, head] = group?.children ?? [];
+				if (group === undefined || line === undefined || head === undefined) return;
+				const { path, head: tip } = drawArrow(arrow, k);
+				group.setAttribute("stroke-width", String(1.5 / k));
+				line.setAttribute("d", path);
+				head.setAttribute("d", tip);
+			});
+		},
+		[arrows],
+	);
 
 	if (arrows.length === 0) return null;
 	return (
 		<svg
+			ref={layer}
 			aria-hidden="true"
 			data-flow-arrows=""
 			width="1"
@@ -265,11 +315,10 @@ export function FlowArrows({
 					key={arrow.key}
 					fill="none"
 					stroke="var(--color-thread)"
-					strokeWidth={1.5 / k}
 					opacity={arrow.faint ? FAINT_OPACITY : undefined}
 				>
-					<path d={arrow.path} />
-					<path d={arrow.head} fill="var(--color-thread)" stroke="none" />
+					<path />
+					<path fill="var(--color-thread)" stroke="none" />
 				</g>
 			))}
 		</svg>

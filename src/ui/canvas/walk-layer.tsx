@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { pageName } from "../../page-path";
 import type { FlowEdge, ProjectedFrame } from "../api";
+import { type CameraStore, useCameraFollow } from "./camera-store";
 import { pageLabel, pageOf } from "./pages";
 
 /**
@@ -245,22 +246,31 @@ function EdgeMark({ certain }: { certain: boolean }) {
  * page somebody packed tighter than this one stays readable instead of
  * becoming two fonts on top of each other. On open canvas it is invisible.
  */
-function tagBox(placed: PlacedWalk, k: number): React.CSSProperties {
-	return {
-		left: placed.ex,
-		top: placed.ey,
-		transform: `scale(${1 / k}) translateY(-50%)`,
-		transformOrigin: "0 0",
-		height: TAG_HEIGHT,
-	};
+function placeTag(tag: HTMLElement, placed: PlacedWalk, k: number): void {
+	tag.style.left = `${placed.ex}px`;
+	tag.style.top = `${placed.ey}px`;
+	tag.style.transform = `scale(${1 / k}) translateY(-50%)`;
 }
 
-function WalkTag({ placed, k, onOpen }: { placed: PlacedWalk; k: number; onOpen: (target: string) => void }) {
-	const walk = placed.walk;
+function WalkTag({
+	walk,
+	onTag,
+	onOpen,
+}: {
+	walk: Walk;
+	/** The layer places the tag, and hides it on a wall below readable width. */
+	onTag: (key: string, tag: HTMLButtonElement | null) => void;
+	onOpen: (target: string) => void;
+}) {
 	// the tag already says the page, so the target is named by its own folder
 	const target = pageName(walk.target);
+	const key = keyOf(walk);
 	return (
 		<button
+			ref={(tag) => {
+				onTag(key, tag);
+				return () => onTag(key, null);
+			}}
 			type="button"
 			data-walk-exit={walk.target}
 			title={`go to ${target} on ${walk.page}`}
@@ -270,7 +280,7 @@ function WalkTag({ placed, k, onOpen }: { placed: PlacedWalk; k: number; onOpen:
 			onDoubleClick={(event) => event.stopPropagation()}
 			onClick={() => onOpen(walk.target)}
 			className="absolute flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xs bg-canvas px-1.5 transition-colors duration-150 hover:bg-surface type-detail"
-			style={tagBox(placed, k)}
+			style={{ transformOrigin: "0 0", height: TAG_HEIGHT }}
 		>
 			<EdgeMark certain={walk.certainty === "will"} />
 			<span className="text-text">{target}</span>
@@ -293,19 +303,65 @@ function WalkTag({ placed, k, onOpen }: { placed: PlacedWalk; k: number; onOpen:
 export function WalkLayer({
 	walks,
 	frames,
-	k,
+	camera,
 	onOpen,
 }: {
 	walks: readonly Walk[];
 	frames: readonly ProjectedFrame[];
-	k: number;
+	/** Every measure here is a screen measure, so the layer follows the camera (#81). */
+	camera: CameraStore;
 	/** Pressing a tag travels: page follows, arrival centred, target selected. */
 	onOpen: (target: string) => void;
 }) {
-	const layers = useMemo(() => placeWalks(walks, frames, k), [walks, frames, k]);
-	if (layers.length === 0) return null;
+	// the walks with a frame on the field to dock on: what is drawn at any zoom
+	const docked = useMemo(() => {
+		const here = new Set(frames.map((frame) => frame.name));
+		return walks.filter((walk) => here.has(walk.frame));
+	}, [walks, frames]);
+	const leaders = useRef(new Map<string, SVGGElement>());
+	const tags = useRef(new Map<string, HTMLButtonElement>());
+	const onLeader = (key: string, group: SVGGElement | null) => {
+		if (group === null) leaders.current.delete(key);
+		else leaders.current.set(key, group);
+	};
+	const onTag = (key: string, tag: HTMLButtonElement | null) => {
+		if (tag === null) tags.current.delete(key);
+		else tags.current.set(key, tag);
+	};
+	const drawn = useRef<{ k: number; docked: readonly Walk[]; frames: readonly ProjectedFrame[] } | null>(null);
+	// React lays out one leader and one tag per walk; the camera places them. A
+	// zoom step that takes a wall below readable width hides its tags rather
+	// than unmounting them, so crossing the line is a write in the same frame as
+	// the zoom that crossed it, never a render that lands after it.
+	useCameraFollow(
+		camera,
+		({ k }) => {
+			const was = drawn.current;
+			if (was !== null && was.k === k && was.docked === docked && was.frames === frames) return;
+			drawn.current = { k, docked, frames };
+			for (const layer of placeWalks(docked, frames, k)) {
+				const nub = layer.size === "nub";
+				for (const placed of layer.marks) {
+					const [line, dot] = leaders.current.get(placed.key)?.children ?? [];
+					line?.setAttribute("d", placed.d);
+					line?.setAttribute("stroke-width", String((nub ? 1.25 : 1) / k));
+					dot?.setAttribute("cx", String(placed.ax));
+					dot?.setAttribute("cy", String(placed.ay));
+					dot?.setAttribute("r", String((nub ? 1.5 : 2.5) / k));
+					// a nub is the only thing left on its wall, so it carries
+					// slightly more ink than the drawing it replaces
+					dot?.setAttribute("fill-opacity", nub ? "0.8" : "0.85");
+					const tag = tags.current.get(placed.key);
+					if (tag === undefined) continue;
+					tag.style.display = nub ? "none" : "";
+					if (!nub) placeTag(tag, placed, k);
+				}
+			}
+		},
+		[docked, frames],
+	);
+	if (docked.length === 0) return null;
 
-	const readable = layers.flatMap((layer) => (layer.size === "nub" ? [] : layer.marks));
 	return (
 		<>
 			<svg
@@ -315,31 +371,25 @@ export function WalkLayer({
 				className="pointer-events-none absolute top-0 left-0"
 				style={{ overflow: "visible" }}
 			>
-				{layers.map((layer) =>
-					layer.marks.map((placed) => (
-						<g key={`${layer.frame}\0${placed.key}`} fill="none">
-							<path
-								d={placed.d}
-								stroke={HAIRLINE}
-								strokeWidth={(layer.size === "nub" ? 1.25 : 1) / k}
-								strokeLinecap="round"
-								strokeLinejoin="round"
-							/>
-							<circle
-								cx={placed.ax}
-								cy={placed.ay}
-								r={(layer.size === "nub" ? 1.5 : 2.5) / k}
-								fill="var(--color-muted)"
-								// a nub is the only thing left on its wall, so it carries
-								// slightly more ink than the drawing it replaces
-								fillOpacity={layer.size === "nub" ? 0.8 : 0.85}
-							/>
+				{docked.map((walk) => {
+					const key = keyOf(walk);
+					return (
+						<g
+							key={key}
+							ref={(group) => {
+								onLeader(key, group);
+								return () => onLeader(key, null);
+							}}
+							fill="none"
+						>
+							<path stroke={HAIRLINE} strokeLinecap="round" strokeLinejoin="round" />
+							<circle fill="var(--color-muted)" />
 						</g>
-					)),
-				)}
+					);
+				})}
 			</svg>
-			{readable.map((placed) => (
-				<WalkTag key={placed.key} placed={placed} k={k} onOpen={onOpen} />
+			{docked.map((walk) => (
+				<WalkTag key={keyOf(walk)} walk={walk} onTag={onTag} onOpen={onOpen} />
 			))}
 		</>
 	);

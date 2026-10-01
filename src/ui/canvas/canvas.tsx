@@ -5428,7 +5428,9 @@ export function ProjectCanvas({
 						style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
 					>
 						{/* the threads live under the frames: the map, never a hit target */}
-						{arrowsOn && <FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} k={k} />}
+						{arrowsOn && (
+							<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={cameraStore} />
+						)}
 						{/* the pages standing on this field (#265). Under the frames,
 						    because a frame is a live document and a page is a picture of
 						    some: the press that reaches a page is the press no frame
@@ -5544,7 +5546,9 @@ export function ProjectCanvas({
 						))}
 						{/* the tags ride over the frames, because pressing one travels —
 						    the leaders under them are the map and take no pointer */}
-						{arrowsOn && <WalkLayer walks={walks} frames={visibleFrames} k={k} onOpen={landOnFrame} />}
+						{arrowsOn && (
+							<WalkLayer walks={walks} frames={visibleFrames} camera={cameraStore} onOpen={landOnFrame} />
+						)}
 					</div>
 				)}
 
