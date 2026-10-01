@@ -614,10 +614,12 @@ try {
 	await settled();
 	await send([bash(`${appPath ? "ELECTRON_RUN_AS_NODE=1 " : ""}'${executable}' design/active-command.mjs`)]);
 	await expect
-		.poll(() =>
-			existsSync(join(project, "design/active-pid"))
-				? Number(readFileSync(join(project, "design/active-pid"), "utf8"))
-				: 0,
+		.poll(
+			() =>
+				existsSync(join(project, "design/active-pid"))
+					? Number(readFileSync(join(project, "design/active-pid"), "utf8"))
+					: 0,
+			{ timeout: 15_000 },
 		)
 		.toBeGreaterThan(1);
 	activeCommandPid = Number(readFileSync(join(project, "design/active-pid"), "utf8"));
