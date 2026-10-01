@@ -3,8 +3,9 @@ import { lstat, mkdir, mkdtemp, open, readdir, rm, writeFile } from "node:fs/pro
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setImmediate as yieldTurn } from "node:timers/promises";
-import { crc32, inflateRawSync } from "node:zlib";
-import { zipSync } from "fflate";
+import { promisify } from "node:util";
+import { crc32, deflateRaw, inflateRawSync } from "node:zlib";
+import { Zip, type ZipInputFile } from "fflate";
 import { readRegistry, registerProject } from "../registry";
 import { FORMAT_VERSION } from "../templates";
 import { parseOrder } from "./canvas-order";
@@ -17,6 +18,9 @@ export type TransferLimits = typeof TRANSFER_LIMITS;
 export class TransferError extends Error {}
 const manifestPath = "spool-manifest.json";
 const excluded = new Set(["node_modules"]);
+const deflate = promisify(deflateRaw);
+// formats that carry their own compression only lose time to deflate
+const precompressed = /\.(?:avif|gif|jpe?g|mp3|mp4|png|webm|webp|woff2?)$/i;
 
 function portable(path: string): boolean {
 	const segments = path.split("/");
@@ -39,7 +43,7 @@ function safeEntry(path: string): boolean {
 function fail(message: string): never {
 	throw new TransferError(message);
 }
-function canvas(bytes: Uint8Array): Uint8Array {
+function canvas(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 	let value: unknown;
 	try {
 		value = JSON.parse(Buffer.from(bytes).toString("utf8"));
@@ -72,7 +76,7 @@ export async function exportProject(
 	if (!readRegistry(spoolDir).projects.some((project) => project.root === root))
 		fail("This project is not registered.");
 	const design = realDesignDir(root);
-	const files: Record<string, Uint8Array> = Object.create(null);
+	const files: Record<string, Uint8Array<ArrayBuffer>> = Object.create(null);
 	const directories: string[] = [];
 	let total = 0;
 	async function walk(directory: string, relative: string): Promise<void> {
@@ -133,10 +137,45 @@ export async function exportProject(
 	const expanded = Object.values(files).reduce((sum, bytes) => sum + bytes.length, 0);
 	if (expanded > limits.expandedBytes || Object.keys(files).length + directories.length > limits.entries)
 		fail("The project exceeds the transfer size limit.");
-	signal?.throwIfAborted();
-	const archive = zipSync(files, { level: 0 });
+	const archive = await pack(files, signal);
 	if (archive.length > limits.compressedBytes) fail("The project exceeds the transfer size limit.");
 	return archive;
+}
+
+/** Deflate on the zlib thread pool, a few files at a time, so the daemon keeps serving while a project packs. */
+async function pack(
+	files: Record<string, Uint8Array<ArrayBuffer>>,
+	signal: AbortSignal | undefined,
+): Promise<Uint8Array> {
+	const paths = Object.keys(files);
+	const packed: { file: ZipInputFile; data: Uint8Array<ArrayBuffer> }[] = [];
+	let next = 0;
+	async function work(): Promise<void> {
+		for (let index = next++; index < paths.length; index = next++) {
+			signal?.throwIfAborted();
+			const filename = paths[index] as string;
+			const bytes = files[filename] as Uint8Array<ArrayBuffer>;
+			const deflated = precompressed.test(filename) ? bytes : await deflate(bytes);
+			const smaller = deflated.length < bytes.length;
+			packed[index] = {
+				file: { filename, size: bytes.length, crc: crc32(bytes), compression: smaller ? 8 : 0 },
+				data: smaller ? deflated : bytes,
+			};
+		}
+	}
+	await Promise.all(Array.from({ length: 4 }, work));
+	signal?.throwIfAborted();
+	const chunks: Uint8Array[] = [];
+	const zip = new Zip((error, chunk) => {
+		if (error) throw error;
+		chunks.push(chunk);
+	});
+	for (const { file, data } of packed) {
+		zip.add(file);
+		file.ondata?.(null, data, true);
+	}
+	zip.end();
+	return Buffer.concat(chunks);
 }
 
 /** One spelling and one filesystem kind for every archive path and its parents. */

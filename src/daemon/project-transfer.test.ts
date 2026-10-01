@@ -82,6 +82,31 @@ it("round-trips authored bytes and organization, excludes local state, and alway
 	expect(readdirSync(f.location)).toHaveLength(2);
 });
 
+it("deflates text that shrinks and stores media and files deflate cannot shrink", async () => {
+	const f = fixture();
+	const text = "export const row = 'a repeated line';\n".repeat(200);
+	writeFileSync(join(f.root, "design/shared/lib/long.ts"), text);
+	writeFileSync(join(f.root, "design/shared/assets/photo.jpg"), text);
+	const bytes = Buffer.from(await exportProject(f.root, f.spool));
+	const methods: Record<string, number> = {};
+	for (
+		let offset = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+		bytes.readUInt32LE(offset) === 0x02014b50;
+		offset += 46 + bytes.readUInt16LE(offset + 28) + bytes.readUInt16LE(offset + 30) + bytes.readUInt16LE(offset + 32)
+	)
+		methods[bytes.toString("utf8", offset + 46, offset + 46 + bytes.readUInt16LE(offset + 28))] = bytes.readUInt16LE(
+			offset + 10,
+		);
+	expect(methods).toMatchObject({
+		"design/shared/lib/long.ts": 8,
+		"design/shared/assets/photo.jpg": 0,
+		"design/shared/lib/one.ts": 0,
+	});
+	const imported = await importProject(bytes, f.location, f.spool);
+	expect(readFileSync(join(imported.root, "design/shared/lib/long.ts"), "utf8")).toBe(text);
+	expect(readFileSync(join(imported.root, "design/shared/assets/photo.jpg"), "utf8")).toBe(text);
+});
+
 it("keeps a folder-names stamp on import so the first read renames its walks, and refuses any other", async () => {
 	const older = fixture(FOLDER_NAMES_FORMAT);
 	const imported = await importProject(await exportProject(older.root, older.spool), older.location, older.spool);
