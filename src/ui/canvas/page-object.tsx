@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { coverUrl } from "../api";
 import { FolderIcon } from "../icons";
-import { type CameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import type { PageObject } from "./page-objects";
 
 /**
@@ -37,14 +37,13 @@ export function PageObjectView({
 }) {
 	const { fit } = object;
 	const ring = useRef<HTMLSpanElement | null>(null);
-	// the ring comes and goes with the selection, so what was drawn is kept per element
-	const drawn = useRef<{ ring: HTMLSpanElement; k: number } | null>(null);
+	// the ring comes and goes with the selection, so a new one is new whatever the zoom
+	const changed = useChanged();
 	useCameraFollow(
 		camera,
 		({ k }) => {
 			const el = ring.current;
-			if (el === null || (drawn.current?.ring === el && drawn.current.k === k)) return;
-			drawn.current = { ring: el, k };
+			if (el === null || !changed(el, k)) return;
 			el.style.inset = `${-3 / k}px`;
 			el.style.borderWidth = `${1.5 / k}px`;
 		},
@@ -114,13 +113,12 @@ export function PageObjectLabel({
 }) {
 	const box = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
-	const drawn = useRef<{ k: number; width: number } | null>(null);
+	const changed = useChanged();
 	useCameraFollow(
 		camera,
 		({ k }) => {
 			if (box.current === null || label.current === null) return;
-			if (drawn.current?.k === k && drawn.current.width === object.w) return;
-			drawn.current = { k, width: object.w };
+			if (!changed(k, object.w)) return;
 			box.current.style.width = `${object.w * k}px`;
 			label.current.style.transform = `scale(${1 / k})`;
 		},

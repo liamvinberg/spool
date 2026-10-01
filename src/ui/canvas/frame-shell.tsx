@@ -4,7 +4,7 @@ import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
 import type { Box, NearScreen } from "./camera";
-import { type CameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import type { FrameState } from "./lifecycle";
 
 /**
@@ -60,13 +60,12 @@ export function ShellClip({
 	children: ReactNode;
 }) {
 	const clip = useRef<HTMLDivElement | null>(null);
-	const drawn = useRef<number | null>(null);
+	const changed = useChanged();
 	useCameraFollow(
 		camera,
 		(at, moving) => {
 			const radius = shellRadius(at.k);
-			if (clip.current === null || radius === drawn.current || (moving && !near(at, frame))) return;
-			drawn.current = radius;
+			if (clip.current === null || (moving && !near(at, frame)) || !changed(radius)) return;
 			clip.current.style.borderRadius = `${radius}px`;
 		},
 		[frame.x, frame.y, frame.w, frame.h, near],

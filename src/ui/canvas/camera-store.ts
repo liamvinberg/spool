@@ -1,4 +1,4 @@
-import { type DependencyList, useLayoutEffect, useRef } from "react";
+import { type DependencyList, useCallback, useLayoutEffect, useRef } from "react";
 import type { Camera } from "../api";
 import { clamp } from "./camera";
 
@@ -134,6 +134,29 @@ export function createCameraStore(): CameraStore {
 			};
 		},
 	};
+}
+
+/**
+ * What a follower last wrote, so it writes nothing it has written already.
+ *
+ * `changed(...values)` is true, and remembers them, only when one of them
+ * differs from the last call that was: a pan leaves a label's zoom where it
+ * was, so a label asked on every frame of one writes once at most.
+ */
+export function useChanged(): (...values: readonly unknown[]) => boolean {
+	const last = useRef<readonly unknown[] | null>(null);
+	return useCallback((...values: readonly unknown[]) => {
+		const was = last.current;
+		if (
+			was !== null &&
+			was.length === values.length &&
+			was.every((value, index) => Object.is(value, values[index]))
+		) {
+			return false;
+		}
+		last.current = values;
+		return true;
+	}, []);
 }
 
 /**

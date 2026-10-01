@@ -3,7 +3,7 @@ import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
 import type { Box, NearScreen } from "./camera";
-import { type CameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import { UnseenMark } from "./unseen-mark";
 
 export function FrameLabel({
@@ -41,7 +41,7 @@ export function FrameLabel({
 	onPlay?: () => void;
 }) {
 	const label = useRef<HTMLDivElement | null>(null);
-	const drawn = useRef<{ k: number; width: number } | null>(null);
+	const changed = useChanged();
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
 	// Both are written here rather than rendered, and only when the zoom or the
@@ -51,9 +51,7 @@ export function FrameLabel({
 		camera,
 		(at, moving) => {
 			const el = label.current;
-			if (el === null || (drawn.current?.k === at.k && drawn.current.width === frame.w)) return;
-			if (moving && !near(at, frame)) return;
-			drawn.current = { k: at.k, width: frame.w };
+			if (el === null || (moving && !near(at, frame)) || !changed(at.k, frame.w)) return;
 			el.style.width = `${frame.w * at.k}px`;
 			el.style.transform = `scale(${1 / at.k})`;
 		},

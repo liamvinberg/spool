@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { pageName } from "../../page-path";
 import type { FlowEdge, ProjectedFrame } from "../api";
-import { type CameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import { pageLabel, pageOf } from "./pages";
 
 /**
@@ -328,7 +328,7 @@ export function WalkLayer({
 		if (tag === null) tags.current.delete(key);
 		else tags.current.set(key, tag);
 	};
-	const drawn = useRef<{ k: number; docked: readonly Walk[]; frames: readonly ProjectedFrame[] } | null>(null);
+	const changed = useChanged();
 	// React lays out one leader and one tag per walk; the camera places them. A
 	// zoom step that takes a wall below readable width hides its tags rather
 	// than unmounting them, so crossing the line is a write in the same frame as
@@ -336,9 +336,7 @@ export function WalkLayer({
 	useCameraFollow(
 		camera,
 		({ k }) => {
-			const was = drawn.current;
-			if (was !== null && was.k === k && was.docked === docked && was.frames === frames) return;
-			drawn.current = { k, docked, frames };
+			if (!changed(k, docked, frames)) return;
 			for (const layer of placeWalks(docked, frames, k)) {
 				const nub = layer.size === "nub";
 				for (const placed of layer.marks) {

@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import type { FlowEdge, ProjectedFrame } from "../api";
 import { clamp } from "./camera";
-import { type CameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import type { SiteBoxes } from "./protocol";
 
 /**
@@ -269,15 +269,14 @@ export function FlowArrows({
 }) {
 	const arrows = useMemo(() => placeArrows(edges, frames, siteBoxes), [edges, frames, siteBoxes]);
 	const layer = useRef<SVGSVGElement | null>(null);
-	const drawn = useRef<{ k: number; arrows: PlacedArrow[] } | null>(null);
+	const changed = useChanged();
 	// Rendered once per route and drawn here once per zoom step: the groups are
 	// React's and in the order of `arrows`, the strokes are the camera's.
 	useCameraFollow(
 		camera,
 		({ k }) => {
 			const svg = layer.current;
-			if (svg === null || (drawn.current?.k === k && drawn.current.arrows === arrows)) return;
-			drawn.current = { k, arrows };
+			if (svg === null || !changed(k, arrows)) return;
 			arrows.forEach((arrow, index) => {
 				const group = svg.children[index];
 				const [line, head] = group?.children ?? [];
