@@ -1,10 +1,13 @@
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
+import { esbuildLicenses } from "./src/bundle-licenses";
 import { buildBundledOAuth } from "./src/daemon/bundled-oauth-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
 // would race the other's write — the build script clears dist/ up front
+const licenses = esbuildLicenses();
+
 export default defineConfig([
 	{
 		entry: {
@@ -14,6 +17,7 @@ export default defineConfig([
 		},
 		format: "esm",
 		target: "node22",
+		esbuildPlugins: [licenses],
 		onSuccess: async () => {
 			const renderer = fileURLToPath(new URL("./src/daemon/bundled-oauth-page.ts", import.meta.url));
 			await writeFile("dist/bundled-oauth-native.js", await buildBundledOAuth(renderer));
@@ -35,6 +39,7 @@ export default defineConfig([
 		define: { __SPOOL_PUBLICATION_BUILD__: "false" },
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
 		noExternal: ["zod", "motion"],
+		esbuildPlugins: [licenses],
 	},
 	{
 		entry: { "publication-runtime": "src/runtime/frame-runtime.ts" },
@@ -46,5 +51,6 @@ export default defineConfig([
 		minify: true,
 		define: { __SPOOL_PUBLICATION_BUILD__: "true" },
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
+		esbuildPlugins: [licenses],
 	},
 ]);

@@ -1,5 +1,11 @@
 # Third-party notices
 
+## Bundled packages
+
+Spool's published JavaScript inlines the npm packages listed in
+`dist/licenses.md` and `dist/ui/licenses.md`, which reproduce the license file
+each one ships.
+
 ## Agent app marks
 
 The agent picker uses the Claude and ChatGPT desktop template icons and Google's

@@ -1,6 +1,9 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { viteLicenses } from "./src/bundle-licenses";
+
+const licenses = viteLicenses();
 
 // Vite's only job (#12): building the canvas SPA into dist/ui at release.
 // The daemon serves the output; there is no vite dev server in the loop —
@@ -8,7 +11,8 @@ import { defineConfig } from "vite";
 export default defineConfig({
 	root: "src/ui",
 	base: "/ui/",
-	plugins: [react(), tailwindcss()],
+	plugins: [react(), tailwindcss(), licenses.app],
+	worker: { plugins: () => [licenses.worker] },
 	build: {
 		outDir: "../../dist/ui",
 		emptyOutDir: true,
