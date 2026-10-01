@@ -17,6 +17,18 @@ export default defineConfig([
 		},
 		format: "esm",
 		target: "node22",
+		// A package belongs in `dependencies` only when something needs its files at
+		// runtime: a native binary, wasm, vendor files, or a path spool or an agent
+		// resolves. Every other package is bundled here. Bundled CommonJS calls
+		// require for node builtins and reads __dirname, which an ES module has to
+		// be given; __dirname then means dist/, so a package that reads files beside
+		// its own code belongs in `dependencies`.
+		banner: {
+			js: 'import { createRequire as __spoolCreateRequire } from "node:module"; const require = __spoolCreateRequire(import.meta.url);',
+		},
+		shims: true,
+		// Bundled code asks for builtins that only exist under node:, like node:sqlite.
+		removeNodeProtocol: false,
 		esbuildPlugins: [licenses],
 		onSuccess: async () => {
 			const renderer = fileURLToPath(new URL("./src/daemon/bundled-oauth-page.ts", import.meta.url));
@@ -48,7 +60,6 @@ export default defineConfig([
 		tsconfig: "tsconfig.runtime.json",
 		define: { __SPOOL_PUBLICATION_BUILD__: "false" },
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
-		noExternal: ["zod", "motion"],
 		esbuildPlugins: [licenses],
 	},
 	{
@@ -60,7 +71,9 @@ export default defineConfig([
 		tsconfig: "tsconfig.runtime.json",
 		minify: true,
 		define: { __SPOOL_PUBLICATION_BUILD__: "true" },
-		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
+		// Published pages have always imported motion through the project's import
+		// map; bundled, it would drop out unused and change what they load.
+		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client", "motion", "motion/react"],
 		esbuildPlugins: [licenses],
 	},
 ]);

@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron, chromium, type ElectronApplication } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
@@ -170,15 +170,19 @@ it("completes a deterministic journey through the clean installed host and deliv
 	}
 	const manifest = JSON.parse(readFileSync(join(install, "package.json"), "utf8")) as {
 		dependencies: Record<string, string>;
+		devDependencies: Record<string, string>;
 	};
+	// The engine is compiled into dist at exactly these versions rather than installed.
 	for (const [name, version] of Object.entries({
 		"@earendil-works/pi-ai": "0.85.1",
 		"@earendil-works/pi-agent-core": "0.85.1",
 		"@earendil-works/pi-coding-agent": "0.85.1",
-		"@anthropic-ai/sandbox-runtime": "0.0.75",
 		typebox: "1.3.7",
-	}))
-		expect(manifest.dependencies[name]).toBe(version);
+	})) {
+		expect(manifest.dependencies[name]).toBeUndefined();
+		expect(manifest.devDependencies[name]).toBe(version);
+	}
+	expect(manifest.dependencies["@anthropic-ai/sandbox-runtime"]).toBe("0.0.75");
 	for (const asset of [
 		"dist/cli.js",
 		"dist/bundled-host.js",
@@ -187,6 +191,8 @@ it("completes a deterministic journey through the clean installed host and deliv
 		"dist/ui/index.html",
 		"dist/frame-runtime.js",
 		"dist/spool-public.d.ts",
+		"dist/licenses.md",
+		"dist/ui/licenses.md",
 		"LICENSE.md",
 		"THIRD_PARTY_NOTICES.md",
 	])
@@ -216,15 +222,22 @@ it("completes a deterministic journey through the clean installed host and deliv
 		expect(existsSync(join(sandbox, asset)), asset).toBe(true);
 	expect(readFileSync(join(install, "THIRD_PARTY_NOTICES.md"), "utf8")).toContain("Copyright (c) 2025 Mario Zechner");
 	expect(readFileSync(join(install, "THIRD_PARTY_NOTICES.md"), "utf8")).toContain("Instrument Sans Project Authors");
-	expect(readFileSync(join(packageRoot("typebox"), "license"), "utf8")).toContain("Haydn Paterson");
+	const licenses = readFileSync(join(install, "dist/licenses.md"), "utf8");
+	expect(licenses).toContain("## @earendil-works/pi-coding-agent 0.85.1");
+	expect(licenses).toMatch(/## typebox 1\.3\.7\n[^#]*Haydn Paterson/);
+	expect(readFileSync(join(install, "dist/ui/licenses.md"), "utf8")).toContain("## pdf-lib 1.17.1");
+	for (const tree of [dirname(install), join(install, "node_modules")])
+		expect(existsSync(join(tree, "@earendil-works/pi-coding-agent")), tree).toBe(false);
+	// Bundled, pi would take spool's package.json for its own; the host reads this one.
+	expect(JSON.parse(readFileSync(join(install, "dist/pi/package.json"), "utf8"))).toMatchObject({
+		name: "@earendil-works/pi-coding-agent",
+		version: "0.85.1",
+	});
 	const pinnedPaths = [
-		join(install, "dist/cli.js"),
-		join(install, "dist/bundled-host.js"),
-		join(install, "dist/bundled-oauth-native.js"),
-		join(install, "dist/bundled-command-process.js"),
-		...Object.keys(manifest.dependencies)
-			.filter((name) => name.includes("pi-") || name.includes("sandbox-runtime") || name === "typebox")
-			.map((name) => join(packageRoot(name), "package.json")),
+		...readdirSync(join(install, "dist"))
+			.filter((file) => file.endsWith(".js"))
+			.map((file) => join(install, "dist", file)),
+		join(sandbox, "package.json"),
 	];
 	const installedHashes = () =>
 		Object.fromEntries(

@@ -144,9 +144,10 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Bundled engine
 
-Spool ships `@earendil-works/pi-ai`, `pi-agent-core` and `pi-coding-agent`
-0.85.1 under the MIT license below. The published pi packages omit this
-license file; this copy comes from their v0.85.1 source release.
+Spool bundles `@earendil-works/pi-ai`, `pi-agent-core`, `pi-coding-agent`,
+`pi-tui`, `pi-telemetry` and `chord` 0.85.1 under the MIT license below. The
+published pi packages omit this license file; this copy comes from their
+v0.85.1 source release.
 
 MIT License
 
