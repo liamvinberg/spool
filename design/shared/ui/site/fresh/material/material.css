@@ -1,0 +1,96 @@
+/* The ground both material takes stand on: the site's palette and its two
+ * house faces (Familjen Grotesk, Fragment Mono, from shared/fonts.css), plus
+ * the display faces each take sets its headlines in. */
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Instrument+Serif:ital@0;1&display=swap");
+
+/* The page scrolls with the browser. */
+html,
+body,
+#root {
+	height: auto;
+	min-height: 100%;
+}
+
+body {
+	background: #101010;
+}
+
+.m-page {
+	--m-bg: #101010;
+	--m-text: #f0efed;
+	--m-soft: #c9c5c0;
+	--m-muted: #8e8c88;
+	--m-line: #2a2826;
+	--m-red: #f5391a;
+	--m-sans: "Familjen Grotesk", Arial, sans-serif;
+	--m-mono: "Fragment Mono", ui-monospace, monospace;
+	--m-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+	--m-gutter: 80px;
+	position: relative;
+	isolation: isolate;
+	min-height: 100vh;
+	overflow: clip;
+	background: var(--m-bg);
+	color: var(--m-text);
+	font-family: var(--m-sans);
+	font-size: 17px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+.m-page ::selection {
+	background: #f5391a;
+	color: #101010;
+}
+
+.m-width {
+	width: 100%;
+	max-width: 1440px;
+	margin: 0 auto;
+	padding: 0 var(--m-gutter);
+}
+
+.m-page a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.m-page code,
+.m-mono {
+	font-family: var(--m-mono);
+	font-feature-settings: "calt" 0;
+}
+
+.m-page :focus-visible {
+	outline: 1.5px solid var(--m-red);
+	outline-offset: 4px;
+	border-radius: 2px;
+}
+
+.m-copy-state {
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	min-width: 18px;
+	font-family: var(--m-mono);
+	font-size: 12px;
+	color: var(--m-muted);
+	transition: color 160ms var(--m-ease);
+}
+
+[data-copied="copied"] .m-copy-state {
+	color: var(--m-red);
+}
+
+.m-prompt {
+	color: var(--m-muted);
+	user-select: none;
+}
+
+@media (max-width: 760px) {
+	.m-page {
+		--m-gutter: 20px;
+		font-size: 16px;
+	}
+}
