@@ -169,13 +169,14 @@ function assertHtmlFrames(root: string, frames: readonly { name: string; page: s
 	);
 }
 
-function missingCurrentCoverNames(root: string, frames: readonly { name: string }[]): string[] {
+function missingCurrentCoverNames(root: string, frames: readonly { name: string; page: string }[]): string[] {
 	const thumbs = join(root, "design", ".spool", "thumbs");
 	const missing: string[] = [];
 	for (const frame of frames) {
 		let files: string[] = [];
 		try {
-			files = readdirSync(join(thumbs, frame.name));
+			const path = frame.page === ROOT_PAGE ? frame.name : `${frame.page}/${frame.name}`;
+			files = readdirSync(join(thumbs, encodeURIComponent(path)));
 		} catch {
 			files = [];
 		}
