@@ -50,7 +50,7 @@ export default function Frame() {
 					<Crops />
 					<h1 className="px-hero-type">
 						<span>A canvas for</span>
-						<em>working things out.</em>
+						<span>working things out.</span>
 					</h1>
 					<div className="px-hero-foot">
 						<p className="px-lede px-quiet">

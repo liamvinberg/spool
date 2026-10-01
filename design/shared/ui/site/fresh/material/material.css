@@ -1,7 +1,7 @@
 /* The ground both material takes stand on: the site's palette and its two
  * house faces (Familjen Grotesk, Fragment Mono, from shared/fonts.css), plus
  * the display faces each take sets its headlines in. */
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Instrument+Serif:ital@0;1&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Young+Serif&display=swap");
 
 /* The page scrolls with the browser. */
 html,

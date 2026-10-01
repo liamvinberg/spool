@@ -3,7 +3,7 @@
  * closes up into a solid. */
 
 .px-page {
-	--px-serif: "Instrument Serif", Georgia, serif;
+	--px-serif: "Young Serif", Georgia, serif;
 	--px-rule: #2c2927;
 }
 
@@ -82,17 +82,12 @@
 	margin: 0 0 0 -0.04em;
 	font-family: var(--px-serif);
 	font-weight: 400;
-	font-size: 164px;
-	line-height: 0.92;
-	letter-spacing: -0.025em;
+	font-size: 134px;
+	line-height: 1.02;
+	letter-spacing: -0.035em;
 }
-.px-hero-type span,
-.px-hero-type em {
+.px-hero-type span {
 	display: block;
-}
-.px-hero-type em {
-	font-style: italic;
-	letter-spacing: -0.02em;
 }
 .px-hero-foot {
 	display: grid;
@@ -121,9 +116,9 @@
 	padding-bottom: 14px;
 	border-bottom: 1px solid #f0efed66;
 	font-family: var(--px-serif);
-	font-size: 38px;
-	line-height: 1.1;
-	letter-spacing: -0.01em;
+	font-size: 29px;
+	line-height: 1.15;
+	letter-spacing: -0.02em;
 	transition: border-color 200ms var(--m-ease);
 }
 .px-download svg {
@@ -200,9 +195,9 @@
 	margin: 0 0 72px;
 	font-family: var(--px-serif);
 	font-weight: 400;
-	font-size: 76px;
-	line-height: 1;
-	letter-spacing: -0.018em;
+	font-size: 56px;
+	line-height: 1.08;
+	letter-spacing: -0.025em;
 }
 .px-section-body {
 	display: grid;
@@ -284,9 +279,9 @@
 	flex: 1;
 	margin: 0;
 	font-family: var(--px-serif);
-	font-style: italic;
-	font-size: 46px;
+	font-size: 36px;
 	line-height: 1;
+	letter-spacing: -0.02em;
 	color: #5d5955;
 	transition: color 500ms var(--m-ease);
 }
@@ -344,9 +339,9 @@
 	margin: 0 0 0 -0.04em;
 	font-family: var(--px-serif);
 	font-weight: 400;
-	font-size: 176px;
-	line-height: 0.92;
-	letter-spacing: -0.025em;
+	font-size: 112px;
+	line-height: 1;
+	letter-spacing: -0.035em;
 }
 .px-band-foot {
 	display: grid;
@@ -466,10 +461,10 @@
 
 @media (max-width: 1100px) {
 	.px-hero-type {
-		font-size: clamp(54px, 11.2vw, 164px);
+		font-size: clamp(40px, 9.2vw, 134px);
 	}
 	.px-band h2 {
-		font-size: clamp(60px, 12vw, 176px);
+		font-size: clamp(44px, 7.6vw, 112px);
 	}
 	.px-hero-foot,
 	.px-band-foot,
@@ -503,7 +498,7 @@
 		padding-bottom: 96px;
 	}
 	.px-hero-type {
-		font-size: 13.4vw;
+		font-size: 13vw;
 	}
 	.px-hero-foot {
 		margin-top: 48px;
@@ -512,14 +507,14 @@
 		font-size: 19px;
 	}
 	.px-download {
-		font-size: 30px;
+		font-size: 24px;
 	}
 	.px-section {
 		padding-top: 88px;
 		padding-bottom: 72px;
 	}
 	.px-section h2 {
-		font-size: 44px;
+		font-size: 34px;
 		margin-bottom: 36px;
 	}
 	.px-copy p {
@@ -529,7 +524,7 @@
 		font-size: 12.5px;
 	}
 	.px-step {
-		font-size: 26px;
+		font-size: 19px;
 	}
 	.px-step:not(:last-child)::after {
 		min-width: 14px;
