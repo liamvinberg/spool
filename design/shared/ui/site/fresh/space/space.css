@@ -1,0 +1,173 @@
+/* What both space takes need from the document: the page scrolls with the
+ * browser, and the type the site already speaks. */
+html,
+body,
+#root {
+	height: auto;
+	min-height: 100%;
+}
+
+.sp-page {
+	--sp-bg: #101010;
+	--sp-text: #f0efed;
+	--sp-muted: #a39d96;
+	--sp-faint: #6f6a64;
+	--sp-red: #f5391a;
+	--sp-warm: #f2e0d5;
+	--sp-edge: clamp(20px, 5.6vw, 80px);
+	position: relative;
+	min-height: 100vh;
+	overflow: clip;
+	background: var(--sp-bg);
+	color: var(--sp-text);
+	font-family: "Familjen Grotesk", Arial, sans-serif;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+.sp-page a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.sp-page code,
+.sp-page pre {
+	font-family: "Fragment Mono", ui-monospace, monospace;
+	font-feature-settings: "calt" 0;
+}
+
+.sp-page :focus-visible {
+	outline: 1.5px solid currentColor;
+	outline-offset: 4px;
+	border-radius: 2px;
+}
+
+.sp-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 9px;
+	font-size: 21px;
+	font-weight: 500;
+	letter-spacing: -0.025em;
+}
+.sp-mark {
+	width: 17px;
+	height: 22px;
+	color: var(--sp-red);
+}
+
+.sp-download {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 56px;
+	padding: 0 30px;
+	border-radius: 4px;
+	background: #f0e8dc;
+	color: #1d0e09 !important;
+	font-size: 17px;
+	font-weight: 500;
+	letter-spacing: -0.01em;
+	transition: background 160ms ease;
+}
+.sp-download:hover {
+	background: #fff8ee;
+}
+.sp-command {
+	display: inline-flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 28px;
+	height: 56px;
+	padding: 0 20px;
+	border: 1px solid rgba(237, 198, 179, 0.3);
+	border-radius: 4px;
+	background: rgba(20, 10, 7, 0.28);
+	color: var(--sp-warm);
+	font-size: 14px;
+	cursor: pointer;
+	transition: border-color 160ms ease;
+}
+.sp-command:hover {
+	border-color: rgba(237, 198, 179, 0.6);
+}
+.sp-command > span {
+	font: 12px "Fragment Mono", monospace;
+	color: rgba(242, 224, 213, 0.6);
+}
+
+.sp-footer {
+	position: relative;
+	z-index: 1;
+	padding: 120px var(--sp-edge) 44px;
+	background: var(--sp-bg);
+}
+.sp-footer-top {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 40px;
+	padding-bottom: 96px;
+}
+.sp-footer-top p {
+	max-width: 520px;
+	margin: 0;
+	font-size: 26px;
+	line-height: 1.3;
+	letter-spacing: -0.02em;
+}
+.sp-footer-top p a {
+	text-decoration: underline;
+	text-decoration-color: rgba(240, 239, 237, 0.3);
+	text-underline-offset: 5px;
+}
+.sp-footer-top .sp-terminal {
+	font: 14px "Fragment Mono", monospace;
+	color: var(--sp-muted);
+	letter-spacing: 0;
+}
+.sp-terminal span {
+	color: var(--sp-faint);
+}
+.sp-footer-bottom {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 24px;
+	padding-top: 28px;
+	border-top: 1px solid rgba(240, 239, 237, 0.09);
+}
+.sp-footer nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 26px;
+	font-size: 15px;
+	color: var(--sp-muted);
+}
+.sp-footer nav a {
+	transition: color 160ms ease;
+}
+.sp-footer nav a:hover {
+	color: var(--sp-text);
+}
+
+@media (max-width: 760px) {
+	.sp-download,
+	.sp-command {
+		width: 100%;
+	}
+	.sp-footer {
+		padding-top: 80px;
+	}
+	.sp-footer-top,
+	.sp-footer-bottom {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+	.sp-footer-top {
+		padding-bottom: 56px;
+	}
+	.sp-footer-top p {
+		font-size: 21px;
+	}
+}
