@@ -1387,16 +1387,19 @@ export function ProjectCanvas({
 	 * drawn apart: the camera at the next animation frame and the page whenever
 	 * its render runs, which a switch caused by a frame's message leaves for a
 	 * later task. Placed from here, the camera moves in the commit that swaps the
-	 * field, and the frame that draws it draws both. Declared before the shelf's
-	 * fit, which has to have the last word on a shelf.
+	 * field, and the frame that draws it draws both. A landing that goes on to a
+	 * frame flies there from here too, so its first frame is already on the page
+	 * it arrived on. Declared before the shelf's fit, which has to have the last
+	 * word on a shelf.
 	 */
-	const arrival = useRef<{ page: string; camera: Camera | null } | null>(null);
+	const arrival = useRef<{ page: string; camera: Camera | null; then?: Camera } | null>(null);
 	useLayoutEffect(() => {
 		const landing = arrival.current;
 		if (landing === null || landing.page !== activePage) return;
 		arrival.current = null;
 		placeCamera(landing.camera);
-	}, [activePage, placeCamera]);
+		if (landing.then !== undefined) camera.fly(landing.then);
+	}, [activePage, placeCamera, camera]);
 
 	/**
 	 * A shelf is fitted on every arrival, stored camera or not. A page with no
@@ -3550,12 +3553,13 @@ export function ProjectCanvas({
 	/**
 	 * Switching saves the leaving page's camera, swaps the field, and restores
 	 * the arriving page's — fits when it has none, or lands where a caller
-	 * says. Selection, element scope, and entered time are page-local and
-	 * reset; a pending trash commits (one undo slot, as ever). The current tool
-	 * rides through untouched.
+	 * says, and flies on from there to `then` when the caller is going
+	 * somewhere on the page. Selection, element scope, and entered time are
+	 * page-local and reset; a pending trash commits (one undo slot, as ever). The
+	 * current tool rides through untouched.
 	 */
 	const switchToPage = useCallback(
-		(target: string, arriveAt?: Camera) => {
+		(target: string, arriveAt?: Camera, then?: Camera) => {
 			if (activePageRef.current === target) return;
 			flushNudge();
 			commitTrash();
@@ -3568,7 +3572,7 @@ export function ProjectCanvas({
 			cameras.current = next.cameras;
 			setActivePage(target);
 			// placed by the commit that swaps the field, so both are drawn by one frame
-			arrival.current = { page: target, camera: next.camera };
+			arrival.current = { page: target, camera: next.camera, ...(then === undefined ? {} : { then }) };
 		},
 		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, camera],
 	);
@@ -4961,18 +4965,23 @@ export function ProjectCanvas({
 			const frame = allFramesRef.current.find((candidate) => candidate.name === name);
 			if (frame === undefined) return;
 			recordDeparture();
-			if (pageOf(frame) !== activePageRef.current) switchToPage(pageOf(frame), arrivalAt(frame));
+			const viewport = viewportRef.current;
+			const cam = camera.get();
+			const centred =
+				viewport === null || cam === null
+					? undefined
+					: centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight);
+			// Another page arrives where the camera stood and flies on to the frame
+			// from there, as the landing always has; the flight starts in the commit
+			// that brings the page, so none of it is drawn over the page being left.
+			if (pageOf(frame) !== activePageRef.current) switchToPage(pageOf(frame), cam ?? undefined, centred);
+			else if (centred !== undefined) camera.fly(centred);
 			setPicked([]);
 			holdChain(null);
 			setSelected([frame.name]);
 			frameAnchor.current = frame.name;
-			const viewport = viewportRef.current;
-			const cam = camera.get();
-			if (viewport !== null && cam !== null) {
-				camera.fly(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
-			}
 		},
-		[recordDeparture, switchToPage, arrivalAt, holdChain, camera],
+		[recordDeparture, switchToPage, holdChain, camera],
 	);
 
 	/**

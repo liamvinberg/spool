@@ -162,6 +162,50 @@ describe("the walk layer", () => {
 		);
 	});
 
+	it("flies to the target once its page has arrived, and draws none of the flight on the page it left", async () => {
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+		const canvas = mount();
+		await canvas.render();
+		const field = () => canvas.host.querySelector<HTMLElement>("[data-canvas-camera]");
+		expect(field()?.style.transform).toBe("translate(0px, 0px) scale(1)");
+
+		// from here the display frames come when the test says
+		const due: FrameRequestCallback[] = [];
+		vi.mocked(requestAnimationFrame).mockImplementation((callback) => {
+			due.push(callback);
+			return 1;
+		});
+		const drawn: { page: boolean; transform: string }[] = [];
+		const frame = (ahead: number) => {
+			const now = performance.now() + ahead;
+			for (const callback of due.splice(0)) callback(now);
+			drawn.push({
+				page: canvas.host.querySelector('[data-frame-label="shop/checkout"]') !== null,
+				transform: field()?.style.transform ?? "",
+			});
+		};
+
+		await act(async () => {
+			exitTag(canvas.host, "shop/checkout")?.click();
+		});
+		frame(0);
+		frame(110);
+		frame(400);
+
+		// every frame of it is on the page it lands on: the page and the flight are one commit
+		expect(drawn.every((one) => one.page)).toBe(true);
+		const x = (transform: string) => Number(/translate\(([-\d.]+)px/.exec(transform)?.[1]);
+		// it sets off from where the camera stood and travels, rather than cutting,
+		// to the frame in the middle of the screen
+		const [first, middle, last] = drawn.map((one) => x(one.transform));
+		expect(first).toBeGreaterThanOrEqual(0);
+		expect(middle).toBeGreaterThan(first ?? Number.NaN);
+		expect(middle).toBeLessThan(405);
+		expect(last).toBe(405);
+		expect(drawn[2]?.transform).toBe("translate(405px, -22px) scale(1)");
+	});
+
 	it("hides the whole layer on one toggle, arrows and tags together", async () => {
 		const canvas = mount();
 		await canvas.render();
