@@ -1,0 +1,100 @@
+.fg-stage[data-backend="fallback"] {
+	background: radial-gradient(ellipse at 68% 46%, #3d150d 0%, #1b0e0b 34%, var(--wv-bg) 66%);
+}
+
+.fg-opening {
+	visibility: visible;
+	opacity: 1;
+}
+.fg-opening h1 {
+	margin: 0;
+	font-size: clamp(50px, 7.4vw, 112px);
+	font-weight: 400;
+	line-height: 0.95;
+	letter-spacing: -0.058em;
+}
+.fg-opening p {
+	max-width: 360px;
+	margin: 34px 0 0;
+	font-size: 18px;
+	line-height: 1.45;
+	color: var(--wv-muted);
+}
+
+/* Frame names sit above each frame, the way the canvas names them. */
+.fg-labels > span {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 2;
+	font: 12px/1 "Fragment Mono", monospace;
+	color: #d9d2ca;
+	opacity: 0;
+	white-space: nowrap;
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+.fg-prompt {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 2;
+	margin: 0;
+	font: 13px/1 "Fragment Mono", monospace;
+	font-feature-settings: "calt" 0;
+	color: #e9e2da;
+	white-space: nowrap;
+	opacity: 0;
+	visibility: hidden;
+	will-change: transform, opacity;
+}
+.fg-prompt span {
+	color: var(--wv-faint);
+}
+
+.fg-history {
+	margin-bottom: 44px;
+	font: 13px/1.9 "Fragment Mono", monospace;
+	color: #d6cfc7;
+	opacity: 0;
+	visibility: hidden;
+}
+.fg-history p {
+	margin: 0 0 6px;
+	color: var(--wv-muted);
+}
+.fg-history ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.fg-history li span {
+	color: #ff7d5c;
+}
+
+.fg-ending h2 {
+	max-width: 11em;
+	font-size: clamp(38px, 4.6vw, 66px);
+	line-height: 1.02;
+	letter-spacing: -0.042em;
+}
+.fg-command {
+	display: flex;
+}
+
+@media (max-width: 760px) {
+	.fg-opening p {
+		margin-top: 22px;
+		font-size: 16px;
+	}
+	.fg-history {
+		margin-bottom: 28px;
+		font-size: 11px;
+	}
+	.fg-command {
+		width: 100%;
+	}
+	.fg-ending h2 {
+		font-size: clamp(34px, 9.6vw, 44px);
+	}
+}
