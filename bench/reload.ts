@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
+import { type Browser, type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
 import {
 	type BuildRun,
 	buildsHeader,
@@ -39,7 +39,7 @@ import {
  *
  * **The completion condition.** `settle` had to guess when things had stopped
  * because it did not know what it was waiting for. This one knows the target:
- * every frame the planned camera puts in the window holds a decoded picture.
+ * every frame the planned camera puts on the canvas holds a decoded picture.
  * A page larger than the window has covers nobody is looking at, and the
  * browser is free to refuse decoding those: on a warm n1000 reload Chromium
  * refused the first `decode()` of 534 to 744 off-screen covers with
@@ -588,15 +588,37 @@ function flowsOf(wire: Iterable<WireRequest>): WireRequest | undefined {
 	return reads.find((entry) => entry.waitMs !== undefined) ?? reads[0];
 }
 
-/** The frames a camera puts in the window: the covers a person sees after a reload. */
-function onScreen(boxes: readonly FrameBox[], camera: Camera): FrameBox[] {
+/** The frames a camera puts on the canvas: the covers a person sees after a reload. */
+function onScreen(boxes: readonly FrameBox[], camera: Camera, field: { width: number; height: number }): FrameBox[] {
 	return boxes.filter((box) => {
 		const left = camera.x + box.x * camera.k;
 		const top = camera.y + box.y * camera.k;
-		return (
-			left < VIEWPORT.width && top < VIEWPORT.height && left + box.w * camera.k > 0 && top + box.h * camera.k > 0
-		);
+		return left < field.width && top < field.height && left + box.w * camera.k > 0 && top + box.h * camera.k > 0;
 	});
+}
+
+/**
+ * The canvas's own box: the window less the panels beside it. The camera is
+ * the canvas's, so a frame past its edge is in the window and on nobody's
+ * screen. Measured rather than taken to be the window, because the two builds
+ * treat such a frame differently: an image element clipped there still
+ * decodes when asked to, and the picture layer, which draws only the canvas,
+ * never draws it (#81), so counting it timed a cover no person sees.
+ */
+async function canvasField(browser: Browser, url: string): Promise<{ width: number; height: number }> {
+	const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+	try {
+		const page = await context.newPage();
+		await page.goto(url, { waitUntil: "domcontentloaded" });
+		await page.locator("[data-canvas-camera]").waitFor({ state: "attached", timeout: 60_000 });
+		return await page.evaluate(() => {
+			const box = document.querySelector("[data-canvas-camera]")?.parentElement?.getBoundingClientRect();
+			if (box === undefined) throw new Error("the canvas has no camera field");
+			return { width: box.width, height: box.height };
+		});
+	} finally {
+		await context.close();
+	}
 }
 
 const range = (values: number[]): string => {
@@ -762,16 +784,12 @@ async function main(): Promise<void> {
 	try {
 		const camera = planCamera(measured.frames, VIEWPORT.width, VIEWPORT.height, options.zoom);
 		const pictures = planCamera(measured.frames, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM);
-		// What a person sees after a reload is the covers in the window. A page
-		// larger than the window has covers nobody is looking at, and the browser
-		// is free to put off decoding those.
-		const visible = onScreen(measured.frames, camera).map((box) => box.name);
-		if (visible.length === 0) throw new Error(`the planned camera at k=${options.zoom} shows no frame`);
 		const browser = await chromium.launch({
 			channel: options.headed ? "chromium" : "chromium-headless-shell",
 			headless: !options.headed,
 		});
 		let results: BuildRun<Round>[];
+		let visible: string[] = [];
 		try {
 			// One untimed preparation per build first. A fresh daemon compiles every
 			// frame document it is asked for, so a first-ever preparation prices the
@@ -781,6 +799,12 @@ async function main(): Promise<void> {
 				writeCamera(subject.root, pictures, measured.page);
 				await prepareCurrentCovers(browser, subject.daemon, subject.url, subject.root, measured.frames);
 			}
+			// What a person sees after a reload is the covers on the canvas. A page
+			// larger than it has covers nobody is looking at, and the browser is
+			// free to put off decoding those.
+			const field = await canvasField(browser, subjects[0]?.url ?? "");
+			visible = onScreen(measured.frames, camera, field).map((box) => box.name);
+			if (visible.length === 0) throw new Error(`the planned camera at k=${options.zoom} shows no frame`);
 
 			results = await interleave(subjects, rounds, async (subject): Promise<Round> => {
 				// the picture job from nothing: the measured page's covers gone, then the canvas opened
