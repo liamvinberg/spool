@@ -127,6 +127,19 @@ const UPLOAD_BYTES = { moving: 8 * 1024 * 1024, still: 32 * 1024 * 1024 };
 const LOADERS = 2;
 
 /**
+ * While the camera moves, a frame asks for a sharper copy only once its square
+ * would be stretched past fourfold, and every other frame asks when it comes
+ * to rest. A zoom across an overview carries hundreds of frames just past the
+ * square's size, and streaming a copy for each of them mid-gesture meant
+ * creating, uploading and binding hundreds of textures while it ran: 30
+ * frames over 12 ms in a thousand-frame overview zoom, against 8 with none
+ * asked until rest. Past fourfold the square is too soft to show even in
+ * motion, and a frame drawn that large shares the screen with few others, so
+ * those copies cost little.
+ */
+const MOVING_SHARP_PX = 4 * RESIDENT_PX;
+
+/**
  * How long the squares of frames off screen wait on a document that never
  * says it has loaded (`setBooting`): a broken frame must not keep the rest of
  * the page from ever drawing.
@@ -433,11 +446,13 @@ export class PictureLayer {
 	 * camera it is drawing and whether it is still moving.
 	 */
 	draw(camera: Camera | null, moving = false): void {
+		const stopped = this.moving && !moving;
 		this.moving = moving;
 		// the store says so once more when a camera comes to rest, and that
-		// camera is already on screen: everything else that changes the picture
-		// asks for its own draw
-		if (camera === this.camera && this.draws > 0) return;
+		// camera is already on screen: drawn again only to ask for the sharper
+		// copies a moving camera held back (`MOVING_SHARP_PX`), since
+		// everything else that changes the picture asks for its own draw
+		if (camera === this.camera && this.draws > 0 && !stopped) return;
 		this.camera = camera;
 		this.render();
 	}
@@ -633,7 +648,8 @@ export class PictureLayer {
 			// what to load is the frame's own cover's business, whatever stands in for it
 			const own = look.own ?? look;
 			const wanted = own.wanted;
-			if (wanted?.kind === "sharp" && (own.sharp === null || own.sharp.width !== wanted.width)) {
+			const asks = !this.moving || Math.max(box.w, box.h) > MOVING_SHARP_PX;
+			if (asks && wanted?.kind === "sharp" && (own.sharp === null || own.sharp.width !== wanted.width)) {
 				wants.push({
 					job: { key: sharpKey(own.url, wanted.width), url: own.url, sharp: wanted, priority },
 					area: wanted.width * wanted.height,
@@ -652,7 +668,7 @@ export class PictureLayer {
 			) {
 				resident.priority = priority;
 				const sized: Box | undefined =
-					own.natural === null ? { w: box.w, h: box.h, maxSide: gpu.maxSide } : undefined;
+					own.natural === null && asks ? { w: box.w, h: box.h, maxSide: gpu.maxSide } : undefined;
 				this.tell(this.loaderOf(own.url), {
 					kind: "priority",
 					key: resident.key,
