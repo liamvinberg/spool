@@ -15,9 +15,8 @@ vi.mock(import("./capture-broker"), async (importOriginal) => ({
 	rasterCaptureSource: broker.raster,
 }));
 
-const { ARRIVE_DEADLINE_MS, CAPTURE_REPLY_TIMEOUT_MS, CAPTURE_SETTLE_BUDGET_MS, useFrameLifecycle } = await import(
-	"./lifecycle"
-);
+const { ARRIVE_DEADLINE_MS, CAPTURE_REPLY_TIMEOUT_MS, CAPTURE_SETTLE_BUDGET_MS, ERRANDS_IN_FLIGHT, useFrameLifecycle } =
+	await import("./lifecycle");
 type Lifecycle = ReturnType<typeof useFrameLifecycle>;
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -315,10 +314,11 @@ describe("capture-failure reasons (#173)", () => {
 	});
 });
 
-describe("errands (#177)", () => {
+describe("errands (#94, #177)", () => {
 	/** Frames with no picture yet, each one owed an errand. */
 	const owed = (count: number): ProjectedFrame[] =>
 		Array.from({ length: count }, (_, index) => ({ name: `f${index}`, x: index * 500, y: 0, w: 390, h: 844 }));
+	const image: CoverRaster = { url: "data:image/jpeg;base64,anBlZw==", width: 800, height: 1731 };
 
 	/** The sweep's interval and the clock it reads, both stopped until a test moves them. */
 	function stopTime() {
@@ -396,5 +396,29 @@ describe("errands (#177)", () => {
 		await act(() => vi.advanceTimersByTimeAsync(ARRIVE_DEADLINE_MS));
 
 		expect(settles()).toEqual([CAPTURE_SETTLE_BUDGET_MS]);
+	});
+
+	it("hands a slot to the next frame owed a picture the moment one lands, not a sweep later", async () => {
+		// Without this, a freed slot stands empty until the next sweep, up to its
+		// whole interval, every time an errand comes home.
+		const tick = stopTime();
+		const id = "5".repeat(32);
+		broker.id.mockReturnValue(id);
+		broker.raster.mockResolvedValue(image);
+		const onShot = vi.fn();
+		const { current, host } = await renderLifecycle(onShot, owed(ERRANDS_IN_FLIGHT + 1), vi.fn());
+		const next = `f${ERRANDS_IN_FLIGHT}`;
+		expect(current().states[next]).toBe("picture");
+
+		tick(50);
+		const { sourceWindow } = await boot(current, host, "f0");
+		await act(() => current().noteArrived("f0", true));
+		await act(async () => {
+			current().noteCaptureSource(source(id, 400, "f0"), sourceWindow);
+		});
+
+		expect(onShot).toHaveBeenCalledExactlyOnceWith("f0", image);
+		expect(current().states.f0).toBe("picture");
+		expect(current().states[next]).toBe("refreshing");
 	});
 });

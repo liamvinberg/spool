@@ -1095,7 +1095,11 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		[noteShot],
 	);
 
-	// The decision function: runs on a sweep interval and urgent intent changes.
+	/** The decision function below, for the captures it starts to call back into once they land. */
+	const computeRef = useRef<() => void>(() => undefined);
+
+	// The decision function: runs on a sweep interval, urgent intent changes, and
+	// every errand that comes home with its picture.
 	const compute = useCallback(() => {
 		const now = performance.now();
 		const result = sweepLifecycle(model.current, {
@@ -1117,9 +1121,20 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			projection: new Set(allFramesRef.current.map((frame) => frame.name)),
 		});
 		for (const { frame, settleMs } of result.refreshCaptures) {
-			void requestCapture(frame, LIVE_MIN_CSS_PX, settleMs).then((image) =>
-				noteErrandShot(model.current, frame, image !== undefined),
-			);
+			void requestCapture(frame, LIVE_MIN_CSS_PX, settleMs).then((image) => {
+				noteErrandShot(model.current, frame, image !== undefined);
+				// A picture that landed frees its slot, and the next frame owed one
+				// takes it now rather than at the next sweep: otherwise each of the
+				// ERRANDS_IN_FLIGHT slots stood empty for up to SWEEP_MS between
+				// errands, every time one came home. The cap is still the whole of the
+				// pacing (#94), because the sweep counts what is in flight before it
+				// lends anything.
+				// A capture that came back empty-handed waits for the sweep instead.
+				// Some fail before they start (no window yet, a capture already in
+				// flight), and retrying those at once would spend all PICTURE_TRIES
+				// before the render that could have made the next try work.
+				if (image !== undefined) computeRef.current();
+			});
 		}
 		// A boot that never reported loaded (#173): the errand deadline is what
 		// ends it, so this sweep is the only place that ever learns why the frame
@@ -1133,6 +1148,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		// handed back from an errand becomes freezable as soon as it is live again
 		applyFreeze(result.states, now);
 	}, [framesRef, allFramesRef, cameraRef, viewportRef, requestCapture, applyFreeze]);
+	computeRef.current = compute;
 
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,
