@@ -133,6 +133,46 @@ describe("design-relative shared/ imports", () => {
 		// the scaffold's own cn(), reached without a single ../
 		expect(sourceFiles).toContain(join(designDir, "shared", "lib", "utils.ts"));
 	});
+
+	// Only where nothing above design/ sets tsconfig compiler options or a
+	// package.json `type`: esbuild parses a file under those when a relative
+	// import reaches it and not when the shared/ plugin does, as it always has.
+	it("compiles to what the same imports by relative path compile to, with no tsconfig or type above design/", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const designDir = realDesignDir(root);
+		writeDesignFile(root, "shared/kit/badge.tsx", "export const Badge = () => <b>badge</b>;\n");
+		writeDesignFile(root, "shared/kit/copy.ts", 'export const copy = "copy";\n');
+		writeDesignFile(root, "shared/kit/folder/index.ts", 'export const folder = "folder";\n');
+		writeDesignFile(root, "shared/kit/tokens.css", ".kit { color: red; }\n");
+		const frame = (from: string) =>
+			[
+				`import { Badge } from "${from}kit/badge";`,
+				`import { copy } from "${from}kit/copy.ts";`,
+				// a folder's index is esbuild's to find, through the same import
+				`import { folder } from "${from}kit/folder";`,
+				`import "${from}kit/tokens.css";`,
+				`import { cn } from "${from}lib/utils";`,
+				"export default () => <p className={cn(copy, folder)}><Badge /></p>;",
+				"",
+			].join("\n");
+		const compile = async (from: string) => {
+			writeDesignFile(root, join("frames", "shop", "cart", "frame.tsx"), frame(from));
+			return await buildDesignEntry({
+				designDir,
+				resolveDir: join(designDir, "frames", "shop", "cart"),
+				sourcefile: "<spool-boot>",
+				contents: 'import Frame from "./frame.tsx";\nexport { Frame };\n',
+				label: 'frame "cart"',
+			});
+		};
+
+		const shared = await compile("shared/");
+		const relative = await compile("../../../shared/");
+
+		expect(shared.bootJs).toBe(relative.bootJs);
+		expect(shared.bundledCss).toBe(relative.bundledCss);
+		expect([...shared.sourceFiles].sort()).toEqual([...relative.sourceFiles].sort());
+	});
 });
 
 /**

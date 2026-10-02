@@ -15,6 +15,7 @@ import {
 import { contentDigest, createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
+import { RESOLVE_EXTENSIONS, sharedImportResolver } from "./shared-import";
 import { type CssSource, compileFrameCssOnWorker } from "./tailwind";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
@@ -218,6 +219,8 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		jsxImportSource: options.publication === true ? "react" : "spool",
 		...(options.publication === true ? { minify: true, legalComments: "none" as const } : {}),
 		loader,
+		// the order the shared/ plugin answers in too: one list, so the two never drift
+		resolveExtensions: [...RESOLVE_EXTENSIONS],
 		packages: "external",
 		define: { "process.env.NODE_ENV": '"production"' },
 		metafile: true,
@@ -403,14 +406,26 @@ createRoot(document.getElementById("root")).render(
  * re-entrant resolve keeps every other rule: the boundary plugin still loads
  * the file, an asset still inlines, and a url() token still gets the asset
  * plugin's refusal in spool's words.
+ *
+ * Most imports never take that re-entrant resolve: one esbuild would answer
+ * with a plain file is answered from the folders instead, the same file under
+ * the same path, because the resolve is slow (`shared-import.ts` says why).
  */
 function sharedImportPlugin(designDir: string): Plugin {
 	return {
 		name: "spool-shared",
 		setup(build) {
-			build.onResolve({ filter: /^shared\// }, (args) =>
-				build.resolve(`./${args.path}`, { resolveDir: designDir, kind: args.kind, importer: args.importer }),
-			);
+			// one per build, as the boundary plugin's resolver is: the player's
+			// context rebuilds, and every rebuild must see the folders as they are
+			let resolveShared = sharedImportResolver(designDir);
+			build.onStart(() => {
+				resolveShared = sharedImportResolver(designDir);
+			});
+			build.onResolve({ filter: /^shared\// }, async (args) => {
+				const path = await resolveShared(args.path, args.kind);
+				if (path !== undefined) return { path };
+				return build.resolve(`./${args.path}`, { resolveDir: designDir, kind: args.kind, importer: args.importer });
+			});
 		},
 	};
 }
