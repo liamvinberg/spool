@@ -22,8 +22,8 @@ function isWithin(base: string, target: string): boolean {
 	return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
-function rejectOutside(designDir: string, target: string, authored: string): void {
-	if (!isWithin(designDir, target)) throw new DesignBoundaryError(authored);
+function rejectOutside(designDir: string, target: string, authored: () => string): void {
+	if (!isWithin(designDir, target)) throw new DesignBoundaryError(authored());
 }
 
 /**
@@ -32,11 +32,7 @@ function rejectOutside(designDir: string, target: string, authored: string): voi
  * collapsed before the final path is returned, and a dangling symlink is
  * rejected instead of becoming a write-through escape.
  */
-export function resolveDesignPath(
-	designDir: string,
-	file: string,
-	authored = designRelativePath(designDir, file),
-): string {
+export function resolveDesignPath(designDir: string, file: string, authored?: string): string {
 	return designPathResolver(designDir)(file, authored);
 }
 
@@ -67,11 +63,14 @@ export function designPathResolver(designDir: string): (file: string, authored?:
 		return canonical;
 	}
 
-	return (file, authored = designRelativePath(designDir, file)) => {
+	return (file, spelled) => {
+		// spelled out only for a refusal: on the paths that pass, which is nearly
+		// all of them, the relative spelling was a third of the resolver's work
+		const authored = (): string => spelled ?? designRelativePath(designDir, file);
 		canonicalDesign ??= realpathSync(designDir);
 		const target = resolve(file);
 		if (!isWithin(authoredDesign, target) && !isWithin(canonicalDesign, target)) {
-			throw new DesignBoundaryError(authored);
+			throw new DesignBoundaryError(authored());
 		}
 
 		const missing: string[] = [];
@@ -83,7 +82,7 @@ export function designPathResolver(designDir: string): (file: string, authored?:
 				break;
 			} catch {
 				const parent = dirname(ancestor);
-				if (parent === ancestor) throw new DesignBoundaryError(authored);
+				if (parent === ancestor) throw new DesignBoundaryError(authored());
 				missing.unshift(basename(ancestor));
 				ancestor = parent;
 			}
@@ -99,7 +98,7 @@ export function designPathResolver(designDir: string): (file: string, authored?:
 		} catch {
 			// lstat found a dangling symlink. Following it for a direct write could
 			// create a file outside design/, so it is never a lawful ancestor.
-			throw new DesignBoundaryError(authored);
+			throw new DesignBoundaryError(authored());
 		}
 		rejectOutside(canonicalDesign, canonicalAncestor, authored);
 		const canonicalTarget = join(canonicalAncestor, ...missing);
