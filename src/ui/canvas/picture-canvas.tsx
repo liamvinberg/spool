@@ -59,21 +59,45 @@ export function PictureCanvas({
 		claims.attach(made);
 		canvas.spoolPictures = () => made.report();
 
-		// the backing store in device pixels, exactly: a canvas a fraction of a
-		// pixel off its box is resampled, and every picture on it softens
+		// The backing store in device pixels, exactly: a canvas a fraction of a
+		// pixel off its box is resampled, and every picture on it softens. The
+		// device box Chrome reports is the exact one, but not under an emulated
+		// scale (a test's or a bench's), where it stays at CSS pixels; the box
+		// times the ratio is the fallback whenever the two disagree.
+		const measure = (width: number, height: number, device?: ResizeObserverSize) => {
+			const ratio = devicePixelRatio;
+			const exact =
+				device !== undefined &&
+				Math.abs(device.inlineSize - width * ratio) <= 1 &&
+				Math.abs(device.blockSize - height * ratio) <= 1;
+			made.resize(
+				width,
+				exact ? device.inlineSize : Math.round(width * ratio),
+				exact ? device.blockSize : Math.round(height * ratio),
+			);
+		};
 		const sized = new ResizeObserver(([entry]) => {
-			if (entry === undefined) return;
-			const css = entry.contentRect.width;
-			const device = entry.devicePixelContentBoxSize?.[0];
-			const width = device?.inlineSize ?? Math.round(css * devicePixelRatio);
-			const height = device?.blockSize ?? Math.round(entry.contentRect.height * devicePixelRatio);
-			made.resize(css, width, height);
+			if (entry !== undefined) {
+				measure(entry.contentRect.width, entry.contentRect.height, entry.devicePixelContentBoxSize?.[0]);
+			}
 		});
 		try {
 			sized.observe(canvas, { box: "device-pixel-content-box" });
 		} catch {
 			sized.observe(canvas);
 		}
+		// a window moved to a screen of another density keeps its CSS size
+		let density: MediaQueryList | null = null;
+		const watchDensity = () => {
+			density?.removeEventListener("change", onDensity);
+			density = matchMedia(`(resolution: ${devicePixelRatio}dppx)`);
+			density.addEventListener("change", onDensity);
+		};
+		const onDensity = () => {
+			measure(canvas.clientWidth, canvas.clientHeight);
+			watchDensity();
+		};
+		watchDensity();
 
 		// the shell's own surface, read from the theme rather than restated here:
 		// a look changed in settings, a system switch to dark, a palette edit
@@ -89,6 +113,7 @@ export function PictureCanvas({
 
 		return () => {
 			sized.disconnect();
+			density?.removeEventListener("change", onDensity);
 			looks.disconnect();
 			scheme.removeEventListener("change", readSurface);
 			claims.attach(null);
