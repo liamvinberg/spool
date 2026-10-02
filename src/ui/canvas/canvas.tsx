@@ -26,6 +26,7 @@ import type {
 } from "../api";
 import {
 	beaconTrash,
+	coverUrl,
 	fetchCanvasState,
 	fetchEnginePreference,
 	fetchFlows,
@@ -97,7 +98,7 @@ import {
 	pngFileName,
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
-import { FrameShell, ShellClip } from "./frame-shell";
+import { FrameShell, FrameSlot, ShellClip } from "./frame-shell";
 import {
 	askText,
 	deleteAsk,
@@ -155,6 +156,8 @@ import {
 	stateCameraSlots,
 	switchPage,
 } from "./pages";
+import { PictureCanvas, PictureClaims } from "./picture-canvas";
+import type { PictureFrame } from "./picture-layer";
 import { type Held, PropertiesRail, rungOf, useRungs } from "./properties-rail";
 import {
 	alterMessage,
@@ -497,6 +500,27 @@ export function ProjectCanvas({
 		() => frames.filter((f) => pageOf(f) === activePage && !hidden.has(f.name)),
 		[frames, activePage, hidden],
 	);
+	/**
+	 * The page as the picture layer draws it (#81): every frame in drawing
+	 * order, each with its cover's address. Which of them a DOM shell draws
+	 * instead is the shells' own business (`FrameSlot`), told to the layer
+	 * through these claims.
+	 */
+	const pictureFrames = useMemo(
+		() =>
+			visibleFrames.map(
+				({ name, x, y, w, h, cover }): PictureFrame => ({
+					name,
+					x,
+					y,
+					w,
+					h,
+					url: cover === undefined ? undefined : coverUrl(project, name, cover.hash),
+				}),
+			),
+		[visibleFrames, project],
+	);
+	const [pictureClaims] = useState(() => new PictureClaims());
 	const navigatorFrames = useMemo(() => frames.filter((frame) => !hidden.has(frame.name)), [frames, hidden]);
 	const navigatorPages = useMemo(() => pages.filter((page) => !hiddenPages.has(page)), [pages, hiddenPages]);
 	/**
@@ -5470,7 +5494,7 @@ export function ProjectCanvas({
 				onContextMenu={onContextMenu}
 			>
 				{restCamera !== null && (
-					<CameraField camera={camera}>
+					<CameraField camera={camera} under>
 						{/* the threads live under the frames: the map, never a hit target */}
 						{arrowsOn && (
 							<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={camera} />
@@ -5489,19 +5513,29 @@ export function ProjectCanvas({
 								hovered={pointerTool && hoveredPage === object.page}
 							/>
 						))}
+					</CameraField>
+				)}
+				{/* every frame standing as its picture, on the GPU (#81): over the
+				    arrows and pages, under every shell, label and tag */}
+				<PictureCanvas camera={camera} frames={pictureFrames} claims={pictureClaims} />
+				{restCamera !== null && (
+					<CameraField camera={camera}>
 						{visibleFrames.map((frame) => {
 							const state = lifecycle.states[frame.name] ?? "picture";
 							const isEntered = entered === frame.name;
+							// a picture with a cover is the picture layer's to draw; a shell
+							// is for a document, or for a frame with nothing to draw but its
+							// placeholder
+							if (
+								state === "picture" &&
+								!isEntered &&
+								frame.cover !== undefined &&
+								externalLink?.frame !== frame.name
+							) {
+								return null;
+							}
 							return (
-								<div
-									key={frame.name}
-									className="absolute"
-									style={{
-										transform: `translate(${frame.x}px, ${frame.y}px)`,
-										width: frame.w,
-										height: frame.h,
-									}}
-								>
+								<FrameSlot key={frame.name} name={frame.name} frame={frame} claims={pictureClaims}>
 									<ShellClip camera={camera} near={near} frame={frame}>
 										<FrameShell
 											project={project}
@@ -5538,7 +5572,7 @@ export function ProjectCanvas({
 											/>
 										)}
 									</ShellClip>
-								</div>
+								</FrameSlot>
 							);
 						})}
 						{/* Labels share one layer above every frame. A transformed frame is
@@ -5860,8 +5894,22 @@ export function ProjectCanvas({
  * camera moving is exactly when none of them has changed. No `will-change`
  * either — promoting a layer holding hundreds of clipped, transformed frames
  * costs Chrome more per frame in re-deciding layers than it saves in paint.
+ *
+ * There are two, either side of the picture layer's canvas: arrows and pages
+ * `under` it, and over it the shells, labels and walk tags. Both follow the
+ * same camera callback the canvas draws in, so the three move as one. The
+ * upper one is the field (`data-canvas-camera`), the one a test reads the
+ * camera from.
  */
-function CameraField({ camera, children }: { camera: CameraStore; children: ReactNode }) {
+function CameraField({
+	camera,
+	under = false,
+	children,
+}: {
+	camera: CameraStore;
+	under?: boolean;
+	children: ReactNode;
+}) {
 	const field = useRef<HTMLDivElement | null>(null);
 	useCameraFollow(
 		camera,
@@ -5871,7 +5919,12 @@ function CameraField({ camera, children }: { camera: CameraStore; children: Reac
 		[],
 	);
 	return (
-		<div ref={field} data-canvas-camera="" className="absolute top-0 left-0" style={{ transformOrigin: "0 0" }}>
+		<div
+			ref={field}
+			{...(under ? { "data-canvas-under": "" } : { "data-canvas-camera": "" })}
+			className="absolute top-0 left-0"
+			style={{ transformOrigin: "0 0" }}
+		>
 			{children}
 		</div>
 	);

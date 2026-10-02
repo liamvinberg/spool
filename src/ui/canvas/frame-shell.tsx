@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
 import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
@@ -6,10 +6,12 @@ import { Thumbnail } from "../thumbnail";
 import { type Box, type NearScreen, shellRadius } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import type { FrameState } from "./lifecycle";
+import type { PictureClaims } from "./picture-canvas";
 
 /**
- * One frame on the canvas, rendering whatever the lifecycle says:
- *   picture: the still (or a quiet placeholder), no iframe in the DOM
+ * One frame's shell on the canvas, rendering whatever the lifecycle says:
+ *   picture: the quiet placeholder of a frame with no cover, no iframe in the
+ *            DOM (a frame with a cover is drawn by the picture layer instead)
  *   held: a document behind its still, borrowed for an export
  *   live: a readable document, a selection or the frame you went inside
  *
@@ -57,6 +59,79 @@ export function ShellClip({
 	);
 	return (
 		<div ref={clip} className="relative h-full w-full overflow-hidden">
+			{children}
+		</div>
+	);
+}
+
+/**
+ * How long a shell waits for its cover to decode before it shows anyway. A
+ * cover the picture layer has already fetched decodes from the HTTP cache in a
+ * few milliseconds; this only bounds a stalled or broken one, which must not
+ * keep a document it is standing in front of out of sight.
+ */
+const REVEAL_MS = 400;
+
+/**
+ * Where one frame's DOM shell stands, and the handoff between it and the
+ * picture layer underneath (#81).
+ *
+ * A frame standing as its picture has no shell: the GPU draws it. One that
+ * holds a document, or has no cover to draw, has this. A shell freshly mounted
+ * over a picture would show its cover layer's bare surface for a frame while
+ * the cover image decodes, so it starts invisible and the picture layer goes
+ * on drawing the frame; once the image is decoded the shell shows and claims
+ * the frame in the same task, and the layer redraws without it before the
+ * paint. Going back to a picture is the same in reverse: the claim ends as
+ * the shell unmounts, and the layer draws the frame again in that commit.
+ *
+ * The opacity is the slot's own, written here rather than rendered, so the
+ * cover inside keeps the opacity the cover law gives it and nothing reading
+ * that sees a fade that never happened.
+ */
+export function FrameSlot({
+	name,
+	frame,
+	claims,
+	children,
+}: {
+	name: string;
+	/** where the frame stands, in world units */
+	frame: Box;
+	claims: PictureClaims;
+	children: ReactNode;
+}) {
+	const slot = useRef<HTMLDivElement | null>(null);
+	useLayoutEffect(() => {
+		const element = slot.current;
+		if (element === null) return;
+		const image = element.querySelector<HTMLImageElement>("[data-frame-cover] img");
+		if (image === null) {
+			claims.claim(name, true);
+			return () => claims.claim(name, false);
+		}
+		let shown = false;
+		const show = () => {
+			if (shown) return;
+			shown = true;
+			element.style.opacity = "";
+			claims.claim(name, true);
+		};
+		element.style.opacity = "0";
+		image.decode().then(show, show);
+		const late = setTimeout(show, REVEAL_MS);
+		return () => {
+			shown = true;
+			clearTimeout(late);
+			claims.claim(name, false);
+		};
+	}, [name, claims]);
+	return (
+		<div
+			ref={slot}
+			className="absolute"
+			style={{ transform: `translate(${frame.x}px, ${frame.y}px)`, width: frame.w, height: frame.h }}
+		>
 			{children}
 		</div>
 	);
