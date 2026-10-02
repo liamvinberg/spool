@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useId, useState } from "react";
-import type { PlayerPublicationJob, PlayerPublicationModel } from "./player-publication-client";
+import { type PlayerPublicationJob, type PlayerPublicationModel, readinessProblems } from "./player-publication-client";
 
 const EASE = [0.22, 0.61, 0.36, 1] as const;
 const MAILBOX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
@@ -258,6 +258,7 @@ function Compose({ model, ...props }: SharePanelProps & { model: PlayerPublicati
 	const [error, setError] = useState("");
 	const failed = props.job?.state === "failed" ? props.job : undefined;
 	const notReady = !model.ready;
+	const problems = readinessProblems(model.diagnostics);
 	const disabled = props.blocked || props.mutating || props.starting;
 	const create = () => {
 		const next = props.mode === "invited" ? collect(props.recipients, draft) : { list: props.recipients };
@@ -294,12 +295,27 @@ function Compose({ model, ...props }: SharePanelProps & { model: PlayerPublicati
 				onError={setError}
 				disabled={disabled}
 			/>
-			{notReady && model.diagnostics[0] !== undefined && (
+			{notReady && problems.length > 0 && (
 				<div className="spool-share-problem" role="status">
-					<p>This journey isn’t ready to share.</p>
 					<p>
-						{model.diagnostics[0].frame}: {model.diagnostics[0].message} {model.diagnostics[0].remedy}
+						{problems.length === 1
+							? "This journey isn’t ready to share."
+							: `This journey isn’t ready to share: ${problems.length} things to fix.`}
 					</p>
+					<ul aria-label="What to fix">
+						{problems.map((problem) => (
+							<li key={`${problem.location ?? ""}\0${problem.code}\0${problem.message}`}>
+								<p>
+									{problem.message} {problem.remedy}
+								</p>
+								<code>
+									{problem.location ?? problem.frames[0]}
+									{problem.location !== undefined &&
+										` · ${problem.frames.length === 1 ? problem.frames[0] : `${problem.frames.length} frames`}`}
+								</code>
+							</li>
+						))}
+					</ul>
 				</div>
 			)}
 			{failed !== undefined && <p className="spool-share-note is-problem">{failed.message}</p>}

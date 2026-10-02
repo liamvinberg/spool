@@ -248,6 +248,16 @@ it("keeps share settings editable when a journey cannot be published", { timeout
 						frame: "home",
 						message: "A navigation destination cannot be established statically.",
 						remedy: "Use a literal frame name.",
+						path: "shared/ui/nav.tsx",
+						line: 12,
+					},
+					{
+						code: "source-unreadable",
+						frame: "home",
+						message: 'Import "./gone" could not be resolved.',
+						remedy: "Check the import path, or create the file it names.",
+						path: "frames/home/frame.tsx",
+						line: 1,
 					},
 				],
 			}),
@@ -266,8 +276,11 @@ it("keeps share settings editable when a journey cannot be published", { timeout
 	await page.getByRole("radio", { name: "Anyone with the link" }).check();
 	await page.getByText("Anyone who has the link can open it, without signing in.").waitFor();
 	expect(await page.getByRole("button", { name: "Create and copy link" }).isDisabled()).toBe(true);
-	await page.getByText("This journey isn’t ready to share.").waitFor();
+	await page.getByText("This journey isn’t ready to share: 2 things to fix.").waitFor();
 	await page.getByText(/Use a literal frame name/).waitFor();
+	await page.getByText("shared/ui/nav.tsx:12 · home").waitFor();
+	await page.getByText(/Check the import path/).waitFor();
+	await page.getByText("frames/home/frame.tsx:1 · home").waitFor();
 	await evidence(page, "canvas-not-ready");
 	await page.setViewportSize({ width: 390, height: 500 });
 	await expect

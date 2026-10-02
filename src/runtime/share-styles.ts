@@ -36,8 +36,12 @@ export const shareStyles = `
 .spool-share-included code{padding:1px 6px;border-radius:4px;background:var(--color-surface);color:var(--color-muted);font:400 11px/16px var(--font-mono,"Fragment Mono",monospace)}
 .spool-share-note{margin:0;color:var(--color-muted);font-size:12px;line-height:18px}
 .spool-share-note code{font:400 11px/16px var(--font-mono,"Fragment Mono",monospace);color:var(--color-text)}
-.spool-share-note.is-problem,.spool-share-problem p:first-child{color:var(--color-thread)}
+.spool-share-note.is-problem,.spool-share-problem>p:first-child{color:var(--color-thread)}
 .spool-share-problem p{margin:0;font-size:12px;line-height:18px;color:var(--color-muted)}
+.spool-share-problem ul{display:flex;flex-direction:column;gap:8px;max-height:220px;margin:6px 0 0;padding:0;overflow-y:auto;list-style:none}
+.spool-share-problem li{display:flex;flex-direction:column;gap:2px;min-width:0}
+.spool-share-problem li p{color:var(--color-text)}
+.spool-share-problem code{overflow-wrap:anywhere;color:var(--color-muted);font:400 11px/16px var(--font-mono,"Fragment Mono",monospace)}
 .spool-share-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .spool-share-row>p{flex:1;min-width:0}
 .spool-share-actions{display:flex;gap:6px}

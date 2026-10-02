@@ -266,3 +266,27 @@ function messageOf(value: unknown, fallback: string): string {
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+export interface ReadinessProblem {
+	code: string;
+	message: string;
+	remedy: string;
+	/** `path:line` of the source that holds the problem, when there is one */
+	location?: string;
+	/** the frames of the journey that reach it */
+	frames: string[];
+}
+
+/** One entry per problem: a shared file reached from many frames is still one place to fix. */
+export function readinessProblems(diagnostics: PlayerPublicationModel["diagnostics"]): ReadinessProblem[] {
+	const problems = new Map<string, ReadinessProblem>();
+	for (const { code, frame, message, remedy, path, line } of diagnostics) {
+		const location = path === undefined ? undefined : line === undefined ? path : `${path}:${line}`;
+		const key = `${location ?? ""}\0${code}\0${message}`;
+		const known = problems.get(key);
+		if (known === undefined)
+			problems.set(key, { code, message, remedy, ...(location === undefined ? {} : { location }), frames: [frame] });
+		else if (!known.frames.includes(frame)) known.frames.push(frame);
+	}
+	return [...problems.values()];
+}
