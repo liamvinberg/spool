@@ -104,7 +104,7 @@ export function PictureCanvas({
 
 	useLayoutEffect(() => {
 		layer.current?.draw(camera.get());
-		return camera.subscribe((at) => layer.current?.draw(at));
+		return camera.subscribe((at, moving) => layer.current?.draw(at, moving));
 	}, [camera]);
 
 	return (

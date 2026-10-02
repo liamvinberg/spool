@@ -87,25 +87,28 @@ export interface PictureReport {
 	/** GPU bytes held by the resident array and by sharper copies. */
 	bytes: { resident: number; sharp: number };
 	/** Covers still on their way: queued, loading, or decoded and waiting to upload. */
-	pending: { queued: number; loading: number; landed: number };
+	pending: { queued: number; fetching: number; decoding: number; landed: number };
 }
 
 /**
- * How many covers load at once. Each is a fetch from the HTTP cache and a
- * decode on Chrome's image threads, never on this one; enough at once that a
+ * How many covers are fetched at once, and how many are fetched or decoding.
+ * A fetch is from the HTTP cache or the daemon, a decode is on Chrome's image
+ * threads, never on this one, and the two overlap: enough at once that a
  * thousand-frame page fills inside its first two seconds, few enough that
  * frames on screen are never queued behind the rest of the page.
  */
-const LOADS_IN_FLIGHT = 12;
+const FETCHES_IN_FLIGHT = 8;
+const LOADS_IN_FLIGHT = 24;
 
 /**
  * Upload limits per drawn frame. A texture upload is a copy the GPU process
  * makes, but its call and the mip chain after it are paid in the frame they
  * are made in; past these, the rest waits for the next frame, so a zoom that
- * suddenly wants a screenful of sharper copies never pays for it in one.
+ * suddenly wants a screenful of sharper copies never pays for it in one. A
+ * camera at rest has no frame to protect, and fills the page faster.
  */
-const UPLOAD_MS = 2;
-const UPLOAD_BYTES = 8 * 1024 * 1024;
+const UPLOAD_MS = { moving: 2, still: 6 };
+const UPLOAD_BYTES = { moving: 8 * 1024 * 1024, still: 32 * 1024 * 1024 };
 
 /**
  * The memory sharper copies may hold: a few screens of device pixels, mips
@@ -296,6 +299,10 @@ export class PictureLayer {
 	private scale = 1;
 	private surface: readonly [number, number, number, number] = [0, 0, 0, 1];
 	private stamp = 0;
+	/** Covers fetched and still decoding. */
+	private decoding = 0;
+	/** Whether the camera last drawn was moving, which decides how much uploads may spend. */
+	private moving = false;
 	private draws = 0;
 	private instances = new Float32Array(0);
 	private redraw = false;
@@ -360,8 +367,12 @@ export class PictureLayer {
 		this.render();
 	}
 
-	/** Draw this camera, now: called from the camera store's frame, with the camera it is drawing. */
-	draw(camera: Camera | null): void {
+	/**
+	 * Draw this camera, now: called from the camera store's frame, with the
+	 * camera it is drawing and whether it is still moving.
+	 */
+	draw(camera: Camera | null, moving = false): void {
+		this.moving = moving;
 		// the store says so once more when a camera comes to rest, and that
 		// camera is already on screen: everything else that changes the picture
 		// asks for its own draw
@@ -432,7 +443,12 @@ export class PictureLayer {
 				resident: this.gpu === null ? 0 : this.gpu.capacity * textureBytes(RESIDENT_PX, RESIDENT_PX, true),
 				sharp,
 			},
-			pending: { queued: this.queue.size, loading: this.loading.size, landed: this.landed.length },
+			pending: {
+				queued: this.queue.size,
+				fetching: this.loading.size,
+				decoding: this.decoding,
+				landed: this.landed.length,
+			},
 		};
 	}
 
@@ -687,7 +703,11 @@ export class PictureLayer {
 	 */
 	private pump(): void {
 		if (this.gpu === null || this.lost || this.disposed) return;
-		while (this.loading.size < LOADS_IN_FLIGHT && this.queue.size > 0) {
+		while (
+			this.loading.size < FETCHES_IN_FLIGHT &&
+			this.loading.size + this.decoding < LOADS_IN_FLIGHT &&
+			this.queue.size > 0
+		) {
 			let best: Job | null = null;
 			for (const job of this.queue.values()) if (best === null || job.priority < best.priority) best = job;
 			if (best === null) return;
@@ -699,10 +719,17 @@ export class PictureLayer {
 
 	private async load(job: Job): Promise<void> {
 		const generation = this.generation;
+		let decoding = false;
 		try {
 			const response = await fetch(job.url);
 			if (!response.ok) throw new Error(`cover ${response.status}`);
 			const blob = await response.blob();
+			// the fetch's slot goes to the next cover now: decodes run on Chrome's
+			// image threads side by side, and a slot held through one idles a
+			// connection
+			decoding = true;
+			this.decoding += 1;
+			this.fetched(job, generation);
 			const known = this.residents.get(job.url)?.natural ?? null;
 			const natural = known ?? (await sizeOf(blob));
 			const resize =
@@ -727,21 +754,32 @@ export class PictureLayer {
 			const entry = job.sharp === null ? this.residents.get(job.url) : this.sharps.get(job.key);
 			if (entry !== undefined) entry.state = "failed";
 		} finally {
-			if (generation === this.generation) {
-				this.loading.delete(job.key);
+			if (!decoding) this.fetched(job, generation);
+			else if (generation === this.generation) {
+				this.decoding -= 1;
 				this.pump();
 			}
 		}
+	}
+
+	/** A load's fetch is done, one way or another: its slot goes to the next in the queue. */
+	private fetched(job: Job, generation: number): void {
+		if (generation !== this.generation) return;
+		this.loading.delete(job.key);
+		this.pump();
 	}
 
 	/** Hand landed decodes to the GPU, within this frame's share of upload time and bytes. */
 	private upload(gpu: Gpu): void {
 		const { gl } = gpu;
 		const start = performance.now();
+		const budget = this.moving
+			? { ms: UPLOAD_MS.moving, bytes: UPLOAD_BYTES.moving }
+			: { ms: UPLOAD_MS.still, bytes: UPLOAD_BYTES.still };
 		let bytes = 0;
 		let squares = false;
 		while (this.landed.length > 0) {
-			if (bytes > 0 && (bytes >= UPLOAD_BYTES || performance.now() - start >= UPLOAD_MS)) break;
+			if (bytes > 0 && (bytes >= budget.bytes || performance.now() - start >= budget.ms)) break;
 			const item = this.landed.shift();
 			if (item === undefined) break;
 			const { job, bitmap, natural } = item;
@@ -978,6 +1016,7 @@ export class PictureLayer {
 	private release(): void {
 		this.generation += 1;
 		this.loading.clear();
+		this.decoding = 0;
 		this.queue.clear();
 		for (const item of this.landed) item.bitmap.close();
 		this.landed = [];
