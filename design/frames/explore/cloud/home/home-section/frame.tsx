@@ -1,11 +1,11 @@
 import { ui } from "spool";
-import { TeamHome } from "shared/ui/explore/cloud/team-home";
+import { TeamHome } from "shared/ui/explore/cloud/home/team-home";
 
 export default function Frame() {
 	return (
 		<TeamHome
 			take="section"
-			host="app"
+			state="app"
 			onOpen={() => ui.go("app/spool-canvas")}
 			onInvite={() => ui.go("explore/cloud/home/home-section--invite")}
 		/>

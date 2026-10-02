@@ -4,10 +4,10 @@ import { TeamHome } from "shared/ui/explore/cloud/home/team-home";
 export default function Frame() {
 	return (
 		<TeamHome
-			take="section"
+			take="faces"
 			state="web"
-			onOpen={() => ui.go("app/spool-canvas")}
-			onInvite={() => ui.go("explore/cloud/home/home-section--invite")}
+			onOpen={() => ui.go("explore/cloud/home/home-faces--invite")}
+			onInvite={() => ui.go("explore/cloud/home/home-faces--invite")}
 		/>
 	);
 }
