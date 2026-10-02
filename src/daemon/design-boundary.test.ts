@@ -7,7 +7,13 @@ import { PROJECT_HEADER, RENDER_HOST } from "./security";
 
 const SENTINEL = "outside-design-sentinel";
 
-type Escape = "ts" | "json" | "css" | "tailwind" | "symlink";
+/**
+ * The `shared-*` kinds reach out by the design-relative shared/ name (#273),
+ * which the compile answers from the folders where it can (`shared-import.ts`):
+ * a linked file, a linked folder and a `..` out of design/ must each be refused
+ * exactly as the same reach by relative path is.
+ */
+type Escape = "ts" | "json" | "css" | "tailwind" | "symlink" | "shared-symlink" | "shared-folder" | "shared-parent";
 
 function renderHarness(spoolDir: string, root: string) {
 	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test" });
@@ -50,6 +56,19 @@ function projectWithEscape(kind: Escape) {
 		symlinkSync(outside, join(project.root, "design", "shared", "escape.ts"));
 		source =
 			'import { secret } from "../../shared/escape.ts"; export default function Frame() { return <p>{secret}</p>; }\n';
+	}
+	if (kind === "shared-symlink") {
+		symlinkSync(outside, join(project.root, "design", "shared", "escape.ts"));
+		source = 'import { secret } from "shared/escape"; export default function Frame() { return <p>{secret}</p>; }\n';
+	}
+	if (kind === "shared-folder") {
+		symlinkSync(project.root, join(project.root, "design", "shared", "away"), "dir");
+		source =
+			'import { secret } from "shared/away/outside"; export default function Frame() { return <p>{secret}</p>; }\n';
+	}
+	if (kind === "shared-parent") {
+		source =
+			'import { secret } from "shared/../../outside"; export default function Frame() { return <p>{secret}</p>; }\n';
 	}
 	writeFrame(project.root, "entry", source);
 	return { ...renderHarness(spoolDir, project.root), ...project };
@@ -97,7 +116,16 @@ describe("the design filesystem boundary", () => {
 		expect((await compositionOf({ request: render }, await player.text())).all).toContain("inside-design");
 	});
 
-	for (const kind of ["ts", "json", "css", "tailwind", "symlink"] as const) {
+	for (const kind of [
+		"ts",
+		"json",
+		"css",
+		"tailwind",
+		"symlink",
+		"shared-symlink",
+		"shared-folder",
+		"shared-parent",
+	] as const) {
 		it(`rejects an escaped ${kind} input in frame and player documents without exposing its contents`, async () => {
 			const { render, name } = projectWithEscape(kind);
 
