@@ -169,8 +169,8 @@ it("holds every live frame while the Edit tool is on, and hands them back when i
 	// the tool alone, with nothing held yet, is the whole cause
 	await page.keyboard.press("e");
 
-	// polled rather than sampled once: a frame owing a picture is photographed
-	// out of a thawed document, and that errand outlives the press by a moment
+	// polled rather than sampled once: the hold is a message to each document,
+	// and it lands a moment after the press
 	await expect.poll(() => ran("home"), { timeout: 30_000 }).toBe(0);
 	await expect.poll(() => ran("beside"), { timeout: 30_000 }).toBe(0);
 

@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
-import { LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
+import { MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { assembleFrameDocument, captureWorkerCsp, captureWorkerDocument } from "./document";
 import { CAPTURE_HOST, RENDER_HOST } from "./security";
 
@@ -296,9 +296,9 @@ async function stopTargetPerformance(frame: Frame) {
 	);
 }
 
-async function requestCapture(page: Page, captureOrigin: string, targetWidth: number) {
+async function requestCapture(page: Page, captureOrigin: string) {
 	return page.evaluate(
-		async ({ captureOrigin, targetWidth }) => {
+		async ({ captureOrigin }) => {
 			const frame = document.querySelector<HTMLIFrameElement>("#frame");
 			const sourceWindow = frame?.contentWindow;
 			if (sourceWindow === null || sourceWindow === undefined) throw new Error("frame unavailable");
@@ -326,7 +326,6 @@ async function requestCapture(page: Page, captureOrigin: string, targetWidth: nu
 					width: number;
 					height: number;
 					dpr: number;
-					targetWidth: number;
 				}>((resolve, reject) => {
 					timeoutId = window.setTimeout(() => reject(new Error("source timed out")), 2400);
 					sourceListener = (event) => {
@@ -338,7 +337,6 @@ async function requestCapture(page: Page, captureOrigin: string, targetWidth: nu
 							width?: unknown;
 							height?: unknown;
 							dpr?: unknown;
-							targetWidth?: unknown;
 							error?: unknown;
 						};
 						if (
@@ -361,8 +359,7 @@ async function requestCapture(page: Page, captureOrigin: string, targetWidth: nu
 							value.svg.size > 16 * 1024 * 1024 ||
 							typeof value.width !== "number" ||
 							typeof value.height !== "number" ||
-							typeof value.dpr !== "number" ||
-							typeof value.targetWidth !== "number"
+							typeof value.dpr !== "number"
 						) {
 							reject(new Error("invalid capture source"));
 							return;
@@ -372,11 +369,10 @@ async function requestCapture(page: Page, captureOrigin: string, targetWidth: nu
 							width: value.width,
 							height: value.height,
 							dpr: value.dpr,
-							targetWidth: value.targetWidth,
 						});
 					};
 					window.addEventListener("message", sourceListener);
-					sourceWindow.postMessage({ spool: "capture", id, targetWidth, settleMs: 0 }, "*");
+					sourceWindow.postMessage({ spool: "capture", id, settleMs: 0 }, "*");
 				});
 				if (timeoutId !== undefined) window.clearTimeout(timeoutId);
 				if (sourceListener !== undefined) window.removeEventListener("message", sourceListener);
@@ -418,7 +414,7 @@ async function requestCapture(page: Page, captureOrigin: string, targetWidth: nu
 				cleanup();
 			}
 		},
-		{ captureOrigin, targetWidth },
+		{ captureOrigin },
 	);
 }
 
@@ -435,7 +431,7 @@ it("exports a long frame within the raster budget instead of rejecting its 2x si
 	});
 	const origin = new URL(served.controlOrigin);
 	origin.hostname = CAPTURE_HOST;
-	const exported = await requestCapture(page, origin.origin, 0);
+	const exported = await requestCapture(page, origin.origin);
 	expect(exported.image.width).toBeGreaterThan(1440);
 	expect(exported.image.height).toBeGreaterThan(7900);
 	expect(exported.image.width * exported.image.height).toBeLessThanOrEqual(MAX_CAPTURE_OUTPUT_PIXELS);
@@ -471,7 +467,7 @@ it.each(["css", "web", "pseudo", "canvas"])("exports the visible state of a %s a
 	}, kind);
 	const origin = new URL(served.controlOrigin);
 	origin.hostname = CAPTURE_HOST;
-	const exported = await requestCapture(page, origin.origin, 0);
+	const exported = await requestCapture(page, origin.origin);
 	expect((await readImage(exported.image.url, page)).center).toEqual([245, 57, 26, 255]);
 	if (kind === "canvas") {
 		const pixel = await page.evaluate(async (url) => {
@@ -494,11 +490,10 @@ async function directWorkerRequest(
 	page: Page,
 	captureOrigin: string,
 	svg: string,
-	dimensions: { width: number; height: number; dpr: number; targetWidth: number } = {
+	dimensions: { width: number; height: number; dpr: number } = {
 		width: 20,
 		height: 10,
 		dpr: 2,
-		targetWidth: 400,
 	},
 ) {
 	return page.evaluate(
@@ -541,39 +536,6 @@ async function directWorkerRequest(
 	);
 }
 
-it.each([
-	["a still frame", "main { background: #18a957; }", true],
-	[
-		"an entrance longer than the budget",
-		"main { animation: enter 4s both; } @keyframes enter { from { opacity: 0; } to { opacity: 1; } }",
-		false,
-	],
-] as const)("reports whether %s went quiet arriving", async (_kind, css, quiet) => {
-	// The canvas skips a capture's settle only for a quiet arrival (#177): one
-	// that ran out its budget was still arriving when the wait gave up.
-	const served = await serveCapture(css);
-	onTestFinished(() => served.close());
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const page = await browser.newPage();
-	await page.goto(served.url);
-	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
-	if (authored === undefined) throw new Error("frame missing");
-	await authored.locator("main").waitFor();
-	const arrived = await page.evaluate(
-		() =>
-			new Promise<unknown>((resolve) => {
-				const frame = document.querySelector<HTMLIFrameElement>("#frame")?.contentWindow;
-				addEventListener("message", (event) => {
-					if (event.source === frame && (event.data as { spool?: unknown }).spool === "arrived")
-						resolve(event.data);
-				});
-				frame?.postMessage({ spool: "arrive", settleMs: 900 }, "*");
-			}),
-	);
-	expect(arrived).toEqual({ spool: "arrived", frame: "capture", quiet });
-});
-
 it.each(['"/theme.css"', 'url("/theme.css")'])("preserves layout beside @import %s in a still", async (importValue) => {
 	const served = await serveCapture(`@import ${importValue};
 		main { background-color: #281c15 !important; }
@@ -591,8 +553,8 @@ it.each(['"/theme.css"', 'url("/theme.css")'])("preserves layout beside @import 
 	);
 	const captureOrigin = new URL(served.controlOrigin);
 	captureOrigin.hostname = CAPTURE_HOST;
-	const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
-	const pixels = await readImage(cover.image.url, page);
+	const exported = await requestCapture(page, captureOrigin.origin);
+	const pixels = await readImage(exported.image.url, page);
 	for (const [channel, expected] of [40, 28, 21].entries()) {
 		expect(Math.abs((pixels.center[channel] ?? 0) - expected)).toBeLessThanOrEqual(2);
 	}
@@ -636,35 +598,21 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	await authored.locator("main").waitFor();
 	await authored.evaluate(() => document.fonts.ready);
 
-	// One reply, one image: 400 CSS px at 2× for the 800×600 source.
-	const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
-	expect(cover.resultReplies).toBe(1);
-	const coverImage = await readImage(cover.image.url, page);
-	expect([coverImage.type, coverImage.width, coverImage.height]).toEqual(["image/jpeg", 800, 600]);
-	expect(coverImage.magic).toEqual([255, 216, 255, 224, 0, 16, 74, 70]);
-	expect(coverImage.center[0]).toBeGreaterThanOrEqual(240);
-	expect(coverImage.center[1]).toBeGreaterThanOrEqual(52);
-	expect(coverImage.center[1]).toBeLessThanOrEqual(62);
-	expect(coverImage.center[2]).toBeGreaterThanOrEqual(20);
-	expect(coverImage.center[2]).toBeLessThanOrEqual(32);
-	expect(coverImage.center[3]).toBe(255);
-	expect(coverImage.bottomRight[0]).toBeGreaterThanOrEqual(16);
-	expect(coverImage.bottomRight[0]).toBeLessThanOrEqual(32);
-	expect(coverImage.bottomRight[1]).toBeGreaterThanOrEqual(161);
-	expect(coverImage.bottomRight[1]).toBeLessThanOrEqual(177);
-	expect(coverImage.bottomRight[2]).toBeGreaterThanOrEqual(79);
-	expect(coverImage.bottomRight[2]).toBeLessThanOrEqual(95);
-	expect(coverImage.bottomRight[3]).toBe(255);
+	// One reply, one image: an export is one full-resolution lossless sheet, 2× for the 800×600 source.
+	const first = await requestCapture(page, captureOrigin.origin);
+	expect(first.resultReplies).toBe(1);
 	// The two project-asset routes (#101): an svg through <img src>, a raster
 	// through a CSS background. Both must be in the picture, not stripped out.
-	expect(coverImage.assetSrc[0]).toBeGreaterThanOrEqual(112);
-	expect(coverImage.assetSrc[0]).toBeLessThanOrEqual(142);
-	expect(coverImage.assetSrc[1]).toBeLessThanOrEqual(16);
-	expect(coverImage.assetSrc[2]).toBeGreaterThanOrEqual(240);
-	expect(coverImage.assetCss[0]).toBeGreaterThanOrEqual(240);
-	expect(coverImage.assetCss[1]).toBeGreaterThanOrEqual(190);
-	expect(coverImage.assetCss[1]).toBeLessThanOrEqual(218);
-	expect(coverImage.assetCss[2]).toBeLessThanOrEqual(16);
+	expect(await readImage(first.image.url, page)).toEqual({
+		type: "image/png",
+		width: 1600,
+		height: 1200,
+		magic: [137, 80, 78, 71, 13, 10, 26, 10],
+		center: [245, 57, 26, 255],
+		bottomRight: [24, 169, 87, 255],
+		assetSrc: [127, 0, 255, 255],
+		assetCss: [255, 204, 0, 255],
+	});
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
 	expect(
 		await authored.evaluate(() =>
@@ -682,7 +630,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	).toBe(0);
 
 	await startTargetPerformance(authored);
-	const exported = await requestCapture(page, captureOrigin.origin, 0);
+	const exported = await requestCapture(page, captureOrigin.origin);
 	expect(exported.resultReplies).toBe(1);
 	// An export is one full-resolution lossless sheet.
 	expect(await readImage(exported.image.url, page)).toEqual({
@@ -766,7 +714,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		spool: "spool-capture-result-v1",
 		id: "0123456789abcdef0123456789abcdef",
 	});
-	expect((retried.reply.image as { url: string } | undefined)?.url).toMatch(/^data:image\/jpeg;base64,/);
+	expect((retried.reply.image as { url: string } | undefined)?.url).toMatch(/^data:image\/png;base64,/);
 	const retriedWorker = page.frames().find((frame) => frame.url() === `${captureOrigin.origin}/capture`);
 	if (retriedWorker === undefined) throw new Error("retried worker disappeared before cleanup inspection");
 	expect(
@@ -795,12 +743,12 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		page,
 		captureOrigin.origin,
 		'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="1000"><rect width="40" height="1000" fill="#f5391a"/></svg>',
-		{ width: 40, height: 1000, dpr: 2, targetWidth: 400 },
+		{ width: 40, height: 1000, dpr: 2 },
 	);
 	expect(tall.reply).toMatchObject({
 		spool: "spool-capture-result-v1",
 		id: "0123456789abcdef0123456789abcdef",
-		image: { width: 800, height: 20_000 },
+		image: { width: 80, height: 2000 },
 	});
 	await page.locator("#direct-worker").evaluate((iframe: HTMLIFrameElement) => {
 		iframe.src = "about:blank";
@@ -810,8 +758,9 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	const oversized = await directWorkerRequest(
 		page,
 		captureOrigin.origin,
-		'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="10000"><rect width="40" height="10000" fill="#f5391a"/></svg>',
-		{ width: 40, height: 10_000, dpr: 2, targetWidth: 400 },
+		'<svg xmlns="http://www.w3.org/2000/svg" width="6000" height="6000"><rect width="6000" height="6000" fill="#f5391a"/></svg>',
+		// past the raster budget even at one device pixel per CSS pixel, so no fit can save it
+		{ width: 6000, height: 6000, dpr: 1 },
 	);
 	expect(oversized.reply).toMatchObject({
 		spool: "spool-capture-result-v1",
@@ -868,20 +817,20 @@ it.each(["inline", "class", "id"] as const)(
 			() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
 		);
 
-		const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
-		expect(cover.resultReplies).toBe(1);
-		const coverImage = await readImage(cover.image.url, page);
-		expect(coverImage.type).toBe("image/jpeg");
+		const exported = await requestCapture(page, captureOrigin.origin);
+		expect(exported.resultReplies).toBe(1);
+		const exportImage = await readImage(exported.image.url, page);
+		expect(exportImage.type).toBe("image/png");
 		// The shim's getContext wrap (#174) forces preserveDrawingBuffer on webgl
-		// contexts, so the self-capture reads back the red gl.clear() rather than
+		// contexts, so the export reads back the red gl.clear() rather than
 		// whatever the drawing buffer holds once the browser is done compositing —
-		// nominally black. JPEG's lossy encoding gets an approximate assertion.
-		expect(coverImage.center[0]).toBeGreaterThanOrEqual(230);
-		expect(coverImage.center[1]).toBeLessThanOrEqual(25);
-		expect(coverImage.center[2]).toBeLessThanOrEqual(25);
-		expect(coverImage.center[3]).toBe(255);
+		// nominally black.
+		expect(exportImage.center[0]).toBeGreaterThanOrEqual(230);
+		expect(exportImage.center[1]).toBeLessThanOrEqual(25);
+		expect(exportImage.center[2]).toBeLessThanOrEqual(25);
+		expect(exportImage.center[3]).toBe(255);
 		// The live canvas sits in the middle half of the frame. Dropping its class
 		// or id moves the replacement image into normal flow at the top left.
-		expect(coverImage.assetSrc.slice(0, 3)).toEqual([255, 255, 255]);
+		expect(exportImage.assetSrc.slice(0, 3)).toEqual([255, 255, 255]);
 	},
 );

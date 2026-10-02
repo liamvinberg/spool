@@ -899,6 +899,10 @@ describe("one turn", () => {
 	 * message explaining it is still being written.
 	 */
 	it("repaints a frame the turn writes while the transcript is still arriving", async () => {
+		// a viewport with a size, so the phone is drawn big enough to read and runs
+		// its document: happy-dom lays nothing out
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(900);
 		const canvas = mount();
 		await canvas.render();
 		const src = () => canvas.host.querySelector("iframe")?.getAttribute("src") ?? null;

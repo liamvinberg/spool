@@ -12,7 +12,7 @@ const LANDING = `export default function Frame() {
 	</main>;
 }`;
 
-it("resizes a tiny frame live, snaps to its content, and prepares the next picture while selected", {
+it("resizes a tiny frame live, snaps to its content, and gets a picture of its new size", {
 	timeout: 120_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -67,7 +67,9 @@ it("resizes a tiny frame live, snaps to its content, and prepares the next pictu
 		await page.mouse.up();
 	};
 	const before = await coverHash();
-	// Five frame pixels past the footer is still inside the magnetic catch.
+	// Five frame pixels past the footer is still inside the magnetic catch. The
+	// size lands in the sidecar, and the daemon's photo booth takes the frame at
+	// it while it is still selected.
 	await drag("s", 0, -395, { width: 800, height: 400 });
 	const releasedAt = performance.now();
 	await expect

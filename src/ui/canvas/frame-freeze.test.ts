@@ -64,8 +64,6 @@ async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
 	function Harness({ props }: { props: Attention }) {
 		lifecycle = useFrameLifecycle({
 			framesRef,
-			// one page, and it is the whole project
-			allFramesRef: framesRef,
 			entered: props.entered ?? null,
 			// deliberately empty: a selection the current tool does not mount for is
 			// still a selection, and the freeze has to see it (#172)
@@ -73,8 +71,6 @@ async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
 			selected: props.selected == null ? [] : [props.selected],
 			hovered: props.hovered ?? null,
 			editing: props.editing ?? false,
-			hasCover: () => true,
-			onShot: () => undefined,
 			cameraRef: { current: { x: 0, y: 0, k: 1 } } as RefObject<Camera | null>,
 			// only the CSS size is read, and happy-dom gives a real div none
 			viewportRef: { current: { clientWidth: 1200, clientHeight: 1200 } } as unknown as RefObject<HTMLElement>,
@@ -150,12 +146,12 @@ describe("which frames hold their animations", () => {
 		expect(isFrameFrozen({ ...resting, editing: true })).toBe(true);
 	});
 
-	it("keeps the same three frames running while the Edit tool is on", () => {
-		// the tool is no reason to photograph a frame held, to stop the frame
-		// whose own hands are inside it, or to touch a still
+	it("keeps the same frames running while the Edit tool is on", () => {
+		// the tool is no reason to export a frame held, to stop the frame whose
+		// own hands are inside it, or to touch a still
 		expect(isFrameFrozen({ ...resting, editing: true, entered: true })).toBe(false);
 		expect(isFrameFrozen({ ...resting, editing: true, capturing: true })).toBe(false);
-		expect(isFrameFrozen({ ...resting, editing: true, state: "refreshing" })).toBe(false);
+		expect(isFrameFrozen({ ...resting, editing: true, state: "held" })).toBe(false);
 		expect(isFrameFrozen({ ...resting, editing: true, state: "picture" })).toBe(false);
 	});
 
@@ -164,10 +160,8 @@ describe("which frames hold their animations", () => {
 		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, entered: true })).toBe(false);
 	});
 
-	it("never freezes a borrowed frame or one already photographing itself", () => {
-		// a borrowed frame's capture settles on its own rAF and animations
-		expect(isFrameFrozen({ ...resting, cameraMoving: true, state: "refreshing" })).toBe(false);
-		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, state: "refreshing" })).toBe(false);
+	it("never freezes a frame being copied for an export", () => {
+		// an export's capture settles on the frame's own rAF and animations
 		expect(isFrameFrozen({ ...resting, cameraMoving: true, capturing: true })).toBe(false);
 		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, capturing: true })).toBe(false);
 	});
@@ -217,12 +211,12 @@ describe("delivering the freeze", () => {
 		expect(freezes(post)).toEqual([]);
 	});
 
-	it("thaws before it asks a frozen frame to photograph itself", async () => {
+	it("thaws before it asks a frozen frame to copy itself for an export", async () => {
 		const { lifecycle, post } = await mountLive();
 		await act(() => lifecycle.noteCameraMoving(true));
 
 		await act(async () => {
-			void lifecycle.capture("landing");
+			void lifecycle.captureExport("landing");
 		});
 
 		// the thaw rides the same channel to the same document, so it cannot land

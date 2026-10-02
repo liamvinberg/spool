@@ -123,7 +123,7 @@ describe("shot and logs, compile paths", () => {
 		expect(existsSync(join(root, "design", ".spool", "verify", "checkout.logs.json"))).toBe(false);
 	});
 
-	it("surfaces a recorded self-capture failure alongside replayed logs (#173)", async () => {
+	it("surfaces a recorded cover failure alongside replayed logs (#173)", async () => {
 		const { root, name, url, controlToken, deps } = await serveVerifyProject();
 		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
 		const verify = await fetch(`${url}/api/p/${name}/verify/quiet`, {

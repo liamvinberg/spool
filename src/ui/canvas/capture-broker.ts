@@ -10,15 +10,15 @@ const RESULT = "spool-capture-result-v1";
 export const CAPTURE_WORKER_TIMEOUT_MS = 2400;
 const MAX_CAPTURE_DATA_URL_CHARS = Math.ceil((64 * 1024 * 1024) / 3) * 4 + 32;
 
-/** The one image as the capture host actually rasterized it. */
-export interface CoverRaster {
+/** The one export image as the capture host actually rasterized it. */
+export interface ExportRaster {
 	url: string;
 	width: number;
 	height: number;
 }
 
 type CaptureResult =
-	| { spool: typeof RESULT; id: string; image: CoverRaster }
+	| { spool: typeof RESULT; id: string; image: ExportRaster }
 	| { spool: typeof RESULT; id: string; error: string };
 
 export interface CaptureBrokerPlatform {
@@ -46,22 +46,22 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
 	return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 }
 
-function coverRaster(value: unknown, targetWidth: number): value is CoverRaster {
+function exportRaster(value: unknown): value is ExportRaster {
 	return (
 		record(value) &&
 		exactKeys(value, ["height", "url", "width"]) &&
 		typeof value.url === "string" &&
 		value.url.length <= MAX_CAPTURE_DATA_URL_CHARS &&
-		value.url.startsWith(targetWidth > 0 ? "data:image/jpeg;base64," : "data:image/png;base64,") &&
+		value.url.startsWith("data:image/png;base64,") &&
 		typeof value.width === "number" &&
 		typeof value.height === "number" &&
 		captureRasterSize(value.width, value.height, 1) !== undefined
 	);
 }
 
-function captureResult(value: unknown, id: string, targetWidth: number): CaptureResult | undefined {
+function captureResult(value: unknown, id: string): CaptureResult | undefined {
 	if (!record(value) || value.spool !== RESULT || value.id !== id) return undefined;
-	if (exactKeys(value, ["id", "image", "spool"]) && coverRaster(value.image, targetWidth)) {
+	if (exactKeys(value, ["id", "image", "spool"]) && exportRaster(value.image)) {
 		return value as CaptureResult;
 	}
 	if (
@@ -90,7 +90,7 @@ export function rasterCaptureSource(
 	configuredOrigin: string,
 	signal?: AbortSignal,
 	platform: CaptureBrokerPlatform = browserPlatform,
-): Promise<CoverRaster> {
+): Promise<ExportRaster> {
 	return new Promise((resolve, reject) => {
 		const captureOrigin = new URL(configuredOrigin).origin;
 		const iframe = platform.createIframe();
@@ -117,7 +117,7 @@ export function rasterCaptureSource(
 			} catch {}
 			iframe.remove();
 		};
-		const finish = (result: { image: CoverRaster } | { error: Error }) => {
+		const finish = (result: { image: ExportRaster } | { error: Error }) => {
 			if (settled) return;
 			settled = true;
 			cleanup();
@@ -135,7 +135,7 @@ export function rasterCaptureSource(
 				return;
 			}
 			channel.port1.onmessage = (event) => {
-				const result = captureResult(event.data, source.id, source.targetWidth);
+				const result = captureResult(event.data, source.id);
 				if (result === undefined) {
 					finish({ error: new Error("invalid capture worker reply") });
 					return;
@@ -154,7 +154,6 @@ export function rasterCaptureSource(
 					width: source.width,
 					height: source.height,
 					dpr: source.dpr,
-					targetWidth: source.targetWidth,
 				});
 			} catch (error) {
 				finish({ error: error instanceof Error ? error : new Error("capture worker unavailable") });

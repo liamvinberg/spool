@@ -733,34 +733,6 @@ export async function fetchCover(project: string, frame: string, cover: Cover): 
 }
 
 /**
- * A self-capture rides a plain PUT as one image. The answer is its immutable
- * address, which the canvas puts on screen straight away.
- */
-export async function putCover(project: string, frame: string, cover: Blob): Promise<Cover | undefined> {
-	const body = new FormData();
-	body.append("cover", cover);
-	const res = await controlFetch(`/api/p/${encodeURIComponent(project)}/thumbs/${encodeURIComponent(frame)}`, {
-		method: "PUT",
-		body,
-	});
-	if (!res.ok) return undefined;
-	return (await res.json()) as Cover;
-}
-
-/**
- * A self-capture failed, and the reason is worth keeping (#173) — but never
- * worth waiting on: `spool logs` is the only reader, so a lost post costs the
- * next look a blank line, not a stuck errand.
- */
-export function postCaptureFailure(project: string, frame: string, error: string): void {
-	void controlFetch(`/api/p/${encodeURIComponent(project)}/thumbs/${encodeURIComponent(frame)}/error`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ error }),
-	}).catch(() => {});
-}
-
-/**
  * Read one SSE body to its end, dispatching each message by its event name.
  * `onBytes` is told about every chunk, comments and heartbeats included: what
  * the caller is watching for is a connection that is still there, and a stream

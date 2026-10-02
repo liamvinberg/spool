@@ -26,10 +26,9 @@ const source: CaptureSourceMessage = {
 	width: 390,
 	height: 844,
 	dpr: 2,
-	targetWidth: 400,
 };
 
-const image = (width: number, height: number) => ({ url: "data:image/jpeg;base64,eA==", width, height });
+const image = (width: number, height: number) => ({ url: "data:image/png;base64,eA==", width, height });
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -77,7 +76,6 @@ describe("trusted capture broker", () => {
 			width: source.width,
 			height: source.height,
 			dpr: source.dpr,
-			targetWidth: source.targetWidth,
 		});
 
 		const imageResult = image(800, 1731);
@@ -158,7 +156,7 @@ describe("trusted capture broker", () => {
 		const { rasterCaptureSource } = await import("./capture-broker");
 		const controller = new AbortController();
 		const { channel, iframe, platform, remove } = harness();
-		const capture = rasterCaptureSource({ ...source, targetWidth: 0 }, captureOrigin, controller.signal, platform);
+		const capture = rasterCaptureSource(source, captureOrigin, controller.signal, platform);
 		iframe.dispatchEvent(new Event("load"));
 
 		controller.abort();

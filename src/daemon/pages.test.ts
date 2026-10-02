@@ -13,6 +13,7 @@ import {
 	writeFrame,
 	writePageFrame,
 } from "../test-helpers";
+import { writeCover } from "./thumbs";
 
 /**
  * Pages (#39): a page is a subfolder of design/frames, each page its own
@@ -90,13 +91,10 @@ describe("page discovery", () => {
 });
 
 /** Everything a frame keeps, asked of one frame by its name through the real routes. */
-async function frameStores(app: ReturnType<typeof makeApp>, project: string, frame: string) {
+async function frameStores(app: ReturnType<typeof makeApp>, root: string, project: string, frame: string) {
 	const segment = encodeURIComponent(frame);
 	const doc = await (await app.request(`/p/${project}/frames/${segment}`)).text();
-	const body = new FormData();
-	body.append("cover", new Blob([COVER_PNG]));
-	const put = await app.request(`/api/p/${project}/thumbs/${segment}`, { method: "PUT", body });
-	const { hash } = (await put.json()) as { hash: string };
+	const { hash } = writeCover(root, frame, Buffer.from(COVER_PNG));
 	const served = (await app.request(`/covers/${project}/${segment}/${hash}`)).status;
 	await app.request(`/api/p/${project}/selection`, jsonPut({ frames: [frame] }));
 	const { selection } = (await (await app.request(`/api/p/${project}/selection`)).json()) as {
@@ -124,8 +122,8 @@ describe("one folder name on two pages", () => {
 			{ name: "vercel/buttons", page: "vercel" },
 		]);
 
-		const spool = await frameStores(app, name, "spool/buttons");
-		const vercel = await frameStores(app, name, "vercel/buttons");
+		const spool = await frameStores(app, root, name, "spool/buttons");
+		const vercel = await frameStores(app, root, name, "vercel/buttons");
 		// each serves its own document
 		expect(spool.doc).toContain("spool buttons");
 		expect(spool.doc).not.toContain("vercel buttons");
@@ -177,8 +175,8 @@ describe("one folder name on two pages", () => {
 		]);
 		expect("page" in (projection.frames[0] ?? {})).toBe(false);
 
-		const flat = await frameStores(app, name, "buttons");
-		const nested = await frameStores(app, name, "examples/mobile/buttons");
+		const flat = await frameStores(app, root, name, "buttons");
+		const nested = await frameStores(app, root, name, "examples/mobile/buttons");
 		expect(flat.doc).toContain("root buttons");
 		expect(flat.doc).not.toContain("mobile buttons");
 		expect(nested.doc).toContain("mobile buttons");
@@ -264,8 +262,6 @@ describe("a frame name is a path, and only a path", () => {
 		const { spoolDir, root, name } = pageProject();
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		const app = makeApp(spoolDir);
-		const body = new FormData();
-		body.append("cover", new Blob([COVER_PNG]));
 
 		for (const frame of ["../escape", "shop/../escape", "shop/.hidden", "shop//checkout", "a\\b"]) {
 			const geometry = await app.request(
@@ -275,11 +271,13 @@ describe("a frame name is a path, and only a path", () => {
 			expect(geometry.status, frame).toBe(400);
 			const selection = await app.request(`/api/p/${name}/selection`, jsonPut({ frames: [frame] }));
 			expect(selection.status, frame).toBe(400);
-			const cover = await app.request(`/api/p/${name}/thumbs/${encodeURIComponent(frame)}`, {
-				method: "PUT",
-				body,
+			// a shot records files under the frame's name: an unsafe one is no frame to boot
+			const boot = await app.request(`/api/p/${name}/boot/${encodeURIComponent(frame)}`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ width: 10, height: 10 }),
 			});
-			expect(cover.status, frame).toBe(404);
+			expect(JSON.parse(await boot.text()), frame).toMatchObject({ outcome: { kind: "missing" } });
 		}
 		// nothing was written anywhere outside the one frame that exists
 		expect(existsSync(join(root, "design", "escape"))).toBe(false);

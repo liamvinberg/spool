@@ -8,19 +8,17 @@ import { ProjectCanvas } from "./canvas";
 /**
  * What a walk arrival costs (#110). The target's reboot is the whole of the
  * arrival, so nothing may stand between the click and it. The dearest case is a
- * target already mounted and booted: it is the one a self-capture could answer,
- * and the one the old race charged its whole timeout for. The arrival's cover is
- * the target's stored still instead — a picture of a freshly booted frame, which
- * is where the walk lands (#5).
+ * target already mounted and booted: it is the one the old race charged a whole
+ * capture timeout for. The arrival's cover is the target's stored still instead
+ * — a picture of a freshly booted frame, which is where the walk lands (#5).
  */
 
 const COVER = { hash: "b".repeat(32) };
 const frames = [
-	{ name: "origin", x: 0, y: 0, w: 100, h: 100, cover: COVER },
-	// no cover, so the canvas borrows it to make one: the only way a frame you
-	// are not inside holds a document at all (#112), and the mounted, booted
-	// target this test is about
-	{ name: "right", x: 180, y: 0, w: 100, h: 100 },
+	{ name: "origin", x: 0, y: 0, w: 400, h: 400, cover: COVER },
+	// drawn big enough to read beside it, so it holds a booted document of its
+	// own: the mounted target this test is about (#112)
+	{ name: "right", x: 440, y: 0, w: 400, h: 400, cover: COVER },
 ];
 
 describe("walk arrival", () => {
@@ -70,9 +68,8 @@ describe("walk arrival", () => {
 		await act(async () => {
 			root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
 		});
-		// the target has to be mounted before the walk: an unmounted one answers no
-		// capture at all, and the dear case is the one that would have answered.
-		// A borrowed frame is that case — it has a document and it has booted.
+		// the target has to be mounted before the walk: the dear case is a target
+		// that already has a document and has booted
 		await until(() => host.querySelector('iframe[title="right"]') !== null);
 
 		await act(async () => {
@@ -85,7 +82,7 @@ describe("walk arrival", () => {
 		const source = host.querySelector<HTMLIFrameElement>('iframe[title="origin"]')?.contentWindow ?? null;
 		const target = host.querySelector<HTMLIFrameElement>('iframe[title="right"]');
 		expect(target).not.toBeNull();
-		// the target has booted, so a self-capture would reach its shim and wait
+		// the target has booted
 		await act(async () => {
 			window.dispatchEvent(
 				new MessageEvent("message", {

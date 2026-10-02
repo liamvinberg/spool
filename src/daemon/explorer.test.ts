@@ -11,6 +11,7 @@ import {
 	writeFrame,
 	writePageFrame,
 } from "../test-helpers";
+import { writeCover } from "./thumbs";
 
 /**
  * The explorer's file operations and its order store (#228).
@@ -44,11 +45,8 @@ const designFile = (root: string, ...parts: string[]) => join(root, "design", ..
 const readJson = (file: string): unknown => JSON.parse(readFileSync(file, "utf8"));
 
 /** A real cover through the real store, so a rename has an address to carry. */
-async function putCover(app: ReturnType<typeof makeApp>, name: string, frame: string): Promise<string> {
-	const body = new FormData();
-	body.append("cover", new Blob([COVER_PNG]));
-	const res = await app.request(`/api/p/${name}/thumbs/${encodeURIComponent(frame)}`, { method: "PUT", body });
-	return ((await res.json()) as { hash: string }).hash;
+function putCover(root: string, frame: string): string {
+	return writeCover(root, frame, Buffer.from(COVER_PNG)).hash;
 }
 
 describe("renaming a frame", () => {
@@ -57,7 +55,7 @@ describe("renaming a frame", () => {
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		writeDesignFile(root, "frames/shop/checkout/frame.json", '{ "x": 10, "y": 20, "w": 390, "h": 844 }\n');
 		const app = makeApp(spoolDir);
-		const hash = await putCover(app, name, "shop/checkout");
+		const hash = putCover(root, "shop/checkout");
 
 		const res = await app.request(
 			`/api/p/${name}/frames/rename`,
@@ -242,7 +240,7 @@ describe("moving frames between pages", () => {
 		writeFrame(root, "detail", label("detail"));
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		const app = makeApp(spoolDir);
-		const hash = await putCover(app, name, "home");
+		const hash = putCover(root, "home");
 
 		const onto = await app.request(
 			`/api/p/${name}/frames/move`,
@@ -1194,7 +1192,7 @@ describe("walks into a frame that changed name", () => {
 			'export function Nav() {\n\treturn <nav><a data-go="vercel/buttons">v</a><a data-go="buttons">r</a></nav>;\n}\n',
 		);
 		const app = makeApp(spoolDir);
-		const hash = await putCover(app, name, "vercel/buttons");
+		const hash = putCover(root, "vercel/buttons");
 
 		const res = await app.request(`/api/p/${name}/pages/rename`, jsonPost({ from: "vercel", to: "acme" }));
 

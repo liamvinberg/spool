@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { COVER_DEVICE_SCALE, COVER_QUALITY, LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
+import { MAX_CAPTURE_OUTPUT_PIXELS, SETTLE_BUDGET_MS } from "../cover";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
 import { collapsedWords } from "./edit-words";
 import { tagWord, wholeComponent } from "./element-name";
@@ -133,13 +133,13 @@ const captureWorkerJs = `(() => {
 	async function validateJob(value, requestId) {
 		if (
 			!record(value) ||
-			!exactKeys(value, ["dpr", "height", "id", "spool", "svg", "targetWidth", "width"]) ||
+			!exactKeys(value, ["dpr", "height", "id", "spool", "svg", "width"]) ||
 			value.spool !== RASTER ||
 			value.id !== requestId
 		) {
 			throw new Error("invalid capture request");
 		}
-		const { width, height, dpr, targetWidth } = value;
+		const { width, height, dpr } = value;
 		if (
 			typeof width !== "number" ||
 			!Number.isFinite(width) ||
@@ -154,11 +154,7 @@ const captureWorkerJs = `(() => {
 			typeof dpr !== "number" ||
 			!Number.isFinite(dpr) ||
 			dpr <= 0 ||
-			dpr > 2 ||
-			typeof targetWidth !== "number" ||
-			!Number.isFinite(targetWidth) ||
-			!Number.isInteger(targetWidth) ||
-			(targetWidth !== 0 && targetWidth !== ${LIVE_MIN_CSS_PX})
+			dpr > 2
 		) {
 			throw new Error("invalid capture dimensions");
 		}
@@ -170,12 +166,11 @@ const captureWorkerJs = `(() => {
 		) {
 			throw new Error("invalid capture SVG");
 		}
-		const scale = targetWidth > 0 ? (targetWidth * ${COVER_DEVICE_SCALE}) / width : dpr;
-		let outputWidth = Math.max(1, Math.round(width * scale));
-		let outputHeight = Math.max(1, Math.round(height * scale));
+		let outputWidth = Math.max(1, Math.round(width * dpr));
+		let outputHeight = Math.max(1, Math.round(height * dpr));
 		// A long frame may fit at native size but exceed the budget at 2x.
 		// Keep its whole layout and spend only the available raster pixels.
-		if (targetWidth === 0 && width * height <= MAX_CAPTURE_OUTPUT_PIXELS && outputWidth * outputHeight > MAX_CAPTURE_OUTPUT_PIXELS) {
+		if (width * height <= MAX_CAPTURE_OUTPUT_PIXELS && outputWidth * outputHeight > MAX_CAPTURE_OUTPUT_PIXELS) {
 			const fittedScale = Math.sqrt(MAX_CAPTURE_OUTPUT_PIXELS / (width * height));
 			outputWidth = Math.max(1, Math.floor(width * fittedScale));
 			outputHeight = Math.max(1, Math.floor(height * fittedScale));
@@ -189,7 +184,6 @@ const captureWorkerJs = `(() => {
 		}
 		return {
 			svg: validateSvg(await value.svg.text(), width, height),
-			targetWidth,
 			outputWidth,
 			outputHeight,
 		};
@@ -199,13 +193,12 @@ const captureWorkerJs = `(() => {
 	// and an OffscreenCanvas's convertToBlob() too, as an idle task whenever it
 	// is on a page's main thread, and forces it only after
 	// kIdleTaskStartTimeoutDelayMs, a whole second on the Mac
-	// (canvas_async_blob_creator.cc). This page rasters while frames are
-	// booting beside it and rarely sees an idle period, so a cover's encode
-	// would often wait out the whole timeout before it began. Encoding at once
-	// does the same work without the wait, and its data URL is what the reply
-	// carries anyway.
-	function encode(canvas, type, quality) {
-		const url = canvas.toDataURL(type, quality);
+	// (canvas_async_blob_creator.cc). This page rasters while frames run beside
+	// it and rarely sees an idle period, so an export's encode would often wait
+	// out the whole timeout before it began. Encoding at once does the same
+	// work without the wait, and its data URL is what the reply carries anyway.
+	function encode(canvas, type) {
+		const url = canvas.toDataURL(type);
 		if (!url.startsWith("data:" + type + ";base64,")) throw new Error("canvas encoding failed");
 		if (url.length > MAX_OUTPUT_CHARS) throw new Error("capture output too large");
 		return url;
@@ -227,9 +220,7 @@ const captureWorkerJs = `(() => {
 			context.fillStyle = "#fff";
 			context.fillRect(0, 0, job.outputWidth, job.outputHeight);
 			context.drawImage(image, 0, 0, job.outputWidth, job.outputHeight);
-			const url = job.targetWidth > 0
-				? encode(canvas, "image/jpeg", ${COVER_QUALITY})
-				: encode(canvas, "image/png");
+			const url = encode(canvas, "image/png");
 			return { url, width: job.outputWidth, height: job.outputHeight };
 		} finally {
 			image.src = "";
@@ -434,10 +425,6 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * place. A looping animation never finishes, so the wait is bounded and
  * infinite iterations are not waited on at all.
  *
- * It answers whether the frame went quiet inside the budget: its finite
- * animations finished and its DOM stopped changing. A frame that ran the
- * budget out was still arriving when the wait gave up on it.
- *
  * One source, spoken in two places. The shim runs it inside a frame on the
  * canvas, for the arrival report and an export, with the rAF it took before
  * frame code ran. The photo booth (`booth.ts`) runs the very same function in
@@ -447,10 +434,9 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  */
 export function settleSource(raf: string): string {
 	return `async function settle(budgetMs) {
-		if (!(budgetMs > 0)) return false;
+		if (!(budgetMs > 0)) return;
 		const deadline = performance.now() + budgetMs;
 		try { await document.fonts.ready; } catch {}
-		let finished = false;
 		while (performance.now() < deadline) {
 			let arriving = 0;
 			try {
@@ -462,10 +448,7 @@ export function settleSource(raf: string): string {
 					if (iterations !== Infinity) arriving++;
 				}
 			} catch {}
-			if (arriving === 0) {
-				finished = true;
-				break;
-			}
+			if (arriving === 0) break;
 			await new Promise((resolve) => setTimeout(resolve, 60));
 		}
 		// Most of what a frame animates, no timing API reports: a spring is
@@ -473,23 +456,23 @@ export function settleSource(raf: string): string {
 		// it. A quiet DOM is the signal that works whatever the library: wait
 		// for nothing to change for a beat, and give up at the budget so a frame
 		// that animates forever still gets photographed.
-		const still = await new Promise((resolve) => {
-			let beat = 0;
+		await new Promise((resolve) => {
+			let quiet = 0;
 			const observer = new MutationObserver(() => {
-				clearTimeout(beat);
-				beat = setTimeout(() => done(true), 120);
+				clearTimeout(quiet);
+				quiet = setTimeout(done, 120);
 			});
-			const cap = setTimeout(() => done(false), Math.max(0, deadline - performance.now()));
-			function done(quiet) {
-				clearTimeout(beat);
+			const cap = setTimeout(done, Math.max(0, deadline - performance.now()));
+			function done() {
+				clearTimeout(quiet);
 				clearTimeout(cap);
 				try { observer.disconnect(); } catch {}
-				resolve(quiet);
+				resolve();
 			}
 			try {
 				observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
-			} catch { done(false); return; }
-			beat = setTimeout(() => done(true), 120);
+			} catch { done(); return; }
+			quiet = setTimeout(done, 120);
 		});
 		// Two native frames, so a rAF-driven entry animation's last commit lands.
 		// Chrome holds rAF entirely in an offscreen iframe, and a frame on the
@@ -499,7 +482,6 @@ export function settleSource(raf: string): string {
 			const timer = setTimeout(resolve, Math.max(0, Math.min(100, deadline - performance.now())));
 			${raf}(() => ${raf}(() => { clearTimeout(timer); resolve(); }));
 		});
-		return finished && still;
 	}`;
 }
 
@@ -511,14 +493,16 @@ export function settleSource(raf: string): string {
  * {spool:"freeze", on} holds this document's animations while the camera moves
  * (#171) or while nothing has attended the frame for a long minute (#172), and
  * re-delivers every held rAF callback on thaw;
- * {spool:"arrive", settleMs} answers {spool:"arrived", quiet} once this document has
- * finished arriving — the same settle a capture waits out, reported rather than
- * photographed, so a promoted frame's cover fades onto a settled frame (#177);
- * {spool:"capture", id, targetWidth, settleMs}
+ * {spool:"arrive", settleMs} answers {spool:"arrived"} once this document has
+ * finished arriving — the same settle the photo booth waits out before it takes
+ * the frame's cover, so a promoted frame's cover fades onto a settled frame (#177);
+ * {spool:"capture", id, settleMs}
  * answers with a sanitized foreignObject source for the trusted capture host
- * to rasterize off this frame's main thread. The frame waits out its own fonts
- * and entry animations first, and carries the faces it loaded in as data URIs,
- * because the isolated rasterization loads no external resources;
+ * to rasterize off this frame's main thread, for an export. The frame waits out
+ * its own fonts and entry animations first, and carries the faces it loaded in
+ * as data URIs, because the isolated rasterization loads no external resources.
+ * A frame's cover is never made here: the daemon's photo booth photographs the
+ * document itself;
  * {spool:"pick", x, y} answers with the element ancestry at that frame-local
  * point — top-level element down to the deepest, each with its selector,
  * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
@@ -553,12 +537,12 @@ const canvasShimJs = `(() => {
 	const nativeCancelRaf = window.cancelAnimationFrame.bind(window);
 
 	/**
-	 * A self-capture reads a canvas after frame code's own task has finished
+	 * An export reads a canvas after frame code's own task has finished
 	 * (#174): whatever WebGL drew is already gone by then, because the spec has
 	 * the browser clear the drawing buffer once it is done compositing, unless
 	 * the context was created with preserveDrawingBuffer. A 2D context has no
 	 * such step, so only webgl/webgl2 need the override — and it overrides a
-	 * frame author's own \`false\` too, since an accurate cover is the point, not
+	 * frame author's own \`false\` too, since an accurate export is the point, not
 	 * a setting to negotiate with.
 	 */
 	const nativeGetContext = HTMLCanvasElement.prototype.getContext;
@@ -964,7 +948,7 @@ const canvasShimJs = `(() => {
 		}
 	}
 
-	async function captureSource(targetWidth, settleMs) {
+	async function captureSource(settleMs) {
 		await settle(settleMs);
 		const W = document.documentElement.clientWidth || innerWidth;
 		const H = document.documentElement.clientHeight || innerHeight;
@@ -1049,12 +1033,11 @@ const canvasShimJs = `(() => {
 		const xml = new XMLSerializer().serializeToString(clone);
 		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">'
 			+ '<foreignObject width="100%" height="100%">' + xml + "</foreignObject></svg>";
-		// A cover is a boot placeholder, not an artifact. The worker rasterizes it
-		// at the shared readable width; an export remains lossless and full-size.
+		// An export is lossless and full-size, at the density the frame is shown.
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
 		const source = new Blob([svg], { type: "image/svg+xml" });
 		if (source.size > 16 * 1024 * 1024) throw new Error("capture source too large");
-		return { svg: source, width: W, height: H, dpr, targetWidth };
+		return { svg: source, width: W, height: H, dpr };
 	}
 
 	// selector below the boot root: tags with :nth-of-type where siblings repeat.
@@ -1942,7 +1925,7 @@ const canvasShimJs = `(() => {
 			return;
 		}
 		if (m.spool === "arrive") {
-			// The same settle a capture waits out, answered as a bare report (#177).
+			// The same settle a cover waits out, answered as a bare report (#177).
 			// Loaded is mid-arrival: an entry animation is at its beginning where
 			// the still photographed its end, and a canvas frame may not have drawn
 			// a tick yet. Waiting out the settle is how the cover fades onto the
@@ -1957,18 +1940,15 @@ const canvasShimJs = `(() => {
 				!Number.isFinite(settleMs) ||
 				!Number.isInteger(settleMs) ||
 				settleMs < 0 ||
-				settleMs > 900
+				settleMs > ${SETTLE_BUDGET_MS}
 			) {
 				return;
 			}
 			arrivalReported = true;
 			// A settle that threw still arrived: the canvas is holding a cover on
 			// this answer, and its own deadline is the only other thing that frees it.
-			// It did not arrive quiet, though, and neither did one that ran out its
-			// budget, so the canvas waits again before it photographs either.
-			let quiet = false;
-			try { quiet = await settle(settleMs); } catch {}
-			parent.postMessage({ spool: "arrived", frame: config.frame, quiet }, "*");
+			try { await settle(settleMs); } catch {}
+			parent.postMessage({ spool: "arrived", frame: config.frame }, "*");
 			return;
 		}
 		if (m.spool === "pick") {
@@ -2068,22 +2048,17 @@ const canvasShimJs = `(() => {
 		}
 		captureInFlight = true;
 		try {
-			const targetWidth = m.targetWidth;
 			const settleMs = m.settleMs;
 			if (
-				typeof targetWidth !== "number" ||
-				!Number.isFinite(targetWidth) ||
-				!Number.isInteger(targetWidth) ||
-				(targetWidth !== 0 && targetWidth !== ${LIVE_MIN_CSS_PX}) ||
 				typeof settleMs !== "number" ||
 				!Number.isFinite(settleMs) ||
 				!Number.isInteger(settleMs) ||
 				settleMs < 0 ||
-				settleMs > 900
+				settleMs > ${SETTLE_BUDGET_MS}
 			) {
 				throw new Error("invalid capture dimensions");
 			}
-			const source = await captureSource(targetWidth, settleMs);
+			const source = await captureSource(settleMs);
 			parent.postMessage({ spool: "capture-source", frame, id, ...source }, config.controlOrigin);
 		} catch (error) {
 			parent.postMessage(

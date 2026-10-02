@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import type { Cover } from "../cover";
 import { FORMAT_VERSION } from "../templates";
 import {
 	makeApp,
@@ -15,7 +16,7 @@ import { createDaemonApp } from "./app";
 import { readSession, writeSession } from "./session";
 import { createMachineStateWatchHarness } from "./session-test-harness";
 import { createSettingsStore } from "./settings";
-import { readCaptureError } from "./thumbs";
+import { writeCover } from "./thumbs";
 
 /** Smallest real PNG: 1×1 transparent pixel. */
 const PNG_BYTES = Buffer.from(
@@ -33,27 +34,6 @@ const frameTsx = (label: string) => `export default function Frame() {
 	return <p>${label}</p>;
 }
 `;
-
-/** A cover arrives as one image. */
-function coverBody(bytes: Buffer): FormData {
-	const body = new FormData();
-	body.append("cover", new Blob([new Uint8Array(bytes)]));
-	return body;
-}
-
-const putCover = (app: ReturnType<typeof makeApp>, name: string, frame: string, body: FormData) =>
-	app.request(`/api/p/${name}/thumbs/${frame}`, { method: "PUT", body });
-
-const postCaptureError = (app: ReturnType<typeof makeApp>, name: string, frame: string, error: unknown) =>
-	app.request(`/api/p/${name}/thumbs/${frame}/error`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ error }),
-	});
-
-interface Cover {
-	hash: string;
-}
 
 describe("frame projection", () => {
 	it("lists frames with geometry from their sidecars", async () => {
@@ -198,14 +178,13 @@ describe("frame projection", () => {
 		writeFrame(root, "bare", frameTsx("bare"));
 		const app = makeApp(spoolDir);
 
-		const put = await putCover(app, name, "covered", coverBody(JPEG_BYTES));
-		expect(put.status).toBe(200);
+		const cover = writeCover(root, "covered", JPEG_BYTES);
 
 		const { frames } = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
 			frames: { name: string; cover?: Cover }[];
 		};
 		const byName = Object.fromEntries(frames.map((frame) => [frame.name, frame]));
-		expect(byName.covered?.cover).toEqual(await put.json());
+		expect(byName.covered?.cover).toEqual(cover);
 		// a frame with no cover simply has none: the canvas shows its placeholder
 		expect(byName.bare?.cover).toBeUndefined();
 	});
@@ -248,7 +227,7 @@ describe("the project registry for home", () => {
 		writeFrame(newer.root, "checkout", frameTsx("checkout"));
 		writeFrame(newer.root, "cart", frameTsx("cart"));
 		const app = makeApp(spoolDir);
-		const put = await putCover(app, newer.name, "cart", coverBody(PNG_BYTES));
+		const cart = writeCover(newer.root, "cart", PNG_BYTES);
 
 		const res = await app.request("/api/projects");
 
@@ -266,14 +245,14 @@ describe("the project registry for home", () => {
 		expect(projects[0]).toMatchObject({
 			root: newer.root,
 			frameCount: 2,
-			covers: [{ frame: "cart", cover: await put.json() }],
+			covers: [{ frame: "cart", cover: cart }],
 		});
 		expect(projects[1]).toMatchObject({ frameCount: 1, covers: [] });
 	});
 
 	it("summarizes across pages: three freshest covers, one folder name on two pages counted twice", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
+		const { root } = makeProject(spoolDir);
 		writeFrame(root, "one", frameTsx("one"));
 		writeFrame(root, "two", frameTsx("two"));
 		writePageFrame(root, "shop", "three", frameTsx("three"));
@@ -282,9 +261,7 @@ describe("the project registry for home", () => {
 		writeFrame(root, "twin", frameTsx("twin"));
 		writePageFrame(root, "shop", "twin", frameTsx("twin"));
 		const app = makeApp(spoolDir);
-		for (const frame of ["one", "two", "shop/three", "shop/four"]) {
-			expect((await putCover(app, name, encodeURIComponent(frame), coverBody(PNG_BYTES))).status).toBe(200);
-		}
+		for (const frame of ["one", "two", "shop/three", "shop/four"]) writeCover(root, frame, PNG_BYTES);
 		// the store's own folder times order the cards, so name them rather than race the clock
 		const shotAt = { one: 1_000, two: 4_000, "shop/three": 2_000, "shop/four": 3_000 };
 		for (const [frame, seconds] of Object.entries(shotAt)) {
@@ -1017,15 +994,14 @@ describe("serving the canvas page", () => {
 });
 
 describe("thumbnails", () => {
-	it("round-trips one immutable image through the .spool store", async () => {
+	it("serves one immutable image out of the .spool store", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
 
-		const put = await putCover(app, name, "checkout", coverBody(JPEG_BYTES));
-		expect(put.status).toBe(200);
-		const cover = (await put.json()) as Cover;
+		// the photo booth's write, which is the only one there is
+		const cover = writeCover(root, "checkout", JPEG_BYTES);
 		expect(cover.hash).toMatch(/^[0-9a-f]{32}$/);
 		// persisted under design/.spool — app-owned, gitignored, never an SSE change event
 		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout", `${cover.hash}.jpg`))).toBe(true);
@@ -1041,8 +1017,7 @@ describe("thumbnails", () => {
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
-		const put = await putCover(app, name, "checkout", coverBody(JPEG_BYTES));
-		const { hash } = (await put.json()) as Cover;
+		const { hash } = writeCover(root, "checkout", JPEG_BYTES);
 
 		// the harness credentials /api/ paths and nothing else, so this read carries
 		// no control header — an <img> cannot, which is why the hash is the credential
@@ -1060,8 +1035,8 @@ describe("thumbnails", () => {
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
 
-		const stale = (await (await putCover(app, name, "checkout", coverBody(PNG_BYTES))).json()) as Cover;
-		const fresh = (await (await putCover(app, name, "checkout", coverBody(JPEG_BYTES))).json()) as Cover;
+		const stale = writeCover(root, "checkout", PNG_BYTES);
+		const fresh = writeCover(root, "checkout", JPEG_BYTES);
 		expect(fresh.hash).not.toBe(stale.hash);
 
 		expect((await app.request(`/covers/${name}/checkout/${stale.hash}`)).status).toBe(404);
@@ -1069,37 +1044,12 @@ describe("thumbnails", () => {
 		expect(Buffer.from(await got.arrayBuffer())).toEqual(JPEG_BYTES);
 	});
 
-	it("refuses an image the store cannot serve", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "checkout", frameTsx("checkout"));
-		const app = makeApp(spoolDir);
-
-		const put = await putCover(app, name, "checkout", coverBody(Buffer.from("<script>no</script>")));
-
-		expect(put.status).toBe(400);
-		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout"))).toBe(false);
-	});
-
-	it("refuses a request that is not exactly one cover image", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "checkout", frameTsx("checkout"));
-		const app = makeApp(spoolDir);
-		const mislabelled = new FormData();
-		mislabelled.append("w390", new Blob([new Uint8Array(JPEG_BYTES)]));
-
-		expect((await putCover(app, name, "checkout", mislabelled)).status).toBe(400);
-		expect((await putCover(app, name, "checkout", new FormData())).status).toBe(400);
-	});
-
-	it("rejects covers for frames that do not exist and unsafe names", async () => {
+	it("serves no cover for frames that do not exist and unsafe names", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
 		const app = makeApp(spoolDir);
 		const hash = "f".repeat(32);
 
-		expect((await putCover(app, name, "ghost", coverBody(JPEG_BYTES))).status).toBe(404);
 		expect((await app.request(`/covers/${name}/ghost/${hash}`)).status).toBe(404);
 		expect((await app.request(`/covers/${name}/${encodeURIComponent("../../escape")}/${hash}`)).status).toBe(404);
 		expect((await app.request(`/covers/${name}/ghost/nothex`)).status).toBe(404);
@@ -1182,96 +1132,6 @@ describe("thumbnails", () => {
 			body: JSON.stringify({ arrows: "hidden" }),
 		});
 		expect(bad.status).toBe(400);
-	});
-
-	it("publishes a thumb event to the project's SSE stream on write", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "checkout", frameTsx("checkout"));
-		const app = makeApp(spoolDir);
-		const controller = new AbortController();
-		onTestFinished(() => controller.abort());
-
-		const stream = await app.request(`/api/p/${name}/events`, { signal: controller.signal });
-		const events = sseReader(stream);
-		expect((await events.next()).event).toBe("hello");
-
-		const put = await putCover(app, name, "checkout", coverBody(PNG_BYTES));
-
-		// the image rides the event, so another browser swaps addresses without a
-		// projection read of its own
-		expect(await events.next()).toEqual({
-			event: "change",
-			data: { kind: "thumb", frame: "checkout", cover: await put.json() },
-		});
-	});
-
-	describe("recording a capture failure (#173)", () => {
-		it("stores the reason beside the frame's cover", async () => {
-			const spoolDir = join(makeTempDir(), ".spool");
-			const { root, name } = makeProject(spoolDir);
-			writeFrame(root, "checkout", frameTsx("checkout"));
-			const app = makeApp(spoolDir);
-
-			const post = await postCaptureError(app, name, "checkout", "capture canvases too large");
-
-			expect(post.status).toBe(204);
-			expect(readCaptureError(root, "checkout")).toMatchObject({ error: "capture canvases too large" });
-		});
-
-		it("requires the same control token and origin policy as the cover PUT", async () => {
-			const spoolDir = join(makeTempDir(), ".spool");
-			const { root, name } = makeProject(spoolDir);
-			writeFrame(root, "checkout", frameTsx("checkout"));
-			const app = makeApp(spoolDir);
-
-			const bare = await app.fetch(`/api/p/${name}/thumbs/checkout/error`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ error: "capture reply timed out" }),
-			});
-			expect(bare.status).toBe(401);
-		});
-
-		it("rejects a non-string or empty reason", async () => {
-			const spoolDir = join(makeTempDir(), ".spool");
-			const { root, name } = makeProject(spoolDir);
-			writeFrame(root, "checkout", frameTsx("checkout"));
-			const app = makeApp(spoolDir);
-
-			expect((await postCaptureError(app, name, "checkout", "")).status).toBe(400);
-			expect((await postCaptureError(app, name, "checkout", 1)).status).toBe(400);
-			expect(
-				(
-					await app.request(`/api/p/${name}/thumbs/checkout/error`, {
-						method: "POST",
-						headers: { "content-type": "application/json" },
-						body: JSON.stringify({}),
-					})
-				).status,
-			).toBe(400);
-		});
-
-		it("rejects a frame that does not exist", async () => {
-			const spoolDir = join(makeTempDir(), ".spool");
-			const { name } = makeProject(spoolDir);
-			const app = makeApp(spoolDir);
-
-			expect((await postCaptureError(app, name, "ghost", "capture reply timed out")).status).toBe(404);
-		});
-
-		it("clears once a landed cover retires every other file in the frame's cover dir", async () => {
-			const spoolDir = join(makeTempDir(), ".spool");
-			const { root, name } = makeProject(spoolDir);
-			writeFrame(root, "checkout", frameTsx("checkout"));
-			const app = makeApp(spoolDir);
-			await postCaptureError(app, name, "checkout", "capture reply timed out");
-			expect(readCaptureError(root, "checkout")).toBeDefined();
-
-			await putCover(app, name, "checkout", coverBody(JPEG_BYTES));
-
-			expect(readCaptureError(root, "checkout")).toBeUndefined();
-		});
 	});
 });
 

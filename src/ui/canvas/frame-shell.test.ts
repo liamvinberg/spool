@@ -38,12 +38,6 @@ describe("coverPlan", () => {
 		expect(plan({})).toEqual({ cover: true, image: "cover", badge: true });
 	});
 
-	it("leaves a borrowed frame to boot behind its own still, badgeless", () => {
-		const borrowed = { state: "refreshing", entered: false } as const;
-		expect(plan(borrowed)).toEqual({ cover: true, image: "cover", badge: false });
-		expect(plan({ ...borrowed, ready: true })).toEqual({ cover: true, image: "cover", badge: false });
-	});
-
 	it("keeps a held frame behind its still: real DOM to read, a picture to look at", () => {
 		expect(plan({ state: "held", entered: false, ready: true })).toEqual({
 			cover: true,
@@ -103,7 +97,7 @@ describe("coverPlan", () => {
 	});
 
 	it("never uncovers a frame you are not inside, however booted", () => {
-		for (const state of ["refreshing", "held", "picture"] as const) {
+		for (const state of ["held", "picture"] as const) {
 			expect(plan({ state, entered: false, ready: true, settled: true }).cover).toBe(true);
 		}
 	});
@@ -162,11 +156,9 @@ describe("FrameShell documents", () => {
 		await again({ state: "live", entered: true });
 		expect(wrapper?.style.visibility).toBe("visible");
 
-		// Borrowed and unreadable held frames both stay behind their still.
-		for (const state of ["refreshing", "held"] as const) {
-			await again({ state });
-			expect(host.querySelector("iframe")?.parentElement?.style.visibility).toBe("hidden");
-		}
+		// An unreadable held frame stays behind its still.
+		await again({ state: "held" });
+		expect(host.querySelector("iframe")?.parentElement?.style.visibility).toBe("hidden");
 		act(() => root.unmount());
 	});
 
@@ -194,7 +186,7 @@ describe("FrameShell documents", () => {
 		const { host, root, again } = await render({ state: "live" });
 		const iframe = host.querySelector("iframe");
 		await again({ state: "held" });
-		await again({ state: "refreshing" });
+		await again({ state: "live" });
 		expect(host.querySelector("iframe")).toBe(iframe);
 		act(() => root.unmount());
 	});

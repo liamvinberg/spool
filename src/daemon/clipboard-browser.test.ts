@@ -1,6 +1,7 @@
 import { type Browser, chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { builtUi, COVER_PNG, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { writeCover } from "./thumbs";
 
 async function launchBrowser(): Promise<Browser | undefined> {
 	try {
@@ -441,14 +442,7 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 		body: JSON.stringify({ root: project.root, open: true }),
 	});
 	expect(session.status).toBe(204);
-	const coverBody = new FormData();
-	coverBody.append("cover", new Blob([COVER_PNG]));
-	const stored = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/thumbs/self`, {
-		method: "PUT",
-		headers: { "X-Spool-Control": project.controlToken },
-		body: coverBody,
-	});
-	expect(stored.status).toBe(200);
+	writeCover(project.root, "self", Buffer.from(COVER_PNG));
 
 	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => context.close());

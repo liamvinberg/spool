@@ -21,17 +21,9 @@ it("accepts a content measurement only with finite dimensions and a request id",
 	expect(parseFrameMessage({ ...message, id: 1.5 })).toBeUndefined();
 });
 
-it("accepts an arrival only with whether it went quiet (#177)", () => {
-	for (const quiet of [true, false]) {
-		expect(parseFrameMessage({ spool: "arrived", frame: "landing", quiet })).toEqual({
-			spool: "arrived",
-			frame: "landing",
-			quiet,
-		});
-	}
-	for (const quiet of [undefined, "true", 1]) {
-		expect(parseFrameMessage({ spool: "arrived", frame: "landing", quiet })).toBeUndefined();
-	}
+it("accepts a document's arrival (#177)", () => {
+	expect(parseFrameMessage({ spool: "arrived", frame: "landing" })).toEqual({ spool: "arrived", frame: "landing" });
+	expect(parseFrameMessage({ spool: "arrived" })).toBeUndefined();
 });
 
 describe("trusted capture source protocol", () => {
@@ -45,11 +37,10 @@ describe("trusted capture source protocol", () => {
 		width: 390,
 		height: 844,
 		dpr: 2,
-		targetWidth: 400,
 	};
 
 	it("carries the request id and accepts only an exact bounded SVG source", () => {
-		expect(captureMessage(id, 400, 900)).toEqual({ spool: "capture", id, targetWidth: 400, settleMs: 900 });
+		expect(captureMessage(id, 900)).toEqual({ spool: "capture", id, settleMs: 900 });
 		expect(parseFrameMessage(source)).toEqual(source);
 		expect(parseFrameMessage({ ...source, extra: true })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, id: "1" })).toBeUndefined();
@@ -58,16 +49,18 @@ describe("trusted capture source protocol", () => {
 		expect(parseFrameMessage({ ...source, width: 0 })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, height: 32769 })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, dpr: 2.1 })).toBeUndefined();
-		expect(parseFrameMessage({ ...source, targetWidth: 401 })).toBeUndefined();
-		expect(parseFrameMessage({ ...source, width: 32768, height: 32768, dpr: 2, targetWidth: 0 })).toBeUndefined();
-		const longExport = { ...source, width: 1440, height: 7900, targetWidth: 0 };
+		// a cover is the photo booth's, never a frame's: the old request shape is refused
+		expect(parseFrameMessage({ ...source, targetWidth: 400 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, width: 32768, height: 32768, dpr: 2 })).toBeUndefined();
+		const longExport = { ...source, width: 1440, height: 7900 };
 		expect(parseFrameMessage(longExport)).toEqual(longExport);
 		expect(parseFrameMessage({ ...source, width: 40, height: 1000 })).toEqual({
 			...source,
 			width: 40,
 			height: 1000,
 		});
-		expect(parseFrameMessage({ ...source, width: 40, height: 10_000 })).toBeUndefined();
+		// an export past the raster budget even at one device pixel per CSS pixel
+		expect(parseFrameMessage({ ...source, width: 6000, height: 6000 })).toBeUndefined();
 	});
 
 	it("accepts only an exact, correlated bounded source error", () => {

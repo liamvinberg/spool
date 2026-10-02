@@ -14,9 +14,9 @@ import { ProjectCanvas } from "./canvas";
  */
 
 const frames = [
-	{ name: "a", x: 0, y: 0, w: 100, h: 100, cover: { hash: "a".repeat(32) } },
-	// no cover, so the canvas borrows it to make one (#112): a mounted sibling
-	{ name: "b", x: 160, y: 0, w: 100, h: 100 },
+	{ name: "a", x: 0, y: 0, w: 400, h: 400, cover: { hash: "a".repeat(32) } },
+	// drawn big enough to read beside it, so it runs a document of its own (#112): a mounted sibling
+	{ name: "b", x: 440, y: 0, w: 400, h: 400, cover: { hash: "b".repeat(32) } },
 	{ name: "shop/c", page: "shop", x: 0, y: 0, w: 100, h: 100, cover: { hash: "c".repeat(32) } },
 ];
 
@@ -62,6 +62,10 @@ describe("page session", () => {
 			return 1;
 		});
 		vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+		// happy-dom lays nothing out, and the canvas reads the viewport's own box
+		// for what is readable on it
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
 
 		const host = document.createElement("div");
 		document.body.append(host);
@@ -80,7 +84,7 @@ describe("page session", () => {
 		const canvas = host.querySelector<HTMLElement>('[role="application"]');
 		if (canvas === null) throw new Error("canvas did not render");
 
-		// a is entered, so its document runs; b is borrowed for its picture — two mounted documents
+		// a is entered, so its document runs; b is readable beside it — two mounted documents
 		await select(canvas, 40, false);
 		await act(async () => {
 			host

@@ -41,7 +41,15 @@ describe("canvas boot", () => {
 	});
 
 	it("mounts the first document as soon as it has a camera and frames", async () => {
-		stubFetch(async () => undefined);
+		// a frame drawn big enough to read at the camera the canvas opens on, in a
+		// viewport with a size: happy-dom lays nothing out, so it is told one
+		stubFetch(async (url) =>
+			url.pathname.endsWith("/frames")
+				? Response.json({ root: "/project", pages: [], frames: [{ ...frames[0], w: 500, h: 500 }] })
+				: undefined,
+		);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
 		const host = mountCanvas();
 
 		// no clock is advanced here: the settle and the sweep are both still

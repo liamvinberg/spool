@@ -6,6 +6,7 @@ import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-h
 import { createDaemonApp } from "./app";
 import { captureWorkerCsp } from "./document";
 import { CAPTURE_HOST, RENDER_HOST } from "./security";
+import { writeCover } from "./thumbs";
 
 const CONTROL_HOST = "localhost";
 const CONTROL_TOKEN = "control-token-for-tests";
@@ -243,12 +244,8 @@ describe("daemon authority matrix", () => {
 	});
 
 	it("lets a cover's own address be its credential, on the control host alone", async () => {
-		const { project, request, control } = makeSecurityHarness();
-		const body = new FormData();
-		body.append("cover", new Blob([new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3])]));
-		const put = await control(`/api/p/${encodeURIComponent(project.name)}/thumbs/home`, { method: "PUT", body });
-		expect(put.status).toBe(200);
-		const { hash } = (await put.json()) as { hash: string };
+		const { project, request } = makeSecurityHarness();
+		const { hash } = writeCover(project.root, "home", Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]));
 		const image = `/covers/${encodeURIComponent(project.name)}/home/${hash}`;
 
 		// An <img> cannot carry the control header, so writing the image content

@@ -31,13 +31,11 @@ import {
 	fetchFlows,
 	fetchProjection,
 	type MoveAsk,
-	postCaptureFailure,
 	postSeen,
 	postTrash,
 	postWalk,
 	putCanvasState,
 	putCanvasView,
-	putCover,
 	putGeometry,
 	putPlaces,
 	putSelection,
@@ -83,7 +81,6 @@ import {
 } from "./camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
-import type { CoverRaster } from "./capture-broker";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
 import { type Drop, dropAt, moveAsk } from "./element-move";
@@ -792,17 +789,7 @@ export function ProjectCanvas({
 	const jumpList = useRef(emptyJumps());
 
 	/**
-	 * Whether a frame has a still worth standing in for it — the only thing the
-	 * lifecycle asks about a picture. The headless fallback and self-capture both
-	 * write the same one-image shape, so any stored cover is enough.
-	 */
-	const hasCover = useCallback(
-		(name: string) => framesRef.current.some((f) => f.name === name && f.cover !== undefined),
-		[],
-	);
-
-	/**
-	 * A cover was written by us or another browser. The image is the frame's
+	 * A cover was written by the daemon's photo booth. The image is the frame's
 	 * own state, so it is patched in place rather than held beside the projection:
 	 * the hash is the address, so a new one is a new URL and the swap needs no
 	 * nonce of its own.
@@ -814,31 +801,6 @@ export function ProjectCanvas({
 			),
 		);
 	}, []);
-
-	// a settled self-capture persists into design/.spool as one immutable image
-	const onShot = useCallback(
-		(frame: string, image: CoverRaster) => {
-			void (async () => {
-				try {
-					const cover = await putCover(project, frame, await (await fetch(image.url)).blob());
-					if (cover !== undefined) noteCover(frame, cover);
-				} catch {
-					// a lost capture is re-taken on the next settle
-				}
-			})();
-		},
-		[project, noteCover],
-	);
-
-	// A self-capture failed with a reason worth keeping (#173): posted and
-	// forgotten, since `spool logs` is the only reader and nothing on screen is
-	// waiting on it.
-	const onCaptureFailure = useCallback(
-		(frame: string, error: string) => {
-			postCaptureFailure(project, frame, error);
-		},
-		[project],
-	);
 
 	// A pointing tool owns every frame represented by its element picks. Without
 	// picks, the selected frame and entered-frame modifier keep their intent.
@@ -867,17 +829,12 @@ export function ProjectCanvas({
 
 	const lifecycle = useFrameLifecycle({
 		framesRef,
-		allFramesRef,
 		entered,
 		selectionTargets,
-		resizing: resizingFrame,
 		selected,
 		hovered: hoveredFrame,
 		// the Edit tool holds the whole field still while it is on (#319, #339)
 		editing: editOn,
-		hasCover: hasCover,
-		onShot,
-		onCaptureFailure,
 		cameraRef: restCameraRef,
 		viewportRef,
 	});
@@ -956,7 +913,6 @@ export function ProjectCanvas({
 			setPicked((current) => current.filter((pick) => pick.frame !== frame));
 			if (pickedChain.current?.frame === frame) holdChain(null);
 			setPreview((current) => (current?.frame === frame ? null : current));
-			lifecycleRef.current.markStale(frame);
 		},
 		[holdChain, releaseHold],
 	);
@@ -1001,40 +957,6 @@ export function ProjectCanvas({
 		},
 		[project, reloadOrHold],
 	);
-
-	/**
-	 * A frame that changed size is a frame whose picture is wrong.
-	 *
-	 * A cover is the document photographed at one width and drawn `object-cover`
-	 * into the frame's box, so a resize invalidates it twice over: the layout it
-	 * recorded is not the layout the frame now has, and the raster it recorded is
-	 * the wrong shape for the box it now fills. Nothing else notices. A geometry
-	 * write never touches the document, and a frame that drops out of live
-	 * because you zoomed away keeps its picture on purpose (`lifecycle.ts`), so
-	 * the wrong one would stand until the next source edit.
-	 *
-	 * Every hand that writes a size lands here — a drag, an undo, and the agent's
-	 * own frame.json arriving over the stream — which is what makes stating a size
-	 * before the frame entry advice rather than a race. A size written after the
-	 * frame appeared costs its first paint and nothing else.
-	 *
-	 * A drag in flight is skipped, and deliberately records nothing while it is:
-	 * the size worth photographing is the one you let go of, and marking every
-	 * frame of the gesture would start the staleness clock at the grab, leaving
-	 * the eventual capture overdue (#215) and shooting the reboot mid-arrival.
-	 */
-	const footprints = useRef(new Map<string, string>());
-	useEffect(() => {
-		if (resizingFrame !== null || gesture.current.kind === "resize") return;
-		const seen = new Map<string, string>();
-		for (const frame of frames) {
-			const footprint = `${Math.round(frame.w)}×${Math.round(frame.h)}`;
-			seen.set(frame.name, footprint);
-			const before = footprints.current.get(frame.name);
-			if (before !== undefined && before !== footprint) lifecycleRef.current.markStale(frame.name);
-		}
-		footprints.current = seen;
-	}, [frames, resizingFrame]);
 
 	const onIframe = useCallback((name: string, el: HTMLIFrameElement | null) => {
 		if (el === null) iframes.current.delete(name);
@@ -3707,8 +3629,9 @@ export function ProjectCanvas({
 	 * down to reloading every document. Frames are content-addressed and
 	 * revalidated, so a frame nothing happened to costs one conditional request,
 	 * and a reconnect is rare enough to pay for the frames something did happen
-	 * to. Every picture goes with them: a frame on another page owes a fresh
-	 * still whether or not anyone has looked at it yet.
+	 * to. The pictures need nothing of their own: the daemon's photo booth kept
+	 * making them while the stream was gone, and the projection read carries
+	 * every one it made.
 	 */
 	const resync = useCallback(() => {
 		window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
@@ -3821,7 +3744,7 @@ export function ProjectCanvas({
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost
-	 * nothing — the sweep, the errands and the frames' own animations all — so
+	 * nothing — the sweep and the frames' own animations both — so
 	 * coming back is a moment the canvas has to act on rather than a moment it
 	 * can wait out at a quarter of a second per sweep. The stream checks itself
 	 * (`subscribeSse`); this is the frames.
@@ -3895,7 +3818,7 @@ export function ProjectCanvas({
 				case "arrived":
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
-					lifecycleRef.current.noteArrived(message.frame, message.quiet);
+					lifecycleRef.current.noteArrived(message.frame);
 					// and so has the document held in front of a reload the hand
 					// caused (#253's no blink): let go at loaded, the still would
 					// stand in until here, which is the flash the hold exists to

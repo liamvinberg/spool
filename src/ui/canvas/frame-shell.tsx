@@ -10,7 +10,6 @@ import type { FrameState } from "./lifecycle";
 /**
  * One frame on the canvas, rendering whatever the lifecycle says:
  *   picture: the still (or a quiet placeholder), no iframe in the DOM
- *   refreshing: a document booting behind the still, only to be photographed
  *   held: a document behind its still, borrowed for an export
  *   live: a readable document, a selection or the frame you went inside
  *

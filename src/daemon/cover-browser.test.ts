@@ -1,4 +1,3 @@
-import { deflateSync } from "node:zlib";
 import { type Browser, chromium } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
@@ -6,39 +5,28 @@ import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-help
 const FRAME_W = 390;
 const FRAME_H = 844;
 const DEVICE_WIDTH = 800;
-const DEVICE_HEIGHT = Math.round((FRAME_H / FRAME_W) * DEVICE_WIDTH);
 
-function crc32(bytes: Uint8Array): number {
-	let crc = 0xffffffff;
-	for (const byte of bytes) {
-		crc ^= byte;
-		for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-	}
-	return (crc ^ 0xffffffff) >>> 0;
-}
-
-function png(width: number, height: number): Buffer {
-	const chunk = (type: string, data: Buffer) => {
-		const header = Buffer.alloc(8);
-		header.writeUInt32BE(data.length, 0);
-		header.write(type, 4);
-		const checksum = Buffer.alloc(4);
-		checksum.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type), data])), 0);
-		return Buffer.concat([header, data, checksum]);
+/**
+ * The cover the daemon's photo booth makes of a frame: a read that finds the
+ * frame uncovered asks for it, and the next reads see it land.
+ */
+async function boothCover(
+	project: { url: string; name: string; controlToken: string },
+	frame: string,
+): Promise<{ hash: string }> {
+	const read = async () => {
+		const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, {
+			headers: { "X-Spool-Control": project.controlToken },
+		});
+		const { frames } = (await res.json()) as { frames: { name: string; cover?: { hash: string } }[] };
+		return frames.find((entry) => entry.name === frame)?.cover;
 	};
-	const header = Buffer.alloc(13);
-	header.writeUInt32BE(width, 0);
-	header.writeUInt32BE(height, 4);
-	header[8] = 8;
-	header[9] = 2;
-	const rows = Buffer.alloc((width * 3 + 1) * height);
-	for (let row = 0; row < height; row += 1) rows[row * (width * 3 + 1)] = 0;
-	return Buffer.concat([
-		Buffer.from("89504e470d0a1a0a", "hex"),
-		chunk("IHDR", header),
-		chunk("IDAT", deflateSync(rows)),
-		chunk("IEND", Buffer.alloc(0)),
-	]);
+	await expect.poll(read, { timeout: 60_000 }).toBeDefined();
+	// the frame's own write events can send it round once more behind the read
+	// that asked; a still frame photographs to the same bytes, so the address holds
+	const cover = await read();
+	if (cover === undefined) throw new Error(`no cover for "${frame}"`);
+	return cover;
 }
 
 async function launchBrowser(): Promise<Browser | undefined> {
@@ -68,15 +56,8 @@ it("draws one 2× portrait image below the live threshold", { timeout: 120_000 }
 	);
 
 	const control = { "content-type": "application/json", "X-Spool-Control": project.controlToken };
-	const body = new FormData();
-	body.append("cover", new Blob([new Uint8Array(png(DEVICE_WIDTH, DEVICE_HEIGHT))], { type: "image/png" }));
-	const stored = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/thumbs/covered`, {
-		method: "PUT",
-		headers: { "X-Spool-Control": project.controlToken },
-		body,
-	});
-	expect(stored.status).toBe(200);
-	const cover = (await stored.json()) as { hash: string };
+	// the daemon's photo booth makes the cover, with no canvas open to ask it
+	const cover = await boothCover(project, "covered");
 	const state = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/state`, {
 		method: "PUT",
 		headers: control,
@@ -195,16 +176,7 @@ it("holds a promoted frame's cover through its entrance, and lets go at the boun
 
 	// a real still to stand in front of each frame: the seam is a settled picture
 	// swapped for a booting document, not a placeholder swapped for one
-	for (const frame of ["slow", "busy"]) {
-		const body = new FormData();
-		body.append("cover", new Blob([new Uint8Array(png(500, 500))], { type: "image/png" }));
-		const stored = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/thumbs/${frame}`, {
-			method: "PUT",
-			headers: { "X-Spool-Control": project.controlToken },
-			body,
-		});
-		expect(stored.status).toBe(200);
-	}
+	for (const frame of ["slow", "busy"]) await boothCover(project, frame);
 
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	await page.addInitScript(watchCovers);

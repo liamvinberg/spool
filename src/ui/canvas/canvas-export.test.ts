@@ -3,7 +3,6 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, type MockInstance, onTestFinished, vi } from "vitest";
-import { CAPTURE_AFTER_READY_MS } from "./lifecycle";
 import type { CaptureSourceMessage } from "./protocol";
 
 const broker = vi.hoisted(() => ({
@@ -162,10 +161,10 @@ describe("multi-frame canvas export", () => {
 		await act(async () => exportButton?.click());
 
 		await completeMountedCapture(host, "a", "11111111111111111111111111111111");
-		// A selected document must survive a download longer than the cover-arrival
-		// window. A JSON/EOF event fixture would reconnect and replace it here.
+		// A selected document must survive a download that outlasts several sweeps
+		// and an arrival deadline. A JSON/EOF event fixture would reconnect and replace it here.
 		if (delayed) {
-			await act(async () => vi.advanceTimersByTimeAsync(CAPTURE_AFTER_READY_MS + 300));
+			await act(async () => vi.advanceTimersByTimeAsync(1800));
 			expect(downloads).toEqual([]);
 			expect(broker.raster.mock.calls.map(([source]) => source.frame)).toEqual(["a"]);
 			expect(host.querySelector('iframe[title="b"]')).toBe(heldB);
@@ -179,10 +178,7 @@ describe("multi-frame canvas export", () => {
 
 		expect(downloads).toEqual(["a.png", "b.png"]);
 		expect(broker.id).toHaveBeenCalledTimes(2);
-		expect(broker.raster.mock.calls.map(([source]) => [source.frame, source.targetWidth])).toEqual([
-			["a", 0],
-			["b", 0],
-		]);
+		expect(broker.raster.mock.calls.map(([source]) => source.frame)).toEqual(["a", "b"]);
 		expect(requests.filter((path) => path.startsWith("/covers/"))).toEqual([]);
 		const restoredSelection = host.querySelector<HTMLIFrameElement>('iframe[title="b"]');
 		expect(restoredSelection?.parentElement?.style.visibility).toBe("visible");
@@ -240,12 +236,7 @@ async function completeMountedCapture(
 	await until(() =>
 		postMessage.mock.calls.some(
 			([message]) =>
-				typeof message === "object" &&
-				message !== null &&
-				"spool" in message &&
-				message.spool === "capture" &&
-				"targetWidth" in message &&
-				message.targetWidth === 0,
+				typeof message === "object" && message !== null && "spool" in message && message.spool === "capture",
 		),
 	);
 
@@ -260,7 +251,6 @@ async function completeMountedCapture(
 					width: 100,
 					height: 100,
 					dpr: 2,
-					targetWidth: 0,
 				},
 				source: sourceWindow,
 			}),

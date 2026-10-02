@@ -78,49 +78,49 @@ describe("trusted UI API client", () => {
 		expect(headersOf(call).get("x-spool-control")).toBeNull();
 	});
 
-	it("uses authenticated keepalive fetches for covers and staged trash", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValue(new Response(JSON.stringify({ hash: "c".repeat(32) }), { status: 200 }));
-		vi.stubGlobal("fetch", fetchMock);
-		const { beaconTrash, putCover } = await loadApi();
-
-		await expect(putCover("demo", "home", new Blob(["jpeg"]))).resolves.toEqual({ hash: "c".repeat(32) });
-		beaconTrash("demo", ["home"]);
-		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-
-		for (const call of fetchMock.mock.calls) {
-			expect(headersOf(call).get("x-spool-control")).toBe("control-test-token");
-		}
-		const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
-		expect([...body.keys()]).toEqual(["cover"]);
-		expect((fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.keepalive).toBe(true);
-	});
-
-	it("posts a self-capture's failure reason, fired and forgotten", async () => {
+	it("uses an authenticated keepalive fetch for staged trash", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
 		vi.stubGlobal("fetch", fetchMock);
-		const { postCaptureFailure } = await loadApi();
+		const { beaconTrash } = await loadApi();
 
-		postCaptureFailure("demo project", "home/card", "capture canvases too large");
+		beaconTrash("demo", ["home"]);
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
 
 		const call = fetchMock.mock.calls[0] ?? [];
-		expect(new URL(String(call[0]), window.location.href).pathname).toBe(
-			"/api/p/demo%20project/thumbs/home%2Fcard/error",
-		);
-		const init = call[1] as RequestInit | undefined;
-		expect(init?.method).toBe("POST");
 		expect(headersOf(call).get("x-spool-control")).toBe("control-test-token");
-		expect(JSON.parse(String(init?.body))).toEqual({ error: "capture canvases too large" });
+		expect((call[1] as RequestInit | undefined)?.keepalive).toBe(true);
 	});
 
-	it("swallows a failed capture-failure post: nothing on screen is waiting on it", async () => {
+	it("tells the daemon what the canvas shows, fired and forgotten", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const { putCanvasView } = await loadApi();
+		const view = {
+			view: "6f1c7c56-3d1e-4c63-9a8b-2b0f7c1d9e10",
+			page: "home",
+			frames: ["home/card"],
+			scheme: "dark" as const,
+		};
+
+		putCanvasView("demo project", view);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+		const call = fetchMock.mock.calls[0] ?? [];
+		expect(new URL(String(call[0]), window.location.href).pathname).toBe("/api/p/demo%20project/view");
+		const init = call[1] as RequestInit | undefined;
+		expect(init?.method).toBe("PUT");
+		expect(headersOf(call).get("x-spool-control")).toBe("control-test-token");
+		expect(JSON.parse(String(init?.body))).toEqual(view);
+	});
+
+	it("swallows a view report that could not be sent: the next camera rest sends another", async () => {
 		const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
 		vi.stubGlobal("fetch", fetchMock);
-		const { postCaptureFailure } = await loadApi();
+		const { putCanvasView } = await loadApi();
 
-		expect(() => postCaptureFailure("demo", "home", "capture reply timed out")).not.toThrow();
+		expect(() =>
+			putCanvasView("demo", { view: "6f1c7c56-3d1e-4c63-9a8b-2b0f7c1d9e10", page: "", frames: [], scheme: "light" }),
+		).not.toThrow();
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
 	});
 

@@ -231,13 +231,14 @@ function captureErrorFile(root: string, frame: string): string {
 
 export interface CaptureError {
 	error: string;
-	/** ISO timestamp of the failed errand, not of the read. */
+	/** ISO timestamp of the failed picture, not of the read. */
 	at: string;
 }
 
 /**
- * The reason a self-capture failed, beside the cover it never wrote (#173).
- * `writeCover`'s own cleanup — every file in the frame's cover dir that is not
+ * The reason the photo booth could not make a cover, beside the old one it
+ * leaves standing (#173): a compile error, a throw on boot, a frame too large
+ * or too slow to draw. `writeCover`'s own cleanup — every file in the frame's cover dir that is not
  * the new image gets removed — retires this the moment a later capture lands,
  * so a stale reason never outlives the picture that made it moot.
  */

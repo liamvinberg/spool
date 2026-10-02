@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
+import { writeCover } from "./thumbs";
 
 const SENTINEL = "outside-design-sentinel";
 const HASH = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4";
@@ -64,10 +65,10 @@ describe("project filesystem sinks", () => {
 		await expectBoundary(await app.request(`/covers/${name}/checkout/${HASH}`), ".spool/thumbs/checkout", root);
 		const stateWrite = await app.request(`/api/p/${name}/state`, json("PUT", { camera: { x: 1, y: 2, k: 1 } }));
 		await expectBoundary(stateWrite, ".spool/state.json", root);
-		const body = new FormData();
-		body.append("cover", new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2])]));
-		const coverWrite = await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body });
-		await expectBoundary(coverWrite, ".spool/thumbs/checkout", root);
+		// the photo booth's write goes through the same boundary as every read
+		expect(() => writeCover(root, "checkout", Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]))).toThrow(
+			'design boundary: ".spool/thumbs/checkout" resolves outside design/',
+		);
 		expect(readFileSync(outsideState, "utf8")).toContain(SENTINEL);
 		expect(readFileSync(join(outsideCovers, `${HASH}.png`), "utf8")).toBe(SENTINEL);
 		// and the projection reads past it rather than through it

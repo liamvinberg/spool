@@ -1,9 +1,9 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LIVE_MIN_CSS_PX } from "../../cover";
+import { LIVE_MIN_CSS_PX, SETTLE_BUDGET_MS } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
-import { CAPTURE_WORKER_TIMEOUT_MS, type CoverRaster, captureRequestId, rasterCaptureSource } from "./capture-broker";
+import { CAPTURE_WORKER_TIMEOUT_MS, captureRequestId, type ExportRaster, rasterCaptureSource } from "./capture-broker";
 import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage } from "./protocol";
 
 /**
@@ -11,21 +11,22 @@ import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage }
  * and why. Mounting is caused, never scheduled:
  *
  *   1. you went inside a frame,
- *   2. its picture is missing,
- *   3. its picture is wrong.
- *   4. it is large enough to read and intersects the viewport's ring.
+ *   2. it is large enough to read and intersects the viewport's ring.
  *
- * The fourth cause is bounded by viewport area rather than page size. Causes 2
- * and 3 are the same errand: borrow the frame long enough to photograph it.
- * The sweep hands that errand out a couple at a time.
+ * The second cause is bounded by viewport area rather than page size.
+ *
+ * A frame is never mounted for its picture. Every cover is made by the
+ * daemon's photo booth, in a browser of its own (#107's one codepath), so a
+ * frame with no picture shows its placeholder until the booth's lands, and a
+ * frame whose source changed keeps its old picture until then. The canvas
+ * only shows them.
  *
  * Selection makes its frames live at every zoom, so moving, resizing and
  * editing work on the visible document. A frame being exported is held
- * separately. Selected frames prepare missing or stale pictures in the
- * background, except while a resize is still changing their viewport.
+ * separately, behind its still.
  *
  * A picture stands in below the readable threshold. Above it, a nearby frame
- * is live; a borrowed or held frame remains behind its still.
+ * is live; a held frame remains behind its still.
  *
  * Live HTML frames hold their animations while the camera moves (#171), once
  * nothing has attended them for a long minute (#172), and for as long as the
@@ -33,7 +34,7 @@ import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage }
  * the frames it is running.
  */
 
-export type FrameState = "picture" | "refreshing" | "held" | "live";
+export type FrameState = "picture" | "held" | "live";
 
 const SWEEP_MS = 300;
 const EXPORT_MOUNT_TIMEOUT_MS = 20_000;
@@ -47,97 +48,36 @@ function isExportMountReady(
 }
 
 /**
- * How long a whole self-capture may take: the shim's serialization, the hops
+ * How long a whole export capture may take: the shim's serialization, the hops
  * between three realms and the worker's raster budget. It has to outlast
  * the worker's, or this timer retires a capture that was still working.
  */
 export const CAPTURE_REPLY_TIMEOUT_MS = CAPTURE_WORKER_TIMEOUT_MS + 3000;
 /**
- * How long a booted frame runs before its still is worth taking. Frames animate
- * their content in; a capture fired on the loaded report records the frame
- * mid-arrival, and that half-drawn picture is what the canvas then shows in the
- * frame's place from then on. The shim waits for its own animations too — this
- * is the outer bound, for the entry animations no timing API sees.
- */
-export const CAPTURE_AFTER_READY_MS = 1500;
-/**
- * How long a frame's picture may stay wrong before the sweep stops waiting out
- * CAPTURE_AFTER_READY_MS. That wait is right for one write: it buys the
- * settle a source edit's own reboot deserves. It has no ceiling past that, and
- * a steady stream of writes reloads the frame on every one of them — a reload
- * takes the boot's memory with it, so the wait restarts before it ever
- * finishes, and the cover falls up to tens of seconds behind the file an
- * agent is still streaming into (#215). Past this cap the sweep stops waiting
- * for the reboot to settle and takes the shot the moment the borrowed
- * document reports loaded, mid-arrival warts and all. That photograph may be
- * a little wrong, but never wrong for longer than this, and the next capture
- * — settled or not — heals whatever it got wrong.
- */
-export const CAPTURE_MAX_STALE_MS = 4000;
-/**
- * How long a frame may wait, inside the capture itself, for its fonts to load
- * and its entry animations to finish before it photographs itself.
- *
- * It is the dominant term in an errand — #94 priced one at 130 to 170 ms booted
- * and discarded, 389 to 570 photographed, and 660 to 1437 with this budget on
- * top — and it stays, because what it costs has changed hands. It used to be
- * paid by whoever was waiting for the picture; a walk paid it on arrival until
- * #110 moved the walk off the capture entirely, and the sweep paid it on a
- * mounted frame you could see. Now it is paid out of an errand slot nobody is
- * waiting on, behind a still that is already on screen. The only thing it buys
- * is a truer picture, and the picture is the only thing anyone looks at. A
- * borrowed frame that went quiet on arrival pays it once, not again for its
- * picture (`maySkipSettle`).
- */
-export const CAPTURE_SETTLE_BUDGET_MS = 900;
-/**
  * How long a promoted frame's cover waits for the document's arrival report
  * before it fades anyway (#177).
  *
- * The report is the shim's own settle, already bounded by
- * CAPTURE_SETTLE_BUDGET_MS — a frame that animates forever or never goes quiet
- * reports at that deadline rather than never. This is the outer bound on the
- * whole errand: the two message hops around that settle, a main thread busy
- * enough to overrun its own budget, and every document that will never answer
- * at all — a boot that broke after it reported loaded, a document served before
- * this shim existed. A cover held forever is a frame you can never see, which
- * is worse than the seam this is fixing.
+ * The report is the shim's own settle, already bounded by SETTLE_BUDGET_MS — a
+ * frame that animates forever or never goes quiet reports at that deadline
+ * rather than never. This is the outer bound: the two message hops around that
+ * settle, a main thread busy enough to overrun its own budget, and every
+ * document that will never answer at all — a boot that broke after it
+ * reported loaded, a document served before this shim existed. A cover held
+ * forever is a frame you can never see, which is worse than the seam this is
+ * fixing.
  */
-export const ARRIVE_DEADLINE_MS = CAPTURE_SETTLE_BUDGET_MS + 600;
-/**
- * How many frames may be borrowed for a picture at once — the whole of the
- * pacing, and a count in flight rather than a rate per tick: a rate is a
- * hardcoded guess at how long a mount takes, and the guess this replaces was
- * out by a factor of thirteen (#94). A count adapts to the daemon and the
- * connection pool on its own. #94 swept it under 6x throttle and found it
- * breaks reproducibly above 3 and never at or below it.
- */
-const SHIPPED_ERRANDS_IN_FLIGHT = 3;
+export const ARRIVE_DEADLINE_MS = SETTLE_BUDGET_MS + 600;
 /**
  * The measurement hook (#108, #112), and the only temporary code the canvas
- * carries. `bench/mount-gesture.ts` sweeps the cap above and below
- * its shipped value to show where a gesture starts paying for the errands
- * behind it, and the alternative is a second lifecycle model living in the
- * bench, which is strictly worse. The bench throws rather than running without
- * it: a gesture over a canvas that borrowed nothing reads as "mounting is free"
- * for the one reason that proves nothing.
- *
- * `globalThis.__spoolBench` is `{ errands, freeze }` — the cap, unbounded at 0
- * or below, and whether live frames ever hold their animations. Read once at
- * module load, because playwright's init script runs before this bundle
- * evaluates and nothing else ever writes it, so an unset hook leaves the sweep
- * comparing against the same constants it always did.
- *
- * They fold into the exported values rather than shadowing them, so the sweep
- * and every test read the one number the decision actually uses. `freeze` is
- * `bench/dither-attribution.ts`'s control arm: the freeze is what that bench
- * measures, and measuring it against a differently-patched project instead of
- * against itself would confound the one difference it exists to price.
+ * carries. `globalThis.__spoolBench` is `{ freeze }`: whether live frames ever
+ * hold their animations. It is `bench/dither-attribution.ts`'s control arm:
+ * the freeze is what that bench measures, and measuring it against a
+ * differently-patched project instead of against itself would confound the one
+ * difference it exists to price. Read once at module load, because
+ * playwright's init script runs before this bundle evaluates and nothing else
+ * ever writes it.
  */
-const benchHooks = (globalThis as unknown as { __spoolBench?: { errands?: number; freeze?: boolean } }).__spoolBench;
-const benchErrands = benchHooks?.errands;
-export const ERRANDS_IN_FLIGHT =
-	benchErrands === undefined ? SHIPPED_ERRANDS_IN_FLIGHT : benchErrands > 0 ? benchErrands : Number.POSITIVE_INFINITY;
+const benchHooks = (globalThis as unknown as { __spoolBench?: { freeze?: boolean } }).__spoolBench;
 export const FREEZE_ENABLED = benchHooks?.freeze !== false;
 /**
  * How long a live frame goes unattended before it holds its animations (#172).
@@ -150,79 +90,6 @@ export const FREEZE_ENABLED = benchHooks?.freeze !== false;
  * 45% of a core and 16% of the GPU process for as long as it stayed open.
  */
 export const IDLE_FREEZE_MS = 60_000;
-/**
- * How many errands a frame gets for one debt before it stops asking. Without a
- * bound, a frame whose capture cannot land — a document that never boots, a
- * shim that never answers — would mount, fail, unmount and mount again forever,
- * because neither "it has no picture" nor "its picture is wrong" stops being
- * true by being acted on. Anything that changes the frame (a source edit,
- * leaving it, a fresh boot) clears the count and the frame asks again.
- */
-export const PICTURE_TRIES = 3;
-/**
- * How long a borrowed frame is given before it is handed back unfinished. The
- * errand is the one mount nobody asked for, so it is the one that needs a
- * deadline: a document that never reports loaded would otherwise hold its slot
- * for the rest of the session. Wide enough to outlast a cold boot, the wait for
- * the frame to finish arriving, and the capture's own outer bound — a deadline
- * that retires working captures would be a slow leak of pictures, not a guard.
- */
-export const ERRAND_DEADLINE_MS = 20_000 + CAPTURE_AFTER_READY_MS + CAPTURE_REPLY_TIMEOUT_MS + CAPTURE_SETTLE_BUDGET_MS;
-
-/** The decision function's persistent bookkeeping, owned by the hook, fabricated by tests. */
-export interface LifecycleModel {
-	/** Frames whose picture is wrong — a source edit, a document that ran, a fresh boot. */
-	stale: Set<string>;
-	/** When each stale frame's picture first became wrong, for the CAPTURE_MAX_STALE_MS cap (#215). */
-	staleSince: Map<string, number>;
-	/**
-	 * Frames that have run long enough since booting to be worth photographing —
-	 * or overdue enough past CAPTURE_MAX_STALE_MS (#215) that the sweep stops
-	 * waiting to find out.
-	 */
-	arrived: Set<string>;
-	/**
-	 * Frames whose document went quiet arriving (#177), each with when that
-	 * document loaded. Quiet is the document's own report that its settle
-	 * finished inside the budget. A settle that ran the budget out or threw
-	 * reports arrival without it, and ARRIVE_DEADLINE_MS running out reports
-	 * nothing at all, which is what a document still busy arriving looks like
-	 * too. The load time names the document, so a reload's successor never
-	 * inherits the report.
-	 */
-	quiet: Map<string, number>;
-	/**
-	 * When something last made each frame's picture wrong. A settle that began
-	 * before it was waiting out a frame that has changed since, and a change
-	 * that did not reload the document (a resize) leaves that report in place.
-	 */
-	changedAt: Map<string, number>;
-	/** Frames borrowed to be photographed, and when the errand began. */
-	errands: Map<string, number>;
-	/** Frames whose last errand came back with a picture — the cover may still be in flight to disk. */
-	photographed: Set<string>;
-	/** Errands a frame has already been given for the picture it owes, capped at PICTURE_TRIES. */
-	tries: Map<string, number>;
-	/** Frames the readable model made live, rather than frames you entered. */
-	modelLive: Set<string>;
-	/** Frames whose current document was entered and must refresh when it leaves. */
-	wentInside: Set<string>;
-}
-
-export function createLifecycleModel(): LifecycleModel {
-	return {
-		stale: new Set(),
-		staleSince: new Map(),
-		arrived: new Set(),
-		quiet: new Map(),
-		changedAt: new Map(),
-		errands: new Map(),
-		photographed: new Set(),
-		tries: new Map(),
-		modelLive: new Set(),
-		wentInside: new Set(),
-	};
-}
 
 /**
  * How far past the viewport a frame is still admitted, as a fraction of it. The
@@ -231,59 +98,18 @@ export function createLifecycleModel(): LifecycleModel {
  */
 export const LIVE_MARGIN = 0.25;
 
-/**
- * The borrowed frame is handed back. A picture that landed pays the debt
- * outright — the cover is on its way to disk and the projection follows it, so
- * `hasCover` is briefly still false and must not start the errand over. A
- * picture that never came counts as one try.
- */
-export function noteErrandShot(model: LifecycleModel, frame: string, captured: boolean): void {
-	model.errands.delete(frame);
-	if (captured) {
-		model.stale.delete(frame);
-		model.staleSince.delete(frame);
-		model.photographed.add(frame);
-		model.tries.delete(frame);
-		return;
-	}
-	// The debt stands. A frame whose picture is wrong is still wrong when the
-	// capture that was going to fix it came back empty-handed, so the errand is
-	// worth trying again — bounded, because "its picture is wrong" would
-	// otherwise stay true however many times it is acted on.
-	model.tries.set(frame, (model.tries.get(frame) ?? 0) + 1);
-}
-
 export interface SweepInput {
 	frames: readonly ProjectedFrame[];
 	entered: string | null;
 	/** Every frame Select currently owns: mounted for the element selection. */
 	selectionTargets: ReadonlySet<string>;
-	/** A resize is still changing the viewport; photograph only its final size. */
-	resizing?: string | null;
 	/** A frame being read rather than looked at — an export in flight holds one mounted. */
 	held: string | null;
 	states: Readonly<Record<string, FrameState>>;
-	/** Frames whose boot has reported loaded, and when — the ones a capture can reach. */
-	ready: ReadonlyMap<string, number>;
-	/** Frames with a capture already in flight. */
-	capturing: ReadonlySet<string>;
-	hasCover: (frame: string) => boolean;
-	now: number;
 	/** Where the camera rests, read when this sweep runs. */
 	camera: Camera | null;
 	/** The viewport's CSS size, read when this sweep runs. */
 	viewport: { width: number; height: number } | null;
-	/**
-	 * Every frame the project has, against which the bookkeeping is pruned (#39).
-	 *
-	 * `frames` is one page's worth, because a page is the canvas. What a frame is
-	 * owed is not: an agent editing a frame on the page you are not on stales its
-	 * picture, and pruning against what is on screen would forget that inside one
-	 * sweep. Then you switch pages and find a picture of the document as it was,
-	 * with nobody owing you a new one. Absent means the caller has no wider list,
-	 * and the page on screen is the whole projection.
-	 */
-	projection?: ReadonlySet<string>;
 }
 
 /**
@@ -296,7 +122,7 @@ export interface SweepInput {
  * prices at the first dropped frame.
  *
  * Size is the frame's larger drawn edge, not its width (#223). Width is what a
- * capture is scaled by, because a still is read across; how much of a frame is
+ * cover is scaled by, because a still is read across; how much of a frame is
  * on screen is how much of it there is, and a phone is 390 across and 844 down.
  * Keying on width alone left every portrait frame a photograph until 103% zoom,
  * where the same area of landscape frame had been live for a while.
@@ -335,11 +161,10 @@ function isFrameLive(
  * so a frame still reflows under the hold. Timers and React state run on,
  * which is the known limit of a hold the frame is never asked about.
  *
- * Three frames never freeze. The one you went inside is the one being used —
+ * Two frames never freeze. The one you went inside is the one being used —
  * its own hands are inside it, and a pick elsewhere on the canvas does not
- * reach in. A borrowed frame is mid-errand, and a capture settles on the
- * frame's own rAF and animations, so a frozen one would photograph itself held;
- * a frame with a capture already in flight is that same errand, one step later.
+ * reach in. And a frame being copied for an export settles on its own rAF and
+ * animations, so a frozen one would be copied held.
  */
 export function isFrameFrozen(input: {
 	cameraMoving: boolean;
@@ -378,283 +203,32 @@ export function isFrameAttended(input: {
 export interface SweepResult {
 	states: Record<string, FrameState>;
 	changed: boolean;
-	/**
-	 * Borrowed frames that have run long enough to be worth photographing now, or
-	 * are overdue enough (#215) that mid-arrival is worth photographing too, each
-	 * with how much of CAPTURE_SETTLE_BUDGET_MS its capture waits out first.
-	 */
-	refreshCaptures: Array<{ frame: string; settleMs: number }>;
-	/**
-	 * Frames whose errand was retired by ERRAND_DEADLINE_MS rather than by a
-	 * picture landing or a reason of its own (#173) — the boot never reported
-	 * loaded, so nothing else in this sweep ever finds out why the frame stayed
-	 * a placeholder.
-	 */
-	expiredErrands: string[];
 }
 
-export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, entered, selectionTargets, held, states, ready, capturing, hasCover, now, camera, viewport } = input;
-	// A frame going back to its picture can be told from a frame you left.
-	// Zooming out must not bill a screenful of frames for a fresh still; going
-	// inside one still must.
-	const wasModelLive = model.modelLive;
-	model.modelLive = new Set();
-
-	const expiredErrands: string[] = [];
-	for (const [name, startedAt] of [...model.errands]) {
-		if (now - startedAt >= ERRAND_DEADLINE_MS) {
-			noteErrandShot(model, name, false);
-			expiredErrands.push(name);
-		}
-	}
-
-	interface Entry {
-		frame: ProjectedFrame;
-		current: FrameState;
-		/** What intent asks for, or null when nobody is asking for this frame. */
-		intent: FrameState | null;
-		/** Its picture is missing or wrong, and it may still ask for one. */
-		debt: boolean;
-		/** Stale long enough that CAPTURE_AFTER_READY_MS is no longer worth waiting out (#215). */
-		overdue: boolean;
-	}
-	const entries: Entry[] = [];
-	const candidates: string[] = [];
-	const alive = new Set<string>();
-	/** A frame mounted because somebody asked for it, still waiting on its boot. */
-	let awaited = false;
-
+export function sweepLifecycle(input: SweepInput): SweepResult {
+	const { frames, entered, selectionTargets, held, states, camera, viewport } = input;
+	const next: Record<string, FrameState> = {};
+	let changed = false;
 	for (const frame of frames) {
 		const name = frame.name;
-		alive.add(name);
-		const current = states[name] ?? "picture";
 		// Select wins over entering: it takes the pointer back to reach an
 		// element. A readable HTML frame remains the live thing it is showing.
-		if (entered === name) model.wentInside.add(name);
-		const modelLive = isFrameLive(frame, camera, viewport);
-		const selected = selectionTargets.has(name);
-		if (modelLive && entered !== name && !model.wentInside.has(name)) {
-			model.modelLive.add(name);
-		}
-		let intent: FrameState | null;
-		if (selected) {
-			intent = "live";
-		} else if (entered === name || modelLive) {
-			intent = "live";
-		} else if (held === name) {
-			intent = "held";
-		} else {
-			intent = null;
-		}
-
-		// A frame you were inside ran, and what it showed while it ran is not
-		// what its still records — leaving it is a change like any other.
-		// Zooming past a frame is not using it, and a still of a freshly booted
-		// frame is still true of the frame that just booted and did nothing.
-		if (current === "live" && intent !== "live" && !wasModelLive.has(name)) {
-			markPictureWrong(model, name, now);
-			model.wentInside.delete(name);
-		}
-
-		// The clock on how long this frame's picture has been wrong, not on how
-		// long it has lacked a cover outright: a cold-boot frame with no cover yet
-		// gets the settle its first still is owed, same as always. Only a picture
-		// that was once right and went wrong starts owing a deadline (#215).
-		if (model.stale.has(name)) {
-			if (!model.staleSince.has(name)) model.staleSince.set(name, now);
-		} else {
-			model.staleSince.delete(name);
-		}
-		const staleSince = model.staleSince.get(name);
-		const overdue = staleSince !== undefined && now - staleSince >= CAPTURE_MAX_STALE_MS;
-
-		// A still is only worth what the frame was doing when it was taken. A
-		// frame that booted a moment ago is still arriving, and one that never
-		// ran never arrived at all — both photograph as an absence, and the
-		// canvas would then show that absence in the frame's own place. Having
-		// run long enough once is remembered, and a reload takes the memory with
-		// the boot. Overdue skips the wait outright: a mid-arrival photograph
-		// beats one that is tens of seconds behind the file (#215), and the next
-		// capture heals whatever this one gets wrong.
-		const readyAt = ready.get(name);
-		if (readyAt === undefined) model.arrived.delete(name);
-		else if (running(current) && !model.arrived.has(name) && (now - readyAt >= CAPTURE_AFTER_READY_MS || overdue)) {
-			model.arrived.add(name);
-		}
-
-		// A frame with no picture, or the wrong one, is worth a document for as
-		// long as it takes to photograph it.
-		// A picture that landed clears `photographed` the moment the projection
-		// catches up: the flag only ever bridges the gap between a shot resolving
-		// and its cover reaching disk, and holding it any longer would mean a
-		// cover deleted later never being noticed.
-		if (model.photographed.has(name) && hasCover(name)) model.photographed.delete(name);
-		const debt =
-			!model.photographed.has(name) &&
-			(model.tries.get(name) ?? 0) < PICTURE_TRIES &&
-			(model.stale.has(name) || !hasCover(name));
-
-		// Intent takes a borrowed frame back: it now has a document for a reason
-		// somebody asked for, so the errand hands its slot over and the debt
-		// stands until the frame is free again.
-		if (intent !== null) {
-			model.errands.delete(name);
-			if (readyAt === undefined) awaited = true;
-		}
-
-		entries.push({ frame, current, intent, debt, overdue });
-		if (intent === null && debt && !model.errands.has(name)) candidates.push(name);
-	}
-
-	// The errand queue is not a queue: the cap is on frames borrowed at once, and
-	// whoever is owed a picture when a slot frees takes it. There is no order
-	// worth imposing, because no order is visible — every one of them is showing
-	// a picture the whole time.
-	//
-	// And no camera gate. #80 made mounting wait for a still camera on the theory
-	// that a booting document's paint is the stutter; #94 disproved that outright
-	// and #112 deleted the gate rather than reverting it. A gesture over frames
-	// being borrowed underneath it drops nothing, measured at 6x throttle in
-	// `bench/mount-gesture.ts`.
-	//
-	// What an errand does have to stay out of the way of is a boot somebody is
-	// waiting on. Not for the paint — for the daemon, the connection pool and the
-	// compile the arriving document needs, all of which an errand is asking for
-	// too. Deleting the camera gate without this cost a cross-page walk 73 ms of
-	// its 220 ms bar (`bench/walk.ts`, 266.7 p50 against 193.9), because a page
-	// switch puts a screenful of frames that owe pictures on screen at the exact
-	// moment the target is booting. An errand is never urgent; an arrival is.
-	if (!awaited) {
-		for (const name of candidates) {
-			if (model.errands.size >= ERRANDS_IN_FLIGHT) break;
-			model.errands.set(name, now);
-		}
-	}
-
-	const next: Record<string, FrameState> = {};
-	const refreshCaptures: Array<{ frame: string; settleMs: number }> = [];
-	let changed = false;
-	for (const { frame, current, intent, debt, overdue } of entries) {
-		const name = frame.name;
-		const target: FrameState = intent ?? (model.errands.has(name) ? "refreshing" : "picture");
-		// The photograph is the errand's whole point, taken the moment the
-		// borrowed document has run long enough to be worth one — or, past
-		// CAPTURE_MAX_STALE_MS, the moment it merely holds one (#215).
-		//
-		// It settles first unless one of two things makes that pointless.
-		// Overdue has to land before the next write retires it, not draw out its
-		// own picture first (#215). And a document that already went quiet has
-		// nothing left to wait for (`maySkipSettle`).
-		if (
-			(target === "refreshing" || selectionTargets.has(name)) &&
-			input.resizing !== name &&
-			entered !== name &&
-			held !== name &&
-			debt &&
-			model.arrived.has(name) &&
-			!capturing.has(name) &&
-			refreshCaptures.length + capturing.size < ERRANDS_IN_FLIGHT
-		) {
-			const settleMs = overdue || maySkipSettle(model, name, ready) ? 0 : CAPTURE_SETTLE_BUDGET_MS;
-			refreshCaptures.push({ frame: name, settleMs });
-		}
+		const target: FrameState =
+			selectionTargets.has(name) || entered === name || isFrameLive(frame, camera, viewport)
+				? "live"
+				: held === name
+					? "held"
+					: "picture";
 		next[name] = target;
-		if (target !== current) changed = true;
+		if (target !== (states[name] ?? "picture")) changed = true;
 	}
-
-	// Frames that left take their bookkeeping with them, and what "left" means
-	// depends on what is being remembered. A borrowed frame, a boot that has run
-	// long enough, a document you went inside: those are facts about a mounted
-	// document, and leaving the page ends them — a page switch must hand its
-	// errand slots straight over to the page arriving.
-	for (const name of [...model.arrived]) if (!alive.has(name)) model.arrived.delete(name);
-	for (const name of [...model.quiet.keys()]) if (!alive.has(name)) model.quiet.delete(name);
-	for (const name of [...model.changedAt.keys()]) if (!alive.has(name)) model.changedAt.delete(name);
-	for (const name of [...model.errands.keys()]) if (!alive.has(name)) model.errands.delete(name);
-	for (const name of [...model.modelLive]) if (!alive.has(name)) model.modelLive.delete(name);
-	for (const name of [...model.wentInside]) if (!alive.has(name)) model.wentInside.delete(name);
-	// The debt is not. A frame is owed a picture whether or not its page is the
-	// one on screen, so it is pruned against the project: an agent's edit to a
-	// frame on another page would otherwise lose its stale mark inside one sweep,
-	// and you would go back to a picture of the document as it was with nobody
-	// owing you a new one.
-	const carried = input.projection ?? alive;
-	for (const name of [...model.stale]) if (!carried.has(name)) model.stale.delete(name);
-	for (const name of [...model.staleSince.keys()]) if (!carried.has(name)) model.staleSince.delete(name);
-	for (const name of [...model.photographed]) if (!carried.has(name)) model.photographed.delete(name);
-	for (const name of [...model.tries.keys()]) if (!carried.has(name)) model.tries.delete(name);
-
-	return {
-		states: next,
-		changed: changed || Object.keys(states).length !== frames.length,
-		refreshCaptures,
-		expiredErrands,
-	};
-}
-
-/** Whether the mounted document has been allowed to run. A held frame runs behind its still. */
-const running = (state: FrameState): boolean => state === "live" || state === "refreshing" || state === "held";
-
-/**
- * Whether a capture may skip its own settle, because the document already
- * waited out that same settle and nothing has happened to it since.
- *
- * A borrowed frame settles when it arrives (#177), and the capture used to ask
- * it to settle again: a second full settle per cover, buying the picture the
- * first had already waited for. Every condition below is about the one
- * document mounted now, named by when it loaded, because each settle starts at
- * load. That document went quiet and said so (`quiet`). Nothing changed the
- * frame after it loaded (`changedAt`), so the quiet it reported is still the
- * frame's. And the errand borrowed the frame before it loaded, so everything it
- * has done since, it did as this errand's borrowed frame: hidden behind its
- * still, never frozen, entered or edited. A document that was live first may
- * have gone quiet only because a freeze held it mid-entrance, and one you just
- * left may still be finishing what you did in it; both keep the full settle.
- */
-function maySkipSettle(model: LifecycleModel, frame: string, ready: ReadonlyMap<string, number>): boolean {
-	const loadedAt = ready.get(frame);
-	if (loadedAt === undefined || model.quiet.get(frame) !== loadedAt) return false;
-	const changedAt = model.changedAt.get(frame);
-	const borrowedAt = model.errands.get(frame);
-	return (changedAt === undefined || changedAt < loadedAt) && borrowedAt !== undefined && borrowedAt < loadedAt;
-}
-
-/**
- * Every frame that gave up on its picture may ask again.
- *
- * The give-up count answers "can this frame be photographed at all", and a
- * hidden tab makes it answer something else: the timers an errand rides on are
- * throttled to a crawl there, so three tries can be spent without the frame
- * ever having had a fair one. Anything that says the conditions have changed —
- * the tab being looked at again — is worth another go, and the bound is still
- * the bound the moment it is spent under it.
- */
-export function renewPictureDebt(model: LifecycleModel): void {
-	model.tries.clear();
-}
-
-/**
- * Something changed about the frame: its picture is wrong, and it may ask again.
- * Whatever changed it may still be moving, so its document has to settle again.
- */
-export function markPictureWrong(model: LifecycleModel, frame: string, now: number): void {
-	model.stale.add(frame);
-	model.changedAt.set(frame, now);
-	model.photographed.delete(frame);
-	model.tries.delete(frame);
+	return { states: next, changed: changed || Object.keys(states).length !== frames.length };
 }
 
 export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
-	/**
-	 * The whole projection, for the sweep's pruning (#39): `framesRef` is the page
-	 * on screen, and what a frame elsewhere is owed has to outlive not being on it.
-	 */
-	allFramesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
 	selectionTargets: ReadonlySet<string>;
-	resizing?: string | null;
 	/**
 	 * The whole frame selection keeps its frames awake even while another
 	 * tool is up. `selectionTargets` determines which documents are shown.
@@ -672,15 +246,6 @@ export interface LifecycleDeps {
 	 * frame an element is in.
 	 */
 	editing: boolean;
-	hasCover: (frame: string) => boolean;
-	onShot: (frame: string, image: CoverRaster) => void;
-	/**
-	 * A self-capture failed for a reason worth keeping (#173) — never fired on a
-	 * frame merely being retired mid-errand (a document swap, an unmount), only
-	 * when the errand itself came back with something to say. Optional so a
-	 * fabricated harness with nothing to assert about it can omit the wiring.
-	 */
-	onCaptureFailure?: (frame: string, reason: string) => void;
 	/**
 	 * Where the camera rests, read by the sweep.
 	 *
@@ -695,25 +260,11 @@ export interface LifecycleDeps {
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const {
-		framesRef,
-		allFramesRef,
-		entered,
-		selectionTargets,
-		resizing = null,
-		selected,
-		hovered,
-		editing,
-		hasCover,
-		onShot,
-		onCaptureFailure,
-		cameraRef,
-		viewportRef,
-	} = deps;
+	const { framesRef, entered, selectionTargets, selected, hovered, editing, cameraRef, viewportRef } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
-	// when each frame reported loaded, not merely that it did: a still is only
-	// worth taking once the frame has had time to finish arriving
+	// when each frame reported loaded, not merely that it did: the export and
+	// the cover fade both wait on a document that has really booted
 	const [ready, setReady] = useState<ReadonlyMap<string, number>>(new Map<string, number>());
 	/**
 	 * Frames whose document has finished arriving (#177) — its own settle done,
@@ -730,23 +281,14 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	enteredRef.current = entered;
 	const selectionTargetsRef = useRef(selectionTargets);
 	selectionTargetsRef.current = selectionTargets;
-	const resizingRef = useRef(resizing);
-	resizingRef.current = resizing;
 	const selectedRef = useRef(selected);
 	selectedRef.current = selected;
 	const hoveredRef = useRef(hovered);
 	hoveredRef.current = hovered;
 	const editingRef = useRef(editing);
 	editingRef.current = editing;
-	const hasCoverRef = useRef(hasCover);
-	hasCoverRef.current = hasCover;
-	const onShotRef = useRef(onShot);
-	onShotRef.current = onShot;
-	const onCaptureFailureRef = useRef(onCaptureFailure);
-	onCaptureFailureRef.current = onCaptureFailure;
 
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
-	const model = useRef(createLifecycleModel());
 	const exportFrame = useRef<string | null>(null);
 	const exportMountWaiter = useRef<{
 		frame: string;
@@ -755,13 +297,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	} | null>(null);
 	interface PendingCapture {
 		id: string;
-		targetWidth: number;
 		sourceWindow: WindowProxy;
-		resolve: (image: CoverRaster | undefined) => void;
+		resolve: (image: ExportRaster | undefined) => void;
 		timeout: ReturnType<typeof setTimeout>;
 		rasterStarted: boolean;
-		sourceReturned: Promise<boolean>;
-		resolveSourceReturned: (returned: boolean) => void;
 		abort: AbortController;
 	}
 	const captureWaiters = useRef(new Map<string, PendingCapture>());
@@ -868,30 +407,17 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	}, []);
 
 	/**
-	 * Resolve exactly the request that produced this shot; stale work cannot
-	 * satisfy its successor.
-	 *
-	 * `reason` is the failure worth keeping (#173): the shim's own error, a
-	 * raster that threw, or a reply that never came. Its absence is not "no
-	 * reason" but "no failure worth recording" — a retirement mid-errand (a
-	 * document swap, an unmount) hands the same `undefined` image back with no
-	 * reason at all, because a reload mid-capture is ordinary under an edit
-	 * stream, not a failure.
+	 * Resolve exactly the request that produced this export; stale work cannot
+	 * satisfy its successor. A retirement (a document swap, an unmount) hands the
+	 * same `undefined` image back as a failure does.
 	 */
-	const noteShot = useCallback((frame: string, id: string, image: CoverRaster | undefined, reason?: string) => {
+	const noteShot = useCallback((frame: string, id: string, image: ExportRaster | undefined) => {
 		const pending = captureWaiters.current.get(frame);
 		if (pending?.id !== id) return;
 		clearTimeout(pending.timeout);
 		captureWaiters.current.delete(frame);
-		pending.resolveSourceReturned(false);
 		pending.abort.abort();
 		pending.resolve(image);
-		// Full-resolution PNG is an export artifact, never a replacement cover.
-		if (image !== undefined && pending.targetWidth > 0) onShotRef.current(frame, image);
-		// Bounded defensively even though the shim's own reply is already capped
-		// at 240 chars (protocol.ts): a reason authored on this side (a timeout, a
-		// raster rejection) carries no such guarantee of its own.
-		if (reason !== undefined) onCaptureFailureRef.current?.(frame, reason.slice(0, 240));
 	}, []);
 
 	/** The frame's arrival is over: it said so, or its deadline said so for it. */
@@ -904,18 +430,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		setSettled((current) => (current.has(frame) ? current : new Set(current).add(frame)));
 	}, []);
 
-	/**
-	 * The document said it has arrived, and whether it went quiet doing so —
-	 * routed in by the canvas's message listener.
-	 */
-	const noteArrived = useCallback(
-		(frame: string, quiet: boolean) => {
-			const loadedAt = readyRef.current.get(frame);
-			if (quiet && loadedAt !== undefined) model.current.quiet.set(frame, loadedAt);
-			endArrival(frame);
-		},
-		[endArrival],
-	);
+	/** The document said it has arrived — routed in by the canvas's message listener. */
+	const noteArrived = useCallback((frame: string) => endArrival(frame), [endArrival]);
 
 	/** The document that was arriving left. Its successor arrives on its own. */
 	const forgetArrival = useCallback((frame: string) => {
@@ -944,7 +460,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				endArrival(frame);
 				return;
 			}
-			sourceWindow.postMessage(arriveMessage(CAPTURE_SETTLE_BUDGET_MS), "*");
+			sourceWindow.postMessage(arriveMessage(SETTLE_BUDGET_MS), "*");
 			arrivalTimers.current.set(
 				frame,
 				setTimeout(() => endArrival(frame), ARRIVE_DEADLINE_MS),
@@ -1022,67 +538,46 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			) {
 				return;
 			}
-			pending.resolveSourceReturned(true);
 			if ("error" in message) {
-				noteShot(message.frame, message.id, undefined, message.error);
+				noteShot(message.frame, message.id, undefined);
 				return;
 			}
-			if (pending.targetWidth !== message.targetWidth || pending.rasterStarted) return;
+			if (pending.rasterStarted) return;
 			pending.rasterStarted = true;
-			void rasterCaptureSource(
-				{ ...message, targetWidth: pending.targetWidth },
-				captureOrigin,
-				pending.abort.signal,
-			).then(
+			void rasterCaptureSource(message, captureOrigin, pending.abort.signal).then(
 				(image) => noteShot(message.frame, message.id, image),
-				() => noteShot(message.frame, message.id, undefined, "capture raster failed"),
+				() => noteShot(message.frame, message.id, undefined),
 			);
 		},
 		[noteShot],
 	);
 
-	/**
-	 * Ask the frame's shim for one still sharp at the live threshold (or a
-	 * full-resolution lossless export when the target is zero).
-	 */
+	/** Ask the frame's shim for one lossless, full-resolution export of itself. */
 	const requestCapture = useCallback(
-		(
-			frame: string,
-			targetWidth = LIVE_MIN_CSS_PX,
-			settleMs = CAPTURE_SETTLE_BUDGET_MS,
-		): Promise<CoverRaster | undefined> => {
-			if (targetWidth !== 0 && targetWidth !== LIVE_MIN_CSS_PX) return Promise.resolve(undefined);
+		(frame: string): Promise<ExportRaster | undefined> => {
 			const el = iframes.current.get(frame);
 			const sourceWindow = el?.contentWindow;
 			if (sourceWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
-			const pending = captureWaiters.current.get(frame);
-			if (pending !== undefined) return Promise.resolve(undefined);
+			if (captureWaiters.current.has(frame)) return Promise.resolve(undefined);
 			return new Promise((resolve) => {
 				const id = captureRequestId();
-				let resolveSourceReturned!: (returned: boolean) => void;
-				const sourceReturned = new Promise<boolean>((sourceResolve) => {
-					resolveSourceReturned = sourceResolve;
-				});
 				const timeout = setTimeout(
-					() => noteShot(frame, id, undefined, "capture reply timed out"),
-					CAPTURE_REPLY_TIMEOUT_MS + settleMs,
+					() => noteShot(frame, id, undefined),
+					CAPTURE_REPLY_TIMEOUT_MS + SETTLE_BUDGET_MS,
 				);
 				captureWaiters.current.set(frame, {
 					id,
-					targetWidth,
 					sourceWindow,
 					resolve,
 					timeout,
 					rasterStarted: false,
-					sourceReturned,
-					resolveSourceReturned,
 					abort: new AbortController(),
 				});
 				// The capture settles on this frame's own rAF and animations, so a
-				// frozen one would photograph itself held. Both messages ride the same
-				// channel to the same document, so the thaw cannot arrive second.
+				// frozen one would be copied held. Both messages ride the same channel
+				// to the same document, so the thaw cannot arrive second.
 				postFreeze(frame, false);
-				sourceWindow.postMessage(captureMessage(id, targetWidth, settleMs), "*");
+				sourceWindow.postMessage(captureMessage(id, SETTLE_BUDGET_MS), "*");
 			});
 		},
 		[noteShot, postFreeze],
@@ -1095,73 +590,38 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		[noteShot],
 	);
 
-	/** The decision function below, for the captures it starts to call back into once they land. */
-	const computeRef = useRef<() => void>(() => undefined);
-
-	// The decision function: runs on a sweep interval, urgent intent changes, and
-	// every errand that comes home with its picture.
+	// The decision function: runs on a sweep interval and on urgent intent changes.
 	const compute = useCallback(() => {
 		const now = performance.now();
-		const result = sweepLifecycle(model.current, {
+		const result = sweepLifecycle({
 			frames: framesRef.current,
 			entered: enteredRef.current,
 			selectionTargets: selectionTargetsRef.current,
-			resizing: resizingRef.current,
 			held: exportFrame.current,
 			states: statesRef.current,
-			ready: readyRef.current,
-			capturing: new Set(captureWaiters.current.keys()),
-			hasCover: hasCoverRef.current,
-			now,
 			camera: cameraRef.current,
 			viewport:
 				viewportRef.current === null
 					? null
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
-			projection: new Set(allFramesRef.current.map((frame) => frame.name)),
 		});
-		for (const { frame, settleMs } of result.refreshCaptures) {
-			void requestCapture(frame, LIVE_MIN_CSS_PX, settleMs).then((image) => {
-				noteErrandShot(model.current, frame, image !== undefined);
-				// A picture that landed frees its slot, and the next frame owed one
-				// takes it now rather than at the next sweep: otherwise each of the
-				// ERRANDS_IN_FLIGHT slots stood empty for up to SWEEP_MS between
-				// errands, every time one came home. The cap is still the whole of the
-				// pacing (#94), because the sweep counts what is in flight before it
-				// lends anything.
-				// A capture that came back empty-handed waits for the sweep instead.
-				// Some fail before they start (no window yet, a capture already in
-				// flight), and retrying those at once would spend all PICTURE_TRIES
-				// before the render that could have made the next try work.
-				if (image !== undefined) computeRef.current();
-			});
-		}
-		// A boot that never reported loaded (#173): the errand deadline is what
-		// ends it, so this sweep is the only place that ever learns why the frame
-		// stayed a placeholder — nothing downstream of the deadline carries a
-		// reason of its own.
-		for (const frame of result.expiredErrands) {
-			onCaptureFailureRef.current?.(frame, "the borrowed document never reported loaded");
-		}
 		if (result.changed) setStates(result.states);
 		// against the states this sweep just decided, not last render's: a frame
-		// handed back from an errand becomes freezable as soon as it is live again
+		// handed back from an export becomes freezable as soon as it is live again
 		applyFreeze(result.states, now);
-	}, [framesRef, allFramesRef, cameraRef, viewportRef, requestCapture, applyFreeze]);
-	computeRef.current = compute;
+	}, [framesRef, cameraRef, viewportRef, applyFreeze]);
 
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,
 	 * capture a full-resolution PNG, then hand the document back.
 	 */
 	const captureExport = useCallback(
-		async (frame: string): Promise<CoverRaster | undefined> => {
+		async (frame: string): Promise<ExportRaster | undefined> => {
 			if (exportFrame.current !== null || !framesRef.current.some((candidate) => candidate.name === frame)) {
 				return undefined;
 			}
 
 			exportFrame.current = frame;
-			const coverCapture = captureWaiters.current.get(frame);
 			let mountPromise: Promise<boolean> | undefined;
 			if (
 				!isExportMountReady(
@@ -1178,23 +638,15 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			compute();
 
 			try {
-				// Let the frame return its cover source before export takes its one
-				// capture slot; then only the host-side raster is superseded.
-				if (coverCapture?.targetWidth === LIVE_MIN_CSS_PX) {
-					if (!(await coverCapture.sourceReturned)) return undefined;
-					if (captureWaiters.current.get(frame)?.id === coverCapture.id) {
-						noteShot(frame, coverCapture.id, undefined);
-					}
-				}
 				if (mountPromise !== undefined && !(await mountPromise)) return undefined;
-				return await requestCapture(frame, 0);
+				return await requestCapture(frame);
 			} finally {
 				finishExportMount(frame, false);
 				if (exportFrame.current === frame) exportFrame.current = null;
 				compute();
 			}
 		},
-		[compute, finishExportMount, framesRef, noteShot, requestCapture],
+		[compute, finishExportMount, framesRef, requestCapture],
 	);
 
 	useEffect(() => {
@@ -1223,19 +675,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	useEffect(() => {
 		enteredRef.current = entered;
 		selectionTargetsRef.current = selectionTargets;
-		// A shot begun before the grab has the old viewport. Retire it before
-		// allowing the drag's final footprint to start a new capture.
-		const pending = resizing === null ? undefined : captureWaiters.current.get(resizing);
-		if (pending !== undefined && resizing !== null) noteShot(resizing, pending.id, undefined);
 		compute();
-	}, [entered, selectionTargets, resizing, compute, noteShot]);
-
-	// The document already waited for fonts and entry motion. Its arrival is
-	// enough to prepare a still, without a second fixed delay after boot.
-	useEffect(() => {
-		for (const frame of settled) model.current.arrived.add(frame);
-		compute();
-	}, [settled, compute]);
+	}, [entered, selectionTargets, compute]);
 
 	// So must the wake, and so must the hold: a frozen frame you point at
 	// animates now and a live one holds the instant the Edit tool comes up
@@ -1253,30 +694,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		return () => clearInterval(sweep);
 	}, [compute]);
 
-	/** A source edit made this frame's cover stale (#22: SSE-live updates). */
-	const markStale = useCallback(
-		(frame: string) => {
-			const pending = captureWaiters.current.get(frame);
-			if (pending !== undefined) noteShot(frame, pending.id, undefined);
-			markPictureWrong(model.current, frame, performance.now());
-		},
-		[noteShot],
-	);
-
 	/**
-	 * The tab is being looked at again.
-	 *
-	 * Two things are wrong with what a hidden tab left behind, and both of them
-	 * are about the tab rather than about any frame. A background tab throttles
-	 * the timers an errand rides on, so a frame that spent its three tries in one
-	 * was never given a fair go and would otherwise never ask again; the count
-	 * goes back to nothing and the owed pictures are taken now. And nothing had
-	 * attended anything for however long the tab was away, so every live frame is
-	 * frozen — coming back is itself the attention, the way settling a camera is,
-	 * so the minute starts here rather than on the first thing you touch.
+	 * The tab is being looked at again. Nothing had attended anything for however
+	 * long the tab was away, so every live frame is frozen — coming back is itself
+	 * the attention, the way settling a camera is, so the minute starts here
+	 * rather than on the first thing you touch.
 	 */
 	const wake = useCallback(() => {
-		renewPictureDebt(model.current);
 		attendedAt.current.clear();
 		compute();
 	}, [compute]);
@@ -1290,9 +714,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		noteArrived,
 		noteCaptureSource,
 		noteCameraMoving,
-		markStale,
 		wake,
-		capture: requestCapture,
 		captureExport,
 		sweep: compute,
 	};

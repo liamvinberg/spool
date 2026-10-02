@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import { type ColorScheme, type Cover, captureRasterSize, coverCaptureScale } from "../cover";
+import { type ColorScheme, captureRasterSize, coverCaptureScale } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
@@ -129,7 +129,6 @@ import {
 	readCover,
 	readCoverImage,
 	scanCoverSchemes,
-	UnservableCoverError,
 	writeCaptureError,
 	writeCover,
 } from "./thumbs";
@@ -1004,9 +1003,6 @@ export function createDaemonApp({
 		}
 	}
 
-	/** The most the one uploaded cover image may weigh. */
-	const MAX_COVER_BYTES = 16 * 1024 * 1024;
-
 	/**
 	 * A read found a frame with no cover. The booth keeps one entry per frame
 	 * and leaves a frame whose cover just failed alone for a while, so calling
@@ -1016,24 +1012,6 @@ export function createDaemonApp({
 	function requestHeal(root: string, name: string, frame: string): void {
 		if (selfOrigin === undefined) return;
 		booth.enqueue({ root, project: name, frame, reason: "missing" });
-	}
-
-	/** The capture protocol carries exactly one image. */
-	async function parseCover(c: Context): Promise<Buffer> {
-		const form = await c.req.formData();
-		const entries = [...form.entries()];
-		const [key, value] = entries[0] ?? [];
-		if (
-			entries.length !== 1 ||
-			key !== "cover" ||
-			value === undefined ||
-			typeof value === "string" ||
-			value.size === 0 ||
-			value.size > MAX_COVER_BYTES
-		) {
-			throw new Error("not a cover");
-		}
-		return Buffer.from(await value.arrayBuffer());
 	}
 
 	/**
@@ -2957,55 +2935,6 @@ export function createDaemonApp({
 						// folders that have already gone had never moved at all
 					}
 				}
-				return c.body(null, 204);
-			},
-		)
-		.put("/api/p/:project/thumbs/:frame", async (c) => {
-			// A self-capture arrives as one image. The answer is its immutable address, so the canvas can put the new
-			// cover on screen without re-reading the projection.
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			// captures are only accepted for frames that exist — never a write for a ghost
-			if (!isFramePath(frame) || !frameExists(project.root, frame))
-				return c.text(`no frame "${frame}" to cover`, 404);
-			let image: Buffer;
-			try {
-				image = await parseCover(c);
-			} catch {
-				return c.text("a cover is one image in the cover field", 400);
-			}
-			let cover: Cover;
-			try {
-				cover = writeCover(project.root, frame, image);
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				if (error instanceof UnservableCoverError) return c.text(error.message, 400);
-				throw error;
-			}
-			hub.publish(project.root, { kind: "thumb", frame, cover });
-			return c.json(cover);
-		})
-		.post(
-			"/api/p/:project/thumbs/:frame/error",
-			validator("json", (value, c) => {
-				const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-				const { error } = body;
-				if (typeof error !== "string" || error === "") return c.text('a capture error is { "error": "..." }', 400);
-				return { error: error.slice(0, 240) };
-			}),
-			(c) => {
-				// The reason a self-capture failed (#173), recorded beside the cover it
-				// never wrote. Same existence check as the PUT above — a ghost has
-				// nothing to record a capture reason against — and no SSE event: the
-				// placeholder it explains is already on screen, and this is read by
-				// `spool logs`, never drawn on the canvas.
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const frame = c.req.param("frame");
-				if (!isFramePath(frame) || !frameExists(project.root, frame))
-					return c.text(`no frame "${frame}" to cover`, 404);
-				writeCaptureError(project.root, frame, c.req.valid("json").error);
 				return c.body(null, 204);
 			},
 		)

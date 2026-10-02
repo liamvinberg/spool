@@ -1,4 +1,4 @@
-import { captureRasterSize, coverCaptureScale, LIVE_MIN_CSS_PX } from "../../cover";
+import { captureRasterSize } from "../../cover";
 
 export { parseStampRef, type StampRef } from "../../stamp";
 
@@ -172,7 +172,6 @@ export interface CaptureSourceMessage {
 	width: number;
 	height: number;
 	dpr: number;
-	targetWidth: number;
 }
 
 export interface CaptureSourceErrorMessage {
@@ -187,8 +186,7 @@ export type CaptureSourceReply = CaptureSourceMessage | CaptureSourceErrorMessag
 export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
-	/** `quiet`: the settle finished inside its budget, rather than running it out or throwing. */
-	| { spool: "arrived"; frame: string; quiet: boolean }
+	| { spool: "arrived"; frame: string }
 	| { spool: "content-size"; frame: string; id: number; width: number; height: number | null }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
@@ -228,9 +226,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "copy":
 			return parseClipboardCopyRequest(data);
-		case "arrived":
-			return typeof m.quiet === "boolean" ? { spool: "arrived", frame: m.frame, quiet: m.quiet } : undefined;
 		case "loaded":
+		case "arrived":
 		case "error":
 		case "shot":
 		case "session?":
@@ -344,7 +341,7 @@ const MAX_CAPTURE_SOURCE_EDGE = 32 * 1024;
 
 function captureSourceMessage(message: Record<string, unknown>): boolean {
 	if (
-		!hasExactKeys(message, ["spool", "frame", "id", "svg", "width", "height", "dpr", "targetWidth"]) ||
+		!hasExactKeys(message, ["spool", "frame", "id", "svg", "width", "height", "dpr"]) ||
 		typeof message.id !== "string" ||
 		!CAPTURE_ID.test(message.id) ||
 		!(message.svg instanceof Blob) ||
@@ -355,15 +352,13 @@ function captureSourceMessage(message: Record<string, unknown>): boolean {
 		!boundedInteger(message.height, 1, MAX_CAPTURE_SOURCE_EDGE) ||
 		!finite(message.dpr) ||
 		message.dpr <= 0 ||
-		message.dpr > 2 ||
-		(message.targetWidth !== 0 && message.targetWidth !== LIVE_MIN_CSS_PX)
+		message.dpr > 2
 	) {
 		return false;
 	}
 	// Exports that fit at native size may reduce their pixel density in the
 	// worker. The source bounds and the worker's output budget still apply.
-	const scale = message.targetWidth > 0 ? coverCaptureScale(message.width) : Math.min(message.dpr, 1);
-	return captureRasterSize(message.width, message.height, scale) !== undefined;
+	return captureRasterSize(message.width, message.height, Math.min(message.dpr, 1)) !== undefined;
 }
 
 function captureSourceErrorMessage(message: Record<string, unknown>): boolean {
@@ -419,15 +414,13 @@ export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const
  */
 export const arriveMessage = (settleMs: number) => ({ spool: "arrive", settleMs }) as const;
 /**
- * `targetWidth` asks for a sharp cover at the live threshold; 0 asks for a full-resolution export.
- * `id` binds the reply to the exact request and frame document.
+ * One full-resolution export of the frame as it stands. A frame's cover is
+ * never asked for here: the daemon's photo booth photographs the document
+ * itself. `id` binds the reply to the exact request and frame document.
  * `settleMs` is how long the frame may wait for its own fonts and entry
- * animations before it photographs itself — the caller owns that budget,
- * because a walk's cover is wanted inside its own arrival and an ambient
- * refresh can afford to wait for the truth.
+ * animations before it is copied.
  */
-export const captureMessage = (id: string, targetWidth: number, settleMs: number) =>
-	({ spool: "capture", id, targetWidth, settleMs }) as const;
+export const captureMessage = (id: string, settleMs: number) => ({ spool: "capture", id, settleMs }) as const;
 /**
  * `selects` is a pick that ends in a selection rather than a hover (#323), and
  * the frame answers it with what only a selection needs: which row of a list
