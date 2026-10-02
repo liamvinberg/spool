@@ -12,7 +12,7 @@ describe("readiness problems", () => {
 				{ ...site, frame: "shop/cart", path: "frames/shop/cart/frame.tsx", line: 4 },
 				{ code: "entry-missing", frame: "gone", message: "Missing.", remedy: "Choose another." },
 			]),
-		).toEqual([
+		).toMatchObject([
 			{ ...site, location: "shared/ui/nav.tsx:12", frames: ["shop/cart", "shop/checkout"] },
 			{ ...site, location: "frames/shop/cart/frame.tsx:4", frames: ["shop/cart"] },
 			{ code: "entry-missing", message: "Missing.", remedy: "Choose another.", frames: ["gone"] },

@@ -268,6 +268,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export interface ReadinessProblem {
+	/** stable across renders: one problem per place and wording */
+	key: string;
 	code: string;
 	message: string;
 	remedy: string;
@@ -285,7 +287,14 @@ export function readinessProblems(diagnostics: PlayerPublicationModel["diagnosti
 		const key = `${location ?? ""}\0${code}\0${message}`;
 		const known = problems.get(key);
 		if (known === undefined)
-			problems.set(key, { code, message, remedy, ...(location === undefined ? {} : { location }), frames: [frame] });
+			problems.set(key, {
+				key,
+				code,
+				message,
+				remedy,
+				...(location === undefined ? {} : { location }),
+				frames: [frame],
+			});
 		else if (!known.frames.includes(frame)) known.frames.push(frame);
 	}
 	return [...problems.values()];

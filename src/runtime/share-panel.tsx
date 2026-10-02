@@ -304,7 +304,7 @@ function Compose({ model, ...props }: SharePanelProps & { model: PlayerPublicati
 					</p>
 					<ul aria-label="What to fix">
 						{problems.map((problem) => (
-							<li key={`${problem.location ?? ""}\0${problem.code}\0${problem.message}`}>
+							<li key={problem.key}>
 								<p>
 									{problem.message} {problem.remedy}
 								</p>
