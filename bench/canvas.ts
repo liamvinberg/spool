@@ -315,11 +315,23 @@ async function measure(
 
 	// The frame showing the most of itself. A readable frame draws its document;
 	// the rest draw stills. A partly-offscreen frame's centre can sit outside the
-	// window.
+	// window. A still standing on its own has no element since #81: the picture
+	// layer reports where it drew it, and a build from before it has the shells.
 	const target = await page.evaluate(() => {
 		let best: { x: number; y: number; area: number } | null = null;
-		for (const frame of document.querySelectorAll("[data-frame-cover], iframe")) {
-			const box = frame.getBoundingClientRect();
+		const boxes = [...document.querySelectorAll("[data-frame-cover], iframe")].map((frame) =>
+			frame.getBoundingClientRect(),
+		);
+		const layer = document.querySelector("[data-picture-layer]") as
+			| (HTMLCanvasElement & {
+					spoolPictures?: () => { drawn: { box: { x: number; y: number; w: number; h: number } }[] };
+			  })
+			| null;
+		const origin = layer?.getBoundingClientRect();
+		for (const { box } of layer?.spoolPictures?.().drawn ?? []) {
+			boxes.push(new DOMRect((origin?.left ?? 0) + box.x, (origin?.top ?? 0) + box.y, box.w, box.h));
+		}
+		for (const box of boxes) {
 			const left = Math.max(0, box.left);
 			const top = Math.max(0, box.top);
 			const right = Math.min(innerWidth, box.right);
