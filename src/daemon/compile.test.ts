@@ -2,8 +2,9 @@ import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { buildDesignEntry, createFrameCompiler } from "./compile";
+import { buildDesignEntry, createFrameCompiler, hashInputs } from "./compile";
 import { realDesignDir } from "./design-path";
+import type { Webfonts } from "./webfonts";
 
 describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
 	it.each(["./effect", "shared/shaders/effect"])("imports %s as the complete source string", async (specifier) => {
@@ -161,5 +162,98 @@ describe("forgetting a compiled document", () => {
 		expect(await cache("home", other)).toBe("miss");
 		// a name that merely starts with the forgotten one is another frame
 		expect(await cache("homepage")).toBe("hit");
+	});
+});
+
+/**
+ * Every request rehashes a document's inputs, and a frame on a large canvas has
+ * a hundred or more: reading them all must not hold the daemon's event loop in
+ * one piece.
+ */
+describe("hashing a document's inputs", () => {
+	it("hands the event loop back while it reads them", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const designDir = realDesignDir(root);
+		const inputs = Array.from({ length: 500 }, (_, index) => {
+			writeDesignFile(root, join("shared", "many", `${index}.ts`), `export const value = ${index};\n`);
+			return join(designDir, "shared", "many", `${index}.ts`);
+		});
+		let handedBack = false;
+		setImmediate(() => {
+			handedBack = true;
+		});
+
+		const hash = await hashInputs("0.0.0-test", "frame", inputs, designDir);
+
+		expect(handedBack).toBe(true);
+		expect(hash).toBe(await hashInputs("0.0.0-test", "frame", [...inputs].reverse(), designDir));
+	});
+});
+
+/**
+ * A document keeps the webfont revision its fonts were resolved at (#80), so a
+ * machine that comes back online retires it. Another compile's resolve can
+ * land while this one is still hashing; that later revision is not this
+ * document's, and recording it would keep yesterday's fonts. Nor may a hit
+ * serve a document whose revision moved while the hit was rehashing it.
+ */
+describe("the webfont revision a document is built at", () => {
+	const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
+
+	/** A frame with enough inputs that hashing them hands the event loop back. */
+	function manyInputs(): string {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const names = Array.from({ length: 400 }, (_, index) => `m${index}`);
+		for (const name of names) {
+			writeDesignFile(root, join("shared", "many", `${name}.ts`), `export const ${name} = 1;\n`);
+		}
+		const imports = names.map((name) => `import { ${name} } from "../../shared/many/${name}";`).join("\n");
+		writeFrame(root, "fonts", `${imports}\nexport default () => <p>{${names.join(" + ")}}</p>;\n`);
+		return root;
+	}
+
+	it("is the one its fonts were resolved at, not one a later resolve moved it to", async () => {
+		const root = manyInputs();
+		let revision = 0;
+		let landed = false;
+		const webfonts: Webfonts = {
+			resolve: async (css) => {
+				// another frame's resolve, finishing on the next turn of the loop
+				if (!landed) setImmediate(() => revision++);
+				landed = true;
+				return css;
+			},
+			read: async () => undefined,
+			revision: () => revision,
+		};
+		const compiler = createFrameCompiler("0.0.0-test", webfonts);
+
+		const first = await compiler.getDocument(root, "fonts", authority);
+		expect(first.kind === "ok" && first.cache).toBe("miss");
+		// it landed while this compile was still at work
+		expect(revision).toBe(1);
+
+		const second = await compiler.getDocument(root, "fonts", authority);
+		expect(second.kind === "ok" && second.cache).toBe("miss");
+	});
+
+	it("is checked again once a hit has rehashed the inputs", async () => {
+		const root = manyInputs();
+		let revision = 0;
+		const webfonts: Webfonts = {
+			resolve: async (css) => css,
+			read: async () => undefined,
+			revision: () => revision,
+		};
+		const compiler = createFrameCompiler("0.0.0-test", webfonts);
+		const first = await compiler.getDocument(root, "fonts", authority);
+		expect(first.kind === "ok" && first.cache).toBe("miss");
+
+		// a resolve elsewhere, landing while the next request rehashes
+		setImmediate(() => revision++);
+		const second = await compiler.getDocument(root, "fonts", authority);
+
+		expect(revision).toBe(1);
+		expect(second.kind === "ok" && second.cache).toBe("miss");
 	});
 });

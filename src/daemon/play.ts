@@ -151,7 +151,9 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 				cached !== undefined &&
 				cached.stamp === stamp &&
 				cached.fonts === webfonts.revision() &&
-				hashInputs(version, stamp, cached.inputs, designDir) === cached.hash
+				(await hashInputs(version, stamp, cached.inputs, designDir)) === cached.hash &&
+				// again after the hash, as the frame compiler does
+				cached.fonts === webfonts.revision()
 			) {
 				return { kind: "ok", bundle: cached.bundle, cache: "hit" };
 			}
@@ -273,6 +275,8 @@ async function compilePlayer(
 		return { name: ref.name, ...(await buildFrameStyleClosure(designDir, ref, publication)) };
 	});
 	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	// read before the hash is awaited, as the frame compiler does (#80)
+	const fontsRevision = webfonts.revision();
 	const { css: fonts, files: fontFiles } = publication
 		? { css: resolvedFonts, files: [] }
 		: inlineLocalFonts(designDir, resolvedFonts);
@@ -290,7 +294,7 @@ async function compilePlayer(
 		join(shared, "transitions.css"),
 		join(shared, "importmap.json"),
 	];
-	const hash = hashInputs(version, stamp, inputs, designDir);
+	const hash = await hashInputs(version, stamp, inputs, designDir);
 	const names = frames.map((ref) => ref.name);
 	const { entry, chunks, screens } = composed.composition;
 	const styles = new Map<string, string>();
@@ -303,7 +307,7 @@ async function compilePlayer(
 		stamp,
 		inputs,
 		hash,
-		fonts: webfonts.revision(),
+		fonts: fontsRevision,
 		broken: [...composed.broken.keys()],
 		bundle: {
 			entry,

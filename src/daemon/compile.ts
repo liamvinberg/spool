@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { setImmediate as yieldTurn } from "node:timers/promises";
 import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbuild";
 import { isFramePath } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
@@ -80,7 +81,10 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			if (
 				cached !== undefined &&
 				cached.fonts === webfonts.revision() &&
-				hashInputs(version, stamp, cached.inputs, designDir) === cached.hash
+				(await hashInputs(version, stamp, cached.inputs, designDir)) === cached.hash &&
+				// again after the hash, which hands the loop back: a resolve that landed
+				// meanwhile retires this document as surely as one before it
+				cached.fonts === webfonts.revision()
 			) {
 				return { kind: "ok", document: cached.document, etag: cached.etag, cache: "hit" };
 			}
@@ -259,6 +263,10 @@ async function compileFrame({
 	// capture can inline them, the file as written whenever that fails. The
 	// project's own faces (#101) then ride the document as data URIs.
 	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	// The revision these fonts were resolved at, read before anything else is
+	// awaited: another compile's resolve can move it while this one hashes, and
+	// recording that later revision would keep these fonts past their retirement.
+	const fontsRevision = webfonts.revision();
 	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts);
 	const importMap = mergeImportMap(
 		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
@@ -283,8 +291,8 @@ async function compileFrame({
 		join(shared, "fonts.css"),
 		join(shared, "importmap.json"),
 	];
-	const hash = hashInputs(version, stamp, inputs, designDir);
-	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: webfonts.revision() };
+	const hash = await hashInputs(version, stamp, inputs, designDir);
+	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: fontsRevision };
 }
 
 /**
@@ -448,8 +456,26 @@ function spoolAssetPlugin(designDir: string, label: string, budget: number | und
 	};
 }
 
-export function hashInputs(version: string, frame: string, inputs: string[], designDir: string): string {
-	const files = [...inputs].sort().map((file) => [file, hashContent(file, designDir)]);
+/**
+ * How long hashing a document's inputs holds the event loop before handing it
+ * back. Every input is read, its path checked against design/, and hashed, on
+ * a miss and on every hit; a frame on a large canvas has a hundred inputs or
+ * more and the player has every frame's. In one piece that was the longest
+ * stretch of a compile left on the daemon's event loop once stylesheets moved to
+ * their workers.
+ */
+const HASH_SLICE_MS = 2;
+
+export async function hashInputs(version: string, frame: string, inputs: string[], designDir: string): Promise<string> {
+	const files: [string, string][] = [];
+	let slice = performance.now();
+	for (const file of [...inputs].sort()) {
+		files.push([file, hashContent(file, designDir)]);
+		if (performance.now() - slice >= HASH_SLICE_MS) {
+			await yieldTurn();
+			slice = performance.now();
+		}
+	}
 	return createHash("sha256")
 		.update(JSON.stringify([version, shimHash, frame, files]))
 		.digest("hex");
