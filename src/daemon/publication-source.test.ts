@@ -113,13 +113,48 @@ describe("publication source attribution", () => {
 		);
 		expect(result.diagnostics[0]?.code).toBe("navigation-unreadable");
 	});
-	it("diagnoses namespace calls and spread attributes", async () => {
-		for (const source of [
+	it("diagnoses namespace calls", async () => {
+		const result = await check(
 			'import * as spool from "spool"; export default () => <button onClick={() => spool.ui.go("next")}/>;',
-			"export default () => <a {...compute()}/>;",
+		);
+		expect(result.diagnostics[0]?.code).toBe("navigation-unreadable");
+	});
+	it("reads member tags and prop spreads as ordinary JSX", async () => {
+		const result = await check(
+			'import { motion } from "motion/react"; import { Button } from "shared/ui/button"; import { Dialog } from "shared/ui/dialog"; export default () => <Dialog.Root><motion.div layout><Button variant="primary" data-go="next">Go</Button></motion.div></Dialog.Root>;',
+			{
+				"shared/ui/button.tsx":
+					"export function Button({ variant, ...rest }) { return <button data-variant={variant} {...rest}/>; }",
+				"shared/ui/dialog.tsx":
+					'import { createContext } from "react"; const Open = createContext(false); function Root({ children }) { return <Open.Provider value={true}>{children}</Open.Provider>; } export const Dialog = { Root };',
+			},
+		);
+		expect(result.diagnostics).toEqual([]);
+		expect(result.included).toEqual(["start", "next"]);
+	});
+	it("follows the component a member tag names", async () => {
+		const result = await check('import { parts } from "shared/ui/parts"; export default () => <parts.Next/>;', {
+			"shared/ui/parts.tsx": 'const Next = () => <a data-go="next"/>; export const parts = { Next };',
+		});
+		expect(result.ok).toBe(true);
+		expect(result.included).toEqual(["start", "next"]);
+	});
+	it("reads data-go wherever the walk spells it, not only in markup", async () => {
+		for (const source of [
+			'const go = { "data-go": "next" }; export default () => <a {...go}/>;',
+			'const key = "data-go"; export default () => <a {...{ [key]: "next" }}/>;',
+			'export default () => <a ref={(node) => node?.setAttribute("data-go", "next")}/>;',
 		]) {
 			const result = await check(source);
-			expect(result.diagnostics[0]?.code).toBe("navigation-unreadable");
+			expect(result.ok).toBe(true);
+			expect(result.included).toEqual(["start", "next"]);
+		}
+		for (const source of [
+			'export default () => <a {...{ "data-go": compute() }}/>;',
+			"export default () => <a ref={(node) => { if (node) node.dataset.go = compute(); }}/>;",
+		]) {
+			const result = await check(source);
+			expect(result.diagnostics.map(({ code }) => code)).toEqual(["navigation-unreadable"]);
 		}
 	});
 	it("ignores unused nested helpers while following used callbacks", async () => {

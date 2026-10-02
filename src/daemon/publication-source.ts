@@ -205,7 +205,13 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 			if (name.isJSXIdentifier() && /^[A-Z]/.test(name.node.name)) {
 				const component = reference(file, name, name.node.name);
 				if (component !== undefined) mounts.push({ component, attributes: path.get("attributes") });
-			} else if (name.isJSXMemberExpression()) unknown(file, name);
+			} else if (name.isJSXMemberExpression()) {
+				// `<motion.div>` or `<Dialog.Root>` is a value like any other: follow
+				// its root binding, which reaches whatever project code it names
+				let object = name.get("object");
+				while (object.isJSXMemberExpression()) object = object.get("object");
+				if (object.isJSXIdentifier()) reference(file, object, object.node.name);
+			}
 		}
 		if (path.isJSXAttribute() && path.get("name").isJSXIdentifier({ name: "data-go" })) {
 			const value = path.get("value");
@@ -220,7 +226,24 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 				"data-go",
 			);
 		}
-		if (path.isJSXSpreadAttribute()) unknown(file, path, "data-go");
+		// A spread carries data-go only from an object written somewhere in this
+		// walk, so the attribute is read where it is spelled, not where it lands.
+		if (path.isObjectProperty() && dataGo(path.get("key"), path.node.computed))
+			navigation(file, path, path.get("value"), "data-go");
+		if (path.isAssignmentExpression() && datasetGo(path.get("left")))
+			navigation(file, path, path.get("right"), "data-go");
+		if (path.isCallExpression() || path.isOptionalCallExpression()) {
+			const callee = path.get("callee") as NodePath;
+			const [attribute, value] = path.get("arguments") as NodePath[];
+			if (
+				(callee.isMemberExpression() || callee.isOptionalMemberExpression()) &&
+				!callee.node.computed &&
+				(callee.get("property") as NodePath).isIdentifier({ name: "setAttribute" }) &&
+				attribute !== undefined &&
+				dataGo(attribute, true)
+			)
+				navigation(file, path, value, "data-go");
+		}
 		if (path.isCallExpression()) {
 			const callee = path.get("callee");
 			if (callee.isImport()) unknown(file, path);
@@ -264,6 +287,21 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 	return out;
 }
 
+function dataGo(key: NodePath, computed: boolean): boolean {
+	return computed ? targets(key)?.includes("data-go") === true : spelling(key.node) === "data-go";
+}
+function datasetGo(path: NodePath): boolean {
+	if (!path.isMemberExpression()) return false;
+	const object = path.get("object");
+	const property = path.get("property");
+	const go = path.node.computed ? property.isStringLiteral({ value: "go" }) : property.isIdentifier({ name: "go" });
+	return (
+		go &&
+		object.isMemberExpression() &&
+		!object.node.computed &&
+		object.get("property").isIdentifier({ name: "dataset" })
+	);
+}
 function spelling(node: Node): string {
 	return node.type === "Identifier" ? node.name : node.type === "StringLiteral" ? node.value : "";
 }
