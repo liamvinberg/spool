@@ -48,13 +48,26 @@ function cacheFile(root: string): string {
 	return resolveDesignPath(designDir, join(designDir, ".spool", "resolved.json"));
 }
 
-/** Machine-written cache: anything malformed reads as nothing resolved. */
-function readRecords(root: string): FrameRecord[] {
-	let parsed: unknown;
+/** The cache file as written, or nothing when it cannot be read. */
+export function readRenderedText(root: string): string | undefined {
 	try {
-		parsed = JSON.parse(readFileSync(cacheFile(root), "utf8"));
+		return readFileSync(cacheFile(root), "utf8");
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
+		return undefined;
+	}
+}
+
+function readRecords(root: string): FrameRecord[] {
+	return parseRecords(readRenderedText(root));
+}
+
+/** Machine-written cache: anything malformed reads as nothing resolved. */
+function parseRecords(text: string | undefined): FrameRecord[] {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text ?? "");
+	} catch {
 		return [];
 	}
 	if (typeof parsed !== "object" || parsed === null) return [];
@@ -129,13 +142,19 @@ export type RenderedReader = (frame: string, sourceHash: string, scenariosHash: 
 /**
  * That read over one load of the cache file. A project-wide derivation asks per
  * frame, and re-reading and re-parsing the whole file each time is a cost with
- * no answer behind it (#109).
+ * no answer behind it (#109). `known` is the file as a caller already read it,
+ * when it did.
  */
-export function createRenderedReader(root: string): RenderedReader {
-	let records: FrameRecord[] | undefined;
+export function createRenderedReader(root: string, known?: { text: string | undefined }): RenderedReader {
+	let records: Map<string, FrameRecord> | undefined;
 	return (frame, sourceHash, scenariosHash) => {
-		records ??= readRecords(root);
-		const record = records.find((candidate) => candidate.frame === frame);
+		// by frame, the first record standing for it: a scan per frame made the
+		// read grow with the project twice over
+		records ??= (known === undefined ? readRecords(root) : parseRecords(known.text)).reduce((byFrame, record) => {
+			if (!byFrame.has(record.frame)) byFrame.set(record.frame, record);
+			return byFrame;
+		}, new Map<string, FrameRecord>());
+		const record = records.get(frame);
 		if (record === undefined) return null;
 		if (record.hash !== sourceHash || record.scenarios !== scenariosHash) return null;
 		return record.targets;
