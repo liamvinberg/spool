@@ -795,11 +795,15 @@ export function ProjectCanvas({
 	 * nonce of its own.
 	 */
 	const noteCover = useCallback((frame: string, cover: Cover) => {
-		setFrames((current) =>
-			current.map((entry) =>
+		setFrames((current) => {
+			// The booth photographs a frame that did not change to the same bytes, so
+			// the same address. A picture the canvas already shows is not worth a
+			// render of the whole canvas.
+			if (!current.some((entry) => entry.name === frame && entry.cover?.hash !== cover.hash)) return current;
+			return current.map((entry) =>
 				entry.name === frame && entry.cover?.hash !== cover.hash ? { ...entry, cover } : entry,
-			),
-		);
+			);
+		});
 	}, []);
 
 	// A pointing tool owns every frame represented by its element picks. Without
