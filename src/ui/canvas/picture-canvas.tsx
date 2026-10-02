@@ -42,11 +42,14 @@ export function PictureCanvas({
 	camera,
 	frames,
 	claims,
+	booting,
 }: {
 	camera: CameraStore;
 	/** The page's frames in drawing order, each with its cover's address. */
 	frames: readonly PictureFrame[];
 	claims: PictureClaims;
+	/** Whether a frame's document is booting, which the squares off screen wait out (`setBooting`). */
+	booting: boolean;
 }) {
 	const element = useRef<PictureCanvasElement | null>(null);
 	const layer = useRef<PictureLayer | null>(null);
@@ -126,6 +129,10 @@ export function PictureCanvas({
 	useLayoutEffect(() => {
 		layer.current?.setFrames(frames);
 	}, [frames]);
+
+	useLayoutEffect(() => {
+		layer.current?.setBooting(booting);
+	}, [booting]);
 
 	useLayoutEffect(() => {
 		layer.current?.draw(camera.get());

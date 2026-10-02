@@ -868,6 +868,15 @@ export function ProjectCanvas({
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
+	// a document is booting from its mount to its loaded report; the picture
+	// layer holds the squares of frames off screen back until none is (#81)
+	const documentsBooting = useMemo(
+		() =>
+			visibleFrames.some(
+				(frame) => (lifecycle.states[frame.name] ?? "picture") !== "picture" && !lifecycle.ready.has(frame.name),
+			),
+		[visibleFrames, lifecycle.states, lifecycle.ready],
+	);
 	const sweepLifecycle = lifecycle.sweep;
 	const noteCameraMoving = lifecycle.noteCameraMoving;
 	const contentRequest = useRef(0);
@@ -5517,7 +5526,7 @@ export function ProjectCanvas({
 				)}
 				{/* every frame standing as its picture, on the GPU (#81): over the
 				    arrows and pages, under every shell, label and tag */}
-				<PictureCanvas camera={camera} frames={pictureFrames} claims={pictureClaims} />
+				<PictureCanvas camera={camera} frames={pictureFrames} claims={pictureClaims} booting={documentsBooting} />
 				{restCamera !== null && (
 					<CameraField camera={camera}>
 						{visibleFrames.map((frame) => {

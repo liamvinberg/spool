@@ -127,6 +127,13 @@ const UPLOAD_BYTES = { moving: 8 * 1024 * 1024, still: 32 * 1024 * 1024 };
 const LOADERS = 2;
 
 /**
+ * How long the squares of frames off screen wait on a document that never
+ * says it has loaded (`setBooting`): a broken frame must not keep the rest of
+ * the page from ever drawing.
+ */
+const BOOT_WAIT_MS = 2000;
+
+/**
  * The memory sharper copies may keep: two screens of device pixels, mips
  * included, and never less than 32 MB. What is on screen is always drawn as
  * sharp as it wants (a halving of the cover at least as wide as its drawing,
@@ -331,6 +338,8 @@ export class PictureLayer {
 	private redraw = false;
 	private settle = false;
 	private disposed = false;
+	private booting = false;
+	private bootWait: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(private readonly canvas: HTMLCanvasElement) {
 		canvas.addEventListener("webglcontextlost", this.onLost);
@@ -378,6 +387,28 @@ export class PictureLayer {
 		this.invalidate();
 	}
 
+	/**
+	 * Whether a frame's document is booting: mounted, and not yet reported
+	 * loaded (`canvas.tsx`). The squares of frames off screen wait while one
+	 * is, because what a document needs to arrive, the daemon answering it and
+	 * the cores running it, is what they would take: decoding a thousand-frame
+	 * page's squares beside the screen's documents made those documents take
+	 * twice as long to report loaded. What a frame on screen wants loads either
+	 * way.
+	 */
+	setBooting(booting: boolean): void {
+		if (booting === this.booting) return;
+		this.booting = booting;
+		clearTimeout(this.bootWait);
+		if (booting) this.bootWait = setTimeout(() => this.background(true), BOOT_WAIT_MS);
+		this.background(!booting);
+	}
+
+	private background(open: boolean): void {
+		for (const loader of this.loaders) this.tell(loader, { kind: "background", open });
+		this.send();
+	}
+
 	/** The surface a frame stands on before and around its picture, as the shell's `bg-surface`. */
 	setSurface(rgba: readonly [number, number, number, number]): void {
 		if (rgba.every((value, i) => value === this.surface[i])) return;
@@ -413,6 +444,7 @@ export class PictureLayer {
 
 	dispose(): void {
 		this.disposed = true;
+		clearTimeout(this.bootWait);
 		this.canvas.removeEventListener("webglcontextlost", this.onLost);
 		this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
 		this.release();

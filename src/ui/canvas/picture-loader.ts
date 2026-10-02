@@ -54,6 +54,8 @@ export type LoaderAsk =
 	  }
 	| { kind: "priority"; key: string; priority: number; box?: Box }
 	| { kind: "cancel"; key: string }
+	/** Whether the rest of the page (priority 2) may load now (`picture-layer.ts`'s `setBooting`). */
+	| { kind: "background"; open: boolean }
 	/** Forget every asked-for load: the context they were for is gone. */
 	| { kind: "reset" };
 
@@ -91,12 +93,14 @@ const FETCHES = 6;
 const LOADS = 12;
 
 /**
- * Covers at once for frames off screen (priority 2), per loader. Those squares
- * are for later, so they trickle in behind what the screen is waiting for: the
- * daemon serving the frames' own documents and the cores are shared with
- * everything the page does next.
+ * Covers at once for frames off screen (priority 2), per loader, and only
+ * while the layer lets them load at all (`open`). Those squares are for later,
+ * so they trickle in behind what the screen is waiting for: the daemon
+ * serving the frames' own documents and the cores are shared with everything
+ * the page does next.
  */
 const BACKGROUND = 1;
+let open = true;
 
 type Load = Extract<LoaderAsk, { kind: "load" }>;
 
@@ -119,6 +123,7 @@ self.onmessage = (event: MessageEvent<LoaderAsk[]>) => {
 				if (ask.box !== undefined) queued.box = ask.box;
 			}
 		} else if (ask.kind === "cancel") queue.delete(ask.key);
+		else if (ask.kind === "background") open = ask.open;
 		else queue.clear();
 	}
 	pump();
@@ -128,7 +133,7 @@ function pump(): void {
 	while (fetching < FETCHES && fetching + decoding < LOADS && queue.size > 0) {
 		let best: Load | null = null;
 		for (const load of queue.values()) if (best === null || load.priority < best.priority) best = load;
-		if (best === null || (best.priority >= 2 && background >= BACKGROUND)) return;
+		if (best === null || (best.priority >= 2 && (!open || background >= BACKGROUND))) return;
 		// everything else asked of the same cover rides along on its decode
 		const group: Load[] = [];
 		for (const load of queue.values()) if (load.url === best.url) group.push(load);
