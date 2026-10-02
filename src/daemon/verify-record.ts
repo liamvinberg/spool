@@ -19,6 +19,13 @@ export interface LogEntry {
 	text: string;
 }
 
+/**
+ * The longest fixed wait `--at` may ask for. A shot is a boot an agent is
+ * waiting on, and the booth gives every boot a deadline of its own; a wait
+ * longer than this is a wait for something a shot cannot show.
+ */
+export const SHOT_AT_MAX_MS = 30_000;
+
 /** What one boot came to. */
 export type BootOutcome =
 	| { kind: "booted"; files: string[]; entries: LogEntry[]; errors: string[]; contentHeight: number }

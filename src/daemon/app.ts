@@ -141,7 +141,7 @@ import {
 	vendorSpoolJs,
 	vendorSpoolJsxJs,
 } from "./vendor";
-import { type BootLine, planShot, recordBoot } from "./verify-record";
+import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_MS } from "./verify-record";
 import { createWebfonts } from "./webfonts";
 
 export interface DaemonOptions {
@@ -246,7 +246,7 @@ const canvasView = z.strictObject({
 const bootRequest = z.strictObject({
 	width: z.number().int().positive(),
 	height: z.number().int().positive(),
-	at: z.number().int().nonnegative().optional(),
+	at: z.number().int().nonnegative().max(SHOT_AT_MAX_MS).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 });
 

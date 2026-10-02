@@ -5,7 +5,7 @@ import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { writeCaptureError } from "./daemon/thumbs";
-import { planShot } from "./daemon/verify-record";
+import { planShot, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { headlessShellArgs } from "./headless-shell";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { type BootDeps, logsFrame, shotFrame } from "./verify";
@@ -159,6 +159,18 @@ describe("shot and logs, compile paths", () => {
 		);
 		const cleanLogs = await logsFrame(deps("clean"));
 		expect((cleanLogs as { captureError?: unknown }).captureError).toBeUndefined();
+	});
+
+	it("refuses a fixed wait longer than any shot waits", async () => {
+		const { root, name, url, controlToken } = await serveVerifyProject();
+		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
+		const boot = (at: number) =>
+			fetch(`${url}/api/p/${name}/boot/quiet`, {
+				method: "POST",
+				headers: { "X-Spool-Control": controlToken, "content-type": "application/json" },
+				body: JSON.stringify({ width: 160, height: 120, at }),
+			});
+		expect((await boot(SHOT_AT_MAX_MS + 1)).status).toBe(400);
 	});
 });
 

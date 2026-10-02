@@ -34,6 +34,7 @@ import { describeMigration, migrateFrameNames } from "./daemon/migrate-frame-nam
 import { publicationReadiness } from "./daemon/publication-readiness";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
+import { SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
@@ -323,6 +324,9 @@ function parseViewport(value: string): { width: number; height: number } {
 function parseMilliseconds(value: string): number {
 	if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
 		throw new SpoolError(`--at must be whole milliseconds, got "${value}"`);
+	}
+	if (Number(value) > SHOT_AT_MAX_MS) {
+		throw new SpoolError(`--at waits at most ${SHOT_AT_MAX_MS} ms, got "${value}"`);
 	}
 	return Number(value);
 }

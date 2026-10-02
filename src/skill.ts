@@ -222,7 +222,7 @@ shot and logs are two outputs of one boot: the frame's really-served document in
                        Reports content height in CSS pixels on stderr after fonts load. For a tall page, use this to set frame.json's h; scroll height is at least the viewport height. Capture size stays the chosen viewport.
                        A frame much taller than a screen writes top-to-bottom slices <frame>.1.png … <frame>.N.png instead, one printed path per line, each slice legible on its own with a small overlap across cuts. Read every printed file — the layout's truth is the whole stack.
                        --viewport sets exact positive-integer CSS pixels instead of frame.json.
-                       --at waits that many milliseconds after the first commit instead of settling.
+                       --at waits that many milliseconds (at most 30000) after the first commit instead of settling.
                        Doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
                        Throws uncaught while booting: shot still written, errors on stderr, exit 1.
                        Waits for #root to have children (up to 10s), then settles the way the canvas's picture of the frame does (fonts, finite entry animations, a quiet DOM, up to 900ms), waits for document.fonts.ready, then shoots; a frame that renders nothing still shoots.
