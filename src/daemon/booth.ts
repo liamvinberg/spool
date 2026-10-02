@@ -8,6 +8,7 @@ import {
 } from "../headless-shell";
 import { pageParent } from "../page-path";
 import { settleSource } from "./document";
+import type { LogEntry } from "./verify-record";
 
 /**
  * The photo booth: every frame cover is made here, in a headless browser the
@@ -319,11 +320,6 @@ export interface ShotRequest {
 	/** A fixed wait after the first commit instead of the settle. */
 	at?: number | undefined;
 	scenario?: string | undefined;
-}
-
-export interface LogEntry {
-	type: string;
-	text: string;
 }
 
 export type ShotResult =

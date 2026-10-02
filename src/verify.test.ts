@@ -5,9 +5,10 @@ import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { writeCaptureError } from "./daemon/thumbs";
+import { planShot } from "./daemon/verify-record";
 import { headlessShellArgs } from "./headless-shell";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
-import { type BootDeps, logsFrame, planShot, shotFrame } from "./verify";
+import { type BootDeps, logsFrame, shotFrame } from "./verify";
 
 /**
  * shot/logs against a really-served daemon. The compile paths never need a

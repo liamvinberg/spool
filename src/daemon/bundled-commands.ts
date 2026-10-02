@@ -6,12 +6,12 @@ import { fileURLToPath } from "node:url";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AgentPermissions } from "../settings/registry";
-import { shotFile, shotTileFile } from "../verify";
 import type { AgentReply } from "./agent-control";
 import type { AgentEvent, AgentImage } from "./agent-events";
 import { SPOOL_COMMAND_GUIDANCE, trustedCommand } from "./bundled-command-route";
 import { type BundledFilePolicy, canonicalFile, inside } from "./bundled-files";
 import { runCommand, sandboxCommand } from "./bundled-sandbox";
+import { shotFile, shotTileFile } from "./verify-record";
 
 export class BundledCommandPolicy {
 	readonly scratch = canonicalFile(mkdtempSync(join(tmpdir(), "spool-command-")));

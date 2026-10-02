@@ -21,7 +21,6 @@ import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
-import { type BootLine, planShot, recordBoot } from "../verify";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
@@ -142,6 +141,7 @@ import {
 	vendorSpoolJs,
 	vendorSpoolJsxJs,
 } from "./vendor";
+import { type BootLine, planShot, recordBoot } from "./verify-record";
 import { createWebfonts } from "./webfonts";
 
 export interface DaemonOptions {
