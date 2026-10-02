@@ -502,7 +502,7 @@ export function ProjectCanvas({
 	);
 	/**
 	 * The page as the picture layer draws it (#81): every frame in drawing
-	 * order, each with its cover's address. Which of them a DOM shell draws
+	 * order, each with its still's address. Which of them a DOM shell draws
 	 * instead is the shells' own business (`FrameSlot`), told to the layer
 	 * through these claims.
 	 */
@@ -515,7 +515,7 @@ export function ProjectCanvas({
 					y,
 					w,
 					h,
-					url: cover === undefined ? undefined : coverUrl(project, name, cover.hash),
+					still: cover === undefined ? undefined : coverUrl(project, name, cover.hash),
 				}),
 			),
 		[visibleFrames, project],
@@ -869,7 +869,7 @@ export function ProjectCanvas({
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
 	// a document is booting from its mount to its loaded report; the picture
-	// layer holds the squares of frames off screen back until none is (#81)
+	// layer holds the rest of the page's stills back until none is (#81)
 	const documentsBooting = useMemo(
 		() =>
 			visibleFrames.some(
@@ -5532,7 +5532,7 @@ export function ProjectCanvas({
 						{visibleFrames.map((frame) => {
 							const state = lifecycle.states[frame.name] ?? "picture";
 							const isEntered = entered === frame.name;
-							// a picture with a cover is the picture layer's to draw; a shell
+							// a picture with a still is the picture layer's to draw; a shell
 							// is for a document, or for a frame with nothing to draw but its
 							// placeholder
 							if (

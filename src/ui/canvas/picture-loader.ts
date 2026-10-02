@@ -1,39 +1,39 @@
-import { containSize, halvings, type PixelSize, RESIDENT_PX, sharpKey, textureFor } from "./picture-plan";
+import { containSize, halvingKey, halvingSteps, type PixelSize, Priority, SQUARE, textureFor } from "./picture-plan";
 
 /**
- * The picture layer's loader, in a worker of its own (#81): fetch a cover,
- * decode it, shrink it to the sizes the layer asked for, and hand the bitmaps
- * over. The layer runs a few of these side by side (`picture-layer.ts`), each
- * cover always going to the same one.
+ * The picture layer's loader, in a worker of its own (#81): fetch a still,
+ * decode it, shrink it to the textures the layer asked for, and hand the
+ * bitmaps over. The layer runs a few of these side by side
+ * (`picture-loads.ts`), each still always going to the same one.
  *
  * Off the page's thread because the page's thread is busy exactly when the
- * most covers are wanted: opening a page mounts a label per frame, most of a
+ * most stills are wanted: opening a page mounts a label per frame, most of a
  * second on a thousand-frame page, and a loader living there could start no
  * decode and hand the network no next request until that was over. Here the
  * whole page is asked for at once, on-screen frames first, and the network
  * and Chrome's image threads work through the mount; the page only uploads
  * what has landed.
  *
- * **One fetch and one decode per cover.** Every size asked of a cover that is
- * still waiting is made from the same decode, largest first. A frame on
- * screen whose cover the layer has not seen yet sends its box along with the
- * ask for its square, and the sharper copy that box wants comes out of the
- * same pass, so it is not a second load the layer could only ask for once the
- * square had told it the cover's size.
+ * **One fetch and one decode per still.** Every texture asked of a still that
+ * is still waiting is made from the same decode, largest first. A frame on
+ * screen whose still the layer has not seen yet sends its drawn size along
+ * with the ask for its square, and the halving that size wants comes out of
+ * the same pass, so it is not a second load the layer could only ask for once
+ * the square had told it how large the still is.
  *
  * **Shrunk in halvings.** A bitmap shrunk by `createImageBitmap(blob, {
  * resizeQuality: "high" })` is resampled on this worker's own thread, about
- * 2.5 ms for a cover of 800 x 533, and that thread was the whole cost of a
+ * 2.5 ms for a still of 800 x 533, and that thread was the whole cost of a
  * reload: on a page of 200 frames it was busy without a break while the
- * screen's covers waited their turn behind it. The decode itself runs on
+ * screen's stills waited their turn behind it. The decode itself runs on
  * Chrome's image threads and costs a fifth of that. Shrunk linearly instead,
  * a step costs a fraction of the resample, but across a large ratio a linear
  * filter skips pixels and aliases; halving at most twofold a step
- * (`halvings`), each step averages every pixel it covers, the box filter a
- * mip chain is built with. The screen's 49 covers of that page, both sizes
- * each, took the loader's thread 120 to 140 ms this way against 270 to 410
- * resampled. The bitmaps stay in this process's memory, so the page's upload
- * is a copy: a video frame shrinks faster still, but on the GPU, and
+ * (`halvingSteps`), each step averages every pixel it covers, the box filter
+ * a mip chain is built with. The screen's 49 stills of that page, square and
+ * halving each, took the loader's thread 120 to 140 ms this way against 270 to
+ * 410 resampled. The bitmaps stay in this process's memory, so the page's
+ * upload is a copy: a video frame shrinks faster still, but on the GPU, and
  * uploading what it gives back cost the page's thread five times as much.
  */
 
@@ -42,25 +42,27 @@ export type LoaderAsk =
 	| {
 			kind: "load";
 			key: string;
-			/** An absolute address: a worker resolves relative ones against its own script. */
-			url: string;
-			/** The resident square, the cover at its own size (`null`), or a resize to this. */
-			size: "resident" | PixelSize | null;
-			/** Lower first: 0 what a frame drawn on screen wants, 1 what a shell's frame would, 2 the rest. */
-			priority: number;
+			/** The still's address as the layer names it, the one key every texture of it is filed under. */
+			still: string;
+			/** The same address made absolute: a worker resolves relative ones against its own script. */
+			href: string;
+			/** The square, or a halving of this size. */
+			size: "square" | PixelSize;
+			priority: Priority;
 			generation: number;
-			/** For a square: the frame on screen it is for, so the sharper copy it wants comes too. */
-			box?: Box;
+			/** For a square: the size its frame is drawn on screen, so the halving that wants comes too. */
+			drawing?: Drawing;
 	  }
-	| { kind: "priority"; key: string; priority: number; box?: Box }
+	| { kind: "priority"; key: string; priority: Priority; drawing?: Drawing }
+	/** Take back a load not started yet, answered `dropped`; one already started lands as usual. */
 	| { kind: "cancel"; key: string }
-	/** Whether the rest of the page (priority 2) may load now (`picture-layer.ts`'s `setBooting`). */
+	/** Whether anything but what the screen wants may load now (`picture-loads.ts`'s `setBooting`). */
 	| { kind: "background"; open: boolean }
 	/** Forget every asked-for load: the context they were for is gone. */
 	| { kind: "reset" };
 
 /** A frame on screen in device pixels, and the largest texture the GPU takes. */
-export interface Box {
+export interface Drawing {
 	w: number;
 	h: number;
 	maxSide: number;
@@ -68,8 +70,8 @@ export interface Box {
 
 /**
  * What the loader hands back, one per load it was asked for, and one for a
- * sharper copy it made unasked from a square's box (`size` set, keyed by
- * `sharpKey`).
+ * halving it made unasked from a square's drawing (`size` set, keyed by
+ * `halvingKey`).
  */
 export type LoaderReply =
 	| {
@@ -79,13 +81,14 @@ export type LoaderReply =
 			natural: PixelSize;
 			/** When the bytes arrived, as epoch milliseconds so the page can put it on its own clock. */
 			fetchedAt: number;
-			/** The size of a sharper copy nobody asked for by its key. */
+			/** The size of a halving nobody asked for by its key. */
 			size?: PixelSize;
 	  }
-	| { key: string; generation: number; failed: true };
+	| { key: string; generation: number; failed: true }
+	| { key: string; generation: number; dropped: true };
 
 /**
- * Covers fetched at once, and fetched or decoded at once, per loader. The
+ * Stills fetched at once, and fetched or decoded at once, per loader. The
  * browser opens six connections to one host whatever the loaders ask, and
  * decodes beyond the cores only queue.
  */
@@ -93,13 +96,13 @@ const FETCHES = 6;
 const LOADS = 12;
 
 /**
- * Covers at once for frames off screen (priority 2), per loader, and only
+ * Stills at once for frames off screen (`Priority.page`), per loader, and only
  * when nothing the screen wants is loading here and the layer lets them load
  * at all (`open`). Those squares are for later, so they trickle in behind
- * what the screen is waiting for: the network, the daemon serving the frames'
- * own documents and the cores are shared with everything the page does next.
- * Let run beside the screen's covers, a reload of a 200-frame page decoded 45
- * squares off screen before the last one on it.
+ * what the screen is waiting for: the network, the daemon serving the
+ * frames' own documents and the cores are shared with everything the page
+ * does next. Let run beside the screen's stills, a reload of a 200-frame page
+ * decoded 45 squares off screen before the last one on it.
  */
 const BACKGROUND = 1;
 let open = true;
@@ -123,10 +126,15 @@ self.onmessage = (event: MessageEvent<LoaderAsk[]>) => {
 			const queued = queue.get(ask.key);
 			if (queued !== undefined) {
 				queued.priority = ask.priority;
-				if (ask.box !== undefined) queued.box = ask.box;
+				if (ask.drawing !== undefined) queued.drawing = ask.drawing;
 			}
-		} else if (ask.kind === "cancel") queue.delete(ask.key);
-		else if (ask.kind === "background") open = ask.open;
+		} else if (ask.kind === "cancel") {
+			const queued = queue.get(ask.key);
+			if (queued !== undefined) {
+				queue.delete(ask.key);
+				post({ key: ask.key, generation: queued.generation, dropped: true });
+			}
+		} else if (ask.kind === "background") open = ask.open;
 		else queue.clear();
 	}
 	pump();
@@ -136,12 +144,14 @@ function pump(): void {
 	while (fetching < FETCHES && fetching + decoding < LOADS && queue.size > 0) {
 		let best: Load | null = null;
 		for (const load of queue.values()) if (best === null || load.priority < best.priority) best = load;
-		if (best === null || (best.priority >= 2 && (!open || urgent > 0 || background >= BACKGROUND))) return;
-		// everything else asked of the same cover rides along on its decode
+		if (best === null) return;
+		const later = best.priority >= Priority.page;
+		if (later && (!open || urgent > 0 || background >= BACKGROUND)) return;
+		// everything else asked of the same still rides along on its decode
 		const group: Load[] = [];
-		for (const load of queue.values()) if (load.url === best.url) group.push(load);
+		for (const load of queue.values()) if (load.still === best.still) group.push(load);
 		for (const load of group) queue.delete(load.key);
-		void run(group, best.priority >= 2);
+		void run(group, later);
 	}
 }
 
@@ -167,9 +177,9 @@ async function fetchAndDecode(group: Load[]): Promise<void> {
 	fetching += 1;
 	let blob: Blob;
 	try {
-		const urgent = group.some((load) => load.priority < 2);
-		const response = await fetch(first.url, { priority: urgent ? "high" : "low" });
-		if (!response.ok) throw new Error(`cover ${response.status}`);
+		const wanted = group.some((load) => load.priority < Priority.page);
+		const response = await fetch(first.href, { priority: wanted ? "high" : "low" });
+		if (!response.ok) throw new Error(`still ${response.status}`);
 		blob = await response.blob();
 	} catch {
 		fail(group);
@@ -206,25 +216,25 @@ async function fetchAndDecode(group: Load[]): Promise<void> {
 interface Output {
 	key: string;
 	size: PixelSize;
-	/** Made from a square's box rather than asked for by key. */
+	/** Made from a square's drawing rather than asked for by key. */
 	derived: boolean;
 }
 
 /**
- * The bitmaps to make of one cover, largest first: every load in the group,
- * and the sharper copy a square's box wants when no load asked for it.
+ * The bitmaps to make of one still, largest first: every load in the group,
+ * and the halving a square's drawing wants when no load asked for it.
  */
 function plan(group: readonly Load[], natural: PixelSize): Output[] {
 	const outputs: Output[] = group.map((load) => ({
 		key: load.key,
-		size: load.size === "resident" ? { width: RESIDENT_PX, height: RESIDENT_PX } : (load.size ?? natural),
+		size: load.size === "square" ? SQUARE : load.size,
 		derived: false,
 	}));
 	for (const load of group) {
-		if (load.box === undefined) continue;
-		const wanted = textureFor(containSize(load.box.w, load.box.h, natural), natural, load.box.maxSide);
-		if (wanted.kind !== "sharp") continue;
-		const key = sharpKey(load.url, wanted.width);
+		if (load.drawing === undefined) continue;
+		const wanted = textureFor(containSize(load.drawing.w, load.drawing.h, natural), natural, load.drawing.maxSide);
+		if (wanted.kind !== "halving") continue;
+		const key = halvingKey(load.still, wanted.width);
 		if (outputs.some((output) => output.key === key)) continue;
 		outputs.push({ key, size: { width: wanted.width, height: wanted.height }, derived: true });
 	}
@@ -238,9 +248,9 @@ interface Made {
 }
 
 /**
- * Every output of one cover from one decode, largest first. Each starts from
+ * Every output of one still from one decode, largest first. Each starts from
  * the smallest bitmap already made that covers it on both sides, so a square
- * squeezed from a wide cover never grows back out of a copy shrunk for its
+ * squeezed from a wide still never grows back out of a halving shrunk for its
  * width, and is walked down from there in halvings.
  */
 async function shrink(blob: Blob, group: readonly Load[]): Promise<Made[]> {
@@ -256,7 +266,7 @@ async function shrink(blob: Blob, group: readonly Load[]): Promise<Made[]> {
 				const covers = bitmap.width >= size.width && bitmap.height >= size.height;
 				if (covers && bitmap.width * bitmap.height < current.width * current.height) current = bitmap;
 			}
-			for (const step of halvings(current, size)) {
+			for (const step of halvingSteps(current, size)) {
 				current = await createImageBitmap(current, {
 					resizeWidth: step.width,
 					resizeHeight: step.height,

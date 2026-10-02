@@ -45,10 +45,10 @@ export function PictureCanvas({
 	booting,
 }: {
 	camera: CameraStore;
-	/** The page's frames in drawing order, each with its cover's address. */
+	/** The page's frames in drawing order, each with its still's address. */
 	frames: readonly PictureFrame[];
 	claims: PictureClaims;
-	/** Whether a frame's document is booting, which the squares off screen wait out (`setBooting`). */
+	/** Whether a frame's document is booting, which the rest of the page's stills wait out (`setBooting`). */
 	booting: boolean;
 }) {
 	const element = useRef<PictureCanvasElement | null>(null);
@@ -84,11 +84,7 @@ export function PictureCanvas({
 				measure(entry.contentRect.width, entry.contentRect.height, entry.devicePixelContentBoxSize?.[0]);
 			}
 		});
-		try {
-			sized.observe(canvas, { box: "device-pixel-content-box" });
-		} catch {
-			sized.observe(canvas);
-		}
+		sized.observe(canvas, { box: "device-pixel-content-box" });
 		// a window moved to a screen of another density keeps its CSS size
 		let density: MediaQueryList | null = null;
 		const watchDensity = () => {

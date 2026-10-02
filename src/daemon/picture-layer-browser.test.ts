@@ -8,10 +8,12 @@ import { writeCover } from "./thumbs";
 
 /**
  * The picture layer (#81) in a real browser: frames standing as their
- * pictures are drawn by WebGL and hold no DOM shell, a frame that becomes a
- * document is handed to its shell and back, and a lost context comes back
- * without anything else noticing. What the GPU drew is read two ways: the
- * layer's own report of what it was given, and the pixels on screen.
+ * pictures are drawn by WebGL and hold no DOM shell, a frame with no still
+ * keeps its placeholder shell, a frame that becomes a document is handed to
+ * its shell and back, a changed still lets its old texture go, the camera's
+ * motion paints once a frame, and a lost context comes back without anything
+ * else noticing. What the GPU drew is read two ways: the layer's own report
+ * of what it was given, and the pixels on screen.
  */
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -27,10 +29,10 @@ function crc32(bytes: Uint8Array): number {
 }
 
 /**
- * The cover the daemon's photo booth makes of a frame: a read that finds the
- * frame uncovered asks for it, and the next reads see it land.
+ * The still the daemon's photo booth makes of a frame: a read that finds the
+ * frame without one asks for it, and the next reads see it land.
  */
-async function boothCover(
+async function boothStill(
 	project: { url: string; name: string; controlToken: string },
 	frame: string,
 ): Promise<{ hash: string }> {
@@ -42,15 +44,15 @@ async function boothCover(
 		return frames.find((entry) => entry.name === frame)?.cover;
 	};
 	await expect.poll(read, { timeout: 60_000 }).toBeDefined();
-	const cover = await read();
-	if (cover === undefined) throw new Error(`no cover for "${frame}"`);
-	return cover;
+	const still = await read();
+	if (still === undefined) throw new Error(`no still for "${frame}"`);
+	return still;
 }
 
 /**
- * A solid-colour RGB PNG, the shape a cover arrives in; with `right`, the
- * columns from the middle on are that colour instead, an edge any softer copy
- * of the picture would smear.
+ * A solid-colour RGB PNG, the shape a still arrives in; with `right`, the
+ * columns from the middle on are that colour instead, an edge any softer
+ * texture of the still would smear.
  */
 function solidPng(
 	width: number,
@@ -94,14 +96,19 @@ const H = 200;
 /** Each frame draws 150 CSS px wide here, a picture below the 400 px readable threshold. */
 const CAMERA = { x: 40, y: 40, k: 0.5 };
 
-async function pictureCanvas() {
+/**
+ * A frame beyond the screen, to the right: its square loads with the rest of
+ * the page, and it is never drawn.
+ */
+const FAR = { name: "far", x: 4000, y: 0, color: [230, 210, 40] } as const;
+
+async function pictureCanvas(options: { plain?: boolean; far?: boolean } = {}) {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
-	for (const frame of FRAMES) {
-		// the document is its cover's colour too, so a picture the canvas takes of
-		// it on its own (the daemon's watcher can report the fresh file after the
-		// page opens) is the same picture
+	for (const frame of options.far === true ? [...FRAMES, FAR] : FRAMES) {
+		// the document is its still's colour too, so a picture the photo booth
+		// takes of it on its own is the same picture
 		const [r, g, b] = frame.color;
 		writeFrame(
 			project.root,
@@ -114,6 +121,11 @@ async function pictureCanvas() {
 			`${JSON.stringify({ x: frame.x, y: frame.y, w: W, h: H })}\n`,
 		);
 		writeCover(project.root, frame.name, Buffer.from(solidPng(800, 533, frame.color)));
+	}
+	if (options.plain === true) {
+		// a document that throws gives the photo booth nothing to keep
+		writeFrame(project.root, "plain", 'export default function Frame() { throw new Error("nothing to picture"); }');
+		writeDesignFile(project.root, "frames/plain/frame.json", `${JSON.stringify({ x: 340, y: 240, w: W, h: H })}\n`);
 	}
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: CAMERA })}\n`);
 	const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
@@ -195,8 +207,8 @@ it("draws every picture on the GPU, where its shell stood, and keeps none in the
 		expect(picture?.picture?.w).toBeCloseTo(150, 5);
 		expect(picture?.picture?.h).toBeCloseTo(99.9375, 5);
 		expect(picture?.natural).toEqual({ width: 800, height: 533 });
-		// 150 device px is past the 64 px square: the cover halved twice streams in
-		expect(picture?.texture).toEqual({ kind: "sharp", width: 200, height: 133 });
+		// 150 device px is past the 64 px square: the still halved twice streams in
+		expect(picture?.texture).toEqual({ kind: "halving", width: 200, height: 133 });
 	}
 	// no shell, no still, no document: the field holds only the labels
 	expect(await page.locator("[data-frame-cover]").count()).toBe(0);
@@ -278,17 +290,17 @@ it("keeps the canvas working through a lost context and draws again when it come
 	expect(near(centres[0], FRAMES[0].color), `the picture is back: ${centres[0]}`).toBe(true);
 });
 
-it("draws the cover itself at 100% on a 2x screen, as sharp as the image element did", {
+it("draws the still itself at 100% on a 2x screen, as sharp as the image element did", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	// 360 CSS px on its long side at k = 1: still a picture, under the 400 px
-	// readable threshold, and drawn 720 device px wide from the 800 px cover
+	// readable threshold, and drawn 720 device px wide from the 800 px still
 	// the photo booth takes of it. White on its left half and black on its
-	// right, an edge that falls on the cover's 400th column: a JPEG block
-	// boundary, so the cover holds it as hard as the document does.
+	// right, an edge that falls on the still's 400th column: a JPEG block
+	// boundary, so the still holds it as hard as the document does.
 	writeFrame(
 		project.root,
 		"card",
@@ -300,27 +312,27 @@ it("draws the cover itself at 100% on a 2x screen, as sharp as the image element
 	const page = await context.newPage();
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 
-	// the full cover, never a smaller copy, at the frame's place and size
-	const cover = await boothCover(project, "card");
+	// the still itself, never a halving of it, at the frame's place and size
+	const still = await boothStill(project, "card");
 	const card = async () => (await report(page))?.drawn.find((picture) => picture.name === "card") ?? null;
 	await expect
 		.poll(
 			async () => {
 				const drawn = await card();
-				return drawn?.url === `/covers/${project.name}/card/${cover.hash}` ? drawn.texture : null;
+				return drawn?.still === `/covers/${project.name}/card/${still.hash}` ? drawn.texture : null;
 			},
 			{ timeout: 60_000 },
 		)
-		.toEqual({ kind: "sharp", width: 800, height: 800 });
+		.toEqual({ kind: "halving", width: 800, height: 800 });
 	const picture = await card();
 	expect(picture?.natural).toEqual({ width: 800, height: 800 });
 	expect(picture?.box).toEqual({ x: 40, y: 40, w: 360, h: 360 });
 	expect(picture?.picture).toEqual({ w: 360, h: 360 });
 	expect(await page.locator('[data-frame-cover="card"]').count()).toBe(0);
 
-	// The white half ends at the cover's middle column, 180 CSS px into the
-	// frame. Drawn from the cover the edge stays within a device pixel or two;
-	// the resident square or a halved copy would smear it across several.
+	// The white half ends at the still's middle column, 180 CSS px into the
+	// frame. Drawn from the still itself the edge stays within a device pixel
+	// or two; the square or a halving would smear it across several.
 	const origin = await canvasOrigin(page);
 	const edge = origin.x + 40 + 180;
 	const [white, black] = await pixels(page, [
@@ -329,4 +341,167 @@ it("draws the cover itself at 100% on a 2x screen, as sharp as the image element
 	]);
 	expect(white?.[0], "a device pixel or so left of the edge is the white half").toBeGreaterThan(235);
 	expect(black?.[0], "a device pixel right of it is the black half").toBeLessThan(20);
+});
+
+it("keeps a frame with no still in its placeholder shell, beside the pictures", { timeout: 180_000 }, async () => {
+	const { page } = await pictureCanvas({ plain: true });
+	const placeholder = page.locator('[data-frame-cover="plain"]');
+	await placeholder.waitFor({ timeout: 30_000 });
+	const now = await report(page);
+	// the layer draws the three with stills, and leaves the fourth to its shell
+	expect(now?.drawn.map((each) => each.name).sort()).toEqual(["blue", "green", "red"]);
+	expect(await placeholder.locator("img").count()).toBe(0);
+	expect(await placeholder.innerText()).toContain("plain");
+	const origin = await canvasOrigin(page);
+	const box = await placeholder.boundingBox();
+	expect(box).toEqual({
+		x: origin.x + CAMERA.x + 340 * CAMERA.k,
+		y: origin.y + CAMERA.y + 240 * CAMERA.k,
+		width: W * CAMERA.k,
+		height: H * CAMERA.k,
+	});
+	// on screen it is the shell's surface, between pictures the GPU drew
+	const surface = (
+		/(\d+), (\d+), (\d+)/.exec(
+			await placeholder
+				.locator("div")
+				.first()
+				.evaluate((element) => getComputedStyle(element).backgroundColor),
+		) ?? []
+	)
+		.slice(1)
+		.map(Number);
+	const [plain, red] = await pixels(page, [
+		{ x: origin.x + CAMERA.x + 340 * CAMERA.k + 20, y: origin.y + CAMERA.y + 240 * CAMERA.k + 20 },
+		{ x: origin.x + CAMERA.x + 75, y: origin.y + CAMERA.y + 50 },
+	]);
+	expect(near(plain, surface), `the placeholder shows its surface: ${plain}`).toBe(true);
+	expect(near(red, FRAMES[0].color), `the picture beside it is drawn: ${red}`).toBe(true);
+});
+
+it("lets a changed still's old texture go: at once off screen, and on screen once the new one is drawn", {
+	timeout: 240_000,
+}, async () => {
+	const { page, project } = await pictureCanvas({ far: true });
+	const stillOf = async (name: string) =>
+		(await report(page))?.stills.find((each) => each.name === name)?.still ?? null;
+	const held = async () => (await report(page))?.held ?? [];
+	// the photo booth pictures each new frame on its own: wait for it to finish
+	let last = "";
+	let quiet = 0;
+	await expect
+		.poll(
+			async () => {
+				const now = JSON.stringify((await report(page))?.stills.map((each) => each.still));
+				quiet = now === last ? quiet + 1 : 0;
+				last = now;
+				return quiet >= 6;
+			},
+			{ timeout: 90_000, interval: 500 },
+		)
+		.toBe(true);
+	// a frame whose document changes colour gets a new still from the booth
+	const recolour = (name: string, [r, g, b]: readonly [number, number, number]) =>
+		writeFrame(
+			project.root,
+			name,
+			`export default function Frame() { return <main style={{ position: "fixed", inset: 0, background: "rgb(${r}, ${g}, ${b})" }} />; }`,
+		);
+
+	// off screen: the far frame's square is on the GPU, and goes the moment its still changes
+	const farBefore = await stillOf(FAR.name);
+	await expect.poll(held, { timeout: 30_000 }).toContain(farBefore);
+	recolour(FAR.name, [140, 40, 200]);
+	await expect.poll(() => stillOf(FAR.name), { timeout: 60_000 }).not.toBe(farBefore);
+	expect(await held()).not.toContain(farBefore);
+
+	// on screen: the old still stands in until the new one is drawn, then goes
+	const redBefore = await stillOf("red");
+	recolour("red", [40, 200, 200]);
+	await expect.poll(() => stillOf("red"), { timeout: 60_000 }).not.toBe(redBefore);
+	const redAfter = await stillOf("red");
+	await expect
+		.poll(
+			async () => {
+				const red = (await report(page))?.drawn.find((each) => each.name === "red");
+				return red?.still === redAfter && red.texture?.kind === "halving";
+			},
+			{ timeout: 30_000 },
+		)
+		.toBe(true);
+	await expect.poll(held, { timeout: 10_000 }).not.toContain(redBefore);
+});
+
+it("paints once a frame while the camera moves, with stills still landing", { timeout: 180_000 }, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir });
+	// a page of small frames, every one on screen, whose squares land while the camera pans
+	for (let i = 0; i < 60; i += 1) {
+		const name = `tile-${String(i).padStart(2, "0")}`;
+		const shade = 40 + ((i * 37) % 180);
+		writeFrame(project.root, name, "export default function Frame() { return <main />; }");
+		writeDesignFile(
+			project.root,
+			`frames/${name}/frame.json`,
+			`${JSON.stringify({ x: (i % 10) * 110, y: Math.floor(i / 10) * 90, w: 100, h: 75 })}\n`,
+		);
+		writeCover(project.root, name, Buffer.from(solidPng(400, 300, [shade, 120, 255 - shade])));
+	}
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 20, y: 20, k: 0.8 } })}\n`);
+	const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	await expect.poll(async () => (await report(page))?.draws ?? 0, { timeout: 30_000 }).toBeGreaterThan(0);
+
+	// a sample every animation frame: how many times the layer has painted, the
+	// camera it drew, and what is out
+	await page.evaluate(() => {
+		const canvas = document.querySelector("[data-picture-layer]") as HTMLCanvasElement & {
+			spoolPictures: () => PictureReport;
+		};
+		const samples: { draws: number; out: number; camera: string }[] = [];
+		Reflect.set(window, "__samples", samples);
+		const tick = () => {
+			const now = canvas.spoolPictures();
+			samples.push({ draws: now.draws, out: now.pending.out, camera: JSON.stringify(now.camera) });
+			if (Reflect.get(window, "__sampling") !== false) requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+	});
+	const origin = await canvasOrigin(page);
+	await page.mouse.move(origin.x + 500, origin.y + 300);
+	for (let i = 0; i < 60; i += 1) {
+		await page.mouse.wheel(i % 20 < 10 ? 8 : -8, 0);
+		await page.waitForTimeout(16);
+	}
+	await page.evaluate(() => Reflect.set(window, "__sampling", false));
+	const samples = (await page.evaluate(() => Reflect.get(window, "__samples"))) as {
+		draws: number;
+		out: number;
+		camera: string;
+	}[];
+	// the frames the camera moved in, from the first to the last
+	const moved = samples.flatMap((sample, i) => (i > 0 && sample.camera !== samples[i - 1]?.camera ? [i] : []));
+	const first = moved[0] ?? 0;
+	const last = moved.at(-1) ?? 0;
+	const during = samples.slice(first, last + 1);
+	// the pan met loads coming back, or it proves nothing
+	const landings = during.filter((sample, i) => i > 0 && sample.out < (during[i - 1]?.out ?? 0)).length;
+	expect(landings, "stills landed while the camera moved").toBeGreaterThan(0);
+	const most = Math.max(...during.slice(1).map((sample, i) => sample.draws - (during[i]?.draws ?? 0)));
+	expect(most, "paints in one animation frame of the pan").toBeLessThanOrEqual(1);
+});
+
+it("loses its context when the canvas goes, rather than leaving it for the collector", {
+	timeout: 180_000,
+}, async () => {
+	const { page } = await pictureCanvas();
+	await page.locator("[data-picture-layer]").evaluate((canvas) => Reflect.set(window, "__canvas", canvas));
+	await page.getByTitle("Home").click();
+	await expect.poll(() => page.locator("[data-picture-layer]").count(), { timeout: 10_000 }).toBe(0);
+	expect(
+		await page.evaluate(() =>
+			(Reflect.get(window, "__canvas") as HTMLCanvasElement).getContext("webgl2")?.isContextLost(),
+		),
+	).toBe(true);
 });

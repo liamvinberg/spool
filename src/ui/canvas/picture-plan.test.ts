@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { bindUnits, containSize, evictions, halvings, RESIDENT_PX, textureBytes, textureFor } from "./picture-plan";
+import {
+	bindUnits,
+	containSize,
+	evictions,
+	halvingSteps,
+	SQUARE,
+	SQUARE_PX,
+	textureBytes,
+	textureFor,
+	UPLOAD_BUDGET,
+	uploadSpent,
+} from "./picture-plan";
 
 const LANDSCAPE = { width: 800, height: 533 };
 const PORTRAIT = { width: 800, height: 1731 };
 
 describe("containSize", () => {
-	it("fills a frame whose shape the cover was photographed at", () => {
+	it("fills a frame whose shape the still was photographed at", () => {
 		expect(containSize(1200, 900, { width: 800, height: 600 })).toEqual({ w: 1200, h: 900 });
 	});
 
@@ -14,7 +25,7 @@ describe("containSize", () => {
 		expect(containSize(1200, 800, LANDSCAPE)).toEqual({ w: 1200, h: 799.5 });
 	});
 
-	it("keeps the cover's shape in a frame resized since, like object-contain", () => {
+	it("keeps the still's shape in a frame resized since, like object-contain", () => {
 		// wider than photographed: the height binds, the width falls short
 		expect(containSize(1600, 533, LANDSCAPE)).toEqual({ w: 800, h: 533 });
 		// taller: the width binds
@@ -22,10 +33,10 @@ describe("containSize", () => {
 	});
 });
 
-describe("halvings", () => {
-	it("halves a cover down to the sharper copy a frame wants, the copy itself the last step", () => {
-		expect(halvings(LANDSCAPE, { width: 400, height: 267 })).toEqual([{ width: 400, height: 267 }]);
-		expect(halvings(LANDSCAPE, { width: 200, height: 133 })).toEqual([
+describe("halvingSteps", () => {
+	it("halves a still down to the halving a frame wants, the halving itself the last step", () => {
+		expect(halvingSteps(LANDSCAPE, { width: 400, height: 267 })).toEqual([{ width: 400, height: 267 }]);
+		expect(halvingSteps(LANDSCAPE, { width: 200, height: 133 })).toEqual([
 			{ width: 400, height: 267 },
 			{ width: 200, height: 134 },
 			{ width: 200, height: 133 },
@@ -33,12 +44,12 @@ describe("halvings", () => {
 	});
 
 	it("walks to the square side by side, never shrinking a side more than twofold", () => {
-		const steps = halvings(LANDSCAPE, { width: RESIDENT_PX, height: RESIDENT_PX });
+		const steps = halvingSteps(LANDSCAPE, { width: SQUARE_PX, height: SQUARE_PX });
 		expect(steps).toEqual([
 			{ width: 400, height: 267 },
 			{ width: 200, height: 134 },
 			{ width: 100, height: 67 },
-			{ width: RESIDENT_PX, height: RESIDENT_PX },
+			{ width: SQUARE_PX, height: SQUARE_PX },
 		]);
 		let at = LANDSCAPE;
 		for (const step of steps) {
@@ -48,52 +59,52 @@ describe("halvings", () => {
 		}
 	});
 
-	it("halves a tall cover's height further than its width", () => {
-		expect(halvings(PORTRAIT, { width: RESIDENT_PX, height: RESIDENT_PX })).toEqual([
+	it("halves a tall still's height further than its width", () => {
+		expect(halvingSteps(PORTRAIT, { width: SQUARE_PX, height: SQUARE_PX })).toEqual([
 			{ width: 400, height: 866 },
 			{ width: 200, height: 433 },
 			{ width: 100, height: 217 },
 			{ width: 100, height: 109 },
-			{ width: RESIDENT_PX, height: RESIDENT_PX },
+			{ width: SQUARE_PX, height: SQUARE_PX },
 		]);
 	});
 
 	it("takes no step to the size it is at, and one to a size it has to grow to", () => {
-		expect(halvings(LANDSCAPE, LANDSCAPE)).toEqual([]);
-		expect(halvings({ width: 40, height: 30 }, { width: RESIDENT_PX, height: RESIDENT_PX })).toEqual([
-			{ width: RESIDENT_PX, height: RESIDENT_PX },
+		expect(halvingSteps(LANDSCAPE, LANDSCAPE)).toEqual([]);
+		expect(halvingSteps({ width: 40, height: 30 }, { width: SQUARE_PX, height: SQUARE_PX })).toEqual([
+			{ width: SQUARE_PX, height: SQUARE_PX },
 		]);
 	});
 });
 
 describe("textureFor", () => {
-	it("draws an overview from the resident square", () => {
+	it("draws an overview from the square", () => {
 		// a thousand-frame overview at 2x: each frame about 62 device px wide
-		expect(textureFor({ w: 62, h: 41 }, LANDSCAPE, 8192)).toEqual({ kind: "resident" });
-		expect(textureFor({ w: RESIDENT_PX, h: RESIDENT_PX }, LANDSCAPE, 8192)).toEqual({ kind: "resident" });
+		expect(textureFor({ w: 62, h: 41 }, LANDSCAPE, 8192)).toEqual(SQUARE);
+		expect(textureFor({ w: SQUARE_PX, h: SQUARE_PX }, LANDSCAPE, 8192)).toEqual(SQUARE);
 	});
 
-	it("streams the smallest halving of the cover at least as wide as the drawing", () => {
+	it("streams the smallest halving of the still at least as wide as the drawing", () => {
 		// the mip level Chrome would have drawn the image element from
-		expect(textureFor({ w: 65, h: 43 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 100, height: 67 });
-		expect(textureFor({ w: 129, h: 86 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 200, height: 133 });
-		expect(textureFor({ w: 200, h: 133 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 200, height: 133 });
-		expect(textureFor({ w: 300, h: 200 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 400, height: 267 });
+		expect(textureFor({ w: 65, h: 43 }, LANDSCAPE, 8192)).toEqual({ kind: "halving", width: 100, height: 67 });
+		expect(textureFor({ w: 129, h: 86 }, LANDSCAPE, 8192)).toEqual({ kind: "halving", width: 200, height: 133 });
+		expect(textureFor({ w: 200, h: 133 }, LANDSCAPE, 8192)).toEqual({ kind: "halving", width: 200, height: 133 });
+		expect(textureFor({ w: 300, h: 200 }, LANDSCAPE, 8192)).toEqual({ kind: "halving", width: 400, height: 267 });
 	});
 
-	it("draws the cover itself once no halving is wide enough, and at 100% zoom", () => {
-		expect(textureFor({ w: 480, h: 320 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 800, height: 533 });
-		expect(textureFor({ w: 2400, h: 1600 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 800, height: 533 });
+	it("draws the still itself once no halving is wide enough, and at 100% zoom", () => {
+		expect(textureFor({ w: 480, h: 320 }, LANDSCAPE, 8192)).toEqual({ kind: "halving", width: 800, height: 533 });
+		expect(textureFor({ w: 2400, h: 1600 }, LANDSCAPE, 8192)).toEqual({ kind: "halving", width: 800, height: 533 });
 	});
 
 	it("steps a tall picture up by its height when its width would fit the square", () => {
 		// 60 wide fits 64, 130 tall does not: the square has only 64 rows to give it
-		expect(textureFor({ w: 60, h: 130 }, PORTRAIT, 8192)).toEqual({ kind: "sharp", width: 100, height: 216 });
+		expect(textureFor({ w: 60, h: 130 }, PORTRAIT, 8192)).toEqual({ kind: "halving", width: 100, height: 216 });
 	});
 
-	it("fits a cover taller than the GPU allows inside that limit", () => {
+	it("fits a still taller than the GPU allows inside that limit", () => {
 		expect(textureFor({ w: 800, h: 40000 }, { width: 800, height: 40000 }, 16384)).toEqual({
-			kind: "sharp",
+			kind: "halving",
 			width: 328,
 			height: 16384,
 		});
@@ -108,11 +119,11 @@ describe("textureBytes", () => {
 });
 
 describe("bindUnits", () => {
-	it("draws a page of resident pictures in one draw", () => {
+	it("draws a page of squares in one draw", () => {
 		expect(bindUnits([null, null, null])).toEqual({ unit: [0, 0, 0], draws: [{ start: 0, end: 3, bound: [] }] });
 	});
 
-	it("gives each distinct sharper texture its own unit and shares one between its users", () => {
+	it("gives each distinct halving its own unit and shares one between its users", () => {
 		expect(bindUnits(["a", null, "b", "a"])).toEqual({
 			unit: [1, 0, 2, 1],
 			draws: [{ start: 0, end: 4, bound: ["a", "b"] }],
@@ -152,5 +163,29 @@ describe("evictions", () => {
 
 	it("never drops a texture drawn this frame, even over budget", () => {
 		expect(evictions(entries, 0, 5)).toEqual(["older", "old"]);
+	});
+});
+
+describe("uploadSpent", () => {
+	const budget = UPLOAD_BUDGET.resting;
+
+	it("always lets a frame make its first upload, however large", () => {
+		expect(uploadSpent({ ms: 50, bytes: 0 }, budget)).toBe(false);
+	});
+
+	it("stops a frame at its share of bytes", () => {
+		expect(uploadSpent({ ms: 0, bytes: budget.bytes - 1 }, budget)).toBe(false);
+		expect(uploadSpent({ ms: 0, bytes: budget.bytes }, budget)).toBe(true);
+	});
+
+	it("stops a frame at its share of time", () => {
+		expect(uploadSpent({ ms: budget.ms - 0.1, bytes: 1 }, budget)).toBe(false);
+		expect(uploadSpent({ ms: budget.ms, bytes: 1 }, budget)).toBe(true);
+	});
+
+	it("gives a moving camera less of both than a resting one", () => {
+		expect(UPLOAD_BUDGET.moving.ms).toBeLessThan(UPLOAD_BUDGET.resting.ms);
+		expect(UPLOAD_BUDGET.moving.bytes).toBeLessThan(UPLOAD_BUDGET.resting.bytes);
+		expect(uploadSpent({ ms: UPLOAD_BUDGET.moving.ms, bytes: 1 }, UPLOAD_BUDGET.moving)).toBe(true);
 	});
 });

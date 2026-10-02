@@ -1,16 +1,33 @@
 import type { Camera } from "../api";
-import { shellRadiusOnScreen } from "./camera";
-import type { Box, LoaderAsk, LoaderReply } from "./picture-loader";
+import { type Box, shellRadiusOnScreen } from "./camera";
+import {
+	closeGpu,
+	contextOf,
+	drawPictures,
+	FLOATS,
+	type Gpu,
+	halvingTexture,
+	mipSquares,
+	openGpu,
+	regrowSquares,
+	uploadSquare,
+} from "./picture-gl";
+import type { Drawing } from "./picture-loader";
+import { type Job, StillLoads } from "./picture-loads";
 import {
 	bindUnits,
 	containSize,
 	evictions,
+	halvingKey,
 	type PixelSize,
-	RESIDENT_PX,
-	SHARP_UNITS,
-	sharpKey,
+	Priority,
+	SQUARE,
+	SQUARE_PX,
+	type Texture,
 	textureBytes,
 	textureFor,
+	UPLOAD_BUDGET,
+	uploadSpent,
 } from "./picture-plan";
 
 /**
@@ -24,60 +41,52 @@ import {
  * because everything is on screen. Here the same pictures are one instanced
  * draw, flat in frame count. Documents stay DOM, over this canvas, because a
  * GPU layer under the DOM cannot draw over an iframe; so does every frame
- * with no cover, which keeps its placeholder shell.
+ * with no still, which keeps its placeholder shell.
  *
  * It draws only when told, with the camera it is told: the camera store's own
  * callback, the one that moves the DOM field, hands it each camera
  * (`picture-canvas.tsx`), so the pictures and everything over them land in the
- * same frame and can never be one apart. A one-off redraw happens only when a
- * texture lands while the camera is still, and it draws the camera last
+ * same frame and can never be one apart. Between cameras it paints once more
+ * only when a still lands while the camera rests, and then the camera last
  * delivered, which is the one the DOM is showing.
  *
- * Textures, by what a frame needs at the size it is drawn (`picture-plan.ts`):
+ * Each still is kept on the GPU two ways (`picture-plan.ts`): its square,
+ * which every frame on the page has, in one texture array, mipmapped there
+ * and drawn back at the still's shape; and, for a frame drawn larger than the
+ * square, the halving of the still its drawn size wants, streamed while it is
+ * on screen and kept within a budget of a few screens once it leaves.
  *
- *   resident: every frame's cover as a 64 px square in one texture array,
- *             mipmapped on the GPU, its true shape restored when drawn;
- *   sharper:  for a frame drawn wider than that, the cover halved to the
- *             smallest size at least as wide as the drawing, or the cover
- *             itself, streamed while it is on screen, kept within a budget of
- *             a few screens and dropped least recently drawn first.
- *
- * Covers are immutable and content-addressed, so a changed cover is a new
- * address and a new texture; the old one is drawn until the new one lands and
- * then let go.
+ * Stills are immutable and content-addressed, so a changed still is a new
+ * address: on screen the one it replaces is drawn until the new one lands, and
+ * off screen the old one goes at once.
  */
 
-/** One frame as the layer sees it: a world box, and the address of its picture. */
+/** One frame as the layer sees it: a world box, and the address of its still. */
 export interface PictureFrame {
 	name: string;
 	x: number;
 	y: number;
 	w: number;
 	h: number;
-	/** The cover's address, absent for a frame with none: its DOM placeholder draws it. */
-	url: string | undefined;
+	/** The still's address, absent for a frame with none: its DOM placeholder draws it. */
+	still: string | undefined;
 }
 
 /** What the layer drew for one frame, read back by tests and benches (`report`). */
 export interface DrawnPicture {
 	name: string;
-	url: string;
+	/** The still drawn: the frame's own, or the one it replaced while its own loads. */
+	still: string;
 	/** The frame on screen, in CSS pixels from the canvas's top left. */
-	box: { x: number; y: number; w: number; h: number };
-	/** The picture inside it in CSS pixels, contained at the top left; null before its size is known. */
+	box: Box;
+	/** The picture inside it in CSS pixels, contained at the top left; null before its still's size is known. */
 	picture: { w: number; h: number } | null;
-	/** The cover's own pixel size. */
+	/** The still's own pixel size. */
 	natural: PixelSize | null;
-	/** What was sampled: the resident square, a sharper copy, or nothing yet (the surface alone). */
-	texture:
-		| { kind: "resident"; width: number; height: number }
-		| { kind: "sharp"; width: number; height: number }
-		| null;
+	/** What was sampled, or nothing yet (the surface alone). */
+	texture: Texture | null;
 	/** What a frame drawn this size wants. */
-	wanted:
-		| { kind: "resident"; width: number; height: number }
-		| { kind: "sharp"; width: number; height: number }
-		| null;
+	wanted: Texture | null;
 }
 
 export interface PictureReport {
@@ -94,250 +103,92 @@ export interface PictureReport {
 	lost: boolean;
 	/** How many times the layer has drawn, which a test can wait on. */
 	draws: number;
-	/** GPU bytes held by the resident array and by sharper copies. */
-	bytes: { resident: number; sharp: number };
-	/** Covers still on their way: with the loader, or decoded and waiting to upload. */
-	pending: { asked: number; landed: number };
+	/** GPU bytes held by the square array and by halvings. */
+	bytes: { squares: number; halvings: number };
+	/** Loads still on their way: out with a loader, or decoded and waiting to upload. */
+	pending: { out: number; landed: number };
+	/** Every still with a texture on the GPU, its square or a halving. */
+	held: string[];
 	/**
-	 * Every frame on the page with a cover, on screen or not: when its cover's
-	 * bytes arrived and when its square reached the GPU, on the page's clock.
-	 * The picture layer's answer to "has every frame got its picture yet".
+	 * Every frame on the page with a still, on screen or not: its still, when
+	 * the still's bytes arrived, and when the frame was first drawn with the
+	 * texture its drawn size wants, on the page's clock. The picture layer's
+	 * answer to "has every frame got its picture yet", on the same terms as an
+	 * image element that has decoded.
 	 */
-	covers: { name: string; fetched: number | null; uploaded: number | null }[];
+	stills: { name: string; still: string; fetched: number | null; drawn: number | null }[];
 }
 
 /**
- * Upload limits per drawn frame. A texture upload is a copy the GPU process
- * makes, but its call and the mip chain after it are paid in the frame they
- * are made in; past these, the rest waits for the next frame, so a zoom that
- * suddenly wants a screenful of sharper copies never pays for it in one. A
- * camera at rest has no frame to protect, and fills the page faster.
- */
-const UPLOAD_MS = { moving: 2, still: 6 };
-const UPLOAD_BYTES = { moving: 8 * 1024 * 1024, still: 32 * 1024 * 1024 };
-
-/**
- * Loaders working side by side, each a worker of its own (`picture-loader.ts`).
- * A cover always goes to the same one, so every size asked of it can share one
- * decode there. Two, because the work a loader cannot hand to Chrome's own
- * image threads runs on the loader's thread, one cover after another, and the
- * screen's covers waited on that line; more would take cores the frames'
- * documents boot on.
- */
-const LOADERS = 2;
-
-/**
- * While the camera moves, a frame asks for a sharper copy only once its square
+ * While the camera moves, a frame asks for a halving only once its square
  * would be stretched past fourfold, and every other frame asks when it comes
  * to rest. A zoom across an overview carries hundreds of frames just past the
- * square's size, and streaming a copy for each of them mid-gesture meant
+ * square's size, and streaming a halving for each of them mid-gesture meant
  * creating, uploading and binding hundreds of textures while it ran: 30
  * frames over 12 ms in a thousand-frame overview zoom, against 8 with none
  * asked until rest. Past fourfold the square is too soft to show even in
  * motion, and a frame drawn that large shares the screen with few others, so
- * those copies cost little.
+ * those halvings cost little.
  */
-const MOVING_SHARP_PX = 4 * RESIDENT_PX;
+const MOVING_HALVING_PX = 4 * SQUARE_PX;
 
 /**
- * How long the squares of frames off screen wait on a document that never
- * says it has loaded (`setBooting`): a broken frame must not keep the rest of
- * the page from ever drawing.
+ * The memory halvings may keep: two screens of device pixels, mips included,
+ * and never less than 32 MB. What is on screen is always drawn from the
+ * halving it wants (at least as wide as its drawing, so at most four screens
+ * of pixels and usually much less); past that, halvings whose frames have
+ * left the screen go, least recently drawn first. Bounded by the screen, not
+ * the page: a frame long off screen keeps only its square.
  */
-const BOOT_WAIT_MS = 2000;
-
-/**
- * The memory sharper copies may keep: two screens of device pixels, mips
- * included, and never less than 32 MB. What is on screen is always drawn as
- * sharp as it wants (a halving of the cover at least as wide as its drawing,
- * so at most four screens of pixels and usually much less); past that, copies
- * whose frames have left the screen go, least recently drawn first. Bounded by
- * the screen, not the page: a frame long off screen holds only its square.
- */
-function sharpBudget(width: number, height: number): number {
+function halvingBudget(width: number, height: number): number {
 	return Math.max(32 * 1024 * 1024, 2 * textureBytes(width, height, true));
 }
 
-interface Resident {
-	/** The layer of the texture array holding it, once uploaded. */
-	slot: number | null;
+/**
+ * A still's square: out with a loader, in its layer of the array, or decoded
+ * with no layer left to put it in (a page with more stills than the GPU allows
+ * layers, 2048 on most), which draws its frame as the surface until the frame
+ * is drawn large enough to want a halving.
+ */
+interface Square {
+	layer: number | null;
 	natural: PixelSize | null;
-	state: "waiting" | "ready" | "failed";
-	/** When its bytes arrived and when its square reached the GPU, on the page's clock. */
+	state: "out" | "ready" | "spare" | "failed";
+	/** When its bytes arrived, on the page's clock. */
 	fetched?: number;
-	uploaded?: number;
 }
 
-interface Sharp {
-	url: string;
+interface Halving {
+	still: string;
 	width: number;
 	height: number;
 	texture: WebGLTexture | null;
-	state: "waiting" | "ready" | "failed";
+	state: "out" | "ready" | "failed";
 	bytes: number;
 	/** The draw that last sampled it, for least-recently-drawn eviction. */
 	used: number;
 }
 
-interface Job {
-	key: string;
-	url: string;
-	sharp: { width: number; height: number } | null;
-	/** Lower loads first: 0 what a frame drawn on screen wants, 1 what a shell's frame would, 2 the rest. */
-	priority: number;
-}
-
-interface Landed {
-	job: Job;
-	bitmap: ImageBitmap;
-	natural: PixelSize;
-}
-
-interface Gpu {
-	gl: WebGL2RenderingContext;
-	program: WebGLProgram;
-	vao: WebGLVertexArrayObject;
-	instances: WebGLBuffer;
-	view: WebGLUniformLocation | null;
-	radius: WebGLUniformLocation | null;
-	surface: WebGLUniformLocation | null;
-	resident: WebGLTexture;
-	capacity: number;
-	maxLayers: number;
-	maxSide: number;
-	units: number;
-	anisotropy: number;
-	blank: WebGLTexture;
-	copy: WebGLFramebuffer;
-}
-
-const FLOATS = 8;
-const RESIDENT_LEVELS = Math.log2(RESIDENT_PX) + 1;
-
-const VERTEX = `#version 300 es
-layout(location = 0) in vec2 a_corner;
-layout(location = 1) in vec4 a_box;
-layout(location = 2) in vec4 a_picture;
-uniform vec2 u_view;
-out vec2 v_local;
-flat out vec2 v_size;
-flat out vec2 v_picture;
-flat out float v_layer;
-flat out int v_unit;
-void main() {
-	// a device pixel of slack on every side, for the antialiased edge
-	vec2 local = a_corner * (a_box.zw + 2.0) - 1.0;
-	vec2 device = a_box.xy + local;
-	gl_Position = vec4(device / u_view * 2.0 - 1.0, 0.0, 1.0);
-	gl_Position.y = -gl_Position.y;
-	v_local = local;
-	v_size = a_box.zw;
-	v_picture = a_picture.xy;
-	v_layer = a_picture.z;
-	v_unit = int(a_picture.w);
-}`;
-
-/**
- * The frame's surface, its picture contained at the top left over it, and the
- * shell's rounded corner, all antialiased the way the DOM rounds a clip: a
- * half-pixel ramp either side of the edge, from a signed distance.
- */
-function fragment(units: number): string {
-	const cases = Array.from({ length: units }, (_, i) => `\t\tcase ${i + 1}: return drawn(u_sharp[${i}], st);`).join(
-		"\n",
-	);
-	return `#version 300 es
-precision highp float;
-precision highp int;
-precision highp sampler2DArray;
-uniform sampler2DArray u_resident;
-uniform sampler2D u_sharp[${units}];
-uniform float u_radius;
-uniform vec4 u_surface;
-in vec2 v_local;
-flat in vec2 v_size;
-flat in vec2 v_picture;
-flat in float v_layer;
-flat in int v_unit;
-out vec4 o_color;
-float edge(vec2 p, vec2 size, float r) {
-	vec2 half_size = size * 0.5;
-	vec2 q = abs(p - half_size) - half_size + r;
-	return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-}
-// Mitchell-Netravali, B = C = 1/3: the cubic Chrome draws a grown image with
-float mitchell(float x) {
-	x = abs(x);
-	if (x < 1.0) return (7.0 * x * x * x - 12.0 * x * x + 16.0 / 3.0) / 6.0;
-	if (x < 2.0) return (-7.0 / 3.0 * x * x * x + 12.0 * x * x - 20.0 * x + 32.0 / 3.0) / 6.0;
-	return 0.0;
-}
-// A sharper copy drawn the way the image element drew the cover: shrunk, from
-// the mip level at least as large as the drawing, filtered linearly; grown,
-// through the cubic over the sixteen texels around the sample.
-vec4 drawn(sampler2D tex, vec2 st) {
-	vec2 size = vec2(textureSize(tex, 0));
-	vec2 rho = size / max(v_picture, vec2(1e-6));
-	float shrink = max(rho.x, rho.y);
-	if (shrink >= 1.0) return textureLod(tex, st, floor(log2(shrink)));
-	vec2 p = st * size - 0.5;
-	vec2 corner = floor(p);
-	vec2 f = p - corner;
-	vec4 sum = vec4(0.0);
-	for (int j = -1; j <= 2; j++) {
-		float wy = mitchell(float(j) - f.y);
-		for (int i = -1; i <= 2; i++) {
-			ivec2 at = ivec2(clamp(corner + vec2(i, j), vec2(0.0), size - 1.0));
-			sum += texelFetch(tex, at, 0) * mitchell(float(i) - f.x) * wy;
-		}
-	}
-	return clamp(sum, 0.0, 1.0);
-}
-vec4 sharp(vec2 st) {
-	switch (v_unit) {
-${cases}
-	}
-	return vec4(0.0);
-}
-void main() {
-	vec2 st = v_local / max(v_picture, vec2(1e-6));
-	// derivatives before any branch: a quad that diverges has none to give
-	vec2 dx = dFdx(st);
-	vec2 dy = dFdy(st);
-	float radius = min(u_radius, 0.5 * min(v_size.x, v_size.y));
-	float cover = clamp(0.5 - edge(v_local, v_size, radius), 0.0, 1.0);
-	vec4 color = u_surface;
-	if (v_unit >= 0 && v_picture.x > 0.0) {
-		vec2 clamped = clamp(st, 0.0, 1.0);
-		vec4 texel = v_unit == 0
-			? textureGrad(u_resident, vec3(clamped, v_layer), dx, dy)
-			: sharp(clamped);
-		float inside = clamp(0.5 - edge(v_local, v_picture, 0.0), 0.0, 1.0);
-		color = mix(u_surface, texel + u_surface * (1.0 - texel.a), inside);
-	}
-	o_color = color * cover;
-}`;
-}
-
 export class PictureLayer {
+	/** The canvas's context for its whole life, lost and restored in place; null without WebGL. */
+	private readonly gl: WebGL2RenderingContext | null;
 	private gpu: Gpu | null = null;
 	private lost = false;
+	private readonly loads: StillLoads;
 	private frames: readonly PictureFrame[] = [];
-	/** The picture each frame showed before its cover changed, drawn until the new one lands. */
-	private previous = new Map<string, string>();
+	/** The still each changed frame drew before, drawn on screen until its new one lands. */
+	private standIns = new Map<string, string>();
+	/** How many frames and stand-ins name each still; a still nobody names is let go. */
+	private uses = new Map<string, number>();
 	private readonly claimed = new Set<string>();
-	private readonly residents = new Map<string, Resident>();
-	/** Which cover each layer of the resident array holds. */
-	private slots: (string | null)[] = [];
-	private readonly sharps = new Map<string, Sharp>();
-	/** Loads handed to a loader and not back yet (`picture-loader.ts`). */
-	private readonly asked = new Map<string, Job>();
-	private loaders: Worker[] = [];
-	/** Asks not sent yet, per loader (`tell`). */
-	private readonly outbox = new Map<Worker, LoaderAsk[]>();
-	private landed: Landed[] = [];
-	/** Bumped when the context goes, so a decode begun before it lands nowhere. */
-	private generation = 0;
+	private readonly squares = new Map<string, Square>();
+	/** Which still each layer of the square array holds. */
+	private layers: (string | null)[] = [];
+	private readonly halvings = new Map<string, Halving>();
+	/** Frames the last draw had on screen, drawn or claimed. */
+	private shown = new Set<string>();
+	/** When each frame was first drawn with what its size wanted, and from which still. */
+	private readonly done = new Map<string, { still: string; at: number }>();
 	private camera: Camera | null = null;
 	private width = 0;
 	private height = 0;
@@ -348,44 +199,52 @@ export class PictureLayer {
 	private moving = false;
 	private draws = 0;
 	private instances = new Float32Array(0);
-	private redraw = false;
+	/** The one paint waiting for the next frame, for what landed while the camera rests (`wake`). */
+	private next: number | null = null;
 	private settle = false;
 	private disposed = false;
-	private booting = false;
-	private bootWait: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(private readonly canvas: HTMLCanvasElement) {
 		canvas.addEventListener("webglcontextlost", this.onLost);
 		canvas.addEventListener("webglcontextrestored", this.onRestored);
-		this.gpu = this.open();
-		// no GPU, nothing to load for: a canvas without WebGL draws no pictures
-		if (this.gpu !== null) {
-			for (let i = 0; i < LOADERS; i++) {
-				const loader = new Worker(new URL("./picture-loader.ts", import.meta.url), { type: "module" });
-				loader.addEventListener("message", this.onLoaded);
-				this.loaders.push(loader);
-			}
-		}
+		this.loads = new StillLoads({ landed: () => this.wake(), gone: (job, failed) => this.onGone(job, failed) });
+		this.gl = contextOf(canvas);
+		// no WebGL at all, nothing to load for: a canvas without it draws no pictures
+		if (this.gl === null) return;
+		this.loads.start();
+		// a context already lost is one that comes back (`onRestored`)
+		if (this.gl.isContextLost()) this.lost = true;
+		else this.open(this.gl);
 	}
 
 	/** The frames on this page, in drawing order: a later frame draws over an earlier one. */
 	setFrames(frames: readonly PictureFrame[]): void {
-		const was = new Map(this.frames.map((frame) => [frame.name, frame.url]));
-		const previous = new Map<string, string>();
+		const before = new Map(this.frames.map((frame) => [frame.name, frame.still]));
+		const standIns = new Map<string, string>();
 		for (const frame of frames) {
-			const before = was.get(frame.name) ?? undefined;
-			const held = this.previous.get(frame.name);
-			// a changed cover draws the picture it replaces until its own lands
-			const standIn = before !== undefined && before !== frame.url ? before : held;
-			if (standIn !== undefined && standIn !== frame.url && frame.url !== undefined)
-				previous.set(frame.name, standIn);
+			if (frame.still === undefined || !this.shown.has(frame.name)) continue;
+			const was = before.get(frame.name);
+			const held = this.standIns.get(frame.name);
+			// A changed still stands in for itself on screen until the new one
+			// lands, if it got as far as a texture; of two changes in a row the
+			// older stand-in stays when the one between them never did.
+			const replaced = was !== undefined && was !== frame.still && this.drawable(was) ? was : held;
+			if (replaced !== undefined && replaced !== frame.still && this.drawable(replaced)) {
+				standIns.set(frame.name, replaced);
+			}
 		}
 		this.frames = frames;
-		this.previous = previous;
-		this.forget();
-		for (const frame of frames) if (frame.url !== undefined) this.want(frame.url, null, 2);
+		this.standIns = standIns;
+		const uses = new Map<string, number>();
+		const name = (still: string) => uses.set(still, (uses.get(still) ?? 0) + 1);
+		for (const frame of frames) if (frame.still !== undefined) name(frame.still);
+		for (const still of standIns.values()) name(still);
+		this.uses = uses;
+		for (const still of this.squares.keys()) if (!uses.has(still)) this.release(still);
+		for (const halving of this.halvings.values()) if (!uses.has(halving.still)) this.release(halving.still);
+		for (const frame of frames) if (frame.still !== undefined) this.want(frame.still, null, Priority.page);
 		this.sizeArray();
-		this.invalidate();
+		this.refresh();
 	}
 
 	/**
@@ -400,33 +259,16 @@ export class PictureLayer {
 		this.invalidate();
 	}
 
-	/**
-	 * Whether a frame's document is booting: mounted, and not yet reported
-	 * loaded (`canvas.tsx`). The squares of frames off screen wait while one
-	 * is, because what a document needs to arrive, the daemon answering it and
-	 * the cores running it, is what they would take: decoding a thousand-frame
-	 * page's squares beside the screen's documents made those documents take
-	 * twice as long to report loaded. What a frame on screen wants loads either
-	 * way.
-	 */
+	/** Whether a frame's document is booting, which the rest of the page's stills wait out (`StillLoads`). */
 	setBooting(booting: boolean): void {
-		if (booting === this.booting) return;
-		this.booting = booting;
-		clearTimeout(this.bootWait);
-		if (booting) this.bootWait = setTimeout(() => this.background(true), BOOT_WAIT_MS);
-		this.background(!booting);
-	}
-
-	private background(open: boolean): void {
-		for (const loader of this.loaders) this.tell(loader, { kind: "background", open });
-		this.send();
+		this.loads.setBooting(booting);
 	}
 
 	/** The surface a frame stands on before and around its picture, as the shell's `bg-surface`. */
 	setSurface(rgba: readonly [number, number, number, number]): void {
 		if (rgba.every((value, i) => value === this.surface[i])) return;
 		this.surface = rgba;
-		this.invalidate();
+		this.refresh();
 	}
 
 	/** The canvas's size in CSS pixels and in device pixels; drawn again at once, before the paint it changes. */
@@ -449,23 +291,29 @@ export class PictureLayer {
 		const stopped = this.moving && !moving;
 		this.moving = moving;
 		// the store says so once more when a camera comes to rest, and that
-		// camera is already on screen: drawn again only to ask for the sharper
-		// copies a moving camera held back (`MOVING_SHARP_PX`), since
-		// everything else that changes the picture asks for its own draw
+		// camera is already on screen: drawn again only to ask for the halvings
+		// a moving camera held back (`MOVING_HALVING_PX`), since everything else
+		// that changes the picture asks for its own draw
 		if (camera === this.camera && this.draws > 0 && !stopped) return;
 		this.camera = camera;
 		this.render();
 	}
 
+	/**
+	 * Let go of everything: the loaders, every texture and buffer, and the
+	 * context itself, lost on purpose so the browser can reclaim it now rather
+	 * than at some later collection. A canvas is made per project tab, and
+	 * Chrome keeps only so many contexts before it loses the oldest itself.
+	 */
 	dispose(): void {
 		this.disposed = true;
-		clearTimeout(this.bootWait);
+		if (this.next !== null) cancelAnimationFrame(this.next);
+		this.next = null;
 		this.canvas.removeEventListener("webglcontextlost", this.onLost);
 		this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
-		this.release();
-		for (const loader of this.loaders) loader.terminate();
-		this.loaders = [];
-		this.outbox.clear();
+		this.loads.dispose();
+		this.close();
+		this.gl?.getExtension("WEBGL_lose_context")?.loseContext();
 	}
 
 	/** What the last draw put on screen, worked out again from the state it drew. */
@@ -476,41 +324,29 @@ export class PictureLayer {
 		if (camera !== null) {
 			this.walk(camera, (frame, box, look) => {
 				const css = (value: number) => value / this.scale;
-				const picture = look.picture === null ? null : { w: css(look.picture.w), h: css(look.picture.h) };
-				const texture =
-					look.sharp !== null
-						? { kind: "sharp" as const, width: look.sharp.width, height: look.sharp.height }
-						: look.resident
-							? { kind: "resident" as const, width: RESIDENT_PX, height: RESIDENT_PX }
-							: null;
-				const wanted =
-					look.wanted === null
-						? null
-						: look.wanted.kind === "resident"
-							? { kind: "resident" as const, width: RESIDENT_PX, height: RESIDENT_PX }
-							: look.wanted;
-				if (
-					texture === null ||
-					wanted === null ||
-					texture.kind !== wanted.kind ||
-					texture.width !== wanted.width ||
-					look.url !== frame.url
-				) {
+				const texture = textureOf(look);
+				if (texture === null || look.wanted === null || !same(texture, look.wanted) || look.still !== frame.still) {
 					complete = false;
 				}
 				drawn.push({
 					name: frame.name,
-					url: look.url,
+					still: look.still,
 					box: { x: css(box.x), y: css(box.y), w: css(box.w), h: css(box.h) },
-					picture,
+					picture: look.picture === null ? null : { w: css(look.picture.w), h: css(look.picture.h) },
 					natural: look.natural,
 					texture,
-					wanted,
+					wanted: look.wanted,
 				});
 			});
 		}
-		let sharp = 0;
-		for (const entry of this.sharps.values()) if (entry.texture !== null) sharp += entry.bytes;
+		let halvings = 0;
+		const held = new Set<string>();
+		for (const halving of this.halvings.values()) {
+			if (halving.texture === null) continue;
+			halvings += halving.bytes;
+			held.add(halving.still);
+		}
+		for (const [still, square] of this.squares) if (square.state === "ready") held.add(still);
 		return {
 			camera,
 			scale: this.scale,
@@ -520,14 +356,22 @@ export class PictureLayer {
 			lost: this.lost || this.gpu === null,
 			draws: this.draws,
 			bytes: {
-				resident: this.gpu === null ? 0 : this.gpu.capacity * textureBytes(RESIDENT_PX, RESIDENT_PX, true),
-				sharp,
+				squares: this.gpu === null ? 0 : this.gpu.capacity * textureBytes(SQUARE_PX, SQUARE_PX, true),
+				halvings,
 			},
-			pending: { asked: this.asked.size, landed: this.landed.length },
-			covers: this.frames.flatMap((frame) => {
-				if (frame.url === undefined) return [];
-				const entry = this.residents.get(frame.url);
-				return [{ name: frame.name, fetched: entry?.fetched ?? null, uploaded: entry?.uploaded ?? null }];
+			pending: this.loads.pending,
+			held: [...held],
+			stills: this.frames.flatMap((frame) => {
+				if (frame.still === undefined) return [];
+				const done = this.done.get(frame.name);
+				return [
+					{
+						name: frame.name,
+						still: frame.still,
+						fetched: this.squares.get(frame.still)?.fetched ?? null,
+						drawn: done?.still === frame.still ? done.at : null,
+					},
+				];
 			}),
 		};
 	}
@@ -541,21 +385,13 @@ export class PictureLayer {
 	 */
 	private walk(
 		camera: Camera,
-		visit: (
-			frame: PictureFrame & { url: string },
-			box: { x: number; y: number; w: number; h: number },
-			look: Look,
-		) => void,
-		claimed?: (
-			frame: PictureFrame & { url: string },
-			box: { x: number; y: number; w: number; h: number },
-			look: Look,
-		) => void,
+		visit: (frame: PictureFrame & { still: string }, box: Box, look: Look) => void,
+		claimed?: (frame: PictureFrame & { still: string }, box: Box, look: Look) => void,
 	): void {
 		const { k } = camera;
 		const s = this.scale;
 		for (const frame of this.frames) {
-			if (frame.url === undefined) continue;
+			if (frame.still === undefined) continue;
 			const box = {
 				x: (frame.x * k + camera.x) * s,
 				y: (frame.y * k + camera.y) * s,
@@ -563,56 +399,58 @@ export class PictureLayer {
 				h: frame.h * k * s,
 			};
 			if (box.x > this.width + 1 || box.y > this.height + 1 || box.x + box.w < -1 || box.y + box.h < -1) continue;
-			const look = this.look(frame as PictureFrame & { url: string }, box);
-			if (this.claimed.has(frame.name)) claimed?.(frame as PictureFrame & { url: string }, box, look);
-			else visit(frame as PictureFrame & { url: string }, box, look);
+			const pictured = frame as PictureFrame & { still: string };
+			const look = this.look(pictured, box);
+			if (this.claimed.has(frame.name)) claimed?.(pictured, box, look);
+			else visit(pictured, box, look);
 		}
 	}
 
 	/**
 	 * What one frame on screen is drawn from, and what it would want. A frame
-	 * whose cover just changed keeps drawing the picture it replaced for as long
-	 * as that one is the better of the two at this size, so a new cover never
+	 * whose still just changed keeps drawing the one it replaced for as long as
+	 * that one is the better of the two at this size, so a new still never
 	 * shows as a blur or a blank on its way in.
 	 */
-	private look(frame: PictureFrame & { url: string }, box: { w: number; h: number }): Look {
-		const own = this.lookAt(frame.url, box);
-		const stand = this.previous.get(frame.name);
+	private look(frame: PictureFrame & { still: string }, box: Box): Look {
+		const own = this.lookAt(frame.still, box);
+		const stand = this.standIns.get(frame.name);
 		if (stand === undefined) return own;
 		const old = this.lookAt(stand, box);
 		return rank(old) > rank(own) ? { ...old, own } : { ...own, own, done: rank(own) === Number.POSITIVE_INFINITY };
 	}
 
-	private lookAt(url: string, box: { w: number; h: number }): Look {
-		const resident = this.residents.get(url);
-		const natural = resident?.natural ?? null;
-		if (natural === null) return { url, natural, picture: null, wanted: null, resident: false, sharp: null };
+	private lookAt(still: string, box: Box): Look {
+		const square = this.squares.get(still);
+		const natural = square?.natural ?? null;
+		if (natural === null) return { still, natural, picture: null, wanted: null, square: false, halving: null };
 		const picture = containSize(box.w, box.h, natural);
 		const wanted = textureFor(picture, natural, this.gpu?.maxSide ?? 4096);
-		const ready = resident?.state === "ready" && resident.slot !== null;
-		let sharp: Sharp | null = null;
-		if (wanted.kind === "sharp") {
-			const exact = this.sharps.get(sharpKey(url, wanted.width));
-			if (exact?.texture != null) sharp = exact;
+		const ready = square?.state === "ready";
+		let halving: Halving | null = null;
+		if (wanted.kind === "halving") {
+			const exact = this.halvings.get(halvingKey(still, wanted.width));
+			if (exact?.texture != null) halving = exact;
 		}
-		// the next best thing on hand: any sharper copy beats the square once it
-		// is wanted, and a square that is not there yet loses to anything. An
+		// the next best thing on hand: any halving beats the square once one is
+		// wanted, and a square that is not there yet loses to anything. An
 		// overview has every square it wants, so this walk is for close-ups only.
-		if (sharp === null && (wanted.kind === "sharp" || !ready)) {
-			for (const entry of this.sharps.values()) {
-				if (entry.url !== url || entry.texture === null) continue;
-				if (sharp === null || entry.width > sharp.width) sharp = entry;
+		if (halving === null && (wanted.kind === "halving" || !ready)) {
+			for (const entry of this.halvings.values()) {
+				if (entry.still !== still || entry.texture === null) continue;
+				if (halving === null || entry.width > halving.width) halving = entry;
 			}
 		}
-		return { url, natural, picture, wanted, resident: ready, sharp };
+		return { still, natural, picture, wanted, square: ready, halving };
 	}
 
 	private render(): void {
-		this.redraw = false;
+		if (this.next !== null) cancelAnimationFrame(this.next);
+		this.next = null;
 		this.paint();
 		// everything asked of the loaders since the last draw goes out together,
 		// a page's squares and which of them are on screen in one message
-		this.send();
+		this.loads.send();
 	}
 
 	private paint(): void {
@@ -631,115 +469,93 @@ export class PictureLayer {
 		const textures: (WebGLTexture | null)[] = [];
 		const none: boolean[] = [];
 		const wants: { job: Job; area: number }[] = [];
-		// what a frame drawn here wants loads first, then what a frame its shell
-		// is drawing would want on the way back, then the rest of the page
-		const note = (
-			frame: PictureFrame & { url: string },
-			box: { w: number; h: number },
-			look: Look,
-			priority: number,
-		) => {
-			if (look.sharp !== null) look.sharp.used = this.stamp;
-			if (look.done === true) {
-				const stand = this.previous.get(frame.name);
-				this.previous.delete(frame.name);
-				if (stand !== undefined) this.forget(stand);
-			}
-			// what to load is the frame's own cover's business, whatever stands in for it
+		const shown = new Set<string>();
+		const note = (frame: PictureFrame & { still: string }, box: Box, look: Look, priority: Priority) => {
+			shown.add(frame.name);
+			if (look.halving !== null) look.halving.used = this.stamp;
+			if (look.done === true) this.dropStandIn(frame.name);
+			// what to load is the frame's own still's business, whatever stands in for it
 			const own = look.own ?? look;
 			const wanted = own.wanted;
-			const asks = !this.moving || Math.max(box.w, box.h) > MOVING_SHARP_PX;
-			if (asks && wanted?.kind === "sharp" && (own.sharp === null || own.sharp.width !== wanted.width)) {
+			const asks = !this.moving || Math.max(box.w, box.h) > MOVING_HALVING_PX;
+			if (asks && wanted?.kind === "halving" && own.halving?.width !== wanted.width) {
 				wants.push({
-					job: { key: sharpKey(own.url, wanted.width), url: own.url, sharp: wanted, priority },
+					job: { key: halvingKey(own.still, wanted.width), still: own.still, halving: wanted, priority },
 					area: wanted.width * wanted.height,
 				});
 			}
 			// A square on screen jumps the queue of the page's other squares when
-			// it is what the frame wants, or when the cover's size is not known
-			// yet: then it takes the frame's box along, and the sharper copy that
-			// box wants comes out of the same decode rather than a second load
-			// asked for once the square has said how big the cover is.
-			const resident = this.asked.get(own.url);
-			if (
-				resident !== undefined &&
-				resident.priority > priority &&
-				(own.natural === null || wanted?.kind === "resident")
-			) {
-				resident.priority = priority;
-				const sized: Box | undefined =
+			// it is what the frame wants, or when its still's size is not known
+			// yet: then it takes the frame's drawn size along, and the halving that
+			// size wants comes out of the same decode rather than a second load
+			// asked for once the square has said how large the still is.
+			const square = this.loads.job(own.still);
+			if (square !== undefined && (own.natural === null || wanted?.kind === "square")) {
+				const drawing: Drawing | undefined =
 					own.natural === null && asks ? { w: box.w, h: box.h, maxSide: gpu.maxSide } : undefined;
-				this.tell(this.loaderOf(own.url), {
-					kind: "priority",
-					key: resident.key,
-					priority,
-					...(sized === undefined ? {} : { box: sized }),
-				});
+				this.loads.raise(square, priority, drawing);
 			}
 		};
 		let count = 0;
 		this.walk(
 			camera,
 			(frame, box, look) => {
-				note(frame, box, look, 0);
+				note(frame, box, look, Priority.drawn);
+				if (look.still === frame.still && rank(look) === Number.POSITIVE_INFINITY) {
+					if (this.done.get(frame.name)?.still !== frame.still) {
+						this.done.set(frame.name, { still: frame.still, at: performance.now() });
+					}
+				}
 				if (this.instances.length < (count + 1) * FLOATS) {
 					const grown = new Float32Array(Math.max(64, (count + 1) * 2) * FLOATS);
 					grown.set(this.instances);
 					this.instances = grown;
 				}
-				const at = count * FLOATS;
+				const base = count * FLOATS;
 				const data = this.instances;
-				data[at] = box.x;
-				data[at + 1] = box.y;
-				data[at + 2] = box.w;
-				data[at + 3] = box.h;
-				data[at + 4] = look.picture?.w ?? 0;
-				data[at + 5] = look.picture?.h ?? 0;
-				data[at + 6] = look.resident ? (this.residents.get(look.url)?.slot ?? 0) : 0;
-				textures.push(look.sharp?.texture ?? null);
-				none.push(look.sharp === null && !look.resident);
+				data[base] = box.x;
+				data[base + 1] = box.y;
+				data[base + 2] = box.w;
+				data[base + 3] = box.h;
+				data[base + 4] = look.picture?.w ?? 0;
+				data[base + 5] = look.picture?.h ?? 0;
+				data[base + 6] = look.square ? (this.squares.get(look.still)?.layer ?? 0) : 0;
+				textures.push(look.halving?.texture ?? null);
+				none.push(look.halving === null && !look.square);
 				count += 1;
 			},
-			// a frame its shell is drawing still keeps its sharper copy warm, so
-			// the moment it hands back its picture is already as sharp as it was
-			(frame, box, look) => note(frame, box, look, 1),
+			// a frame its shell is drawing still keeps its halving warm, so the
+			// moment it hands back its picture is already as sharp as it was
+			(frame, box, look) => note(frame, box, look, Priority.shell),
 		);
+		this.shown = shown;
+		// off screen, a changed frame's old still goes at once
+		for (const name of this.standIns.keys()) if (!shown.has(name)) this.dropStandIn(name);
 		this.request(wants);
 
 		if (count > 0) {
 			const { unit, draws } = bindUnits(textures, gpu.units);
 			for (let i = 0; i < count; i++) this.instances[i * FLOATS + 7] = none[i] ? -1 : (unit[i] ?? 0);
-			// biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook
-			gl.useProgram(gpu.program);
-			gl.uniform2f(gpu.view, this.width, this.height);
-			gl.uniform1f(gpu.radius, shellRadiusOnScreen(camera.k) * this.scale);
-			const [r, g, b, a] = this.surface;
-			gl.uniform4f(gpu.surface, r * a, g * a, b * a, a);
-			gl.enable(gl.BLEND);
-			gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-			gl.bindVertexArray(gpu.vao);
-			gl.bindBuffer(gl.ARRAY_BUFFER, gpu.instances);
-			gl.bufferData(gl.ARRAY_BUFFER, this.instances.subarray(0, count * FLOATS), gl.STREAM_DRAW);
-			gl.activeTexture(gl.TEXTURE0);
-			gl.bindTexture(gl.TEXTURE_2D_ARRAY, gpu.resident);
-			for (const draw of draws) {
-				if (draw.end <= draw.start) continue;
-				for (let unitAt = 0; unitAt < gpu.units; unitAt++) {
-					gl.activeTexture(gl.TEXTURE1 + unitAt);
-					gl.bindTexture(gl.TEXTURE_2D, draw.bound[unitAt] ?? gpu.blank);
-				}
-				const offset = draw.start * FLOATS * 4;
-				gl.vertexAttribPointer(1, 4, gl.FLOAT, false, FLOATS * 4, offset);
-				gl.vertexAttribPointer(2, 4, gl.FLOAT, false, FLOATS * 4, offset + 16);
-				gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, draw.end - draw.start);
-			}
-			gl.bindVertexArray(null);
+			drawPictures(
+				gpu,
+				{
+					width: this.width,
+					height: this.height,
+					radius: shellRadiusOnScreen(camera.k) * this.scale,
+					surface: this.surface,
+				},
+				this.instances.subarray(0, count * FLOATS),
+				draws,
+			);
 		}
 		this.evict(gpu);
-		if (this.landed.length > 0) this.wake();
+		if (this.loads.pending.landed > 0) this.wake();
 	}
 
-	/** Draw again before the next paint: what a shell's claim or a new frame list changes. */
+	/**
+	 * Draw again before the next paint: a shell's claim, whose own change shows
+	 * in that paint, so the frame is never drawn twice or not at all.
+	 */
 	private invalidate(): void {
 		if (this.settle) return;
 		this.settle = true;
@@ -749,428 +565,274 @@ export class PictureLayer {
 		});
 	}
 
-	/** Draw once more at the next frame: a texture landed while the camera is still. */
+	/**
+	 * Draw a change the next paint can carry: a new frame list, a new surface.
+	 * At rest that is now. While the camera moves it is the camera's own next
+	 * paint, or the one it makes coming to rest, so a frame of motion stays one
+	 * paint however much changes during it.
+	 */
+	private refresh(): void {
+		if (!this.moving) this.invalidate();
+	}
+
+	/**
+	 * Paint once more at the next frame, for what landed while the camera
+	 * rests: one paint waiting at most, and any paint before it makes it moot
+	 * (`render`). A moving camera paints every frame it moves, and uploads as
+	 * it does.
+	 */
 	private wake(): void {
-		if (this.redraw || this.disposed) return;
-		this.redraw = true;
-		requestAnimationFrame(() => {
-			if (this.redraw) this.render();
+		if (this.moving || this.next !== null || this.disposed) return;
+		this.next = requestAnimationFrame(() => {
+			this.next = null;
+			this.render();
 		});
 	}
 
 	// --- textures --------------------------------------------------------------
 
-	/** Ask the loader for a cover at the size a tier keeps it, unless that is already on its way or held. */
-	private want(url: string, sharp: { width: number; height: number } | null, priority: number): void {
-		if (sharp === null) {
-			if (this.residents.has(url)) return;
-			this.residents.set(url, { slot: null, natural: null, state: "waiting" });
-			this.ask({ key: url, url, sharp: null, priority });
+	/** Ask for a still's square, or one of its halvings, unless that is already out or held. */
+	private want(still: string, halving: PixelSize | null, priority: Priority): void {
+		if (halving === null) {
+			if (this.squares.has(still)) return;
+			this.squares.set(still, { layer: null, natural: null, state: "out" });
+			this.ask({ key: still, still, halving: null, priority });
 			return;
 		}
-		const key = sharpKey(url, sharp.width);
-		if (this.sharps.has(key)) return;
-		this.sharps.set(key, {
-			url,
-			width: sharp.width,
-			height: sharp.height,
+		const key = halvingKey(still, halving.width);
+		if (this.halvings.has(key)) return;
+		this.halvings.set(key, {
+			still,
+			width: halving.width,
+			height: halving.height,
 			texture: null,
-			state: "waiting",
-			bytes: textureBytes(sharp.width, sharp.height, true),
+			state: "out",
+			bytes: textureBytes(halving.width, halving.height, true),
 			used: this.stamp,
 		});
-		this.ask({ key, url, sharp, priority });
+		this.ask({ key, still, halving, priority });
 	}
 
-	/** An ask for a loader, sent with the rest at the end of the next draw (`send`). */
-	private tell(loader: Worker | undefined, ask: LoaderAsk): void {
-		if (loader === undefined) return;
-		const waiting = this.outbox.get(loader);
-		if (waiting === undefined) this.outbox.set(loader, [ask]);
-		else waiting.push(ask);
-	}
-
-	private send(): void {
-		for (const [loader, asks] of this.outbox) loader.postMessage(asks);
-		this.outbox.clear();
-	}
-
-	/** The loader a cover always goes to, so every size asked of it meets on one decode. */
-	private loaderOf(url: string): Worker | undefined {
-		let hash = 0;
-		for (let i = 0; i < url.length; i++) hash = (hash * 31 + url.charCodeAt(i)) | 0;
-		return this.loaders[Math.abs(hash) % Math.max(1, this.loaders.length)];
-	}
-
-	/** Hand a load to its loader. Nothing loads without a context to upload to; a restored one asks again. */
+	/** Nothing loads without a context to upload to; a restored one asks for everything again. */
 	private ask(job: Job): void {
-		const loader = this.loaderOf(job.url);
-		if (loader === undefined || this.gpu === null || this.lost) return;
-		this.asked.set(job.key, job);
-		this.tell(loader, {
-			kind: "load",
-			key: job.key,
-			url: new URL(job.url, location.href).href,
-			size: job.sharp ?? "resident",
-			priority: job.priority,
-			generation: this.generation,
-		});
-	}
-
-	/** Take back a load nobody wants any more, if its loader has not started it. */
-	private cancel(key: string): void {
-		const job = this.asked.get(key);
-		if (job === undefined) return;
-		this.asked.delete(key);
-		this.tell(this.loaderOf(job.url), { kind: "cancel", key });
+		if (this.gpu === null || this.lost) return;
+		this.loads.ask(job);
 	}
 
 	/**
-	 * The sharper copies this draw asked for, largest on screen first. Every
-	 * one is asked for: what the screen shows is bounded by the screen (a
-	 * halving at least as wide as its drawing holds at most four times its
-	 * pixels), and drawing a frame on screen softer than the image element did
-	 * to save memory would be a change anybody can see. The budget is for the
-	 * copies kept once their frames leave the screen (`evict`).
+	 * The halvings this draw asked for, largest on screen first. Every one is
+	 * asked for: what the screen shows is bounded by the screen (a halving at
+	 * least as wide as its drawing holds at most four times its pixels), and
+	 * drawing a frame on screen softer than the image element did to save
+	 * memory would be a change anybody can see. The budget is for the halvings
+	 * kept once their frames leave the screen (`evict`).
 	 */
 	private request(wants: { job: Job; area: number }[]): void {
-		// copies asked for earlier and no longer wanted give their place back
+		// halvings asked for earlier and no longer wanted give their place back;
+		// one already being decoded lands all the same
 		const wanted = new Set(wants.map((want) => want.job.key));
-		for (const [key, job] of this.asked) {
-			if (job.sharp !== null && !wanted.has(key)) {
-				this.cancel(key);
-				if (this.sharps.get(key)?.texture === null) this.sharps.delete(key);
-			}
+		for (const [key, halving] of this.halvings) {
+			if (halving.state === "out" && !wanted.has(key)) this.loads.cancel(key);
 		}
 		for (const { job } of wants.sort((a, b) => a.job.priority - b.job.priority || b.area - a.area)) {
-			this.want(job.url, job.sharp, job.priority);
+			this.want(job.still, job.halving, job.priority);
 		}
 	}
 
-	/**
-	 * A load came back. A decode for a context that has since gone, or for a
-	 * copy nobody wants any more, is let go; everything else waits for the
-	 * next draw to upload it.
-	 */
-	private readonly onLoaded = (event: MessageEvent<LoaderReply>): void => {
-		const reply = event.data;
-		if (!("failed" in reply) && reply.size !== undefined) {
-			this.onDerived(reply, reply.size);
+	/** A load failed, or was taken back before it started. */
+	private onGone(job: Job, failed: boolean): void {
+		if (job.halving === null) {
+			const square = this.squares.get(job.still);
+			if (square?.state !== "out") return;
+			if (failed) square.state = "failed";
+			else this.squares.delete(job.still);
 			return;
 		}
-		const job = this.asked.get(reply.key);
-		const current = reply.generation === this.generation && job !== undefined;
-		if (current) this.asked.delete(reply.key);
-		if ("failed" in reply) {
-			if (!current) return;
-			const entry = job.sharp === null ? this.residents.get(job.url) : this.sharps.get(job.key);
-			if (entry !== undefined) entry.state = "failed";
-			return;
-		}
-		if (!current) {
-			reply.bitmap.close();
-			return;
-		}
-		if (job.sharp === null) {
-			const entry = this.residents.get(job.url);
-			if (entry !== undefined) entry.fetched = reply.fetchedAt - performance.timeOrigin;
-		}
-		this.landed.push({ job, bitmap: reply.bitmap, natural: reply.natural });
-		this.wake();
-	};
-
-	/**
-	 * A sharper copy a loader made along with a square, for the box its frame
-	 * had then. Kept if its cover is still on the page and no copy of that size
-	 * is drawn yet; a load asked for it meanwhile is taken back.
-	 */
-	private onDerived(reply: Extract<LoaderReply, { bitmap: ImageBitmap }>, size: PixelSize): void {
-		const url = reply.key.slice(0, reply.key.lastIndexOf("#"));
-		const held = this.sharps.get(reply.key);
-		if (reply.generation !== this.generation || !this.residents.has(url) || held?.texture != null) {
-			reply.bitmap.close();
-			return;
-		}
-		this.cancel(reply.key);
-		if (held === undefined) {
-			this.sharps.set(reply.key, {
-				url,
-				width: size.width,
-				height: size.height,
-				texture: null,
-				state: "waiting",
-				bytes: textureBytes(size.width, size.height, true),
-				used: this.stamp,
-			});
-		}
-		const job: Job = { key: reply.key, url, sharp: size, priority: 0 };
-		this.landed.push({ job, bitmap: reply.bitmap, natural: reply.natural });
-		this.wake();
+		const halving = this.halvings.get(job.key);
+		if (halving?.state !== "out") return;
+		if (failed) halving.state = "failed";
+		else this.halvings.delete(job.key);
 	}
 
-	/** Hand landed decodes to the GPU, within this frame's share of upload time and bytes. */
+	/** Hand landed decodes to the GPU, within this frame's share of upload time and bytes (`UPLOAD_BUDGET`). */
 	private upload(gpu: Gpu): void {
-		const { gl } = gpu;
+		const budget = this.moving ? UPLOAD_BUDGET.moving : UPLOAD_BUDGET.resting;
 		const start = performance.now();
-		const budget = this.moving
-			? { ms: UPLOAD_MS.moving, bytes: UPLOAD_BYTES.moving }
-			: { ms: UPLOAD_MS.still, bytes: UPLOAD_BYTES.still };
 		let bytes = 0;
 		let squares = false;
-		while (this.landed.length > 0) {
-			if (bytes > 0 && (bytes >= budget.bytes || performance.now() - start >= budget.ms)) break;
-			const item = this.landed.shift();
+		while (!uploadSpent({ ms: performance.now() - start, bytes }, budget)) {
+			const item = this.loads.take();
 			if (item === undefined) break;
 			const { job, bitmap, natural } = item;
-			if (job.sharp === null) {
-				const entry = this.residents.get(job.url);
-				const slot = entry === undefined ? null : this.slot(gpu, job.url);
-				if (entry !== undefined && slot !== null) {
-					gl.bindTexture(gl.TEXTURE_2D_ARRAY, gpu.resident);
-					gl.texSubImage3D(
-						gl.TEXTURE_2D_ARRAY,
-						0,
-						0,
-						0,
-						slot,
-						RESIDENT_PX,
-						RESIDENT_PX,
-						1,
-						gl.RGBA,
-						gl.UNSIGNED_BYTE,
-						bitmap,
-					);
-					entry.slot = slot;
-					entry.natural = natural;
-					entry.state = "ready";
-					entry.uploaded ??= performance.now();
-					squares = true;
-					bytes += RESIDENT_PX * RESIDENT_PX * 4;
+			if (job.halving === null) {
+				const square = this.squares.get(job.still);
+				if (square !== undefined && square.state !== "ready") {
+					square.natural = natural;
+					square.fetched ??= item.fetched;
+					const layer = this.layerFor(gpu, job.still);
+					if (layer === null) square.state = "spare";
+					else {
+						uploadSquare(gpu, layer, bitmap);
+						square.layer = layer;
+						square.state = "ready";
+						squares = true;
+						bytes += SQUARE_PX * SQUARE_PX * 4;
+					}
 				}
 			} else {
-				const entry = this.sharps.get(job.key);
-				if (entry !== undefined && entry.texture === null) {
-					const texture = gl.createTexture();
-					gl.bindTexture(gl.TEXTURE_2D, texture);
-					gl.texStorage2D(
-						gl.TEXTURE_2D,
-						levels(bitmap.width, bitmap.height),
-						gl.RGBA8,
-						bitmap.width,
-						bitmap.height,
-					);
-					gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
-					gl.generateMipmap(gl.TEXTURE_2D);
-					filter(gl, gl.TEXTURE_2D, gpu.anisotropy);
-					entry.texture = texture;
-					entry.width = bitmap.width;
-					entry.height = bitmap.height;
-					entry.bytes = textureBytes(bitmap.width, bitmap.height, true);
-					entry.state = "ready";
+				let halving = this.halvings.get(job.key);
+				// a halving made beside a square, for the size its frame was drawn,
+				// kept while its still is on the page
+				if (halving === undefined && item.derived && this.uses.has(job.still)) {
+					halving = {
+						still: job.still,
+						width: job.halving.width,
+						height: job.halving.height,
+						texture: null,
+						state: "out",
+						bytes: 0,
+						used: this.stamp,
+					};
+					this.halvings.set(job.key, halving);
+				}
+				if (halving !== undefined && halving.texture === null) {
+					halving.texture = halvingTexture(gpu, bitmap);
+					halving.width = bitmap.width;
+					halving.height = bitmap.height;
+					halving.bytes = textureBytes(bitmap.width, bitmap.height, true);
+					halving.state = "ready";
 					bytes += bitmap.width * bitmap.height * 4;
-					const resident = this.residents.get(job.url);
-					if (resident !== undefined && resident.natural === null) resident.natural = natural;
+					const square = this.squares.get(job.still);
+					if (square !== undefined && square.natural === null) square.natural = natural;
+					// a load asked for the same halving meanwhile has nothing left to do
+					if (item.derived) this.loads.cancel(job.key);
 				}
 			}
 			bitmap.close();
 		}
-		if (squares) {
-			gl.bindTexture(gl.TEXTURE_2D_ARRAY, gpu.resident);
-			gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
-		}
+		if (squares) mipSquares(gpu);
 	}
 
-	/**
-	 * A layer of the resident array for this cover, growing the array when it
-	 * is full. A page with more covers than the GPU allows layers (2048 on
-	 * most) draws the rest as their surface until they come close enough to
-	 * stream a sharper copy.
-	 */
-	private slot(gpu: Gpu, url: string): number | null {
-		const held = this.residents.get(url)?.slot;
+	/** A layer of the square array for this still, growing the array when it is full and the GPU allows. */
+	private layerFor(gpu: Gpu, still: string): number | null {
+		const held = this.squares.get(still)?.layer;
 		if (held != null) return held;
-		let free = this.slots.indexOf(null);
+		let free = this.layers.indexOf(null);
 		if (free === -1 && gpu.capacity < gpu.maxLayers) {
-			this.grow(gpu, Math.min(gpu.maxLayers, Math.max(16, Math.ceil(gpu.capacity * 1.5))));
-			free = this.slots.indexOf(null);
+			this.regrow(gpu, Math.min(gpu.maxLayers, Math.max(16, Math.ceil(gpu.capacity * 1.5))));
+			free = this.layers.indexOf(null);
 		}
 		if (free === -1) return null;
-		this.slots[free] = url;
+		this.layers[free] = still;
 		return free;
 	}
 
-	/** Size the resident array to the page: room for every cover on it, with some to spare. */
+	/** Size the square array to the page: room for every still on it, with some to spare. */
 	private sizeArray(): void {
 		const gpu = this.gpu;
 		if (gpu === null || this.lost) return;
-		const wanted = new Set<string>();
-		for (const frame of this.frames) if (frame.url !== undefined) wanted.add(frame.url);
-		for (const stand of this.previous.values()) wanted.add(stand);
-		const need = Math.min(gpu.maxLayers, roundUp(wanted.size + 8, 16));
-		// grow to the page at once, rather than in steps as its covers land; and
+		const need = Math.min(gpu.maxLayers, roundUp(this.uses.size + 8, 16));
+		// grow to the page at once, rather than in steps as its stills land; and
 		// give memory back when a page switch leaves most of the array empty
-		if (need > gpu.capacity || (gpu.capacity > 64 && need * 4 < gpu.capacity)) this.grow(gpu, need);
+		if (need > gpu.capacity || (gpu.capacity > 64 && need * 4 < gpu.capacity)) this.regrow(gpu, need);
 	}
 
 	/**
-	 * A new resident array of `capacity` layers, the squares already uploaded
-	 * copied across on the GPU and packed from the first layer.
+	 * A square array of `capacity` layers, the squares already in one copied
+	 * across on the GPU and packed from the first layer. A square a smaller
+	 * array has no room for is asked for again.
 	 */
-	private grow(gpu: Gpu, capacity: number): void {
-		const { gl } = gpu;
-		const next = residentArray(gl, capacity, gpu.anisotropy);
-		const keep = [...this.residents].filter(([, entry]) => entry.slot !== null);
-		this.slots = new Array<string | null>(capacity).fill(null);
-		if (keep.length > 0) {
-			gl.bindFramebuffer(gl.READ_FRAMEBUFFER, gpu.copy);
-			gl.bindTexture(gl.TEXTURE_2D_ARRAY, next);
-			keep.forEach(([url, entry], index) => {
-				if (entry.slot === null || index >= capacity) {
-					entry.slot = null;
-					entry.state = "waiting";
-					return;
-				}
-				gl.framebufferTextureLayer(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gpu.resident, 0, entry.slot);
-				gl.copyTexSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, index, 0, 0, RESIDENT_PX, RESIDENT_PX);
-				entry.slot = index;
-				this.slots[index] = url;
-			});
-			gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-			gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
-		}
-		gl.deleteTexture(gpu.resident);
-		gpu.resident = next;
-		gpu.capacity = capacity;
-		// squares the smaller array could not keep load again
-		for (const [url, entry] of this.residents) {
-			if (entry.state === "waiting" && entry.slot === null && !this.asked.has(url)) {
-				this.ask({ key: url, url, sharp: null, priority: 2 });
+	private regrow(gpu: Gpu, capacity: number): void {
+		const keep: number[] = [];
+		const layers = new Array<string | null>(capacity).fill(null);
+		const lost: string[] = [];
+		for (const [still, square] of this.squares) {
+			if (square.layer === null) continue;
+			if (keep.length < capacity) {
+				layers[keep.length] = still;
+				keep.push(square.layer);
+				square.layer = keep.length - 1;
+			} else {
+				square.layer = null;
+				square.state = "out";
+				lost.push(still);
 			}
 		}
+		regrowSquares(gpu, capacity, keep);
+		this.layers = layers;
+		for (const still of lost) this.ask({ key: still, still, halving: null, priority: Priority.page });
 	}
 
-	/**
-	 * Let go of every picture no frame names any more, or only `url` when one
-	 * is given: its square's layer goes back to the array, its sharper copies
-	 * are deleted, and a load still queued for it is dropped.
-	 */
-	private forget(url?: string): void {
-		const named = new Set<string>();
-		for (const frame of this.frames) if (frame.url !== undefined) named.add(frame.url);
-		for (const stand of this.previous.values()) named.add(stand);
+	/** Whether a still has anything on the GPU to draw a frame with. */
+	private drawable(still: string): boolean {
+		if (this.squares.get(still)?.state === "ready") return true;
+		for (const halving of this.halvings.values())
+			if (halving.still === still && halving.texture !== null) return true;
+		return false;
+	}
+
+	/** A frame's stand-in is done with: its still goes once nothing else names it. */
+	private dropStandIn(name: string): void {
+		const still = this.standIns.get(name);
+		if (still === undefined) return;
+		this.standIns.delete(name);
+		const left = (this.uses.get(still) ?? 1) - 1;
+		if (left > 0) this.uses.set(still, left);
+		else {
+			this.uses.delete(still);
+			this.release(still);
+		}
+	}
+
+	/** Let go of one still: its square's layer goes back to the array, its halvings are deleted, its loads taken back. */
+	private release(still: string): void {
+		const square = this.squares.get(still);
+		if (square !== undefined) {
+			if (square.layer !== null && this.layers[square.layer] === still) this.layers[square.layer] = null;
+			this.squares.delete(still);
+			this.loads.cancel(still);
+		}
 		const gl = this.gpu?.gl;
-		for (const [key, entry] of this.residents) {
-			if (named.has(key) || (url !== undefined && key !== url)) continue;
-			if (entry.slot !== null && this.slots[entry.slot] === key) this.slots[entry.slot] = null;
-			this.residents.delete(key);
-			this.cancel(key);
-		}
-		for (const [key, entry] of this.sharps) {
-			if (named.has(entry.url) || (url !== undefined && entry.url !== url)) continue;
-			if (entry.texture !== null) gl?.deleteTexture(entry.texture);
-			this.sharps.delete(key);
-			this.cancel(key);
+		for (const [key, halving] of this.halvings) {
+			if (halving.still !== still) continue;
+			if (halving.texture !== null) gl?.deleteTexture(halving.texture);
+			this.halvings.delete(key);
+			this.loads.cancel(key);
 		}
 	}
 
-	/** Sharper copies past the budget, least recently drawn first. */
+	/** Halvings past the budget, least recently drawn first. */
 	private evict(gpu: Gpu): void {
 		const loaded: { key: string; bytes: number; used: number }[] = [];
-		for (const [key, entry] of this.sharps)
-			if (entry.texture !== null) loaded.push({ key, bytes: entry.bytes, used: entry.used });
-		for (const key of evictions(loaded, sharpBudget(this.width, this.height), this.stamp)) {
-			const entry = this.sharps.get(key);
-			if (entry?.texture != null) gpu.gl.deleteTexture(entry.texture);
-			this.sharps.delete(key);
+		for (const [key, halving] of this.halvings) {
+			if (halving.texture !== null) loaded.push({ key, bytes: halving.bytes, used: halving.used });
+		}
+		for (const key of evictions(loaded, halvingBudget(this.width, this.height), this.stamp)) {
+			const halving = this.halvings.get(key);
+			if (halving?.texture != null) gpu.gl.deleteTexture(halving.texture);
+			this.halvings.delete(key);
 		}
 	}
 
 	// --- the context -------------------------------------------------------------
 
-	private open(): Gpu | null {
-		const gl = this.canvas.getContext("webgl2", {
-			alpha: true,
-			premultipliedAlpha: true,
-			antialias: false,
-			depth: false,
-			stencil: false,
-			preserveDrawingBuffer: false,
-			// drawn in the same frame as the DOM, never ahead of it (#81's lockstep)
-			desynchronized: false,
-			powerPreference: "default",
-		});
-		if (gl === null || gl.isContextLost()) return null;
-		const units = Math.min(SHARP_UNITS, (gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) as number) - 1);
-		const program = link(gl, VERTEX, fragment(units));
-		const extension = gl.getExtension("EXT_texture_filter_anisotropic");
-		const anisotropy =
-			extension === null ? 1 : Math.min(8, gl.getParameter(extension.MAX_TEXTURE_MAX_ANISOTROPY_EXT) as number);
-		// biome-ignore lint/correctness/useHookAtTopLevel: WebGL's useProgram, not a React hook
-		gl.useProgram(program);
-		gl.uniform1i(gl.getUniformLocation(program, "u_resident"), 0);
-		gl.uniform1iv(
-			gl.getUniformLocation(program, "u_sharp"),
-			Array.from({ length: units }, (_, i) => i + 1),
-		);
-		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-		const vao = gl.createVertexArray();
-		gl.bindVertexArray(vao);
-		const corners = gl.createBuffer();
-		gl.bindBuffer(gl.ARRAY_BUFFER, corners);
-		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
-		gl.enableVertexAttribArray(0);
-		gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-		const instances = gl.createBuffer();
-		gl.bindBuffer(gl.ARRAY_BUFFER, instances);
-		for (const location of [1, 2]) {
-			gl.enableVertexAttribArray(location);
-			gl.vertexAttribPointer(location, 4, gl.FLOAT, false, FLOATS * 4, (location - 1) * 16);
-			gl.vertexAttribDivisor(location, 1);
-		}
-		gl.bindVertexArray(null);
-		const blank = gl.createTexture();
-		gl.bindTexture(gl.TEXTURE_2D, blank);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
-		this.slots = new Array<string | null>(16).fill(null);
-		return {
-			gl,
-			program,
-			vao,
-			instances,
-			view: gl.getUniformLocation(program, "u_view"),
-			radius: gl.getUniformLocation(program, "u_radius"),
-			surface: gl.getUniformLocation(program, "u_surface"),
-			resident: residentArray(gl, 16, anisotropy),
-			capacity: 16,
-			maxLayers: gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) as number,
-			maxSide: gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
-			units,
-			anisotropy,
-			blank,
-			copy: gl.createFramebuffer(),
-		};
+	private open(gl: WebGL2RenderingContext): void {
+		this.gpu = openGpu(gl);
+		this.layers = new Array<string | null>(this.gpu.capacity).fill(null);
 	}
 
-	/** Drop every texture and every decode in flight: they belong to a context that is gone. */
-	private release(): void {
-		this.generation += 1;
-		this.asked.clear();
-		for (const loader of this.loaders) this.tell(loader, { kind: "reset" });
-		this.send();
-		for (const item of this.landed) item.bitmap.close();
-		this.landed = [];
-		const gl = this.lost ? null : (this.gpu?.gl ?? null);
-		for (const entry of this.sharps.values()) if (entry.texture !== null) gl?.deleteTexture(entry.texture);
-		if (gl !== null && this.gpu !== null) {
-			gl.deleteTexture(this.gpu.resident);
-			gl.deleteTexture(this.gpu.blank);
-			gl.deleteProgram(this.gpu.program);
+	/** Every texture and GL object let go, and every still forgotten. */
+	private close(): void {
+		const gpu = this.gpu;
+		if (gpu !== null && !this.lost) {
+			for (const halving of this.halvings.values())
+				if (halving.texture !== null) gpu.gl.deleteTexture(halving.texture);
+			closeGpu(gpu);
 		}
-		this.sharps.clear();
-		this.residents.clear();
-		this.slots = [];
 		this.gpu = null;
+		this.squares.clear();
+		this.halvings.clear();
+		this.layers = [];
 	}
 
 	/**
@@ -1182,108 +844,53 @@ export class PictureLayer {
 	private readonly onLost = (event: Event): void => {
 		event.preventDefault();
 		this.lost = true;
-		this.release();
+		this.loads.reset();
+		this.close();
 	};
 
-	/** Back: every program and texture is made again, and every cover loads again from the HTTP cache. */
+	/** Back: every program and texture is made again, and every still loads again from the HTTP cache. */
 	private readonly onRestored = (): void => {
+		if (this.gl === null) return;
 		this.lost = false;
-		this.gpu = this.open();
-		// whatever the page asked for while the context was gone was never loaded
-		this.residents.clear();
-		this.sharps.clear();
+		this.open(this.gl);
+		// what was wanted while the context was gone, from the very start
+		// included, was never asked for
+		this.squares.clear();
+		this.halvings.clear();
 		this.setFrames(this.frames);
 	};
 }
 
 interface Look {
-	/** The cover drawn: the frame's own, or the one it replaced while its own loads. */
-	url: string;
+	/** The still drawn: the frame's own, or the one it replaced while its own loads. */
+	still: string;
 	natural: PixelSize | null;
 	/** The picture's drawn size in device pixels. */
 	picture: { w: number; h: number } | null;
-	wanted: ReturnType<typeof textureFor> | null;
-	/** Whether its resident square is uploaded. */
-	resident: boolean;
-	sharp: Sharp | null;
-	/** The frame's own cover, when a stand-in is what is drawn or was just let go. */
+	wanted: Texture | null;
+	/** Whether its square is in the array. */
+	square: boolean;
+	halving: Halving | null;
+	/** The frame's own still, when a stand-in is what is drawn or was just let go. */
 	own?: Look;
-	/** The frame's own cover is drawn as sharp as it wants, so its stand-in can go. */
+	/** The frame's own still is drawn the way its size wants, so its stand-in can go. */
 	done?: boolean;
 }
 
-/** How well a look draws its frame: as wanted beats anything, then the sharper the better. */
+/** What a look samples, in the report's terms. */
+function textureOf(look: Look): Texture | null {
+	if (look.halving !== null) return { kind: "halving", width: look.halving.width, height: look.halving.height };
+	return look.square ? SQUARE : null;
+}
+
+const same = (a: Texture, b: Texture): boolean => a.kind === b.kind && a.width === b.width && a.height === b.height;
+
+/** How well a look draws its frame: as wanted beats anything, then the larger halving, then the square. */
 function rank(look: Look): number {
-	const { wanted, sharp, resident } = look;
-	if (wanted !== null) {
-		if (wanted.kind === "resident" ? resident : sharp !== null && sharp.width === wanted.width) {
-			return Number.POSITIVE_INFINITY;
-		}
-	}
-	if (sharp !== null) return 2 + sharp.width;
-	return resident ? 1 : 0;
+	const texture = textureOf(look);
+	if (texture !== null && look.wanted !== null && same(texture, look.wanted)) return Number.POSITIVE_INFINITY;
+	if (look.halving !== null) return 2 + look.halving.width;
+	return look.square ? 1 : 0;
 }
 
 const roundUp = (value: number, step: number): number => Math.max(step, Math.ceil(value / step) * step);
-
-const levels = (width: number, height: number): number => Math.floor(Math.log2(Math.max(width, height))) + 1;
-
-/** Trilinear, and anisotropic where the GPU offers it: a square drawn at its cover's shape is sampled unevenly. */
-function filter(gl: WebGL2RenderingContext, target: number, anisotropy: number): void {
-	gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-	gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-	gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-	gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-	if (anisotropy > 1) gl.texParameterf(target, 0x84fe /* TEXTURE_MAX_ANISOTROPY_EXT */, anisotropy);
-}
-
-/**
- * A resident array of `capacity` layers, every level of every layer written
- * before anything samples it.
- *
- * WebGL promises a texture reads as zeros until written, and Chrome keeps the
- * promise by clearing whatever is unwritten the first time a draw samples it:
- * one clear per layer and level, on the GPU process's main thread. For an
- * array sized to a thousand-frame page that was a 200 ms stall in the first
- * draw after the page opened, and every renderer's raster waited behind it,
- * the documents of readable frames included. Written here from a pixel buffer
- * the GPU process fills with zeros itself, it is one copy per level and
- * nothing crosses from the page.
- */
-function residentArray(gl: WebGL2RenderingContext, capacity: number, anisotropy: number): WebGLTexture {
-	const texture = gl.createTexture();
-	gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
-	gl.texStorage3D(gl.TEXTURE_2D_ARRAY, RESIDENT_LEVELS, gl.RGBA8, RESIDENT_PX, RESIDENT_PX, capacity);
-	const zeros = gl.createBuffer();
-	gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, zeros);
-	gl.bufferData(gl.PIXEL_UNPACK_BUFFER, RESIDENT_PX * RESIDENT_PX * 4 * capacity, gl.STATIC_DRAW);
-	// a buffer source refuses the page-side unpack conversions
-	gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-	for (let level = 0, side = RESIDENT_PX; level < RESIDENT_LEVELS; level++, side = Math.max(1, side >> 1)) {
-		gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, level, 0, 0, 0, side, side, capacity, gl.RGBA, gl.UNSIGNED_BYTE, 0);
-	}
-	gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-	gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
-	gl.deleteBuffer(zeros);
-	filter(gl, gl.TEXTURE_2D_ARRAY, anisotropy);
-	return texture;
-}
-
-function link(gl: WebGL2RenderingContext, vertex: string, fragmentSource: string): WebGLProgram {
-	const program = gl.createProgram();
-	for (const [type, source] of [
-		[gl.VERTEX_SHADER, vertex],
-		[gl.FRAGMENT_SHADER, fragmentSource],
-	] as const) {
-		const shader = gl.createShader(type);
-		if (shader === null) throw new Error("could not create a shader");
-		gl.shaderSource(shader, source);
-		gl.compileShader(shader);
-		gl.attachShader(program, shader);
-	}
-	gl.linkProgram(program);
-	if (gl.getProgramParameter(program, gl.LINK_STATUS) !== true && !gl.isContextLost()) {
-		throw new Error(`picture layer: ${gl.getProgramInfoLog(program) ?? "the program did not link"}`);
-	}
-	return program;
-}
