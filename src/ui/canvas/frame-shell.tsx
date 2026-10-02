@@ -3,7 +3,7 @@ import type { Cover } from "../../cover";
 import { pageName } from "../../page-path";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
-import type { Box, NearScreen } from "./camera";
+import { type Box, type NearScreen, shellRadius } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import type { FrameState } from "./lifecycle";
 
@@ -21,20 +21,6 @@ import type { FrameState } from "./lifecycle";
 
 /** How far past the edited element's own box the caret is still the frame's (#321). */
 const EDIT_SLACK_PX = 2;
-
-/**
- * A shell's corner radius, in the frame's own units: twelve screen pixels close
- * up, and never more than 24 of the frame's, so an overview of many reads as
- * rounded rectangles rather than as pills.
- */
-export function shellRadius(k: number): number {
-	return Math.min(12 / k, 24);
-}
-
-/** The same corner in screen pixels, which is what anything drawn round a shell rounds to. */
-export function shellRadiusOnScreen(k: number): number {
-	return shellRadius(k) * k;
-}
 
 /**
  * The shell's rounded clip, following the camera on its own (#81).

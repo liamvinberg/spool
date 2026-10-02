@@ -1,9 +1,8 @@
 import { type CSSProperties, type HTMLAttributes, useRef } from "react";
 import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
-import { type Box, toScreen } from "./camera";
+import { type Box, shellRadiusOnScreen, toScreen } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
-import { shellRadiusOnScreen } from "./frame-shell";
 import type { ShownRefusal } from "./hand-edit";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";

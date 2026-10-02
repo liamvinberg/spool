@@ -1,9 +1,8 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type { ProjectedFrame } from "../api";
 import { type Hand, type HandMark, PLATE_DRAWN } from "./agent-hand";
-import { toScreen } from "./camera";
+import { shellRadiusOnScreen, toScreen } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
-import { shellRadiusOnScreen } from "./frame-shell";
 
 /**
  * The five objects of the agent's hand, drawn over the field (#214).
