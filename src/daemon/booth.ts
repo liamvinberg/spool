@@ -48,11 +48,12 @@ const BOOTH_TABS = 3;
 /**
  * Covers a tab takes before it is swapped for a fresh page. A tab's renderer
  * grows across navigations, back/forward cache or not: one browser climbed from
- * 1.1 to 4.8 GB over five passes of a 200-frame page. A fresh page every twenty
- * holds a pass of Spool's canvas at a median of about 1.1 GB on the GPU, the
- * peaks being the heaviest frames themselves.
+ * 1.1 to 4.8 GB over five passes of a 200-frame page. Over a pass of Spool's
+ * canvas a fresh page every ten kept the browser at a median of 0.78 GB where
+ * every twenty kept it at 0.94 to 1.06 GB, for a pass at most 5% longer. The
+ * peaks are the heaviest frames themselves either way.
  */
-const COVERS_PER_PAGE = 20;
+const COVERS_PER_PAGE = 10;
 
 /**
  * How long the browser outlives the last sitting, its tabs parked on an empty
