@@ -10,13 +10,15 @@ import { refusalOf } from "./verbs";
  * never reads the canvas — the boot is a fresh page, seeded like any first
  * open (named or default scenario). Compile errors surface
  * verbatim before a browser ever launches; the log cache under
- * design/.spool/verify is keyed to the document's closure etag and scenario,
- * so unchanged source in the same scenario replays without a boot.
+ * design/.spool/verify is keyed to the document's closure etag, the scenario
+ * and the colour scheme, so unchanged source in the same scenario and scheme
+ * replays without a boot.
  *
  * The boot itself is the daemon's: a page in the photo booth's browser
  * (`daemon/booth.ts`), through the same load and the same settle every cover
- * gets, ahead of any cover waiting. An agent's shot and the canvas's picture
- * of the same frame are one render, and the machine runs one browser for both.
+ * gets, in the colour scheme the canvas shows, ahead of any cover waiting. An
+ * agent's shot and the canvas's picture of the same frame are one render, and
+ * the machine runs one browser for both.
  */
 
 export interface BootDeps {
@@ -65,7 +67,12 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 	// failing, and the reason belongs on every answer this returns, not only a
 	// fresh boot's.
 	const captureError = readCaptureError(deps.root, deps.frame);
-	if (cached !== undefined && cached.etag === probe.etag && cached.scenario === scenarioName(deps)) {
+	if (
+		cached !== undefined &&
+		cached.etag === probe.etag &&
+		cached.scenario === scenarioName(deps) &&
+		cached.scheme === probe.scheme
+	) {
 		return {
 			kind: "logs",
 			entries: cached.entries,
@@ -83,7 +90,10 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 	};
 }
 
-type Probe = { kind: "ok"; etag: string } | { kind: "error"; message: string } | { kind: "missing"; message: string };
+type Probe =
+	| { kind: "ok"; etag: string; scheme: string }
+	| { kind: "error"; message: string }
+	| { kind: "missing"; message: string };
 
 /** The daemon compiles (cache-hit cheap); shot and logs branch on its JSON. */
 async function probeCompile(deps: BootDeps): Promise<Probe> {
@@ -93,8 +103,15 @@ async function probeCompile(deps: BootDeps): Promise<Probe> {
 	const body: unknown =
 		res.headers.get("content-type")?.includes("json") === true ? await res.json() : await res.text();
 	if (typeof body === "object" && body !== null) {
-		const { kind, etag, message } = body as { kind?: unknown; etag?: unknown; message?: unknown };
-		if (kind === "ok" && typeof etag === "string") return { kind: "ok", etag };
+		const { kind, etag, scheme, message } = body as {
+			kind?: unknown;
+			etag?: unknown;
+			scheme?: unknown;
+			message?: unknown;
+		};
+		if (kind === "ok" && typeof etag === "string") {
+			return { kind: "ok", etag, scheme: typeof scheme === "string" ? scheme : "" };
+		}
 		if (kind === "error" && typeof message === "string") return { kind: "error", message };
 		if (kind === "missing" && typeof message === "string") return { kind: "missing", message };
 	}

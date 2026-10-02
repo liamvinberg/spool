@@ -258,12 +258,12 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		const verify = await fetch(`${daemon.url}/api/p/${name}/verify/quiet`, {
 			headers: { "X-Spool-Control": daemon.controlToken },
 		});
-		const { etag } = (await verify.json()) as { etag: string };
+		const { etag, scheme } = (await verify.json()) as { etag: string; scheme: string };
 		const cacheDir = join(root, "design", ".spool", "verify");
 		mkdirSync(cacheDir, { recursive: true });
 		writeFileSync(
 			join(cacheDir, "quiet.logs.json"),
-			`${JSON.stringify({ etag, scenario: "default", entries: [] })}\n`,
+			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
 
 		const result = await spoolAsync(["logs", "quiet"], home, root);

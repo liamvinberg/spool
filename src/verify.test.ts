@@ -34,7 +34,8 @@ async function browserAvailable(): Promise<boolean> {
 }
 
 async function serveVerifyProject() {
-	const { spoolDir, root, name, url } = await serveProject();
+	// the scheme a boot renders in is the machine's until a canvas says; this one is held light
+	const { spoolDir, root, name, url } = await serveProject({ booth: { systemScheme: async () => "light" } });
 	const controlToken = readDaemonState(spoolDir)?.controlToken;
 	if (controlToken === undefined) throw new Error("test daemon has no control token");
 	const deps = (frame: string, overrides: Partial<BootDeps> = {}): BootDeps => ({
@@ -109,11 +110,11 @@ describe("shot and logs, compile paths", () => {
 			headers: { "X-Spool-Control": controlToken },
 		});
 		expect(verify.status).toBe(200);
-		const { etag } = (await verify.json()) as { etag: string };
+		const { etag, scheme } = (await verify.json()) as { etag: string; scheme: string };
 		writeDesignFile(
 			root,
 			".spool/verify/shop%2Fcheckout.logs.json",
-			`${JSON.stringify({ etag, scenario: "default", entries: [] })}\n`,
+			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
 		writeCaptureError(root, "shop/checkout", "shop only");
 
@@ -130,11 +131,11 @@ describe("shot and logs, compile paths", () => {
 		const verify = await fetch(`${url}/api/p/${name}/verify/quiet`, {
 			headers: { "X-Spool-Control": controlToken },
 		});
-		const { etag } = (await verify.json()) as { etag: string };
+		const { etag, scheme } = (await verify.json()) as { etag: string; scheme: string };
 		writeDesignFile(
 			root,
 			".spool/verify/quiet.logs.json",
-			`${JSON.stringify({ etag, scenario: "default", entries: [] })}\n`,
+			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
 		writeCaptureError(root, "quiet", "capture canvases too large");
 
@@ -150,11 +151,11 @@ describe("shot and logs, compile paths", () => {
 		const cleanVerify = await fetch(`${url}/api/p/${name}/verify/clean`, {
 			headers: { "X-Spool-Control": controlToken },
 		});
-		const { etag: cleanEtag } = (await cleanVerify.json()) as { etag: string };
+		const { etag: cleanEtag, scheme: cleanScheme } = (await cleanVerify.json()) as { etag: string; scheme: string };
 		writeDesignFile(
 			root,
 			".spool/verify/clean.logs.json",
-			`${JSON.stringify({ etag: cleanEtag, scenario: "default", entries: [] })}\n`,
+			`${JSON.stringify({ etag: cleanEtag, scenario: "default", scheme: cleanScheme, entries: [] })}\n`,
 		);
 		const cleanLogs = await logsFrame(deps("clean"));
 		expect((cleanLogs as { captureError?: unknown }).captureError).toBeUndefined();
@@ -396,6 +397,30 @@ export default function Late() {
 			},
 		);
 		expect(await lines()).toContain("late");
+	});
+
+	it("does not replay logs booted in the other colour scheme", { timeout: 60_000 }, async () => {
+		if (!(await browserAvailable())) return;
+		const { root, name, url, controlToken, deps } = await serveVerifyProject();
+		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
+		const verify = await fetch(`${url}/api/p/${name}/verify/quiet`, {
+			headers: { "X-Spool-Control": controlToken },
+		});
+		const { etag, scheme } = (await verify.json()) as { etag: string; scheme: string };
+		expect(scheme).toBe("light");
+		// the same source, booted dark: nothing a light boot would say
+		writeDesignFile(
+			root,
+			".spool/verify/quiet.logs.json",
+			`${JSON.stringify({ etag, scenario: "default", scheme: "dark", entries: [{ type: "log", text: "dark only" }] })}\n`,
+		);
+
+		const logs = await logsFrame(deps("quiet", { viewport: { width: 160, height: 120 } }));
+
+		expect(logs).toMatchObject({ kind: "logs", replayed: false });
+		expect((logs as { entries: { text: string }[] }).entries).not.toContainEqual(
+			expect.objectContaining({ text: "dark only" }),
+		);
 	});
 
 	it("seeds and caches boots by scenario", { timeout: 180_000 }, async () => {

@@ -2533,7 +2533,9 @@ export function createDaemonApp({
 			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
 			if (doc.kind === "missing") return c.json({ kind: "missing", message: doc.message }, 404);
 			if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
-			return c.json({ kind: "ok", etag: doc.etag });
+			// the scheme a boot would render in now, the log cache's third key
+			await booth.schemeKnown();
+			return c.json({ kind: "ok", etag: doc.etag, scheme: booth.scheme });
 		})
 		.post(
 			"/api/p/:project/boot/:frame",
@@ -2576,6 +2578,7 @@ export function createDaemonApp({
 						const files = recordBoot(project.root, frame, {
 							etag: doc.etag,
 							scenario: scenario ?? "default",
+							scheme: boot.scheme,
 							pngs: boot.pngs,
 							entries: boot.entries,
 						});

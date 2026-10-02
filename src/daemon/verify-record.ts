@@ -1,16 +1,17 @@
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import type { ColorScheme } from "../cover";
 import { frameSegment } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
  * What one boot of a frame for `spool shot` and `spool logs` (#25) leaves for
  * an agent to read back by path under design/.spool/verify: the shot, or its
- * slices top to bottom, and the console, cached under the document's etag and
- * the scenario. The daemon writes it, since the boot is a page in its photo
- * booth; the CLI reads it, and replays the console without a boot while both
- * still match.
+ * slices top to bottom, and the console, cached under the document's etag, the
+ * scenario and the colour scheme it was booted in. The daemon writes it, since
+ * the boot is a page in its photo booth; the CLI reads it, and replays the
+ * console without a boot while all three still match.
  */
 
 export interface LogEntry {
@@ -94,6 +95,7 @@ export function recordBoot(
 	boot: {
 		etag: string;
 		scenario: string;
+		scheme: ColorScheme;
 		pngs: readonly Buffer[];
 		entries: readonly LogEntry[];
 	},
@@ -107,10 +109,10 @@ export function recordBoot(
 		if (png !== undefined) writeAtomic(file, png);
 	}
 	sweepShotFiles(root, frame, files);
-	const { etag, scenario, entries } = boot;
+	const { etag, scenario, scheme, entries } = boot;
 	writeAtomic(
 		logsFile(root, frame),
-		`${JSON.stringify({ etag, scenario, at: new Date().toISOString(), entries }, null, "\t")}\n`,
+		`${JSON.stringify({ etag, scenario, scheme, at: new Date().toISOString(), entries }, null, "\t")}\n`,
 	);
 	return files;
 }
@@ -119,7 +121,7 @@ export function recordBoot(
 export function readLogsCache(
 	root: string,
 	frame: string,
-): { etag: string; scenario: string; entries: LogEntry[] } | undefined {
+): { etag: string; scenario: string; scheme: string; entries: LogEntry[] } | undefined {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(logsFile(root, frame), "utf8"));
@@ -128,7 +130,12 @@ export function readLogsCache(
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { etag, scenario, entries } = parsed as { etag?: unknown; scenario?: unknown; entries?: unknown };
+	const { etag, scenario, scheme, entries } = parsed as {
+		etag?: unknown;
+		scenario?: unknown;
+		scheme?: unknown;
+		entries?: unknown;
+	};
 	if (typeof etag !== "string" || typeof scenario !== "string" || !Array.isArray(entries)) return undefined;
 	const sound = entries.every(
 		(entry): entry is LogEntry =>
@@ -137,7 +144,8 @@ export function readLogsCache(
 			typeof (entry as LogEntry).type === "string" &&
 			typeof (entry as LogEntry).text === "string",
 	);
-	return sound ? { etag, scenario, entries } : undefined;
+	// a cache from before the scheme was part of its name names none, and replays nothing
+	return sound ? { etag, scenario, scheme: typeof scheme === "string" ? scheme : "", entries } : undefined;
 }
 
 function sweepShotFiles(root: string, frame: string, kept: string[]): void {
