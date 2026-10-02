@@ -98,13 +98,14 @@ describe("FrameLabel", () => {
 		const { el } = label({ name: "landing", frameWidth: 1000, camera });
 		expect(el.style.width).toBe("200px");
 
-		// four drawn frames of one gesture: the width catches up within them
+		// four drawn frames of one gesture: the width is written on its one turn among them
 		const widths: string[] = [];
 		for (const k of [0.21, 0.22, 0.23, 0.24]) {
 			act(() => camera.set({ x: 0, y: 0, k }));
 			widths.push(el.style.width);
 		}
-		expect(widths.filter((width) => width !== "200px").length).toBe(1);
+		const written = widths.filter((width, i) => width !== (i === 0 ? "200px" : widths[i - 1]));
+		expect(written).toHaveLength(1);
 		expect(widths.at(-1)).not.toBe("200px");
 
 		act(() => vi.advanceTimersByTime(REST_MS));

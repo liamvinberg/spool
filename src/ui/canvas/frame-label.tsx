@@ -2,7 +2,7 @@ import { type ReactNode, useMemo, useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
-import type { Camera } from "../api";
+import { bucketOf } from "./bucket";
 import type { Box, NearScreen } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import { UnseenMark } from "./unseen-mark";
@@ -11,29 +11,12 @@ import { UnseenMark } from "./unseen-mark";
  * How many drawn frames a label's width may trail a zoom by while the camera
  * moves (#81). A width is a layout: every label's truncation worked out again,
  * a thousand of them a step on an overview, which alone overran the frame.
- * So in motion each label takes its turn, one in this many per drawn frame,
- * a few milliseconds behind its frame at most; where it stands is never
- * behind, and at rest every width is exact.
+ * So in motion each label takes its turn, one in this many of the frames it
+ * is drawn in, a turn spread over the page by its name: a few milliseconds
+ * behind its frame at most, where it stands never behind, and at rest every
+ * width exact.
  */
 const WIDTH_TURNS = 4;
-
-/** A count of drawn cameras, the same for every label in one frame. */
-let drawnTick = 0;
-let drawnCamera: Camera | null = null;
-function tickOf(camera: Camera): number {
-	if (camera !== drawnCamera) {
-		drawnCamera = camera;
-		drawnTick += 1;
-	}
-	return drawnTick;
-}
-
-/** A label's turn, spread over the page by its name. */
-function turnOf(name: string): number {
-	let hash = 0;
-	for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-	return Math.abs(hash) % WIDTH_TURNS;
-}
 
 export function FrameLabel({
 	name,
@@ -72,7 +55,9 @@ export function FrameLabel({
 	const place = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
 	const changed = useChanged();
-	const turn = useMemo(() => turnOf(name), [name]);
+	const turn = useMemo(() => bucketOf(name, WIDTH_TURNS), [name]);
+	// the frames this label was drawn in while the camera moved, which its turn counts
+	const moves = useRef(0);
 	// The label stands in screen pixels, in a field the camera only translates
 	// (`LabelField`): where its frame's top left falls at this zoom, as wide as
 	// the frame draws. Written here rather than rendered, and only when the
@@ -83,13 +68,15 @@ export function FrameLabel({
 	useCameraFollow(
 		camera,
 		(at, moving) => {
-			const at_ = place.current;
+			const placed = place.current;
 			const el = label.current;
-			if (at_ === null || el === null || (moving && !near(at, frame))) return;
+			if (placed === null || el === null || (moving && !near(at, frame))) return;
 			if (changed(at.k, frame.x, frame.y))
-				at_.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
+				placed.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
 			const width = `${frame.w * at.k}px`;
-			if (el.style.width !== width && (!moving || (tickOf(at) + turn) % WIDTH_TURNS === 0)) el.style.width = width;
+			if (moving) moves.current += 1;
+			if (el.style.width !== width && (!moving || (moves.current + turn) % WIDTH_TURNS === 0))
+				el.style.width = width;
 		},
 		[frame.x, frame.y, frame.w, frame.h, near],
 	);
