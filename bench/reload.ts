@@ -231,10 +231,12 @@ function watchCovers(): void {
 
 /**
  * A frame standing as its picture has had no `<img>` since #81: the picture
- * layer fetches and uploads its cover, and keeps the same two marks on the
- * same clock (`covers` in its report). Its upload is the decode, the moment
- * the picture can be drawn. A frame showing a shell keeps the image's marks.
- * Its fetches run in the layer's loader worker, so they leave no resource
+ * layer fetches its still and draws it, and keeps the same two marks on the
+ * same clock (`stills` in its report). Its decode mark is the first draw that
+ * gave the frame the texture its drawn size wants, the moment it looks the
+ * way the decoded image element did, and not the earlier one that put its
+ * 64 px square on the GPU. A frame showing a shell keeps the image's marks.
+ * Its fetches run in the layer's loader workers, so they leave no resource
  * timing on this page.
  */
 const readCovers = (page: Page): Promise<CoverWatch> =>
@@ -243,13 +245,13 @@ const readCovers = (page: Page): Promise<CoverWatch> =>
 		const marks = { ...watch.marks };
 		const layer = document.querySelector("[data-picture-layer]") as
 			| (HTMLCanvasElement & {
-					spoolPictures?: () => { covers: { name: string; fetched: number | null; uploaded: number | null }[] };
+					spoolPictures?: () => { stills: { name: string; fetched: number | null; drawn: number | null }[] };
 			  })
 			| null;
-		for (const cover of layer?.spoolPictures?.().covers ?? []) {
-			if (marks[cover.name] !== undefined || cover.fetched === null) continue;
-			marks[cover.name] =
-				cover.uploaded === null ? { load: cover.fetched } : { load: cover.fetched, decode: cover.uploaded };
+		for (const still of layer?.spoolPictures?.().stills ?? []) {
+			if (marks[still.name] !== undefined || still.fetched === null) continue;
+			marks[still.name] =
+				still.drawn === null ? { load: still.fetched } : { load: still.fetched, decode: still.drawn };
 		}
 		return { marks, refusals: watch.refusals };
 	});
