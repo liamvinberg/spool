@@ -1074,10 +1074,34 @@ function filter(gl: WebGL2RenderingContext, target: number, anisotropy: number):
 	if (anisotropy > 1) gl.texParameterf(target, 0x84fe /* TEXTURE_MAX_ANISOTROPY_EXT */, anisotropy);
 }
 
+/**
+ * A resident array of `capacity` layers, every level of every layer written
+ * before anything samples it.
+ *
+ * WebGL promises a texture reads as zeros until written, and Chrome keeps the
+ * promise by clearing whatever is unwritten the first time a draw samples it:
+ * one clear per layer and level, on the GPU process's main thread. For an
+ * array sized to a thousand-frame page that was a 200 ms stall in the first
+ * draw after the page opened, and every renderer's raster waited behind it,
+ * the documents of readable frames included. Written here from a pixel buffer
+ * the GPU process fills with zeros itself, it is one copy per level and
+ * nothing crosses from the page.
+ */
 function residentArray(gl: WebGL2RenderingContext, capacity: number, anisotropy: number): WebGLTexture {
 	const texture = gl.createTexture();
 	gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture);
 	gl.texStorage3D(gl.TEXTURE_2D_ARRAY, RESIDENT_LEVELS, gl.RGBA8, RESIDENT_PX, RESIDENT_PX, capacity);
+	const zeros = gl.createBuffer();
+	gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, zeros);
+	gl.bufferData(gl.PIXEL_UNPACK_BUFFER, RESIDENT_PX * RESIDENT_PX * 4 * capacity, gl.STATIC_DRAW);
+	// a buffer source refuses the page-side unpack conversions
+	gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+	for (let level = 0, side = RESIDENT_PX; level < RESIDENT_LEVELS; level++, side = Math.max(1, side >> 1)) {
+		gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, level, 0, 0, 0, side, side, capacity, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+	}
+	gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+	gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
+	gl.deleteBuffer(zeros);
 	filter(gl, gl.TEXTURE_2D_ARRAY, anisotropy);
 	return texture;
 }
