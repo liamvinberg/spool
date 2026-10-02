@@ -1,11 +1,11 @@
 import { extname, join } from "node:path";
 import traverseModule, { type NodePath } from "@babel/traverse";
-import type { Node, Program } from "@babel/types";
+import type { Node, ObjectProperty, Program } from "@babel/types";
 import { ASSET_EXTENSIONS, TEXT_EXTENSIONS } from "./assets";
 import { designRelativePath } from "./design-path";
 import type { FrameGraph } from "./flows";
 import { createSourcePass, type NavSite, resolveFrameDir, type UnreadableSite } from "./nav-sites";
-import { componentInputs, targets } from "./publication-values";
+import { componentInputs, type Mount, targets } from "./publication-values";
 
 // CommonJS with an `exports.default`: Node and the published bundle import the
 // whole module object, vitest unwraps it to the function.
@@ -21,7 +21,8 @@ export type UnreadableReason =
 	| "spool-namespace"
 	| "dynamic-import"
 	| "local-namespace"
-	| "side-effect-import";
+	| "side-effect-import"
+	| "data-go-unread";
 
 export interface PublicationSource {
 	sites: NavSite[];
@@ -51,7 +52,7 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 	const modules = new Map<string, NodePath<Program>>();
 	const visited = new Set<Node>();
 	const exports = new Map<string, NodePath | undefined>();
-	const mounts: { component: NodePath; attributes: NodePath[] }[] = [];
+	const mounts: Mount[] = [];
 	const navigations: { file: string; path: NodePath; value: NodePath | undefined; via: NavSite["via"] }[] = [];
 	const queue: { file: string; path: NodePath }[] = [];
 	function failure(file: string, node: Node | undefined, reason: string, remedy: string) {
@@ -100,7 +101,7 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 		const parent = path.parentPath;
 		if (!parent?.isImportDeclaration() || parent.node.importKind === "type") return;
 		if (path.isImportSpecifier() && path.node.importKind === "type") return;
-		// esbuild drops a `?raw`-style suffix when no file carries it, so the checker does too
+		// a `?raw`-style suffix names the same file to esbuild, so it changes nothing here
 		const name = parent.node.source.value.replace(/[?#].*$/u, "");
 		const extension = extname(name).toLowerCase();
 		if (
@@ -247,10 +248,16 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 				if (component !== undefined) mounts.push({ component, attributes: path.get("attributes") });
 			} else if (name.isJSXMemberExpression()) {
 				// `<motion.div>` or `<Dialog.Root>` is a value like any other: follow
-				// its root binding, which reaches whatever project code it names
+				// its root binding, which reaches whatever project code it names, and
+				// mount what the member names so its props are read like a plain tag's
+				const members = [name.node.property.name];
 				let object = name.get("object");
-				while (object.isJSXMemberExpression()) object = object.get("object");
-				if (object.isJSXIdentifier()) reference(file, object, object.node.name);
+				while (object.isJSXMemberExpression()) {
+					members.unshift(object.node.property.name);
+					object = object.get("object");
+				}
+				const root = object.isJSXIdentifier() ? reference(file, object, object.node.name) : undefined;
+				if (root !== undefined) mounts.push({ component: root, members, attributes: path.get("attributes") });
 			}
 		}
 		if (path.isJSXAttribute() && path.get("name").isJSXIdentifier({ name: "data-go" })) {
@@ -266,24 +273,33 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 				"data-go",
 			);
 		}
-		// A spread carries data-go only from an object written somewhere in this
-		// walk, so the attribute is read where it is spelled, not where it lands.
-		if (path.isObjectProperty() && dataGo(path.get("key"), path.node.computed))
-			navigation(file, path, path.get("value"), "data-go");
-		if (path.isAssignmentExpression() && datasetGo(path.get("left")))
-			navigation(file, path, path.get("right"), "data-go");
+		// data-go reaches an element only by being spelled: in JSX, as a literal
+		// object key a spread carries, as a literal setAttribute name or through
+		// dataset.go. Those are read where they are spelled; any other spelling of
+		// the name, or a dataset write by computed name, cannot be read.
+		if (path.isObjectProperty() && dataGoKey(path)) navigation(file, path, path.get("value"), "data-go");
+		const dataset = path.isAssignmentExpression() ? datasetWrite(path.get("left")) : undefined;
+		if (dataset === "go") navigation(file, path, path.get("right"), "data-go");
+		else if (dataset === "unknown") unknown(file, path, "data-go-unread", "data-go");
 		if (path.isCallExpression() || path.isOptionalCallExpression()) {
-			const callee = path.get("callee") as NodePath;
-			const [attribute, value] = path.get("arguments") as NodePath[];
-			if (
-				(callee.isMemberExpression() || callee.isOptionalMemberExpression()) &&
-				!callee.node.computed &&
-				(callee.get("property") as NodePath).isIdentifier({ name: "setAttribute" }) &&
-				attribute !== undefined &&
-				dataGo(attribute, true)
-			)
-				navigation(file, path, value, "data-go");
+			const [first, second] = path.get("arguments") as NodePath[];
+			const method = calledMethod(path);
+			if (method === "setAttribute" && first?.isStringLiteral({ value: "data-go" }))
+				navigation(file, path, second, "data-go");
+			if (method === "assign" && first !== undefined && datasetWrite(first, true) === "unknown")
+				unknown(file, path, "data-go-unread", "data-go");
 		}
+		if (
+			((path.isStringLiteral() && path.node.value === "data-go") ||
+				(path.isTemplateElement() && path.node.value.raw === "data-go")) &&
+			!readDataGo(path)
+		)
+			unknown(file, path, "data-go-unread", "data-go");
+		// Markup built as text reaches the page through an HTML sink. Text the walk
+		// can read is checked for the attribute; markup read back from the page was
+		// put there by code this walk reads, so other values are not followed.
+		const html = htmlSink(path);
+		if (html !== undefined && DATA_GO.test(markupText(html))) unknown(file, path, "data-go-unread", "data-go");
 		if (path.isCallExpression()) {
 			const callee = path.get("callee");
 			if (callee.isImport()) unknown(file, path, "dynamic-import");
@@ -327,20 +343,91 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 	return out;
 }
 
-function dataGo(key: NodePath, computed: boolean): boolean {
-	return computed ? targets(key)?.includes("data-go") === true : spelling(key.node) === "data-go";
+const DATA_GO = /\bdata-go\b/u;
+/** Calls that only look for an attribute: a selector or a name they read, never write. */
+const ATTRIBUTE_READS = new Set([
+	"closest",
+	"getAttribute",
+	"hasAttribute",
+	"matches",
+	"querySelector",
+	"querySelectorAll",
+	"removeAttribute",
+]);
+
+function htmlSink(path: NodePath): NodePath | undefined {
+	if (path.isAssignmentExpression()) {
+		const left = path.get("left");
+		if (
+			left.isMemberExpression() &&
+			!left.node.computed &&
+			(left.get("property").isIdentifier({ name: "innerHTML" }) ||
+				left.get("property").isIdentifier({ name: "outerHTML" }))
+		)
+			return path.get("right");
+	}
+	if ((path.isCallExpression() || path.isOptionalCallExpression()) && calledMethod(path) === "insertAdjacentHTML")
+		return (path.get("arguments") as NodePath[])[1];
+	if (path.isObjectProperty() && !path.node.computed && spelling(path.node.key) === "__html") return path.get("value");
 }
-function datasetGo(path: NodePath): boolean {
-	if (!path.isMemberExpression()) return false;
+/** The text of a literal, a template's fixed parts, or a const holding either. */
+function markupText(path: NodePath): string {
+	if (path.isStringLiteral()) return path.node.value;
+	if (path.isTemplateLiteral()) return path.node.quasis.map((quasi) => quasi.value.raw).join("");
+	if (path.isIdentifier()) {
+		const binding = path.scope.getBinding(path.node.name);
+		if (binding?.kind === "const" && binding.path.isVariableDeclarator()) {
+			const init = binding.path.get("init");
+			if (init.isStringLiteral() || init.isTemplateLiteral()) return markupText(init);
+		}
+	}
+	return "";
+}
+function dataGoKey(property: NodePath<ObjectProperty>): boolean {
+	const key = property.get("key");
+	return property.node.computed ? key.isStringLiteral({ value: "data-go" }) : spelling(key.node) === "data-go";
+}
+/** A string naming data-go where the walk already reads it, or where nothing is written. */
+function readDataGo(path: NodePath): boolean {
+	const parent = path.parentPath;
+	if (parent?.isObjectProperty() && path.key === "key") return dataGoKey(parent);
+	if ((parent?.isCallExpression() || parent?.isOptionalCallExpression()) && path.listKey === "arguments") {
+		const method = calledMethod(parent);
+		return (method === "setAttribute" && path.key === 0) || (method !== undefined && ATTRIBUTE_READS.has(method));
+	}
+	return false;
+}
+function calledMethod(call: NodePath): string | undefined {
+	const callee = call.get("callee") as NodePath;
+	if (!(callee.isMemberExpression() || callee.isOptionalMemberExpression()) || callee.node.computed) return;
+	const property = callee.get("property") as NodePath;
+	return property.isIdentifier() ? property.node.name : undefined;
+}
+/**
+ * What a write through `element.dataset` names: `go`, another literal name, or
+ * one it cannot tell. With `whole`, the dataset itself is the target, as in
+ * `Object.assign(element.dataset, …)`.
+ */
+function datasetWrite(path: NodePath, whole = false): "go" | "other" | "unknown" | undefined {
+	if (!path.isMemberExpression()) return;
+	if (whole)
+		return path.get("property").isIdentifier({ name: "dataset" }) && !path.node.computed ? "unknown" : undefined;
 	const object = path.get("object");
+	if (
+		!object.isMemberExpression() ||
+		object.node.computed ||
+		!object.get("property").isIdentifier({ name: "dataset" })
+	)
+		return;
 	const property = path.get("property");
-	const go = path.node.computed ? property.isStringLiteral({ value: "go" }) : property.isIdentifier({ name: "go" });
-	return (
-		go &&
-		object.isMemberExpression() &&
-		!object.node.computed &&
-		object.get("property").isIdentifier({ name: "dataset" })
-	);
+	const name = path.node.computed
+		? property.isStringLiteral()
+			? property.node.value
+			: undefined
+		: property.isIdentifier()
+			? property.node.name
+			: undefined;
+	return name === undefined ? "unknown" : name === "go" ? "go" : "other";
 }
 function spelling(node: Node): string {
 	return node.type === "Identifier" ? node.name : node.type === "StringLiteral" ? node.value : "";

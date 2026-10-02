@@ -199,6 +199,11 @@ const UNREADABLE: Record<UnreadableReason, { message: string; remedy: string }> 
 		message: "A namespace import of a local file hides which of its exports are used.",
 		remedy: "Import the names you use.",
 	},
+	"data-go-unread": {
+		message: "data-go is set in a way that cannot be read, so where it leads is unknown.",
+		remedy:
+			'Write data-go as a JSX attribute, a literal "data-go" object key, a literal setAttribute("data-go", …) name or dataset.go.',
+	},
 	"side-effect-import": {
 		message: "A local file imported only for its side effects cannot be attributed.",
 		remedy: "Import a named value from it.",

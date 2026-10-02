@@ -139,11 +139,32 @@ describe("publication source attribution", () => {
 		expect(result.ok).toBe(true);
 		expect(result.included).toEqual(["start", "next"]);
 	});
+	it("reads the props a member tag passes, and closes no prop set it cannot name", async () => {
+		const shared = {
+			"shared/ui/nav.tsx":
+				'import { Link as Imported } from "./link"; export const Link = ({ to }) => <a data-go={to}/>; export const Nav = { Link }; export const Loose = { Link: Imported };',
+			"shared/ui/link.tsx": "export const Link = ({ to }) => <a data-go={to}/>;",
+		};
+		const named = await check(
+			'import { Link, Nav } from "shared/ui/nav"; export default () => <><Link to="next"/><Nav.Link to="other"/></>;',
+			shared,
+		);
+		expect(named.ok).toBe(true);
+		expect(named.included).toEqual(["start", "next", "other"]);
+		const unnamed = await check(
+			'import { Link } from "shared/ui/link"; import { Loose } from "shared/ui/nav"; export default () => <><Link to="next"/><Loose.Link to="other"/></>;',
+			shared,
+		);
+		expect(unnamed.diagnostics.map(({ code }) => code)).toEqual(["navigation-unreadable"]);
+	});
 	it("reads data-go wherever the walk spells it, not only in markup", async () => {
 		for (const source of [
 			'const go = { "data-go": "next" }; export default () => <a {...go}/>;',
-			'const key = "data-go"; export default () => <a {...{ [key]: "next" }}/>;',
+			'export default () => <a {...{ ["data-go"]: "next" }}/>;',
 			'export default () => <a ref={(node) => node?.setAttribute("data-go", "next")}/>;',
+			'export default () => <a data-go="next" ref={(node) => node?.closest("[data-go]")?.getAttribute("data-go")}/>;',
+			'const sample = `<a data-go="checkout">`; export default () => <pre data-go="next">{sample}</pre>;',
+			'export default () => <div data-go="next" dangerouslySetInnerHTML={{ __html: "<b>Go</b>" }}/>;',
 		]) {
 			const result = await check(source);
 			expect(result.ok).toBe(true);
@@ -152,6 +173,11 @@ describe("publication source attribution", () => {
 		for (const source of [
 			'export default () => <a {...{ "data-go": compute() }}/>;',
 			"export default () => <a ref={(node) => { if (node) node.dataset.go = compute(); }}/>;",
+			'const key = "data-go"; export default () => <a {...{ [key]: "next" }}/>;',
+			'export default () => <a ref={(node) => { if (node) node.dataset[pick()] = "next"; }}/>;',
+			'export default () => <a ref={(node) => node && Object.assign(node.dataset, { go: "next" })}/>;',
+			'export default () => <div ref={(node) => { if (node) node.innerHTML = `<a data-go="next">Go</a>`; }}/>;',
+			"const markup = '<a data-go=\"next\">Go</a>'; export default () => <div dangerouslySetInnerHTML={{ __html: markup }}/>;",
 		]) {
 			const result = await check(source);
 			expect(result.diagnostics.map(({ code }) => code)).toEqual(["navigation-unreadable"]);

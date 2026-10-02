@@ -31,7 +31,8 @@ export function targets(
 	if (path.isIdentifier()) {
 		const binding = path.scope.getBinding(path.node.name);
 		if (binding === undefined && path.node.name === "undefined") return [];
-		if (binding !== undefined && inputs.values.has(binding.identifier)) return inputs.values.get(binding.identifier);
+		if (binding !== undefined && inputs.values.has(binding.identifier))
+			return [...(inputs.values.get(binding.identifier) ?? []), ...(inputs.opaque ? [undefined] : [])];
 		if (binding?.constant !== true || binding.kind !== "const" || !binding.path.isVariableDeclarator()) return;
 		const init = binding.path.get("init");
 		return init.node == null ? undefined : targets(init as NodePath, next, inputs);
@@ -42,11 +43,12 @@ export function targets(
 		if (!object.isIdentifier() || !property.isIdentifier()) return;
 		const binding = object.scope.getBinding(object.node.name);
 		if (binding !== undefined && inputs.members.has(binding.identifier))
-			return (
-				inputs.members.get(binding.identifier)?.get(property.node.name) ??
-				inputs.members.get(binding.identifier)?.get("*") ??
-				[]
-			);
+			return [
+				...(inputs.members.get(binding.identifier)?.get(property.node.name) ??
+					inputs.members.get(binding.identifier)?.get("*") ??
+					[]),
+				...(inputs.opaque ? [undefined] : []),
+			];
 		if (binding?.constant !== true || binding.kind !== "const" || !binding.path.isVariableDeclarator()) return;
 		if (
 			binding.referencePaths.some((reference) => {
@@ -80,13 +82,23 @@ type TargetValues = (string | undefined)[];
 interface Inputs {
 	values: Map<Node, TargetValues>;
 	members: Map<Node, Map<string, TargetValues>>;
+	/** A member tag passed props to a project component the walk could not reach, so no prop's set is closed. */
+	opaque?: true;
+}
+
+/** One JSX mount: the component's binding, the members a member tag reads off it, and its attributes. */
+export interface Mount {
+	component: NodePath;
+	members?: string[];
+	attributes: NodePath[];
 }
 
 /** One direct JSX prop boundary. Further forwarding remains an explicit declaration. */
-export function componentInputs(mounts: { component: NodePath; attributes: NodePath[] }[]): Inputs {
+export function componentInputs(mounts: Mount[]): Inputs {
 	const inputs: Inputs = { values: new Map(), members: new Map() };
 	for (const mount of mounts) {
 		let component = mount.component;
+		const members = [...(mount.members ?? [])];
 		const seen = new Set<Node>();
 		while (!seen.has(component.node)) {
 			seen.add(component.node);
@@ -96,9 +108,24 @@ export function componentInputs(mounts: { component: NodePath; attributes: NodeP
 				component = bound;
 			} else if (component.isVariableDeclarator() && component.get("init").node != null)
 				component = component.get("init") as NodePath;
-			else break;
+			else if (component.isTSAsExpression() || component.isTSSatisfiesExpression())
+				component = component.get("expression") as NodePath;
+			else if (members.length > 0 && component.isObjectExpression()) {
+				const member = members.shift();
+				const property = component
+					.get("properties")
+					.find((item) => item.isObjectProperty() && !item.node.computed && spelling(item.node.key) === member);
+				if (!property?.isObjectProperty()) break;
+				component = property.get("value");
+			} else break;
 		}
-		if (!component.isFunction()) continue;
+		if (!component.isFunction()) {
+			// A member tag ends where a plain tag would, except on a member the
+			// object imports from another project file: the frame can mount that
+			// component by name too, so its prop set can no longer be closed.
+			if (mount.attributes.length > 0 && projectImport(component)) inputs.opaque = true;
+			continue;
+		}
 		const parameter = component.get("params")[0];
 		if (parameter === undefined) continue;
 		const props = new Map<string, TargetValues>();
@@ -146,6 +173,13 @@ export function componentInputs(mounts: { component: NodePath; attributes: NodeP
 	return inputs;
 }
 
+function projectImport(path: NodePath): boolean {
+	const declaration = path.parentPath;
+	if (!(path.isImportSpecifier() || path.isImportDefaultSpecifier()) || !declaration?.isImportDeclaration())
+		return false;
+	const source = declaration.node.source.value;
+	return source.startsWith(".") || source.startsWith("shared/");
+}
 function spelling(node: Node): string {
 	return node.type === "Identifier" ? node.name : node.type === "StringLiteral" ? node.value : "";
 }
