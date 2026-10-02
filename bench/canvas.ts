@@ -1,21 +1,23 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { type Browser, type BrowserContext, type CDPSession, chromium, type Page } from "playwright-core";
+import { type BrowserContext, type CDPSession, chromium, type Page } from "playwright-core";
 import {
 	type BenchState,
+	type BuildRun,
+	buildsHeader,
 	collector,
-	copyProject,
 	DEFAULT_ZOOM,
 	driveRoundTripWheel,
 	framesOnCanvas,
-	freePort,
 	type GestureStats,
+	interleave,
+	median,
 	mountedCount,
 	ms,
 	now,
+	oneMinuteLoad,
 	PAN_EVENTS,
 	PAN_STEP_PX,
-	pageToMeasure,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
@@ -23,8 +25,11 @@ import {
 	RARE_INTERVAL_MS,
 	read,
 	type Stamped,
+	type Subject,
 	settle,
-	startDaemon,
+	startSubjects,
+	stopSubjects,
+	takeBuildOptions,
 	VIEWPORT,
 	windowStats,
 	writeCamera,
@@ -70,9 +75,18 @@ import {
  *   pnpm build && node bench/canvas.ts --project <spool-bench>
  *   node bench/canvas.ts --project <spool-bench> --zoom 0.16 --headed
  *   node bench/canvas.ts --project <path> --throttle 1,2,4,6 --headed --out run.json
+ *   node bench/canvas.ts --project <path> --page n1000 --builds base=<checkout>,cand=<checkout> --rounds 4 --headed
  *
  * The default measures entry into a readable document. The 0.16 command keeps
  * the historical cold overview-entry route visible.
+ *
+ * `--builds` compares spool versions: each build is a built spool checkout,
+ * measured on its own copy of the same subject, and `--rounds` runs every build
+ * that many times with the order rotated each round (`takeBuildOptions` in
+ * harness.ts). The report gives the median of the rounds and, beside it, the
+ * worst round whole. A difference between builds means something only when it
+ * is larger than the spread between rounds of one build, and the load row says
+ * how busy the machine was.
  *
  * Run it with node's own type stripping, not tsx: the collector below is
  * serialized into the page by playwright, and esbuild's keep-names transform
@@ -181,6 +195,8 @@ interface RunResult {
 	arrivals: number;
 	enterMs: number;
 	reloadMs: number;
+	/** The one-minute load average as this rate began. */
+	load1: number;
 }
 
 /**
@@ -217,6 +233,7 @@ async function measure(
 	cdp: CDPSession,
 	rate: number,
 	url: string,
+	load1: number,
 ): Promise<RunResult> {
 	await cdp.send("Emulation.setCPUThrottlingRate", { rate });
 	// frames mounted mid-run are throttled as they attach; the sweep after the
@@ -378,99 +395,227 @@ async function measure(
 		arrivals: arrivals.length,
 		enterMs,
 		reloadMs,
+		load1,
 	};
 }
 
-function table(results: RunResult[], zoom: number): string {
+/** A rate a round could not measure. It stays in the report as a failure; it is never dropped. */
+interface Failed {
+	rate: number;
+	load1: number;
+	failed: string;
+}
+
+type Outcome = RunResult | Failed;
+
+const isFailed = (outcome: Outcome): outcome is Failed => "failed" in outcome;
+
+/** One column of the report: a build at one rate, and what each of its rounds measured. */
+interface Column {
+	label: string;
+	rounds: Outcome[];
+}
+
+/**
+ * The worst round, picked whole so its figures are printed together: the one
+ * whose slower gesture had the highest p95, then the longest single interval.
+ * A failed round is worse than any measured one.
+ */
+function worstRound(rounds: readonly Outcome[]): number {
+	const severity = (outcome: Outcome): number[] =>
+		isFailed(outcome)
+			? [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]
+			: [Math.max(outcome.pan.p95, outcome.zoom.p95), Math.max(outcome.pan.worst, outcome.zoom.worst)];
+	let worst = 0;
+	for (let index = 1; index < rounds.length; index++) {
+		const [p95, longest] = severity(rounds[index] as Outcome);
+		const [worstP95, worstLongest] = severity(rounds[worst] as Outcome);
+		if (
+			(p95 as number) > (worstP95 as number) ||
+			(p95 === worstP95 && (longest as number) > (worstLongest as number))
+		) {
+			worst = index;
+		}
+	}
+	return worst;
+}
+
+/**
+ * Every cell is the median of the column's measured rounds, so a column of one
+ * round prints that round as it was. A round that failed is counted in the
+ * `rounds measured` row, and a column with no measured round prints "failed".
+ */
+function table(columns: Column[], zoom: number): string {
 	const entryScope = zoom === CANVAS_ZOOM ? `readable at k=${zoom}` : `k=${zoom}`;
+	const cells = (cell: (runs: RunResult[]) => string): string =>
+		columns
+			.map((column) => {
+				const measured = column.rounds.filter((outcome): outcome is RunResult => !isFailed(outcome));
+				return measured.length === 0 ? "failed" : cell(measured);
+			})
+			.join(" | ");
+	const mid = (runs: RunResult[], pick: (run: RunResult) => number): number => median(runs.map(pick));
+	const count = (value: number): string => (Number.isInteger(value) ? String(value) : value.toFixed(1));
+	const gesture = (runs: RunResult[], pick: (run: RunResult) => GestureStats): string =>
+		`${ms(mid(runs, (r) => pick(r).p50))} / ${ms(mid(runs, (r) => pick(r).p95))} / ${ms(mid(runs, (r) => pick(r).worst))}`;
+	const rare = (runs: RunResult[], pick: (run: RunResult) => GestureStats): string =>
+		`${count(mid(runs, (r) => pick(r).rareIntervals))} / ${count(mid(runs, (r) => pick(r).frames))}`;
+	const loafs = (runs: RunResult[], pick: (run: RunResult) => GestureStats): string =>
+		`${count(mid(runs, (r) => pick(r).loafs))} (worst block ${ms(mid(runs, (r) => pick(r).loafWorstBlocking))})`;
+	const enter = (runs: RunResult[]): string => {
+		const reached = runs.filter((r) => Number.isFinite(r.enterMs));
+		if (reached.length === 0) return "never";
+		const missed = runs.length - reached.length;
+		return `${ms(mid(reached, (r) => r.enterMs))}${missed > 0 ? ` (never in ${missed} of ${runs.length})` : ""}`;
+	};
+	const measured = (column: Column): string => {
+		const failures = column.rounds.filter(isFailed);
+		const head = `${column.rounds.length - failures.length} of ${column.rounds.length}`;
+		return failures.length === 0 ? head : `${head}, failed: ${failures.map((outcome) => outcome.failed).join("; ")}`;
+	};
+	const load = (column: Column): string => {
+		const loads = column.rounds.map((outcome) => outcome.load1);
+		const low = Math.min(...loads).toFixed(1);
+		const high = Math.max(...loads).toFixed(1);
+		return low === high ? low : `${low} to ${high}`;
+	};
 	const rows = [
-		`| bar | ${results.map((r) => `${r.rate}x`).join(" | ")} |`,
-		`|---|${results.map(() => "---|").join("")}`,
-		`| refresh interval (idle p50) | ${results.map((r) => ms(r.refreshMs)).join(" | ")} |`,
-		`| pan p50 / p95 / worst | ${results.map((r) => `${ms(r.pan.p50)} / ${ms(r.pan.p95)} / ${ms(r.pan.worst)}`).join(" | ")} |`,
-		`| pan intervals > ${RARE_INTERVAL_MS} ms | ${results.map((r) => `${r.pan.rareIntervals} / ${r.pan.frames}`).join(" | ")} |`,
-		`| pan long-animation frames | ${results.map((r) => `${r.pan.loafs} (worst block ${ms(r.pan.loafWorstBlocking)})`).join(" | ")} |`,
-		`| zoom p50 / p95 / worst | ${results.map((r) => `${ms(r.zoom.p50)} / ${ms(r.zoom.p95)} / ${ms(r.zoom.worst)}`).join(" | ")} |`,
-		`| zoom intervals > ${RARE_INTERVAL_MS} ms | ${results.map((r) => `${r.zoom.rareIntervals} / ${r.zoom.frames}`).join(" | ")} |`,
-		`| zoom long-animation frames | ${results.map((r) => `${r.zoom.loafs} (worst block ${ms(r.zoom.loafWorstBlocking)})`).join(" | ")} |`,
-		`| frame arrival p50 / worst | ${results.map((r) => `${ms(r.arrivalP50)} / ${ms(r.arrivalWorst)}`).join(" | ")} |`,
-		`| double-click to clickable (${entryScope}) | ${results.map((r) => (Number.isFinite(r.enterMs) ? ms(r.enterMs) : "never")).join(" | ")} |`,
-		`| reload to settled | ${results.map((r) => ms(r.reloadMs)).join(" | ")} |`,
-		`| documents mounted (idle / peak) | ${results.map((r) => `${r.idleMounted} / ${Math.max(r.pan.mountedPeak, r.zoom.mountedPeak)}`).join(" | ")} |`,
-		`| of those, throttled by name | ${results.map((r) => String(r.throttledFrames)).join(" | ")} |`,
+		`| bar | ${columns.map((column) => column.label).join(" | ")} |`,
+		`|---|${columns.map(() => "---|").join("")}`,
+		`| rounds measured | ${columns.map(measured).join(" | ")} |`,
+		`| refresh interval (idle p50) | ${cells((runs) => ms(mid(runs, (r) => r.refreshMs)))} |`,
+		`| pan p50 / p95 / worst | ${cells((runs) => gesture(runs, (r) => r.pan))} |`,
+		`| pan intervals > ${RARE_INTERVAL_MS} ms | ${cells((runs) => rare(runs, (r) => r.pan))} |`,
+		`| pan long-animation frames | ${cells((runs) => loafs(runs, (r) => r.pan))} |`,
+		`| zoom p50 / p95 / worst | ${cells((runs) => gesture(runs, (r) => r.zoom))} |`,
+		`| zoom intervals > ${RARE_INTERVAL_MS} ms | ${cells((runs) => rare(runs, (r) => r.zoom))} |`,
+		`| zoom long-animation frames | ${cells((runs) => loafs(runs, (r) => r.zoom))} |`,
+		`| frame arrival p50 / worst | ${cells((runs) => `${ms(mid(runs, (r) => r.arrivalP50))} / ${ms(mid(runs, (r) => r.arrivalWorst))}`)} |`,
+		`| double-click to clickable (${entryScope}) | ${cells(enter)} |`,
+		`| reload to settled | ${cells((runs) => ms(mid(runs, (r) => r.reloadMs)))} |`,
+		`| documents mounted (idle / peak) | ${cells((runs) => `${count(mid(runs, (r) => r.idleMounted))} / ${count(mid(runs, (r) => Math.max(r.pan.mountedPeak, r.zoom.mountedPeak)))}`)} |`,
+		`| of those, throttled by name | ${cells((runs) => count(mid(runs, (r) => r.throttledFrames)))} |`,
+		`| one-minute load at the run | ${columns.map(load).join(" | ")} |`,
 	];
 	return rows.join("\n");
 }
 
 async function main(): Promise<void> {
-	const options = parseArgs(process.argv.slice(2));
-	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } = pageToMeasure(root, options.page);
-	// a camera planned over nothing is a run that measures an empty canvas and
-	// reports it as fast, which is the one failure this whole ticket exists to avoid
-	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
-	const camera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zoom);
-	// rewritten before every run: the canvas persists its camera on settle, so
-	// each rate would otherwise start where the last one's gestures left off
-	const resetCamera = (): void => writeCamera(root, camera, canvasPage);
-	const port = await freePort();
-	const daemon = await startDaemon(spoolDir, root, port);
-	const url = `${daemon.url}/p/${encodeURIComponent(name)}`;
-	process.stderr.write(
-		`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ${boxes.length} frames, k=${options.zoom})\n`,
-	);
-
-	let browser: Browser | undefined;
-	const results: RunResult[] = [];
+	const { builds, rounds, rest } = takeBuildOptions(process.argv.slice(2));
+	const options = parseArgs(rest);
+	const { subjects, page: measured } = await startSubjects(options.project, builds, options.page);
 	try {
-		browser = await chromium.launch({
+		const camera = planCamera(measured.frames, VIEWPORT.width, VIEWPORT.height, options.zoom);
+		// rewritten before every run: the canvas persists its camera on settle, so
+		// each rate would otherwise start where the last one's gestures left off
+		const resetCamera = (subject: Subject): void => writeCamera(subject.root, camera, measured.page);
+		const browser = await chromium.launch({
 			channel: options.headed ? "chromium" : "chromium-headless-shell",
 			headless: !options.headed,
 		});
-		writeCamera(root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), canvasPage);
-		await prepareCurrentCovers(browser, url, root, boxes);
-		resetCamera();
+		let runs: BuildRun<Outcome[]>[];
+		try {
+			for (const subject of subjects) {
+				const pictures = planCamera(measured.frames, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM);
+				writeCamera(subject.root, pictures, measured.page);
+				await prepareCurrentCovers(browser, subject.url, subject.root, measured.frames);
 
-		// One discarded pass first. A fresh daemon compiles every frame it is
-		// asked for, and a first-ever boot measures the toolchain rather than the
-		// canvas — arrivals came out at 4.2 s cold against 0.2 s warm.
-		process.stderr.write("bench: warming the daemon\n");
-		resetCamera();
-		const warm = await browser.newContext({ viewport: VIEWPORT });
-		const warmPage = await warm.newPage();
-		await warmPage.goto(url, { waitUntil: "domcontentloaded" });
-		await settle(warmPage, 1500, 60_000);
-		await warm.close();
-		// The canvas persists its own camera through the daemon on settle, so a
-		// save in flight when the context closed can land *after* the planned
-		// camera is written and quietly reopen the next run somewhere empty.
-		await new Promise((wait) => setTimeout(wait, 1500));
+				// One discarded pass first. A fresh daemon compiles every frame it is
+				// asked for, and a first-ever boot measures the toolchain rather than the
+				// canvas — arrivals came out at 4.2 s cold against 0.2 s warm.
+				process.stderr.write(`bench: warming ${subject.build.label}\n`);
+				resetCamera(subject);
+				const warm = await browser.newContext({ viewport: VIEWPORT });
+				const warmPage = await warm.newPage();
+				await warmPage.goto(subject.url, { waitUntil: "domcontentloaded" });
+				await settle(warmPage, 1500, 60_000);
+				await warm.close();
+				// The canvas persists its own camera through the daemon on settle, so a
+				// save in flight when the context closed can land *after* the planned
+				// camera is written and quietly reopen the next run somewhere empty.
+				await new Promise((wait) => setTimeout(wait, 1500));
+			}
 
-		for (const rate of options.throttle) {
-			resetCamera();
-			const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-			await context.addInitScript(collector);
-			const page = await context.newPage();
-			// a canvas that threw is not a canvas that was fast: never report over a broken run
-			page.on("pageerror", (error) => process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`));
-			const cdp = await context.newCDPSession(page);
-			process.stderr.write(`bench: throttle ${rate}x\n`);
-			results.push(await measure(page, context, cdp, rate, url));
-			await context.close();
+			runs = await interleave(subjects, rounds, async (subject) => {
+				const outcomes: Outcome[] = [];
+				for (const rate of options.throttle) {
+					resetCamera(subject);
+					const load1 = oneMinuteLoad();
+					const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+					try {
+						await context.addInitScript(collector);
+						const page = await context.newPage();
+						// a canvas that threw is not a canvas that was fast: never report over a broken run
+						page.on("pageerror", (error) =>
+							process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`),
+						);
+						const cdp = await context.newCDPSession(page);
+						outcomes.push(await measure(page, context, cdp, rate, subject.url, load1));
+						process.stderr.write(`bench:   throttle ${rate}x at load ${load1.toFixed(1)}\n`);
+					} catch (error) {
+						const reason = String(error).slice(0, 160);
+						process.stderr.write(`bench:   throttle ${rate}x failed at load ${load1.toFixed(1)}: ${reason}\n`);
+						outcomes.push({ rate, load1, failed: reason });
+					} finally {
+						await context.close();
+					}
+					// let the settle-time camera save land before the next plan overwrites it
+					await new Promise((wait) => setTimeout(wait, 1500));
+				}
+				return outcomes;
+			});
+		} finally {
+			await browser.close();
+		}
+
+		const column = (subject: Subject, index: number, picked: (rounds: Outcome[]) => Outcome[]): Column => ({
+			label:
+				subjects.length === 1
+					? `${options.throttle[index]}x`
+					: `${subject.build.label} ${options.throttle[index]}x`,
+			rounds: picked(
+				runs.filter((run) => run.build === subject.build.label).map((run) => run.result[index] as Outcome),
+			),
+		});
+		const columns = subjects.flatMap((subject) =>
+			options.throttle.map((_, index) => column(subject, index, (all) => all)),
+		);
+		const sections = [buildsHeader(subjects, runs, rounds)];
+		if (rounds === 1) {
+			sections.push(table(columns, options.zoom));
+		} else {
+			const worst = columns.map((each) => {
+				const index = worstRound(each.rounds);
+				return { label: `${each.label}, round ${index + 1}`, rounds: [each.rounds[index] as Outcome] };
+			});
+			sections.push(
+				`### median of the rounds\n\n${table(columns, options.zoom)}`,
+				`### worst round (highest gesture p95, then longest interval)\n\n${table(worst, options.zoom)}`,
+			);
+		}
+		process.stdout.write(`${sections.join("\n\n")}\n`);
+		if (options.out !== undefined) {
+			const results = runs.flatMap((run) =>
+				run.result.map((outcome) => ({ build: run.build, round: run.round, ...outcome })),
+			);
+			writeFileSync(
+				options.out,
+				`${JSON.stringify(
+					{
+						project: options.project,
+						headed: options.headed,
+						page: measured.page,
+						builds: subjects.map((subject) => subject.build),
+						results,
+					},
+					null,
+					2,
+				)}\n`,
+			);
+			process.stderr.write(`bench: wrote ${options.out}\n`);
 		}
 	} finally {
-		await browser?.close();
-		daemon.stop();
-	}
-
-	const report = table(results, options.zoom);
-	process.stdout.write(`${report}\n`);
-	if (options.out !== undefined) {
-		writeFileSync(
-			options.out,
-			`${JSON.stringify({ project: options.project, headed: options.headed, results }, null, 2)}\n`,
-		);
-		process.stderr.write(`bench: wrote ${options.out}\n`);
+		stopSubjects(subjects);
 	}
 }
 

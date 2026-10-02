@@ -1,14 +1,26 @@
-import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import {
+	cpSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Browser, Page as BrowserPage } from "playwright-core";
 
 /**
- * The plumbing the six benchmarks share: a private copy of a real spool project,
- * a daemon of its own, and the geometry reading that decides what to measure.
+ * The plumbing the benchmarks share: a private copy of a real spool project, a
+ * daemon of its own, the geometry reading that decides what to measure, and
+ * the builds and interleaved rounds that compare one spool version with another.
  *
  * Sharing it is not tidiness. `bench/canvas.ts` (#82) and `bench/frame-cost.ts`
  * (#85) quote numbers at each other — a per-frame cost against a per-frame
@@ -95,8 +107,233 @@ export interface Daemon {
 	stop: () => void;
 }
 
-export async function startDaemon(spoolDir: string, root: string, port: number): Promise<Daemon> {
-	const cli = join(repoRoot, "dist/cli.js");
+/**
+ * A spool build to measure: a checkout whose `dist/cli.js` serves the daemon
+ * and the canvas. The benchmark's own code always comes from this checkout, so
+ * two builds differ in the product under test and nothing else. Its commit, and
+ * whether what it is built from had uncommitted edits, go into every report, so
+ * a comparison's numbers say which code they were taken on.
+ */
+export interface Build {
+	label: string;
+	checkout: string;
+	cli: string;
+	commit: string;
+	dirty: boolean;
+}
+
+/**
+ * What `pnpm build` reads. Dirty is judged over these alone: a daemon run saves
+ * `design/` itself, so a whole checkout that has ever been measured is never
+ * clean.
+ */
+const BUILD_INPUTS = [
+	"src",
+	"package.json",
+	"pnpm-lock.yaml",
+	"tsconfig.json",
+	"tsconfig.runtime.json",
+	"tsconfig.ui.json",
+	"tsup.config.ts",
+	"vite.config.ts",
+];
+
+const git = (checkout: string, args: string[]): string =>
+	execFileSync("git", ["-C", checkout, ...args], { encoding: "utf8" }).trim();
+
+/** The newest modification time under a path, a file or a whole directory. */
+function newest(path: string): number {
+	const stat = statSync(path);
+	if (!stat.isDirectory()) return stat.mtimeMs;
+	let found = 0;
+	for (const entry of readdirSync(path)) found = Math.max(found, newest(join(path, entry)));
+	return found;
+}
+
+/**
+ * One checkout's build. A `dist/` older than anything it is built from is
+ * refused: it is some earlier state of the code, and the commit the report
+ * would print beside its numbers is not the code that produced them.
+ */
+function readBuild(label: string, checkout: string): Build {
+	const root = realpathSync(resolve(checkout));
+	const cli = join(root, "dist/cli.js");
+	if (!existsSync(cli)) throw new Error(`${cli} is missing — run pnpm build in ${root} first`);
+	const inputs = BUILD_INPUTS.filter((input) => existsSync(join(root, input)));
+	if (statSync(cli).mtimeMs < Math.max(...inputs.map((input) => newest(join(root, input))))) {
+		throw new Error(`${cli} is older than the sources it is built from — run pnpm build in ${root} first`);
+	}
+	return {
+		label,
+		checkout: root,
+		cli,
+		commit: git(root, ["rev-parse", "HEAD"]),
+		dirty: git(root, ["status", "--porcelain", "--", ...inputs]) !== "",
+	};
+}
+
+/**
+ * `base=<spool checkout>,cand=<spool checkout>`. Two labels on one `dist/`
+ * would report one build twice as a comparison, so each build needs a checkout
+ * of its own: a detached worktree per commit, each installed and built.
+ */
+function parseBuilds(spec: string): Build[] {
+	const builds = spec.split(",").map((entry): Build => {
+		const at = entry.indexOf("=");
+		if (at <= 0) throw new Error(`--builds takes label=<spool checkout>, got "${entry}"`);
+		return readBuild(entry.slice(0, at).trim(), entry.slice(at + 1).trim());
+	});
+	if (new Set(builds.map((build) => build.label)).size !== builds.length) {
+		throw new Error("--builds needs distinct labels");
+	}
+	if (new Set(builds.map((build) => build.cli)).size !== builds.length) {
+		throw new Error("--builds names one dist/ twice; give each build a checkout of its own");
+	}
+	return builds;
+}
+
+/**
+ * Rotating the order evens out whatever drifts across a session only over a
+ * whole number of turns, so the rounds must be a multiple of the builds: two
+ * builds run AB then BA.
+ */
+function assertBalanced(builds: readonly unknown[], rounds: number): void {
+	if (!Number.isInteger(rounds) || rounds < 1) throw new Error("--rounds takes a positive whole number");
+	if (rounds % builds.length !== 0) {
+		throw new Error(
+			`--rounds ${rounds} is not a multiple of the ${builds.length} builds, so the order is not balanced`,
+		);
+	}
+}
+
+/**
+ * `--builds` and `--rounds`, taken out of a benchmark's arguments and checked
+ * before a copy, a daemon or a browser exists. With no `--builds` the one build
+ * is this checkout's. `rest` is left for the benchmark's own options.
+ */
+export function takeBuildOptions(argv: readonly string[]): { builds: Build[]; rounds: number; rest: string[] } {
+	let builds: Build[] | undefined;
+	let rounds = 1;
+	const rest: string[] = [];
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i] as string;
+		const next = argv[i + 1];
+		if (arg === "--builds" && next !== undefined) {
+			builds = parseBuilds(next);
+			i++;
+		} else if (arg === "--rounds" && next !== undefined) {
+			rounds = Number(next);
+			i++;
+		} else {
+			rest.push(arg);
+		}
+	}
+	const chosen = builds ?? [readBuild("this", repoRoot)];
+	assertBalanced(chosen, rounds);
+	return { builds: chosen, rounds, rest };
+}
+
+const describeBuild = (build: Build): string =>
+	`${build.label} = ${build.checkout} at ${build.commit.slice(0, 12)}${build.dirty ? " (uncommitted source edits)" : ""}`;
+
+/** The one-minute load average now, the figure `sysctl -n vm.loadavg` leads with. */
+export const oneMinuteLoad = (): number => loadavg()[0] ?? Number.NaN;
+
+/** One build's private copy of the subject, and the daemon its build serves that copy with. */
+export interface Subject {
+	build: Build;
+	root: string;
+	url: string;
+	daemon: Daemon;
+}
+
+/**
+ * A private copy and a daemon of its own for every build. The copies are of one
+ * source, so the builds differ in the product alone, and every copy is measured
+ * on the same page. A daemon that fails to start stops the ones already up.
+ */
+export async function startSubjects(
+	project: string,
+	builds: readonly Build[],
+	pageName: string | undefined,
+): Promise<{ subjects: Subject[]; page: Page }> {
+	const subjects: Subject[] = [];
+	let page: Page = { page: ROOT_PAGE, frames: [] };
+	try {
+		for (const build of builds) {
+			process.stderr.write(`bench: build ${describeBuild(build)}\n`);
+			const { root, name, spoolDir } = copyProject(project);
+			page = pageToMeasure(root, pageName);
+			// a camera planned over nothing is a run that measures an empty canvas
+			// and reports it as fast
+			if (page.frames.length === 0) throw new Error(`${project} has no frames to measure`);
+			const daemon = await startDaemon(spoolDir, root, await freePort(), build.cli);
+			const url = `${daemon.url}/p/${encodeURIComponent(name)}`;
+			subjects.push({ build, root, url, daemon });
+			process.stderr.write(
+				`bench: ${build.label} ${url} (copy of ${project}, page "${page.page === ROOT_PAGE ? "root" : page.page}", ${page.frames.length} frames)\n`,
+			);
+		}
+	} catch (error) {
+		stopSubjects(subjects);
+		throw error;
+	}
+	return { subjects, page };
+}
+
+export function stopSubjects(subjects: readonly Subject[]): void {
+	for (const subject of subjects) subject.daemon.stop();
+}
+
+export interface BuildRun<T> {
+	build: string;
+	round: number;
+	result: T;
+}
+
+/**
+ * Every build once per round, the order rotated each round, so whatever drifts
+ * across a session (other work on the machine, heat, a warming cache) lands on
+ * every build alike instead of on whichever always runs second.
+ */
+export async function interleave<T>(
+	subjects: readonly Subject[],
+	rounds: number,
+	run: (subject: Subject) => Promise<T>,
+): Promise<BuildRun<T>[]> {
+	assertBalanced(subjects, rounds);
+	const runs: BuildRun<T>[] = [];
+	for (let round = 0; round < rounds; round++) {
+		for (let turn = 0; turn < subjects.length; turn++) {
+			const subject = subjects[(turn + round) % subjects.length] as Subject;
+			process.stderr.write(`bench: round ${round + 1}/${rounds}, build ${subject.build.label}\n`);
+			runs.push({ build: subject.build.label, round, result: await run(subject) });
+		}
+	}
+	return runs;
+}
+
+/** The builds a report was taken on, and the order their rounds ran in. */
+export function buildsHeader(subjects: readonly Subject[], runs: readonly BuildRun<unknown>[], rounds: number): string {
+	const lines = subjects.map((subject) => `build ${describeBuild(subject.build)}`);
+	if (rounds > 1) {
+		const order = Array.from({ length: rounds }, (_, round) =>
+			runs
+				.filter((run) => run.round === round)
+				.map((run) => run.build)
+				.join(" "),
+		);
+		lines.push("", `${rounds} rounds, build order rotated every round: ${order.join(" | ")}`);
+	}
+	return lines.join("\n");
+}
+
+export async function startDaemon(
+	spoolDir: string,
+	root: string,
+	port: number,
+	cli = join(repoRoot, "dist/cli.js"),
+): Promise<Daemon> {
 	if (!existsSync(cli)) throw new Error(`${cli} is missing — run pnpm build first`);
 	const env = { SPOOL_DIR: spoolDir, SPOOL_PORT: String(port) };
 	await run(process.execPath, [cli, "open", root], env);
@@ -385,6 +622,19 @@ export function quantile(sorted: number[], q: number): number {
 	if (sorted.length === 0) return Number.NaN;
 	const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
 	return sorted[index] ?? Number.NaN;
+}
+
+/**
+ * The middle of the values, the mean of the two middles when there is an even
+ * number of them. `quantile(sorted, 0.5)` takes the lower of those two, which
+ * over two rounds is simply the better round, so every reported median is this.
+ */
+export function median(values: readonly number[]): number {
+	const sorted = [...values].sort((a, b) => a - b);
+	if (sorted.length === 0) return Number.NaN;
+	const half = sorted.length / 2;
+	if (!Number.isInteger(half)) return sorted[Math.floor(half)] ?? Number.NaN;
+	return ((sorted[half - 1] ?? Number.NaN) + (sorted[half] ?? Number.NaN)) / 2;
 }
 
 export const ms = (value: number): string => (Number.isFinite(value) ? value.toFixed(1) : "—");
