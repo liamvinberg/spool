@@ -77,7 +77,15 @@ async function pictureCanvas() {
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	for (const frame of FRAMES) {
-		writeFrame(project.root, frame.name, "export default function Frame() { return <main>picture</main>; }");
+		// the document is its cover's colour too, so a picture the canvas takes of
+		// it on its own (the daemon's watcher can report the fresh file after the
+		// page opens) is the same picture
+		const [r, g, b] = frame.color;
+		writeFrame(
+			project.root,
+			frame.name,
+			`export default function Frame() { return <main style={{ position: "fixed", inset: 0, background: "rgb(${r}, ${g}, ${b})" }} />; }`,
+		);
 		writeDesignFile(
 			project.root,
 			`frames/${frame.name}/frame.json`,
@@ -95,10 +103,19 @@ async function pictureCanvas() {
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: CAMERA })}\n`);
 	const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	// settled: every picture drawn as its size wants, and no document borrowed
+	// to photograph one, three looks in a row
+	let calm = 0;
 	await expect
-		.poll(async () => (await report(page))?.complete === true && (await report(page))?.drawn.length === 3, {
-			timeout: 30_000,
-		})
+		.poll(
+			async () => {
+				const now = await report(page);
+				const borrowed = await page.locator("iframe").count();
+				calm = now?.complete === true && now.drawn.length === 3 && borrowed === 0 ? calm + 1 : 0;
+				return calm >= 3;
+			},
+			{ timeout: 60_000, interval: 200 },
+		)
 		.toBe(true);
 	return { page, project };
 }
