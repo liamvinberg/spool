@@ -1,5 +1,6 @@
+import { execFile } from "node:child_process";
 import type { BrowserContext, CDPSession, ConsoleMessage, Page } from "playwright-core";
-import { COVER_QUALITY, type ColorScheme, captureRasterSize, coverCaptureScale, SETTLE_BUDGET_MS } from "../cover";
+import { COVER_QUALITY, type ColorScheme, type CoverShape, coverShape, SETTLE_BUDGET_MS } from "../cover";
 import {
 	fetchHeadlessShell,
 	type HeadlessShell,
@@ -23,13 +24,14 @@ import type { LogEntry } from "./verify-record";
  * and the same `thumb` event the canvas has always read, so an open canvas
  * picks it up unchanged.
  *
- * What feeds it is the change hub of every registered project, open in a
- * canvas or not, and any read that finds a frame with no cover. One queue, one
- * entry per frame, in this order: the frames on screen in an open canvas, then
- * the rest of the page it shows, then everything else. Within each, an edit
- * goes ahead of a picture that is merely missing, and a frame edited while a
- * tab is photographing it goes round once more when the tab is free, so a
- * storm of writes occupies one tab and never builds a backlog.
+ * One frame in a tab, from its load to its stored picture, is a sitting. What
+ * asks for one is the change hub of every registered project, open in a canvas
+ * or not, and any read that finds a frame with no cover. One queue, one entry
+ * per frame, in this order: the frames on screen in an open canvas, then the
+ * rest of the page it shows, then everything else. Within each, an edit goes
+ * ahead of a picture that is merely missing, and a frame edited while a tab is
+ * photographing it sits again when the tab is free, so a storm of writes
+ * occupies one tab and never builds a backlog.
  *
  * `spool shot` and `spool logs` boot frames in the same browser, through the
  * same load and the same settle, ahead of any cover: an agent is waiting on
@@ -41,21 +43,47 @@ import type { LogEntry } from "./verify-record";
  * own canvas of 754 frames: two tabs took 196 s, three 135 s, and four no less
  * than three. Past that the stages only get slower.
  */
-export const BOOTH_TABS = 3;
+const BOOTH_TABS = 3;
 
 /**
- * Covers a tab takes before it is swapped for a fresh one. A tab's renderer
+ * Covers a tab takes before it is swapped for a fresh page. A tab's renderer
  * grows across navigations, back/forward cache or not: one browser climbed from
  * 1.1 to 4.8 GB over five passes of a 200-frame page. A fresh page every twenty
- * holds a whole pass of Spool's canvas at 0.66 GB at the same speed.
+ * holds a pass of Spool's canvas at a median of about 1.1 GB on the GPU, the
+ * peaks being the heaviest frames themselves.
  */
-export const COVERS_PER_PAGE = 20;
+const COVERS_PER_PAGE = 20;
 
 /**
- * How much longer than its own budget the settle is waited on, from outside
- * the page. A frame whose main thread is too busy to run timers never fires
- * the settle's own cap (one took 15.5 s on a software GPU), so the booth's
- * patience has to live where the frame cannot hold it up.
+ * How long the browser outlives the last sitting, its tabs parked on an empty
+ * page. An agent edits a frame, looks, and edits again a few seconds later, and
+ * each of those is one sitting with nothing queued behind it: closing on every
+ * drain made each one relaunch the browser first, about 0.2 s of the half
+ * second an edit took to reach the canvas. Kept, the browser holds its few
+ * hundred megabytes for this long after a burst and then frees all of it.
+ */
+const LINGER_MS = 30_000;
+
+/**
+ * How long a whole sitting may take, from load to screenshot, enforced from
+ * the daemon. A frame whose main thread never comes back (a loop, a script
+ * stuck in its own work) never answers anything the booth asks it, its own
+ * settle's cap included, so the booth's patience has to live outside the page:
+ * past this the tab is closed out from under the frame, its old cover stays,
+ * and the reason is written beside it.
+ */
+const SITTING_MS = 20_000;
+
+/**
+ * The same for a shot, before any fixed wait `--at` asks for: a boot's own
+ * wait for content, its settle, its fonts and every slice.
+ */
+const SHOT_MS = 45_000;
+
+/**
+ * How much longer than its own budget the settle is waited on before the
+ * picture is taken anyway. A frame too busy to run timers never fires the
+ * settle's own cap (one took 15.5 s on a software GPU).
  */
 const SETTLE_GRACE_MS = 600;
 
@@ -68,14 +96,8 @@ const COVER_BOOT_MS = 5000;
  */
 const SHOT_BOOT_MS = 10_000;
 
-/** How long a navigation may take before the job gives up on it. */
-const LOAD_MS = 15_000;
-
-/** How long Chrome is given to draw the screenshot itself. */
-const SCREENSHOT_MS = 10_000;
-
 /** How long a document's fonts may keep a shot waiting (#18). */
-const SHOT_FONTS_MS = 30_000;
+const SHOT_FONTS_MS = 15_000;
 
 /**
  * How long after a failed launch the booth tries again. A browser that could
@@ -90,8 +112,27 @@ const RELAUNCH_AFTER_MS = 60_000;
  */
 const FAILED_COOLDOWN_MS = 60_000;
 
-/** How long a browser gets to close before its process is ended outright. */
-const CLOSE_MS = 5000;
+/**
+ * How long the browser gets to answer anything the booth asks of it, a close
+ * included, before its process is ended outright.
+ */
+const ANSWER_MS = 5000;
+
+/**
+ * Browsers lost in a row, with no cover landed between, before the booth stops
+ * relaunching for a while. One lost browser is a crash or a kill, and every
+ * frame that was in it sits again in the next; three is a machine that cannot
+ * keep one running.
+ */
+const LOST_IN_A_ROW = 3;
+
+/** The waits a test needs short; every one of them is the constant above in the daemon. */
+interface BoothTiming {
+	sittingMs: number;
+	shotMs: number;
+	relaunchAfterMs: number;
+	lingerMs: number;
+}
 
 /**
  * Why a frame owes a cover. An edit is fresh work somebody is likely watching
@@ -104,14 +145,15 @@ export type BoothReason = "edited" | "stale" | "missing";
 const REASON_RANK: Record<BoothReason, number> = { edited: 0, stale: 1, missing: 2 };
 
 /** One frame of one registered project. */
-export interface BoothFrame {
+interface BoothFrame {
 	root: string;
 	/** The project's name, which is how a frame URL names it. */
 	project: string;
 	frame: string;
 }
 
-export interface BoothJob extends BoothFrame {
+/** One frame owed a picture, and why. */
+export interface Sitting extends BoothFrame {
 	reason: BoothReason;
 }
 
@@ -120,14 +162,16 @@ export interface BoothJob extends BoothFrame {
  * the frames inside its viewport. A frame on screen is one somebody is looking
  * at; the rest of that page is a pan away.
  */
-export interface BoothView {
+interface BoothView {
 	root: string;
 	page: string;
 	frames: readonly string[];
 }
 
-/** Where a frame stands in the queue's order: on screen, on an open page, or neither. */
-export type BoothPlace = 0 | 1 | 2;
+/** Where a frame stands in the queue's order. */
+type Place = "on screen" | "on an open page" | "elsewhere";
+
+const PLACE_RANK: Record<Place, number> = { "on screen": 0, "on an open page": 1, elsewhere: 2 };
 
 const keyOf = (root: string, frame: string) => `${root}\0${frame}`;
 
@@ -144,45 +188,48 @@ const keyOf = (root: string, frame: string) => `${root}\0${frame}`;
  * see, because the one somebody is looking at is the one worth having first.
  */
 export function createBoothQueue() {
-	interface Waiting extends BoothJob {
+	interface Waiting extends Sitting {
 		seq: number;
 	}
 	const waiting = new Map<string, Waiting>();
-	/** Frames in a tab now, each true once a change has landed behind the tab's back. */
-	const inTab = new Map<string, { job: BoothJob; dirty: boolean }>();
+	/** Frames in a tab now, each with what it is owed again once the tab is free. */
+	const inTab = new Map<string, { sitting: Sitting; again: BoothReason | undefined }>();
 	const views = new Map<string, { root: string; page: string; frames: ReadonlySet<string> }>();
 	let seq = 0;
 
-	function placeOf(root: string, frame: string): BoothPlace {
-		let place: BoothPlace = 2;
+	function placeOf(root: string, frame: string): Place {
+		let place: Place = "elsewhere";
 		for (const view of views.values()) {
 			if (view.root !== root) continue;
-			if (view.frames.has(frame)) return 0;
-			if (pageParent(frame) === view.page) place = 1;
+			if (view.frames.has(frame)) return "on screen";
+			if (pageParent(frame) === view.page) place = "on an open page";
 		}
 		return place;
 	}
 
-	function add(job: BoothJob): void {
-		const key = keyOf(job.root, job.frame);
-		const held = inTab.get(key);
-		if (held !== undefined) {
-			// the tab holding it is photographing what the frame was: a missing
-			// picture is being made right now, anything else goes round again
-			if (job.reason !== "missing") held.dirty = true;
+	function add(sitting: Sitting): void {
+		const key = keyOf(sitting.root, sitting.frame);
+		const occupant = inTab.get(key);
+		if (occupant !== undefined) {
+			// the tab is photographing what the frame was: a missing picture is
+			// being made right now, anything else sits again after
+			if (sitting.reason === "missing") return;
+			if (occupant.again === undefined || REASON_RANK[sitting.reason] < REASON_RANK[occupant.again]) {
+				occupant.again = sitting.reason;
+			}
 			return;
 		}
 		const queued = waiting.get(key);
-		if (queued === undefined) waiting.set(key, { ...job, seq: seq++ });
-		else if (REASON_RANK[job.reason] < REASON_RANK[queued.reason]) queued.reason = job.reason;
+		if (queued === undefined) waiting.set(key, { ...sitting, seq: seq++ });
+		else if (REASON_RANK[sitting.reason] < REASON_RANK[queued.reason]) queued.reason = sitting.reason;
 	}
 
 	/** The next frame for a free tab, which is now in it. */
-	function take(): BoothJob | undefined {
+	function take(): Sitting | undefined {
 		let best: Waiting | undefined;
-		let bestPlace = 3;
+		let bestPlace = Number.POSITIVE_INFINITY;
 		for (const entry of waiting.values()) {
-			const place = placeOf(entry.root, entry.frame);
+			const place = PLACE_RANK[placeOf(entry.root, entry.frame)];
 			if (
 				best === undefined ||
 				place < bestPlace ||
@@ -197,37 +244,44 @@ export function createBoothQueue() {
 		if (best === undefined) return undefined;
 		const key = keyOf(best.root, best.frame);
 		waiting.delete(key);
-		const job: BoothJob = { root: best.root, project: best.project, frame: best.frame, reason: best.reason };
-		inTab.set(key, { job, dirty: false });
-		return job;
+		const sitting: Sitting = { root: best.root, project: best.project, frame: best.frame, reason: best.reason };
+		inTab.set(key, { sitting, again: undefined });
+		return sitting;
 	}
 
-	/** The tab is free of this frame. One that changed while it was in there goes round again. */
-	function release(job: BoothFrame): boolean {
-		const key = keyOf(job.root, job.frame);
-		const held = inTab.get(key);
-		if (held === undefined) return false;
+	/** The tab is free of this frame. One owed again while it was in there goes back in line. */
+	function release(sitting: BoothFrame): boolean {
+		const key = keyOf(sitting.root, sitting.frame);
+		const occupant = inTab.get(key);
+		if (occupant === undefined) return false;
 		inTab.delete(key);
-		if (!held.dirty) return false;
-		add({ ...held.job, reason: "edited" });
+		if (occupant.again === undefined) return false;
+		add({ ...occupant.sitting, reason: occupant.again });
 		return true;
+	}
+
+	/** A sitting the browser never finished, through no fault of the frame's: back in line as it was. */
+	function putBack(sitting: Sitting): void {
+		release(sitting);
+		add(sitting);
 	}
 
 	/** The frame is gone: nothing is owed for it. */
 	function drop(root: string, frame: string): void {
 		const key = keyOf(root, frame);
 		waiting.delete(key);
-		const held = inTab.get(key);
-		if (held !== undefined) held.dirty = false;
+		const occupant = inTab.get(key);
+		if (occupant !== undefined) occupant.again = undefined;
 	}
 
 	/** Everything owed for one project, which has left the registry. */
 	function dropProject(root: string): void {
 		for (const [key, entry] of waiting) if (entry.root === root) waiting.delete(key);
-		for (const held of inTab.values()) if (held.job.root === root) held.dirty = false;
+		for (const occupant of inTab.values()) if (occupant.sitting.root === root) occupant.again = undefined;
 		for (const [id, view] of views) if (view.root === root) views.delete(id);
 	}
 
+	/** What one open canvas shows, or nothing once it has gone. */
 	function view(id: string, next: BoothView | undefined): void {
 		if (next === undefined) views.delete(id);
 		else views.set(id, { root: next.root, page: next.page, frames: new Set(next.frames) });
@@ -237,6 +291,7 @@ export function createBoothQueue() {
 		add,
 		take,
 		release,
+		putBack,
 		drop,
 		dropProject,
 		view,
@@ -252,11 +307,11 @@ export function createBoothQueue() {
 	};
 }
 
-export type BoothQueue = ReturnType<typeof createBoothQueue>;
+type BoothQueue = ReturnType<typeof createBoothQueue>;
 
 /**
  * Whether a frame's picture depends on the colour scheme it is shown in, read
- * off its compiled document: a `prefers-color-scheme` query in its stylesheets
+ * off its served document: a `prefers-color-scheme` query in its stylesheets
  * (Tailwind's `dark:` compiles to one), a `color-scheme` there or in a meta tag
  * that lets the browser choose between light and dark, or code that asks
  * `matchMedia` for the scheme. Only the stylesheets are searched for the query
@@ -282,32 +337,68 @@ export function followsColorScheme(document: string): boolean {
 const BOTH_SCHEMES =
 	/color-scheme\s*:[^;}"'<]*\blight\b[^;}"'<]*\bdark\b|color-scheme\s*:[^;}"'<]*\bdark\b[^;}"'<]*\blight\b/i;
 
-export type BoothCompile = { kind: "ok"; document: string } | { kind: "error"; message: string } | { kind: "missing" };
+/**
+ * The colour scheme this machine is in, for the booth to start in before any
+ * canvas has said which it shows: a frame on a canvas follows the browser's own
+ * preference, and a browser follows the machine. macOS says so through its
+ * global defaults; anywhere else the booth starts light, which is what a
+ * headless browser renders when nobody says.
+ */
+export function systemColorScheme(platform: NodeJS.Platform = process.platform): Promise<ColorScheme> {
+	if (platform !== "darwin") return Promise.resolve("light");
+	return new Promise((done) => {
+		execFile("defaults", ["read", "-g", "AppleInterfaceStyle"], { timeout: 2000 }, (error, stdout) => {
+			done(error === null && stdout.trim() === "Dark" ? "dark" : "light");
+		});
+	});
+}
+
+/** The frame's document as the daemon compiles it now. */
+type BoothCompile =
+	| { kind: "ok"; etag: string; document: string }
+	| { kind: "error"; message: string }
+	| { kind: "missing" };
 
 export interface BoothDeps {
 	/** The render origin, once the daemon is really listening. */
 	origin(): string | undefined;
-	/** The frame's document, compiled through the cache the page load then hits. */
+	/**
+	 * The frame's document as it stands, with the etag that names the source it
+	 * was built from, or the compile's error, or nothing when the frame is gone.
+	 */
 	compile(root: string, frame: string): Promise<BoothCompile>;
 	geometry(root: string, frame: string): { w: number; h: number };
 	/** Whether the frame has a cover now, for a missing picture that may have turned up. */
 	covered(root: string, frame: string): boolean;
+	/**
+	 * Whether the project is still one the daemon keeps. A sitting is only ever
+	 * owed again for one that is: a project that left, or moved and left its name
+	 * to another folder, would otherwise be photographed against a document that
+	 * is no longer its own, and owed again, forever.
+	 */
+	registered(root: string): boolean;
 	/** A cover landed: the bytes, and the scheme it depends on when it depends on one. */
 	store(root: string, frame: string, bytes: Buffer, scheme: ColorScheme | undefined): void;
 	/** A cover could not be made; the reason rides beside the old one, which stays (#173). */
 	failed(root: string, frame: string, reason: string): void;
-	/** A job for this frame is over, whatever came of it. */
+	/** A sitting for this frame is over, whatever came of it. */
 	finished?(root: string, frame: string): void;
 	/** The browser; tests hand in their own. */
 	launch?(): Promise<HeadlessShell>;
 	/** The first-run fetch of the pinned shell; tests hand in their own. */
 	fetch?(): Promise<void>;
+	/** The scheme to start in until a canvas says; tests hand in their own. */
+	systemScheme?(): Promise<ColorScheme>;
 	/** Something worth a line in the daemon's log. */
 	log?(line: string): void;
+	timing?: Partial<BoothTiming>;
 }
 
+/** What a test sets for itself: the browser, the scheme the booth starts in, and its waits. */
+export type BoothSeams = Pick<BoothDeps, "launch" | "fetch" | "systemScheme" | "timing">;
+
 /** What `spool shot` and `spool logs` ask of one boot (#25). */
-export interface ShotRequest {
+interface ShotRequest {
 	project: string;
 	frame: string;
 	/** CSS pixels: an explicit viewport, the sidecar's footprint, or the default. */
@@ -322,8 +413,15 @@ export interface ShotRequest {
 	scenario?: string | undefined;
 }
 
-export type ShotResult =
-	| { kind: "booted"; pngs: Buffer[]; entries: LogEntry[]; errors: string[]; contentHeight: number }
+type ShotResult =
+	| {
+			kind: "booted";
+			pngs: Buffer[];
+			entries: LogEntry[];
+			errors: string[];
+			contentHeight: number;
+			scheme: ColorScheme;
+	  }
 	/** The document failed to serve after the compile probe passed: the source broke in between. */
 	| { kind: "unserved"; status: number };
 
@@ -334,46 +432,97 @@ interface PendingShot {
 	reject: (error: Error) => void;
 }
 
+interface Running {
+	shell: Promise<HeadlessShell>;
+	context: Promise<BrowserContext> | undefined;
+	/** A session on the browser itself, which closes a tab whose renderer will not answer. */
+	control: Promise<CDPSession> | undefined;
+	/** The browser is closing, or went away: nothing more is asked of it. */
+	ended: Promise<void> | undefined;
+}
+
 interface Tab {
+	live: Running;
 	page: Page;
 	cdp: CDPSession;
+	/** The tab as the browser names it, for closing it without its renderer. */
+	targetId: string;
 	/** Covers taken on this page, for COVERS_PER_PAGE. */
 	covers: number;
 	/** The scheme this page was last asked to emulate. */
 	scheme: ColorScheme | undefined;
 	errors: string[];
 	entries: LogEntry[];
+	/** Going back to an empty page after a drain; the next sitting waits on it. */
+	parking: Promise<unknown> | undefined;
 }
 
-interface Running {
-	shell: Promise<HeadlessShell>;
-	context: Promise<BrowserContext> | undefined;
-}
+/** What one sitting saw. */
+type Shot =
+	| { kind: "picture"; bytes: Buffer; etag: string | undefined; scheme: ColorScheme }
+	/** The document answered with something other than itself. */
+	| { kind: "answered"; status: number }
+	/** It threw before it drew anything. */
+	| { kind: "threw"; message: string };
 
 /** A wait the booth enforces from outside the page ran out. */
-class TimedOut extends Error {}
+class TimedOut extends Error {
+	constructor(
+		readonly what: string,
+		readonly ms: number,
+	) {
+		super(`the frame did not finish ${what} within ${Math.round(ms / 1000)} s`);
+	}
+}
 
 /** A browser that would not start, as against a frame that would not draw. */
 class LaunchFailure extends Error {}
+
+/** The browser went away under a sitting: the frame did nothing wrong. */
+class BrowserLost extends Error {
+	constructor() {
+		super("the browser went away");
+	}
+}
 
 function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
 	let timer: NodeJS.Timeout | undefined;
 	return Promise.race([
 		promise,
 		new Promise<never>((_, fail) => {
-			timer = setTimeout(() => fail(new TimedOut(what)), ms);
+			timer = setTimeout(() => fail(new TimedOut(what, ms)), ms);
 		}),
 	]).finally(() => clearTimeout(timer));
 }
 
 const pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
+/** A frame's document on the render origin, top level, as the canvas's iframe loads it. */
+function frameUrl(origin: string, project: string, frame: string, scenario?: string): string {
+	const query = scenario === undefined ? "" : `?scenario=${encodeURIComponent(scenario)}`;
+	return `${origin}/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(frame)}${query}`;
+}
+
+/** The one line a failed picture or shot is explained by. */
+function describe(error: unknown): string {
+	return (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
+}
+
 const FETCHING_LINE = "first shot on this machine — fetching the pinned Chromium headless-shell (one-time, ~90 MB)";
 const FETCHED_LINE = "headless-shell ready — cached for every future shot";
 
-/** The booth itself: one queue, one browser while there is work, BOOTH_TABS tabs in it. */
-export function createBooth(deps: BoothDeps) {
-	const queue = createBoothQueue();
+/**
+ * The booth itself: the queue it is handed, one browser while there is work and
+ * for a while after, BOOTH_TABS tabs in it.
+ */
+export function createBooth(queue: BoothQueue, deps: BoothDeps) {
+	const timing: BoothTiming = {
+		sittingMs: SITTING_MS,
+		shotMs: SHOT_MS,
+		relaunchAfterMs: RELAUNCH_AFTER_MS,
+		lingerMs: LINGER_MS,
+		...deps.timing,
+	};
 	const shots: PendingShot[] = [];
 	/** Shots in a tab, which hear about a fetch as much as the ones waiting do. */
 	const shooting = new Set<PendingShot>();
@@ -386,17 +535,35 @@ export function createBooth(deps: BoothDeps) {
 	let running: Running | undefined;
 	let fetching: Promise<void> | undefined;
 	let blockedUntil = 0;
-	let unblock: NodeJS.Timeout | undefined;
-	let scheme: ColorScheme = "light";
+	let retry: NodeJS.Timeout | undefined;
+	let linger: NodeJS.Timeout | undefined;
 	let closed = false;
-	/** Workers in the middle of a job, as against ones about to look for the next. */
+	/** Workers in the middle of a sitting or a shot, as against ones about to look for the next. */
 	let occupied = 0;
+	/** Browsers that went away since the last cover landed. */
+	let lostInARow = 0;
 
-	function enqueue(job: BoothJob): void {
+	// The scheme covers render in: the machine's, until a canvas says which it
+	// shows. A canvas that speaks first wins over the machine's answer, which is
+	// asked for once, the first time anything needs it.
+	let scheme: ColorScheme = "light";
+	let canvasSaid = false;
+	let asked: Promise<void> | undefined;
+	const machineScheme = (): Promise<void> => {
+		asked ??= (deps.systemScheme ?? systemColorScheme)().then(
+			(found) => {
+				if (!canvasSaid) scheme = found;
+			},
+			() => {},
+		);
+		return asked;
+	};
+
+	function enqueue(sitting: Sitting): void {
 		if (closed) return;
-		const failed = failedAt.get(keyOf(job.root, job.frame));
-		if (job.reason === "missing" && failed !== undefined && failed + FAILED_COOLDOWN_MS > Date.now()) return;
-		queue.add(job);
+		const failed = failedAt.get(keyOf(sitting.root, sitting.frame));
+		if (sitting.reason === "missing" && failed !== undefined && failed + FAILED_COOLDOWN_MS > Date.now()) return;
+		queue.add(sitting);
 		pump();
 	}
 
@@ -409,14 +576,19 @@ export function createBooth(deps: BoothDeps) {
 		});
 	}
 
+	const blocked = () => Date.now() < blockedUntil;
+
 	/** Hand free tabs their work, launching the browser on the first. */
 	function pump(): void {
 		if (closed) return;
-		const coversAllowed = Date.now() >= blockedUntil;
-		const waiting = () => shots.length + (coversAllowed ? queue.waiting : 0);
-		// a worker between jobs takes the next one itself; one starts only for
+		const waiting = () => shots.length + (blocked() ? 0 : queue.waiting);
+		// a worker between sittings takes the next one itself; one starts only for
 		// work nobody alive is about to pick up
 		while (slots.size < BOOTH_TABS && slots.size - occupied < waiting()) {
+			if (linger !== undefined) {
+				clearTimeout(linger);
+				linger = undefined;
+			}
 			let slot = 0;
 			while (slots.has(slot)) slot++;
 			slots.add(slot);
@@ -425,66 +597,94 @@ export function createBooth(deps: BoothDeps) {
 				settleIfIdle();
 			});
 		}
-		if (!coversAllowed && queue.waiting > 0 && unblock === undefined) {
-			unblock = setTimeout(() => {
-				unblock = undefined;
+		if (blocked() && queue.waiting > 0) armRetry();
+	}
+
+	/** Try the browser again once the wait after a failed launch is over. */
+	function armRetry(): void {
+		if (retry !== undefined || closed) return;
+		retry = setTimeout(
+			() => {
+				retry = undefined;
 				pump();
-			}, blockedUntil - Date.now());
-			unblock.unref?.();
-		}
+			},
+			Math.max(0, blockedUntil - Date.now()),
+		);
+		retry.unref?.();
 	}
 
 	/**
 	 * The last worker is done. Work that arrived as it left starts another;
-	 * otherwise the queue has drained and the browser closes, taking every byte
-	 * it held with it. A relaunch costs 0.1 to 0.3 s.
+	 * otherwise the queue has drained, the tabs go back to an empty page so no
+	 * frame's document stays loaded for nobody, and the browser waits LINGER_MS for
+	 * the next sitting before it closes and frees all of its memory.
 	 */
 	function settleIfIdle(): void {
 		if (slots.size > 0 || closed) return;
-		if (shots.length > 0 || (queue.waiting > 0 && Date.now() >= blockedUntil)) {
+		if (shots.length > 0 || (queue.waiting > 0 && !blocked())) {
 			pump();
 			return;
 		}
-		const held = running;
-		running = undefined;
-		tabs.clear();
-		if (held !== undefined) void shut(held);
+		if (queue.waiting > 0) armRetry();
+		for (const [slot, tab] of tabs) {
+			tab.parking = within(tab.page.goto("about:blank"), ANSWER_MS, "parking").catch(() => retire(slot, tab));
+		}
+		if (linger !== undefined) clearTimeout(linger);
+		linger = setTimeout(() => {
+			linger = undefined;
+			if (slots.size === 0 && running !== undefined) void end(running);
+		}, timing.lingerMs);
+		linger.unref?.();
 	}
 
-	async function shut(held: Running): Promise<void> {
-		let shell: HeadlessShell;
-		try {
-			shell = await held.shell;
-		} catch {
-			return;
+	/**
+	 * Close a browser, and end its process when the close does not come back.
+	 * It is forgotten first, so the next sitting launches another rather than
+	 * asking anything of this one.
+	 */
+	function end(live: Running): Promise<void> {
+		if (running === live) {
+			running = undefined;
+			tabs.clear();
 		}
-		try {
-			await within(shell.close(), CLOSE_MS, "close");
-		} catch {
-			// a close that never returns (seen on M1 Macs) must not keep the memory
-			// it was meant to free
-			await shell.kill().catch(() => {});
-		}
+		live.ended ??= (async () => {
+			const shell = await live.shell.catch(() => undefined);
+			if (shell === undefined) return;
+			try {
+				await within(shell.close(), ANSWER_MS, "closing");
+			} catch {
+				await shell.kill().catch(() => {});
+			}
+		})();
+		return live.ended;
+	}
+
+	/** The browser went away without being asked to: whatever was in it sits again in the next. */
+	function lose(live: Running): void {
+		if (live.ended !== undefined) return;
+		lostInARow++;
+		void end(live);
 	}
 
 	function browserNow(): Running {
 		if (running !== undefined) return running;
-		const next: Running = { shell: start(), context: undefined };
-		running = next;
-		const forget = () => {
-			if (running !== next) return;
-			running = undefined;
-			tabs.clear();
-		};
-		next.shell.then((shell) => {
-			// a browser that died (its GPU process took it down, someone killed it)
-			// is relaunched by the next job rather than asked for tabs forever
-			shell.browser.on("disconnected", forget);
-		}, forget);
-		return next;
+		const live: Running = { shell: start(), context: undefined, control: undefined, ended: undefined };
+		running = live;
+		live.shell.then(
+			(shell) => shell.browser.on("disconnected", () => lose(live)),
+			() => void end(live),
+		);
+		return live;
+	}
+
+	/** A session on the browser itself, asked for once per browser. */
+	function controlOf(live: Running): Promise<CDPSession> {
+		live.control ??= live.shell.then((shell) => shell.browser.newBrowserCDPSession());
+		return live.control;
 	}
 
 	async function start(): Promise<HeadlessShell> {
+		await machineScheme();
 		try {
 			return await launch();
 		} catch (error) {
@@ -509,26 +709,104 @@ export function createBooth(deps: BoothDeps) {
 	}
 
 	async function tabFor(slot: number): Promise<Tab> {
-		const held = tabs.get(slot);
-		if (held !== undefined && held.covers < COVERS_PER_PAGE && !held.page.isClosed()) return held;
-		if (held !== undefined) retire(slot, held);
+		const existing = tabs.get(slot);
+		if (existing !== undefined) {
+			await existing.parking;
+			existing.parking = undefined;
+			if (tabs.get(slot) === existing && existing.live.ended === undefined && existing.covers < COVERS_PER_PAGE) {
+				return existing;
+			}
+			retire(slot, existing);
+		}
+		const live = browserNow();
+		let shell: HeadlessShell;
 		try {
-			const live = browserNow();
-			const shell = await live.shell;
-			live.context ??= shell.browser.newContext({ viewport: null });
-			const context = await live.context;
-			const page = await context.newPage();
-			const cdp = await context.newCDPSession(page);
-			const tab: Tab = { page, cdp, covers: 0, scheme: undefined, errors: [], entries: [] };
-			page.on("pageerror", (error) => {
-				const text = String(error);
-				tab.errors.push(text);
-				tab.entries.push({ type: "pageerror", text });
-			});
-			tabs.set(slot, tab);
-			return tab;
+			shell = await live.shell;
 		} catch (error) {
 			throw new LaunchFailure(describe(error));
+		}
+		try {
+			return await within(openTab(slot, live, shell), ANSWER_MS * 2, "opening a tab");
+		} catch {
+			// it started, and has gone away or stopped answering since
+			lose(live);
+			throw new BrowserLost();
+		}
+	}
+
+	async function openTab(slot: number, live: Running, shell: HeadlessShell): Promise<Tab> {
+		live.context ??= shell.browser.newContext({ viewport: null });
+		const context = await live.context;
+		const page = await context.newPage();
+		const cdp = await context.newCDPSession(page);
+		const { targetInfo } = (await cdp.send("Target.getTargetInfo")) as { targetInfo: { targetId: string } };
+		const tab: Tab = {
+			live,
+			page,
+			cdp,
+			targetId: targetInfo.targetId,
+			covers: 0,
+			scheme: undefined,
+			errors: [],
+			entries: [],
+			parking: undefined,
+		};
+		page.on("pageerror", (error) => {
+			const text = String(error);
+			tab.errors.push(text);
+			tab.entries.push({ type: "pageerror", text });
+		});
+		if (live.ended !== undefined) throw new BrowserLost();
+		tabs.set(slot, tab);
+		return tab;
+	}
+
+	/** A tab that failed a sitting, or has taken its share, is closed rather than trusted with the next. */
+	function retire(slot: number, tab: Tab): void {
+		if (tabs.get(slot) === tab) tabs.delete(slot);
+		void tab.page.close().catch(() => {});
+	}
+
+	/**
+	 * A sitting ran out its deadline: the tab goes, closed by the browser rather
+	 * than asked of a renderer that stopped answering, and when the browser
+	 * itself does not answer either, its process is ended and every tab with it.
+	 */
+	async function abandon(slot: number, tab: Tab): Promise<void> {
+		if (tabs.get(slot) === tab) tabs.delete(slot);
+		try {
+			const control = await within(controlOf(tab.live), ANSWER_MS, "closing");
+			await within(control.send("Target.closeTarget", { targetId: tab.targetId }), ANSWER_MS, "closing");
+		} catch {
+			lose(tab.live);
+			await end(tab.live);
+		}
+	}
+
+	/** The work, under one deadline enforced from the daemon. */
+	async function underDeadline<T>(slot: number, tab: Tab, ms: number, what: string, work: Promise<T>): Promise<T> {
+		try {
+			return await within(work, ms, what);
+		} catch (error) {
+			if (error instanceof TimedOut) await abandon(slot, tab);
+			throw error;
+		}
+	}
+
+	/**
+	 * Whether the tab's browser went away, which no frame is blamed for. It is
+	 * asked rather than trusted to have said so: its going and the failure it
+	 * caused arrive in no promised order.
+	 */
+	async function browserGone(tab: Tab): Promise<boolean> {
+		if (tab.live.ended !== undefined) return true;
+		try {
+			const control = await within(controlOf(tab.live), ANSWER_MS, "answering");
+			await within(control.send("Browser.getVersion"), ANSWER_MS, "answering");
+			return false;
+		} catch {
+			lose(tab.live);
+			return true;
 		}
 	}
 
@@ -544,143 +822,201 @@ export function createBooth(deps: BoothDeps) {
 					shot.resolve(await runShot(slot, shot));
 				} catch (error) {
 					shot.reject(error instanceof Error ? error : new Error(String(error)));
-					if (error instanceof LaunchFailure) return;
+					if (error instanceof LaunchFailure) {
+						blockRelaunch(error);
+						return;
+					}
 				} finally {
 					shooting.delete(shot);
 					occupied--;
 				}
 				continue;
 			}
-			if (Date.now() < blockedUntil) return;
-			const job = queue.take();
-			if (job === undefined) return;
+			if (blocked()) return;
+			const sitting = queue.take();
+			if (sitting === undefined) return;
 			occupied++;
 			try {
-				await runCover(slot, job);
+				await runCover(slot, sitting);
 			} catch (error) {
-				// a daemon shutting down took the browser out from under the job
+				// a daemon shutting down took the browser out from under the sitting
 				if (closed) return;
 				if (error instanceof LaunchFailure) {
 					// not the frame's fault: it waits for a browser that starts
-					queue.release(job);
-					queue.add(job);
-					blockedUntil = Date.now() + RELAUNCH_AFTER_MS;
-					log(`the photo booth could not start a browser: ${error.message}`);
+					if (deps.registered(sitting.root)) queue.putBack(sitting);
+					blockRelaunch(error);
+					return;
+				}
+				if (error instanceof BrowserLost) {
+					// nor this: it sits again in the next browser, unless the browsers
+					// keep going, which is the machine's trouble and not a frame's
+					if (deps.registered(sitting.root)) queue.putBack(sitting);
+					if (lostInARow < LOST_IN_A_ROW) continue;
+					lostInARow = 0;
+					blockRelaunch(new Error(`${LOST_IN_A_ROW} browsers in a row went away`));
 					return;
 				}
 				// a frame whose folder went strange under it (a design boundary, a
 				// vanished project) is that frame's problem, never the booth's
-				log(`could not make a cover for "${job.frame}": ${describe(error)}`);
+				log(`could not make a cover for "${sitting.frame}": ${describe(error)}`);
 			} finally {
 				occupied--;
-				if (queue.release(job)) pump();
-				deps.finished?.(job.root, job.frame);
+				if (queue.release(sitting)) pump();
+				deps.finished?.(sitting.root, sitting.frame);
 			}
 		}
 	}
 
-	async function runCover(slot: number, job: BoothJob): Promise<void> {
-		const key = keyOf(job.root, job.frame);
-		if (job.reason === "missing" && deps.covered(job.root, job.frame)) return;
-		const origin = deps.origin();
-		if (origin === undefined) return;
-		const compiled = await deps.compile(job.root, job.frame);
-		if (compiled.kind === "missing") return;
-		const fail = (reason: string) => {
-			failedAt.set(key, Date.now());
-			deps.failed(job.root, job.frame, reason.slice(0, 240));
-		};
-		// a broken compile keeps the last good picture; the reason rides beside it
-		if (compiled.kind === "error") return fail(compiled.message);
-		const { w, h } = deps.geometry(job.root, job.frame);
-		const width = Math.max(1, Math.round(w));
-		const height = Math.max(1, Math.round(h));
-		const scale = coverCaptureScale(width);
-		if (captureRasterSize(width, height, scale) === undefined) return fail("too large for a cover");
-		const sensitive = followsColorScheme(compiled.document);
-		const tab = await tabFor(slot);
-		tab.covers++;
-		try {
-			// the scheme this picture is taken in, which a change of the canvas's while
-			// it is in the tab does not rewrite: that change sends it round again
-			const taken = await prepare(tab, { width, height, scale });
-			const url = `${origin}/p/${encodeURIComponent(job.project)}/frames/${encodeURIComponent(job.frame)}`;
-			await within(tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: LOAD_MS }), LOAD_MS, "load");
-			const world = await isolatedWorld(tab);
-			const rendered = await booted(tab, world, COVER_BOOT_MS, true);
-			if (!rendered && tab.errors.length > 0) return fail(`threw on boot: ${tab.errors[0]}`);
-			await settled(tab, world);
-			const bytes = await screenshot(tab, {
-				format: "jpeg",
-				quality: Math.round(COVER_QUALITY * 100),
-				optimizeForSpeed: true,
-				clip: { x: 0, y: 0, width, height, scale: 1 },
-			});
-			failedAt.delete(key);
-			deps.store(job.root, job.frame, bytes, sensitive ? taken : undefined);
-		} catch (error) {
-			// a page that would not load or draw is not one to load the next frame into
-			retire(slot, tab);
-			// a daemon shutting down is not something the frame did
-			if (closed) return;
-			fail(error instanceof TimedOut ? `the frame did not finish its ${error.message} in time` : describe(error));
-		}
+	function blockRelaunch(error: Error): void {
+		blockedUntil = Date.now() + timing.relaunchAfterMs;
+		log(`the photo booth could not start a browser: ${error.message}`);
+		armRetry();
 	}
 
-	async function runShot(slot: number, shot: PendingShot): Promise<ShotResult> {
+	async function runCover(slot: number, sitting: Sitting): Promise<void> {
+		const { root, frame } = sitting;
+		const key = keyOf(root, frame);
+		if (sitting.reason === "missing" && deps.covered(root, frame)) return;
+		const origin = deps.origin();
+		if (origin === undefined) return;
+		const fail = (reason: string) => {
+			failedAt.set(key, Date.now());
+			deps.failed(root, frame, reason.slice(0, 240));
+		};
+		const owedAgain = (reason: BoothReason) => {
+			if (deps.registered(root)) queue.add({ ...sitting, reason });
+		};
+		const { w, h } = deps.geometry(root, frame);
+		const shape = coverShape(w, h);
+		if (shape === undefined) return fail("too large for a cover");
+		// a frame that is gone or will not compile needs no browser to say so
+		const before = await deps.compile(root, frame);
+		if (before.kind === "missing") return;
+		if (before.kind === "error") return fail(before.message);
+		const tab = await tabFor(slot);
+		tab.covers++;
+		let shot: Shot;
+		try {
+			const url = frameUrl(origin, sitting.project, frame);
+			shot = await underDeadline(slot, tab, timing.sittingMs, "being photographed", sitCover(tab, url, shape));
+		} catch (error) {
+			if (closed) return;
+			// a deadline closed the tab already, and the reason is the frame's
+			if (error instanceof TimedOut) return fail(error.message);
+			if (await browserGone(tab)) throw new BrowserLost();
+			// a page that would not load or draw is not one to load the next frame into
+			retire(slot, tab);
+			return fail(describe(error));
+		}
+		if (shot.kind === "threw") return fail(`threw on boot: ${shot.message}`);
+		if (shot.kind === "answered") {
+			// gone, or its project is moving: nothing to picture and nothing to blame
+			if (shot.status === 404 || shot.status === 409) return;
+			if (shot.status !== 500) return fail(`its document answered ${shot.status}`);
+			// the source broke between the compile and the load: its words, or
+			// another try when it was fixed again in between
+			const now = await deps.compile(root, frame);
+			if (now.kind === "error") return fail(now.message);
+			if (now.kind === "ok") owedAgain("edited");
+			return;
+		}
+		// The picture is only stored when it is still of the frame: the frame is
+		// there, and its source is the one the picture was taken of. Anything else
+		// sits again rather than putting a stale picture over a good one.
+		const now = await deps.compile(root, frame);
+		if (now.kind === "missing") return;
+		if (now.kind !== "ok" || now.etag !== (shot.etag ?? before.etag)) return owedAgain("edited");
+		failedAt.delete(key);
+		lostInARow = 0;
+		const follows = followsColorScheme(now.document);
+		deps.store(root, frame, shot.bytes, follows ? shot.scheme : undefined);
+		// the canvas changed scheme while this frame was in the tab
+		if (follows && shot.scheme !== scheme) owedAgain("stale");
+	}
+
+	/** Load, settle and photograph one frame for its cover. */
+	async function sitCover(tab: Tab, url: string, shape: CoverShape): Promise<Shot> {
+		const taken = await prepare(tab, shape);
+		const response = await tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: 0 });
+		if (response === null) return { kind: "answered", status: 0 };
+		if (response.status() !== 200) return { kind: "answered", status: response.status() };
+		// a document the cache revalidated answers as the 200 it confirmed, with
+		// that answer's etag: the source the picture is of either way (one that
+		// names none is taken to be the compile just before it)
+		const etag = response.headers().etag;
+		const world = await isolatedWorld(tab);
+		const rendered = await booted(tab, world, COVER_BOOT_MS, true);
+		if (!rendered && tab.errors[0] !== undefined) return { kind: "threw", message: tab.errors[0] };
+		await settled(tab, world);
+		const bytes = await screenshot(tab, {
+			format: "jpeg",
+			quality: Math.round(COVER_QUALITY * 100),
+			optimizeForSpeed: true,
+			clip: { x: 0, y: 0, width: shape.width, height: shape.height, scale: 1 },
+		});
+		return { kind: "picture", bytes, etag, scheme: taken };
+	}
+
+	async function runShot(slot: number, pending: PendingShot): Promise<ShotResult> {
 		const origin = deps.origin();
 		if (origin === undefined) throw new Error("the daemon is not listening yet");
-		const { request } = shot;
+		const { request } = pending;
 		const tab = await tabFor(slot);
 		// the console is a shot's to keep, and only a shot's: a frame logging every
 		// tick would otherwise cost every cover the serialization of every line
 		const onConsole = (message: ConsoleMessage) => tab.entries.push({ type: message.type(), text: message.text() });
 		tab.page.on("console", onConsole);
 		try {
-			await prepare(tab, { width: request.width, height: request.height, scale: request.scale });
-			const query = request.scenario === undefined ? "" : `?scenario=${encodeURIComponent(request.scenario)}`;
-			const url = `${origin}/p/${encodeURIComponent(request.project)}/frames/${encodeURIComponent(request.frame)}${query}`;
-			const response = await within(
-				tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: LOAD_MS }),
-				LOAD_MS,
-				"load",
-			);
-			if (response !== null && response.status() >= 500) return { kind: "unserved", status: response.status() };
-			const world = await isolatedWorld(tab);
-			// frames are blank until React commits (#16); one that renders nothing
-			// is legitimate, so running this out still shoots what is there
-			await booted(tab, world, SHOT_BOOT_MS, false);
-			if (request.at === undefined) await settled(tab, world);
-			else await pause(request.at);
-			await within(evaluate(tab, world, "document.fonts.ready.then(() => true)"), SHOT_FONTS_MS, "fonts").catch(
-				() => {},
-			);
-			const contentHeight = Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
-			const pngs: Buffer[] = [];
-			for (const tile of request.tiles) {
-				pngs.push(
-					await screenshot(tab, {
-						format: "png",
-						clip: { x: 0, y: tile.y, width: request.width, height: tile.height, scale: 1 },
-					}),
-				);
-			}
-			return { kind: "booted", pngs, entries: [...tab.entries], errors: [...tab.errors], contentHeight };
+			const url = frameUrl(origin, request.project, request.frame, request.scenario);
+			const ms = timing.shotMs + (request.at ?? 0);
+			return await underDeadline(slot, tab, ms, "booting", sitShot(tab, url, request));
 		} catch (error) {
+			if (error instanceof LaunchFailure || error instanceof TimedOut) throw error;
+			if (error instanceof BrowserLost || (await browserGone(tab))) {
+				throw new Error("the browser went away during the shot; run it again");
+			}
 			retire(slot, tab);
-			throw error instanceof TimedOut ? new Error(`the frame did not finish its ${error.message} in time`) : error;
+			throw error;
 		} finally {
 			tab.page.off("console", onConsole);
 		}
 	}
 
-	/** A tab that failed a job, or has taken its share, is closed rather than trusted with the next. */
-	function retire(slot: number, tab: Tab): void {
-		if (tabs.get(slot) === tab) tabs.delete(slot);
-		void tab.page.close().catch(() => {});
+	/** One boot for an agent: the shot's slices, the console, and how tall the content ran. */
+	async function sitShot(tab: Tab, url: string, request: ShotRequest): Promise<ShotResult> {
+		const taken = await prepare(tab, { width: request.width, height: request.height, scale: request.scale });
+		const response = await tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: 0 });
+		if (response !== null && response.status() >= 500) return { kind: "unserved", status: response.status() };
+		const world = await isolatedWorld(tab);
+		// frames are blank until React commits (#16); one that renders nothing
+		// is legitimate, so running this out still shoots what is there
+		await booted(tab, world, SHOT_BOOT_MS, false);
+		if (request.at === undefined) await settled(tab, world);
+		else await pause(request.at);
+		await within(evaluate(tab, world, "document.fonts.ready.then(() => true)"), SHOT_FONTS_MS, "loading fonts").catch(
+			() => {},
+		);
+		const contentHeight = Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
+		const pngs: Buffer[] = [];
+		for (const tile of request.tiles) {
+			pngs.push(
+				await screenshot(tab, {
+					format: "png",
+					clip: { x: 0, y: tile.y, width: request.width, height: tile.height, scale: 1 },
+				}),
+			);
+		}
+		return {
+			kind: "booted",
+			pngs,
+			entries: [...tab.entries],
+			errors: [...tab.errors],
+			contentHeight,
+			scheme: taken,
+		};
 	}
 
-	/** Metrics, scheme and a clean slate for the next document in this tab. */
+	/** Metrics, scheme and a clean slate for the next document in this tab; answers the scheme it set. */
 	async function prepare(tab: Tab, metrics: { width: number; height: number; scale: number }): Promise<ColorScheme> {
 		const wanted = scheme;
 		tab.errors.length = 0;
@@ -721,22 +1057,20 @@ export function createBooth(deps: BoothDeps) {
 
 	/**
 	 * The shim's own settle, run where frame code cannot reach it, and waited on
-	 * from outside the page for no longer than its budget and a grace.
+	 * for no longer than its budget and a grace before the picture is taken.
 	 */
 	async function settled(tab: Tab, world: number): Promise<void> {
 		await within(
 			evaluate(tab, world, `(${settleSource("requestAnimationFrame")})(${SETTLE_BUDGET_MS})`),
 			SETTLE_BUDGET_MS + SETTLE_GRACE_MS,
-			"settle",
+			"settling",
 		).catch((error: unknown) => {
 			if (!(error instanceof TimedOut)) throw error;
 		});
 	}
 
 	async function screenshot(tab: Tab, params: Record<string, unknown>): Promise<Buffer> {
-		const shot = (await within(tab.cdp.send("Page.captureScreenshot", params), SCREENSHOT_MS, "drawing")) as {
-			data: string;
-		};
+		const shot = (await tab.cdp.send("Page.captureScreenshot", params)) as { data: string };
 		return Buffer.from(shot.data, "base64");
 	}
 
@@ -763,15 +1097,12 @@ export function createBooth(deps: BoothDeps) {
 	return {
 		enqueue,
 		shoot,
-		/** What one open canvas shows, or nothing once it has gone. */
-		view: (id: string, next: BoothView | undefined) => queue.view(id, next),
-		placeOf: (root: string, frame: string) => queue.placeOf(root, frame),
-		/** A frame left the project. */
-		drop: (root: string, frame: string) => queue.drop(root, frame),
-		/** A project left the registry. */
-		dropProject: (root: string) => queue.dropProject(root),
-		/** The scheme covers render in. True when it changed, so the covers it made stale can be asked for. */
+		/**
+		 * A canvas showed a scheme it was not showing before. True when that is a
+		 * change for the booth, so the covers it made stale can be asked for.
+		 */
 		setScheme(next: ColorScheme): boolean {
+			canvasSaid = true;
 			if (next === scheme) return false;
 			scheme = next;
 			return true;
@@ -779,20 +1110,14 @@ export function createBooth(deps: BoothDeps) {
 		get scheme(): ColorScheme {
 			return scheme;
 		},
+		/** Settles once the booth knows the scheme it starts in. */
+		schemeKnown: machineScheme,
 		async close(): Promise<void> {
 			closed = true;
-			if (unblock !== undefined) clearTimeout(unblock);
+			if (retry !== undefined) clearTimeout(retry);
+			if (linger !== undefined) clearTimeout(linger);
 			for (const pending of shots.splice(0)) pending.reject(new Error("the daemon is shutting down"));
-			const held = running;
-			running = undefined;
-			tabs.clear();
-			if (held !== undefined) await shut(held);
+			if (running !== undefined) await end(running);
 		},
 	};
-}
-
-export type Booth = ReturnType<typeof createBooth>;
-
-function describe(error: unknown): string {
-	return (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
 }

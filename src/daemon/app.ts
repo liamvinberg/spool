@@ -41,7 +41,7 @@ import {
 	readThreads,
 	serveThreads,
 } from "./agent-threads";
-import { createBooth } from "./booth";
+import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
@@ -200,6 +200,8 @@ export interface DaemonOptions {
 	onMachineStateWatchError?: (error: Error) => void;
 	/** Controlled Cloud boundary for daemon publication route tests. */
 	publicationServices?: PublicationJobServices;
+	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
+	booth?: BoothSeams | undefined;
 }
 
 /** The player page's params (#24): Zod-validated, path-safe names only. */
@@ -416,6 +418,7 @@ export function createDaemonApp({
 	onHistoryNotice,
 	home,
 	publicationServices,
+	booth: boothSeams,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -807,15 +810,17 @@ export function createDaemonApp({
 	// the booth needs a dialable origin, which exists only once the server has
 	// bound — in-process app.request() never activates it
 	let selfOrigin: string | undefined;
-	const booth = createBooth({
+	const sittings = createBoothQueue();
+	const booth = createBooth(sittings, {
 		origin: () => selfOrigin,
 		compile: async (root, frame) => {
 			const doc = await compiler.getDocument(root, frame, frameAuthority(root));
-			if (doc.kind === "ok") return { kind: "ok", document: doc.document };
+			if (doc.kind === "ok") return { kind: "ok", etag: doc.etag, document: doc.document };
 			return doc.kind === "missing" ? { kind: "missing" } : { kind: "error", message: doc.message };
 		},
 		geometry: (root, frame) => frameGeometry(root, frame),
 		covered: (root, frame) => readCover(root, frame) !== undefined,
+		registered: (root) => boothWatches.has(root),
 		store: (root, frame, bytes, scheme) => {
 			const cover = writeCover(root, frame, bytes, scheme);
 			hub.publish(root, { kind: "thumb", frame, cover });
@@ -828,8 +833,9 @@ export function createDaemonApp({
 		// canvases are showing rather than everything the booth ever saw. Opening
 		// that page later costs each mounted frame one compile.
 		finished: (root, frame) => {
-			if (booth.placeOf(root, frame) === 2) compiler.forget(root, frame);
+			if (sittings.placeOf(root, frame) === "elsewhere") compiler.forget(root, frame);
 		},
+		...boothSeams,
 	});
 	/**
 	 * The booth listens to every registered project, open in a canvas or not,
@@ -850,7 +856,7 @@ export function createDaemonApp({
 			if (roots.includes(root)) continue;
 			stop();
 			boothWatches.delete(root);
-			booth.dropProject(root);
+			sittings.dropProject(root);
 		}
 		for (const root of roots) {
 			if (boothWatches.has(root)) continue;
@@ -862,7 +868,7 @@ export function createDaemonApp({
 					try {
 						if (event.kind === "frame") {
 							if (frameExists(root, event.frame)) owe(event.frame);
-							else booth.drop(root, event.frame);
+							else sittings.drop(root, event.frame);
 						} else if (event.kind === "shared") {
 							// the link graph names its readers (#109); a file nobody has
 							// read yet could be under any frame
@@ -1760,7 +1766,7 @@ export function createDaemonApp({
 				if ("response" in project) return project.response;
 				const { view, page, frames, scheme } = c.req.valid("json");
 				if (views.get(view) !== project.root) return c.body(null, 204);
-				booth.view(view, { root: project.root, page, frames });
+				sittings.view(view, { root: project.root, page, frames });
 				if (booth.setScheme(scheme)) void restale();
 				return c.body(null, 204);
 			},
@@ -3088,7 +3094,7 @@ export function createDaemonApp({
 				views.set(view, project.root);
 				stream.onAbort(() => {
 					views.delete(view);
-					booth.view(view, undefined);
+					sittings.view(view, undefined);
 				});
 				await stream.writeSSE({ event: "hello", data: JSON.stringify({ project: name, view }), id: String(id++) });
 				const unsubscribe = hub.subscribe(project.root, (event) => {

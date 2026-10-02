@@ -45,6 +45,31 @@ export function captureRasterSize(
 	return { width, height };
 }
 
+/** A frame's cover, worked out from its footprint. */
+export interface CoverShape {
+	/** The CSS size the frame is laid out at, in whole pixels. */
+	width: number;
+	height: number;
+	/** The device scale it is photographed at (`coverCaptureScale`). */
+	scale: number;
+	/** The image that comes out. */
+	raster: { width: number; height: number };
+}
+
+/**
+ * The cover a frame of this footprint gets, or nothing when it is past the
+ * raster budget: what the photo booth lays the frame out at and photographs,
+ * and what a stored cover is measured against to tell whether it is still the
+ * frame's size.
+ */
+export function coverShape(frameWidth: number, frameHeight: number): CoverShape | undefined {
+	const width = Math.max(1, Math.round(frameWidth));
+	const height = Math.max(1, Math.round(frameHeight));
+	const scale = coverCaptureScale(width);
+	const raster = captureRasterSize(width, height, scale);
+	return raster === undefined ? undefined : { width, height, scale, raster };
+}
+
 /** JPEG quality for a cover. Covers are opaque, so they never need alpha. */
 export const COVER_QUALITY = 0.82;
 

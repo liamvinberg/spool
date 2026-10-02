@@ -6,6 +6,7 @@ import type { AgentEngine } from "./agent-engine";
 import type { AgentExecutor } from "./agent-exec";
 import type { Look } from "./agent-preflight";
 import { createDaemonApp } from "./app";
+import type { BoothSeams } from "./booth";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
 import type { PublicationJobServices } from "./publication-jobs";
 
@@ -29,6 +30,8 @@ export interface ServeDaemonOptions {
 	agentLook?: Look | undefined;
 	/** Controlled Cloud boundary for publication browser tests. */
 	publicationServices?: PublicationJobServices | undefined;
+	/** The photo booth's browser, starting scheme and waits, as a browser test sets them. */
+	booth?: BoothSeams | undefined;
 }
 
 export interface RunningDaemon {
@@ -60,6 +63,7 @@ export function serveDaemon({
 	agentEngines,
 	agentLook,
 	publicationServices,
+	booth,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
 	assertLoopbackHost(host);
 	const daemon = createDaemonApp({
@@ -75,6 +79,7 @@ export function serveDaemon({
 		...(agentEngines === undefined ? {} : { agentEngines }),
 		...(agentLook === undefined ? {} : { agentLook }),
 		...(publicationServices === undefined ? {} : { publicationServices }),
+		...(booth === undefined ? {} : { booth }),
 	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {

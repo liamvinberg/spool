@@ -1,17 +1,18 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
 	type BoothDeps,
-	type BoothJob,
 	type BoothReason,
 	createBooth,
 	createBoothQueue,
 	followsColorScheme,
+	type Sitting,
+	systemColorScheme,
 } from "./booth";
 
 const ROOT = "/projects/shop";
 const OTHER = "/projects/blog";
 
-const job = (frame: string, reason: BoothReason = "missing", root = ROOT): BoothJob => ({
+const sitting = (frame: string, reason: BoothReason = "missing", root = ROOT): Sitting => ({
 	root,
 	project: root.slice(root.lastIndexOf("/") + 1),
 	frame,
@@ -31,48 +32,48 @@ function drain(queue: ReturnType<typeof createBoothQueue>): string[] {
 describe("the booth queue", () => {
 	it("keeps one entry per frame, however many things ask for it", () => {
 		const queue = createBoothQueue();
-		queue.add(job("checkout"));
-		queue.add(job("checkout"));
-		queue.add(job("checkout", "edited"));
+		queue.add(sitting("checkout"));
+		queue.add(sitting("checkout"));
+		queue.add(sitting("checkout", "edited"));
 		expect(queue.waiting).toBe(1);
 		expect(drain(queue)).toEqual(["checkout:edited"]);
 	});
 
 	it("tells the same frame name in two projects apart", () => {
 		const queue = createBoothQueue();
-		queue.add(job("home"));
-		queue.add(job("home", "missing", OTHER));
+		queue.add(sitting("home"));
+		queue.add(sitting("home", "missing", OTHER));
 		expect(queue.waiting).toBe(2);
 	});
 
 	it("takes what is waiting in the order it arrived when nothing else tells them apart", () => {
 		const queue = createBoothQueue();
-		for (const frame of ["a", "b", "c"]) queue.add(job(frame));
+		for (const frame of ["a", "b", "c"]) queue.add(sitting(frame));
 		expect(drain(queue)).toEqual(["a:missing", "b:missing", "c:missing"]);
 	});
 
 	it("puts an edit ahead of a stale picture, and a stale picture ahead of a missing one", () => {
 		const queue = createBoothQueue();
-		queue.add(job("missing"));
-		queue.add(job("stale", "stale"));
-		queue.add(job("edited", "edited"));
+		queue.add(sitting("missing"));
+		queue.add(sitting("stale", "stale"));
+		queue.add(sitting("edited", "edited"));
 		expect(drain(queue)).toEqual(["edited:edited", "stale:stale", "missing:missing"]);
 	});
 
 	it("never lowers what a frame is owed", () => {
 		const queue = createBoothQueue();
-		queue.add(job("checkout", "edited"));
-		queue.add(job("checkout", "missing"));
-		queue.add(job("checkout", "stale"));
+		queue.add(sitting("checkout", "edited"));
+		queue.add(sitting("checkout", "missing"));
+		queue.add(sitting("checkout", "stale"));
 		expect(drain(queue)).toEqual(["checkout:edited"]);
 	});
 
 	it("takes the frames on screen first, then the rest of the open page, then everything else", () => {
 		const queue = createBoothQueue();
-		queue.add(job("elsewhere/one", "edited"));
-		queue.add(job("shop/aside"));
-		queue.add(job("shop/visible"));
-		queue.add(job("loose"));
+		queue.add(sitting("elsewhere/one", "edited"));
+		queue.add(sitting("shop/aside"));
+		queue.add(sitting("shop/visible"));
+		queue.add(sitting("loose"));
 		queue.view("canvas", { root: ROOT, page: "shop", frames: ["shop/visible"] });
 		// an edit nobody can see waits behind the page somebody is looking at
 		expect(drain(queue)).toEqual([
@@ -85,18 +86,18 @@ describe("the booth queue", () => {
 
 	it("reads the root page as the frames with no page of their own", () => {
 		const queue = createBoothQueue();
-		queue.add(job("shop/checkout"));
-		queue.add(job("home"));
+		queue.add(sitting("shop/checkout"));
+		queue.add(sitting("home"));
 		queue.view("canvas", { root: ROOT, page: "", frames: [] });
-		expect(queue.placeOf(ROOT, "home")).toBe(1);
-		expect(queue.placeOf(ROOT, "shop/checkout")).toBe(2);
+		expect(queue.placeOf(ROOT, "home")).toBe("on an open page");
+		expect(queue.placeOf(ROOT, "shop/checkout")).toBe("elsewhere");
 		expect(drain(queue)).toEqual(["home:missing", "shop/checkout:missing"]);
 	});
 
 	it("orders by where the canvas rests now, not where it was when the work arrived", () => {
 		const queue = createBoothQueue();
-		queue.add(job("left"));
-		queue.add(job("right"));
+		queue.add(sitting("left"));
+		queue.add(sitting("right"));
 		queue.view("canvas", { root: ROOT, page: "", frames: ["left"] });
 		queue.view("canvas", { root: ROOT, page: "", frames: ["right"] });
 		expect(queue.take()?.frame).toBe("right");
@@ -105,47 +106,47 @@ describe("the booth queue", () => {
 	it("counts a view only for its own project, and forgets it when the canvas goes", () => {
 		const queue = createBoothQueue();
 		queue.view("canvas", { root: OTHER, page: "", frames: ["home"] });
-		expect(queue.placeOf(ROOT, "home")).toBe(2);
-		expect(queue.placeOf(OTHER, "home")).toBe(0);
+		expect(queue.placeOf(ROOT, "home")).toBe("elsewhere");
+		expect(queue.placeOf(OTHER, "home")).toBe("on screen");
 		queue.view("canvas", undefined);
-		expect(queue.placeOf(OTHER, "home")).toBe(2);
+		expect(queue.placeOf(OTHER, "home")).toBe("elsewhere");
 	});
 
 	it("takes the best place any open canvas gives a frame", () => {
 		const queue = createBoothQueue();
 		queue.view("one", { root: ROOT, page: "shop", frames: [] });
 		queue.view("two", { root: ROOT, page: "shop", frames: ["shop/checkout"] });
-		expect(queue.placeOf(ROOT, "shop/checkout")).toBe(0);
-		expect(queue.placeOf(ROOT, "shop/cart")).toBe(1);
+		expect(queue.placeOf(ROOT, "shop/checkout")).toBe("on screen");
+		expect(queue.placeOf(ROOT, "shop/cart")).toBe("on an open page");
 	});
 
 	it("photographs a frame edited while it was in a tab once more when the tab is free", () => {
 		const queue = createBoothQueue();
-		queue.add(job("checkout", "missing"));
+		queue.add(sitting("checkout", "missing"));
 		const inTab = queue.take();
 		expect(inTab?.frame).toBe("checkout");
 		// the write lands while the tab is photographing the old source
-		queue.add(job("checkout", "edited"));
-		queue.add(job("checkout", "edited"));
+		queue.add(sitting("checkout", "edited"));
+		queue.add(sitting("checkout", "edited"));
 		expect(queue.waiting).toBe(0);
 		expect(queue.take()).toBeUndefined();
-		expect(queue.release(job("checkout"))).toBe(true);
+		expect(queue.release(sitting("checkout"))).toBe(true);
 		expect(drain(queue)).toEqual(["checkout:edited"]);
 	});
 
 	it("does not photograph a frame twice because a read found it uncovered while it was in a tab", () => {
 		const queue = createBoothQueue();
-		queue.add(job("checkout"));
+		queue.add(sitting("checkout"));
 		const inTab = queue.take();
-		queue.add(job("checkout", "missing"));
-		expect(queue.release(job(inTab?.frame ?? ""))).toBe(false);
+		queue.add(sitting("checkout", "missing"));
+		expect(queue.release(sitting(inTab?.frame ?? ""))).toBe(false);
 		expect(queue.waiting).toBe(0);
 	});
 
 	it("never hands out a frame that is already in a tab", () => {
 		const queue = createBoothQueue();
-		queue.add(job("a"));
-		queue.add(job("b"));
+		queue.add(sitting("a"));
+		queue.add(sitting("b"));
 		expect(queue.take()?.frame).toBe("a");
 		expect(queue.take()?.frame).toBe("b");
 		expect(queue.take()).toBeUndefined();
@@ -154,26 +155,36 @@ describe("the booth queue", () => {
 
 	it("owes nothing for a frame that left, waiting or in a tab", () => {
 		const queue = createBoothQueue();
-		queue.add(job("gone"));
-		queue.add(job("going"));
+		queue.add(sitting("gone"));
+		queue.add(sitting("going"));
 		queue.drop(ROOT, "gone");
 		const inTab = queue.take();
 		expect(inTab?.frame).toBe("going");
-		queue.add(job("going", "edited"));
+		queue.add(sitting("going", "edited"));
 		queue.drop(ROOT, "going");
-		expect(queue.release(job("going"))).toBe(false);
+		expect(queue.release(sitting("going"))).toBe(false);
 		expect(queue.waiting).toBe(0);
 	});
 
 	it("forgets everything a project was owed, and its canvases, when it leaves the registry", () => {
 		const queue = createBoothQueue();
-		queue.add(job("home"));
-		queue.add(job("home", "missing", OTHER));
+		queue.add(sitting("home"));
+		queue.add(sitting("home", "missing", OTHER));
 		queue.view("canvas", { root: ROOT, page: "", frames: ["home"] });
 		queue.dropProject(ROOT);
 		expect(queue.waiting).toBe(1);
-		expect(queue.placeOf(ROOT, "home")).toBe(2);
+		expect(queue.placeOf(ROOT, "home")).toBe("elsewhere");
 		expect(queue.take()?.root).toBe(OTHER);
+	});
+
+	it("puts a sitting the browser never finished back in line as it was, edits that came in meanwhile kept", () => {
+		const queue = createBoothQueue();
+		queue.add(sitting("checkout", "missing"));
+		const inTab = queue.take();
+		queue.add(sitting("checkout", "edited"));
+		queue.putBack(inTab ?? sitting("checkout"));
+		expect(queue.busy).toBe(0);
+		expect(drain(queue)).toEqual(["checkout:edited"]);
 	});
 });
 
@@ -213,26 +224,28 @@ describe("the booth before any browser", () => {
 	function booth(overrides: Partial<BoothDeps> = {}) {
 		const deps = {
 			origin: () => "http://run.spool.localhost:1",
-			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "ok", document: "<main></main>" })),
+			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "ok", etag: '"one"', document: "<main></main>" })),
 			geometry: vi.fn(() => ({ w: 390, h: 844 })),
 			covered: vi.fn(() => false),
+			registered: vi.fn(() => true),
 			store: vi.fn(),
 			failed: vi.fn(),
 			finished: vi.fn(),
-			launch: vi.fn(async () => {
+			launch: vi.fn<NonNullable<BoothDeps["launch"]>>(async () => {
 				throw new Error("no browser in this test");
 			}),
+			systemScheme: vi.fn(async () => "light" as const),
 			log: vi.fn(),
 			...overrides,
 		};
-		const made = createBooth(deps);
+		const made = createBooth(createBoothQueue(), deps);
 		onTestFinished(() => made.close());
 		return { booth: made, deps };
 	}
 
 	it("refuses a frame past the raster budget with a reason, without a browser", async () => {
 		const { booth: made, deps } = booth({ geometry: vi.fn(() => ({ w: 100, h: 50_000 })) });
-		made.enqueue(job("tall"));
+		made.enqueue(sitting("tall"));
 		await vi.waitFor(() => expect(deps.failed).toHaveBeenCalledWith(ROOT, "tall", "too large for a cover"));
 		expect(deps.launch).not.toHaveBeenCalled();
 		expect(deps.store).not.toHaveBeenCalled();
@@ -240,7 +253,7 @@ describe("the booth before any browser", () => {
 
 	it("does not spend a picture on a frame whose missing cover turned up while it waited", async () => {
 		const { booth: made, deps } = booth({ covered: vi.fn(() => true) });
-		made.enqueue(job("home", "missing"));
+		made.enqueue(sitting("home", "missing"));
 		await vi.waitFor(() => expect(deps.finished).toHaveBeenCalledWith(ROOT, "home"));
 		expect(deps.compile).not.toHaveBeenCalled();
 		expect(deps.launch).not.toHaveBeenCalled();
@@ -250,15 +263,15 @@ describe("the booth before any browser", () => {
 		const { booth: made, deps } = booth({
 			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "error", message: "Unexpected end of file" })),
 		});
-		made.enqueue(job("broken", "missing"));
+		made.enqueue(sitting("broken", "missing"));
 		await vi.waitFor(() => expect(deps.failed).toHaveBeenCalledWith(ROOT, "broken", "Unexpected end of file"));
 		// every projection read finds it uncovered; none of them is a reason to try again
-		made.enqueue(job("broken", "missing"));
-		made.enqueue(job("broken", "missing"));
+		made.enqueue(sitting("broken", "missing"));
+		made.enqueue(sitting("broken", "missing"));
 		await new Promise((done) => setTimeout(done, 20));
 		expect(deps.compile).toHaveBeenCalledTimes(1);
 		// an edit is the thing that can fix it
-		made.enqueue(job("broken", "edited"));
+		made.enqueue(sitting("broken", "edited"));
 		await vi.waitFor(() => expect(deps.compile).toHaveBeenCalledTimes(2));
 		expect(deps.store).not.toHaveBeenCalled();
 		expect(deps.launch).not.toHaveBeenCalled();
@@ -266,7 +279,7 @@ describe("the booth before any browser", () => {
 
 	it("owes nothing for a frame that is gone by the time a tab is free", async () => {
 		const { booth: made, deps } = booth({ compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "missing" })) });
-		made.enqueue(job("gone", "edited"));
+		made.enqueue(sitting("gone", "edited"));
 		await vi.waitFor(() => expect(deps.finished).toHaveBeenCalledWith(ROOT, "gone"));
 		expect(deps.failed).not.toHaveBeenCalled();
 		expect(deps.launch).not.toHaveBeenCalled();
@@ -274,7 +287,7 @@ describe("the booth before any browser", () => {
 
 	it("blames a browser that will not start on the browser, never on the frame", async () => {
 		const { booth: made, deps } = booth();
-		made.enqueue(job("home", "edited"));
+		made.enqueue(sitting("home", "edited"));
 		await vi.waitFor(() =>
 			expect(deps.log).toHaveBeenCalledWith(expect.stringContaining("could not start a browser")),
 		);
@@ -282,9 +295,20 @@ describe("the booth before any browser", () => {
 		expect(deps.failed).not.toHaveBeenCalled();
 		// and does not try again on the next edit: a browser that would not start
 		// a moment ago will not start now
-		made.enqueue(job("other", "edited"));
+		made.enqueue(sitting("other", "edited"));
 		await new Promise((done) => setTimeout(done, 20));
 		expect(deps.launch).toHaveBeenCalledTimes(1);
+	});
+
+	it("tries a browser that would not start again once the wait is over, with nothing new asking", async () => {
+		const { booth: made, deps } = booth({ timing: { relaunchAfterMs: 300 } });
+		made.enqueue(sitting("home", "edited"));
+		await vi.waitFor(() => expect(deps.launch).toHaveBeenCalled());
+		await new Promise((done) => setTimeout(done, 100));
+		expect(deps.launch).toHaveBeenCalledTimes(1);
+		// the frame is still owed, and the retry is the booth's own to make
+		await vi.waitFor(() => expect(deps.launch).toHaveBeenCalledTimes(2), { timeout: 2000 });
+		expect(deps.failed).not.toHaveBeenCalled();
 	});
 
 	it("tells a waiting shot the browser would not start", async () => {
@@ -292,5 +316,47 @@ describe("the booth before any browser", () => {
 		await expect(
 			made.shoot({ project: "shop", frame: "home", width: 10, height: 10, scale: 1, tiles: [{ y: 0, height: 10 }] }),
 		).rejects.toThrow("no browser in this test");
+	});
+});
+
+describe("the colour scheme the booth starts in", () => {
+	const quiet = {
+		origin: () => undefined,
+		compile: async () => ({ kind: "missing" }) as const,
+		geometry: () => ({ w: 390, h: 844 }),
+		covered: () => false,
+		registered: () => true,
+		store: () => {},
+		failed: () => {},
+	};
+
+	it("is the machine's until a canvas says otherwise", async () => {
+		const made = createBooth(createBoothQueue(), { ...quiet, systemScheme: async () => "dark" });
+		onTestFinished(() => made.close());
+		await made.schemeKnown();
+		expect(made.scheme).toBe("dark");
+		expect(made.setScheme("dark")).toBe(false);
+		expect(made.setScheme("light")).toBe(true);
+	});
+
+	it("gives way to a canvas that spoke before the machine answered", async () => {
+		let answer: (scheme: "dark") => void = () => {};
+		const made = createBooth(createBoothQueue(), {
+			...quiet,
+			systemScheme: () =>
+				new Promise((done) => {
+					answer = done;
+				}),
+		});
+		onTestFinished(() => made.close());
+		const known = made.schemeKnown();
+		made.setScheme("light");
+		answer("dark");
+		await known;
+		expect(made.scheme).toBe("light");
+	});
+
+	it("is light anywhere the machine has no say", async () => {
+		expect(await systemColorScheme("linux")).toBe("light");
 	});
 });
