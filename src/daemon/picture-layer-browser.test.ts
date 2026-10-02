@@ -25,11 +25,16 @@ function crc32(bytes: Uint8Array): number {
 	return (crc ^ 0xffffffff) >>> 0;
 }
 
-/** A solid-colour RGB PNG, the shape a cover arrives in. */
+/**
+ * A solid-colour RGB PNG, the shape a cover arrives in; with `right`, the
+ * columns from the middle on are that colour instead, an edge any softer copy
+ * of the picture would smear.
+ */
 function solidPng(
 	width: number,
 	height: number,
 	[r, g, b]: readonly [number, number, number],
+	right: readonly [number, number, number] = [r, g, b],
 ): Uint8Array<ArrayBuffer> {
 	const chunk = (type: string, data: Buffer) => {
 		const header = Buffer.alloc(8);
@@ -45,7 +50,7 @@ function solidPng(
 	header[8] = 8;
 	header[9] = 2;
 	const row = Buffer.alloc(width * 3 + 1);
-	for (let x = 0; x < width; x += 1) row.set([r, g, b], 1 + x * 3);
+	for (let x = 0; x < width; x += 1) row.set(x < width / 2 ? [r, g, b] : right, 1 + x * 3);
 	const rows = Buffer.concat(Array.from({ length: height }, () => row));
 	return new Uint8Array(
 		Buffer.concat([
@@ -158,8 +163,8 @@ it("draws every picture on the GPU, where its shell stood, and keeps none in the
 		expect(picture?.picture?.w).toBeCloseTo(150, 5);
 		expect(picture?.picture?.h).toBeCloseTo(99.9375, 5);
 		expect(picture?.natural).toEqual({ width: 800, height: 533 });
-		// 150 device px is past the 128 px square: the 256 texel copy streams in
-		expect(picture?.texture).toEqual({ kind: "sharp", width: 256, height: 171 });
+		// 150 device px is past the 128 px square: the cover halved twice streams in
+		expect(picture?.texture).toEqual({ kind: "sharp", width: 200, height: 133 });
 	}
 	// no shell, no still, no document: the field holds only the labels
 	expect(await page.locator("[data-frame-cover]").count()).toBe(0);
@@ -239,4 +244,53 @@ it("keeps the canvas working through a lost context and draws again when it come
 		.toBe(true);
 	const centres = await pixels(page, [{ x: origin.x + CAMERA.x + 75, y: origin.y + CAMERA.y + 50 }]);
 	expect(near(centres[0], FRAMES[0].color), `the picture is back: ${centres[0]}`).toBe(true);
+});
+
+it("draws the cover itself at 100% on a 2x screen, as sharp as the image element did", {
+	timeout: 180_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir });
+	// 360 CSS px on its long side at k = 1: still a picture, under the 400 px
+	// readable threshold, and drawn 720 device px wide from an 800 px cover
+	writeFrame(project.root, "card", "export default function Frame() { return <main>card</main>; }");
+	writeDesignFile(project.root, "frames/card/frame.json", '{ "x": 0, "y": 0, "w": 360, "h": 360 }\n');
+	const body = new FormData();
+	body.append("cover", new Blob([solidPng(800, 800, [255, 255, 255], [0, 0, 0])], { type: "image/png" }));
+	const stored = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/thumbs/card`, {
+		method: "PUT",
+		headers: { "X-Spool-Control": project.controlToken },
+		body,
+	});
+	expect(stored.status).toBe(200);
+	const cover = (await stored.json()) as { hash: string };
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 40, y: 40, k: 1 } })}\n`);
+	const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 2 });
+	const page = await context.newPage();
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+
+	// the full cover, never a smaller copy, at the frame's place and size
+	const card = async () => (await report(page))?.drawn.find((picture) => picture.name === "card") ?? null;
+	await expect
+		.poll(async () => (await card())?.texture, { timeout: 30_000 })
+		.toEqual({ kind: "sharp", width: 800, height: 800 });
+	const picture = await card();
+	expect(picture?.url).toBe(`/covers/${project.name}/card/${cover.hash}`);
+	expect(picture?.natural).toEqual({ width: 800, height: 800 });
+	expect(picture?.box).toEqual({ x: 40, y: 40, w: 360, h: 360 });
+	expect(picture?.picture).toEqual({ w: 360, h: 360 });
+	expect(await page.locator('[data-frame-cover="card"]').count()).toBe(0);
+
+	// The white half ends at the cover's middle column, 180 CSS px into the
+	// frame. Drawn from the cover the edge stays within a device pixel or two;
+	// the resident square or a halved copy would smear it across several.
+	const origin = await canvasOrigin(page);
+	const edge = origin.x + 40 + 180;
+	const [white, black] = await pixels(page, [
+		{ x: edge - 1.5, y: origin.y + 220 },
+		{ x: edge + 1, y: origin.y + 220 },
+	]);
+	expect(white?.[0], "a device pixel or so left of the edge is the white half").toBeGreaterThan(235);
+	expect(black?.[0], "a device pixel right of it is the black half").toBeLessThan(20);
 });
