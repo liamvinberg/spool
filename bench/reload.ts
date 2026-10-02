@@ -4,10 +4,9 @@ import { type Browser, type BrowserContext, type CDPSession, chromium, type Fram
 import {
 	copyProject,
 	DEFAULT_ZOOM,
-	densestPage,
 	freePort,
 	ms,
-	namedPage,
+	pageToMeasure,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
@@ -591,8 +590,7 @@ function report(runs: Run[], expected: string[], page: string): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } =
-		options.page === undefined ? densestPage(root) : namedPage(root, options.page);
+	const { page: canvasPage, frames: boxes } = pageToMeasure(root, options.page);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const frameNames = boxes.map((box) => box.name);
 	const camera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zoom);

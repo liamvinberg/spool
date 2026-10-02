@@ -6,17 +6,16 @@ import {
 	collector,
 	copyProject,
 	DEFAULT_ZOOM,
-	densestPage,
 	driveRoundTripWheel,
 	framesOnCanvas,
 	freePort,
 	type GestureStats,
 	mountedCount,
 	ms,
-	namedPage,
 	now,
 	PAN_EVENTS,
 	PAN_STEP_PX,
+	pageToMeasure,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
@@ -406,8 +405,7 @@ function table(results: RunResult[], zoom: number): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } =
-		options.page === undefined ? densestPage(root) : namedPage(root, options.page);
+	const { page: canvasPage, frames: boxes } = pageToMeasure(root, options.page);
 	// a camera planned over nothing is a run that measures an empty canvas and
 	// reports it as fast, which is the one failure this whole ticket exists to avoid
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);

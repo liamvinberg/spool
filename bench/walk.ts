@@ -1,16 +1,18 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { type Browser, type BrowserContext, chromium } from "playwright-core";
 import {
 	type Camera,
 	copyProject,
 	DEFAULT_ZOOM,
+	type FrameBox,
 	freePort,
 	ms,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
 	quiet,
+	readPages,
 	startDaemon,
 	VIEWPORT,
 	writeCamera,
@@ -122,60 +124,6 @@ function parseArgs(argv: string[]): Options {
 	return { project, walks, repeat, pair, headed, out };
 }
 
-// --- the canvas as it sits on disk --------------------------------------------
-
-interface Placed {
-	name: string;
-	page: string;
-	x: number;
-	y: number;
-	w: number;
-	h: number;
-}
-
-/**
- * Every frame in the project and the page it sits on. `harness.densestPage`
- * answers a different question — the one camera that mounts the most — and a
- * walk needs the opposite: a frame anywhere, and its target's page, so that
- * "same page" and "cross page" can be told apart before either is clicked.
- */
-function allFrames(root: string): Placed[] {
-	const dir = join(root, "design", "frames");
-	const placed: Placed[] = [];
-	const read = (file: string): Omit<Placed, "name" | "page"> | undefined => {
-		if (!existsSync(file)) return undefined;
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(readFileSync(file, "utf8"));
-		} catch {
-			return undefined;
-		}
-		const frame = parsed as Partial<Placed>;
-		if (typeof frame.x !== "number" || typeof frame.y !== "number") return undefined;
-		if (typeof frame.w !== "number" || typeof frame.h !== "number") return undefined;
-		return { x: frame.x, y: frame.y, w: frame.w, h: frame.h };
-	};
-	for (const entry of readdirSync(dir)) {
-		const direct = read(join(dir, entry, "frame.json"));
-		if (direct !== undefined) {
-			placed.push({ ...direct, name: entry, page: "" });
-			continue;
-		}
-		let nested: string[];
-		try {
-			nested = readdirSync(join(dir, entry));
-		} catch {
-			continue;
-		}
-		for (const child of nested) {
-			const box = read(join(dir, entry, child, "frame.json"));
-			// a frame's name is its whole path, as the flow graph and the canvas spell it
-			if (box !== undefined) placed.push({ ...box, name: `${entry}/${child}`, page: entry });
-		}
-	}
-	return placed;
-}
-
 /**
  * The camera a walk starts from: the source frame filling most of the window,
  * which is where entering a frame leaves you anyway (`fitCamera`). A walk is a
@@ -185,7 +133,7 @@ function allFrames(root: string): Placed[] {
  * against a canvas still mounting thirty documents, which is #90's bar, not this
  * one.
  */
-function cameraOn(box: Placed, width: number, height: number, fill: number): Camera {
+function cameraOn(box: FrameBox, width: number, height: number, fill: number): Camera {
 	const k = Math.min((width * fill) / box.w, (height * fill) / box.h);
 	return { k, x: width / 2 - (box.x + box.w / 2) * k, y: height / 2 - (box.y + box.h / 2) * k };
 }
@@ -417,7 +365,7 @@ function stampKey(site: EdgeSite): string | undefined {
 	return site.anchor === undefined ? undefined : `${site.path}:${site.anchor.line}:${site.anchor.col}`;
 }
 
-function planWalks(edges: FlowEdge[], frames: Map<string, Placed>, perCase: number): Plan[] {
+function planWalks(edges: FlowEdge[], frames: Map<string, FrameBox>, perCase: number): Plan[] {
 	const plans: Plan[] = [];
 	for (const edge of edges) {
 		if (edge.missing === true || edge.from === edge.to) continue;
@@ -477,8 +425,8 @@ function planWalks(edges: FlowEdge[], frames: Map<string, Placed>, perCase: numb
  * premise under test — that a walk boots exactly one document — is weakest on
  * the page that holds the most.
  */
-function injectedWalks(source: Placed, frames: Placed[], perCase: number): Plan[] {
-	const plan = (to: Placed): Plan => ({
+function injectedWalks(source: FrameBox, frames: FrameBox[], perCase: number): Plan[] {
+	const plan = (to: FrameBox): Plan => ({
 		from: source.name,
 		to: to.name,
 		kind: source.page === to.page ? "same-page" : "cross-page",
@@ -488,7 +436,7 @@ function injectedWalks(source: Placed, frames: Placed[], perCase: number): Plan[
 		injected: true,
 	});
 	const sameHere = frames.filter((frame) => frame.page === source.page && frame.name !== source.name);
-	const byPage = new Map<string, Placed[]>();
+	const byPage = new Map<string, FrameBox[]>();
 	for (const frame of frames) {
 		if (frame.page === source.page) continue;
 		const held = byPage.get(frame.page);
@@ -857,7 +805,8 @@ function phaseTable(rows: WalkResult[], kind: Plan["kind"]): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const frames = allFrames(root);
+	// every frame on every page: a walk needs its target's page, not the densest one
+	const frames = readPages(root).flatMap((page) => page.frames);
 	if (frames.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const byName = new Map(frames.map((frame) => [frame.name, frame]));
 	const port = await freePort();

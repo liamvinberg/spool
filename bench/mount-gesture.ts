@@ -5,13 +5,12 @@ import { LIVE_MIN_CSS_PX } from "../src/cover.ts";
 import {
 	clearCopiedCovers,
 	copyProject,
-	densestPage,
 	type FrameBox,
 	framesOnCanvas,
 	freePort,
 	mountedCount,
 	ms,
-	namedPage,
+	pageToMeasure,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
@@ -1015,8 +1014,7 @@ const frameUrl = (renderUrl: string, project: string, frame: string): string =>
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } =
-		options.page === undefined ? densestPage(root) : namedPage(root, options.page);
+	const { page: canvasPage, frames: boxes } = pageToMeasure(root, options.page);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);

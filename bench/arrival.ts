@@ -2,13 +2,11 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Browser, type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
 import {
-	type Page as CanvasPage,
 	copyProject,
 	DEFAULT_ZOOM,
-	densestPage,
 	freePort,
 	ms,
-	namedPage,
+	pageToMeasure,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
@@ -166,9 +164,6 @@ function parseArgs(argv: string[]): Options {
 	if (!Number.isInteger(repeats) || repeats < 1) throw new Error("--repeats takes a positive whole number");
 	return { project, page, zooms, headed, arms, repeats, out };
 }
-
-const pageToMeasure = (root: string, name: string | undefined): CanvasPage =>
-	name === undefined ? densestPage(root) : namedPage(root, name);
 
 /**
  * Flip the daemon's frame compiler between the shipped document and #92's

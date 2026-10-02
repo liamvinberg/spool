@@ -259,14 +259,10 @@ export interface Page {
 }
 
 /**
- * The frames sharing one camera. Both layouts are read: `frames/<frame>/`
- * today, and `frames/<page>/<frame>/` after #89's hard cut, which would
- * otherwise leave this finding nothing and planning a camera over an empty
- * canvas. A page is the larger group under the page layout, since that is the
- * one canvas a single camera can put the most documents on screen at once.
- *
- * The root page wins outright when it holds anything, because a canvas opens
- * there unless its state says otherwise.
+ * Every page and its frames, the root page first when it holds any. Both
+ * layouts are read: `frames/<frame>/` and `frames/<page>/<frame>/` since #89's
+ * hard cut, which would otherwise leave this finding nothing and planning a
+ * camera over an empty canvas.
  */
 export function readPages(root: string): Page[] {
 	const dir = join(root, "design", "frames");
@@ -291,14 +287,19 @@ export function readPages(root: string): Page[] {
 		}
 		if (boxes.length > 0) pages.push({ page: name, frames: boxes });
 	}
-	// the root page wins outright when it holds anything, because a canvas opens
-	// there unless its state says otherwise
-	return flat.length > 0 ? [{ page: ROOT_PAGE, frames: flat }] : pages;
+	return flat.length > 0 ? [{ page: ROOT_PAGE, frames: flat }, ...pages] : pages;
 }
 
+/**
+ * The page a single camera can put the most documents on. The root page wins
+ * outright when it holds anything, because a canvas opens there unless its
+ * state says otherwise.
+ */
 export function densestPage(root: string): Page {
+	const pages = readPages(root);
+	if (pages[0]?.page === ROOT_PAGE) return pages[0];
 	let widest: Page = { page: ROOT_PAGE, frames: [] };
-	for (const page of readPages(root)) if (page.frames.length > widest.frames.length) widest = page;
+	for (const page of pages) if (page.frames.length > widest.frames.length) widest = page;
 	return widest;
 }
 
@@ -308,6 +309,10 @@ export function namedPage(root: string, name: string): Page {
 	if (found === undefined) throw new Error(`no page "${name}" in ${root}/design/frames`);
 	return found;
 }
+
+/** The page a run's `--page` names, or the densest one when it names none. */
+export const pageToMeasure = (root: string, name: string | undefined): Page =>
+	name === undefined ? densestPage(root) : namedPage(root, name);
 
 /**
  * The picture zoom used while benchmarks populate covers. Reload also keeps it

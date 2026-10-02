@@ -3,17 +3,7 @@ import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { type Browser, type BrowserContext, type CDPSession, chromium, type Page } from "playwright-core";
-import {
-	copyProject,
-	densestPage,
-	type FrameBox,
-	freePort,
-	ms,
-	namedPage,
-	quantile,
-	startDaemon,
-	VIEWPORT,
-} from "./harness.ts";
+import { copyProject, type FrameBox, freePort, ms, pageToMeasure, quantile, startDaemon, VIEWPORT } from "./harness.ts";
 
 /**
  * What one mounted frame costs (#85). `WARM_POOL_CAP = 24` exists on the belief
@@ -652,7 +642,7 @@ function frameUrl(renderUrl: string, project: string, frame: string): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { frames: boxes } = options.page === undefined ? densestPage(root) : namedPage(root, options.page);
+	const { frames: boxes } = pageToMeasure(root, options.page);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);
