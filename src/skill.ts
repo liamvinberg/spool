@@ -215,7 +215,7 @@ Verify with spool url, shot and logs: wait for async initialization, inspect ren
 
 	verbs: () => `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
 
-shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it.
+shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, the same browser that makes the canvas's pictures of frames, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900), in the colour scheme the canvas shows (light until a canvas has connected). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it.
 
   spool shot <frame> [--viewport <width>x<height>] [--at <milliseconds>] [--scenario <name>]
                        Boots headless and writes design/.spool/verify/<frame>.png (a frame on a page is stored as shop%2Fcheckout.png), printing the path.

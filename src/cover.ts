@@ -60,6 +60,14 @@ export const COVER_QUALITY = 0.82;
  */
 export const SETTLE_BUDGET_MS = 900;
 
+/**
+ * The colour scheme frames are asked to render in (`prefers-color-scheme`):
+ * the one the canvas showing them is in, so a cover matches the live frame it
+ * fades into. Frames inside the canvas follow the browser's own preference,
+ * not the canvas chrome's look.
+ */
+export type ColorScheme = "light" | "dark";
+
 /** One immutable image, addressed by the hash of its content. */
 export interface Cover {
 	hash: string;

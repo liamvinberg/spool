@@ -1,5 +1,5 @@
 import type { Browser, BrowserContext, CDPSession, ConsoleMessage, Page } from "playwright-core";
-import { COVER_QUALITY, captureRasterSize, coverCaptureScale, SETTLE_BUDGET_MS } from "../cover";
+import { COVER_QUALITY, type ColorScheme, captureRasterSize, coverCaptureScale, SETTLE_BUDGET_MS } from "../cover";
 import { fetchHeadlessShell, launchHeadlessShell, MissingHeadlessShellError } from "../headless-shell";
 import { pageParent } from "../page-path";
 import { settleSource } from "./document";
@@ -247,9 +247,6 @@ export function createBoothQueue() {
 }
 
 export type BoothQueue = ReturnType<typeof createBoothQueue>;
-
-/** The colour scheme a frame is asked to render in (`prefers-color-scheme`). */
-export type ColorScheme = "light" | "dark";
 
 /**
  * Whether a frame's picture depends on the colour scheme it is shown in, read
@@ -564,6 +561,8 @@ export function createBooth(deps: BoothDeps) {
 			try {
 				await runCover(slot, job);
 			} catch (error) {
+				// a daemon shutting down took the browser out from under the job
+				if (closed) return;
 				if (error instanceof LaunchFailure) {
 					// not the frame's fault: it waits for a browser that starts
 					queue.release(job);
@@ -605,7 +604,9 @@ export function createBooth(deps: BoothDeps) {
 		const tab = await tabFor(slot);
 		tab.covers++;
 		try {
-			await prepare(tab, { width, height, scale });
+			// the scheme this picture is taken in, which a change of the canvas's while
+			// it is in the tab does not rewrite: that change sends it round again
+			const taken = await prepare(tab, { width, height, scale });
 			const url = `${origin}/p/${encodeURIComponent(job.project)}/frames/${encodeURIComponent(job.frame)}`;
 			await within(tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: LOAD_MS }), LOAD_MS, "load");
 			const world = await isolatedWorld(tab);
@@ -619,10 +620,12 @@ export function createBooth(deps: BoothDeps) {
 				clip: { x: 0, y: 0, width, height, scale: 1 },
 			});
 			failedAt.delete(key);
-			deps.store(job.root, job.frame, bytes, sensitive ? scheme : undefined);
+			deps.store(job.root, job.frame, bytes, sensitive ? taken : undefined);
 		} catch (error) {
 			// a page that would not load or draw is not one to load the next frame into
 			retire(slot, tab);
+			// a daemon shutting down is not something the frame did
+			if (closed) return;
 			fail(error instanceof TimedOut ? `the frame did not finish its ${error.message} in time` : describe(error));
 		}
 	}
@@ -681,7 +684,8 @@ export function createBooth(deps: BoothDeps) {
 	}
 
 	/** Metrics, scheme and a clean slate for the next document in this tab. */
-	async function prepare(tab: Tab, metrics: { width: number; height: number; scale: number }): Promise<void> {
+	async function prepare(tab: Tab, metrics: { width: number; height: number; scale: number }): Promise<ColorScheme> {
+		const wanted = scheme;
 		tab.errors.length = 0;
 		tab.entries.length = 0;
 		await tab.cdp.send("Emulation.setDeviceMetricsOverride", {
@@ -690,12 +694,14 @@ export function createBooth(deps: BoothDeps) {
 			deviceScaleFactor: metrics.scale,
 			mobile: false,
 		});
-		if (tab.scheme !== scheme) {
-			await tab.cdp.send("Emulation.setEmulatedMedia", {
-				features: [{ name: "prefers-color-scheme", value: scheme }],
-			});
-			tab.scheme = scheme;
+		if (tab.scheme !== wanted) {
+			// through playwright rather than a CDP session of the booth's own:
+			// playwright holds the page's media emulation, light unless told, and
+			// would put it back over a value set behind its back
+			await tab.page.emulateMedia({ colorScheme: wanted });
+			tab.scheme = wanted;
 		}
+		return wanted;
 	}
 
 	/** The frame has drawn something into its root, or the budget ran out, or (for a cover) it threw. */

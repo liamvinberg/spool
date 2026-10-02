@@ -3,7 +3,7 @@ import { type Dirent, existsSync, readdirSync, readFileSync, renameSync, rmSync 
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
-import type { Cover } from "../cover";
+import type { ColorScheme, Cover } from "../cover";
 import { frameSegment, segmentFrame } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
@@ -166,8 +166,15 @@ function coverFormat(bytes: Buffer): { ext: CoverExt; type: string } | undefined
 	return COVER_FORMATS.find((format) => format.magic.every((byte, index) => bytes[index] === byte));
 }
 
-/** Write one image and retire every prior address for this frame. */
-export function writeCover(root: string, frame: string, bytes: Buffer): Cover {
+/**
+ * Write one image and retire every prior address for this frame.
+ *
+ * A cover whose frame follows the colour scheme says which one it was taken
+ * in, beside it. The image stays content-addressed, and the scheme is the one
+ * fact a canvas switching to the other can not read off the picture: which of
+ * the covers it holds are now of a frame nobody is looking at.
+ */
+export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: ColorScheme): Cover {
 	const dir = coverDir(root, frame);
 	const format = coverFormat(bytes);
 	if (format === undefined) throw new UnservableCoverError();
@@ -183,7 +190,30 @@ export function writeCover(root: string, frame: string, bytes: Buffer): Cover {
 	for (const legacyFormat of COVER_FORMATS) {
 		rmSync(join(coverStoreDir(root), `${frame}.${legacyFormat.ext}`), { force: true });
 	}
+	if (scheme !== undefined) writeAtomic(join(dir, SCHEME_NAME), `${scheme}\n`);
 	return { hash };
+}
+
+const SCHEME_NAME = "scheme";
+
+/**
+ * Every stored cover taken in a colour scheme its frame follows, with that
+ * scheme. A frame that does not follow one has no entry: its picture is the
+ * same in both.
+ */
+export function scanCoverSchemes(root: string): Map<string, ColorScheme> {
+	const schemes = new Map<string, ColorScheme>();
+	const store = coverStoreDir(root);
+	for (const { frame, folder } of framesIn(store)) {
+		let scheme: string;
+		try {
+			scheme = readFileSync(join(store, folder, SCHEME_NAME), "utf8").trim();
+		} catch {
+			continue;
+		}
+		if (scheme === "light" || scheme === "dark") schemes.set(frame, scheme);
+	}
+	return schemes;
 }
 
 export class UnservableCoverError extends Error {

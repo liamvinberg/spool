@@ -1296,12 +1296,15 @@ describe("what an open canvas shows, for the photo booth's order", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(body),
 			});
-		expect((await tell({ view, page: "", frames: ["checkout"] })).status).toBe(204);
-		// a view is the page and its frames by name, and nothing else
-		expect((await tell({ view, page: "../up", frames: [] })).status).toBe(400);
-		expect((await tell({ view, page: "", frames: ["../up"] })).status).toBe(400);
-		expect((await tell({ view: "not-a-stream", page: "", frames: [] })).status).toBe(400);
-		expect((await tell({ view, page: "", frames: [], camera: { x: 0, y: 0, k: 1 } })).status).toBe(400);
+		expect((await tell({ view, page: "", frames: ["checkout"], scheme: "dark" })).status).toBe(204);
+		// a view is the page, its frames by name and their colour scheme, and nothing else
+		expect((await tell({ view, page: "../up", frames: [], scheme: "dark" })).status).toBe(400);
+		expect((await tell({ view, page: "", frames: ["../up"], scheme: "dark" })).status).toBe(400);
+		expect((await tell({ view, page: "", frames: [], scheme: "dim" })).status).toBe(400);
+		expect((await tell({ view: "not-a-stream", page: "", frames: [], scheme: "dark" })).status).toBe(400);
+		expect((await tell({ view, page: "", frames: [], scheme: "dark", camera: { x: 0, y: 0, k: 1 } })).status).toBe(
+			400,
+		);
 	});
 
 	it("takes a report from a canvas whose stream has gone without complaint, and keeps none of it", async () => {
@@ -1311,7 +1314,7 @@ describe("what an open canvas shows, for the photo booth's order", () => {
 		const response = await app.request(`/api/p/${name}/view`, {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ view: "6f1c7c56-3d1e-4c63-9a8b-2b0f7c1d9e10", page: "", frames: [] }),
+			body: JSON.stringify({ view: "6f1c7c56-3d1e-4c63-9a8b-2b0f7c1d9e10", page: "", frames: [], scheme: "dark" }),
 		});
 		expect(response.status).toBe(204);
 	});

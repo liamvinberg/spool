@@ -8,6 +8,7 @@ import {
 	readCaptureError,
 	readCover,
 	readCoverImage,
+	scanCoverSchemes,
 	scanCovers,
 	scanDatedCovers,
 	UnservableCoverError,
@@ -148,6 +149,25 @@ describe("recording a capture failure (#173)", () => {
 
 		expect(readCover(root, "home")).toBeUndefined();
 		expect(scanCovers(root)).toEqual(new Map());
+	});
+});
+
+describe("the colour scheme a cover was taken in", () => {
+	it("is written beside a cover that follows one, and retires with it", () => {
+		const root = project();
+		writeCover(root, "night", JPEG, "dark");
+		writeCover(root, "plain", PNG);
+		expect(scanCoverSchemes(root)).toEqual(new Map([["night", "dark"]]));
+		// a later picture that follows no scheme takes the record with it
+		writeCover(root, "night", OTHER_JPEG);
+		expect(scanCoverSchemes(root)).toEqual(new Map());
+	});
+
+	it("is never mistaken for a cover", () => {
+		const root = project();
+		const cover = writeCover(root, "home", JPEG, "light");
+		expect(readCover(root, "home")).toEqual(cover);
+		expect(scanCovers(root)).toEqual(new Map([["home", cover]]));
 	});
 });
 

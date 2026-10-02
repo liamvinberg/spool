@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { headlessShellArgs } from "../headless-shell";
-import { serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { serveProject, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 import { imageSize } from "./thumbs";
 
 /**
@@ -121,4 +121,66 @@ it("photographs an edit, a resize and a broken frame without a canvas, and leave
 	writeFrame(project.root, "edited", frameOf("#11aa11"));
 	await expect.poll(async () => (await project.coverOf("edited"))?.hash, { timeout: 30_000 }).not.toBe(resized);
 	expect(project.captureError("edited")).toBeUndefined();
+});
+
+it("photographs in the scheme the canvas shows, and again only what follows it when that changes", {
+	timeout: 120_000,
+}, async () => {
+	if (!(await shellAvailable())) return;
+	const project = await served();
+	writeFrame(
+		project.root,
+		"night",
+		`export default function Frame() {
+	return <main className="h-screen bg-white dark:bg-black">night</main>;
+}
+`,
+	);
+	writeFrame(project.root, "plain", frameOf("#f5391a"));
+	await project.projection();
+	await expect
+		.poll(
+			async () => (await project.coverOf("night")) !== undefined && (await project.coverOf("plain")) !== undefined,
+			{
+				timeout: 45_000,
+			},
+		)
+		.toBe(true);
+	// the writes' own change events ask again behind the read that found them
+	// uncovered; let that settle before calling either picture the light one
+	await new Promise((done) => setTimeout(done, 3000));
+	const lightNight = (await project.coverOf("night"))?.hash;
+	const plain = (await project.coverOf("plain"))?.hash;
+	const scheme = (frame: string) => {
+		const file = join(project.root, "design", ".spool", "thumbs", frame, "scheme");
+		return existsSync(file) ? readFileSync(file, "utf8").trim() : undefined;
+	};
+	expect(scheme("night")).toBe("light");
+	expect(scheme("plain")).toBeUndefined();
+
+	// a canvas connects, and its frames render dark
+	const controller = new AbortController();
+	onTestFinished(() => controller.abort());
+	const stream = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/events`, {
+		headers: { "X-Spool-Control": project.controlToken },
+		signal: controller.signal,
+	});
+	const hello = await sseReader(stream).next();
+	const { view } = hello.data as { view: string };
+	const told = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/view`, {
+		method: "PUT",
+		headers: { "X-Spool-Control": project.controlToken, "content-type": "application/json" },
+		body: JSON.stringify({ view, page: "", frames: ["night", "plain"], scheme: "dark" }),
+	});
+	expect(told.status).toBe(204);
+
+	// the picture that says dark is the one taken in dark, whatever was in a tab
+	// when the canvas said so
+	await expect
+		.poll(async () => scheme("night") === "dark" && (await project.coverOf("night"))?.hash !== lightNight, {
+			timeout: 30_000,
+		})
+		.toBe(true);
+	// a frame that looks the same in both was not photographed again
+	expect((await project.coverOf("plain"))?.hash).toBe(plain);
 });

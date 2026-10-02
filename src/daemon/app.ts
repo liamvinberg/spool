@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import { type Cover, captureRasterSize, coverCaptureScale } from "../cover";
+import { type ColorScheme, type Cover, captureRasterSize, coverCaptureScale } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
@@ -128,6 +128,7 @@ import {
 	isCoverHash,
 	readCover,
 	readCoverImage,
+	scanCoverSchemes,
 	UnservableCoverError,
 	writeCaptureError,
 	writeCover,
@@ -237,6 +238,7 @@ const canvasView = z.strictObject({
 	view: z.uuid(),
 	page: z.string().refine(isPageSlot, { message: "not a page" }),
 	frames: z.array(z.string().refine(isFramePath, { message: "not a frame name" })).max(100_000),
+	scheme: z.enum(["light", "dark"]),
 });
 
 /** One boot an agent asked for (#25): the viewport the CLI settled on, and how it should wait. */
@@ -815,8 +817,8 @@ export function createDaemonApp({
 		},
 		geometry: (root, frame) => frameGeometry(root, frame),
 		covered: (root, frame) => readCover(root, frame) !== undefined,
-		store: (root, frame, bytes) => {
-			const cover = writeCover(root, frame, bytes);
+		store: (root, frame, bytes, scheme) => {
+			const cover = writeCover(root, frame, bytes, scheme);
 			hub.publish(root, { kind: "thumb", frame, cover });
 		},
 		failed: (root, frame, reason) => writeCaptureError(root, frame, reason),
@@ -865,6 +867,26 @@ export function createDaemonApp({
 					}
 				}),
 			);
+		}
+	}
+
+	/**
+	 * The canvas went over to the other colour scheme: every cover taken in the
+	 * one it left, of a frame that follows the scheme, is now a picture of a
+	 * frame nobody is looking at. Those are owed again, behind anything edited,
+	 * and nothing else is: most frames look the same in both.
+	 */
+	function restale(scheme: ColorScheme): void {
+		for (const root of boothWatches.keys()) {
+			const project = basename(root);
+			try {
+				for (const [frame, taken] of scanCoverSchemes(root)) {
+					if (taken !== scheme && frameExists(root, frame))
+						booth.enqueue({ root, project, frame, reason: "stale" });
+				}
+			} catch {
+				// a project whose design folder went strange owes nothing it can be asked
+			}
 		}
 	}
 
@@ -1737,13 +1759,15 @@ export function createDaemonApp({
 			"/api/p/:project/view",
 			validator("json", (value, c) => {
 				const parsed = canvasView.safeParse(value);
-				return parsed.success ? parsed.data : c.text('a view is { "view", "page", "frames" }', 400);
+				return parsed.success ? parsed.data : c.text('a view is { "view", "page", "frames", "scheme" }', 400);
 			}),
 			(c) => {
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
-				const { view, page, frames } = c.req.valid("json");
-				if (views.get(view) === project.root) booth.view(view, { root: project.root, page, frames });
+				const { view, page, frames, scheme } = c.req.valid("json");
+				if (views.get(view) !== project.root) return c.body(null, 204);
+				booth.view(view, { root: project.root, page, frames });
+				if (booth.setScheme(scheme)) restale(scheme);
 				return c.body(null, 204);
 			},
 		)

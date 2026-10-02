@@ -1,6 +1,6 @@
 import { hc } from "hono/client";
 import type { Attachment } from "../attachment";
-import type { Cover } from "../cover";
+import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import { type AgentEngineId, type AgentLoginProgress, isAgentEngineId } from "../daemon/agent-engine";
 import type { AgentEvent } from "../daemon/agent-events";
@@ -151,6 +151,8 @@ export interface CanvasView {
 	page: string;
 	/** The frames inside the viewport, by name. */
 	frames: string[];
+	/** The colour scheme frames render in here, which covers are taken in. */
+	scheme: ColorScheme;
 }
 
 /**

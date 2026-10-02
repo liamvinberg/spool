@@ -66,7 +66,7 @@ import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
-import { framesOnScreen } from "./booth-view";
+import { frameScheme, framesOnScreen } from "./booth-view";
 import {
 	type Box,
 	boundsOf,
@@ -3718,9 +3718,10 @@ export function ProjectCanvas({
 	}, [refetchFrames, refetchFlows, reloadFrameDocument]);
 
 	/**
-	 * What this canvas shows, told to the daemon's photo booth: the page, and the
-	 * frames inside the viewport, which it photographs first. At rest and only
-	 * when it changed, never per tick. It rides under the name the event stream
+	 * What this canvas shows, told to the daemon's photo booth: the page, the
+	 * frames inside the viewport, which it photographs first, and the colour
+	 * scheme they render in, which it photographs in. At rest and only when it
+	 * changed, never per tick. It rides under the name the event stream
 	 * handed this canvas in its hello, so it stops counting the moment the
 	 * stream does, and a stream that comes back hands out a new name and is
 	 * told again.
@@ -3735,11 +3736,20 @@ export function ProjectCanvas({
 			width: viewport.clientWidth,
 			height: viewport.clientHeight,
 		});
-		const told = JSON.stringify([view, activePageRef.current, frames]);
+		const scheme = frameScheme();
+		const told = JSON.stringify([view, activePageRef.current, frames, scheme]);
 		if (told === toldView.current) return;
 		toldView.current = told;
-		putCanvasView(project, { view, page: activePageRef.current, frames });
+		putCanvasView(project, { view, page: activePageRef.current, frames, scheme });
 	}, [project]);
+	// the machine going over to dark at sunset is a scheme every cover that
+	// follows one was not taken in
+	useEffect(() => {
+		if (typeof matchMedia !== "function") return;
+		const media = matchMedia("(prefers-color-scheme: dark)");
+		media.addEventListener("change", tellView);
+		return () => media.removeEventListener("change", tellView);
+	}, [tellView]);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a page switch and frames arriving are triggers too — the report reads both through refs
 	useEffect(() => {
 		if (restCamera !== null && loaded) tellView();
