@@ -1,6 +1,7 @@
 import type { Camera } from "../api";
 import { shellRadiusOnScreen } from "./camera";
-import { coverSize, type PixelSize } from "./cover-size";
+import type { PixelSize } from "./cover-size";
+import type { LoaderAsk, LoaderReply } from "./picture-loader";
 import { bindUnits, containSize, evictions, RESIDENT_PX, SHARP_UNITS, textureBytes, textureFor } from "./picture-plan";
 
 /**
@@ -86,8 +87,8 @@ export interface PictureReport {
 	draws: number;
 	/** GPU bytes held by the resident array and by sharper copies. */
 	bytes: { resident: number; sharp: number };
-	/** Covers still on their way: queued, loading, or decoded and waiting to upload. */
-	pending: { queued: number; fetching: number; decoding: number; landed: number };
+	/** Covers still on their way: with the loader, or decoded and waiting to upload. */
+	pending: { asked: number; landed: number };
 	/**
 	 * Every frame on the page with a cover, on screen or not: when its cover's
 	 * bytes arrived and when its square reached the GPU, on the page's clock.
@@ -95,18 +96,6 @@ export interface PictureReport {
 	 */
 	covers: { name: string; fetched: number | null; uploaded: number | null }[];
 }
-
-/**
- * How many covers are asked for at once, and how many are asked for or
- * decoding. A fetch is from the HTTP cache or the daemon and a decode is on
- * Chrome's image threads, never on this one, but each hands its result back
- * through this thread. A page opening is the one moment this thread is busy
- * for most of a second (React mounting every label), so the network has to
- * be kept working through it: enough asked for that the browser's own six
- * connections never idle, the frames on screen asked for first.
- */
-const FETCHES_IN_FLIGHT = 64;
-const LOADS_IN_FLIGHT = 96;
 
 /**
  * Upload limits per drawn frame. A texture upload is a copy the GPU process
@@ -299,8 +288,9 @@ export class PictureLayer {
 	/** Which cover each layer of the resident array holds. */
 	private slots: (string | null)[] = [];
 	private readonly sharps = new Map<string, Sharp>();
-	private readonly queue = new Map<string, Job>();
-	private readonly loading = new Set<string>();
+	/** Loads handed to the loader and not back yet (`picture-loader.ts`). */
+	private readonly asked = new Map<string, Job>();
+	private loader: Worker | null = null;
 	private landed: Landed[] = [];
 	/** Bumped when the context goes, so a decode begun before it lands nowhere. */
 	private generation = 0;
@@ -310,8 +300,6 @@ export class PictureLayer {
 	private scale = 1;
 	private surface: readonly [number, number, number, number] = [0, 0, 0, 1];
 	private stamp = 0;
-	/** Covers fetched and still decoding. */
-	private decoding = 0;
 	/** Whether the camera last drawn was moving, which decides how much uploads may spend. */
 	private moving = false;
 	private draws = 0;
@@ -324,6 +312,11 @@ export class PictureLayer {
 		canvas.addEventListener("webglcontextlost", this.onLost);
 		canvas.addEventListener("webglcontextrestored", this.onRestored);
 		this.gpu = this.open();
+		// no GPU, nothing to load for: a canvas without WebGL draws no pictures
+		if (this.gpu !== null) {
+			this.loader = new Worker(new URL("./picture-loader.ts", import.meta.url), { type: "module" });
+			this.loader.addEventListener("message", this.onLoaded);
+		}
 	}
 
 	/** The frames on this page, in drawing order: a later frame draws over an earlier one. */
@@ -343,7 +336,6 @@ export class PictureLayer {
 		this.forget();
 		for (const frame of frames) if (frame.url !== undefined) this.want(frame.url, null, 2);
 		this.sizeArray();
-		this.pump();
 		this.invalidate();
 	}
 
@@ -397,6 +389,8 @@ export class PictureLayer {
 		this.canvas.removeEventListener("webglcontextlost", this.onLost);
 		this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
 		this.release();
+		this.loader?.terminate();
+		this.loader = null;
 	}
 
 	/** What the last draw put on screen, worked out again from the state it drew. */
@@ -454,12 +448,7 @@ export class PictureLayer {
 				resident: this.gpu === null ? 0 : this.gpu.capacity * textureBytes(RESIDENT_PX, RESIDENT_PX, true),
 				sharp,
 			},
-			pending: {
-				queued: this.queue.size,
-				fetching: this.loading.size,
-				decoding: this.decoding,
-				landed: this.landed.length,
-			},
+			pending: { asked: this.asked.size, landed: this.landed.length },
 			covers: this.frames.flatMap((frame) => {
 				if (frame.url === undefined) return [];
 				const entry = this.residents.get(frame.url);
@@ -577,8 +566,11 @@ export class PictureLayer {
 				});
 			}
 			// a square on screen jumps the queue of the page's other squares
-			const resident = this.queue.get(own.url);
-			if (resident !== undefined) resident.priority = 1;
+			const resident = this.asked.get(own.url);
+			if (resident !== undefined && resident.priority > 1) {
+				resident.priority = 1;
+				this.loader?.postMessage({ kind: "priority", key: resident.key, priority: 1 } satisfies LoaderAsk);
+			}
 		};
 		let count = 0;
 		this.walk(
@@ -639,7 +631,6 @@ export class PictureLayer {
 			gl.bindVertexArray(null);
 		}
 		this.evict(gpu);
-		this.pump();
 		if (this.landed.length > 0) this.wake();
 	}
 
@@ -664,12 +655,12 @@ export class PictureLayer {
 
 	// --- textures --------------------------------------------------------------
 
-	/** Queue a load, or raise its place in the queue. */
+	/** Ask the loader for a cover at the size a tier keeps it, unless that is already on its way or held. */
 	private want(url: string, sharp: { width: number; height: number } | null, priority: number): void {
 		if (sharp === null) {
 			if (this.residents.has(url)) return;
 			this.residents.set(url, { slot: null, natural: null, state: "waiting" });
-			this.queue.set(url, { key: url, url, sharp: null, priority });
+			this.ask({ key: url, url, sharp: null, priority });
 			return;
 		}
 		const key = sharpKey(url, sharp.width);
@@ -683,7 +674,27 @@ export class PictureLayer {
 			bytes: textureBytes(sharp.width, sharp.height, true),
 			used: this.stamp,
 		});
-		this.queue.set(key, { key, url, sharp, priority });
+		this.ask({ key, url, sharp, priority });
+	}
+
+	/** Hand a load to the loader. Nothing loads without a context to upload to; a restored one asks again. */
+	private ask(job: Job): void {
+		if (this.loader === null || this.gpu === null || this.lost) return;
+		this.asked.set(job.key, job);
+		this.loader.postMessage({
+			kind: "load",
+			key: job.key,
+			url: new URL(job.url, location.href).href,
+			size: job.sharp ?? "resident",
+			priority: job.priority,
+			generation: this.generation,
+		} satisfies LoaderAsk);
+	}
+
+	/** Take back a load nobody wants any more, if the loader has not started it. */
+	private cancel(key: string): void {
+		if (!this.asked.delete(key)) return;
+		this.loader?.postMessage({ kind: "cancel", key } satisfies LoaderAsk);
 	}
 
 	/**
@@ -693,11 +704,11 @@ export class PictureLayer {
 	 */
 	private request(wants: { job: Job; area: number }[], used: number): void {
 		// copies asked for earlier and no longer wanted give their place back
-		const asked = new Set(wants.map((want) => want.job.key));
-		for (const [key, job] of this.queue) {
-			if (job.sharp !== null && !asked.has(key)) {
-				this.queue.delete(key);
-				this.sharps.delete(key);
+		const wanted = new Set(wants.map((want) => want.job.key));
+		for (const [key, job] of this.asked) {
+			if (job.sharp !== null && !wanted.has(key)) {
+				this.cancel(key);
+				if (this.sharps.get(key)?.texture === null) this.sharps.delete(key);
 			}
 		}
 		let spent = used;
@@ -714,82 +725,32 @@ export class PictureLayer {
 	}
 
 	/**
-	 * Start loads until the in-flight limit, best place in the queue first.
-	 * Nothing loads without a context to upload to; a restored one asks again.
+	 * A load came back. A decode for a context that has since gone, or for a
+	 * copy nobody wants any more, is let go; everything else waits for the
+	 * next draw to upload it.
 	 */
-	private pump(): void {
-		if (this.gpu === null || this.lost || this.disposed) return;
-		while (
-			this.loading.size < FETCHES_IN_FLIGHT &&
-			this.loading.size + this.decoding < LOADS_IN_FLIGHT &&
-			this.queue.size > 0
-		) {
-			let best: Job | null = null;
-			for (const job of this.queue.values()) if (best === null || job.priority < best.priority) best = job;
-			if (best === null) return;
-			this.queue.delete(best.key);
-			this.loading.add(best.key);
-			void this.load(best);
-		}
-	}
-
-	private async load(job: Job): Promise<void> {
-		const generation = this.generation;
-		let decoding = false;
-		try {
-			// what is on screen first, in the browser's own queue as in this one
-			const response = await fetch(job.url, { priority: job.priority < 2 ? "high" : "low" });
-			if (!response.ok) throw new Error(`cover ${response.status}`);
-			const bytes = new Uint8Array(await response.arrayBuffer());
-			const blob = new Blob([bytes], { type: response.headers.get("content-type") ?? "" });
-			// the fetch's slot goes to the next cover now: decodes run on Chrome's
-			// image threads side by side, and a slot held through one idles a
-			// connection
-			decoding = true;
-			this.decoding += 1;
-			if (job.sharp === null) {
-				const entry = this.residents.get(job.url);
-				if (entry !== undefined) entry.fetched = performance.now();
-			}
-			this.fetched(job, generation);
-			const known = this.residents.get(job.url)?.natural ?? null;
-			const natural = known ?? coverSize(bytes) ?? (await decodedSize(blob));
-			const resize =
-				job.sharp === null
-					? { resizeWidth: RESIDENT_PX, resizeHeight: RESIDENT_PX }
-					: job.sharp.width === natural.width && job.sharp.height === natural.height
-						? {}
-						: { resizeWidth: job.sharp.width, resizeHeight: job.sharp.height };
-			const bitmap = await createImageBitmap(blob, {
-				...resize,
-				resizeQuality: "high",
-				premultiplyAlpha: "premultiply",
-			});
-			if (generation !== this.generation) {
-				bitmap.close();
-				return;
-			}
-			this.landed.push({ job, bitmap, natural });
-			this.wake();
-		} catch {
-			if (generation !== this.generation) return;
+	private readonly onLoaded = (event: MessageEvent<LoaderReply>): void => {
+		const reply = event.data;
+		const job = this.asked.get(reply.key);
+		const current = reply.generation === this.generation && job !== undefined;
+		if (current) this.asked.delete(reply.key);
+		if ("failed" in reply) {
+			if (!current) return;
 			const entry = job.sharp === null ? this.residents.get(job.url) : this.sharps.get(job.key);
 			if (entry !== undefined) entry.state = "failed";
-		} finally {
-			if (!decoding) this.fetched(job, generation);
-			else if (generation === this.generation) {
-				this.decoding -= 1;
-				this.pump();
-			}
+			return;
 		}
-	}
-
-	/** A load's fetch is done, one way or another: its slot goes to the next in the queue. */
-	private fetched(job: Job, generation: number): void {
-		if (generation !== this.generation) return;
-		this.loading.delete(job.key);
-		this.pump();
-	}
+		if (!current) {
+			reply.bitmap.close();
+			return;
+		}
+		if (job.sharp === null) {
+			const entry = this.residents.get(job.url);
+			if (entry !== undefined) entry.fetched = reply.fetchedAt - performance.timeOrigin;
+		}
+		this.landed.push({ job, bitmap: reply.bitmap, natural: reply.natural });
+		this.wake();
+	};
 
 	/** Hand landed decodes to the GPU, within this frame's share of upload time and bytes. */
 	private upload(gpu: Gpu): void {
@@ -926,8 +887,8 @@ export class PictureLayer {
 		gpu.capacity = capacity;
 		// squares the smaller array could not keep load again
 		for (const [url, entry] of this.residents) {
-			if (entry.state === "waiting" && entry.slot === null && !this.loading.has(url) && !this.queue.has(url)) {
-				this.queue.set(url, { key: url, url, sharp: null, priority: 2 });
+			if (entry.state === "waiting" && entry.slot === null && !this.asked.has(url)) {
+				this.ask({ key: url, url, sharp: null, priority: 2 });
 			}
 		}
 	}
@@ -946,13 +907,13 @@ export class PictureLayer {
 			if (named.has(key) || (url !== undefined && key !== url)) continue;
 			if (entry.slot !== null && this.slots[entry.slot] === key) this.slots[entry.slot] = null;
 			this.residents.delete(key);
-			this.queue.delete(key);
+			this.cancel(key);
 		}
 		for (const [key, entry] of this.sharps) {
 			if (named.has(entry.url) || (url !== undefined && entry.url !== url)) continue;
 			if (entry.texture !== null) gl?.deleteTexture(entry.texture);
 			this.sharps.delete(key);
-			this.queue.delete(key);
+			this.cancel(key);
 		}
 	}
 
@@ -1038,9 +999,8 @@ export class PictureLayer {
 	/** Drop every texture and every decode in flight: they belong to a context that is gone. */
 	private release(): void {
 		this.generation += 1;
-		this.loading.clear();
-		this.decoding = 0;
-		this.queue.clear();
+		this.asked.clear();
+		this.loader?.postMessage({ kind: "reset" } satisfies LoaderAsk);
 		for (const item of this.landed) item.bitmap.close();
 		this.landed = [];
 		const gl = this.lost ? null : (this.gpu?.gl ?? null);
@@ -1072,6 +1032,9 @@ export class PictureLayer {
 	private readonly onRestored = (): void => {
 		this.lost = false;
 		this.gpu = this.open();
+		// whatever the page asked for while the context was gone was never loaded
+		this.residents.clear();
+		this.sharps.clear();
 		this.setFrames(this.frames);
 	};
 }
@@ -1109,14 +1072,6 @@ const sharpKey = (url: string, width: number): string => `${url}#${width}`;
 const roundUp = (value: number, step: number): number => Math.max(step, Math.ceil(value / step) * step);
 
 const levels = (width: number, height: number): number => Math.floor(Math.log2(Math.max(width, height))) + 1;
-
-/** A cover's size by decoding it, for the file whose header said nothing. */
-async function decodedSize(blob: Blob): Promise<PixelSize> {
-	const bitmap = await createImageBitmap(blob);
-	const size = { width: bitmap.width, height: bitmap.height };
-	bitmap.close();
-	return size;
-}
 
 /** Trilinear, and anisotropic where the GPU offers it: a square drawn at its cover's shape is sampled unevenly. */
 function filter(gl: WebGL2RenderingContext, target: number, anisotropy: number): void {
