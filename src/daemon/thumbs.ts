@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { type Dirent, existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import type { ColorScheme, Cover } from "../cover";
@@ -177,7 +177,7 @@ function coverFormat(bytes: Buffer): { ext: CoverExt; type: string } | undefined
 export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: ColorScheme): Cover {
 	const dir = coverDir(root, frame);
 	const format = coverFormat(bytes);
-	if (format === undefined) throw new UnservableCoverError();
+	if (format === undefined) throw new Error("a cover must be one PNG or JPEG image");
 	const hash = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
 	const name = `${hash}.${format.ext}`;
 	writeAtomic(join(dir, name), bytes);
@@ -199,28 +199,24 @@ const SCHEME_NAME = "scheme";
 /**
  * Every stored cover taken in a colour scheme its frame follows, with that
  * scheme. A frame that does not follow one has no entry: its picture is the
- * same in both.
+ * same in both. Read without holding the event loop, like `scanDatedCovers`:
+ * a canvas changing scheme asks this of every registered project at once.
  */
-export function scanCoverSchemes(root: string): Map<string, ColorScheme> {
-	const schemes = new Map<string, ColorScheme>();
+export async function scanCoverSchemes(root: string): Promise<Map<string, ColorScheme>> {
 	const store = coverStoreDir(root);
-	for (const { frame, folder } of framesIn(store)) {
-		let scheme: string;
-		try {
-			scheme = readFileSync(join(store, folder, SCHEME_NAME), "utf8").trim();
-		} catch {
-			continue;
-		}
-		if (scheme === "light" || scheme === "dark") schemes.set(frame, scheme);
-	}
-	return schemes;
-}
-
-export class UnservableCoverError extends Error {
-	constructor() {
-		super("a cover must be one PNG or JPEG image");
-		this.name = "UnservableCoverError";
-	}
+	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+	const scanned = await Promise.all(
+		folders.map(async (folder) => {
+			const frame = segmentFrame(folder);
+			if (frame === undefined) return undefined;
+			const scheme = await readFile(join(store, folder, SCHEME_NAME), "utf8").then(
+				(text) => text.trim(),
+				() => undefined,
+			);
+			return scheme === "light" || scheme === "dark" ? ([frame, scheme] as const) : undefined;
+		}),
+	);
+	return new Map(scanned.filter((entry) => entry !== undefined));
 }
 
 const CAPTURE_ERROR_NAME = "error.json";
@@ -246,7 +242,7 @@ export function writeCaptureError(root: string, frame: string, error: string): v
 	writeAtomic(captureErrorFile(root, frame), `${JSON.stringify({ error, at: new Date().toISOString() })}\n`);
 }
 
-/** Machine-written cache: anything malformed reads as no recorded error (mirrors readLogsCache in verify.ts). */
+/** Machine-written cache: anything malformed reads as no recorded error (mirrors readLogsCache in verify-record.ts). */
 export function readCaptureError(root: string, frame: string): CaptureError | undefined {
 	let parsed: unknown;
 	try {
@@ -268,11 +264,14 @@ export function readCaptureError(root: string, frame: string): CaptureError | un
  * frame whose sidecar moved without changing size keeps its picture, and one
  * whose size changed while the daemon was not running still learns it is wrong.
  */
-export function coverSize(root: string, frame: string): { width: number; height: number } | undefined {
-	const cover = readCover(root, frame);
-	if (cover === undefined) return undefined;
-	const image = readCoverImage(root, frame, cover.hash);
-	return image === undefined ? undefined : imageSize(image.bytes);
+export async function coverSize(root: string, frame: string): Promise<{ width: number; height: number } | undefined> {
+	const dir = coverDir(root, frame);
+	const names = (await listed(dir)).filter((entry) => entry.isFile()).map((entry) => entry.name);
+	const cover = coverAmong(names);
+	const name = cover === undefined ? undefined : names.find((candidate) => candidate.startsWith(`${cover.hash}.`));
+	if (name === undefined) return undefined;
+	const bytes = await readFile(join(dir, name)).catch(() => undefined);
+	return bytes === undefined ? undefined : imageSize(bytes);
 }
 
 /** A JPEG's frame header or a PNG's IHDR, whichever the bytes are. */

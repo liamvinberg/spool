@@ -11,7 +11,6 @@ import {
 	scanCoverSchemes,
 	scanCovers,
 	scanDatedCovers,
-	UnservableCoverError,
 	writeCaptureError,
 	writeCover,
 } from "./thumbs";
@@ -101,7 +100,7 @@ describe("writing a cover", () => {
 	});
 
 	it("refuses bytes the store cannot serve", () => {
-		expect(() => writeCover(project(), "home", Buffer.from("nope"))).toThrow(UnservableCoverError);
+		expect(() => writeCover(project(), "home", Buffer.from("nope"))).toThrow("a cover must be one PNG or JPEG image");
 	});
 });
 
@@ -153,14 +152,14 @@ describe("recording a capture failure (#173)", () => {
 });
 
 describe("the colour scheme a cover was taken in", () => {
-	it("is written beside a cover that follows one, and retires with it", () => {
+	it("is written beside a cover that follows one, and retires with it", async () => {
 		const root = project();
 		writeCover(root, "night", JPEG, "dark");
 		writeCover(root, "plain", PNG);
-		expect(scanCoverSchemes(root)).toEqual(new Map([["night", "dark"]]));
+		expect(await scanCoverSchemes(root)).toEqual(new Map([["night", "dark"]]));
 		// a later picture that follows no scheme takes the record with it
 		writeCover(root, "night", OTHER_JPEG);
-		expect(scanCoverSchemes(root)).toEqual(new Map());
+		expect(await scanCoverSchemes(root)).toEqual(new Map());
 	});
 
 	it("is never mistaken for a cover", () => {
@@ -172,14 +171,14 @@ describe("the colour scheme a cover was taken in", () => {
 });
 
 describe("a cover's own size", () => {
-	it("reads a stored JPEG's frame header", () => {
+	it("reads a stored JPEG's frame header", async () => {
 		const root = project();
 		// SOI, an APP0 segment to step over, then a baseline frame header: 1731 high, 800 wide
 		const jpeg = Buffer.from([
 			0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x06, 0xc3, 0x03, 0x20, 0x03,
 		]);
 		writeCover(root, "home", jpeg);
-		expect(coverSize(root, "home")).toEqual({ width: 800, height: 1731 });
+		expect(await coverSize(root, "home")).toEqual({ width: 800, height: 1731 });
 	});
 
 	it("reads a PNG's header", () => {
@@ -190,9 +189,9 @@ describe("a cover's own size", () => {
 		expect(imageSize(png)).toEqual({ width: 800, height: 500 });
 	});
 
-	it("knows nothing of a frame with no cover, or bytes it cannot read", () => {
+	it("knows nothing of a frame with no cover, or bytes it cannot read", async () => {
 		const root = project();
-		expect(coverSize(root, "home")).toBeUndefined();
+		expect(await coverSize(root, "home")).toBeUndefined();
 		expect(imageSize(JPEG)).toBeUndefined();
 	});
 });

@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import { type ColorScheme, captureRasterSize, coverCaptureScale } from "../cover";
+import { captureRasterSize, coverCaptureScale } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
@@ -868,7 +868,13 @@ export function createDaemonApp({
 							// read yet could be under any frame
 							for (const frame of event.frames ?? frameNames(root) ?? []) owe(frame);
 						} else if (event.kind === "geometry" && frameExists(root, event.frame)) {
-							if (resized(root, event.frame)) owe(event.frame);
+							void resized(root, event.frame).then(
+								(owed) => owed && owe(event.frame),
+								() => {
+									// the same, read later: a cover or sidecar past the design
+									// boundary owes nothing, and must never take the daemon down
+								},
+							);
 						}
 					} catch {
 						// a project whose design folder went strange owes nothing it can be asked
@@ -884,12 +890,13 @@ export function createDaemonApp({
 	 * frame nobody is looking at. Those are owed again, behind anything edited,
 	 * and nothing else is: most frames look the same in both.
 	 */
-	function restale(scheme: ColorScheme): void {
+	async function restale(): Promise<void> {
 		for (const root of boothWatches.keys()) {
 			const project = basename(root);
 			try {
-				for (const [frame, taken] of scanCoverSchemes(root)) {
-					if (taken !== scheme && frameExists(root, frame))
+				for (const [frame, taken] of await scanCoverSchemes(root)) {
+					// the scheme may have changed again while the store was read
+					if (taken !== booth.scheme && frameExists(root, frame))
 						booth.enqueue({ root, project, frame, reason: "stale" });
 				}
 			} catch {
@@ -904,8 +911,8 @@ export function createDaemonApp({
 	 * resize is, because the cover's layout and its shape are both the old
 	 * size's (#113).
 	 */
-	function resized(root: string, frame: string): boolean {
-		const stored = coverSize(root, frame);
+	async function resized(root: string, frame: string): Promise<boolean> {
+		const stored = await coverSize(root, frame);
 		if (stored === undefined) return true;
 		const { w, h } = frameGeometry(root, frame);
 		const width = Math.max(1, Math.round(w));
@@ -1754,7 +1761,7 @@ export function createDaemonApp({
 				const { view, page, frames, scheme } = c.req.valid("json");
 				if (views.get(view) !== project.root) return c.body(null, 204);
 				booth.view(view, { root: project.root, page, frames });
-				if (booth.setScheme(scheme)) restale(scheme);
+				if (booth.setScheme(scheme)) void restale();
 				return c.body(null, 204);
 			},
 		)

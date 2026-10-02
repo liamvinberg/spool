@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
@@ -624,5 +624,35 @@ describe("health", () => {
 			pid: process.pid,
 			startedAt: expect.any(String),
 		});
+	});
+});
+
+describe("the booth's watch on a project", () => {
+	it("survives a geometry change whose stored cover lies past the design boundary", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		rmSync(join(root, "design", ".spool"), { recursive: true, force: true });
+		symlinkSync(makeTempDir(), join(root, "design", ".spool"), "dir");
+		const rejected: unknown[] = [];
+		const onRejection = (reason: unknown) => rejected.push(reason);
+		process.on("unhandledRejection", onRejection);
+		onTestFinished(() => {
+			process.off("unhandledRejection", onRejection);
+		});
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await app.request(`/api/p/${name}/events`, { signal: controller.signal }));
+		await events.next();
+
+		writeDesignFile(root, "frames/home/frame.json", `${JSON.stringify({ x: 0, y: 0, w: 390, h: 844 })}\n`);
+		let change: SseEvent;
+		do change = await events.next(10_000);
+		while ((change.data as { kind?: string }).kind !== "geometry");
+		// the booth hears the same change, and reads the stored cover's size after it
+		await new Promise((done) => setTimeout(done, 200));
+
+		expect(rejected).toEqual([]);
 	});
 });
