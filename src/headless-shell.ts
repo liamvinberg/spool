@@ -38,14 +38,42 @@ export class MissingHeadlessShellError extends Error {
 	}
 }
 
-export async function launchHeadlessShell(): Promise<Browser> {
+/** One running shell: the browser to drive, and two ways to end its process. */
+export interface HeadlessShell {
+	browser: Browser;
+	/** Close the browser and wait for its process to end. */
+	close(): Promise<void>;
+	/** End its process outright, whether or not it answers. */
+	kill(): Promise<void>;
+}
+
+/**
+ * Launch the shell as a server playwright then connects to, rather than as a
+ * browser it owns. The difference is the handle: a server can always be killed
+ * by its process, whatever the browser itself is doing, and a browser whose
+ * close never returns (seen on M1 Macs) or whose renderer is wedged must never
+ * be able to keep the memory it holds.
+ */
+export async function launchHeadlessShell(): Promise<HeadlessShell> {
+	let server: Awaited<ReturnType<typeof chromium.launchServer>>;
 	try {
-		return await chromium.launch({ channel: "chromium-headless-shell", headless: true, args: headlessShellArgs() });
+		server = await chromium.launchServer({
+			channel: "chromium-headless-shell",
+			headless: true,
+			args: headlessShellArgs(),
+		});
 	} catch (error) {
 		// playwright's stable phrasing for a build that is not in the cache
 		if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
 			throw new MissingHeadlessShellError();
 		}
+		throw error;
+	}
+	try {
+		const browser = await chromium.connect(server.wsEndpoint());
+		return { browser, close: () => server.close(), kill: () => server.kill() };
+	} catch (error) {
+		await server.kill();
 		throw error;
 	}
 }

@@ -1,6 +1,11 @@
-import type { Browser, BrowserContext, CDPSession, ConsoleMessage, Page } from "playwright-core";
+import type { BrowserContext, CDPSession, ConsoleMessage, Page } from "playwright-core";
 import { COVER_QUALITY, type ColorScheme, captureRasterSize, coverCaptureScale, SETTLE_BUDGET_MS } from "../cover";
-import { fetchHeadlessShell, launchHeadlessShell, MissingHeadlessShellError } from "../headless-shell";
+import {
+	fetchHeadlessShell,
+	type HeadlessShell,
+	launchHeadlessShell,
+	MissingHeadlessShellError,
+} from "../headless-shell";
 import { pageParent } from "../page-path";
 import { settleSource } from "./document";
 
@@ -293,7 +298,7 @@ export interface BoothDeps {
 	/** A job for this frame is over, whatever came of it. */
 	finished?(root: string, frame: string): void;
 	/** The browser; tests hand in their own. */
-	launch?(): Promise<Browser>;
+	launch?(): Promise<HeadlessShell>;
 	/** The first-run fetch of the pinned shell; tests hand in their own. */
 	fetch?(): Promise<void>;
 	/** Something worth a line in the daemon's log. */
@@ -345,10 +350,8 @@ interface Tab {
 }
 
 interface Running {
-	browser: Promise<Browser>;
+	shell: Promise<HeadlessShell>;
 	context: Promise<BrowserContext> | undefined;
-	/** The browser process, once known, so a close that hangs can end it. */
-	pid: number | undefined;
 }
 
 /** A wait the booth enforces from outside the page ran out. */
@@ -453,51 +456,39 @@ export function createBooth(deps: BoothDeps) {
 	}
 
 	async function shut(held: Running): Promise<void> {
-		let browser: Browser;
+		let shell: HeadlessShell;
 		try {
-			browser = await held.browser;
+			shell = await held.shell;
 		} catch {
 			return;
 		}
 		try {
-			await within(browser.close(), CLOSE_MS, "close");
+			await within(shell.close(), CLOSE_MS, "close");
 		} catch {
 			// a close that never returns (seen on M1 Macs) must not keep the memory
 			// it was meant to free
-			if (held.pid !== undefined) {
-				try {
-					process.kill(held.pid, "SIGKILL");
-				} catch {}
-			}
+			await shell.kill().catch(() => {});
 		}
 	}
 
 	function browserNow(): Running {
 		if (running !== undefined) return running;
-		const next: Running = { browser: start(), context: undefined, pid: undefined };
+		const next: Running = { shell: start(), context: undefined };
 		running = next;
 		const forget = () => {
 			if (running !== next) return;
 			running = undefined;
 			tabs.clear();
 		};
-		next.browser.then(async (browser) => {
+		next.shell.then((shell) => {
 			// a browser that died (its GPU process took it down, someone killed it)
 			// is relaunched by the next job rather than asked for tabs forever
-			browser.on("disconnected", forget);
-			try {
-				const session = await browser.newBrowserCDPSession();
-				const { processInfo } = (await session.send("SystemInfo.getProcessInfo")) as {
-					processInfo: Array<{ type: string; id: number }>;
-				};
-				next.pid = processInfo.find((entry) => entry.type === "browser")?.id;
-				await session.detach();
-			} catch {}
+			shell.browser.on("disconnected", forget);
 		}, forget);
 		return next;
 	}
 
-	async function start(): Promise<Browser> {
+	async function start(): Promise<HeadlessShell> {
 		try {
 			return await launch();
 		} catch (error) {
@@ -527,8 +518,8 @@ export function createBooth(deps: BoothDeps) {
 		if (held !== undefined) retire(slot, held);
 		try {
 			const live = browserNow();
-			const browser = await live.browser;
-			live.context ??= browser.newContext({ viewport: null });
+			const shell = await live.shell;
+			live.context ??= shell.browser.newContext({ viewport: null });
 			const context = await live.context;
 			const page = await context.newPage();
 			const cdp = await context.newCDPSession(page);
