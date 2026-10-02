@@ -742,6 +742,16 @@ it("captures through the isolated worker while preserving output and cleanup", {
 			return [canvas.width, canvas.height];
 		}),
 	).toEqual([0, 0]);
+	// The worker encodes at once: Chromium holds a toBlob() on a page's main
+	// thread for an idle period, up to a second, and this page rarely gets one.
+	expect(
+		await retriedWorker.evaluate(
+			() =>
+				(
+					window as unknown as { __captureCanvasStats: { read(): { toBlobCalls: number } } }
+				).__captureCanvasStats.read().toBlobCalls,
+		),
+	).toBe(0);
 	await page.locator("#direct-worker").evaluate((iframe: HTMLIFrameElement) => {
 		iframe.src = "about:blank";
 		iframe.remove();

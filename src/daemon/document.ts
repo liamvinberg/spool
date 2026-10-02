@@ -36,7 +36,7 @@ const captureWorkerJs = `(() => {
 	const MAX_SOURCE_EDGE = 32 * 1024;
 	const MAX_SVG_NODES = 50002;
 	const MAX_CAPTURE_OUTPUT_PIXELS = ${MAX_CAPTURE_OUTPUT_PIXELS};
-	const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+	const MAX_OUTPUT_CHARS = Math.ceil((64 * 1024 * 1024) / 3) * 4 + 32;
 	const REQUEST_ID = /^[0-9a-f]{32}$/;
 	const SAFE_FONT_DATA_URL = /^data:font\\/(?:otf|ttf|woff2?);base64,[a-z0-9+/]+={0,2}$/i;
 	const SAFE_IMAGE_DATA_URL = /^data:image\\/(?:${CAPTURE_IMAGE_TYPES});base64,[a-z0-9+/]+={0,2}$/i;
@@ -195,25 +195,20 @@ const captureWorkerJs = `(() => {
 		};
 	}
 
-	function blobDataUrl(blob) {
-		if (blob.size === 0 || blob.size > MAX_OUTPUT_BYTES) {
-			return Promise.reject(new Error("capture output too large"));
-		}
-		return new Promise((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () => resolve(reader.result);
-			reader.onerror = () => reject(reader.error || new Error("blob read failed"));
-			reader.readAsDataURL(blob);
-		});
-	}
-
-	function canvasBlob(canvas, type, quality) {
-		return new Promise((resolve, reject) => {
-			canvas.toBlob((blob) => {
-				if (blob) resolve(blob);
-				else reject(new Error("canvas blob encoding failed"));
-			}, type, quality);
-		});
+	// The encode happens at once, through toDataURL(). Chromium runs toBlob(),
+	// and an OffscreenCanvas's convertToBlob() too, as an idle task whenever it
+	// is on a page's main thread, and forces it only after
+	// kIdleTaskStartTimeoutDelayMs, a whole second on the Mac
+	// (canvas_async_blob_creator.cc). This page rasters while frames are
+	// booting beside it and rarely sees an idle period, so a cover's encode
+	// would often wait out the whole timeout before it began. Encoding at once
+	// does the same work without the wait, and its data URL is what the reply
+	// carries anyway.
+	function encode(canvas, type, quality) {
+		const url = canvas.toDataURL(type, quality);
+		if (!url.startsWith("data:" + type + ";base64,")) throw new Error("canvas encoding failed");
+		if (url.length > MAX_OUTPUT_CHARS) throw new Error("capture output too large");
+		return url;
 	}
 
 	// One image off one parsed snapshot; the daemon stores the reported raster as-is.
@@ -232,10 +227,10 @@ const captureWorkerJs = `(() => {
 			context.fillStyle = "#fff";
 			context.fillRect(0, 0, job.outputWidth, job.outputHeight);
 			context.drawImage(image, 0, 0, job.outputWidth, job.outputHeight);
-			const blob = job.targetWidth > 0
-				? await canvasBlob(canvas, "image/jpeg", ${COVER_QUALITY})
-				: await canvasBlob(canvas, "image/png");
-			return { url: await blobDataUrl(blob), width: job.outputWidth, height: job.outputHeight };
+			const url = job.targetWidth > 0
+				? encode(canvas, "image/jpeg", ${COVER_QUALITY})
+				: encode(canvas, "image/png");
+			return { url, width: job.outputWidth, height: job.outputHeight };
 		} finally {
 			image.src = "";
 			canvas.width = 0;
