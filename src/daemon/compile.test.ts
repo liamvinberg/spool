@@ -240,6 +240,25 @@ describe("the webfont revision a document is built at", () => {
 		expect(third.kind === "ok" && third.cache).toBe("miss");
 	});
 
+	it("names the document's etag, so a browser never keeps fonts a resolve replaced", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		let revision = 0;
+		const webfonts: Webfonts = {
+			resolve: async (css) => css,
+			read: async () => undefined,
+			revision: () => revision,
+		};
+		const compiler = createFrameCompiler("0.0.0-test", webfonts);
+
+		const before = await compiler.getDocument(root, "home", authority);
+		revision++;
+		const after = await compiler.getDocument(root, "home", authority);
+
+		expect(after.kind === "ok" && after.cache).toBe("miss");
+		expect(before.kind === "ok" && after.kind === "ok" && before.etag !== after.etag).toBe(true);
+	});
+
 	it("is checked again once a hit has rehashed the inputs", async () => {
 		const root = manyInputs();
 		let revision = 0;

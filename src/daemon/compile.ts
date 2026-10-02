@@ -336,8 +336,12 @@ async function compileFrame({
 	const hash = inputsHash(version, stamp, digests);
 	// A document a file moved under while it compiled is of no one state of the
 	// folder: it is named by its own bytes, never cached, and the next request
-	// compiles again.
-	const etag = settled ? hash : createHash("sha256").update(document).digest("hex");
+	// compiles again. A settled one is named by its inputs and the webfont
+	// revision it was built at, which changes its fonts with its inputs untouched
+	// (#80): without it a browser would revalidate yesterday's fonts as current.
+	const etag = settled
+		? createHash("sha256").update(`${hash}\0${fontsRevision}`).digest("hex")
+		: createHash("sha256").update(document).digest("hex");
 	return {
 		inputs: [...digests.keys()],
 		hash,

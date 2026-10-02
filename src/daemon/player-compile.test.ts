@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { createPlayerCompiler, type PlayerCompile } from "./play";
+import { createPlayerCompiler, type PlayerCompile, playerEtag } from "./play";
 import { listProjectFrames } from "./projection";
 import type { Webfonts } from "./webfonts";
 
@@ -43,6 +43,26 @@ describe("the player's cache", () => {
 
 		expect(revision).toBe(1);
 		expect(again.cache).toBe("miss");
+	});
+
+	it("names the bundle by the webfont revision too, so a browser never keeps fonts a resolve replaced", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		let revision = 0;
+		const player = createPlayerCompiler(
+			"0.0.0-test",
+			webfontsAt(() => revision),
+		);
+		const frames = listProjectFrames(root).frames;
+		const config = { project: "p", projectCapability: "c", start: "home", scenario: "default", frames: {} };
+
+		const before = await player.getBundle(root, frames);
+		revision++;
+		const after = await player.getBundle(root, frames);
+
+		if (before.kind !== "ok" || after.kind !== "ok") throw new Error("the player did not compile");
+		expect(after.cache).toBe("miss");
+		expect(playerEtag(after.bundle, config)).not.toBe(playerEtag(before.bundle, config));
 	});
 
 	it("keeps a bundle of the sources as read when an edit lands mid-compile, and compiles the edit next", async () => {

@@ -320,8 +320,10 @@ async function compilePlayer(
 	// A bundle a file moved under while it compiled (a stylesheet two frames read
 	// differently) is named by its own contents, as a frame document is by its
 	// bytes, so no revalidation takes it for the sources now. It is never cached.
+	// A settled bundle carries the webfont revision in its name, as a frame
+	// document's etag does (#80), since a resolve changes its fonts alone.
 	const hash = settled
-		? inputsKey
+		? createHash("sha256").update(`${inputsKey}\0${fontsRevision}`).digest("hex")
 		: createHash("sha256")
 				.update(JSON.stringify([entry, [...chunks], fonts, transitions, importMap]))
 				.digest("hex");
