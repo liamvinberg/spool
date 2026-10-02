@@ -36,6 +36,7 @@ import {
 	postTrash,
 	postWalk,
 	putCanvasState,
+	putCanvasView,
 	putCover,
 	putGeometry,
 	putPlaces,
@@ -65,6 +66,7 @@ import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
+import { framesOnScreen } from "./booth-view";
 import {
 	type Box,
 	boundsOf,
@@ -3715,11 +3717,44 @@ export function ProjectCanvas({
 		for (const frame of allFramesRef.current) reloadFrameDocument(frame.name);
 	}, [refetchFrames, refetchFlows, reloadFrameDocument]);
 
+	/**
+	 * What this canvas shows, told to the daemon's photo booth: the page, and the
+	 * frames inside the viewport, which it photographs first. At rest and only
+	 * when it changed, never per tick. It rides under the name the event stream
+	 * handed this canvas in its hello, so it stops counting the moment the
+	 * stream does, and a stream that comes back hands out a new name and is
+	 * told again.
+	 */
+	const viewStream = useRef<string | null>(null);
+	const toldView = useRef("");
+	const tellView = useCallback(() => {
+		const view = viewStream.current;
+		const viewport = viewportRef.current;
+		if (view === null || restCameraRef.current === null || viewport === null) return;
+		const frames = framesOnScreen(framesRef.current, restCameraRef.current, {
+			width: viewport.clientWidth,
+			height: viewport.clientHeight,
+		});
+		const told = JSON.stringify([view, activePageRef.current, frames]);
+		if (told === toldView.current) return;
+		toldView.current = told;
+		putCanvasView(project, { view, page: activePageRef.current, frames });
+	}, [project]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a page switch and frames arriving are triggers too — the report reads both through refs
+	useEffect(() => {
+		if (restCamera !== null && loaded) tellView();
+	}, [restCamera, loaded, activePage, visibleFrames, tellView]);
+
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
 		return subscribeSse(
 			`/api/p/${encodeURIComponent(project)}/events`,
 			{
+				hello: (data) => {
+					const view = (data as { view?: unknown }).view;
+					viewStream.current = typeof view === "string" ? view : null;
+					tellView();
+				},
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (["frame", "shared", "geometry"].includes(event.kind))
@@ -3772,7 +3807,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [changedUnderHand, noteCover, project, refetchFlows, refetchFrames, reloadOrHold, resync]);
+	}, [changedUnderHand, noteCover, project, refetchFlows, refetchFrames, reloadOrHold, resync, tellView]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost

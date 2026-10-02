@@ -144,6 +144,23 @@ export async function saveCanvasState(project: string, state: CanvasState): Prom
 	if (!response.ok) throw new Error("Could not save the canvas position. Try again.");
 }
 
+/** What this canvas shows, told to the photo booth so it photographs that first. */
+export interface CanvasView {
+	/** The id the project's event stream handed this canvas in its hello. */
+	view: string;
+	page: string;
+	/** The frames inside the viewport, by name. */
+	frames: string[];
+}
+
+/**
+ * Tell the daemon what this canvas shows. Never waited on and never retried:
+ * a lost report costs the booth's order one camera rest, not a picture.
+ */
+export function putCanvasView(project: string, view: CanvasView): void {
+	void client.api.p[":project"].view.$put({ param: { project }, json: view }).catch(() => {});
+}
+
 export async function browseDirectory(path?: string): Promise<FsListing | undefined> {
 	const res = await client.api.fs.list.$get({ query: path === undefined ? {} : { path } });
 	if (!res.ok) return undefined;
