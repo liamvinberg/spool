@@ -561,12 +561,21 @@ export const read = (page: BrowserPage): Promise<BenchState> =>
  * Hold until the canvas stops mounting: the count unchanged across `stableMs`.
  * Reports when it stopped changing, not when the waiting ended, so "looks
  * complete" is not inflated by the window that proves it.
+ *
+ * The count is watched only once the canvas has drawn a frame shell. A canvas
+ * still booting holds no documents either, and on a loaded machine its UI can
+ * take seconds to draw, long enough for a count of zero to look stable. The
+ * draw gets its own wait, so a late one leaves the stability check its whole
+ * window; a page that never draws goes on to be checked as it is, and the
+ * caller's empty-screen guard says so. A count that never holds still for
+ * `stableMs` within `timeoutMs` is not a settled canvas, and throws.
  */
 export async function settle(
 	page: BrowserPage,
 	stableMs: number,
 	timeoutMs: number,
 ): Promise<{ count: number; stableAt: number }> {
+	await page.waitForSelector("[data-frame-label]", { state: "attached", timeout: timeoutMs }).catch(() => undefined);
 	const deadline = Date.now() + timeoutMs;
 	let count = await mountedCount(page);
 	let since = Date.now();
@@ -578,7 +587,24 @@ export async function settle(
 			since = Date.now();
 		} else if (Date.now() - since >= stableMs) return { count, stableAt: since };
 	}
-	return { count, stableAt: since };
+	throw new Error(`the canvas never held its document count still for ${stableMs} ms in ${timeoutMs / 1000} s`);
+}
+
+/**
+ * `settle`, then a refusal to go on over an empty screen: a canvas showing
+ * nothing is fast at everything, and every number taken over it would read as
+ * good news.
+ */
+export async function settleOnFrames(
+	page: BrowserPage,
+	stableMs: number,
+	timeoutMs: number,
+): Promise<{ count: number; stableAt: number }> {
+	const settled = await settle(page, stableMs, timeoutMs);
+	if ((await framesOnCanvas(page)) === 0) {
+		throw new Error("the canvas settled with no frames on screen, so this run would measure an empty screen");
+	}
+	return settled;
 }
 
 export const PAN_EVENTS = 90;

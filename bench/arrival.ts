@@ -10,6 +10,7 @@ import {
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
+	settleOnFrames,
 	startDaemon,
 	VIEWPORT,
 	writeCamera,
@@ -777,6 +778,9 @@ async function measure(
 	// taken without this carries that block inside it.
 	if (blockFlows) await page.route(/\/api\/p\/[^/]+\/flows$/, (route) => void route.abort());
 	await page.goto(url, { waitUntil: "domcontentloaded" });
+	// a canvas that has not drawn yet is quiet too: the wait below means
+	// something only once the page is on screen, and an empty one is a failure
+	await settleOnFrames(page, 1000, 60_000);
 
 	// Hold until the canvas stops mounting *and* every mounted frame has arrived.
 	// Watching the iframe count alone stops 2.5 s after the final insert, which
@@ -1035,7 +1039,12 @@ async function main(): Promise<void> {
 						process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`),
 					);
 					process.stderr.write(`bench: zoom ${zoom} — ${arm.label} ${repeat + 1}/${options.repeats}\n`);
-					const result = await measure(context, page, url, zoom, arm, repeat);
+					let result: RunResult;
+					try {
+						result = await measure(context, page, url, zoom, arm, repeat);
+					} finally {
+						await context.close();
+					}
 					process.stderr.write(
 						`bench:   ${result.mounted} mounted, ${result.measured} arrivals decomposed, ${result.wireSeen} requests seen\n`,
 					);
@@ -1046,8 +1055,14 @@ async function main(): Promise<void> {
 							`no readable documents mounted at zoom ${zoom}; choose a zoom that makes these frames live, then verify the planned camera if it still mounts none`,
 						);
 					}
+					// documents that all fell out of the join are an empty table, not a result
+					if (result.measured === 0) {
+						const why = Object.entries(result.dropped).map(([reason, n]) => `${n} ${reason}`);
+						throw new Error(
+							`${result.mounted} documents mounted and none could be decomposed (${why.join(", ")})`,
+						);
+					}
 					results.push(result);
-					await context.close();
 					// let the settle-time camera save land before the next plan overwrites it
 					await new Promise((wait) => setTimeout(wait, 1500));
 				}

@@ -6,7 +6,6 @@ import {
 	clearCopiedCovers,
 	copyProject,
 	type FrameBox,
-	framesOnCanvas,
 	freePort,
 	mountedCount,
 	ms,
@@ -15,6 +14,8 @@ import {
 	prepareCurrentCovers,
 	quantile,
 	quiet,
+	settle,
+	settleOnFrames,
 	startDaemon,
 	VIEWPORT,
 	writeCamera,
@@ -586,20 +587,6 @@ function windowStats(state: BenchState, from: number, to: number): GestureStats 
 const now = (page: Page): Promise<number> => page.evaluate(() => performance.now());
 const read = (page: Page): Promise<BenchState> =>
 	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
-async function settle(page: Page, stableMs: number, timeoutMs: number): Promise<number> {
-	const deadline = Date.now() + timeoutMs;
-	let count = await mountedCount(page);
-	let since = Date.now();
-	while (Date.now() < deadline) {
-		await page.waitForTimeout(150);
-		const next = await mountedCount(page);
-		if (next !== count) {
-			count = next;
-			since = Date.now();
-		} else if (Date.now() - since >= stableMs) return count;
-	}
-	return count;
-}
 
 const PAN_EVENTS = 90;
 const PAN_STEP_PX = 26;
@@ -845,11 +832,13 @@ async function jobsArm(
 	// This arm starts at picture zoom, so the thing to insist on is that it is
 	// drawing frames. A run over an empty page would report a perfectly smooth
 	// gesture over nothing.
-	const mountedAfter = await settle(page, 1000, 40_000);
-	if ((await framesOnCanvas(page)) === 0) {
-		await context.close();
-		throw new Error("the canvas settled with no frames on screen — this run would measure an empty screen");
-	}
+	const mountedAfter = await settleOnFrames(page, 1000, 40_000).then(
+		(settled) => settled.count,
+		async (error: unknown) => {
+			await context.close();
+			throw error;
+		},
+	);
 	await throttleEveryFrame(context, page, rate);
 	const state0 = await read(page);
 	const refreshMs = refreshInterval(state0);
@@ -929,11 +918,10 @@ async function costArm(
 ): Promise<CostRow> {
 	resetCamera();
 	const { context, page } = await open(browser, url, { hooks: null, captureIdle: 0, throttle: rate });
-	await settle(page, 1000, 40_000);
-	if ((await framesOnCanvas(page)) === 0) {
+	await settleOnFrames(page, 1000, 40_000).catch(async (error: unknown) => {
 		await context.close();
-		throw new Error("the canvas settled with no frames on screen — this run would price a job on an empty screen");
-	}
+		throw error;
+	});
 	await throttleEveryFrame(context, page, rate);
 	const legs: JobLeg[] = [];
 	for (const spec of specs) {
