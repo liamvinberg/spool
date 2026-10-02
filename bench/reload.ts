@@ -1,16 +1,26 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { type Browser, type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
+import { type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
 import {
-	copyProject,
+	type BuildRun,
+	buildsHeader,
+	type Camera,
+	type Page as CanvasPage,
+	clearCopiedCovers,
 	DEFAULT_ZOOM,
-	freePort,
+	type FrameBox,
+	interleave,
+	median,
 	ms,
-	pageToMeasure,
+	oneMinuteLoad,
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
-	startDaemon,
+	ROOT_PAGE,
+	type Subject,
+	startSubjects,
+	stopSubjects,
+	takeBuildOptions,
 	VIEWPORT,
 	writeCamera,
 } from "./harness.ts";
@@ -29,7 +39,12 @@ import {
  *
  * **The completion condition.** `settle` had to guess when things had stopped
  * because it did not know what it was waiting for. This one knows the target:
- * every frame on the page that *has* a stored cover holds a decoded picture.
+ * every frame the planned camera puts in the window holds a decoded picture.
+ * A page larger than the window has covers nobody is looking at, and the
+ * browser is free to refuse decoding those: on a warm n1000 reload Chromium
+ * refused the first `decode()` of 534 to 744 off-screen covers with
+ * "EncodingError: The source image cannot be decoded", so waiting on all of
+ * them never finished and measured something no person sees.
  * The timestamp is the page's own `performance.now()` at the last cover's
  * decode, which on a reload is measured from that document's navigation start,
  * so there is no stability window to subtract and no arbitrary constant.
@@ -51,14 +66,21 @@ import {
  * first load per name — and since #111 both name the same addresses, so the two
  * elements are one request rather than two.
  *
- * **The setup is not part of the timing.** The canonical subject has no
- * app-owned state. This script first lets the canvas at picture zoom create
- * exactly one current cover for every measured frame in its private copy, fails
- * if that coverage does not complete, then opens a fresh context for the
- * existing reload path.
+ * **Covers are timed, then the reload is.** The canonical subject has no
+ * app-owned state. Each round first deletes the copy's covers and times the
+ * canvas at picture zoom from opening to one current cover for every measured
+ * frame, failing if that coverage does not complete, then opens a fresh context
+ * for the reload path. One untimed preparation before the rounds warms the
+ * daemon's compile cache, so every timed one starts from the same place.
+ *
+ * `--builds` compares spool builds the way `bench/canvas.ts` does: each build
+ * on its own copy and daemon, `--rounds` interleaved, the commit of each
+ * printed with its numbers, and every figure reported as the median of the
+ * rounds beside the worst round.
  *
  *   pnpm build && node bench/reload.ts --project <spool-bench>
  *   node bench/reload.ts --project <path> --page n200 --repeats 5 --out reload.json
+ *   node bench/reload.ts --project <path> --page n200 --builds base=<checkout>,cand=<checkout> --rounds 2
  *
  * Run it with node's own type stripping, not tsx: the watcher below is
  * serialized into the page by playwright, and esbuild's keep-names transform
@@ -77,16 +99,14 @@ interface Options {
 
 /**
  * The arms. `stock` is the canvas as shipped; `flows blocked` is the null
- * control that names the cause, aborting exactly one request and changing
- * nothing else. The canvas tolerates it by design — `canvas.tsx:546` returns
- * early when the fetch gives back nothing, so the arrows are missing and every
- * other thing on screen is identical.
+ * control for the link graph, aborting its request. The canvas tolerates it by
+ * design — the arrows are missing and every other thing on screen is identical.
  *
- * Read the warm row of `stock` only. Routing a request disables the page's HTTP
- * cache in Chromium, so `flows blocked` fetches every cover on both of its
- * passes and its "warm" row is a cold measurement wearing the wrong label. The
- * null control is there to name a cause in the cold numbers, which it still
- * does; caching is the other arm's to report.
+ * The control is not free. Playwright intercepts every request once any route
+ * is set, matching the pattern on its own side, so the blocked arm also pays a
+ * driver round trip per cover and loses the page's HTTP cache: its "warm" row
+ * is a cold measurement wearing the wrong label. Read the warm row of `stock`
+ * only, and read the arms' cold rows against each other knowing that.
  */
 const ARMS = [
 	{ label: "stock", blockFlows: false },
@@ -138,10 +158,14 @@ function parseArgs(argv: string[]): Options {
 interface CoverMark {
 	load: number;
 	decode?: number;
+	/** Set when `decode()` was refused twice: the cover will never be measured as decoded. */
+	refused?: string;
 }
 
 interface CoverWatch {
 	marks: Record<string, CoverMark>;
+	/** Every refused `decode()`, retries included, with the browser's own reason. */
+	refusals: { frame: string; retry: boolean; reason: string }[];
 }
 
 /**
@@ -153,10 +177,31 @@ interface CoverWatch {
  * `load` says the bytes arrived; `decode()` says the bitmap is ready to paint.
  * The bar is what a person sees, so completion is the decode, and both are kept
  * because the difference between them is the decode cost the map cares about.
+ *
+ * A refused `decode()` is not a cover still on its way. An element replaced by a
+ * newer one is no refusal, since its successor decodes the same address; any
+ * other is retried once, and a second refusal marks the cover as one that will
+ * never decode, so the wait can end and the report can say so.
  */
 function watchCovers(): void {
 	const marks: Record<string, CoverMark> = {};
+	const refusals: CoverWatch["refusals"] = [];
 	const seen = new WeakSet<Element>();
+	const decode = (img: HTMLImageElement, alt: string, retry: boolean): void => {
+		img.decode()
+			.then(() => {
+				const mark = marks[alt];
+				if (mark !== undefined && mark.decode === undefined) mark.decode = performance.now();
+			})
+			.catch((error: unknown) => {
+				if (!img.isConnected) return;
+				const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+				refusals.push({ frame: alt, retry, reason });
+				const mark = marks[alt];
+				if (!retry) setTimeout(() => decode(img, alt, true), 100);
+				else if (mark !== undefined && mark.decode === undefined) mark.refused = reason;
+			});
+	};
 	const note = (node: Element): void => {
 		if (node.tagName !== "IMG" || seen.has(node)) return;
 		seen.add(node);
@@ -167,14 +212,7 @@ function watchCovers(): void {
 			// first load per frame wins: a mounted frame renders a second
 			// thumbnail of its own, and that one is not the reload's cover
 			if (marks[alt] === undefined) marks[alt] = { load: performance.now() };
-			img.decode()
-				.then(() => {
-					const mark = marks[alt];
-					if (mark !== undefined && mark.decode === undefined) mark.decode = performance.now();
-				})
-				.catch(() => {
-					// removed from the document before it could decode
-				});
+			decode(img, alt, false);
 		};
 		if (img.complete && img.naturalWidth > 0) onLoad();
 		else img.addEventListener("load", onLoad, { once: true });
@@ -188,11 +226,11 @@ function watchCovers(): void {
 	new MutationObserver((records) => {
 		for (const record of records) for (const added of record.addedNodes) scan(added);
 	}).observe(document, { childList: true, subtree: true });
-	(globalThis as unknown as { __covers: CoverWatch }).__covers = { marks };
+	(globalThis as unknown as { __covers: CoverWatch }).__covers = { marks, refusals };
 }
 
-const readMarks = (page: Page): Promise<Record<string, CoverMark>> =>
-	page.evaluate(() => (globalThis as unknown as { __covers: CoverWatch }).__covers.marks);
+const readCovers = (page: Page): Promise<CoverWatch> =>
+	page.evaluate(() => (globalThis as unknown as { __covers: CoverWatch }).__covers);
 
 interface CoverResponse {
 	frame: string;
@@ -398,76 +436,108 @@ function census(wire: Map<string, WireRequest>): Census[] {
 }
 
 interface Sample {
-	/** Page time at the last cover's `load` — bytes in hand for every frame. */
+	/** Page time at the last on-screen cover's `load` — bytes in hand for every one. */
 	loadCompleteMs: number;
-	/** Page time at the last cover's `decode` — the bar: every frame holds a picture. */
+	/** Page time at the last on-screen cover's `decode` — the bar: every one holds a picture. */
 	decodeCompleteMs: number;
-	/** Page time at the last cover response — everything after this is not network. */
+	/** Page time at the last on-screen cover response — everything after this is not network. */
 	lastResponseEndMs: number;
 	coversLoaded: number;
 	census: Census[];
 	/** How long polling took to notice, so the census's scope is honest. */
 	noticedAfterMs: number;
 	/**
-	 * Every cover's decode time, sorted. The shape is the whole argument: covers
-	 * landing evenly across the window are a queue draining, covers landing
-	 * together at the end are something releasing them all at once.
+	 * Every on-screen cover's decode time, sorted. The shape is the whole
+	 * argument: covers landing evenly across the window are a queue draining,
+	 * covers landing together at the end are something releasing them all at once.
 	 */
 	decodeTimeline: number[];
 	/** Every request, so a surprising total can be read back without re-running. */
 	wire: WireRequest[];
+	/** The link graph's daemon time, read once it answered; NaN when it never did. */
+	flowsMs: number;
+	/** Whether the link graph was still unanswered when the last cover decoded. */
+	flowsAfterComplete: boolean;
+	/** Refused `decode()` calls on any cover, first tries and retries. */
+	refusals: CoverWatch["refusals"];
+	/** On-screen covers whose decode was refused twice, so the bar left them out. */
+	undecoded: string[];
+	/** The one-minute load average as this reload began. */
+	load1: number;
 }
 
 const POLL_MS = 40;
 
 /**
- * Hold until every covered frame holds a decoded picture, then report the
- * page's own timestamp of the last one. Fails loudly rather than timing out
- * into a plausible number: a run that measures nothing reports it as fast, and
- * this map has been bitten by that twice.
+ * Hold until every cover on screen holds a decoded picture or has had its
+ * decode refused twice, then report the page's own timestamp of the last one.
+ * Fails loudly rather than timing out into a plausible number: a run that
+ * measures nothing reports it as fast, and this map has been bitten by that
+ * twice.
  */
-async function waitComplete(page: Page, expected: string[], timeoutMs: number): Promise<Record<string, CoverMark>> {
+async function waitComplete(page: Page, expected: string[], timeoutMs: number): Promise<CoverWatch> {
 	const deadline = Date.now() + timeoutMs;
-	let marks: Record<string, CoverMark> = {};
+	let covers: CoverWatch = { marks: {}, refusals: [] };
+	const done = (name: string): boolean =>
+		covers.marks[name]?.decode !== undefined || covers.marks[name]?.refused !== undefined;
 	while (Date.now() < deadline) {
-		marks = await readMarks(page);
-		if (expected.every((name) => marks[name]?.decode !== undefined)) return marks;
+		covers = await readCovers(page);
+		if (expected.every(done)) return covers;
 		await page.waitForTimeout(POLL_MS);
 	}
-	const noLoad = expected.filter((name) => marks[name] === undefined);
-	const noDecode = expected.filter((name) => marks[name] !== undefined && marks[name]?.decode === undefined);
+	const noLoad = expected.filter((name) => covers.marks[name] === undefined);
+	const noDecode = expected.filter((name) => covers.marks[name] !== undefined && !done(name));
+	const sample = (names: string[]): string =>
+		names.length > 0 ? ` (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", …" : ""})` : "";
 	throw new Error(
-		`the canvas never completed: ${noLoad.length} of ${expected.length} covers never loaded` +
-			`${noLoad.length > 0 ? ` (${noLoad.slice(0, 6).join(", ")}${noLoad.length > 6 ? ", …" : ""})` : ""}` +
-			`, ${noDecode.length} loaded but never decoded` +
-			`${noDecode.length > 0 ? ` (${noDecode.slice(0, 6).join(", ")}${noDecode.length > 6 ? ", …" : ""})` : ""}`,
+		`the canvas never completed: ${noLoad.length} of ${expected.length} covers on screen never loaded${sample(noLoad)}` +
+			`, ${noDecode.length} loaded but never decoded${sample(noDecode)}`,
 	);
 }
 
-async function sample(page: Page, watch: CdpWatch, expected: string[]): Promise<Sample> {
+async function sample(page: Page, watch: CdpWatch, expected: string[], blocked: boolean): Promise<Sample> {
 	watch.reset();
+	const load1 = oneMinuteLoad();
 	const started = Date.now();
 	await page.reload({ waitUntil: "commit" });
-	const marks = await waitComplete(page, expected, 60_000);
+	const covers = await waitComplete(page, expected, 60_000);
 	const noticedAt = Date.now();
 	// snapshot immediately: everything the frames fetch after completion is real
 	// traffic but it is not what the reload bar is about
 	const snapshot = new Map(watch.wire);
 	const taken = census(snapshot);
+	// the record's entries keep filling in after this, so this is read now
+	const flowsAfterComplete = flowsOf(snapshot.values())?.waitMs === undefined;
 	const responses = await readCoverResponses(page);
-	const loads = expected.map((name) => marks[name]?.load ?? Number.NaN);
-	const decodes = expected.map((name) => marks[name]?.decode ?? Number.NaN);
+	const decoded = expected.filter((name) => covers.marks[name]?.decode !== undefined);
+	const loads = expected.map((name) => covers.marks[name]?.load ?? Number.NaN);
+	const decodes = decoded.map((name) => covers.marks[name]?.decode ?? Number.NaN);
 	const wanted = new Set(expected);
 	const ends = responses.filter((entry) => wanted.has(entry.frame)).map((entry) => entry.responseEnd);
+	// The canvas no longer waits for the link graph (#109), so its request can
+	// still be unanswered when the last cover decodes, and the snapshot above
+	// holds no time for it. Its daemon time is read from the live record once it
+	// lands; the blocked arm aborted it, so it never will.
+	let flows = flowsOf(watch.wire.values());
+	const flowsDeadline = Date.now() + 15_000;
+	while (!blocked && flows?.waitMs === undefined && Date.now() < flowsDeadline) {
+		await page.waitForTimeout(100);
+		flows = flowsOf(watch.wire.values());
+	}
 	return {
 		loadCompleteMs: Math.max(...loads),
-		decodeCompleteMs: Math.max(...decodes),
+		decodeCompleteMs: decodes.length > 0 ? Math.max(...decodes) : Number.NaN,
 		lastResponseEndMs: ends.length > 0 ? Math.max(...ends) : Number.NaN,
-		coversLoaded: expected.filter((name) => marks[name] !== undefined).length,
+		coversLoaded: expected.filter((name) => covers.marks[name] !== undefined).length,
 		census: taken,
 		noticedAfterMs: noticedAt - started,
 		decodeTimeline: [...decodes].sort((a, b) => a - b),
 		wire: [...snapshot.values()],
+		flowsMs: flows?.waitMs ?? Number.NaN,
+		flowsAfterComplete,
+		refusals: covers.refusals,
+		undecoded: expected.filter((name) => covers.marks[name]?.decode === undefined),
+		load1,
 	};
 }
 
@@ -479,186 +549,293 @@ interface Run {
 	samples: Sample[];
 }
 
-/** The flows request, which the null control below removes. */
-const flowsOf = (sample: Sample): WireRequest | undefined =>
-	sample.wire.find((entry) => /\/flows$/.test(entry.url.split("?")[0] ?? ""));
+/** One round of one build: its timed cover preparation, then its reloads. */
+interface Round {
+	coverMs: number;
+	coverLoad: number;
+	runs: Run[];
+}
 
-function report(runs: Run[], expected: string[], page: string): string {
+/**
+ * The canvas's read of the link graph, which the null control removes. A boot
+ * asks for it twice, and on a cold cache the first ask is never answered, so
+ * the answered one is the one timed.
+ */
+function flowsOf(wire: Iterable<WireRequest>): WireRequest | undefined {
+	const reads = [...wire].filter((entry) => entry.method === "GET" && /\/flows$/.test(entry.url.split("?")[0] ?? ""));
+	return reads.find((entry) => entry.waitMs !== undefined) ?? reads[0];
+}
+
+/** The frames a camera puts in the window: the covers a person sees after a reload. */
+function onScreen(boxes: readonly FrameBox[], camera: Camera): FrameBox[] {
+	return boxes.filter((box) => {
+		const left = camera.x + box.x * camera.k;
+		const top = camera.y + box.y * camera.k;
+		return (
+			left < VIEWPORT.width && top < VIEWPORT.height && left + box.w * camera.k > 0 && top + box.h * camera.k > 0
+		);
+	});
+}
+
+const range = (values: number[]): string => {
+	const low = Math.min(...values).toFixed(1);
+	const high = Math.max(...values).toFixed(1);
+	return low === high ? low : `${low} to ${high}`;
+};
+
+/**
+ * One build's reloads, read round by round: each figure is taken as a median
+ * within its round, then reported as the median of those rounds and as the
+ * worst round whole, so one slow round is visible and one fast round cannot
+ * hide the rest. The single-sample tables read the last round's last reload.
+ */
+function report(rounds: readonly Round[], onScreenCount: number, page: CanvasPage): string {
 	const lines: string[] = [];
-	const column = (rows: Sample[], pick: (row: Sample) => number): number[] => rows.map(pick).sort((a, b) => a - b);
-	const p50 = (rows: Sample[], pick: (row: Sample) => number): number => quantile(column(rows, pick), 0.5);
-	lines.push(`page "${page === "" ? "root" : page}": ${expected.length} frames with a stored cover`);
+	const series = (run: Pick<Run, "arm" | "cache">): Sample[][] =>
+		rounds.map((round) => round.runs.find((each) => each.arm === run.arm && each.cache === run.cache)?.samples ?? []);
+	const within = (samples: Sample[], pick: (row: Sample) => number): number => median(samples.map(pick));
+	const across = (perRound: Sample[][], pick: (row: Sample) => number): number =>
+		median(perRound.map((samples) => within(samples, pick)));
+	const kinds = rounds[0]?.runs ?? [];
+	const coverGroup = (row: Sample): Census | undefined => row.census.find((group) => group.bucket === "cover");
+	lines.push(
+		`page "${page.page === ROOT_PAGE ? "root" : page.page}": ${onScreenCount} covers on screen of ${page.frames.length} frames`,
+	);
 	lines.push("");
-	lines.push("### reload to canvas looking complete");
+	lines.push("### reload to every cover on screen decoded");
 	lines.push("");
-	lines.push(`| arm | cache | last cover decoded (p50) | worst | last cover loaded (p50) | bar (2 s) |`);
-	lines.push(`|---|---|---|---|---|---|`);
-	for (const run of runs) {
-		if (run.samples.length === 0) continue;
-		const decode = column(run.samples, (row) => row.decodeCompleteMs);
-		const median = quantile(decode, 0.5);
+	lines.push(
+		`| arm | cache | rounds × reloads | median of rounds | worst round: median / worst reload | last cover loaded | bar (2 s) | load |`,
+	);
+	lines.push(`|---|---|---|---|---|---|---|---|`);
+	for (const run of kinds) {
+		const perRound = series(run);
+		const decode = (row: Sample): number => row.decodeCompleteMs;
+		const medians = perRound.map((samples) => within(samples, decode));
+		const worst = medians.indexOf(Math.max(...medians));
+		const middle = median(medians);
+		const worstReload = Math.max(...(perRound[worst] ?? []).map(decode));
 		lines.push(
-			`| ${run.arm} | ${run.cache} | **${ms(median)}** | ${ms(decode.at(-1) ?? Number.NaN)} | ${ms(p50(run.samples, (row) => row.loadCompleteMs))} | ${median < 2000 ? "**pass**" : "**miss**"} |`,
+			`| ${run.arm} | ${run.cache} | ${perRound.length} × ${perRound[0]?.length ?? 0} | **${ms(middle)}** | round ${worst + 1}: ${ms(medians[worst] ?? Number.NaN)} / ${ms(worstReload)} | ${ms(across(perRound, (row) => row.loadCompleteMs))} | ${middle < 2000 ? "**pass**" : "**miss**"} | ${range(perRound.flat().map((row) => row.load1))} |`,
 		);
 	}
 	lines.push("");
-	lines.push("### what the covers were waiting for");
+	lines.push("### what the covers were waiting for (median of rounds)");
 	lines.push("");
-	lines.push(`| arm | cache | covers queued p50 | daemon per cover p50 | \`/flows\` daemon time | complete |`);
+	lines.push(`| arm | cache | covers queued | daemon per cover | \`/flows\` daemon time | complete |`);
 	lines.push(`|---|---|---|---|---|---|`);
-	for (const run of runs) {
-		if (run.samples.length === 0) continue;
-		const covers = run.samples.map((row) => row.census.find((group) => group.bucket === "cover"));
-		const queued = covers.map((group) => group?.queuedP50 ?? Number.NaN).sort((a, b) => a - b);
-		const wait = covers.map((group) => group?.waitP50 ?? Number.NaN).sort((a, b) => a - b);
-		const flows = run.samples.map((row) => flowsOf(row)?.waitMs ?? Number.NaN).sort((a, b) => a - b);
+	for (const run of kinds) {
+		const perRound = series(run);
+		const late = perRound.flat().filter((row) => row.flowsAfterComplete).length;
+		const flowsCell =
+			run.arm === "flows blocked"
+				? "— (blocked)"
+				: `${ms(across(perRound, (row) => row.flowsMs))}${late > 0 ? ` (${late}/${perRound.flat().length} answered after complete)` : ""}`;
 		lines.push(
-			`| ${run.arm} | ${run.cache} | ${ms(quantile(queued, 0.5))} | ${ms(quantile(wait, 0.5))} | ${run.arm === "flows blocked" ? "— (blocked)" : ms(quantile(flows, 0.5))} | ${ms(p50(run.samples, (row) => row.decodeCompleteMs))} |`,
+			`| ${run.arm} | ${run.cache} | ${ms(across(perRound, (row) => coverGroup(row)?.queuedP50 ?? Number.NaN))} | ${ms(across(perRound, (row) => coverGroup(row)?.waitP50 ?? Number.NaN))} | ${flowsCell} | ${ms(across(perRound, (row) => row.decodeCompleteMs))} |`,
 		);
 	}
 	lines.push("");
-	lines.push("### where the time went");
+	lines.push("### where the time went (median of rounds)");
 	lines.push("");
 	lines.push(`| arm | cache | last cover response end | last cover decoded | gap: decode, paint, commit |`);
 	lines.push(`|---|---|---|---|---|`);
-	for (const run of runs) {
-		if (run.samples.length === 0) continue;
-		const end = p50(run.samples, (row) => row.lastResponseEndMs);
-		const decode = p50(run.samples, (row) => row.decodeCompleteMs);
+	for (const run of kinds) {
+		const perRound = series(run);
+		const end = across(perRound, (row) => row.lastResponseEndMs);
+		const decode = across(perRound, (row) => row.decodeCompleteMs);
 		lines.push(`| ${run.arm} | ${run.cache} | ${ms(end)} | ${ms(decode)} | ${ms(decode - end)} |`);
 	}
 	lines.push("");
-	lines.push("### how the covers arrived");
+	lines.push("### decodes the browser refused");
+	lines.push("");
+	lines.push(
+		`| arm | cache | refused first time | refused again on retry | on-screen covers never decoded | reasons |`,
+	);
+	lines.push(`|---|---|---|---|---|---|`);
+	for (const run of kinds) {
+		const rows = series(run).flat();
+		const refusals = rows.flatMap((row) => row.refusals);
+		const reasons = [...new Set(refusals.map((refusal) => refusal.reason))];
+		lines.push(
+			`| ${run.arm} | ${run.cache} | ${refusals.filter((refusal) => !refusal.retry).length} | ${refusals.filter((refusal) => refusal.retry).length} | ${rows.reduce((sum, row) => sum + row.undecoded.length, 0)} | ${reasons.length === 0 ? "—" : reasons.slice(0, 3).join("; ")} |`,
+		);
+	}
+	const last = (run: Run): Sample | undefined => series(run).at(-1)?.at(-1);
+	lines.push("");
+	lines.push("### how the covers arrived (last reload)");
 	lines.push("");
 	lines.push(`| arm | cache | first | p50 | last | window | shape |`);
 	lines.push(`|---|---|---|---|---|---|---|`);
-	for (const run of runs) {
-		const last = run.samples.at(-1);
-		if (last === undefined) continue;
-		const line = last.decodeTimeline;
+	for (const run of kinds) {
+		const line = last(run)?.decodeTimeline;
+		if (line === undefined) continue;
 		const first = line[0] ?? Number.NaN;
 		const end = line.at(-1) ?? Number.NaN;
-		const median = quantile(line, 0.5);
-		const position = (median - first) / Math.max(1, end - first);
+		const middle = median(line);
+		const position = (middle - first) / Math.max(1, end - first);
 		lines.push(
-			`| ${run.arm} | ${run.cache} | ${ms(first)} | ${ms(median)} | ${ms(end)} | ${ms(end - first)} | ${position > 0.35 && position < 0.65 ? "even — a queue draining" : position >= 0.65 ? "back-loaded" : "front-loaded"} |`,
+			`| ${run.arm} | ${run.cache} | ${ms(first)} | ${ms(middle)} | ${ms(end)} | ${ms(end - first)} | ${position > 0.35 && position < 0.65 ? "even — a queue draining" : position >= 0.65 ? "back-loaded" : "front-loaded"} |`,
 		);
 	}
 	lines.push("");
-	lines.push("### what it fetched, up to completion");
+	lines.push("### what it fetched, up to completion (last reload)");
 	lines.push("");
 	lines.push(
 		`| arm | cache | what | requests | transferred | 304 | from cache | conns | queued p50/worst | daemon p50/worst |`,
 	);
 	lines.push(`|---|---|---|---|---|---|---|---|---|---|`);
-	for (const run of runs) {
-		const last = run.samples.at(-1);
-		if (last === undefined) continue;
-		for (const group of last.census) {
+	for (const run of kinds) {
+		for (const group of last(run)?.census ?? []) {
 			lines.push(
 				`| ${run.arm} | ${run.cache} | ${group.bucket} | ${group.requests} | ${kb(group.bytes)} | ${group.notModified} | ${group.fromCache} | ${group.connections} | ${ms(group.queuedP50)} / ${ms(group.queuedWorst)} | ${ms(group.waitP50)} / ${ms(group.waitWorst)} |`,
 			);
 		}
 	}
 	lines.push("");
-	lines.push("### do covers revalidate");
+	lines.push("### do covers revalidate (last reload)");
 	lines.push("");
 	lines.push(`| arm | cache | cover requests | sent if-none-match | answered with an etag | 304 | cache-control |`);
 	lines.push(`|---|---|---|---|---|---|---|`);
-	for (const run of runs) {
-		const last = run.samples.at(-1);
-		if (last === undefined) continue;
-		const covers = last.wire.filter((entry) => entry.url.includes("/covers/"));
+	for (const run of kinds) {
+		const covers = (last(run)?.wire ?? []).filter((entry) => entry.url.includes("/covers/"));
 		const directives = new Set(covers.map((entry) => entry.cacheControl).filter((value) => value !== undefined));
 		lines.push(
 			`| ${run.arm} | ${run.cache} | ${covers.length} | ${covers.filter((entry) => entry.sentIfNoneMatch === true).length} | ${covers.filter((entry) => entry.gotEtag === true).length} | ${covers.filter((entry) => entry.status === 304).length} | ${directives.size === 0 ? "—" : [...directives].join(", ")} |`,
 		);
 	}
 	lines.push("");
-	const lag = runs
-		.flatMap((run) => run.samples)
-		.map((row) => row.noticedAfterMs)
-		.sort((a, b) => a - b);
+	const lag = median(
+		rounds.flatMap((round) => round.runs.flatMap((run) => run.samples.map((row) => row.noticedAfterMs))),
+	);
 	lines.push(
 		`Completion times are the page's own \`performance.now()\`, measured from that document's navigation start. ` +
-			`The census is snapshotted when polling noticed, ${ms(quantile(lag, 0.5))} of wall clock after the reload was ` +
+			`The census is snapshotted when polling noticed, ${ms(lag)} of wall clock after the reload was ` +
 			`issued, so it is a ceiling on what the reload fetched rather than an exact cut.`,
 	);
 	return lines.join("\n");
 }
 
-async function main(): Promise<void> {
-	const options = parseArgs(process.argv.slice(2));
-	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } = pageToMeasure(root, options.page);
-	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
-	const frameNames = boxes.map((box) => box.name);
-	const camera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zoom);
-	const pictureCamera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM);
-	writeCamera(root, pictureCamera, canvasPage);
-	const port = await freePort();
-	const daemon = await startDaemon(spoolDir, root, port);
-	const url = `${daemon.url}/p/${encodeURIComponent(name)}`;
+function coverTable(subjects: readonly Subject[], results: readonly BuildRun<Round>[], frames: number): string {
+	const lines = [
+		`### cover preparation, no covers to all ${frames}`,
+		"",
+		"| build | rounds | median | worst round | each round | load |",
+		"|---|---|---|---|---|---|",
+	];
+	for (const { build } of subjects) {
+		const mine = results.filter((result) => result.build === build.label).map((result) => result.result);
+		const took = mine.map((round) => round.coverMs / 1000);
+		lines.push(
+			`| ${build.label} | ${took.length} | **${median(took).toFixed(1)} s** | ${Math.max(...took).toFixed(1)} s | ${took.map((value) => value.toFixed(1)).join(", ")} | ${range(mine.map((round) => round.coverLoad))} |`,
+		);
+	}
+	return lines.join("\n");
+}
 
-	let browser: Browser | undefined;
+async function main(): Promise<void> {
+	const { builds, rounds, rest } = takeBuildOptions(process.argv.slice(2));
+	const options = parseArgs(rest);
+	const { subjects, page: measured } = await startSubjects(options.project, builds, options.page);
 	try {
-		browser = await chromium.launch({
+		const camera = planCamera(measured.frames, VIEWPORT.width, VIEWPORT.height, options.zoom);
+		const pictures = planCamera(measured.frames, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM);
+		// What a person sees after a reload is the covers in the window. A page
+		// larger than the window has covers nobody is looking at, and the browser
+		// is free to put off decoding those.
+		const visible = onScreen(measured.frames, camera).map((box) => box.name);
+		if (visible.length === 0) throw new Error(`the planned camera at k=${options.zoom} shows no frame`);
+		const browser = await chromium.launch({
 			channel: options.headed ? "chromium" : "chromium-headless-shell",
 			headless: !options.headed,
 		});
-		await prepareCurrentCovers(browser, url, root, boxes);
-		writeCamera(root, camera, canvasPage);
-		process.stderr.write(
-			`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ` +
-				`${frameNames.length} frames, all covered)\n`,
-		);
-
-		const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-		const page = await context.newPage();
-		await page.addInitScript(watchCovers);
-		const watch = await watchNetwork(context, page);
-
-		// One discarded pass first, and it is not the cold measurement. A fresh
-		// daemon compiles every frame document it is asked for, so a first-ever
-		// load prices the toolchain. A reload on a machine somebody is working on
-		// meets a daemon that has been up for hours, so the honest cold case is a
-		// cold *browser* cache against a warm daemon, which is what clearing the
-		// cache below gives.
-		process.stderr.write("bench: warming the daemon\n");
-		await page.goto(url, { waitUntil: "commit" });
-		await waitComplete(page, frameNames, 90_000);
-
-		const session = await context.newCDPSession(page);
-		const runs: Run[] = [];
-		for (const arm of ARMS) {
-			if (arm.blockFlows) {
-				// exactly one request removed, nothing else touched
-				await page.route(/\/api\/p\/[^/]+\/flows$/, (route) => void route.abort());
+		let results: BuildRun<Round>[];
+		try {
+			// One untimed preparation per build first. A fresh daemon compiles every
+			// frame document it is asked for, so a first-ever preparation prices the
+			// toolchain; the timed ones below meet a daemon that has been up a while.
+			for (const subject of subjects) {
+				process.stderr.write(`bench: warming ${subject.build.label}\n`);
+				writeCamera(subject.root, pictures, measured.page);
+				await prepareCurrentCovers(browser, subject.url, subject.root, measured.frames);
 			}
-			for (const cache of ["cold", "warm"] as const) {
-				const samples: Sample[] = [];
-				for (let i = 0; i < options.repeats; i++) {
-					if (cache === "cold") await session.send("Network.clearBrowserCache");
-					const taken = await sample(page, watch, frameNames);
-					process.stderr.write(
-						`bench: ${arm.label} / ${cache} ${i + 1}/${options.repeats} — ${ms(taken.decodeCompleteMs)} ms\n`,
-					);
-					samples.push(taken);
+
+			results = await interleave(subjects, rounds, async (subject): Promise<Round> => {
+				// the picture job from nothing: every cover gone, then the canvas opened
+				clearCopiedCovers(subject.root);
+				writeCamera(subject.root, pictures, measured.page);
+				const coverLoad = oneMinuteLoad();
+				const coverMs = await prepareCurrentCovers(browser, subject.url, subject.root, measured.frames);
+				writeCamera(subject.root, camera, measured.page);
+
+				const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+				try {
+					const page = await context.newPage();
+					await page.addInitScript(watchCovers);
+					const watch = await watchNetwork(context, page);
+
+					// One discarded pass first, and it is not the cold measurement. A
+					// reload on a machine somebody is working on meets a daemon that has
+					// been up for hours, so the honest cold case is a cold *browser* cache
+					// against a warm daemon, which is what clearing the cache below gives.
+					await page.goto(subject.url, { waitUntil: "commit" });
+					await waitComplete(page, visible, 90_000);
+
+					const session = await context.newCDPSession(page);
+					const runs: Run[] = [];
+					for (const arm of ARMS) {
+						if (arm.blockFlows) await page.route(/\/api\/p\/[^/]+\/flows$/, (route) => void route.abort());
+						for (const cache of ["cold", "warm"] as const) {
+							const samples: Sample[] = [];
+							for (let i = 0; i < options.repeats; i++) {
+								if (cache === "cold") await session.send("Network.clearBrowserCache");
+								const taken = await sample(page, watch, visible, arm.blockFlows);
+								const refused = taken.refusals.length > 0 ? `, ${taken.refusals.length} decodes refused` : "";
+								process.stderr.write(
+									`bench:   ${arm.label} / ${cache} ${i + 1}/${options.repeats} — ${ms(taken.decodeCompleteMs)} ms at load ${taken.load1.toFixed(1)}${refused}\n`,
+								);
+								samples.push(taken);
+							}
+							runs.push({ arm: arm.label, cache, samples });
+						}
+						if (arm.blockFlows) await page.unroute(/\/api\/p\/[^/]+\/flows$/);
+					}
+					return { coverMs, coverLoad, runs };
+				} finally {
+					await context.close();
 				}
-				runs.push({ arm: arm.label, cache, samples });
-			}
-			if (arm.blockFlows) await page.unroute(/\/api\/p\/[^/]+\/flows$/);
+			});
+		} finally {
+			await browser.close();
 		}
 
-		const text = report(runs, frameNames, canvasPage);
-		process.stdout.write(`${text}\n`);
+		const sections = [buildsHeader(subjects, results, rounds), coverTable(subjects, results, measured.frames.length)];
+		for (const { build } of subjects) {
+			const mine = results.filter((result) => result.build === build.label).map((result) => result.result);
+			sections.push(
+				`${subjects.length > 1 ? `## build ${build.label}\n\n` : ""}${report(mine, visible.length, measured)}`,
+			);
+		}
+		process.stdout.write(`${sections.join("\n\n")}\n`);
 		if (options.out !== undefined) {
-			writeFileSync(options.out, `${JSON.stringify({ page: canvasPage, frames: frameNames, runs }, null, "\t")}\n`);
+			writeFileSync(
+				options.out,
+				`${JSON.stringify(
+					{
+						page: measured.page,
+						frames: measured.frames.map((box) => box.name),
+						onScreen: visible,
+						builds: subjects.map((subject) => subject.build),
+						results,
+					},
+					null,
+					"\t",
+				)}\n`,
+			);
 			process.stderr.write(`bench: wrote ${options.out}\n`);
 		}
 	} finally {
-		await browser?.close();
-		daemon.stop();
+		stopSubjects(subjects);
 	}
 }
 

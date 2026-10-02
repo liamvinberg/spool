@@ -437,15 +437,16 @@ export async function prepareCurrentCovers(
 	url: string,
 	root: string,
 	frames: readonly { name: string; page: string }[],
-): Promise<void> {
+): Promise<number> {
 	assertHtmlFrames(root, frames);
 	const pageName = frames[0]?.page === ROOT_PAGE ? "root" : (frames[0]?.page ?? "unknown");
 	process.stderr.write(`bench: preparing ${frames.length} current covers on page "${pageName}"\n`);
 	const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
 	const page = await context.newPage();
 	try {
-		await page.goto(url, { waitUntil: "domcontentloaded" });
+		// from the canvas opening to its last cover: the whole job, boot included
 		const started = Date.now();
+		await page.goto(url, { waitUntil: "domcontentloaded" });
 		// a ceiling, not an estimate: an idle M1 Pro makes 200 covers in about a
 		// minute, a loaded one several times slower, and n1000 is five times 200
 		const timeoutMs = Math.max(COVER_SETUP_TIMEOUT_MS, frames.length * COVER_SETUP_MS_PER_FRAME);
@@ -462,9 +463,11 @@ export async function prepareCurrentCovers(
 					` (${sample}${missing.length > 6 ? ", …" : ""})`,
 			);
 		}
+		const tookMs = Date.now() - started;
 		process.stderr.write(
-			`bench: prepared ${frames.length} current covers on page "${pageName}" in ${((Date.now() - started) / 1000).toFixed(0)} s\n`,
+			`bench: prepared ${frames.length} current covers on page "${pageName}" in ${(tookMs / 1000).toFixed(1)} s\n`,
 		);
+		return tookMs;
 	} finally {
 		await context.close();
 		// A closing canvas can still have its camera save in flight. Let it land
