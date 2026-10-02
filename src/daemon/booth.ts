@@ -101,6 +101,14 @@ const SHOT_BOOT_MS = 10_000;
 const SHOT_FONTS_MS = 15_000;
 
 /**
+ * How long a browser already on disk may take to start. A cold start is a
+ * second or two; one that has not answered in this long is not starting, and a
+ * shot waiting on it hears so in plain words instead of waiting with it. The
+ * first-run fetch is not under it: that has its own narration.
+ */
+const LAUNCH_MS = 30_000;
+
+/**
  * How long after a failed launch the booth tries again. A browser that could
  * not start a second ago will not start now, and every edit asking would make
  * the daemon a launch loop.
@@ -129,6 +137,7 @@ const LOST_IN_A_ROW = 3;
 
 /** The waits a test needs short; every one of them is the constant above in the daemon. */
 interface BoothTiming {
+	launchMs: number;
 	sittingMs: number;
 	shotMs: number;
 	relaunchAfterMs: number;
@@ -518,6 +527,7 @@ const FETCHED_LINE = "headless-shell ready — cached for every future shot";
  */
 export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	const timing: BoothTiming = {
+		launchMs: LAUNCH_MS,
 		sittingMs: SITTING_MS,
 		shotMs: SHOT_MS,
 		relaunchAfterMs: RELAUNCH_AFTER_MS,
@@ -687,7 +697,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	async function start(): Promise<HeadlessShell> {
 		await machineScheme();
 		try {
-			return await launch();
+			return await launchInTime();
 		} catch (error) {
 			if (!(error instanceof MissingHeadlessShellError)) throw error;
 		}
@@ -706,7 +716,22 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			}
 		})();
 		await fetching;
-		return await launch();
+		return await launchInTime();
+	}
+
+	/** A launch under LAUNCH_MS. A browser that answers after it gave up is ended, never kept. */
+	async function launchInTime(): Promise<HeadlessShell> {
+		const launching = launch();
+		try {
+			return await within(launching, timing.launchMs, "starting");
+		} catch (error) {
+			if (!(error instanceof TimedOut)) throw error;
+			void launching.then(
+				(late) => late.kill(),
+				() => {},
+			);
+			throw new Error(`the browser did not start within ${Math.round(timing.launchMs / 1000)} s`);
+		}
 	}
 
 	async function tabFor(slot: number): Promise<Tab> {

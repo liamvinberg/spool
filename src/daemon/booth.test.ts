@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import type { HeadlessShell } from "../headless-shell";
 import { makeApp, makeProject, makeTempDir, sseReader, writeFrame } from "../test-helpers";
 import {
 	type BoothDeps,
@@ -311,6 +312,29 @@ describe("the booth before any browser", () => {
 		// the frame is still owed, and the retry is the booth's own to make
 		await vi.waitFor(() => expect(deps.launch).toHaveBeenCalledTimes(2), { timeout: 2000 });
 		expect(deps.failed).not.toHaveBeenCalled();
+	});
+
+	it("gives a browser that does not answer a deadline, tells the shot why, and ends it if it answers late", async () => {
+		let started: (shell: HeadlessShell) => void = () => {};
+		const { booth: made } = booth({
+			launch: vi.fn<NonNullable<BoothDeps["launch"]>>(
+				() =>
+					new Promise((done) => {
+						started = done;
+					}),
+			),
+			timing: { launchMs: 1000 },
+		});
+		await expect(
+			made.shoot({ project: "shop", frame: "home", width: 10, height: 10, scale: 1, tiles: [{ y: 0, height: 10 }] }),
+		).rejects.toThrow("the browser did not start within 1 s");
+		const late = {
+			browser: {} as HeadlessShell["browser"],
+			close: vi.fn(async () => {}),
+			kill: vi.fn(async () => {}),
+		};
+		started(late);
+		await vi.waitFor(() => expect(late.kill).toHaveBeenCalled());
 	});
 
 	it("tells a waiting shot the browser would not start", async () => {
