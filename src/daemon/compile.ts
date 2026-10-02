@@ -14,7 +14,7 @@ import {
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { readIfExists } from "./project-files";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
-import { buildFrameCss } from "./tailwind";
+import { compileFrameCssOnWorker } from "./tailwind";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
 
@@ -254,7 +254,7 @@ async function compileFrame({
 	});
 
 	const shared = join(designDir, "shared");
-	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
+	const { css, stylesheets } = await compileFrameCssOnWorker(designDir, sourceFiles);
 	// The stills' fonts (#80): remote faces resolved to this daemon so a
 	// capture can inline them, the file as written whenever that fails. The
 	// project's own faces (#101) then ride the document as data URIs.

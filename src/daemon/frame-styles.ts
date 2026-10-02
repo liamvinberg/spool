@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { buildDesignEntry } from "./compile";
 import { layeredProjectCss } from "./document";
 import { frameFolder } from "./projection";
-import { buildFrameCss } from "./tailwind";
+import { compileFrameCssOnWorker } from "./tailwind";
 
 const STYLESHEET_ENTRY = "<spool-styles>";
 
@@ -32,7 +32,7 @@ export async function buildFrameStyleClosure(
 		label: `frame "${ref.name}"`,
 		...(publication ? { publication: true } : {}),
 	});
-	const compiled = await buildFrameCss(designDir, frame.sourceFiles);
+	const compiled = await compileFrameCssOnWorker(designDir, frame.sourceFiles);
 	const project = frame.bundledCss === undefined ? "" : layeredProjectCss(frame.bundledCss);
 	return {
 		css: project === "" ? compiled.css : `${compiled.css}\n${project}`,

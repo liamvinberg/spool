@@ -9,8 +9,8 @@ export interface SpoolEntry {
 }
 
 /**
- * A script spool starts in a process of its own: the CLI, the bundled host,
- * the command owner. From a checkout it is
+ * A script spool starts in a process or worker of its own: the CLI, the
+ * bundled host, the command owner, the stylesheet worker. From a checkout it is
  * the TypeScript source, run through tsx; from the package it is the build
  * tsup writes for it (tsup.config.ts). Both are named relative to this file, so
  * from src/daemon/ in a checkout and from dist/ once built, where every entry

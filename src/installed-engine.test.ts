@@ -188,6 +188,7 @@ it("completes a deterministic journey through the clean installed host and deliv
 		"dist/bundled-host.js",
 		"dist/bundled-oauth-native.js",
 		"dist/bundled-command-process.js",
+		"dist/tailwind-worker.js",
 		"dist/ui/index.html",
 		"dist/frame-runtime.js",
 		"dist/spool-public.d.ts",

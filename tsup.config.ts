@@ -14,6 +14,7 @@ export default defineConfig([
 			cli: "src/cli.ts",
 			"bundled-host": "src/daemon/bundled-host.ts",
 			"bundled-command-process": "src/daemon/bundled-command-process.ts",
+			"tailwind-worker": "src/daemon/tailwind-worker.ts",
 		},
 		format: "esm",
 		target: "node22",

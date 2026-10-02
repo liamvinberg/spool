@@ -3,8 +3,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 
 /** A path Spool would otherwise read outside the registered project's design/. */
 export class DesignBoundaryError extends Error {
-	constructor(path: string) {
-		super(`design boundary: "${path}" resolves outside design/`);
+	/** The path as the project spelled it: what a stylesheet worker hands back to rebuild this error. */
+	constructor(readonly authored: string) {
+		super(`design boundary: "${authored}" resolves outside design/`);
 	}
 }
 
