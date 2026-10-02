@@ -88,6 +88,12 @@ export interface PictureReport {
 	bytes: { resident: number; sharp: number };
 	/** Covers still on their way: queued, loading, or decoded and waiting to upload. */
 	pending: { queued: number; fetching: number; decoding: number; landed: number };
+	/**
+	 * Every frame on the page with a cover, on screen or not: when its cover's
+	 * bytes arrived and when its square reached the GPU, on the page's clock.
+	 * The picture layer's answer to "has every frame got its picture yet".
+	 */
+	covers: { name: string; fetched: number | null; uploaded: number | null }[];
 }
 
 /**
@@ -124,6 +130,9 @@ interface Resident {
 	slot: number | null;
 	natural: PixelSize | null;
 	state: "waiting" | "ready" | "failed";
+	/** When its bytes arrived and when its square reached the GPU, on the page's clock. */
+	fetched?: number;
+	uploaded?: number;
 }
 
 interface Sharp {
@@ -449,6 +458,11 @@ export class PictureLayer {
 				decoding: this.decoding,
 				landed: this.landed.length,
 			},
+			covers: this.frames.flatMap((frame) => {
+				if (frame.url === undefined) return [];
+				const entry = this.residents.get(frame.url);
+				return [{ name: frame.name, fetched: entry?.fetched ?? null, uploaded: entry?.uploaded ?? null }];
+			}),
 		};
 	}
 
@@ -729,6 +743,10 @@ export class PictureLayer {
 			// connection
 			decoding = true;
 			this.decoding += 1;
+			if (job.sharp === null) {
+				const entry = this.residents.get(job.url);
+				if (entry !== undefined) entry.fetched = performance.now();
+			}
 			this.fetched(job, generation);
 			const known = this.residents.get(job.url)?.natural ?? null;
 			const natural = known ?? (await sizeOf(blob));
@@ -804,6 +822,7 @@ export class PictureLayer {
 					entry.slot = slot;
 					entry.natural = natural;
 					entry.state = "ready";
+					entry.uploaded ??= performance.now();
 					squares = true;
 					bytes += RESIDENT_PX * RESIDENT_PX * 4;
 				}
