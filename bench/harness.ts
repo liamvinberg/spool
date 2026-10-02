@@ -33,12 +33,13 @@ export const VIEWPORT = { width: 1512, height: 945 };
  * The subject is generated, and has to be. Make a fresh detached copy from any
  * directory so neither unknown pages nor ignored app state can follow it:
  *
- *   git -C <spool-bench-source> worktree add --detach <spool-bench> 4bb16401b0e38e67bd44116c5ccc17b4e6281e6e
+ *   git -C <spool-bench-source> worktree add --detach <spool-bench> 4e3024560fb40f6ee41d27dea683587f28dd780b
  *   node <spool-bench>/generate.mjs
  *
- * At the pinned commit, `generate.mjs` writes 437 frames across six pages from
- * fixed seeds, geometry, and archetype rotation. Pass that fresh project root
- * as `--project <spool-bench>`.
+ * At the pinned commit, `generate.mjs` writes 1449 frames across eight pages:
+ * seven from fixed seeds, geometry, and archetype rotation, `n1000` the
+ * densest, and the twelve `dither` specimens `bench/dither-attribution.ts`
+ * measures. Pass that fresh project root as `--project <spool-bench>`.
  *
  * A live canvas is not a benchmark subject. Frame count and which page is
  * densest move whenever someone works. App-owned state is excluded below; each
