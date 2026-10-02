@@ -1,5 +1,5 @@
 import type { FlowEdge, FlowGraph, FrameGraph } from "./flows";
-import { publicationSource } from "./publication-source";
+import { publicationSource, type UnreadableReason } from "./publication-source";
 
 export type ReadinessCode =
 	| "entry-missing"
@@ -86,25 +86,23 @@ export function readinessFrom(
 			root === undefined
 				? {
 						sites: source.sites,
-						unreadable: source.unreadable,
+						unreadable: source.unreadable.map((site) => ({ ...site, reason: "destination" as const })),
 						links: source.links,
 						invalidLinks: source.invalidLinks,
 						failures:
 							source.parseFailure === undefined
 								? []
-								: [{ ...source.parseFailure, reason: "Source could not be parsed." }],
+								: [
+										{
+											...source.parseFailure,
+											reason: "Source could not be parsed.",
+											remedy: "Fix the syntax error in this file.",
+										},
+									],
 					}
 				: publicationSource(root, frame, source);
 		for (const failure of strict.failures) {
-			diagnostics.push(
-				at(
-					"source-unreadable",
-					frame,
-					failure,
-					failure.reason,
-					"Use a direct value import or export so this navigation can be attributed.",
-				),
-			);
+			diagnostics.push(at("source-unreadable", frame, failure, failure.reason, failure.remedy));
 		}
 		if (strict.invalidLinks !== undefined) {
 			diagnostics.push(
@@ -145,15 +143,8 @@ export function readinessFrom(
 			}
 		} else {
 			for (const site of strict.unreadable) {
-				diagnostics.push(
-					at(
-						"navigation-unreadable",
-						frame,
-						site,
-						"A navigation destination cannot be established statically.",
-						"Use a literal, a simple const or finite branch, or route through an exported links object.",
-					),
-				);
+				const { message, remedy } = UNREADABLE[site.reason];
+				diagnostics.push(at("navigation-unreadable", frame, site, message, `${remedy} ${LINKS_REMEDY}`));
 			}
 		}
 
@@ -179,6 +170,40 @@ export function readinessFrom(
 
 	return { entry, ok: diagnostics.length === 0, included, outgoing, diagnostics };
 }
+
+const LINKS_REMEDY = "Or list this frame's destinations in an exported `links` object.";
+
+const UNREADABLE: Record<UnreadableReason, { message: string; remedy: string }> = {
+	destination: {
+		message: "A navigation destination cannot be established statically.",
+		remedy:
+			"Use a literal, a simple const or finite branch, or a prop passed directly from where the component is used.",
+	},
+	"go-value": {
+		message: "ui.go is passed on as a value, so where it leads cannot be read.",
+		remedy: "Call ui.go with its destination where the navigation happens.",
+	},
+	"ui-value": {
+		message: "ui is used as a value or through a computed member, so its navigation cannot be read.",
+		remedy: "Call ui.go(...) directly.",
+	},
+	"spool-namespace": {
+		message: "spool is imported whole, so its navigation calls cannot be read.",
+		remedy: 'Import what you use by name, as in `import { ui } from "spool"`.',
+	},
+	"dynamic-import": {
+		message: "A dynamic import() loads code whose navigation cannot be read before sharing.",
+		remedy: "Use a static import.",
+	},
+	"local-namespace": {
+		message: "A namespace import of a local file hides which of its exports are used.",
+		remedy: "Import the names you use.",
+	},
+	"side-effect-import": {
+		message: "A local file imported only for its side effects cannot be attributed.",
+		remedy: "Import a named value from it.",
+	},
+};
 
 function at(
 	code: ReadinessCode,

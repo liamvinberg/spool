@@ -13,12 +13,22 @@ const traverse: typeof traverseModule =
 	typeof traverseModule === "function"
 		? traverseModule
 		: (traverseModule as unknown as { default: typeof traverseModule }).default;
+/** What kind of source hides navigation, so a diagnostic can name that form and its fix. */
+export type UnreadableReason =
+	| "destination"
+	| "go-value"
+	| "ui-value"
+	| "spool-namespace"
+	| "dynamic-import"
+	| "local-namespace"
+	| "side-effect-import";
+
 export interface PublicationSource {
 	sites: NavSite[];
-	unreadable: UnreadableSite[];
+	unreadable: (UnreadableSite & { reason: UnreadableReason })[];
 	links: FrameGraph["links"];
 	invalidLinks: FrameGraph["invalidLinks"];
-	failures: { path: string; line: number; reason: string }[];
+	failures: { path: string; line: number; reason: string; remedy: string }[];
 }
 
 /** A bounded lexical slice. Dynamic values require the frame's enforced links set. */
@@ -44,15 +54,19 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 	const mounts: { component: NodePath; attributes: NodePath[] }[] = [];
 	const navigations: { file: string; path: NodePath; value: NodePath | undefined; via: NavSite["via"] }[] = [];
 	const queue: { file: string; path: NodePath }[] = [];
-	function failure(file: string, node: Node | undefined, reason: string) {
-		out.failures.push({ path: designRelativePath(designDir, file), line: node?.loc?.start.line ?? 1, reason });
+	function failure(file: string, node: Node | undefined, reason: string, remedy: string) {
+		const path = designRelativePath(designDir, file);
+		const line = node?.loc?.start.line ?? 1;
+		// every use of a broken import reaches it again; it is one problem
+		if (out.failures.some((known) => known.path === path && known.line === line && known.reason === reason)) return;
+		out.failures.push({ path, line, reason, remedy });
 	}
 	function module(file: string): NodePath<Program> | undefined {
 		const cached = modules.get(file);
 		if (cached !== undefined) return cached;
 		const program = pass.parsed(file)?.program;
 		if (program === undefined) {
-			failure(file, undefined, "Source could not be read or parsed.");
+			failure(file, undefined, "Source could not be read or parsed.", "Fix the syntax error in this file.");
 			return;
 		}
 		let found: NodePath<Program> | undefined;
@@ -77,7 +91,7 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 					statement.node.specifiers.length === 0 &&
 					pass.resolve(file, statement.node.source.value) !== undefined
 				)
-					unknown(file, statement);
+					unknown(file, statement, "side-effect-import");
 			}
 		}
 		return found;
@@ -99,11 +113,16 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 		if (name === "spool" || (!name.startsWith(".") && !name.startsWith("shared/"))) return;
 		const target = pass.resolve(file, name);
 		if (target === undefined) {
-			failure(file, path.node, `Import "${name}" could not be resolved.`);
+			failure(
+				file,
+				path.node,
+				`Import "${name}" could not be resolved.`,
+				"Check the import path, or create the file it names.",
+			);
 			return;
 		}
 		if (path.isImportNamespaceSpecifier()) {
-			unknown(file, path);
+			unknown(file, path, "local-namespace");
 			return;
 		}
 		return select(
@@ -148,7 +167,13 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 				if (!specifier.isExportSpecifier() || spelling(specifier.node.exported) !== name) continue;
 				if (statement.node.source !== null && statement.node.source !== undefined) {
 					const target = pass.resolve(file, statement.node.source.value);
-					if (target === undefined) failure(file, statement.node, "Re-export could not be resolved.");
+					if (target === undefined)
+						failure(
+							file,
+							statement.node,
+							"Re-export could not be resolved.",
+							"Check the re-export's path, or create the file it names.",
+						);
 					else {
 						const selected = select(target, spelling(specifier.node.local));
 						exports.set(key, selected);
@@ -162,10 +187,24 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 				return;
 			}
 		}
-		failure(file, program.node, `Export "${name}" could not be attributed. Use a direct value export.`);
+		failure(
+			file,
+			program.node,
+			name === "default"
+				? "There is no default export in this file."
+				: `"${name}" is not exported by name from this file.`,
+			name === "default"
+				? "Add `export default` to the component the import expects."
+				: `Export it directly, as in \`export const ${name} = …\` or \`export { ${name} }\`.`,
+		);
 	}
-	function unknown(file: string, path: NodePath, via: NavSite["via"] = "ui.go") {
-		out.unreadable.push({ via, path: designRelativePath(designDir, file), line: path.node.loc?.start.line ?? 1 });
+	function unknown(file: string, path: NodePath, reason: UnreadableReason, via: NavSite["via"] = "ui.go") {
+		out.unreadable.push({
+			via,
+			reason,
+			path: designRelativePath(designDir, file),
+			line: path.node.loc?.start.line ?? 1,
+		});
 	}
 	function navigation(file: string, path: NodePath, value: NodePath | undefined, via: NavSite["via"]) {
 		navigations.push({ file, path, value, via });
@@ -189,16 +228,16 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 				binding.parentPath.isImportDeclaration() &&
 				binding.parentPath.node.source.value === "spool"
 			)
-				unknown(file, path);
+				unknown(file, path, "spool-namespace");
 			if (spoolUI(path)) {
 				const parent = path.parentPath;
 				if (!parent.isMemberExpression() || parent.node.computed || !parent.get("property").isIdentifier())
-					unknown(file, path);
+					unknown(file, path, "ui-value");
 				else if (
 					parent.get("property").isIdentifier({ name: "go" }) &&
 					!(parent.parentPath.isCallExpression() && parent.key === "callee")
 				)
-					unknown(file, parent);
+					unknown(file, parent, "go-value");
 			}
 		}
 		if (path.isJSXOpeningElement()) {
@@ -247,7 +286,7 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 		}
 		if (path.isCallExpression()) {
 			const callee = path.get("callee");
-			if (callee.isImport()) unknown(file, path);
+			if (callee.isImport()) unknown(file, path, "dynamic-import");
 			if (callee.isMemberExpression() && spoolUI(callee.get("object"))) {
 				const prop = callee.get("property");
 				if (
@@ -255,7 +294,7 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 					(callee.node.computed && prop.isStringLiteral({ value: "go" }))
 				)
 					navigation(file, path, path.get("arguments")[0], "ui.go");
-				else if (callee.node.computed) unknown(file, path);
+				else if (callee.node.computed) unknown(file, path, "ui-value");
 			}
 		}
 	}
@@ -282,7 +321,7 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 	for (const { file, path, value, via } of navigations) {
 		const read = value === undefined ? undefined : targets(value, new Set(), inputs);
 		const site = { via, path: designRelativePath(designDir, file), line: path.node.loc?.start.line ?? 1 };
-		if (read === undefined || read.includes(undefined)) unknown(file, path, via);
+		if (read === undefined || read.includes(undefined)) unknown(file, path, "destination", via);
 		for (const target of read ?? []) if (target !== undefined) out.sites.push({ ...site, target });
 	}
 	return out;

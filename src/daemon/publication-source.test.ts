@@ -165,6 +165,43 @@ describe("publication source attribution", () => {
 		expect(result.ok).toBe(true);
 		expect(result.included).toEqual(["start", "next"]);
 	});
+	it("says what each unreadable form is and how to fix that form", async () => {
+		const cases = [
+			['import { ui } from "spool"; export default () => <a data-go={compute()}/>;', "destination", "literal"],
+			[
+				'import { ui } from "spool"; const go = ui.go; export default () => <a onClick={() => go("next")}/>;',
+				"ui.go is passed on",
+				"Call ui.go",
+			],
+			[
+				'import * as spool from "spool"; export default () => <a onClick={() => spool.ui.go("next")}/>;',
+				"imported whole",
+				'import { ui } from "spool"',
+			],
+			['export default () => <a onClick={() => import("./later")}/>;', "import()", "static import"],
+			['import "./effects"; export default () => null;', "side effects", "named value"],
+			[
+				'import { Gone } from "./gone"; export default () => <Gone/>;',
+				'Import "./gone" could not be resolved.',
+				"import path",
+			],
+			[
+				'import { Missing } from "shared/ui/nav"; export default () => <Missing/>;',
+				'"Missing" is not exported by name',
+				"export const Missing",
+			],
+		] as const;
+		for (const [source, message, remedy] of cases) {
+			const result = await check(source, {
+				"frames/start/effects.ts": "console.log('loaded');",
+				"shared/ui/nav.tsx": "export const Nav = () => null;",
+			});
+			expect(result.diagnostics.map(({ message }) => message)).toEqual([expect.stringContaining(message)]);
+			expect(result.diagnostics[0]?.message).toContain(message);
+			expect(result.diagnostics[0]?.remedy).toContain(remedy);
+			expect(result.diagnostics[0]?.path).toBeDefined();
+		}
+	});
 	it("ignores unused nested helpers while following used callbacks", async () => {
 		const result = await check(
 			'import { ui } from "spool"; export default function Frame() { function unused() { ui.go("secret"); } function used() { ui.go("next"); } return <button onClick={used}/>; }',
