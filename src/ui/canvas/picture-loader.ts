@@ -50,6 +50,8 @@ export type LoaderAsk =
 			size: "square" | PixelSize;
 			priority: Priority;
 			generation: number;
+			/** Which ask this is of its key, echoed in every reply, so a reply to an older one is told apart. */
+			ask: number;
 			/** For a square: the size its frame is drawn on screen, so the halving that wants comes too. */
 			drawing?: Drawing;
 	  }
@@ -81,11 +83,13 @@ export type LoaderReply =
 			natural: PixelSize;
 			/** When the bytes arrived, as epoch milliseconds so the page can put it on its own clock. */
 			fetchedAt: number;
+			/** The ask answered, absent for a halving nobody asked for by its key (`size` set instead). */
+			ask?: number;
 			/** The size of a halving nobody asked for by its key. */
 			size?: PixelSize;
 	  }
-	| { key: string; generation: number; failed: true }
-	| { key: string; generation: number; dropped: true };
+	| { key: string; generation: number; ask: number; failed: true }
+	| { key: string; generation: number; ask: number; dropped: true };
 
 /**
  * Stills fetched at once, and fetched or decoded at once, per loader. The
@@ -132,7 +136,7 @@ self.onmessage = (event: MessageEvent<LoaderAsk[]>) => {
 			const queued = queue.get(ask.key);
 			if (queued !== undefined) {
 				queue.delete(ask.key);
-				post({ key: ask.key, generation: queued.generation, dropped: true });
+				post({ key: ask.key, generation: queued.generation, ask: queued.ask, dropped: true });
 			}
 		} else if (ask.kind === "background") open = ask.open;
 		else queue.clear();
@@ -168,7 +172,7 @@ async function run(group: Load[], later: boolean): Promise<void> {
 }
 
 const fail = (group: readonly Load[]) => {
-	for (const load of group) post({ key: load.key, generation: load.generation, failed: true });
+	for (const load of group) post({ key: load.key, generation: load.generation, ask: load.ask, failed: true });
 };
 
 async function fetchAndDecode(group: Load[]): Promise<void> {
@@ -200,7 +204,7 @@ async function fetchAndDecode(group: Load[]): Promise<void> {
 					bitmap,
 					natural,
 					fetchedAt,
-					...(output.derived ? { size: output.size } : {}),
+					...(output.ask === undefined ? { size: output.size } : { ask: output.ask }),
 				},
 				[bitmap],
 			);
@@ -216,8 +220,8 @@ async function fetchAndDecode(group: Load[]): Promise<void> {
 interface Output {
 	key: string;
 	size: PixelSize;
-	/** Made from a square's drawing rather than asked for by key. */
-	derived: boolean;
+	/** The ask it answers, absent for one made from a square's drawing rather than asked for by key. */
+	ask?: number;
 }
 
 /**
@@ -228,7 +232,7 @@ function plan(group: readonly Load[], natural: PixelSize): Output[] {
 	const outputs: Output[] = group.map((load) => ({
 		key: load.key,
 		size: load.size === "square" ? SQUARE : load.size,
-		derived: false,
+		ask: load.ask,
 	}));
 	for (const load of group) {
 		if (load.drawing === undefined) continue;
@@ -236,7 +240,7 @@ function plan(group: readonly Load[], natural: PixelSize): Output[] {
 		if (wanted.kind !== "halving") continue;
 		const key = halvingKey(load.still, wanted.width);
 		if (outputs.some((output) => output.key === key)) continue;
-		outputs.push({ key, size: { width: wanted.width, height: wanted.height }, derived: true });
+		outputs.push({ key, size: { width: wanted.width, height: wanted.height } });
 	}
 	return outputs.sort((a, b) => b.size.width * b.size.height - a.size.width * a.size.height);
 }

@@ -1,6 +1,6 @@
 import { bucketOf } from "./bucket";
 import type { Drawing, LoaderAsk, LoaderReply } from "./picture-loader";
-import type { PixelSize, Priority } from "./picture-plan";
+import { type PixelSize, Priority } from "./picture-plan";
 
 /**
  * The page's side of the picture layer's loaders (`picture-loader.ts`): which
@@ -44,6 +44,8 @@ export interface Job {
 	cancelled?: boolean;
 	/** Its frame's drawn size has gone with it, so a square brings the halving that size wants. */
 	sized?: boolean;
+	/** Which ask of its key it went out as (`StillLoads.ask`). */
+	ask?: number;
 }
 
 /** A load back from its loader, decoded and waiting for a frame to upload it. */
@@ -64,24 +66,39 @@ export interface LoadHooks {
 	gone: (job: Job, failed: boolean) => void;
 }
 
+/** Makes one loader: a worker of `picture-loader.ts`, or a stand-in for one in a test. */
+export type LoaderFactory = () => Pick<Worker, "postMessage" | "addEventListener" | "terminate">;
+
+const worker: LoaderFactory = () => new Worker(new URL("./picture-loader.ts", import.meta.url), { type: "module" });
+
 export class StillLoads {
-	private loaders: Worker[] = [];
-	private readonly outbox = new Map<Worker, LoaderAsk[]>();
+	private loaders: ReturnType<LoaderFactory>[] = [];
+	private readonly outbox = new Map<ReturnType<LoaderFactory>, LoaderAsk[]>();
 	private readonly out = new Map<string, Job>();
 	private landed: Landed[] = [];
 	/** Bumped when the context goes, so a decode begun before it lands nowhere. */
 	private generation = 0;
 	private booting = false;
 	private bootWait: ReturnType<typeof setTimeout> | undefined;
+	/**
+	 * Asks numbered as they go. A key can go out again while an older ask of
+	 * it is still out, released and wanted again before its loader answered;
+	 * the number tells that older ask's answer apart, so it never settles the
+	 * newer one.
+	 */
+	private asks = 0;
 
-	constructor(private readonly hooks: LoadHooks) {}
+	constructor(
+		private readonly hooks: LoadHooks,
+		private readonly make: LoaderFactory = worker,
+	) {}
 
 	/** Make the loaders. Only once there is a context to load for, or one that will come back. */
 	start(): void {
 		if (this.loaders.length > 0) return;
 		for (let i = 0; i < LOADERS; i++) {
-			const loader = new Worker(new URL("./picture-loader.ts", import.meta.url), { type: "module" });
-			loader.addEventListener("message", this.onReply);
+			const loader = this.make();
+			loader.addEventListener("message", this.onReply as EventListener);
 			this.loaders.push(loader);
 		}
 	}
@@ -90,9 +107,9 @@ export class StillLoads {
 		return this.loaders.length > 0;
 	}
 
-	/** Loads out, and loads landed and waiting to upload. */
-	get pending(): { out: number; landed: number } {
-		return { out: this.out.size, landed: this.landed.length };
+	/** Loads out, loads landed and waiting to upload, and every ask ever sent. */
+	get pending(): { out: number; landed: number; asked: number } {
+		return { out: this.out.size, landed: this.landed.length, asked: this.asks };
 	}
 
 	/** The load out under this key, if any. */
@@ -104,6 +121,8 @@ export class StillLoads {
 	ask(job: Job): void {
 		const loader = this.loaderOf(job.still);
 		if (loader === undefined) return;
+		this.asks += 1;
+		job.ask = this.asks;
 		this.out.set(job.key, job);
 		this.tell(loader, {
 			kind: "load",
@@ -113,6 +132,7 @@ export class StillLoads {
 			size: job.halving ?? "square",
 			priority: job.priority,
 			generation: this.generation,
+			ask: job.ask,
 		});
 	}
 
@@ -192,14 +212,14 @@ export class StillLoads {
 		this.send();
 	}
 
-	private tell(loader: Worker | undefined, ask: LoaderAsk): void {
+	private tell(loader: ReturnType<LoaderFactory> | undefined, ask: LoaderAsk): void {
 		if (loader === undefined) return;
 		const waiting = this.outbox.get(loader);
 		if (waiting === undefined) this.outbox.set(loader, [ask]);
 		else waiting.push(ask);
 	}
 
-	private loaderOf(still: string): Worker | undefined {
+	private loaderOf(still: string): ReturnType<LoaderFactory> | undefined {
 		return this.loaders[bucketOf(still, this.loaders.length)];
 	}
 
@@ -215,12 +235,12 @@ export class StillLoads {
 		}
 		if ("bitmap" in reply && reply.size !== undefined) {
 			const still = reply.key.slice(0, reply.key.lastIndexOf("#"));
-			const job: Job = { key: reply.key, still, halving: reply.size, priority: 0 };
+			const job: Job = { key: reply.key, still, halving: reply.size, priority: Priority.drawn };
 			this.land(job, reply, true);
 			return;
 		}
 		const job = this.out.get(reply.key);
-		if (job === undefined) {
+		if (job === undefined || job.ask !== reply.ask) {
 			if ("bitmap" in reply) reply.bitmap.close();
 			return;
 		}
