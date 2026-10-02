@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import type { Camera } from "../api";
 import type { NearScreen } from "./camera";
 import { type CameraStore, createCameraStore, REST_MS } from "./camera-store";
-import { FrameLabel } from "./frame-label";
+import { FrameLabel, LabelField } from "./frame-label";
 
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -49,10 +49,13 @@ function label(props: { name: string; frameWidth: number; camera: CameraStore; n
 	return { el: found, root };
 }
 
+/** where every label's frame stands in these tests, in world units */
+const AT = { x: 100, y: 50 };
+
 function element({ name, frameWidth, camera, near = ON_SCREEN }: Parameters<typeof label>[0]) {
 	return createElement(FrameLabel, {
 		name,
-		frame: { x: 0, y: 0, w: frameWidth, h: 800 },
+		frame: { ...AT, w: frameWidth, h: 800 },
 		camera,
 		near,
 		entered: false,
@@ -70,7 +73,9 @@ describe("FrameLabel", () => {
 		});
 
 		expect(el.style.width).toBe("240px");
-		expect(el.style.transform).toBe("scale(5)");
+		// in screen pixels, where the frame's top left falls at this zoom, and never scaled
+		expect(el.parentElement?.style.transform).toBe("translate(20px, 10px)");
+		expect(el.style.transform).toBe("");
 		expect(el.innerHTML).toContain("min-w-0 truncate");
 	});
 
@@ -81,7 +86,20 @@ describe("FrameLabel", () => {
 		act(() => camera.set({ x: 40, y: 0, k: 0.5 }));
 
 		expect(el.style.width).toBe("600px");
-		expect(el.style.transform).toBe("scale(2)");
+		expect(el.parentElement?.style.transform).toBe("translate(50px, 25px)");
+		expect(el.style.transform).toBe("");
+	});
+
+	it("writes nothing on a pan, which the field carries for every label at once", () => {
+		const camera = cameraAt({ x: 0, y: 0, k: 0.5 });
+		const { el } = label({ name: "landing", frameWidth: 1200, camera });
+		const place = el.parentElement;
+		if (place === null) throw new Error("no place");
+		place.style.transform = "translate(-1px, -1px)";
+
+		act(() => camera.set({ x: 300, y: -120, k: 0.5 }));
+
+		expect(place.style.transform).toBe("translate(-1px, -1px)");
 	});
 
 	it("leaves a label off screen alone while the camera moves, and catches it up once it rests", () => {
@@ -97,7 +115,7 @@ describe("FrameLabel", () => {
 
 		act(() => vi.advanceTimersByTime(REST_MS));
 		expect(el.style.width).toBe("600px");
-		expect(el.style.transform).toBe("scale(2)");
+		expect(el.parentElement?.style.transform).toBe("translate(50px, 25px)");
 	});
 
 	it("names the frame by its own folder, since the page around it says the rest", () => {
@@ -106,5 +124,24 @@ describe("FrameLabel", () => {
 		expect(el.getAttribute("data-frame-label")).toBe("shop/checkout");
 		expect(el.innerHTML).toContain(">checkout</span>");
 		expect(el.innerHTML).not.toContain(">shop/checkout<");
+	});
+});
+
+describe("LabelField", () => {
+	it("carries its labels by the camera's translation alone, so they keep their size", () => {
+		const camera = cameraAt({ x: 30, y: -10, k: 0.25 });
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			host.remove();
+		});
+		act(() => root.render(createElement(LabelField, { camera }, null)));
+		const field = host.querySelector<HTMLElement>("[data-canvas-labels]");
+		expect(field?.style.transform).toBe("translate(30px, -10px)");
+
+		act(() => camera.set({ x: -200, y: 80, k: 4 }));
+		expect(field?.style.transform).toBe("translate(-200px, 80px)");
 	});
 });

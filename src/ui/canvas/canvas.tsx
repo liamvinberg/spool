@@ -97,7 +97,7 @@ import {
 	pngBytesFromImageBlob,
 	pngFileName,
 } from "./frame-export";
-import { FrameLabel } from "./frame-label";
+import { FrameLabel, LabelField } from "./frame-label";
 import { FrameShell, FrameSlot, ShellClip } from "./frame-shell";
 import {
 	askText,
@@ -5494,7 +5494,7 @@ export function ProjectCanvas({
 				onContextMenu={onContextMenu}
 			>
 				{restCamera !== null && (
-					<CameraField camera={camera} under>
+					<CameraField camera={camera} layer="under">
 						{/* the threads live under the frames: the map, never a hit target */}
 						{arrowsOn && (
 							<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={camera} />
@@ -5575,45 +5575,45 @@ export function ProjectCanvas({
 								</FrameSlot>
 							);
 						})}
-						{/* Labels share one layer above every frame. A transformed frame is
-						    its own stacking context, so keeping its label inside would let a
-						    later neighboring frame paint over the label regardless of the
-						    label's own z-index. */}
+					</CameraField>
+				)}
+				{/* Labels share one layer above every frame. A transformed frame is
+				    its own stacking context, so keeping its label inside would let a
+				    later neighboring frame paint over the label regardless of the
+				    label's own z-index. */}
+				{restCamera !== null && (
+					<LabelField camera={camera}>
 						{visibleFrames.map((frame) => {
 							const isEntered = entered === frame.name;
 							const isSelected = selected.includes(frame.name);
 							const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
 							return (
-								<div
+								// Mono, muted; thread when selected. Entered swaps it for the
+								// state chip (#28).
+								<FrameLabel
 									key={`${frame.name}:label`}
-									className="pointer-events-none absolute h-0"
-									style={{
-										transform: `translate(${frame.x}px, ${frame.y}px)`,
-										width: frame.w,
-									}}
-								>
-									{/* Mono, muted; thread when selected. Entered swaps it for the
-										    state chip (#28). */}
-									<FrameLabel
-										name={frame.name}
-										frame={frame}
-										near={near}
-										camera={camera}
-										entered={isEntered}
-										selected={isSelected}
-										hovered={isHovered}
-										unseen={unseen.get(frame.name)}
-										sharing={(() => {
-											const state = sharing.state(frame.name);
-											return state?.chip === undefined
-												? undefined
-												: { chip: state.chip, expanded: state.open, open: () => sharing.show(frame.name) };
-										})()}
-										onPlay={() => playFrame(frame.name)}
-									/>
-								</div>
+									name={frame.name}
+									frame={frame}
+									near={near}
+									camera={camera}
+									entered={isEntered}
+									selected={isSelected}
+									hovered={isHovered}
+									unseen={unseen.get(frame.name)}
+									sharing={(() => {
+										const state = sharing.state(frame.name);
+										return state?.chip === undefined
+											? undefined
+											: { chip: state.chip, expanded: state.open, open: () => sharing.show(frame.name) };
+									})()}
+									onPlay={() => playFrame(frame.name)}
+								/>
 							);
 						})}
+					</LabelField>
+				)}
+				{restCamera !== null && (
+					<CameraField camera={camera} layer="over">
 						{pageObjects.map((object) => (
 							<PageObjectLabel
 								key={`${object.page}:label`}
@@ -5895,19 +5895,20 @@ export function ProjectCanvas({
  * either — promoting a layer holding hundreds of clipped, transformed frames
  * costs Chrome more per frame in re-deciding layers than it saves in paint.
  *
- * There are two, either side of the picture layer's canvas: arrows and pages
- * `under` it, and over it the shells, labels and walk tags. Both follow the
- * same camera callback the canvas draws in, so the three move as one. The
- * upper one is the field (`data-canvas-camera`), the one a test reads the
- * camera from.
+ * There are three, around the picture layer's canvas and the labels' own
+ * field (`LabelField`): arrows and pages `under` the canvas, the frames'
+ * shells over it (the field, `data-canvas-camera`, the one a test reads the
+ * camera from), and `over` the labels the page labels and walk tags. All of
+ * them follow the same camera callback the canvas draws in, so they move as
+ * one.
  */
 function CameraField({
 	camera,
-	under = false,
+	layer = "frames",
 	children,
 }: {
 	camera: CameraStore;
-	under?: boolean;
+	layer?: "under" | "frames" | "over";
 	children: ReactNode;
 }) {
 	const field = useRef<HTMLDivElement | null>(null);
@@ -5921,7 +5922,7 @@ function CameraField({
 	return (
 		<div
 			ref={field}
-			{...(under ? { "data-canvas-under": "" } : { "data-canvas-camera": "" })}
+			{...(layer === "frames" ? { "data-canvas-camera": "" } : { [`data-canvas-${layer}`]: "" })}
 			className="absolute top-0 left-0"
 			style={{ transformOrigin: "0 0" }}
 		>
