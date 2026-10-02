@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import type { PictureReport } from "../ui/canvas/picture-layer";
+import { UPLOAD_BUDGET } from "../ui/canvas/picture-plan";
 import { writeCover } from "./thumbs";
 
 /**
@@ -506,6 +507,48 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 			),
 	);
 	expect(most, "paints in one animation frame of the pan").toBeLessThanOrEqual(1);
+});
+
+it("keeps every paint's uploads within its share, past it only by the one texture it ends on", {
+	timeout: 180_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir });
+	// a page whose stills all land at once, more than one paint's share of them,
+	// each drawn large enough to bring a halving along with its square
+	for (let i = 0; i < 24; i += 1) {
+		const name = `big-${String(i).padStart(2, "0")}`;
+		writeFrame(project.root, name, "export default function Frame() { return <main />; }");
+		writeDesignFile(
+			project.root,
+			`frames/${name}/frame.json`,
+			`${JSON.stringify({ x: (i % 6) * 320, y: Math.floor(i / 6) * 220, w: 300, h: 200 })}\n`,
+		);
+		writeCover(project.root, name, Buffer.from(solidPng(1600, 1066, [40 + i * 8, 120, 200 - i * 6])));
+	}
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 10, y: 10, k: 0.55 } })}\n`);
+	const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: 2 });
+	const page = await context.newPage();
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	await expect
+		.poll(
+			async () => {
+				const now = await report(page);
+				return now?.complete === true && now.drawn.length >= 12;
+			},
+			{ timeout: 60_000 },
+		)
+		.toBe(true);
+	const uploads = (await report(page))?.uploads ?? [];
+	expect(uploads.length, "paints that uploaded").toBeGreaterThan(1);
+	for (const paint of uploads) {
+		const budget = paint.moving ? UPLOAD_BUDGET.moving : UPLOAD_BUDGET.resting;
+		if (paint.count === 1) continue;
+		// everything before the last texture fit the share; the last one began inside it
+		expect(paint.bytes - paint.lastBytes).toBeLessThan(budget.bytes);
+		expect(paint.ms - paint.lastMs).toBeLessThan(budget.ms + 1);
+	}
 });
 
 it("loses its context when the canvas goes, rather than leaving it for the collector", {

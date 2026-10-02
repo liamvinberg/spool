@@ -105,8 +105,14 @@ export interface PictureReport {
 	draws: number;
 	/** GPU bytes held by the square array and by halvings. */
 	bytes: { squares: number; halvings: number };
-	/** Loads still on their way: out with a loader, or decoded and waiting to upload. */
-	pending: { out: number; landed: number };
+	/** Loads still on their way (out with a loader, or decoded and waiting to upload), and every ask sent. */
+	pending: { out: number; landed: number; asked: number };
+	/**
+	 * The last paints that uploaded anything: how many textures, their bytes
+	 * and milliseconds, and the bytes and milliseconds of the last of them,
+	 * the one a paint may take past its budget (`UPLOAD_BUDGET`).
+	 */
+	uploads: { count: number; bytes: number; ms: number; lastBytes: number; lastMs: number; moving: boolean }[];
 	/** Every still with a texture on the GPU, its square or a halving. */
 	held: string[];
 	/**
@@ -189,6 +195,9 @@ export class PictureLayer {
 	private shown = new Set<string>();
 	/** When each frame was first drawn with what its size wanted, and from which still. */
 	private readonly done = new Map<string, { still: string; at: number }>();
+	/** Stills whose square found no layer free; one is asked again when a layer frees up. */
+	private readonly spares = new Set<string>();
+	private uploads: PictureReport["uploads"] = [];
 	private camera: Camera | null = null;
 	private width = 0;
 	private height = 0;
@@ -207,7 +216,15 @@ export class PictureLayer {
 	constructor(private readonly canvas: HTMLCanvasElement) {
 		canvas.addEventListener("webglcontextlost", this.onLost);
 		canvas.addEventListener("webglcontextrestored", this.onRestored);
-		this.loads = new StillLoads({ landed: () => this.wake(), gone: (job, failed) => this.onGone(job, failed) });
+		this.loads = new StillLoads({
+			landed: () => this.wake(),
+			// a load taken back before it started may be wanted again at rest:
+			// the next paint asks for it
+			gone: (job, failed) => {
+				this.onGone(job, failed);
+				this.wake();
+			},
+		});
 		this.gl = contextOf(canvas);
 		// no WebGL at all, nothing to load for: a canvas without it draws no pictures
 		if (this.gl === null) return;
@@ -360,6 +377,7 @@ export class PictureLayer {
 				halvings,
 			},
 			pending: this.loads.pending,
+			uploads: [...this.uploads],
 			held: [...held],
 			stills: this.frames.flatMap((frame) => {
 				if (frame.still === undefined) return [];
@@ -455,9 +473,11 @@ export class PictureLayer {
 
 	private paint(): void {
 		const gpu = this.gpu;
-		if (gpu === null || this.lost || this.disposed || this.width === 0 || this.height === 0) return;
+		if (gpu === null || this.lost || this.disposed) return;
 		const { gl } = gpu;
+		// a canvas with no size still takes in what landed, rather than hold every bitmap open
 		this.upload(gpu);
+		if (this.width === 0 || this.height === 0) return;
 		this.stamp += 1;
 		this.draws += 1;
 		gl.viewport(0, 0, this.width, this.height);
@@ -659,19 +679,24 @@ export class PictureLayer {
 		const budget = this.moving ? UPLOAD_BUDGET.moving : UPLOAD_BUDGET.resting;
 		const start = performance.now();
 		let bytes = 0;
+		let count = 0;
+		let last = { bytes: 0, at: start };
 		let squares = false;
 		while (!uploadSpent({ ms: performance.now() - start, bytes }, budget)) {
 			const item = this.loads.take();
 			if (item === undefined) break;
 			const { job, bitmap, natural } = item;
+			const before = { bytes, at: performance.now() };
 			if (job.halving === null) {
 				const square = this.squares.get(job.still);
 				if (square !== undefined && square.state !== "ready") {
 					square.natural = natural;
 					square.fetched ??= item.fetched;
 					const layer = this.layerFor(gpu, job.still);
-					if (layer === null) square.state = "spare";
-					else {
+					if (layer === null) {
+						square.state = "spare";
+						this.spares.add(job.still);
+					} else {
 						uploadSquare(gpu, layer, bitmap);
 						square.layer = layer;
 						square.state = "ready";
@@ -709,8 +734,24 @@ export class PictureLayer {
 				}
 			}
 			bitmap.close();
+			if (bytes > before.bytes) {
+				count += 1;
+				last = { bytes: bytes - before.bytes, at: before.at };
+			}
 		}
 		if (squares) mipSquares(gpu);
+		if (count > 0) {
+			const ms = performance.now() - start;
+			this.uploads.push({
+				count,
+				bytes,
+				ms,
+				lastBytes: last.bytes,
+				lastMs: performance.now() - last.at,
+				moving: this.moving,
+			});
+			if (this.uploads.length > 100) this.uploads.shift();
+		}
 	}
 
 	/** A layer of the square array for this still, growing the array when it is full and the GPU allows. */
@@ -788,9 +829,20 @@ export class PictureLayer {
 	private release(still: string): void {
 		const square = this.squares.get(still);
 		if (square !== undefined) {
-			if (square.layer !== null && this.layers[square.layer] === still) this.layers[square.layer] = null;
 			this.squares.delete(still);
+			this.spares.delete(still);
 			this.loads.cancel(still);
+			if (square.layer !== null && this.layers[square.layer] === still) {
+				this.layers[square.layer] = null;
+				// a still that found the array full takes the layer this one leaves
+				const spare = this.spares.values().next().value;
+				if (spare !== undefined) {
+					this.spares.delete(spare);
+					const waiting = this.squares.get(spare);
+					if (waiting !== undefined) waiting.state = "out";
+					this.ask({ key: spare, still: spare, halving: null, priority: Priority.page });
+				}
+			}
 		}
 		const gl = this.gpu?.gl;
 		for (const [key, halving] of this.halvings) {
