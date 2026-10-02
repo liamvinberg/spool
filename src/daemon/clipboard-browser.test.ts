@@ -1,6 +1,6 @@
 import { type Browser, chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
-import { builtUi, COVER_PNG, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, COVER_PNG, pagePointOf, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { writeCover } from "./thumbs";
 
 async function launchBrowser(): Promise<Browser | undefined> {
@@ -337,11 +337,11 @@ it("can copy after the canvas ignores an automatic walk from the same held frame
 	// being entered (#112): it holds real DOM for the tools to read, its boot
 	// runs, and it stays for as long as the selection does, which is what makes
 	// the walk it tries on its own observable at all.
-	const still = page.locator('[data-frame-cover="warm"]');
-	await still.waitFor({ timeout: 30_000 });
-	const stillBox = await still.boundingBox();
-	if (stillBox === null) throw new Error("the frame's own still is not on the canvas");
-	await page.mouse.click(stillBox.x + stillBox.width / 2, stillBox.y + stillBox.height / 2);
+	// Its still is drawn by the picture layer (#81), so the click is aimed at
+	// where the frame stands in the world: its middle.
+	await label.waitFor({ timeout: 30_000 });
+	const middle = await pagePointOf(page, { x: 180, y: 180 });
+	await page.mouse.click(middle.x, middle.y);
 	const frame = await childFrame(page, 'iframe[title="warm"]');
 	await frame.locator("#copy").waitFor({ state: "attached" });
 	await page.waitForTimeout(100);

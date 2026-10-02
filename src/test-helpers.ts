@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Page } from "playwright-core";
 import { inject, onTestFinished } from "vitest";
 import { createClaudeAdapter } from "./daemon/agent-claude";
 import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
@@ -529,4 +530,24 @@ export async function settle(read: () => number, quietMs = 300): Promise<void> {
 			quietSince = Date.now();
 		}
 	}
+}
+
+/**
+ * Where a world point lands on a canvas page, from the camera its field
+ * carries. A frame standing as its picture is drawn by the picture layer and
+ * has no element of its own to find (#81), so a press meant for one is aimed
+ * where the frame is, which is also how the canvas decides what a press
+ * landed on.
+ */
+export async function pagePointOf(page: Page, world: { x: number; y: number }): Promise<{ x: number; y: number }> {
+	const field = page.locator("[data-canvas-camera]");
+	await field.waitFor({ state: "attached", timeout: 30_000 });
+	return field.evaluate((element, at) => {
+		const transform = (element as HTMLElement).style.transform;
+		const camera = /translate\(([-\d.e]+)px, ([-\d.e]+)px\) scale\(([-\d.e]+)\)/.exec(transform);
+		const viewport = element.parentElement?.getBoundingClientRect();
+		if (camera === null || viewport === undefined) throw new Error(`the field carries no camera: "${transform}"`);
+		const k = Number(camera[3]);
+		return { x: viewport.left + Number(camera[1]) + at.x * k, y: viewport.top + Number(camera[2]) + at.y * k };
+	}, world);
 }

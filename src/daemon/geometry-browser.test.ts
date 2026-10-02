@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Page, Request } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, pagePointOf, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 interface GeometryPut {
 	surface: string;
@@ -110,11 +110,11 @@ it("keeps authored geometry byte-identical across idle player and canvas viewpor
 	// document unless something asks for one (#112), and the frame you went
 	// inside is the one that holds a live document through every resize below —
 	// which is the document this leg is about.
-	const authoredStill = canvas.locator('[data-frame-cover="authored"]');
-	await authoredStill.waitFor({ timeout: 30_000 });
-	const stillBox = await authoredStill.boundingBox();
-	if (stillBox === null) throw new Error("the frame's own still is not on the canvas");
-	await canvas.mouse.dblclick(stillBox.x + stillBox.width / 2, stillBox.y + Math.min(stillBox.height / 2, 200));
+	// The still is drawn by the picture layer (#81), so the double-click is
+	// aimed at where the frame stands in the world: its middle, near its top.
+	await canvas.locator('[data-frame-label="authored"]').waitFor({ timeout: 30_000 });
+	const inside = await pagePointOf(canvas, { x: 41 + 195, y: 73 + 200 });
+	await canvas.mouse.dblclick(inside.x, inside.y);
 	await canvas.frameLocator('iframe[title="authored"]').locator("#geometry-probe").waitFor({ timeout: 30_000 });
 	assertAuthored("canvas load at 900px");
 	for (const height of [700, 1100, 1668]) {
