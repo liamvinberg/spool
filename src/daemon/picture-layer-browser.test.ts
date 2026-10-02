@@ -459,11 +459,16 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 		const canvas = document.querySelector("[data-picture-layer]") as HTMLCanvasElement & {
 			spoolPictures: () => PictureReport;
 		};
-		const samples: { draws: number; out: number; camera: string }[] = [];
+		const samples: { draws: number; out: number; camera: string; at: number }[] = [];
 		Reflect.set(window, "__samples", samples);
 		const tick = () => {
 			const now = canvas.spoolPictures();
-			samples.push({ draws: now.draws, out: now.pending.out, camera: JSON.stringify(now.camera) });
+			samples.push({
+				draws: now.draws,
+				out: now.pending.out,
+				camera: JSON.stringify(now.camera),
+				at: performance.now(),
+			});
 			if (Reflect.get(window, "__sampling") !== false) requestAnimationFrame(tick);
 		};
 		requestAnimationFrame(tick);
@@ -479,6 +484,7 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 		draws: number;
 		out: number;
 		camera: string;
+		at: number;
 	}[];
 	// the frames the camera moved in, from the first to the last
 	const moved = samples.flatMap((sample, i) => (i > 0 && sample.camera !== samples[i - 1]?.camera ? [i] : []));
@@ -488,7 +494,17 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 	// the pan met loads coming back, or it proves nothing
 	const landings = during.filter((sample, i) => i > 0 && sample.out < (during[i - 1]?.out ?? 0)).length;
 	expect(landings, "stills landed while the camera moved").toBeGreaterThan(0);
-	const most = Math.max(...during.slice(1).map((sample, i) => sample.draws - (during[i]?.draws ?? 0)));
+	// counted only across one animation frame: a sample the busy page held back
+	// spans several, and their paints are not one frame's
+	const gaps = during.slice(1).map((sample, i) => sample.at - (during[i]?.at ?? 0));
+	const frame = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)] ?? 16;
+	const most = Math.max(
+		...during
+			.slice(1)
+			.map((sample, i) =>
+				sample.at - (during[i]?.at ?? 0) <= frame * 1.5 ? sample.draws - (during[i]?.draws ?? 0) : 0,
+			),
+	);
 	expect(most, "paints in one animation frame of the pan").toBeLessThanOrEqual(1);
 });
 
