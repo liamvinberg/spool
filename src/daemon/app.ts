@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -16,7 +17,7 @@ import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
-import { isFramePath, isSafeName } from "../page-path";
+import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
@@ -225,6 +226,16 @@ const publicationCreate = publicationParams.extend({
 const publicationGrant = publicationParams.extend({
 	email: z.string().trim().email().max(320),
 	kind: z.enum(["invite", "revoke"]),
+});
+
+/**
+ * What one open canvas shows, told at camera rest (#81): the event stream it
+ * rides beside, the page it is on, and the frames inside its viewport.
+ */
+const canvasView = z.strictObject({
+	view: z.uuid(),
+	page: z.string().refine(isPageSlot, { message: "not a page" }),
+	frames: z.array(z.string().refine(isFramePath, { message: "not a frame name" })).max(100_000),
 });
 
 const PLAYER_HANDOFF_TTL_MS = 30_000;
@@ -808,6 +819,12 @@ export function createDaemonApp({
 	 * project's watcher open when no browser is looking.
 	 */
 	const boothWatches = new Map<string, () => void>();
+	/**
+	 * Every open canvas, by the id its event stream was handed, and the project
+	 * it shows. A view lives exactly as long as that stream: a canvas that closed,
+	 * crashed or lost its connection stops counting the moment the stream does.
+	 */
+	const views = new Map<string, string>();
 	function boothKeeping(roots: readonly string[]): void {
 		if (selfOrigin === undefined) return;
 		for (const [root, stop] of boothWatches) {
@@ -1697,6 +1714,27 @@ export function createDaemonApp({
 					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 					throw error;
 				}
+				return c.body(null, 204);
+			},
+		)
+		/*
+		 * What one open canvas shows, for the booth's order (#81): the frames on
+		 * screen are photographed first, then the rest of their page. Sent at
+		 * camera rest, never per tick, and only when it changed. It names the event
+		 * stream it rides beside, because that is how long it stays true; a report
+		 * that arrives after its stream has gone describes nobody.
+		 */
+		.put(
+			"/api/p/:project/view",
+			validator("json", (value, c) => {
+				const parsed = canvasView.safeParse(value);
+				return parsed.success ? parsed.data : c.text('a view is { "view", "page", "frames" }', 400);
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { view, page, frames } = c.req.valid("json");
+				if (views.get(view) === project.root) booth.view(view, { root: project.root, page, frames });
 				return c.body(null, 204);
 			},
 		)
@@ -3014,7 +3052,14 @@ export function createDaemonApp({
 			return streamSSE(c, async (stream) => {
 				let id = 0;
 				beatWhileOpen(stream);
-				await stream.writeSSE({ event: "hello", data: JSON.stringify({ project: name }), id: String(id++) });
+				// the name this canvas tells the booth what it shows under
+				const view = randomUUID();
+				views.set(view, project.root);
+				stream.onAbort(() => {
+					views.delete(view);
+					booth.view(view, undefined);
+				});
+				await stream.writeSSE({ event: "hello", data: JSON.stringify({ project: name, view }), id: String(id++) });
 				const unsubscribe = hub.subscribe(project.root, (event) => {
 					void stream.writeSSE({ event: "change", data: JSON.stringify(event), id: String(id++) }).catch(() => {});
 				});

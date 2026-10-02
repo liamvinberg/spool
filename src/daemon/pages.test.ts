@@ -430,7 +430,7 @@ describe("page-aware change events", () => {
 
 		const res = await app.request(`/api/p/${name}/events`, { signal: controller.signal });
 		const events = sseReader(res);
-		expect(await events.next()).toEqual({ event: "hello", data: { project: name } });
+		expect(await events.next()).toEqual({ event: "hello", data: { project: name, view: expect.any(String) } });
 
 		// macOS arms the recursive watcher asynchronously — probe until it fires
 		let armed = false;

@@ -512,7 +512,7 @@ describe("change events", () => {
 		expect(res.headers.get("content-type")).toContain("text/event-stream");
 		const events = sseReader(res);
 
-		expect(await events.next()).toEqual({ event: "hello", data: { project: name } });
+		expect(await events.next()).toEqual({ event: "hello", data: { project: name, view: expect.any(String) } });
 
 		// macOS arms the recursive FSEvents watcher asynchronously — probe with
 		// throwaway shared/ writes until the first change lands, then settle, so
@@ -607,7 +607,7 @@ describe("change events", () => {
 
 		expect(res.status).toBe(200);
 		const events = sseReader(res);
-		expect(await events.next()).toEqual({ event: "hello", data: { project: name } });
+		expect(await events.next()).toEqual({ event: "hello", data: { project: name, view: expect.any(String) } });
 	});
 });
 

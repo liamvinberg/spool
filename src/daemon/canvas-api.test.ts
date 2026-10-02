@@ -1275,6 +1275,48 @@ describe("thumbnails", () => {
 	});
 });
 
+describe("what an open canvas shows, for the photo booth's order", () => {
+	it("names each canvas's stream in its hello and takes its view under that name", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "checkout", frameTsx("checkout"));
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+
+		const stream = await app.request(`/api/p/${name}/events`, { signal: controller.signal });
+		const hello = await sseReader(stream).next();
+		expect(hello.event).toBe("hello");
+		const { view } = hello.data as { view: string };
+		expect(view).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+		const tell = (body: unknown) =>
+			app.request(`/api/p/${name}/view`, {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		expect((await tell({ view, page: "", frames: ["checkout"] })).status).toBe(204);
+		// a view is the page and its frames by name, and nothing else
+		expect((await tell({ view, page: "../up", frames: [] })).status).toBe(400);
+		expect((await tell({ view, page: "", frames: ["../up"] })).status).toBe(400);
+		expect((await tell({ view: "not-a-stream", page: "", frames: [] })).status).toBe(400);
+		expect((await tell({ view, page: "", frames: [], camera: { x: 0, y: 0, k: 1 } })).status).toBe(400);
+	});
+
+	it("takes a report from a canvas whose stream has gone without complaint, and keeps none of it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		const response = await app.request(`/api/p/${name}/view`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ view: "6f1c7c56-3d1e-4c63-9a8b-2b0f7c1d9e10", page: "", frames: [] }),
+		});
+		expect(response.status).toBe(204);
+	});
+});
+
 describe("start designing", () => {
 	it("creates named or unnamed projects at an explicit location without changing the default", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
