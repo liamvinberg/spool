@@ -12,13 +12,15 @@ import type { PixelSize } from "./cover-size";
  * The side of the square every frame's picture is kept at, always (#81).
  *
  * Sized to what an overview shows rather than to what a close-up wants: a page
- * of a thousand frames fits on screen with each one a few dozen CSS pixels
- * wide, and 128 texels covers that at 2x with room to spare, for a quarter of
- * the memory a 256 square would cost (about 90 MB against 350 MB on a
- * thousand frames). Anything drawn larger streams a sharper copy while it is
- * on screen.
+ * of a thousand frames fits on screen with each one about thirty CSS pixels
+ * wide, which 64 texels covers at 2x. Every frame on the page pays for this
+ * square whether it is on screen or not, so it is the whole of the layer's
+ * cost in page size: 22 MB on a thousand frames, mips included, where a 128
+ * square measured 120 MB more GPU process memory than the image elements it
+ * replaced and a 256 one would be 350 MB. Anything drawn larger streams a
+ * sharper copy while it is on screen.
  */
-export const RESIDENT_PX = 128;
+export const RESIDENT_PX = 64;
 
 /** The size the picture of a `natural`-sized cover draws in a `w` x `h` frame: contained, never stretched. */
 export function containSize(w: number, h: number, natural: PixelSize): { w: number; h: number } {

@@ -26,7 +26,7 @@ import { bindUnits, containSize, evictions, RESIDENT_PX, SHARP_UNITS, textureByt
  *
  * Textures, by what a frame needs at the size it is drawn (`picture-plan.ts`):
  *
- *   resident: every frame's cover as a 128 px square in one texture array,
+ *   resident: every frame's cover as a 64 px square in one texture array,
  *             mipmapped on the GPU, its true shape restored when drawn;
  *   sharper:  for a frame drawn wider than that, the cover halved to the
  *             smallest size at least as wide as the drawing, or the cover
@@ -108,12 +108,14 @@ const UPLOAD_MS = { moving: 2, still: 6 };
 const UPLOAD_BYTES = { moving: 8 * 1024 * 1024, still: 32 * 1024 * 1024 };
 
 /**
- * The memory sharper copies may hold: a few screens of device pixels, mips
- * included, and never less than 64 MB. Bounded by the screen, not the page —
- * a frame off screen holds only its resident square.
+ * The memory sharper copies may hold: two screens of device pixels, mips
+ * included, and never less than 32 MB. Bounded by the screen, not the page —
+ * a frame off screen holds only its resident square. A copy is a halving of
+ * the cover at least as wide as its drawing, so one screen of them is at most
+ * four of pixels and usually much less.
  */
 function sharpBudget(width: number, height: number): number {
-	return Math.max(64 * 1024 * 1024, 3 * textureBytes(width, height, true));
+	return Math.max(32 * 1024 * 1024, 2 * textureBytes(width, height, true));
 }
 
 interface Resident {

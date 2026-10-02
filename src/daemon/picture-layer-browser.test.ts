@@ -180,7 +180,7 @@ it("draws every picture on the GPU, where its shell stood, and keeps none in the
 		expect(picture?.picture?.w).toBeCloseTo(150, 5);
 		expect(picture?.picture?.h).toBeCloseTo(99.9375, 5);
 		expect(picture?.natural).toEqual({ width: 800, height: 533 });
-		// 150 device px is past the 128 px square: the cover halved twice streams in
+		// 150 device px is past the 64 px square: the cover halved twice streams in
 		expect(picture?.texture).toEqual({ kind: "sharp", width: 200, height: 133 });
 	}
 	// no shell, no still, no document: the field holds only the labels

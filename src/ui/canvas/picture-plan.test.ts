@@ -24,12 +24,14 @@ describe("containSize", () => {
 
 describe("textureFor", () => {
 	it("draws an overview from the resident square", () => {
-		expect(textureFor({ w: 64, h: 43 }, LANDSCAPE, 8192)).toEqual({ kind: "resident" });
+		// a thousand-frame overview at 2x: each frame about 62 device px wide
+		expect(textureFor({ w: 62, h: 41 }, LANDSCAPE, 8192)).toEqual({ kind: "resident" });
 		expect(textureFor({ w: RESIDENT_PX, h: RESIDENT_PX }, LANDSCAPE, 8192)).toEqual({ kind: "resident" });
 	});
 
 	it("streams the smallest halving of the cover at least as wide as the drawing", () => {
 		// the mip level Chrome would have drawn the image element from
+		expect(textureFor({ w: 65, h: 43 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 100, height: 67 });
 		expect(textureFor({ w: 129, h: 86 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 200, height: 133 });
 		expect(textureFor({ w: 200, h: 133 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 200, height: 133 });
 		expect(textureFor({ w: 300, h: 200 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 400, height: 267 });
@@ -41,8 +43,8 @@ describe("textureFor", () => {
 	});
 
 	it("steps a tall picture up by its height when its width would fit the square", () => {
-		// 60 wide fits 128, 130 tall does not: the square has only 128 rows to give it
-		expect(textureFor({ w: 60, h: 130 }, PORTRAIT, 8192)).toEqual({ kind: "sharp", width: 200, height: 433 });
+		// 60 wide fits 64, 130 tall does not: the square has only 64 rows to give it
+		expect(textureFor({ w: 60, h: 130 }, PORTRAIT, 8192)).toEqual({ kind: "sharp", width: 100, height: 216 });
 	});
 
 	it("fits a cover taller than the GPU allows inside that limit", () => {
