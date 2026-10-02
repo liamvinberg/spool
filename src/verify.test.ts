@@ -5,6 +5,7 @@ import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { writeCaptureError } from "./daemon/thumbs";
+import { headlessShellArgs } from "./headless-shell";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { type BootDeps, logsFrame, planShot, shotFrame } from "./verify";
 
@@ -13,12 +14,17 @@ import { type BootDeps, logsFrame, planShot, shotFrame } from "./verify";
  * browser — they always run. The one boot smoke (#18: the shot path is
  * deliberately unseamed beyond this) is gated on a playwright-managed build
  * already being on the machine: tests never trigger the ~90 MB lazy fetch,
- * that narration is #27's second-machine acceptance.
+ * that narration is #27's second-machine acceptance. The boot itself is the
+ * daemon's photo booth, so these drive it exactly as an agent does.
  */
 
 async function browserAvailable(): Promise<boolean> {
 	try {
-		const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+		const browser = await chromium.launch({
+			channel: "chromium-headless-shell",
+			headless: true,
+			args: headlessShellArgs(),
+		});
 		await browser.close();
 		return true;
 	} catch {
@@ -199,11 +205,16 @@ describe("the one boot smoke", () => {
 		const font = readFileSync(
 			join(process.cwd(), "node_modules/@fontsource/fragment-mono/files/fragment-mono-latin-400-normal.woff2"),
 		);
-		let requested: (response: ServerResponse) => void = () => {};
-		const fontRequest = new Promise<ServerResponse>((resolve) => {
-			requested = resolve;
+		// Every request is answered, each well past the settle's whole budget, so
+		// the measurement has to wait for the font rather than for the settle. The
+		// daemon's photo booth loads the frame for its cover as well as for the
+		// shot, so the font is asked for more than once.
+		const server = createServer((_request, response: ServerResponse) => {
+			setTimeout(() => {
+				response.writeHead(200, { "Content-Type": "font/woff2", "Access-Control-Allow-Origin": "*" });
+				response.end(font);
+			}, 2500);
 		});
-		const server = createServer((_request, response) => requested(response));
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		onTestFinished(() => {
 			server.closeAllConnections();
@@ -228,19 +239,7 @@ export default function Tall() {
 }
 `,
 		);
-		const shot = await shotFrame(
-			deps("tall", {
-				viewport: { width: 160, height: 120 },
-				wait: async () => {
-					const response = await fontRequest;
-					// Return while the real font is pending, so measurement must wait for it.
-					setTimeout(() => {
-						response.writeHead(200, { "Content-Type": "font/woff2", "Access-Control-Allow-Origin": "*" });
-						response.end(font);
-					}, 100);
-				},
-			}),
-		);
+		const shot = await shotFrame(deps("tall", { viewport: { width: 160, height: 120 } }));
 		expect(shot.kind).toBe("shot");
 		if (shot.kind !== "shot") throw new Error("shot failed");
 		const logs = await logsFrame(deps("tall"));
@@ -274,29 +273,16 @@ export default function Noisy() {
 		);
 		writeFrame(root, "defaulted", "export default function Defaulted() { return <main>defaulted</main>; }\n");
 		const defaultNarrations: string[] = [];
-		const defaultWaits: number[] = [];
 		await expect(
-			shotFrame(
-				deps("defaulted", {
-					narrate: (line) => defaultNarrations.push(line),
-					wait: async (milliseconds) => {
-						defaultWaits.push(milliseconds);
-					},
-				}),
-			),
+			shotFrame(deps("defaulted", { narrate: (line) => defaultNarrations.push(line) })),
 		).resolves.toMatchObject({ kind: "shot", contentHeight: 900 });
 		expect(defaultNarrations).toEqual(['no valid frame.json for "defaulted" — using the 1440×900 default viewport']);
-		expect(defaultWaits).toEqual([300]);
 		expect(existsSync(join(root, "design", "frames", "defaulted", "frame.json"))).toBe(false);
 
-		const waits: number[] = [];
 		const shot = await shotFrame(
 			deps("noisy", {
 				viewport: { width: 160, height: 120 },
 				at: 17,
-				wait: async (milliseconds) => {
-					waits.push(milliseconds);
-				},
 				narrate: (line) => narrations.push(line),
 			}),
 		);
@@ -306,7 +292,6 @@ export default function Noisy() {
 		const file = files[0] as string;
 		expect(existsSync(file)).toBe(true);
 		expect((shot as { bootErrors: string[] }).bootErrors).toEqual([]);
-		expect(waits).toEqual([17]);
 		// Playwright captures at the documented 2× device scale.
 		const png = readPngSize(file);
 		expect(png).toEqual({ width: 320, height: 240 });
@@ -371,6 +356,45 @@ export default function Noisy() {
 		const errors = (thrown as { bootErrors: string[] }).bootErrors;
 		expect(errors.length).toBeGreaterThan(0);
 		expect(errors.join("\n")).toContain("boom at boot");
+	});
+
+	it("settles the way a cover does, or waits exactly as long as --at says", { timeout: 120_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(
+			root,
+			"late",
+			`import { useEffect } from "react";
+
+export default function Late() {
+	useEffect(() => {
+		const timer = setTimeout(() => console.log("late"), 2500);
+		return () => clearTimeout(timer);
+	}, []);
+	return <main>late</main>;
+}
+`,
+		);
+		const lines = async () => {
+			const logs = await logsFrame(deps("late"));
+			if (logs.kind !== "logs") throw new Error("logs failed");
+			return logs.entries.map((entry) => entry.text);
+		};
+
+		// a quiet frame settles in a beat and is shot long before its timer fires
+		await expect(shotFrame(deps("late", { viewport: { width: 160, height: 120 } }))).resolves.toMatchObject({
+			kind: "shot",
+		});
+		expect(await lines()).not.toContain("late");
+
+		// a fixed wait is the agent saying when, and the settle is not asked
+		await expect(shotFrame(deps("late", { viewport: { width: 160, height: 120 }, at: 3500 }))).resolves.toMatchObject(
+			{
+				kind: "shot",
+			},
+		);
+		expect(await lines()).toContain("late");
 	});
 
 	it("seeds and caches boots by scenario", { timeout: 180_000 }, async () => {

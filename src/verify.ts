@@ -1,12 +1,11 @@
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeAtomic } from "./atomic-write";
+import type { LogEntry } from "./daemon/booth";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
-import { renderOrigin } from "./daemon/lifecycle";
 import { readFrameGeometry } from "./daemon/projection";
 import { type CaptureError, readCaptureError } from "./daemon/thumbs";
 import { SpoolError } from "./errors";
-import { fetchHeadlessShell, launchHeadlessShell, MissingHeadlessShellError } from "./headless-shell";
 import { frameSegment } from "./page-path";
 import { refusalOf } from "./verbs";
 
@@ -18,6 +17,11 @@ import { refusalOf } from "./verbs";
  * verbatim before a browser ever launches; the log cache under
  * design/.spool/verify is keyed to the document's closure etag and scenario,
  * so unchanged source in the same scenario replays without a boot.
+ *
+ * The boot itself is the daemon's: a page in the photo booth's browser
+ * (`daemon/booth.ts`), through the same load and the same settle every cover
+ * gets, ahead of any cover waiting. An agent's shot and the canvas's picture
+ * of the same frame are one render, and the machine runs one browser for both.
  */
 
 export interface BootDeps {
@@ -28,21 +32,13 @@ export interface BootDeps {
 	frame: string;
 	narrate: (line: string) => void;
 	viewport?: { width: number; height: number };
+	/** A fixed wait after the first commit, in place of the settle every cover gets. */
 	at?: number;
 	scenario?: string;
-	/** The post-commit clock seam. */
-	wait?: (milliseconds: number) => Promise<void>;
 }
-
-const DEFAULT_SETTLE_MS = 300;
 
 function controlHeaders(controlToken: string): HeadersInit {
 	return { "X-Spool-Control": controlToken };
-}
-
-export interface LogEntry {
-	type: string;
-	text: string;
 }
 
 export type ShotOutcome =
@@ -59,8 +55,8 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
-	const boot = await bootFrame(deps, probe.etag);
-	if (boot.kind === "broken") return boot;
+	const boot = await bootFrame(deps);
+	if (boot.kind !== "booted") return boot;
 	return { kind: "shot", files: boot.files, bootErrors: boot.errors, contentHeight: boot.contentHeight };
 }
 
@@ -69,10 +65,10 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
 	const cached = readLogsCache(deps.root, deps.frame);
-	// The frame's last self-capture failure (#173), read alongside its logs
-	// rather than folded into either cache: a boot can replay while a capture
-	// keeps failing, and the reason belongs on every answer this returns, not
-	// only a fresh boot's.
+	// The frame's last cover failure (#173), read alongside its logs rather
+	// than folded into either cache: a boot can replay while its cover keeps
+	// failing, and the reason belongs on every answer this returns, not only a
+	// fresh boot's.
 	const captureError = readCaptureError(deps.root, deps.frame);
 	if (cached !== undefined && cached.etag === probe.etag && cached.scenario === scenarioName(deps)) {
 		return {
@@ -82,8 +78,8 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 			...(captureError === undefined ? {} : { captureError }),
 		};
 	}
-	const boot = await bootFrame(deps, probe.etag);
-	if (boot.kind === "broken") return boot;
+	const boot = await bootFrame(deps);
+	if (boot.kind !== "booted") return boot;
 	return {
 		kind: "logs",
 		entries: boot.entries,
@@ -197,83 +193,86 @@ type Boot =
 	| { kind: "booted"; files: string[]; entries: LogEntry[]; errors: string[]; contentHeight: number }
 	| { kind: "broken"; message: string };
 
-async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
+/** One boot as the daemon answers it, line by line: narration while it waits, then the outcome. */
+export type BootLine =
+	| { narrate: string }
+	| { outcome: Boot | { kind: "missing"; message: string } | { kind: "failed"; message: string } };
+
+async function bootFrame(deps: BootDeps): Promise<Boot | { kind: "missing"; message: string }> {
 	const { w, h } = frameSize(deps);
 	const plan = planShot(w, h);
-	const browser = await launchNarrated(deps.narrate);
-	try {
-		const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: plan.scale });
-		const entries: LogEntry[] = [];
-		const errors: string[] = [];
-		page.on("console", (message) => entries.push({ type: message.type(), text: message.text() }));
-		page.on("pageerror", (error) => {
-			// uncaught in the frame: part of the log stream, and what makes a boot broken
-			const text = String(error);
-			errors.push(text);
-			entries.push({ type: "pageerror", text });
-		});
-
-		const scenario = deps.scenario === undefined ? "" : `?scenario=${encodeURIComponent(deps.scenario)}`;
-		const url = `${renderOrigin(deps.daemonUrl)}/p/${encodeURIComponent(deps.name)}/frames/${encodeURIComponent(deps.frame)}${scenario}`;
-		const response = await page.goto(url, { timeout: 15_000, waitUntil: "domcontentloaded" });
-		if (response !== null && response.status() >= 500) {
-			// the source broke between probe and boot — re-probe for the verbatim text
-			const reprobe = await probeCompile(deps);
-			return {
-				kind: "broken",
-				message: reprobe.kind === "error" ? reprobe.message : `frame "${deps.frame}" failed to serve`,
-			};
-		}
-		// frames are blank until React commits (#16); a frame that renders nothing
-		// is legitimate, so a quiet timeout still shoots what is there
-		await page
-			.waitForFunction("(document.getElementById('root')?.childElementCount ?? 0) > 0", undefined, {
-				timeout: 10_000,
-			})
-			.catch(() => {});
-		await (deps.wait?.(deps.at ?? DEFAULT_SETTLE_MS) ?? page.waitForTimeout(deps.at ?? DEFAULT_SETTLE_MS));
-		await page.waitForFunction(() => document.fonts.ready.then(() => true), undefined, { timeout: 30_000 });
-		const contentHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-		const files: string[] = [];
-		if (plan.tiles.length === 1) {
-			writeAtomic(shotFile(deps.root, deps.frame), await page.screenshot({ type: "png" }));
-			files.push(shotFile(deps.root, deps.frame));
-		} else {
-			deps.narrate(`"${deps.frame}" is ${h}px tall — shooting ${plan.tiles.length} slices, top to bottom`);
-			for (const [index, tile] of plan.tiles.entries()) {
-				const png = await page.screenshot({
-					type: "png",
-					clip: { x: 0, y: tile.y, width: w, height: tile.height },
-				});
-				const file = shotTileFile(deps.root, deps.frame, index + 1);
-				writeAtomic(file, png);
-				files.push(file);
-			}
-		}
-		sweepShotFiles(deps.root, deps.frame, files);
-		writeAtomic(
-			logsFile(deps.root, deps.frame),
-			`${JSON.stringify({ etag, scenario: scenarioName(deps), at: new Date().toISOString(), entries }, null, "\t")}\n`,
-		);
-		return { kind: "booted", files, entries, errors, contentHeight };
-	} finally {
-		await browser.close();
+	if (plan.tiles.length > 1) {
+		deps.narrate(`"${deps.frame}" is ${h}px tall — shooting ${plan.tiles.length} slices, top to bottom`);
 	}
+	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/boot/${encodeURIComponent(deps.frame)}`;
+	const res = await fetch(url, {
+		method: "POST",
+		headers: { ...controlHeaders(deps.controlToken), "content-type": "application/json" },
+		body: JSON.stringify({
+			width: w,
+			height: h,
+			...(deps.at === undefined ? {} : { at: deps.at }),
+			...(deps.scenario === undefined ? {} : { scenario: deps.scenario }),
+		}),
+	});
+	if (res.status === 401 || res.status === 403) throw await refusalOf(res, url);
+	if (!res.ok || res.body === null) {
+		const text = await res.text();
+		throw new SpoolError(text !== "" ? text : `the daemon could not boot "${deps.frame}"`);
+	}
+	for await (const line of bootLines(res.body)) {
+		if ("narrate" in line) {
+			deps.narrate(line.narrate);
+			continue;
+		}
+		if (line.outcome.kind === "failed") throw new SpoolError(line.outcome.message);
+		return line.outcome;
+	}
+	throw new SpoolError(`the daemon stopped answering while it booted "${deps.frame}"`);
 }
 
-/** The pinned shell, fetched first and said so when this machine has never had it. */
-async function launchNarrated(narrate: (line: string) => void) {
-	try {
-		return await launchHeadlessShell();
-	} catch (error) {
-		if (!(error instanceof MissingHeadlessShellError)) throw error;
+/** The daemon's answer as the lines it is written in, each one JSON. */
+async function* bootLines(body: ReadableStream<Uint8Array>): AsyncGenerator<BootLine> {
+	const decoder = new TextDecoder();
+	let buffer = "";
+	for await (const chunk of body) {
+		buffer += decoder.decode(chunk, { stream: true });
+		let newline = buffer.indexOf("\n");
+		while (newline !== -1) {
+			const line = buffer.slice(0, newline).trim();
+			buffer = buffer.slice(newline + 1);
+			if (line !== "") yield JSON.parse(line) as BootLine;
+			newline = buffer.indexOf("\n");
+		}
 	}
-	narrate("first shot on this machine — fetching the pinned Chromium headless-shell (one-time, ~90 MB)");
-	await fetchHeadlessShell().catch(() => {
-		throw new SpoolError("fetching the headless-shell failed — see the install output above");
-	});
-	narrate("headless-shell ready — cached for every future shot");
-	return launchHeadlessShell();
+	if (buffer.trim() !== "") yield JSON.parse(buffer) as BootLine;
+}
+
+/**
+ * What one boot leaves for an agent to read back by path: the shot, or its
+ * slices top to bottom, and the console under the document's etag and
+ * scenario. Written by the daemon, which ran the boot; every address this run
+ * did not write retires with it.
+ */
+export function recordBoot(
+	root: string,
+	frame: string,
+	boot: { etag: string; scenario: string; pngs: readonly Buffer[]; entries: readonly LogEntry[] },
+): string[] {
+	const files =
+		boot.pngs.length === 1
+			? [shotFile(root, frame)]
+			: boot.pngs.map((_, index) => shotTileFile(root, frame, index + 1));
+	for (const [index, file] of files.entries()) {
+		const png = boot.pngs[index];
+		if (png !== undefined) writeAtomic(file, png);
+	}
+	sweepShotFiles(root, frame, files);
+	writeAtomic(
+		logsFile(root, frame),
+		`${JSON.stringify({ etag: boot.etag, scenario: boot.scenario, at: new Date().toISOString(), entries: boot.entries }, null, "\t")}\n`,
+	);
+	return files;
 }
 
 /** An explicit viewport, else the sidecar footprint, else the narrated default. */

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { type SSEStreamingApi, streamSSE } from "hono/streaming";
+import { type SSEStreamingApi, stream, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
@@ -21,6 +21,7 @@ import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
+import { type BootLine, planShot, recordBoot } from "../verify";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
@@ -236,6 +237,14 @@ const canvasView = z.strictObject({
 	view: z.uuid(),
 	page: z.string().refine(isPageSlot, { message: "not a page" }),
 	frames: z.array(z.string().refine(isFramePath, { message: "not a frame name" })).max(100_000),
+});
+
+/** One boot an agent asked for (#25): the viewport the CLI settled on, and how it should wait. */
+const bootRequest = z.strictObject({
+	width: z.number().int().positive(),
+	height: z.number().int().positive(),
+	at: z.number().int().nonnegative().optional(),
+	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 });
 
 const PLAYER_HANDOFF_TTL_MS = 30_000;
@@ -2502,6 +2511,59 @@ export function createDaemonApp({
 			if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
 			return c.json({ kind: "ok", etag: doc.etag });
 		})
+		.post(
+			"/api/p/:project/boot/:frame",
+			validator("json", (value, c) => {
+				const parsed = bootRequest.safeParse(value);
+				return parsed.success ? parsed.data : c.text('a boot is { "width", "height", "at"?, "scenario"? }', 400);
+			}),
+			(c) => {
+				// shot and logs (#25): one boot of the served document in the photo
+				// booth's browser, ahead of every cover, through the same load and the
+				// same settle, and recorded where the CLI reads it back. The answer is
+				// lines of JSON, because the first boot on a machine waits on a fetch of
+				// the browser, and an agent should hear that while it waits.
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const frame = c.req.param("frame");
+				const { width, height, at, scenario } = c.req.valid("json");
+				c.header("content-type", "application/x-ndjson; charset=utf-8");
+				c.header("cache-control", "no-store");
+				return stream(c, async (out) => {
+					const write = (line: BootLine) => out.write(`${JSON.stringify(line)}\n`);
+					const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+					if (doc.kind === "missing")
+						return void (await write({ outcome: { kind: "missing", message: doc.message } }));
+					if (doc.kind === "error")
+						return void (await write({ outcome: { kind: "broken", message: doc.message } }));
+					const plan = planShot(width, height);
+					try {
+						const boot = await booth.shoot(
+							{ project: name, frame, width, height, scale: plan.scale, tiles: plan.tiles, at, scenario },
+							(line) => void write({ narrate: line }).catch(() => {}),
+						);
+						if (boot.kind === "unserved") {
+							// the source broke between the compile and the load: its text, verbatim
+							const again = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+							const message = again.kind === "error" ? again.message : `frame "${frame}" failed to serve`;
+							return void (await write({ outcome: { kind: "broken", message } }));
+						}
+						const files = recordBoot(project.root, frame, {
+							etag: doc.etag,
+							scenario: scenario ?? "default",
+							pngs: boot.pngs,
+							entries: boot.entries,
+						});
+						const { entries, errors, contentHeight } = boot;
+						await write({ outcome: { kind: "booted", files, entries, errors, contentHeight } });
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						await write({ outcome: { kind: "failed", message } });
+					}
+				});
+			},
+		)
 		.post(
 			"/api/p/:project/locate",
 			validator("json", (value, c) => {
