@@ -20,14 +20,6 @@ import type { PixelSize } from "./cover-size";
  */
 export const RESIDENT_PX = 128;
 
-/**
- * The sharper copies streamed for frames drawn wider than the resident
- * square, by texel width, before the cover itself. Each step doubles, so a
- * picture never holds much more than four times the texels its frame shows;
- * past the last step it is the full cover, which is what 100% zoom draws.
- */
-export const SHARP_WIDTHS = [256, 512] as const;
-
 /** The size the picture of a `natural`-sized cover draws in a `w` x `h` frame: contained, never stretched. */
 export function containSize(w: number, h: number, natural: PixelSize): { w: number; h: number } {
 	const scale = Math.min(w / natural.width, h / natural.height);
@@ -35,10 +27,16 @@ export function containSize(w: number, h: number, natural: PixelSize): { w: numb
 }
 
 /**
- * The texture a picture needs to draw `drawn` device pixels as sharp as the
- * cover itself would: the resident square when both sides fit in it, else the
- * narrowest sharper copy at least as wide as the drawing, else the cover at
- * its own size. A sharper copy keeps the cover's shape, so its width decides.
+ * The texture a picture needs to draw `drawn` device pixels the way the image
+ * element drew it: the resident square when both sides fit in it, else a
+ * halving of the cover, the smallest one at least as wide as the drawing, else
+ * the cover itself.
+ *
+ * Halvings because that is what Chrome draws a shrunk image from: the level of
+ * its mip chain at least as large as the drawing, filtered linearly. A copy at
+ * exactly that size, sampled the same way (`picture-layer.ts`), is the same
+ * picture, where a copy at some other size draws softer or harsher. A sharper
+ * copy keeps the cover's shape, so its width decides.
  *
  * `maxSide` is the GPU's texture limit: a cover taller than it (a capture
  * allows 32 megapixels) is scaled down to fit, the one case where the full
@@ -50,13 +48,14 @@ export function textureFor(
 	maxSide: number,
 ): { kind: "resident" } | { kind: "sharp"; width: number; height: number } {
 	if (drawn.w <= RESIDENT_PX && drawn.h <= RESIDENT_PX) return { kind: "resident" };
-	const step = SHARP_WIDTHS.find((width) => width >= drawn.w && width < natural.width);
-	const width = step ?? natural.width;
-	const fit = Math.min(1, maxSide / width, maxSide / ((natural.height * width) / natural.width));
+	let width = natural.width;
+	while (width / 2 >= drawn.w && width / 2 > RESIDENT_PX) width /= 2;
+	const height = (natural.height * width) / natural.width;
+	const fit = Math.min(1, maxSide / width, maxSide / height);
 	return {
 		kind: "sharp",
 		width: Math.max(1, Math.round(width * fit)),
-		height: Math.max(1, Math.round(((natural.height * width) / natural.width) * fit)),
+		height: Math.max(1, Math.round(height * fit)),
 	};
 }
 

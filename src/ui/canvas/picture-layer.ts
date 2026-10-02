@@ -27,9 +27,10 @@ import { bindUnits, containSize, evictions, RESIDENT_PX, SHARP_UNITS, textureByt
  *
  *   resident: every frame's cover as a 128 px square in one texture array,
  *             mipmapped on the GPU, its true shape restored when drawn;
- *   sharper:  for a frame drawn wider than that, a copy at 256 or 512 texels
- *             or the full cover, streamed while it is on screen, kept within
- *             a budget of a few screens and dropped least recently drawn first.
+ *   sharper:  for a frame drawn wider than that, the cover halved to the
+ *             smallest size at least as wide as the drawing, or the cover
+ *             itself, streamed while it is on screen, kept within a budget of
+ *             a few screens and dropped least recently drawn first.
  *
  * Covers are immutable and content-addressed, so a changed cover is a new
  * address and a new texture; the old one is drawn until the new one lands and
@@ -85,6 +86,8 @@ export interface PictureReport {
 	draws: number;
 	/** GPU bytes held by the resident array and by sharper copies. */
 	bytes: { resident: number; sharp: number };
+	/** Covers still on their way: queued, loading, or decoded and waiting to upload. */
+	pending: { queued: number; loading: number; landed: number };
 }
 
 /**
@@ -195,10 +198,9 @@ void main() {
  * half-pixel ramp either side of the edge, from a signed distance.
  */
 function fragment(units: number): string {
-	const cases = Array.from(
-		{ length: units },
-		(_, i) => `\t\tcase ${i + 1}: return textureGrad(u_sharp[${i}], st, dx, dy);`,
-	).join("\n");
+	const cases = Array.from({ length: units }, (_, i) => `\t\tcase ${i + 1}: return drawn(u_sharp[${i}], st);`).join(
+		"\n",
+	);
 	return `#version 300 es
 precision highp float;
 precision highp int;
@@ -218,7 +220,35 @@ float edge(vec2 p, vec2 size, float r) {
 	vec2 q = abs(p - half_size) - half_size + r;
 	return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
-vec4 sharp(vec2 st, vec2 dx, vec2 dy) {
+// Mitchell-Netravali, B = C = 1/3: the cubic Chrome draws a grown image with
+float mitchell(float x) {
+	x = abs(x);
+	if (x < 1.0) return (7.0 * x * x * x - 12.0 * x * x + 16.0 / 3.0) / 6.0;
+	if (x < 2.0) return (-7.0 / 3.0 * x * x * x + 12.0 * x * x - 20.0 * x + 32.0 / 3.0) / 6.0;
+	return 0.0;
+}
+// A sharper copy drawn the way the image element drew the cover: shrunk, from
+// the mip level at least as large as the drawing, filtered linearly; grown,
+// through the cubic over the sixteen texels around the sample.
+vec4 drawn(sampler2D tex, vec2 st) {
+	vec2 size = vec2(textureSize(tex, 0));
+	vec2 rho = size / max(v_picture, vec2(1e-6));
+	float shrink = max(rho.x, rho.y);
+	if (shrink >= 1.0) return textureLod(tex, st, floor(log2(shrink)));
+	vec2 p = st * size - 0.5;
+	vec2 corner = floor(p);
+	vec2 f = p - corner;
+	vec4 sum = vec4(0.0);
+	for (int j = -1; j <= 2; j++) {
+		float wy = mitchell(float(j) - f.y);
+		for (int i = -1; i <= 2; i++) {
+			ivec2 at = ivec2(clamp(corner + vec2(i, j), vec2(0.0), size - 1.0));
+			sum += texelFetch(tex, at, 0) * mitchell(float(i) - f.x) * wy;
+		}
+	}
+	return clamp(sum, 0.0, 1.0);
+}
+vec4 sharp(vec2 st) {
 	switch (v_unit) {
 ${cases}
 	}
@@ -236,7 +266,7 @@ void main() {
 		vec2 clamped = clamp(st, 0.0, 1.0);
 		vec4 texel = v_unit == 0
 			? textureGrad(u_resident, vec3(clamped, v_layer), dx, dy)
-			: sharp(clamped, dx, dy);
+			: sharp(clamped);
 		float inside = clamp(0.5 - edge(v_local, v_picture, 0.0), 0.0, 1.0);
 		color = mix(u_surface, texel + u_surface * (1.0 - texel.a), inside);
 	}
@@ -402,6 +432,7 @@ export class PictureLayer {
 				resident: this.gpu === null ? 0 : this.gpu.capacity * textureBytes(RESIDENT_PX, RESIDENT_PX, true),
 				sharp,
 			},
+			pending: { queued: this.queue.size, loading: this.loading.size, landed: this.landed.length },
 		};
 	}
 

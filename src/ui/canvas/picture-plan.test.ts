@@ -28,18 +28,21 @@ describe("textureFor", () => {
 		expect(textureFor({ w: RESIDENT_PX, h: RESIDENT_PX }, LANDSCAPE, 8192)).toEqual({ kind: "resident" });
 	});
 
-	it("streams the narrowest sharper copy at least as wide as the drawing", () => {
-		expect(textureFor({ w: 129, h: 86 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 256, height: 171 });
-		expect(textureFor({ w: 480, h: 320 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 512, height: 341 });
+	it("streams the smallest halving of the cover at least as wide as the drawing", () => {
+		// the mip level Chrome would have drawn the image element from
+		expect(textureFor({ w: 129, h: 86 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 200, height: 133 });
+		expect(textureFor({ w: 200, h: 133 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 200, height: 133 });
+		expect(textureFor({ w: 300, h: 200 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 400, height: 267 });
 	});
 
-	it("draws the cover itself past the last step, which is what 100% zoom needs", () => {
+	it("draws the cover itself once no halving is wide enough, and at 100% zoom", () => {
+		expect(textureFor({ w: 480, h: 320 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 800, height: 533 });
 		expect(textureFor({ w: 2400, h: 1600 }, LANDSCAPE, 8192)).toEqual({ kind: "sharp", width: 800, height: 533 });
 	});
 
 	it("steps a tall picture up by its height when its width would fit the square", () => {
 		// 60 wide fits 128, 130 tall does not: the square has only 128 rows to give it
-		expect(textureFor({ w: 60, h: 130 }, PORTRAIT, 8192)).toEqual({ kind: "sharp", width: 256, height: 554 });
+		expect(textureFor({ w: 60, h: 130 }, PORTRAIT, 8192)).toEqual({ kind: "sharp", width: 200, height: 433 });
 	});
 
 	it("fits a cover taller than the GPU allows inside that limit", () => {
