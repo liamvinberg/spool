@@ -52,11 +52,20 @@ export type LoaderReply =
 const FETCHES = 8;
 const LOADS = 24;
 
+/**
+ * Loads at once for frames off screen (priority 2). Those squares are for
+ * later, so they trickle in beside what the screen is waiting for: the
+ * daemon serving the frames' own documents and the decode threads are shared
+ * with everything the page does next.
+ */
+const BACKGROUND = 2;
+
 type Load = Extract<LoaderAsk, { kind: "load" }>;
 
 const queue = new Map<string, Load>();
 let fetching = 0;
 let decoding = 0;
+let background = 0;
 
 const post = (reply: LoaderReply, transfer: Transferable[] = []) => self.postMessage(reply, { transfer });
 
@@ -75,13 +84,24 @@ function pump(): void {
 	while (fetching < FETCHES && fetching + decoding < LOADS && queue.size > 0) {
 		let best: Load | null = null;
 		for (const load of queue.values()) if (best === null || load.priority < best.priority) best = load;
-		if (best === null) return;
+		if (best === null || (best.priority >= 2 && background >= BACKGROUND)) return;
 		queue.delete(best.key);
 		void run(best);
 	}
 }
 
 async function run(load: Load): Promise<void> {
+	const later = load.priority >= 2;
+	if (later) background += 1;
+	try {
+		await fetchAndDecode(load);
+	} finally {
+		if (later) background -= 1;
+		pump();
+	}
+}
+
+async function fetchAndDecode(load: Load): Promise<void> {
 	fetching += 1;
 	let bytes: Uint8Array<ArrayBuffer>;
 	let type: string;
