@@ -103,7 +103,17 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 	}
 
-	return { getDocument };
+	/**
+	 * Drop one frame's compiled document, whatever authority it was built for.
+	 * The next request compiles it again, at a compile's cost and nothing more:
+	 * the cache is an accelerator, never the truth.
+	 */
+	function forget(root: string, frame: string): void {
+		const prefix = `${root}\0${frame}\0`;
+		for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key);
+	}
+
+	return { getDocument, forget };
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;

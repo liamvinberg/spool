@@ -1,8 +1,8 @@
 import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
-import { buildDesignEntry } from "./compile";
+import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { buildDesignEntry, createFrameCompiler } from "./compile";
 import { realDesignDir } from "./design-path";
 
 describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
@@ -130,5 +130,36 @@ describe("design-relative shared/ imports", () => {
 
 		// the scaffold's own cn(), reached without a single ../
 		expect(sourceFiles).toContain(join(designDir, "shared", "lib", "utils.ts"));
+	});
+});
+
+/**
+ * The photo booth compiles every frame of every registered project, and lets
+ * go of one nobody has open once it is photographed. Forgetting is per frame,
+ * whatever authority the document was built for, and costs the next request a
+ * compile and nothing else.
+ */
+describe("forgetting a compiled document", () => {
+	it("compiles the frame afresh and leaves every other frame cached", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		writeFrame(root, "homepage", "export default function Page() { return <main>page</main>; }\n");
+		const compiler = createFrameCompiler("0.0.0-test");
+		const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
+		const other = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:2" };
+		const cache = async (frame: string, by = authority) => {
+			const doc = await compiler.getDocument(root, frame, by);
+			return doc.kind === "ok" ? doc.cache : doc.kind;
+		};
+		expect(await cache("home")).toBe("miss");
+		expect(await cache("home", other)).toBe("miss");
+		expect(await cache("homepage")).toBe("miss");
+
+		compiler.forget(root, "home");
+
+		expect(await cache("home")).toBe("miss");
+		expect(await cache("home", other)).toBe("miss");
+		// a name that merely starts with the forgotten one is another frame
+		expect(await cache("homepage")).toBe("hit");
 	});
 });

@@ -822,6 +822,15 @@ export function createDaemonApp({
 			hub.publish(root, { kind: "thumb", frame, cover });
 		},
 		failed: (root, frame, reason) => writeCaptureError(root, frame, reason),
+		// The booth compiles every frame of every registered project, where the
+		// canvas only ever compiled the page it showed, and a compiled document
+		// holds the frame's whole bundle and stylesheet. One of a page nobody has
+		// open is let go once it is photographed, so the cache holds what open
+		// canvases are showing rather than everything the booth ever saw. Opening
+		// that page later costs each mounted frame one compile.
+		finished: (root, frame) => {
+			if (booth.placeOf(root, frame) === 2) compiler.forget(root, frame);
+		},
 	});
 	/**
 	 * The booth listens to every registered project, open in a canvas or not,
