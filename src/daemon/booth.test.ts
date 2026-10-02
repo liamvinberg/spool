@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { makeApp, makeProject, makeTempDir, sseReader, writeFrame } from "../test-helpers";
 import {
 	type BoothDeps,
 	type BoothReason,
@@ -358,5 +360,52 @@ describe("the colour scheme the booth starts in", () => {
 
 	it("is light anywhere the machine has no say", async () => {
 		expect(await systemColorScheme("linux")).toBe("light");
+	});
+});
+
+describe("two canvases in different schemes", () => {
+	it("move the booth only when one of them changes its own, so panning either trades nothing", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "home", "export default function Frame() { return <main>home</main>; }\n");
+		const app = makeApp(spoolDir, {
+			booth: {
+				systemScheme: async () => "light",
+				launch: async () => {
+					throw new Error("no browser in this test");
+				},
+			},
+		});
+		const scheme = async () =>
+			((await (await app.request(`/api/p/${name}/verify/home`)).json()) as { scheme: string }).scheme;
+		const open = async () => {
+			const controller = new AbortController();
+			onTestFinished(() => controller.abort());
+			const events = sseReader(await app.request(`/api/p/${name}/events`, { signal: controller.signal }));
+			const hello = await events.next();
+			const { view } = hello.data as { view: string };
+			return (shows: "light" | "dark") =>
+				app.request(`/api/p/${name}/view`, {
+					method: "PUT",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ view, page: "", frames: ["home"], scheme: shows }),
+				});
+		};
+		const one = await open();
+		const two = await open();
+
+		await one("dark");
+		expect(await scheme()).toBe("dark");
+		// the second canvas opens light: the newest thing anyone said
+		await two("light");
+		expect(await scheme()).toBe("light");
+		// the first pans, still dark, and moves nothing; nor does the second
+		await one("dark");
+		await two("light");
+		expect(await scheme()).toBe("light");
+		// until the first goes over to light and back to dark itself
+		await one("light");
+		await one("dark");
+		expect(await scheme()).toBe("dark");
 	});
 });

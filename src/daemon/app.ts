@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import { captureRasterSize, coverCaptureScale } from "../cover";
+import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
@@ -822,10 +822,14 @@ export function createDaemonApp({
 		covered: (root, frame) => readCover(root, frame) !== undefined,
 		registered: (root) => boothWatches.has(root),
 		store: (root, frame, bytes, scheme) => {
+			// a frame deleted while it sat has no folder a picture belongs in
+			if (!frameExists(root, frame)) return;
 			const cover = writeCover(root, frame, bytes, scheme);
 			hub.publish(root, { kind: "thumb", frame, cover });
 		},
-		failed: (root, frame, reason) => writeCaptureError(root, frame, reason),
+		failed: (root, frame, reason) => {
+			if (frameExists(root, frame)) writeCaptureError(root, frame, reason);
+		},
 		// The booth compiles every frame of every registered project, where the
 		// canvas only ever compiled the page it showed, and a compiled document
 		// holds the frame's whole bundle and stylesheet. One of a page nobody has
@@ -845,11 +849,12 @@ export function createDaemonApp({
 	 */
 	const boothWatches = new Map<string, () => void>();
 	/**
-	 * Every open canvas, by the id its event stream was handed, and the project
-	 * it shows. A view lives exactly as long as that stream: a canvas that closed,
-	 * crashed or lost its connection stops counting the moment the stream does.
+	 * Every open canvas, by the id its event stream was handed: the project it
+	 * shows, and the colour scheme it last said its frames render in. A view
+	 * lives exactly as long as that stream: a canvas that closed, crashed or lost
+	 * its connection stops counting the moment the stream does.
 	 */
-	const views = new Map<string, string>();
+	const views = new Map<string, { root: string; scheme: ColorScheme | undefined }>();
 	function boothKeeping(roots: readonly string[]): void {
 		if (selfOrigin === undefined) return;
 		for (const [root, stop] of boothWatches) {
@@ -858,8 +863,10 @@ export function createDaemonApp({
 			boothWatches.delete(root);
 			sittings.dropProject(root);
 		}
+		const arrived: string[] = [];
 		for (const root of roots) {
 			if (boothWatches.has(root)) continue;
+			arrived.push(root);
 			const project = basename(root);
 			const owe = (frame: string) => booth.enqueue({ root, project, frame, reason: "edited" });
 			boothWatches.set(
@@ -888,16 +895,19 @@ export function createDaemonApp({
 				}),
 			);
 		}
+		// a project's covers may be of the other scheme than the one the booth
+		// starts in, or than the one the canvas went to while it was not watched
+		void booth.schemeKnown().then(() => restale(arrived));
 	}
 
 	/**
-	 * The canvas went over to the other colour scheme: every cover taken in the
-	 * one it left, of a frame that follows the scheme, is now a picture of a
-	 * frame nobody is looking at. Those are owed again, behind anything edited,
-	 * and nothing else is: most frames look the same in both.
+	 * The booth's colour scheme changed: every cover taken in another, of a frame
+	 * that follows the scheme, is now a picture of a frame nobody is looking at.
+	 * Those are owed again, behind anything edited, and nothing else is: most
+	 * frames look the same in both.
 	 */
-	async function restale(): Promise<void> {
-		for (const root of boothWatches.keys()) {
+	async function restale(roots: Iterable<string>): Promise<void> {
+		for (const root of roots) {
 			const project = basename(root);
 			try {
 				for (const [frame, taken] of await scanCoverSchemes(root)) {
@@ -921,8 +931,7 @@ export function createDaemonApp({
 		const stored = await coverSize(root, frame);
 		if (stored === undefined) return true;
 		const { w, h } = frameGeometry(root, frame);
-		const width = Math.max(1, Math.round(w));
-		const owed = captureRasterSize(width, Math.max(1, Math.round(h)), coverCaptureScale(width));
+		const owed = coverShape(w, h)?.raster;
 		if (owed === undefined) return false;
 		// Chrome rounds the raster its own way: a pixel either way is the same size
 		return stored.width !== owed.width || Math.abs(stored.height - owed.height) > 1;
@@ -1022,7 +1031,7 @@ export function createDaemonApp({
 	 * this for every uncovered frame in a projection read costs a queue, never a
 	 * stampede.
 	 */
-	function requestHeal(root: string, name: string, frame: string): void {
+	function owePicture(root: string, name: string, frame: string): void {
 		if (selfOrigin === undefined) return;
 		booth.enqueue({ root, project: name, frame, reason: "missing" });
 	}
@@ -1678,9 +1687,9 @@ export function createDaemonApp({
 					frames: projection.frames.map((frame) => {
 						// This read is the moment a canvas learns a frame has no cover
 						// to show, and a frame with none renders its placeholder and
-						// asks for nothing (#111). So the heal is enqueued here rather
-						// than waiting for a request that will never come.
-						if (frame.cover === undefined) requestHeal(project.root, name, frame.name);
+						// asks for nothing (#111). So its picture is owed from here
+						// rather than waiting for a request that will never come.
+						if (frame.cover === undefined) owePicture(project.root, name, frame.name);
 						return frame;
 					}),
 				});
@@ -1713,10 +1722,10 @@ export function createDaemonApp({
 				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 				throw error;
 			}
-			// The address named a cover this frame does not have. Heal it: the shot
-			// lands, the thumb event carries the new image, and the canvas asks
-			// again at the address that now exists.
-			if (exists) requestHeal(project.root, name, frame);
+			// The address named a cover this frame does not have. The booth owes it
+			// a picture: the cover lands, the thumb event carries the new image, and
+			// the canvas asks again at the address that now exists.
+			if (exists) owePicture(project.root, name, frame);
 			return c.text("no such cover", 404);
 		})
 		.get("/api/p/:project/state", (c) => {
@@ -1765,9 +1774,16 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const { view, page, frames, scheme } = c.req.valid("json");
-				if (views.get(view) !== project.root) return c.body(null, 204);
+				const open = views.get(view);
+				if (open?.root !== project.root) return c.body(null, 204);
 				sittings.view(view, { root: project.root, page, frames });
-				if (booth.setScheme(scheme)) void restale();
+				// Only a canvas whose own scheme changed moves the booth, so two
+				// canvases in different schemes do not trade it back and forth on
+				// every pan: the one that changed last is the one being looked at.
+				if (open.scheme !== scheme) {
+					open.scheme = scheme;
+					if (booth.setScheme(scheme)) void restale(boothWatches.keys());
+				}
 				return c.body(null, 204);
 			},
 		)
@@ -3094,7 +3110,7 @@ export function createDaemonApp({
 				beatWhileOpen(stream);
 				// the name this canvas tells the booth what it shows under
 				const view = randomUUID();
-				views.set(view, project.root);
+				views.set(view, { root: project.root, scheme: undefined });
 				stream.onAbort(() => {
 					views.delete(view);
 					sittings.view(view, undefined);
