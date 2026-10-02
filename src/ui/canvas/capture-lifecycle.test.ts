@@ -15,7 +15,9 @@ vi.mock(import("./capture-broker"), async (importOriginal) => ({
 	rasterCaptureSource: broker.raster,
 }));
 
-const { CAPTURE_REPLY_TIMEOUT_MS, CAPTURE_SETTLE_BUDGET_MS, useFrameLifecycle } = await import("./lifecycle");
+const { ARRIVE_DEADLINE_MS, CAPTURE_REPLY_TIMEOUT_MS, CAPTURE_SETTLE_BUDGET_MS, useFrameLifecycle } = await import(
+	"./lifecycle"
+);
 type Lifecycle = ReturnType<typeof useFrameLifecycle>;
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -31,12 +33,13 @@ afterEach(async () => {
 	broker.id.mockReset();
 	broker.raster.mockReset();
 	vi.useRealTimers();
+	vi.restoreAllMocks();
 });
 
-function source(id: string, targetWidth: number): CaptureSourceMessage {
+function source(id: string, targetWidth: number, frame = "landing"): CaptureSourceMessage {
 	return {
 		spool: "capture-source",
-		frame: "landing",
+		frame,
 		id,
 		svg: new Blob(["<svg/>"], { type: "image/svg+xml" }),
 		width: 390,
@@ -46,11 +49,12 @@ function source(id: string, targetWidth: number): CaptureSourceMessage {
 	};
 }
 
-async function mountLifecycle(
+/** The hook over fabricated frames, read through the render that last ran. */
+async function renderLifecycle(
 	onShot: (frame: string, image: CoverRaster) => void,
-	frames: ProjectedFrame[] = [],
-	onCaptureFailure: (frame: string, reason: string) => void = vi.fn(),
-) {
+	frames: ProjectedFrame[],
+	onCaptureFailure: (frame: string, reason: string) => void,
+): Promise<{ current: () => Lifecycle; host: HTMLDivElement }> {
 	const framesRef = { current: frames } as unknown as RefObject<ProjectedFrame[]>;
 	let lifecycle: Lifecycle | undefined;
 	function Harness() {
@@ -71,21 +75,39 @@ async function mountLifecycle(
 		});
 		return null;
 	}
-	host = document.createElement("div");
-	document.body.append(host);
-	root = createRoot(host);
+	const mounted = document.createElement("div");
+	host = mounted;
+	document.body.append(mounted);
+	root = createRoot(mounted);
 	await act(() => root?.render(createElement(Harness)));
-	if (lifecycle === undefined) throw new Error("lifecycle did not mount");
+	const current = () => {
+		if (lifecycle === undefined) throw new Error("lifecycle did not mount");
+		return lifecycle;
+	};
+	current();
+	return { current, host: mounted };
+}
 
+/** A document for the frame, booted: what the shell's iframe and its loaded report hand the hook. */
+async function boot(lifecycle: () => Lifecycle, host: HTMLDivElement, frame: string) {
 	const iframe = document.createElement("iframe");
 	host.append(iframe);
 	if (iframe.contentWindow === null) throw new Error("frame window unavailable");
 	await act(() => {
-		lifecycle?.onIframe("landing", iframe);
-		lifecycle?.noteLoaded("landing");
+		lifecycle().onIframe(frame, iframe);
+		lifecycle().noteLoaded(frame);
 	});
-	if (lifecycle === undefined) throw new Error("lifecycle did not update");
-	return { iframe, lifecycle, sourceWindow: iframe.contentWindow };
+	return { iframe, sourceWindow: iframe.contentWindow };
+}
+
+async function mountLifecycle(
+	onShot: (frame: string, image: CoverRaster) => void,
+	frames: ProjectedFrame[] = [],
+	onCaptureFailure: (frame: string, reason: string) => void = vi.fn(),
+) {
+	const { current, host } = await renderLifecycle(onShot, frames, onCaptureFailure);
+	const { iframe, sourceWindow } = await boot(current, host, "landing");
+	return { iframe, lifecycle: current(), sourceWindow };
 }
 
 describe("capture request lifecycle", () => {
@@ -290,5 +312,89 @@ describe("capture-failure reasons (#173)", () => {
 
 		expect(onCaptureFailure).not.toHaveBeenCalled();
 		iframe.remove();
+	});
+});
+
+describe("errands (#177)", () => {
+	/** Frames with no picture yet, each one owed an errand. */
+	const owed = (count: number): ProjectedFrame[] =>
+		Array.from({ length: count }, (_, index) => ({ name: `f${index}`, x: index * 500, y: 0, w: 390, h: 844 }));
+
+	/** The sweep's interval and the clock it reads, both stopped until a test moves them. */
+	function stopTime() {
+		vi.useFakeTimers();
+		let clock = 1_000;
+		vi.spyOn(performance, "now").mockImplementation(() => clock);
+		return (ms: number) => {
+			clock += ms;
+		};
+	}
+
+	/** The settle budget of every capture the frame's document was asked for. */
+	function captureSettles(sourceWindow: WindowProxy) {
+		const post = vi.spyOn(sourceWindow, "postMessage");
+		return () =>
+			post.mock.calls
+				.map(([message]) => message as { spool: string; settleMs?: number })
+				.filter((message) => message.spool === "capture")
+				.map((message) => message.settleMs);
+	}
+
+	it("photographs a borrowed frame that went quiet arriving without settling it again", async () => {
+		const tick = stopTime();
+		broker.id.mockReturnValue("1".repeat(32));
+		const { current, host } = await renderLifecycle(vi.fn(), owed(1), vi.fn());
+		expect(current().states.f0).toBe("refreshing");
+
+		tick(50);
+		const { sourceWindow } = await boot(current, host, "f0");
+		const settles = captureSettles(sourceWindow);
+		await act(() => current().noteArrived("f0", true));
+
+		expect(settles()).toEqual([0]);
+	});
+
+	it("settles a borrowed frame that arrived by running out its budget", async () => {
+		// a long entrance is still mid-arrival when the arrival settle gives up
+		const tick = stopTime();
+		broker.id.mockReturnValue("3".repeat(32));
+		const { current, host } = await renderLifecycle(vi.fn(), owed(1), vi.fn());
+
+		tick(50);
+		const { sourceWindow } = await boot(current, host, "f0");
+		const settles = captureSettles(sourceWindow);
+		await act(() => current().noteArrived("f0", false));
+
+		expect(settles()).toEqual([CAPTURE_SETTLE_BUDGET_MS]);
+	});
+
+	it("settles a borrowed frame resized mid-arrival, however quiet its late report", async () => {
+		// The resize reflows the document in place, after its settle began: the
+		// report is of the frame before the change.
+		const tick = stopTime();
+		broker.id.mockReturnValue("4".repeat(32));
+		const { current, host } = await renderLifecycle(vi.fn(), owed(1), vi.fn());
+
+		tick(50);
+		const { sourceWindow } = await boot(current, host, "f0");
+		const settles = captureSettles(sourceWindow);
+		tick(100);
+		await act(() => current().markStale("f0"));
+		await act(() => current().noteArrived("f0", true));
+
+		expect(settles()).toEqual([CAPTURE_SETTLE_BUDGET_MS]);
+	});
+
+	it("settles a borrowed frame whose arrival only its deadline vouched for", async () => {
+		const tick = stopTime();
+		broker.id.mockReturnValue("2".repeat(32));
+		const { current, host } = await renderLifecycle(vi.fn(), owed(1), vi.fn());
+
+		tick(50);
+		const { sourceWindow } = await boot(current, host, "f0");
+		const settles = captureSettles(sourceWindow);
+		await act(() => vi.advanceTimersByTimeAsync(ARRIVE_DEADLINE_MS));
+
+		expect(settles()).toEqual([CAPTURE_SETTLE_BUDGET_MS]);
 	});
 });

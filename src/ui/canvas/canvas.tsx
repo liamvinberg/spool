@@ -3850,7 +3850,7 @@ export function ProjectCanvas({
 				case "arrived":
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
-					lifecycleRef.current.noteArrived(message.frame);
+					lifecycleRef.current.noteArrived(message.frame, message.quiet);
 					// and so has the document held in front of a reload the hand
 					// caused (#253's no blink): let go at loaded, the still would
 					// stand in until here, which is the flash the hold exists to

@@ -4,9 +4,11 @@ import type { FrameState, SweepInput } from "./lifecycle";
 import {
 	CAPTURE_AFTER_READY_MS,
 	CAPTURE_MAX_STALE_MS,
+	CAPTURE_SETTLE_BUDGET_MS,
 	createLifecycleModel,
 	ERRAND_DEADLINE_MS,
 	ERRANDS_IN_FLIGHT,
+	markPictureWrong,
 	noteErrandShot,
 	PICTURE_TRIES,
 	renewPictureDebt,
@@ -121,7 +123,7 @@ describe("its picture is missing", () => {
 
 		// the sweep after the mount finds it arrived and asks for the picture
 		const shot = s.sweep(frames, uncovered);
-		expect(shot.refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(shot.refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 
 		// the shot lands; the frame goes straight back to being a picture, even
 		// though the cover is still on its way to disk
@@ -133,7 +135,7 @@ describe("its picture is missing", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
 		s.sweep(frames, uncovered);
-		expect(s.sweep(frames, uncovered).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(s.sweep(frames, uncovered).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 
 		for (let i = 0; i < 3; i++) {
 			const held = s.sweep(frames, { ...uncovered, capturing: new Set(["a"]) });
@@ -147,7 +149,9 @@ describe("its picture is missing", () => {
 		const s = sweeper();
 		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
 			s.sweep(frames, uncovered);
-			expect(s.sweep(frames, uncovered).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+			expect(s.sweep(frames, uncovered).refreshCaptures).toEqual([
+				{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS },
+			]);
 			noteErrandShot(s.model, "a", false);
 		}
 
@@ -199,7 +203,7 @@ describe("its picture is wrong", () => {
 
 		s.model.stale.add("a");
 		expect(s.sweep(frames).states.a).toBe("refreshing");
-		expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 
 		noteErrandShot(s.model, "a", true);
 		expect(s.sweep(frames).states.a).toBe("picture");
@@ -216,7 +220,7 @@ describe("its picture is wrong", () => {
 
 		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
 			expect(s.sweep(frames).states.a).toBe("refreshing");
-			expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+			expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 			noteErrandShot(s.model, "a", false);
 		}
 
@@ -228,7 +232,7 @@ describe("its picture is wrong", () => {
 		const s = sweeper();
 		s.model.stale.add("a");
 		s.sweep(frames);
-		expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 
 		noteErrandShot(s.model, "a", true);
 		for (let i = 0; i < 5; i++) expect(s.sweep(frames).states.a).toBe("picture");
@@ -275,10 +279,30 @@ describe("a picture staled by a steady stream of writes (#215)", () => {
 		}
 
 		// staleSince is old enough now: the sweep stops waiting for a reboot that
-		// never finishes settling and takes the shot mid-arrival instead.
+		// never finishes settling and takes the shot mid-arrival instead. No
+		// document here ever went quiet, so the zero is the cap's own.
+		expect(s.model.quiet.size).toBe(0);
 		const nextNow = s.clock() + SWEEP_MS;
 		const overdue = s.sweep(frames, { ...uncovered, ready: new Map([["a", nextNow - 100]]) });
-		expect(overdue.refreshCaptures).toEqual([{ frame: "a", overdue: true }]);
+		expect(overdue.refreshCaptures).toEqual([{ frame: "a", settleMs: 0 }]);
+	});
+
+	it("skips the settle for being overdue alone, where the same arrival before the cap settles", () => {
+		// Two things zero a capture's settle, the cap and a quiet arrival. This one
+		// arrived without going quiet, so only the cap can be what zeroes it.
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const uncovered = { hasCover: () => false };
+		s.model.stale.add("a");
+		s.sweep(frames, { ...uncovered, ready: new Map() });
+		const staleSince = s.model.staleSince.get("a") ?? 0;
+		const booted = { ...uncovered, ready: new Map([["a", s.clock() + 50]]) };
+		s.model.arrived.add("a");
+
+		while (s.clock() + SWEEP_MS - staleSince < CAPTURE_MAX_STALE_MS) {
+			expect(s.sweep(frames, booted).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
+		}
+		expect(s.sweep(frames, booted).refreshCaptures).toEqual([{ frame: "a", settleMs: 0 }]);
 	});
 
 	it("clears staleSince when a capture lands; the next staling restarts the clock", () => {
@@ -312,7 +336,7 @@ describe("a picture staled by a steady stream of writes (#215)", () => {
 
 		for (let sweeps = 0; sweeps < 20; sweeps++) {
 			const result = s.sweep(frames, uncovered);
-			expect(result.refreshCaptures.some((capture) => capture.overdue)).toBe(false);
+			expect(result.refreshCaptures.some((capture) => capture.settleMs === 0)).toBe(false);
 		}
 		expect(s.model.staleSince.size).toBe(0);
 	});
@@ -370,7 +394,7 @@ describe("intent", () => {
 		expect(s.sweep(frames, { selectionTargets, resizing: "a" }).refreshCaptures).toEqual([]);
 		const released = s.sweep(frames, { selectionTargets });
 		expect(released.states.a).toBe("live");
-		expect(released.refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(released.refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 		noteErrandShot(s.model, "a", true);
 		expect(s.sweep(frames, { selectionTargets }).refreshCaptures).toEqual([]);
 	});
@@ -507,7 +531,7 @@ describe("what is worth photographing", () => {
 		while (s.clock() + SWEEP_MS - bootedAt < CAPTURE_AFTER_READY_MS) {
 			expect(s.sweep(frames, booting).refreshCaptures).toEqual([]);
 		}
-		expect(s.sweep(frames, booting).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(s.sweep(frames, booting).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 	});
 
 	it("never photographs a frame that never reported loaded", () => {
@@ -541,6 +565,96 @@ describe("what is worth photographing", () => {
 		// named as an expired errand (#173) — the boot-failure case `spool logs`
 		// has to be told about, since nothing later carries a reason of its own
 		expect(expired).toEqual(["a"]);
+	});
+});
+
+describe("how long a capture settles first", () => {
+	const uncovered = { hasCover: () => false };
+
+	/**
+	 * Borrows "a" before its document exists, then has that document report
+	 * loaded — what an errand on a frame showing its picture always looks like.
+	 */
+	function borrowThenBoot() {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		s.sweep(frames, { ...uncovered, ready: new Map() });
+		const loadedAt = s.clock() + 50;
+		const booted = { ...uncovered, ready: new Map([["a", loadedAt]]) };
+		// the arrival the hook records once the document's arrival is over, by any route
+		s.model.arrived.add("a");
+		return { frames, s, booted, loadedAt };
+	}
+
+	it("skips the settle for a borrowed document that went quiet arriving", () => {
+		// #177's arrival is the same settle a capture waits out; a second one only
+		// photographed the same frame a settle later
+		const { frames, s, booted, loadedAt } = borrowThenBoot();
+		s.model.quiet.set("a", loadedAt);
+
+		expect(s.sweep(frames, booted).refreshCaptures).toEqual([{ frame: "a", settleMs: 0 }]);
+	});
+
+	it("settles a document that arrived without going quiet", () => {
+		// A settle that ran out its budget or threw still reports arrival, and so
+		// does the deadline for a document too busy to answer. None of them says
+		// the entrance is over, so the capture waits it out again.
+		const { frames, s, booted } = borrowThenBoot();
+
+		expect(s.sweep(frames, booted).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
+	});
+
+	it("settles a reloaded document whose predecessor went quiet", () => {
+		const { frames, s, booted, loadedAt } = borrowThenBoot();
+		s.model.quiet.set("a", loadedAt - 30);
+
+		expect(s.sweep(frames, booted).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
+	});
+
+	it("settles again once something changed the frame without reloading it", () => {
+		// a resize reflows the borrowed document in place: whatever that sets
+		// moving has not been waited out by anything
+		const { frames, s, booted, loadedAt } = borrowThenBoot();
+		s.model.quiet.set("a", loadedAt);
+		markPictureWrong(s.model, "a", loadedAt + 100);
+
+		expect(s.sweep(frames, booted).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
+	});
+
+	it("ignores a quiet report that lands after such a change, from a settle that began before it", () => {
+		// The settle started at load and the resize came mid-settle: the report is
+		// late, not fresh, and the reflow it never saw is still unwaited.
+		const { frames, s, booted, loadedAt } = borrowThenBoot();
+		markPictureWrong(s.model, "a", loadedAt + 100);
+		s.model.quiet.set("a", loadedAt);
+
+		expect(s.sweep(frames, booted).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
+	});
+
+	it("settles a document that was running before the errand borrowed it", () => {
+		// Live first: a freeze may have held it mid-entrance when it reported, and
+		// the errand only hands it back the thaw a moment before the capture.
+		const big = { ...frame("a", 0, 0), w: 500, h: 500 };
+		const s = sweeper();
+		const loadedAt = s.clock() + SWEEP_MS - 100;
+		const readable = { ...uncovered, ready: new Map([["a", loadedAt]]), camera: { x: 0, y: 0, k: 1 } };
+		expect(s.sweep([big], readable).states.a).toBe("live");
+		s.model.quiet.set("a", loadedAt);
+		s.model.arrived.add("a");
+
+		// zoomed past it: the frame still owes its picture, and an errand takes it
+		const zoomedOut = { ...readable, camera: { x: 0, y: 0, k: 0.1 } };
+		expect(s.sweep([big], zoomedOut).states.a).toBe("refreshing");
+		expect(s.sweep([big], zoomedOut).refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
+	});
+
+	it("never skips it for a selected frame, which is live and may be held", () => {
+		const { frames, s, booted, loadedAt } = borrowThenBoot();
+		s.model.quiet.set("a", loadedAt);
+
+		expect(s.sweep(frames, { ...booted, selectionTargets: new Set(["a"]) }).refreshCaptures).toEqual([
+			{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS },
+		]);
 	});
 });
 
@@ -772,7 +886,7 @@ describe("a readable frame", () => {
 
 		const released = s.sweep(frames, at(1));
 		expect(released.states.a).toBe("refreshing");
-		expect(released.refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
+		expect(released.refreshCaptures).toEqual([{ frame: "a", settleMs: CAPTURE_SETTLE_BUDGET_MS }]);
 		expect(s.model.stale.has("a")).toBe(true);
 	});
 

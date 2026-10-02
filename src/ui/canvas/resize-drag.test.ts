@@ -35,7 +35,7 @@ it("shows the live document while resizing below the readable threshold", async 
 	await act(async () => {
 		for (const spool of ["loaded", "arrived"]) {
 			window.dispatchEvent(
-				new MessageEvent("message", { data: { spool, frame: "home" }, source: iframe.contentWindow }),
+				new MessageEvent("message", { data: { spool, frame: "home", quiet: true }, source: iframe.contentWindow }),
 			);
 		}
 	});

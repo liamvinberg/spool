@@ -541,6 +541,39 @@ async function directWorkerRequest(
 	);
 }
 
+it.each([
+	["a still frame", "main { background: #18a957; }", true],
+	[
+		"an entrance longer than the budget",
+		"main { animation: enter 4s both; } @keyframes enter { from { opacity: 0; } to { opacity: 1; } }",
+		false,
+	],
+] as const)("reports whether %s went quiet arriving", async (_kind, css, quiet) => {
+	// The canvas skips a capture's settle only for a quiet arrival (#177): one
+	// that ran out its budget was still arriving when the wait gave up.
+	const served = await serveCapture(css);
+	onTestFinished(() => served.close());
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const page = await browser.newPage();
+	await page.goto(served.url);
+	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
+	if (authored === undefined) throw new Error("frame missing");
+	await authored.locator("main").waitFor();
+	const arrived = await page.evaluate(
+		() =>
+			new Promise<unknown>((resolve) => {
+				const frame = document.querySelector<HTMLIFrameElement>("#frame")?.contentWindow;
+				addEventListener("message", (event) => {
+					if (event.source === frame && (event.data as { spool?: unknown }).spool === "arrived")
+						resolve(event.data);
+				});
+				frame?.postMessage({ spool: "arrive", settleMs: 900 }, "*");
+			}),
+	);
+	expect(arrived).toEqual({ spool: "arrived", frame: "capture", quiet });
+});
+
 it.each(['"/theme.css"', 'url("/theme.css")'])("preserves layout beside @import %s in a still", async (importValue) => {
 	const served = await serveCapture(`@import ${importValue};
 		main { background-color: #281c15 !important; }

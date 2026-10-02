@@ -85,7 +85,9 @@ export const CAPTURE_MAX_STALE_MS = 4000;
  * #110 moved the walk off the capture entirely, and the sweep paid it on a
  * mounted frame you could see. Now it is paid out of an errand slot nobody is
  * waiting on, behind a still that is already on screen. The only thing it buys
- * is a truer picture, and the picture is the only thing anyone looks at.
+ * is a truer picture, and the picture is the only thing anyone looks at. A
+ * borrowed frame that went quiet on arrival pays it once, not again for its
+ * picture (`maySkipSettle`).
  */
 export const CAPTURE_SETTLE_BUDGET_MS = 900;
 /**
@@ -179,6 +181,22 @@ export interface LifecycleModel {
 	 * waiting to find out.
 	 */
 	arrived: Set<string>;
+	/**
+	 * Frames whose document went quiet arriving (#177), each with when that
+	 * document loaded. Quiet is the document's own report that its settle
+	 * finished inside the budget. A settle that ran the budget out or threw
+	 * reports arrival without it, and ARRIVE_DEADLINE_MS running out reports
+	 * nothing at all, which is what a document still busy arriving looks like
+	 * too. The load time names the document, so a reload's successor never
+	 * inherits the report.
+	 */
+	quiet: Map<string, number>;
+	/**
+	 * When something last made each frame's picture wrong. A settle that began
+	 * before it was waiting out a frame that has changed since, and a change
+	 * that did not reload the document (a resize) leaves that report in place.
+	 */
+	changedAt: Map<string, number>;
 	/** Frames borrowed to be photographed, and when the errand began. */
 	errands: Map<string, number>;
 	/** Frames whose last errand came back with a picture — the cover may still be in flight to disk. */
@@ -196,6 +214,8 @@ export function createLifecycleModel(): LifecycleModel {
 		stale: new Set(),
 		staleSince: new Map(),
 		arrived: new Set(),
+		quiet: new Map(),
+		changedAt: new Map(),
 		errands: new Map(),
 		photographed: new Set(),
 		tries: new Map(),
@@ -360,11 +380,10 @@ export interface SweepResult {
 	changed: boolean;
 	/**
 	 * Borrowed frames that have run long enough to be worth photographing now, or
-	 * are overdue enough (#215) that mid-arrival is worth photographing too. An
-	 * overdue capture asks for none of CAPTURE_SETTLE_BUDGET_MS: it has to land
-	 * before the next write retires it.
+	 * are overdue enough (#215) that mid-arrival is worth photographing too, each
+	 * with how much of CAPTURE_SETTLE_BUDGET_MS its capture waits out first.
 	 */
-	refreshCaptures: Array<{ frame: string; overdue: boolean }>;
+	refreshCaptures: Array<{ frame: string; settleMs: number }>;
 	/**
 	 * Frames whose errand was retired by ERRAND_DEADLINE_MS rather than by a
 	 * picture landing or a reason of its own (#173) — the boot never reported
@@ -434,7 +453,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// Zooming past a frame is not using it, and a still of a freshly booted
 		// frame is still true of the frame that just booted and did nothing.
 		if (current === "live" && intent !== "live" && !wasModelLive.has(name)) {
-			markPictureWrong(model, name);
+			markPictureWrong(model, name, now);
 			model.wentInside.delete(name);
 		}
 
@@ -514,7 +533,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	}
 
 	const next: Record<string, FrameState> = {};
-	const refreshCaptures: Array<{ frame: string; overdue: boolean }> = [];
+	const refreshCaptures: Array<{ frame: string; settleMs: number }> = [];
 	let changed = false;
 	for (const { frame, current, intent, debt, overdue } of entries) {
 		const name = frame.name;
@@ -522,6 +541,11 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// The photograph is the errand's whole point, taken the moment the
 		// borrowed document has run long enough to be worth one — or, past
 		// CAPTURE_MAX_STALE_MS, the moment it merely holds one (#215).
+		//
+		// It settles first unless one of two things makes that pointless.
+		// Overdue has to land before the next write retires it, not draw out its
+		// own picture first (#215). And a document that already went quiet has
+		// nothing left to wait for (`maySkipSettle`).
 		if (
 			(target === "refreshing" || selectionTargets.has(name)) &&
 			input.resizing !== name &&
@@ -532,7 +556,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			!capturing.has(name) &&
 			refreshCaptures.length + capturing.size < ERRANDS_IN_FLIGHT
 		) {
-			refreshCaptures.push({ frame: name, overdue });
+			const settleMs = overdue || maySkipSettle(model, name, ready) ? 0 : CAPTURE_SETTLE_BUDGET_MS;
+			refreshCaptures.push({ frame: name, settleMs });
 		}
 		next[name] = target;
 		if (target !== current) changed = true;
@@ -544,6 +569,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// document, and leaving the page ends them — a page switch must hand its
 	// errand slots straight over to the page arriving.
 	for (const name of [...model.arrived]) if (!alive.has(name)) model.arrived.delete(name);
+	for (const name of [...model.quiet.keys()]) if (!alive.has(name)) model.quiet.delete(name);
+	for (const name of [...model.changedAt.keys()]) if (!alive.has(name)) model.changedAt.delete(name);
 	for (const name of [...model.errands.keys()]) if (!alive.has(name)) model.errands.delete(name);
 	for (const name of [...model.modelLive]) if (!alive.has(name)) model.modelLive.delete(name);
 	for (const name of [...model.wentInside]) if (!alive.has(name)) model.wentInside.delete(name);
@@ -570,6 +597,30 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 const running = (state: FrameState): boolean => state === "live" || state === "refreshing" || state === "held";
 
 /**
+ * Whether a capture may skip its own settle, because the document already
+ * waited out that same settle and nothing has happened to it since.
+ *
+ * A borrowed frame settles when it arrives (#177), and the capture used to ask
+ * it to settle again: a second full settle per cover, buying the picture the
+ * first had already waited for. Every condition below is about the one
+ * document mounted now, named by when it loaded, because each settle starts at
+ * load. That document went quiet and said so (`quiet`). Nothing changed the
+ * frame after it loaded (`changedAt`), so the quiet it reported is still the
+ * frame's. And the errand borrowed the frame before it loaded, so everything it
+ * has done since, it did as this errand's borrowed frame: hidden behind its
+ * still, never frozen, entered or edited. A document that was live first may
+ * have gone quiet only because a freeze held it mid-entrance, and one you just
+ * left may still be finishing what you did in it; both keep the full settle.
+ */
+function maySkipSettle(model: LifecycleModel, frame: string, ready: ReadonlyMap<string, number>): boolean {
+	const loadedAt = ready.get(frame);
+	if (loadedAt === undefined || model.quiet.get(frame) !== loadedAt) return false;
+	const changedAt = model.changedAt.get(frame);
+	const borrowedAt = model.errands.get(frame);
+	return (changedAt === undefined || changedAt < loadedAt) && borrowedAt !== undefined && borrowedAt < loadedAt;
+}
+
+/**
  * Every frame that gave up on its picture may ask again.
  *
  * The give-up count answers "can this frame be photographed at all", and a
@@ -583,9 +634,13 @@ export function renewPictureDebt(model: LifecycleModel): void {
 	model.tries.clear();
 }
 
-/** Something changed about the frame: its picture is wrong, and it may ask again. */
-function markPictureWrong(model: LifecycleModel, frame: string): void {
+/**
+ * Something changed about the frame: its picture is wrong, and it may ask again.
+ * Whatever changed it may still be moving, so its document has to settle again.
+ */
+export function markPictureWrong(model: LifecycleModel, frame: string, now: number): void {
 	model.stale.add(frame);
+	model.changedAt.set(frame, now);
 	model.photographed.delete(frame);
 	model.tries.delete(frame);
 }
@@ -839,8 +894,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		if (reason !== undefined) onCaptureFailureRef.current?.(frame, reason.slice(0, 240));
 	}, []);
 
-	/** The frame has arrived — it said so, or its deadline said so for it. */
-	const noteArrived = useCallback((frame: string) => {
+	/** The frame's arrival is over: it said so, or its deadline said so for it. */
+	const endArrival = useCallback((frame: string) => {
 		const timer = arrivalTimers.current.get(frame);
 		if (timer !== undefined) {
 			clearTimeout(timer);
@@ -848,6 +903,19 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		}
 		setSettled((current) => (current.has(frame) ? current : new Set(current).add(frame)));
 	}, []);
+
+	/**
+	 * The document said it has arrived, and whether it went quiet doing so —
+	 * routed in by the canvas's message listener.
+	 */
+	const noteArrived = useCallback(
+		(frame: string, quiet: boolean) => {
+			const loadedAt = readyRef.current.get(frame);
+			if (quiet && loadedAt !== undefined) model.current.quiet.set(frame, loadedAt);
+			endArrival(frame);
+		},
+		[endArrival],
+	);
 
 	/** The document that was arriving left. Its successor arrives on its own. */
 	const forgetArrival = useCallback((frame: string) => {
@@ -873,16 +941,16 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		(frame: string) => {
 			const sourceWindow = iframes.current.get(frame)?.contentWindow;
 			if (sourceWindow == null) {
-				noteArrived(frame);
+				endArrival(frame);
 				return;
 			}
 			sourceWindow.postMessage(arriveMessage(CAPTURE_SETTLE_BUDGET_MS), "*");
 			arrivalTimers.current.set(
 				frame,
-				setTimeout(() => noteArrived(frame), ARRIVE_DEADLINE_MS),
+				setTimeout(() => endArrival(frame), ARRIVE_DEADLINE_MS),
 			);
 		},
-		[noteArrived],
+		[endArrival],
 	);
 
 	useEffect(
@@ -1048,10 +1116,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
 			projection: new Set(allFramesRef.current.map((frame) => frame.name)),
 		});
-		for (const { frame, overdue } of result.refreshCaptures) {
-			// Overdue skips the settle budget outright: it has to land before the
-			// next write retires it, not draw out its own picture first (#215).
-			void requestCapture(frame, LIVE_MIN_CSS_PX, overdue ? 0 : CAPTURE_SETTLE_BUDGET_MS).then((image) =>
+		for (const { frame, settleMs } of result.refreshCaptures) {
+			void requestCapture(frame, LIVE_MIN_CSS_PX, settleMs).then((image) =>
 				noteErrandShot(model.current, frame, image !== undefined),
 			);
 		}
@@ -1176,7 +1242,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		(frame: string) => {
 			const pending = captureWaiters.current.get(frame);
 			if (pending !== undefined) noteShot(frame, pending.id, undefined);
-			markPictureWrong(model.current, frame);
+			markPictureWrong(model.current, frame, performance.now());
 		},
 		[noteShot],
 	);

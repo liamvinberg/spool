@@ -187,7 +187,8 @@ export type CaptureSourceReply = CaptureSourceMessage | CaptureSourceErrorMessag
 export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
-	| { spool: "arrived"; frame: string }
+	/** `quiet`: the settle finished inside its budget, rather than running it out or throwing. */
+	| { spool: "arrived"; frame: string; quiet: boolean }
 	| { spool: "content-size"; frame: string; id: number; width: number; height: number | null }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
@@ -227,8 +228,9 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "copy":
 			return parseClipboardCopyRequest(data);
-		case "loaded":
 		case "arrived":
+			return typeof m.quiet === "boolean" ? { spool: "arrived", frame: m.frame, quiet: m.quiet } : undefined;
+		case "loaded":
 		case "error":
 		case "shot":
 		case "session?":

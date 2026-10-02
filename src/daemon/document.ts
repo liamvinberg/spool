@@ -434,7 +434,7 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * {spool:"freeze", on} holds this document's animations while the camera moves
  * (#171) or while nothing has attended the frame for a long minute (#172), and
  * re-delivers every held rAF callback on thaw;
- * {spool:"arrive", settleMs} answers {spool:"arrived"} once this document has
+ * {spool:"arrive", settleMs} answers {spool:"arrived", quiet} once this document has
  * finished arriving — the same settle a capture waits out, reported rather than
  * photographed, so a promoted frame's cover fades onto a settled frame (#177);
  * {spool:"capture", id, targetWidth, settleMs}
@@ -754,11 +754,16 @@ const canvasShimJs = `(() => {
 	 * canvas would then show in the frame's place. Waiting costs one settle and
 	 * buys a still that matches. A looping animation never finishes, so the
 	 * wait is bounded and infinite iterations are not waited on at all.
+	 *
+	 * It answers whether the frame went quiet inside the budget: its finite
+	 * animations finished and its DOM stopped changing. A frame that ran the
+	 * budget out was still arriving when the wait gave up on it.
 	 */
 	async function settle(budgetMs) {
-		if (!(budgetMs > 0)) return;
+		if (!(budgetMs > 0)) return false;
 		const deadline = performance.now() + budgetMs;
 		try { await document.fonts.ready; } catch {}
+		let finished = false;
 		while (performance.now() < deadline) {
 			let arriving = 0;
 			try {
@@ -770,7 +775,10 @@ const canvasShimJs = `(() => {
 					if (iterations !== Infinity) arriving++;
 				}
 			} catch {}
-			if (arriving === 0) break;
+			if (arriving === 0) {
+				finished = true;
+				break;
+			}
 			await new Promise((resolve) => setTimeout(resolve, 60));
 		}
 		// Most of what a frame animates, no timing API reports: a spring is
@@ -778,23 +786,23 @@ const canvasShimJs = `(() => {
 		// it. A quiet DOM is the signal that works whatever the library — wait
 		// for nothing to change for a beat, and give up at the budget so a frame
 		// that animates forever still gets photographed.
-		await new Promise((resolve) => {
-			let quiet = 0;
+		const still = await new Promise((resolve) => {
+			let beat = 0;
 			const observer = new MutationObserver(() => {
-				clearTimeout(quiet);
-				quiet = setTimeout(done, 120);
+				clearTimeout(beat);
+				beat = setTimeout(() => done(true), 120);
 			});
-			const cap = setTimeout(done, Math.max(0, deadline - performance.now()));
-			function done() {
-				clearTimeout(quiet);
+			const cap = setTimeout(() => done(false), Math.max(0, deadline - performance.now()));
+			function done(quiet) {
+				clearTimeout(beat);
 				clearTimeout(cap);
 				try { observer.disconnect(); } catch {}
-				resolve();
+				resolve(quiet);
 			}
 			try {
 				observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
-			} catch { done(); return; }
-			quiet = setTimeout(done, 120);
+			} catch { done(false); return; }
+			beat = setTimeout(() => done(true), 120);
 		});
 		// Two native frames, so a rAF-driven entry animation's last commit lands.
 		// Chrome holds rAF entirely in an offscreen iframe, and a frame borrowed
@@ -804,6 +812,7 @@ const canvasShimJs = `(() => {
 			const timer = setTimeout(resolve, Math.max(0, Math.min(100, deadline - performance.now())));
 			nativeRaf(() => nativeRaf(() => { clearTimeout(timer); resolve(); }));
 		});
+		return finished && still;
 	}
 
 	const SAFE_FONT_DATA_URL = /^data:font\\/(?:otf|ttf|woff2?);base64,[a-z0-9+/]+={0,2}$/i;
@@ -1944,8 +1953,11 @@ const canvasShimJs = `(() => {
 			arrivalReported = true;
 			// A settle that threw still arrived: the canvas is holding a cover on
 			// this answer, and its own deadline is the only other thing that frees it.
-			try { await settle(settleMs); } catch {}
-			parent.postMessage({ spool: "arrived", frame: config.frame }, "*");
+			// It did not arrive quiet, though, and neither did one that ran out its
+			// budget, so the canvas waits again before it photographs either.
+			let quiet = false;
+			try { quiet = await settle(settleMs); } catch {}
+			parent.postMessage({ spool: "arrived", frame: config.frame, quiet }, "*");
 			return;
 		}
 		if (m.spool === "pick") {

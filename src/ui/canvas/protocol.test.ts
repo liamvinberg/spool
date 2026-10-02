@@ -21,6 +21,19 @@ it("accepts a content measurement only with finite dimensions and a request id",
 	expect(parseFrameMessage({ ...message, id: 1.5 })).toBeUndefined();
 });
 
+it("accepts an arrival only with whether it went quiet (#177)", () => {
+	for (const quiet of [true, false]) {
+		expect(parseFrameMessage({ spool: "arrived", frame: "landing", quiet })).toEqual({
+			spool: "arrived",
+			frame: "landing",
+			quiet,
+		});
+	}
+	for (const quiet of [undefined, "true", 1]) {
+		expect(parseFrameMessage({ spool: "arrived", frame: "landing", quiet })).toBeUndefined();
+	}
+});
+
 describe("trusted capture source protocol", () => {
 	const id = "0123456789abcdef0123456789abcdef";
 	const svg = new Blob(["<svg/>"], { type: "image/svg+xml" });
