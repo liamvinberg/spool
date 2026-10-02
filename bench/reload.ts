@@ -229,8 +229,30 @@ function watchCovers(): void {
 	(globalThis as unknown as { __covers: CoverWatch }).__covers = { marks, refusals };
 }
 
+/**
+ * A frame standing as its picture has had no `<img>` since #81: the picture
+ * layer fetches and uploads its cover, and keeps the same two marks on the
+ * same clock (`covers` in its report). Its upload is the decode, the moment
+ * the picture can be drawn. A frame showing a shell keeps the image's marks.
+ * Its fetches run in the layer's loader worker, so they leave no resource
+ * timing on this page.
+ */
 const readCovers = (page: Page): Promise<CoverWatch> =>
-	page.evaluate(() => (globalThis as unknown as { __covers: CoverWatch }).__covers);
+	page.evaluate(() => {
+		const watch = (globalThis as unknown as { __covers: CoverWatch }).__covers;
+		const marks = { ...watch.marks };
+		const layer = document.querySelector("[data-picture-layer]") as
+			| (HTMLCanvasElement & {
+					spoolPictures?: () => { covers: { name: string; fetched: number | null; uploaded: number | null }[] };
+			  })
+			| null;
+		for (const cover of layer?.spoolPictures?.().covers ?? []) {
+			if (marks[cover.name] !== undefined || cover.fetched === null) continue;
+			marks[cover.name] =
+				cover.uploaded === null ? { load: cover.fetched } : { load: cover.fetched, decode: cover.uploaded };
+		}
+		return { marks, refusals: watch.refusals };
+	});
 
 interface CoverResponse {
 	frame: string;
