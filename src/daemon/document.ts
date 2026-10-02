@@ -427,6 +427,83 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
 }
 
 /**
+ * The one settle (#177): how long a frame is given to finish arriving before
+ * anyone believes what it shows. Frames animate their content in, so a picture
+ * taken the instant a boot reports loaded records whatever had not faded in
+ * yet, and that absence is what the canvas would then show in the frame's
+ * place. A looping animation never finishes, so the wait is bounded and
+ * infinite iterations are not waited on at all.
+ *
+ * It answers whether the frame went quiet inside the budget: its finite
+ * animations finished and its DOM stopped changing. A frame that ran the
+ * budget out was still arriving when the wait gave up on it.
+ *
+ * One source, spoken in two places. The shim runs it inside a frame on the
+ * canvas, for the arrival report and an export, with the rAF it took before
+ * frame code ran. The photo booth (`booth.ts`) runs the very same function in
+ * an isolated world of its own tab, where every global is native whatever the
+ * frame did to its own, so a cover waits out exactly what a frame on the
+ * canvas does. `raf` names the requestAnimationFrame each place trusts.
+ */
+export function settleSource(raf: string): string {
+	return `async function settle(budgetMs) {
+		if (!(budgetMs > 0)) return false;
+		const deadline = performance.now() + budgetMs;
+		try { await document.fonts.ready; } catch {}
+		let finished = false;
+		while (performance.now() < deadline) {
+			let arriving = 0;
+			try {
+				for (const animation of document.getAnimations()) {
+					if (animation.playState !== "running") continue;
+					let iterations = 1;
+					try { iterations = animation.effect.getComputedTiming().iterations; } catch {}
+					// a loop never finishes; waiting on one would only time out
+					if (iterations !== Infinity) arriving++;
+				}
+			} catch {}
+			if (arriving === 0) {
+				finished = true;
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 60));
+		}
+		// Most of what a frame animates, no timing API reports: a spring is
+		// rAF-driven inline style writes, and getAnimations() has never heard of
+		// it. A quiet DOM is the signal that works whatever the library: wait
+		// for nothing to change for a beat, and give up at the budget so a frame
+		// that animates forever still gets photographed.
+		const still = await new Promise((resolve) => {
+			let beat = 0;
+			const observer = new MutationObserver(() => {
+				clearTimeout(beat);
+				beat = setTimeout(() => done(true), 120);
+			});
+			const cap = setTimeout(() => done(false), Math.max(0, deadline - performance.now()));
+			function done(quiet) {
+				clearTimeout(beat);
+				clearTimeout(cap);
+				try { observer.disconnect(); } catch {}
+				resolve(quiet);
+			}
+			try {
+				observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
+			} catch { done(false); return; }
+			beat = setTimeout(() => done(true), 120);
+		});
+		// Two native frames, so a rAF-driven entry animation's last commit lands.
+		// Chrome holds rAF entirely in an offscreen iframe, and a frame on the
+		// canvas may be one; the race with the timer is what keeps the settle
+		// inside its budget either way.
+		await new Promise((resolve) => {
+			const timer = setTimeout(resolve, Math.max(0, Math.min(100, deadline - performance.now())));
+			${raf}(() => ${raf}(() => { clearTimeout(timer); resolve(); }));
+		});
+		return finished && still;
+	}`;
+}
+
+/**
  * The canvas shim (#8/#22), a classic script installed before any module so it
  * holds native references before frame code can replace them. Frames keep
  * running when Select owns the pointer; a freeze is the rAF gate below. Speaks
@@ -747,73 +824,7 @@ const canvasShimJs = `(() => {
 		return css;
 	}
 
-	/**
-	 * A still is a picture of a frame that has finished arriving. Frames animate
-	 * their content in, so capturing the instant a boot reports loaded records
-	 * whatever had not faded in yet — and that missing content is what the
-	 * canvas would then show in the frame's place. Waiting costs one settle and
-	 * buys a still that matches. A looping animation never finishes, so the
-	 * wait is bounded and infinite iterations are not waited on at all.
-	 *
-	 * It answers whether the frame went quiet inside the budget: its finite
-	 * animations finished and its DOM stopped changing. A frame that ran the
-	 * budget out was still arriving when the wait gave up on it.
-	 */
-	async function settle(budgetMs) {
-		if (!(budgetMs > 0)) return false;
-		const deadline = performance.now() + budgetMs;
-		try { await document.fonts.ready; } catch {}
-		let finished = false;
-		while (performance.now() < deadline) {
-			let arriving = 0;
-			try {
-				for (const animation of document.getAnimations()) {
-					if (animation.playState !== "running") continue;
-					let iterations = 1;
-					try { iterations = animation.effect.getComputedTiming().iterations; } catch {}
-					// a loop never finishes; waiting on one would only time out
-					if (iterations !== Infinity) arriving++;
-				}
-			} catch {}
-			if (arriving === 0) {
-				finished = true;
-				break;
-			}
-			await new Promise((resolve) => setTimeout(resolve, 60));
-		}
-		// Most of what a frame animates, no timing API reports: a spring is
-		// rAF-driven inline style writes, and getAnimations() has never heard of
-		// it. A quiet DOM is the signal that works whatever the library — wait
-		// for nothing to change for a beat, and give up at the budget so a frame
-		// that animates forever still gets photographed.
-		const still = await new Promise((resolve) => {
-			let beat = 0;
-			const observer = new MutationObserver(() => {
-				clearTimeout(beat);
-				beat = setTimeout(() => done(true), 120);
-			});
-			const cap = setTimeout(() => done(false), Math.max(0, deadline - performance.now()));
-			function done(quiet) {
-				clearTimeout(beat);
-				clearTimeout(cap);
-				try { observer.disconnect(); } catch {}
-				resolve(quiet);
-			}
-			try {
-				observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
-			} catch { done(false); return; }
-			beat = setTimeout(() => done(true), 120);
-		});
-		// Two native frames, so a rAF-driven entry animation's last commit lands.
-		// Chrome holds rAF entirely in an offscreen iframe, and a frame borrowed
-		// for a picture may be one — the race with the timer is what keeps a
-		// capture inside its deadline either way.
-		await new Promise((resolve) => {
-			const timer = setTimeout(resolve, Math.max(0, Math.min(100, deadline - performance.now())));
-			nativeRaf(() => nativeRaf(() => { clearTimeout(timer); resolve(); }));
-		});
-		return finished && still;
-	}
+	${settleSource("nativeRaf")}
 
 	const SAFE_FONT_DATA_URL = /^data:font\\/(?:otf|ttf|woff2?);base64,[a-z0-9+/]+={0,2}$/i;
 	const SAFE_IMAGE_DATA_URL = /^data:image\\/(?:${CAPTURE_IMAGE_TYPES});base64,[a-z0-9+/]+={0,2}$/i;

@@ -6,7 +6,7 @@ import { renderOrigin } from "./daemon/lifecycle";
 import { readFrameGeometry } from "./daemon/projection";
 import { type CaptureError, readCaptureError } from "./daemon/thumbs";
 import { SpoolError } from "./errors";
-import { launchHeadlessShell } from "./headless-shell";
+import { fetchHeadlessShell, launchHeadlessShell, MissingHeadlessShellError } from "./headless-shell";
 import { frameSegment } from "./page-path";
 import { refusalOf } from "./verbs";
 
@@ -200,7 +200,7 @@ type Boot =
 async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 	const { w, h } = frameSize(deps);
 	const plan = planShot(w, h);
-	const browser = await launchHeadlessShell(deps.narrate);
+	const browser = await launchNarrated(deps.narrate);
 	try {
 		const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: plan.scale });
 		const entries: LogEntry[] = [];
@@ -259,6 +259,21 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 	} finally {
 		await browser.close();
 	}
+}
+
+/** The pinned shell, fetched first and said so when this machine has never had it. */
+async function launchNarrated(narrate: (line: string) => void) {
+	try {
+		return await launchHeadlessShell();
+	} catch (error) {
+		if (!(error instanceof MissingHeadlessShellError)) throw error;
+	}
+	narrate("first shot on this machine — fetching the pinned Chromium headless-shell (one-time, ~90 MB)");
+	await fetchHeadlessShell().catch(() => {
+		throw new SpoolError("fetching the headless-shell failed — see the install output above");
+	});
+	narrate("headless-shell ready — cached for every future shot");
+	return launchHeadlessShell();
 }
 
 /** An explicit viewport, else the sidecar footprint, else the narrated default. */

@@ -48,6 +48,18 @@ export function captureRasterSize(
 /** JPEG quality for a cover. Covers are opaque, so they never need alpha. */
 export const COVER_QUALITY = 0.82;
 
+/**
+ * How long a frame may wait for its fonts and its entry animations before it
+ * is believed (#177): before the photo booth takes its cover, before its cover
+ * fades onto it on the canvas, and before an export copies it.
+ *
+ * It is the dominant term in a cover, 66 to 76% of the booth's time on Spool's
+ * own canvas, and it stays, because the only thing it buys is a truer picture
+ * and the picture is the only thing anyone looks at. A frame that animates
+ * forever is photographed at the budget, mid-animation.
+ */
+export const SETTLE_BUDGET_MS = 900;
+
 /** One immutable image, addressed by the hash of its content. */
 export interface Cover {
 	hash: string;
