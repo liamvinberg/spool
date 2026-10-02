@@ -195,7 +195,7 @@ Choose the interaction from the brief before choosing its inputs: what the perso
 Choose the rendering path for the effect:
   - GLSL: shader text passed to browser WebGL or Three.js WebGLRenderer/ShaderMaterial.
   - WebGPU: native shader text is WGSL. Three.js WebGPURenderer uses node materials and TSL, its JavaScript shader expressions, which can target WebGPU or its WebGL 2 fallback. ShaderMaterial is for WebGLRenderer; port custom GLSL to TSL when using WebGPURenderer.
-Import .glsl and .wgsl directly as source strings, without ?raw or a wrapper .ts file:
+Import .glsl and .wgsl directly as source strings, with no wrapper .ts file. A ?raw suffix is unnecessary but harmless:
 
   import fragment from "./effect.glsl";
   import compute from "shared/shaders/effect.wgsl";

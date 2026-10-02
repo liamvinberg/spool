@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbuild";
 import { isFramePath } from "../page-path";
@@ -184,6 +184,17 @@ export function designEntryKey(options: Pick<DesignEntryOptions, "designDir" | "
 	return relative(options.designDir, resolve(options.resolveDir, options.sourcefile));
 }
 
+/**
+ * The file behind one `metafile.inputs` key. esbuild drops a `?raw` or `#hash`
+ * suffix to find a file no name carries, but keeps it on the key; a reader of
+ * the key (the cache hash, the publication capture) wants the file.
+ */
+export function designInputFile(designDir: string, input: string): string {
+	const file = resolve(designDir, input);
+	const bare = resolve(designDir, input.replace(/[?#][^/]*$/u, ""));
+	return bare === file || existsSync(file) ? file : bare;
+}
+
 /** A compiled output's served name: its path under the virtual outdir. */
 export function designOutputName(designDir: string, path: string): string {
 	return relative(join(designDir, VIRTUAL_OUTDIR), path).split(sep).join("/");
@@ -195,7 +206,7 @@ export async function buildDesignEntry(options: DesignEntryOptions): Promise<Des
 	const bootKey = designEntryKey(options);
 	const sourceFiles = Object.keys(result.metafile.inputs)
 		.filter((input) => input !== bootKey)
-		.map((input) => resolve(options.designDir, input));
+		.map((input) => designInputFile(options.designDir, input));
 	const bootJs = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
 	if (bootJs === undefined) throw new Error(`${options.label} compiled to no module`);
 	const bundledCss = result.outputFiles.find((file) => file.path.endsWith(".css"))?.text;

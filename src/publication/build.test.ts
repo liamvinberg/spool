@@ -151,6 +151,18 @@ describe("portable website build", { timeout: 30000 }, () => {
 		writeFrame(options.root, "next", 'import image from "./absent.png"; export default () => <img src={image}/>;');
 		await expect(buildWebsite(options)).rejects.toThrow("absent.png");
 	});
+	it("captures a shader imported with a query suffix, as the canvas compiles it", async () => {
+		const options = project();
+		writeFrame(
+			options.root,
+			"next",
+			'import fragment from "./effect.glsl?raw"; export default () => <pre>{fragment}</pre>;',
+		);
+		writeDesignFile(options.root, "frames/next/effect.glsl", "void main() { /* SHADER_SOURCE */ }");
+		const website = await buildWebsite(options);
+		const emitted = [...website.objects.values()].map(({ bytes }) => Buffer.from(bytes).toString("utf8")).join("\n");
+		expect(emitted).toContain("SHADER_SOURCE");
+	});
 	it("rejects private resource origins and unsupported authored local URLs", async () => {
 		await expect(fetchPublicResource("https://127.0.0.1/private")).rejects.toThrow("private or reserved");
 		await expect(fetchPublicResource("http://example.com/module.js")).rejects.toThrow("HTTPS");

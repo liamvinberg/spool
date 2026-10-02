@@ -157,6 +157,14 @@ describe("publication source attribution", () => {
 			expect(result.diagnostics.map(({ code }) => code)).toEqual(["navigation-unreadable"]);
 		}
 	});
+	it("reads a shader imported with a query suffix the way the compiler does", async () => {
+		const result = await check(
+			'import fragment from "./effect.glsl?raw"; export default () => <canvas data-shader={fragment} data-go="next"/>;',
+			{ "frames/start/effect.glsl": "void main() {}" },
+		);
+		expect(result.ok).toBe(true);
+		expect(result.included).toEqual(["start", "next"]);
+	});
 	it("ignores unused nested helpers while following used callbacks", async () => {
 		const result = await check(
 			'import { ui } from "spool"; export default function Frame() { function unused() { ui.go("secret"); } function used() { ui.go("next"); } return <button onClick={used}/>; }',

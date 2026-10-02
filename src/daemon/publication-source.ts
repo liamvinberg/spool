@@ -86,7 +86,8 @@ export function publicationSource(root: string, frame: string, _graph: FrameGrap
 		const parent = path.parentPath;
 		if (!parent?.isImportDeclaration() || parent.node.importKind === "type") return;
 		if (path.isImportSpecifier() && path.node.importKind === "type") return;
-		const name = parent.node.source.value;
+		// esbuild drops a `?raw`-style suffix when no file carries it, so the checker does too
+		const name = parent.node.source.value.replace(/[?#].*$/u, "");
 		const extension = extname(name).toLowerCase();
 		if (
 			ASSET_EXTENSIONS.has(extension) ||

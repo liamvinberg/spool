@@ -25,6 +25,20 @@ describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
 		expect(sourceFiles).toContain(join(designDir, relativeFile));
 	});
 
+	it("keeps the file itself in the closure when the import carries ?raw", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, `effect.${extension}`, "void main() {}\n");
+		const designDir = realDesignDir(root);
+		const { sourceFiles } = await buildDesignEntry({
+			designDir,
+			resolveDir: designDir,
+			sourcefile: "<spool-boot>",
+			contents: `export { default as source } from "./effect.${extension}?raw";`,
+			label: "shader source",
+		});
+		expect(sourceFiles).toEqual([join(designDir, `effect.${extension}`)]);
+	});
+
 	it.each(["relative", "symlink"])("rejects a %s import outside design/", async (kind) => {
 		const { root } = makeProject(join(makeTempDir(), ".spool"));
 		const designDir = realDesignDir(root);

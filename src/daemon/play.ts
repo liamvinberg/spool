@@ -8,6 +8,7 @@ import {
 	describeCompileError,
 	designBuildOptions,
 	designEntryKey,
+	designInputFile,
 	designOutputName,
 	hashInputs,
 	isDesignBoundaryFailure,
@@ -414,7 +415,7 @@ function readComposition(designDir: string, frames: PlayerFrameRef[], result: Bu
 	const entryKey = designEntryKey({ designDir, resolveDir: designDir, sourcefile: STDIN_NAME });
 	const sourceFiles = Object.keys(metafile.inputs)
 		.filter((input) => input !== entryKey)
-		.map((input) => resolve(designDir, input));
+		.map((input) => designInputFile(designDir, input));
 	const chunks = new Map<string, string>();
 	for (const file of outputFiles) {
 		const name = designOutputName(designDir, file.path);
