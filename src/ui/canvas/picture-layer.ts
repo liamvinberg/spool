@@ -463,12 +463,12 @@ export class PictureLayer {
 			const exact = this.sharps.get(sharpKey(url, wanted.width));
 			if (exact?.texture != null) sharp = exact;
 		}
-		if (sharp === null) {
-			// the next best thing on hand: any sharper copy beats the square once
-			// it is wanted, and a square that is not there yet loses to anything
+		// the next best thing on hand: any sharper copy beats the square once it
+		// is wanted, and a square that is not there yet loses to anything. An
+		// overview has every square it wants, so this walk is for close-ups only.
+		if (sharp === null && (wanted.kind === "sharp" || !ready)) {
 			for (const entry of this.sharps.values()) {
 				if (entry.url !== url || entry.texture === null) continue;
-				if (wanted.kind === "resident" && ready) continue;
 				if (sharp === null || entry.width > sharp.width) sharp = entry;
 			}
 		}
