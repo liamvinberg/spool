@@ -593,7 +593,14 @@ try {
 	expect(calls()).toBe(beforeRestart);
 	await rail.getByRole("button", { name: "Choose model" }).click();
 	await page.getByRole("button", { name: "Find a model…", exact: true }).click();
-	await page.locator('[data-agent-model-row="Installed cached model"]').waitFor();
+	// the menu the search came from can still be on the page for a frame, its
+	// own row for the same model in it, once the canvas has loaded fast enough
+	// for that menu to have listed it
+	await page
+		.getByRole("dialog", { name: "Model picker" })
+		.filter({ has: page.getByRole("searchbox", { name: "Search models" }) })
+		.locator('[data-agent-model-row="Installed cached model"]')
+		.waitFor();
 	await page.keyboard.press("Escape");
 	await field.fill("Continue after the stopped host.");
 	await field.press("Enter");
