@@ -94,10 +94,12 @@ const LOADS = 12;
 
 /**
  * Covers at once for frames off screen (priority 2), per loader, and only
- * while the layer lets them load at all (`open`). Those squares are for later,
- * so they trickle in behind what the screen is waiting for: the daemon
- * serving the frames' own documents and the cores are shared with everything
- * the page does next.
+ * when nothing the screen wants is loading here and the layer lets them load
+ * at all (`open`). Those squares are for later, so they trickle in behind
+ * what the screen is waiting for: the network, the daemon serving the frames'
+ * own documents and the cores are shared with everything the page does next.
+ * Let run beside the screen's covers, a reload of a 200-frame page decoded 45
+ * squares off screen before the last one on it.
  */
 const BACKGROUND = 1;
 let open = true;
@@ -108,6 +110,7 @@ const queue = new Map<string, Load>();
 let fetching = 0;
 let decoding = 0;
 let background = 0;
+let urgent = 0;
 
 const post = (reply: LoaderReply, transfer: Transferable[] = []) => self.postMessage(reply, { transfer });
 
@@ -133,7 +136,7 @@ function pump(): void {
 	while (fetching < FETCHES && fetching + decoding < LOADS && queue.size > 0) {
 		let best: Load | null = null;
 		for (const load of queue.values()) if (best === null || load.priority < best.priority) best = load;
-		if (best === null || (best.priority >= 2 && (!open || background >= BACKGROUND))) return;
+		if (best === null || (best.priority >= 2 && (!open || urgent > 0 || background >= BACKGROUND))) return;
 		// everything else asked of the same cover rides along on its decode
 		const group: Load[] = [];
 		for (const load of queue.values()) if (load.url === best.url) group.push(load);
@@ -144,10 +147,12 @@ function pump(): void {
 
 async function run(group: Load[], later: boolean): Promise<void> {
 	if (later) background += 1;
+	else urgent += 1;
 	try {
 		await fetchAndDecode(group);
 	} finally {
 		if (later) background -= 1;
+		else urgent -= 1;
 		pump();
 	}
 }
