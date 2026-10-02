@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir } from "../test-helpers";
 import {
-	createThumbHealer,
+	coverSize,
+	imageSize,
 	readCaptureError,
 	readCover,
 	readCoverImage,
@@ -150,53 +151,28 @@ describe("recording a capture failure (#173)", () => {
 	});
 });
 
-describe("the headless fallback", () => {
-	it("writes the same one-image shape", async () => {
+describe("a cover's own size", () => {
+	it("reads a stored JPEG's frame header", () => {
 		const root = project();
-		const stored = vi.fn();
-		const healer = createThumbHealer({ capture: async () => JPEG, stored });
-		healer.request({ root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 });
-		await vi.waitFor(() => expect(stored).toHaveBeenCalledOnce());
-		expect(readCover(root, "home")).toEqual(stored.mock.calls[0]?.[2]);
+		// SOI, an APP0 segment to step over, then a baseline frame header: 1731 high, 800 wide
+		const jpeg = Buffer.from([
+			0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x06, 0xc3, 0x03, 0x20, 0x03,
+		]);
+		writeCover(root, "home", jpeg);
+		expect(coverSize(root, "home")).toEqual({ width: 800, height: 1731 });
 	});
 
-	it("does not overwrite a self-capture that lands during its shot", async () => {
-		const root = project();
-		let finish: (() => void) | undefined;
-		const stored = vi.fn();
-		const healer = createThumbHealer({
-			capture: () =>
-				new Promise((resolve) => {
-					finish = () => resolve(JPEG);
-				}),
-			stored,
-		});
-		healer.request({ root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 });
-		await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-		const selfCapture = writeCover(root, "home", OTHER_JPEG);
-		finish?.();
-		await vi.waitFor(() => expect(readCover(root, "home")).toEqual(selfCapture));
-		expect(stored).not.toHaveBeenCalled();
+	it("reads a PNG's header", () => {
+		const png = Buffer.alloc(24);
+		png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+		png.writeUInt32BE(800, 16);
+		png.writeUInt32BE(500, 20);
+		expect(imageSize(png)).toEqual({ width: 800, height: 500 });
 	});
 
-	it("does not spend a shot for an already covered frame", async () => {
+	it("knows nothing of a frame with no cover, or bytes it cannot read", () => {
 		const root = project();
-		writeCover(root, "home", JPEG);
-		const capture = vi.fn(async () => JPEG);
-		const healer = createThumbHealer({ capture, stored: vi.fn() });
-		healer.request({ root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 });
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		expect(capture).not.toHaveBeenCalled();
-	});
-
-	it("deduplicates requests for one frame during the cooldown", async () => {
-		const root = project();
-		const capture = vi.fn(async () => undefined);
-		const healer = createThumbHealer({ capture, stored: vi.fn() });
-		const request = { root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 };
-		healer.request(request);
-		healer.request(request);
-		healer.request(request);
-		await vi.waitFor(() => expect(capture).toHaveBeenCalledOnce());
+		expect(coverSize(root, "home")).toBeUndefined();
+		expect(imageSize(JPEG)).toBeUndefined();
 	});
 });

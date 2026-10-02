@@ -80,7 +80,7 @@ export function serveDaemon({
 	return new Promise<RunningDaemon>((resolve, reject) => {
 		let closing: Promise<void> | undefined;
 		const server = serve({ fetch: daemon.app.fetch, hostname: host, port, createServer }, (info: AddressInfo) => {
-			// bound: the daemon can now dial itself (the thumb healer's shots)
+			// bound: the daemon can now dial itself (the photo booth loads its frames here)
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
 			// listening first, asking after — the registry never delays the canvas
 			daemon.startUpdateCheck();

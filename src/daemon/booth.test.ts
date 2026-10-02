@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { type BoothJob, type BoothReason, createBoothQueue, followsColorScheme } from "./booth";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+	type BoothDeps,
+	type BoothJob,
+	type BoothReason,
+	createBooth,
+	createBoothQueue,
+	followsColorScheme,
+} from "./booth";
 
 const ROOT = "/projects/shop";
 const OTHER = "/projects/blog";
@@ -186,5 +193,96 @@ describe("whether a picture follows the colour scheme", () => {
 		expect(followsColorScheme("<style>:root{color-scheme:dark}</style><main>night</main>")).toBe(false);
 		expect(followsColorScheme("<style>:root{color-scheme: light}</style>")).toBe(false);
 		expect(followsColorScheme("<main>plain</main>")).toBe(false);
+	});
+});
+
+/**
+ * The booth's decisions that need no browser: what it refuses before it would
+ * launch one. A launch here is a failure of the test, because each of these is
+ * a browser started for nothing.
+ */
+describe("the booth before any browser", () => {
+	function booth(overrides: Partial<BoothDeps> = {}) {
+		const deps = {
+			origin: () => "http://run.spool.localhost:1",
+			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "ok", document: "<main></main>" })),
+			geometry: vi.fn(() => ({ w: 390, h: 844 })),
+			covered: vi.fn(() => false),
+			store: vi.fn(),
+			failed: vi.fn(),
+			finished: vi.fn(),
+			launch: vi.fn(async () => {
+				throw new Error("no browser in this test");
+			}),
+			log: vi.fn(),
+			...overrides,
+		};
+		const made = createBooth(deps);
+		onTestFinished(() => made.close());
+		return { booth: made, deps };
+	}
+
+	it("refuses a frame past the raster budget with a reason, without a browser", async () => {
+		const { booth: made, deps } = booth({ geometry: vi.fn(() => ({ w: 100, h: 50_000 })) });
+		made.enqueue(job("tall"));
+		await vi.waitFor(() => expect(deps.failed).toHaveBeenCalledWith(ROOT, "tall", "too large for a cover"));
+		expect(deps.launch).not.toHaveBeenCalled();
+		expect(deps.store).not.toHaveBeenCalled();
+	});
+
+	it("does not spend a picture on a frame whose missing cover turned up while it waited", async () => {
+		const { booth: made, deps } = booth({ covered: vi.fn(() => true) });
+		made.enqueue(job("home", "missing"));
+		await vi.waitFor(() => expect(deps.finished).toHaveBeenCalledWith(ROOT, "home"));
+		expect(deps.compile).not.toHaveBeenCalled();
+		expect(deps.launch).not.toHaveBeenCalled();
+	});
+
+	it("keeps a broken compile's reason beside the old cover, and lets only an edit ask again soon", async () => {
+		const { booth: made, deps } = booth({
+			compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "error", message: "Unexpected end of file" })),
+		});
+		made.enqueue(job("broken", "missing"));
+		await vi.waitFor(() => expect(deps.failed).toHaveBeenCalledWith(ROOT, "broken", "Unexpected end of file"));
+		// every projection read finds it uncovered; none of them is a reason to try again
+		made.enqueue(job("broken", "missing"));
+		made.enqueue(job("broken", "missing"));
+		await new Promise((done) => setTimeout(done, 20));
+		expect(deps.compile).toHaveBeenCalledTimes(1);
+		// an edit is the thing that can fix it
+		made.enqueue(job("broken", "edited"));
+		await vi.waitFor(() => expect(deps.compile).toHaveBeenCalledTimes(2));
+		expect(deps.store).not.toHaveBeenCalled();
+		expect(deps.launch).not.toHaveBeenCalled();
+	});
+
+	it("owes nothing for a frame that is gone by the time a tab is free", async () => {
+		const { booth: made, deps } = booth({ compile: vi.fn<BoothDeps["compile"]>(async () => ({ kind: "missing" })) });
+		made.enqueue(job("gone", "edited"));
+		await vi.waitFor(() => expect(deps.finished).toHaveBeenCalledWith(ROOT, "gone"));
+		expect(deps.failed).not.toHaveBeenCalled();
+		expect(deps.launch).not.toHaveBeenCalled();
+	});
+
+	it("blames a browser that will not start on the browser, never on the frame", async () => {
+		const { booth: made, deps } = booth();
+		made.enqueue(job("home", "edited"));
+		await vi.waitFor(() =>
+			expect(deps.log).toHaveBeenCalledWith(expect.stringContaining("could not start a browser")),
+		);
+		expect(deps.launch).toHaveBeenCalledTimes(1);
+		expect(deps.failed).not.toHaveBeenCalled();
+		// and does not try again on the next edit: a browser that would not start
+		// a moment ago will not start now
+		made.enqueue(job("other", "edited"));
+		await new Promise((done) => setTimeout(done, 20));
+		expect(deps.launch).toHaveBeenCalledTimes(1);
+	});
+
+	it("tells a waiting shot the browser would not start", async () => {
+		const { booth: made } = booth();
+		await expect(
+			made.shoot({ project: "shop", frame: "home", width: 10, height: 10, scale: 1, tiles: [{ y: 0, height: 10 }] }),
+		).rejects.toThrow("no browser in this test");
 	});
 });

@@ -229,44 +229,38 @@ export function readCaptureError(root: string, frame: string): CaptureError | un
 	return typeof error === "string" && typeof at === "string" ? { error, at } : undefined;
 }
 
-export interface HealRequest {
-	root: string;
-	frame: string;
-	url: string;
-	width: number;
-	height: number;
+/**
+ * The pixel size of a frame's stored cover, read off the image's own header.
+ *
+ * A cover is 800 px wide at whatever height the frame's aspect gives it, so its
+ * size says what footprint it was taken at without anything remembering it: a
+ * frame whose sidecar moved without changing size keeps its picture, and one
+ * whose size changed while the daemon was not running still learns it is wrong.
+ */
+export function coverSize(root: string, frame: string): { width: number; height: number } | undefined {
+	const cover = readCover(root, frame);
+	if (cover === undefined) return undefined;
+	const image = readCoverImage(root, frame, cover.hash);
+	return image === undefined ? undefined : imageSize(image.bytes);
 }
 
-interface HealerDeps {
-	capture(target: { url: string; width: number; height: number }): Promise<Buffer | undefined>;
-	stored(root: string, frame: string, cover: Cover): void;
-}
-
-const HEAL_COOLDOWN_MS = 60_000;
-
-export function createThumbHealer(deps: HealerDeps) {
-	const attempted = new Map<string, number>();
-	let tail: Promise<void> = Promise.resolve();
-	const covered = (root: string, frame: string): boolean => {
-		try {
-			return readCover(root, frame) !== undefined;
-		} catch {
-			return false;
-		}
-	};
-	function request(heal: HealRequest): void {
-		const key = `${heal.root}\0${heal.frame}`;
-		const now = Date.now();
-		if ((attempted.get(key) ?? -Infinity) + HEAL_COOLDOWN_MS > now || covered(heal.root, heal.frame)) return;
-		attempted.set(key, now);
-		tail = tail
-			.then(async () => {
-				const image = await deps.capture(heal);
-				if (image === undefined || covered(heal.root, heal.frame)) return;
-				const cover = writeCover(heal.root, heal.frame, image);
-				deps.stored(heal.root, heal.frame, cover);
-			})
-			.catch(() => {});
+/** A JPEG's frame header or a PNG's IHDR, whichever the bytes are. */
+export function imageSize(bytes: Uint8Array): { width: number; height: number } | undefined {
+	const at = (index: number) => bytes[index] ?? 0;
+	if (at(0) === 0x89 && at(1) === 0x50 && bytes.length >= 24) {
+		const word = (index: number) =>
+			((at(index) << 24) | (at(index + 1) << 16) | (at(index + 2) << 8) | at(index + 3)) >>> 0;
+		return { width: word(16), height: word(20) };
 	}
-	return { request };
+	if (at(0) !== 0xff || at(1) !== 0xd8) return undefined;
+	for (let index = 2; index + 8 < bytes.length; ) {
+		if (at(index) !== 0xff) return undefined;
+		const marker = at(index + 1);
+		// a start-of-frame marker of any coding, never DHT, JPG or DAC
+		if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+			return { width: (at(index + 7) << 8) | at(index + 8), height: (at(index + 5) << 8) | at(index + 6) };
+		}
+		index += 2 + ((at(index + 2) << 8) | at(index + 3));
+	}
+	return undefined;
 }

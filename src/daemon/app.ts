@@ -10,7 +10,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import type { Cover } from "../cover";
+import { type Cover, captureRasterSize, coverCaptureScale } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
@@ -40,6 +40,7 @@ import {
 	readThreads,
 	serveThreads,
 } from "./agent-threads";
+import { createBooth } from "./booth";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
@@ -88,6 +89,7 @@ import {
 	frameDirectories,
 	frameExists,
 	frameGeometry,
+	frameNames,
 	listProjectFrames,
 	lookupFrame,
 	type ProjectCard,
@@ -119,10 +121,10 @@ import {
 	watchMachineState,
 } from "./session";
 import { createSettingsStore } from "./settings";
-import { createShotTaker } from "./shots";
 import {
-	createThumbHealer,
+	coverSize,
 	isCoverHash,
+	readCover,
 	readCoverImage,
 	UnservableCoverError,
 	writeCaptureError,
@@ -754,7 +756,10 @@ export function createDaemonApp({
 	const emitAppEvent = (event: AppEvent) => {
 		// a project that arrived or left changes who keeps history, and an arrival
 		// brings whatever design/ churn the daemon was not up for
-		if (event.kind === "registry" || event.kind === "project-renamed") history.keeping(registeredRoots());
+		if (event.kind === "registry" || event.kind === "project-renamed") {
+			history.keeping(registeredRoots());
+			boothKeeping(registeredRoots());
+		}
 		for (const listener of appListeners) listener(event);
 	};
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
@@ -778,14 +783,81 @@ export function createDaemonApp({
 	});
 	const updateAvailable = () => (updateCheck === true ? updateChecker.available() : undefined);
 
-	// the healer needs a dialable origin, which exists only once the server has
+	// the booth needs a dialable origin, which exists only once the server has
 	// bound — in-process app.request() never activates it
 	let selfOrigin: string | undefined;
-	const shots = createShotTaker();
-	const healer = createThumbHealer({
-		capture: (target) => shots.capture(target),
-		stored: (root, frame, cover) => hub.publish(root, { kind: "thumb", frame, cover }),
+	const booth = createBooth({
+		origin: () => selfOrigin,
+		compile: async (root, frame) => {
+			const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+			if (doc.kind === "ok") return { kind: "ok", document: doc.document };
+			return doc.kind === "missing" ? { kind: "missing" } : { kind: "error", message: doc.message };
+		},
+		geometry: (root, frame) => frameGeometry(root, frame),
+		covered: (root, frame) => readCover(root, frame) !== undefined,
+		store: (root, frame, bytes) => {
+			const cover = writeCover(root, frame, bytes);
+			hub.publish(root, { kind: "thumb", frame, cover });
+		},
+		failed: (root, frame, reason) => writeCaptureError(root, frame, reason),
 	});
+	/**
+	 * The booth listens to every registered project, open in a canvas or not,
+	 * the way history does: an agent's edit to a page nobody has open is a
+	 * picture owed all the same, and its subscription is what holds that
+	 * project's watcher open when no browser is looking.
+	 */
+	const boothWatches = new Map<string, () => void>();
+	function boothKeeping(roots: readonly string[]): void {
+		if (selfOrigin === undefined) return;
+		for (const [root, stop] of boothWatches) {
+			if (roots.includes(root)) continue;
+			stop();
+			boothWatches.delete(root);
+			booth.dropProject(root);
+		}
+		for (const root of roots) {
+			if (boothWatches.has(root)) continue;
+			const project = basename(root);
+			const owe = (frame: string) => booth.enqueue({ root, project, frame, reason: "edited" });
+			boothWatches.set(
+				root,
+				hub.subscribe(root, (event) => {
+					try {
+						if (event.kind === "frame") {
+							if (frameExists(root, event.frame)) owe(event.frame);
+							else booth.drop(root, event.frame);
+						} else if (event.kind === "shared") {
+							// the link graph names its readers (#109); a file nobody has
+							// read yet could be under any frame
+							for (const frame of event.frames ?? frameNames(root) ?? []) owe(frame);
+						} else if (event.kind === "geometry" && frameExists(root, event.frame)) {
+							if (resized(root, event.frame)) owe(event.frame);
+						}
+					} catch {
+						// a project whose design folder went strange owes nothing it can be asked
+					}
+				}),
+			);
+		}
+	}
+
+	/**
+	 * Whether a frame's stored cover was taken at another size than the frame
+	 * has now. A move rewrites the sidecar too, and is not a picture owed; a
+	 * resize is, because the cover's layout and its shape are both the old
+	 * size's (#113).
+	 */
+	function resized(root: string, frame: string): boolean {
+		const stored = coverSize(root, frame);
+		if (stored === undefined) return true;
+		const { w, h } = frameGeometry(root, frame);
+		const width = Math.max(1, Math.round(w));
+		const owed = captureRasterSize(width, Math.max(1, Math.round(h)), coverCaptureScale(width));
+		if (owed === undefined) return false;
+		// Chrome rounds the raster its own way: a pixel either way is the same size
+		return stored.width !== owed.width || Math.abs(stored.height - owed.height) > 1;
+	}
 	const goReader = createGoReader();
 	const resolvePass = createResolvePass({
 		read: (target) => goReader.read(target),
@@ -879,20 +951,14 @@ export function createDaemonApp({
 	const MAX_COVER_BYTES = 16 * 1024 * 1024;
 
 	/**
-	 * Ask the headless fallback for a frame's cover. The healer holds the
-	 * per-frame cooldown and runs one shot at a time, so calling this for every
-	 * uncovered frame in a projection read costs a queue, never a stampede.
+	 * A read found a frame with no cover. The booth keeps one entry per frame
+	 * and leaves a frame whose cover just failed alone for a while, so calling
+	 * this for every uncovered frame in a projection read costs a queue, never a
+	 * stampede.
 	 */
-	function requestHeal(root: string, name: string, frame: string, geometry?: { w: number; h: number }): void {
+	function requestHeal(root: string, name: string, frame: string): void {
 		if (selfOrigin === undefined) return;
-		const { w, h } = geometry ?? frameGeometry(root, frame);
-		healer.request({
-			root,
-			frame,
-			url: `${selfOrigin}/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`,
-			width: w,
-			height: h,
-		});
+		booth.enqueue({ root, project: name, frame, reason: "missing" });
 	}
 
 	/** The capture protocol carries exactly one image. */
@@ -1566,7 +1632,7 @@ export function createDaemonApp({
 						// to show, and a frame with none renders its placeholder and
 						// asks for nothing (#111). So the heal is enqueued here rather
 						// than waiting for a request that will never come.
-						if (frame.cover === undefined) requestHeal(project.root, name, frame.name, frame);
+						if (frame.cover === undefined) requestHeal(project.root, name, frame.name);
 						return frame;
 					}),
 				});
@@ -3376,12 +3442,13 @@ export function createDaemonApp({
 		controlToken,
 		/** Stable for this daemon and canonical root; rendered project code receives only its own. */
 		projectCapability,
-		/** Activate origin-dependent work (the thumb healer) once really bound. */
+		/** Activate origin-dependent work (the photo booth) once really bound. */
 		setSelfOrigin: (origin: string) => {
 			controlOrigin = new URL(origin).origin;
 			renderOrigin = renderOriginFor(controlOrigin);
 			captureOrigin = captureOriginFor(controlOrigin);
 			selfOrigin = renderOrigin;
+			boothKeeping(registeredRoots());
 		},
 		/** Begin the daily phone-home — post-listen only, and only when opted in. */
 		startUpdateCheck: () => {
@@ -3413,9 +3480,11 @@ export function createDaemonApp({
 			history.close();
 			liveTurns.close();
 			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
+			for (const stop of boothWatches.values()) stop();
+			boothWatches.clear();
 			hub.close();
 			updateChecker.stop();
-			const closed = await Promise.allSettled([compiled, ...stoppedEngines, shots.close(), goReader.close()]);
+			const closed = await Promise.allSettled([compiled, ...stoppedEngines, booth.close(), goReader.close()]);
 			const errors: unknown[] = [];
 			for (const result of closed) if (result.status === "rejected") errors.push(result.reason);
 			if (errors.length > 0) throw new AggregateError(errors, "Daemon resources could not close");
