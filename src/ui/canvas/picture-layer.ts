@@ -332,6 +332,10 @@ export class PictureLayer {
 
 	/** Draw this camera, now: called from the camera store's frame, with the camera it is drawing. */
 	draw(camera: Camera | null): void {
+		// the store says so once more when a camera comes to rest, and that
+		// camera is already on screen: everything else that changes the picture
+		// asks for its own draw
+		if (camera === this.camera && this.draws > 0) return;
 		this.camera = camera;
 		this.render();
 	}
@@ -340,9 +344,6 @@ export class PictureLayer {
 		this.disposed = true;
 		this.canvas.removeEventListener("webglcontextlost", this.onLost);
 		this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
-		this.generation += 1;
-		for (const item of this.landed) item.bitmap.close();
-		this.landed = [];
 		this.release();
 	}
 
