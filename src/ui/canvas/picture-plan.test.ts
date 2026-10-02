@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bindUnits, containSize, evictions, RESIDENT_PX, textureBytes, textureFor } from "./picture-plan";
+import { bindUnits, containSize, evictions, halvings, RESIDENT_PX, textureBytes, textureFor } from "./picture-plan";
 
 const LANDSCAPE = { width: 800, height: 533 };
 const PORTRAIT = { width: 800, height: 1731 };
@@ -19,6 +19,50 @@ describe("containSize", () => {
 		expect(containSize(1600, 533, LANDSCAPE)).toEqual({ w: 800, h: 533 });
 		// taller: the width binds
 		expect(containSize(400, 1000, LANDSCAPE)).toEqual({ w: 400, h: 266.5 });
+	});
+});
+
+describe("halvings", () => {
+	it("halves a cover down to the sharper copy a frame wants, the copy itself the last step", () => {
+		expect(halvings(LANDSCAPE, { width: 400, height: 267 })).toEqual([{ width: 400, height: 267 }]);
+		expect(halvings(LANDSCAPE, { width: 200, height: 133 })).toEqual([
+			{ width: 400, height: 267 },
+			{ width: 200, height: 134 },
+			{ width: 200, height: 133 },
+		]);
+	});
+
+	it("walks to the square side by side, never shrinking a side more than twofold", () => {
+		const steps = halvings(LANDSCAPE, { width: RESIDENT_PX, height: RESIDENT_PX });
+		expect(steps).toEqual([
+			{ width: 400, height: 267 },
+			{ width: 200, height: 134 },
+			{ width: 100, height: 67 },
+			{ width: RESIDENT_PX, height: RESIDENT_PX },
+		]);
+		let at = LANDSCAPE;
+		for (const step of steps) {
+			expect(at.width / step.width).toBeLessThanOrEqual(2);
+			expect(at.height / step.height).toBeLessThanOrEqual(2);
+			at = step;
+		}
+	});
+
+	it("halves a tall cover's height further than its width", () => {
+		expect(halvings(PORTRAIT, { width: RESIDENT_PX, height: RESIDENT_PX })).toEqual([
+			{ width: 400, height: 866 },
+			{ width: 200, height: 433 },
+			{ width: 100, height: 217 },
+			{ width: 100, height: 109 },
+			{ width: RESIDENT_PX, height: RESIDENT_PX },
+		]);
+	});
+
+	it("takes no step to the size it is at, and one to a size it has to grow to", () => {
+		expect(halvings(LANDSCAPE, LANDSCAPE)).toEqual([]);
+		expect(halvings({ width: 40, height: 30 }, { width: RESIDENT_PX, height: RESIDENT_PX })).toEqual([
+			{ width: RESIDENT_PX, height: RESIDENT_PX },
+		]);
 	});
 });
 

@@ -1,8 +1,17 @@
 import type { Camera } from "../api";
 import { shellRadiusOnScreen } from "./camera";
-import type { PixelSize } from "./cover-size";
-import type { LoaderAsk, LoaderReply } from "./picture-loader";
-import { bindUnits, containSize, evictions, RESIDENT_PX, SHARP_UNITS, textureBytes, textureFor } from "./picture-plan";
+import type { Box, LoaderAsk, LoaderReply } from "./picture-loader";
+import {
+	bindUnits,
+	containSize,
+	evictions,
+	type PixelSize,
+	RESIDENT_PX,
+	SHARP_UNITS,
+	sharpKey,
+	textureBytes,
+	textureFor,
+} from "./picture-plan";
 
 /**
  * The picture layer (#81, #107): every frame standing as its picture, drawn by
@@ -57,7 +66,7 @@ export interface DrawnPicture {
 	box: { x: number; y: number; w: number; h: number };
 	/** The picture inside it in CSS pixels, contained at the top left; null before its size is known. */
 	picture: { w: number; h: number } | null;
-	/** The cover's own pixel size, from its header. */
+	/** The cover's own pixel size. */
 	natural: PixelSize | null;
 	/** What was sampled: the resident square, a sharper copy, or nothing yet (the surface alone). */
 	texture:
@@ -108,6 +117,16 @@ const UPLOAD_MS = { moving: 2, still: 6 };
 const UPLOAD_BYTES = { moving: 8 * 1024 * 1024, still: 32 * 1024 * 1024 };
 
 /**
+ * Loaders working side by side, each a worker of its own (`picture-loader.ts`).
+ * A cover always goes to the same one, so every size asked of it can share one
+ * decode there. Two, because the work a loader cannot hand to Chrome's own
+ * image threads runs on the loader's thread, one cover after another, and the
+ * screen's covers waited on that line; more would take cores the frames'
+ * documents boot on.
+ */
+const LOADERS = 2;
+
+/**
  * The memory sharper copies may keep: two screens of device pixels, mips
  * included, and never less than 32 MB. What is on screen is always drawn as
  * sharp as it wants (a halving of the cover at least as wide as its drawing,
@@ -144,7 +163,7 @@ interface Job {
 	key: string;
 	url: string;
 	sharp: { width: number; height: number } | null;
-	/** Lower loads first: 0 a sharper copy on screen, 1 a resident square on screen, 2 the rest. */
+	/** Lower loads first: 0 what a frame drawn on screen wants, 1 what a shell's frame would, 2 the rest. */
 	priority: number;
 }
 
@@ -291,9 +310,11 @@ export class PictureLayer {
 	/** Which cover each layer of the resident array holds. */
 	private slots: (string | null)[] = [];
 	private readonly sharps = new Map<string, Sharp>();
-	/** Loads handed to the loader and not back yet (`picture-loader.ts`). */
+	/** Loads handed to a loader and not back yet (`picture-loader.ts`). */
 	private readonly asked = new Map<string, Job>();
-	private loader: Worker | null = null;
+	private loaders: Worker[] = [];
+	/** Asks not sent yet, per loader (`tell`). */
+	private readonly outbox = new Map<Worker, LoaderAsk[]>();
 	private landed: Landed[] = [];
 	/** Bumped when the context goes, so a decode begun before it lands nowhere. */
 	private generation = 0;
@@ -317,8 +338,11 @@ export class PictureLayer {
 		this.gpu = this.open();
 		// no GPU, nothing to load for: a canvas without WebGL draws no pictures
 		if (this.gpu !== null) {
-			this.loader = new Worker(new URL("./picture-loader.ts", import.meta.url), { type: "module" });
-			this.loader.addEventListener("message", this.onLoaded);
+			for (let i = 0; i < LOADERS; i++) {
+				const loader = new Worker(new URL("./picture-loader.ts", import.meta.url), { type: "module" });
+				loader.addEventListener("message", this.onLoaded);
+				this.loaders.push(loader);
+			}
 		}
 	}
 
@@ -392,8 +416,9 @@ export class PictureLayer {
 		this.canvas.removeEventListener("webglcontextlost", this.onLost);
 		this.canvas.removeEventListener("webglcontextrestored", this.onRestored);
 		this.release();
-		this.loader?.terminate();
-		this.loader = null;
+		for (const loader of this.loaders) loader.terminate();
+		this.loaders = [];
+		this.outbox.clear();
 	}
 
 	/** What the last draw put on screen, worked out again from the state it drew. */
@@ -474,7 +499,11 @@ export class PictureLayer {
 			box: { x: number; y: number; w: number; h: number },
 			look: Look,
 		) => void,
-		claimed?: (frame: PictureFrame & { url: string }, look: Look) => void,
+		claimed?: (
+			frame: PictureFrame & { url: string },
+			box: { x: number; y: number; w: number; h: number },
+			look: Look,
+		) => void,
 	): void {
 		const { k } = camera;
 		const s = this.scale;
@@ -488,7 +517,7 @@ export class PictureLayer {
 			};
 			if (box.x > this.width + 1 || box.y > this.height + 1 || box.x + box.w < -1 || box.y + box.h < -1) continue;
 			const look = this.look(frame as PictureFrame & { url: string }, box);
-			if (this.claimed.has(frame.name)) claimed?.(frame as PictureFrame & { url: string }, look);
+			if (this.claimed.has(frame.name)) claimed?.(frame as PictureFrame & { url: string }, box, look);
 			else visit(frame as PictureFrame & { url: string }, box, look);
 		}
 	}
@@ -533,6 +562,13 @@ export class PictureLayer {
 
 	private render(): void {
 		this.redraw = false;
+		this.paint();
+		// everything asked of the loaders since the last draw goes out together,
+		// a page's squares and which of them are on screen in one message
+		this.send();
+	}
+
+	private paint(): void {
 		const gpu = this.gpu;
 		if (gpu === null || this.lost || this.disposed || this.width === 0 || this.height === 0) return;
 		const { gl } = gpu;
@@ -548,7 +584,14 @@ export class PictureLayer {
 		const textures: (WebGLTexture | null)[] = [];
 		const none: boolean[] = [];
 		const wants: { job: Job; area: number }[] = [];
-		const note = (frame: PictureFrame & { url: string }, look: Look) => {
+		// what a frame drawn here wants loads first, then what a frame its shell
+		// is drawing would want on the way back, then the rest of the page
+		const note = (
+			frame: PictureFrame & { url: string },
+			box: { w: number; h: number },
+			look: Look,
+			priority: number,
+		) => {
 			if (look.sharp !== null) look.sharp.used = this.stamp;
 			if (look.done === true) {
 				const stand = this.previous.get(frame.name);
@@ -560,22 +603,37 @@ export class PictureLayer {
 			const wanted = own.wanted;
 			if (wanted?.kind === "sharp" && (own.sharp === null || own.sharp.width !== wanted.width)) {
 				wants.push({
-					job: { key: sharpKey(own.url, wanted.width), url: own.url, sharp: wanted, priority: 0 },
+					job: { key: sharpKey(own.url, wanted.width), url: own.url, sharp: wanted, priority },
 					area: wanted.width * wanted.height,
 				});
 			}
-			// a square on screen jumps the queue of the page's other squares
+			// A square on screen jumps the queue of the page's other squares when
+			// it is what the frame wants, or when the cover's size is not known
+			// yet: then it takes the frame's box along, and the sharper copy that
+			// box wants comes out of the same decode rather than a second load
+			// asked for once the square has said how big the cover is.
 			const resident = this.asked.get(own.url);
-			if (resident !== undefined && resident.priority > 1) {
-				resident.priority = 1;
-				this.loader?.postMessage({ kind: "priority", key: resident.key, priority: 1 } satisfies LoaderAsk);
+			if (
+				resident !== undefined &&
+				resident.priority > priority &&
+				(own.natural === null || wanted?.kind === "resident")
+			) {
+				resident.priority = priority;
+				const sized: Box | undefined =
+					own.natural === null ? { w: box.w, h: box.h, maxSide: gpu.maxSide } : undefined;
+				this.tell(this.loaderOf(own.url), {
+					kind: "priority",
+					key: resident.key,
+					priority,
+					...(sized === undefined ? {} : { box: sized }),
+				});
 			}
 		};
 		let count = 0;
 		this.walk(
 			camera,
 			(frame, box, look) => {
-				note(frame, look);
+				note(frame, box, look, 0);
 				if (this.instances.length < (count + 1) * FLOATS) {
 					const grown = new Float32Array(Math.max(64, (count + 1) * 2) * FLOATS);
 					grown.set(this.instances);
@@ -596,7 +654,7 @@ export class PictureLayer {
 			},
 			// a frame its shell is drawing still keeps its sharper copy warm, so
 			// the moment it hands back its picture is already as sharp as it was
-			note,
+			(frame, box, look) => note(frame, box, look, 1),
 		);
 		this.request(wants);
 
@@ -676,24 +734,47 @@ export class PictureLayer {
 		this.ask({ key, url, sharp, priority });
 	}
 
-	/** Hand a load to the loader. Nothing loads without a context to upload to; a restored one asks again. */
+	/** An ask for a loader, sent with the rest at the end of the next draw (`send`). */
+	private tell(loader: Worker | undefined, ask: LoaderAsk): void {
+		if (loader === undefined) return;
+		const waiting = this.outbox.get(loader);
+		if (waiting === undefined) this.outbox.set(loader, [ask]);
+		else waiting.push(ask);
+	}
+
+	private send(): void {
+		for (const [loader, asks] of this.outbox) loader.postMessage(asks);
+		this.outbox.clear();
+	}
+
+	/** The loader a cover always goes to, so every size asked of it meets on one decode. */
+	private loaderOf(url: string): Worker | undefined {
+		let hash = 0;
+		for (let i = 0; i < url.length; i++) hash = (hash * 31 + url.charCodeAt(i)) | 0;
+		return this.loaders[Math.abs(hash) % Math.max(1, this.loaders.length)];
+	}
+
+	/** Hand a load to its loader. Nothing loads without a context to upload to; a restored one asks again. */
 	private ask(job: Job): void {
-		if (this.loader === null || this.gpu === null || this.lost) return;
+		const loader = this.loaderOf(job.url);
+		if (loader === undefined || this.gpu === null || this.lost) return;
 		this.asked.set(job.key, job);
-		this.loader.postMessage({
+		this.tell(loader, {
 			kind: "load",
 			key: job.key,
 			url: new URL(job.url, location.href).href,
 			size: job.sharp ?? "resident",
 			priority: job.priority,
 			generation: this.generation,
-		} satisfies LoaderAsk);
+		});
 	}
 
-	/** Take back a load nobody wants any more, if the loader has not started it. */
+	/** Take back a load nobody wants any more, if its loader has not started it. */
 	private cancel(key: string): void {
-		if (!this.asked.delete(key)) return;
-		this.loader?.postMessage({ kind: "cancel", key } satisfies LoaderAsk);
+		const job = this.asked.get(key);
+		if (job === undefined) return;
+		this.asked.delete(key);
+		this.tell(this.loaderOf(job.url), { kind: "cancel", key });
 	}
 
 	/**
@@ -713,7 +794,9 @@ export class PictureLayer {
 				if (this.sharps.get(key)?.texture === null) this.sharps.delete(key);
 			}
 		}
-		for (const { job } of wants.sort((a, b) => b.area - a.area)) this.want(job.url, job.sharp, 0);
+		for (const { job } of wants.sort((a, b) => a.job.priority - b.job.priority || b.area - a.area)) {
+			this.want(job.url, job.sharp, job.priority);
+		}
 	}
 
 	/**
@@ -723,6 +806,10 @@ export class PictureLayer {
 	 */
 	private readonly onLoaded = (event: MessageEvent<LoaderReply>): void => {
 		const reply = event.data;
+		if (!("failed" in reply) && reply.size !== undefined) {
+			this.onDerived(reply, reply.size);
+			return;
+		}
 		const job = this.asked.get(reply.key);
 		const current = reply.generation === this.generation && job !== undefined;
 		if (current) this.asked.delete(reply.key);
@@ -743,6 +830,35 @@ export class PictureLayer {
 		this.landed.push({ job, bitmap: reply.bitmap, natural: reply.natural });
 		this.wake();
 	};
+
+	/**
+	 * A sharper copy a loader made along with a square, for the box its frame
+	 * had then. Kept if its cover is still on the page and no copy of that size
+	 * is drawn yet; a load asked for it meanwhile is taken back.
+	 */
+	private onDerived(reply: Extract<LoaderReply, { bitmap: ImageBitmap }>, size: PixelSize): void {
+		const url = reply.key.slice(0, reply.key.lastIndexOf("#"));
+		const held = this.sharps.get(reply.key);
+		if (reply.generation !== this.generation || !this.residents.has(url) || held?.texture != null) {
+			reply.bitmap.close();
+			return;
+		}
+		this.cancel(reply.key);
+		if (held === undefined) {
+			this.sharps.set(reply.key, {
+				url,
+				width: size.width,
+				height: size.height,
+				texture: null,
+				state: "waiting",
+				bytes: textureBytes(size.width, size.height, true),
+				used: this.stamp,
+			});
+		}
+		const job: Job = { key: reply.key, url, sharp: size, priority: 0 };
+		this.landed.push({ job, bitmap: reply.bitmap, natural: reply.natural });
+		this.wake();
+	}
 
 	/** Hand landed decodes to the GPU, within this frame's share of upload time and bytes. */
 	private upload(gpu: Gpu): void {
@@ -992,7 +1108,8 @@ export class PictureLayer {
 	private release(): void {
 		this.generation += 1;
 		this.asked.clear();
-		this.loader?.postMessage({ kind: "reset" } satisfies LoaderAsk);
+		for (const loader of this.loaders) this.tell(loader, { kind: "reset" });
+		this.send();
 		for (const item of this.landed) item.bitmap.close();
 		this.landed = [];
 		const gl = this.lost ? null : (this.gpu?.gl ?? null);
@@ -1058,8 +1175,6 @@ function rank(look: Look): number {
 	if (sharp !== null) return 2 + sharp.width;
 	return resident ? 1 : 0;
 }
-
-const sharpKey = (url: string, width: number): string => `${url}#${width}`;
 
 const roundUp = (value: number, step: number): number => Math.max(step, Math.ceil(value / step) * step);
 

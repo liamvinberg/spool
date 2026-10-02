@@ -1,5 +1,3 @@
-import type { PixelSize } from "./cover-size";
-
 /**
  * What the picture layer decides before it touches the GPU: how big a texture
  * a frame's picture needs at the size it is drawn, where the picture sits in
@@ -7,6 +5,12 @@ import type { PixelSize } from "./cover-size";
  * sharper pictures go when memory runs out. Pure, so each rule is tested on
  * its own, and the layer is left with only the GL calls.
  */
+
+/** An image's size in its own pixels. */
+export interface PixelSize {
+	width: number;
+	height: number;
+}
 
 /**
  * The side of the square every frame's picture is kept at, always (#81).
@@ -60,6 +64,31 @@ export function textureFor(
 		height: Math.max(1, Math.round(height * fit)),
 	};
 }
+
+/**
+ * The sizes a picture passes through on its way from `from` down to `to`,
+ * ending at `to`: each step halves every side whose half still reaches its
+ * target, so no step shrinks a side much more than twofold, and a linear
+ * filter at each one averages every pixel it covers rather than skipping some
+ * (`picture-loader.ts`). Empty when `from` is `to`; a side already smaller
+ * than its target is left for the last step to grow.
+ */
+export function halvings(from: PixelSize, to: PixelSize): PixelSize[] {
+	const steps: PixelSize[] = [];
+	const half = (side: number, goal: number) => (Math.round(side / 2) >= goal ? Math.round(side / 2) : side);
+	let { width, height } = from;
+	for (;;) {
+		const next = { width: half(width, to.width), height: half(height, to.height) };
+		if (next.width === width && next.height === height) break;
+		steps.push(next);
+		({ width, height } = next);
+	}
+	if (width !== to.width || height !== to.height) steps.push(to);
+	return steps;
+}
+
+/** How the layer and its loaders name one sharper copy of a cover. */
+export const sharpKey = (url: string, width: number): string => `${url}#${width}`;
 
 /** GPU bytes for an RGBA8 texture of this size, with or without its mip chain (a third more). */
 export function textureBytes(width: number, height: number, mipmapped: boolean): number {
