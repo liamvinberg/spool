@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { buildDesignEntry } from "./compile";
+import { buildDesignEntry, cssSources } from "./compile";
+import type { DesignReads } from "./design-reads";
 import { layeredProjectCss } from "./document";
 import { frameFolder } from "./projection";
 import { compileFrameCssOnWorker } from "./tailwind";
@@ -11,18 +12,17 @@ export interface FrameStyleRef {
 	page?: string;
 }
 
-export interface FrameStyleClosure {
-	css: string;
-	sources: string[];
-	stylesheets: string[];
-}
-
-/** Build the exact stylesheet closure a frame receives in its standalone document. */
+/**
+ * Build the exact stylesheet closure a frame receives in its standalone
+ * document, from the compile's own reads: every file it reaches is read once
+ * for the whole compile, and the stylesheets Tailwind read are noted in it.
+ */
 export async function buildFrameStyleClosure(
 	designDir: string,
 	ref: FrameStyleRef,
+	reads: DesignReads,
 	publication = false,
-): Promise<FrameStyleClosure> {
+): Promise<string> {
 	const folder = frameFolder(ref.name);
 	const frame = await buildDesignEntry({
 		designDir,
@@ -30,13 +30,10 @@ export async function buildFrameStyleClosure(
 		sourcefile: STYLESHEET_ENTRY,
 		contents: `import frame from ${JSON.stringify("./frame.tsx")};\nexport default frame;\n`,
 		label: `frame "${ref.name}"`,
-		...(publication ? { publication: true } : {}),
+		...(publication ? { publication: true } : { reads: () => reads }),
 	});
-	const compiled = await compileFrameCssOnWorker(designDir, frame.sourceFiles);
+	const compiled = await compileFrameCssOnWorker(designDir, cssSources(reads, frame.sourceFiles));
+	for (const sheet of compiled.stylesheets) reads.noted(sheet.file, sheet.digest);
 	const project = frame.bundledCss === undefined ? "" : layeredProjectCss(frame.bundledCss);
-	return {
-		css: project === "" ? compiled.css : `${compiled.css}\n${project}`,
-		sources: frame.sourceFiles,
-		stylesheets: compiled.stylesheets,
-	};
+	return project === "" ? compiled.css : `${compiled.css}\n${project}`;
 }

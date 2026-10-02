@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { setImmediate as yieldTurn } from "node:timers/promises";
-import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbuild";
+import { type BuildOptions, build, formatMessagesSync, type Loader, type Plugin } from "esbuild";
 import { isFramePath } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
 import {
@@ -12,10 +12,10 @@ import {
 	realDesignDir,
 	resolveDesignPath,
 } from "./design-path";
+import { contentDigest, createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
-import { readIfExists } from "./project-files";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
-import { compileFrameCssOnWorker } from "./tailwind";
+import { type CssSource, compileFrameCssOnWorker } from "./tailwind";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
 
@@ -37,6 +37,8 @@ interface CacheEntry {
 	document: string;
 	/** The webfont resolution this document was assembled from (#80). */
 	fonts: number;
+	/** Every input was one state through the compile (see DesignReads), so the document is of what its hash is of. */
+	settled: boolean;
 }
 
 const STDIN_NAME = "<spool-boot>";
@@ -71,13 +73,16 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 
 		const stamp = `${frame}\0${authority.projectCapability}\0${authority.controlOrigin}`;
 		const key = `${root}\0${stamp}`;
+		// What this request found. A miss answers only for that: another miss
+		// overlapping it may have cached a newer document meanwhile, which this one
+		// must neither cover with its own nor clear on its failure.
+		const cached = cache.get(key);
 		try {
 			// One canonical root owns the entry, every resolved import, stylesheets,
 			// direct shared reads, and cache revalidation for this document.
 			// A machine that comes back online resolves webfonts it could not reach
 			// before, and the revision it was built at retires it (#80) — read after
 			// the compile, because the compile is what moves it.
-			const cached = cache.get(key);
 			if (
 				cached !== undefined &&
 				cached.fonts === webfonts.revision() &&
@@ -98,10 +103,13 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 				stamp,
 				webfonts,
 			});
-			cache.set(key, entry);
+			if (cache.get(key) === cached) {
+				if (entry.settled) cache.set(key, entry);
+				else cache.delete(key);
+			}
 			return { kind: "ok", document: entry.document, etag: entry.etag, cache: "miss" };
 		} catch (error) {
-			cache.delete(key);
+			if (cache.get(key) === cached) cache.delete(key);
 			const message = describeCompileError(error);
 			return { kind: "error", document: errorDocument(frame, message), message };
 		}
@@ -147,6 +155,42 @@ export interface DesignEntryOptions {
 	 * document is the exact whole-player failure `composePlayer` exists to stop.
 	 */
 	imageBudget?: number | undefined;
+	/**
+	 * The compile's own reads, when this bundle is one part of a document whose
+	 * cache key must hash exactly the bytes it was made of: esbuild is handed
+	 * those bytes instead of reading each file for itself. A getter, because the
+	 * player's context outlives the compile that hands them in.
+	 */
+	reads?: () => DesignReads | undefined;
+}
+
+/**
+ * Esbuild's own loader for each extension it knows without being told, which
+ * a plugin handing esbuild a file's bytes has to name itself. .mts and .cts
+ * are left out on purpose: esbuild parses those more strictly than the "ts"
+ * the API can ask for, so it reads them for itself (see DesignReads.readTwice).
+ */
+const DEFAULT_LOADERS: Record<string, Loader> = {
+	".js": "js",
+	".mjs": "js",
+	".cjs": "js",
+	".jsx": "jsx",
+	".ts": "ts",
+	".tsx": "tsx",
+	".css": "css",
+	".module.css": "local-css",
+	".json": "json",
+	".txt": "text",
+};
+
+/** The loader esbuild would choose for a path: its longest known extension. */
+function loaderOf(path: string, loaders: Readonly<Record<string, Loader>>): Loader | undefined {
+	const name = basename(path);
+	for (let at = name.indexOf("."); at !== -1; at = name.indexOf(".", at + 1)) {
+		const loader = loaders[name.slice(at)];
+		if (loader !== undefined) return loader;
+	}
+	return undefined;
 }
 
 /**
@@ -158,7 +202,11 @@ export interface DesignEntryOptions {
  * once; the player keeps them in a context and rebuilds incrementally.
  */
 export function designBuildOptions(options: DesignEntryOptions): BuildOptions & { metafile: true; write: false } {
-	const { designDir, resolveDir, sourcefile, contents, label, imageBudget } = options;
+	const { designDir, resolveDir, sourcefile, contents, label, imageBudget, reads } = options;
+	const loader: Record<string, Loader> =
+		options.publication === true
+			? { ...TEXT_LOADERS, ".woff2": "dataurl", ".woff": "dataurl", ".ttf": "dataurl", ".otf": "dataurl" }
+			: TEXT_LOADERS;
 	return {
 		stdin: { contents, resolveDir, loader: "js", sourcefile },
 		bundle: true,
@@ -169,10 +217,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		jsxDev: options.publication !== true,
 		jsxImportSource: options.publication === true ? "react" : "spool",
 		...(options.publication === true ? { minify: true, legalComments: "none" as const } : {}),
-		loader:
-			options.publication === true
-				? { ...TEXT_LOADERS, ".woff2": "dataurl", ".woff": "dataurl", ".ttf": "dataurl", ".otf": "dataurl" }
-				: TEXT_LOADERS,
+		loader,
 		packages: "external",
 		define: { "process.env.NODE_ENV": '"production"' },
 		metafile: true,
@@ -181,8 +226,8 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		absWorkingDir: designDir,
 		plugins: [
 			sharedImportPlugin(designDir),
-			spoolBoundaryPlugin(designDir),
-			spoolAssetPlugin(designDir, label, imageBudget, options.publication === true),
+			spoolBoundaryPlugin(designDir, { ...DEFAULT_LOADERS, ...loader }, reads),
+			spoolAssetPlugin(designDir, label, imageBudget, options.publication === true, reads),
 		],
 		logLevel: "silent",
 	};
@@ -248,6 +293,7 @@ async function compileFrame({
 	stamp,
 	webfonts,
 }: FrameCompile): Promise<CacheEntry> {
+	const reads = createDesignReads(designDir);
 	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry({
 		designDir,
 		resolveDir: frameDir,
@@ -255,23 +301,22 @@ async function compileFrame({
 		contents: bootEntry(frame),
 		label: `frame "${frame}"`,
 		imageBudget: IMAGE_BUDGET_BYTES,
+		reads: () => reads,
 	});
 
 	const shared = join(designDir, "shared");
-	const { css, stylesheets } = await compileFrameCssOnWorker(designDir, sourceFiles);
+	const { css, stylesheets } = await compileFrameCssOnWorker(designDir, cssSources(reads, sourceFiles));
+	for (const sheet of stylesheets) reads.noted(sheet.file, sheet.digest);
 	// The stills' fonts (#80): remote faces resolved to this daemon so a
 	// capture can inline them, the file as written whenever that fails. The
 	// project's own faces (#101) then ride the document as data URIs.
-	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
 	// The revision these fonts were resolved at, read before anything else is
 	// awaited: another compile's resolve can move it while this one hashes, and
 	// recording that later revision would keep these fonts past their retirement.
 	const fontsRevision = webfonts.revision();
-	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts);
-	const importMap = mergeImportMap(
-		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
-		importMapPins(),
-	);
+	const { css: fonts } = inlineLocalFonts(designDir, resolvedFonts, reads.bytes);
+	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
 
 	const document = assembleFrameDocument({
 		project,
@@ -284,15 +329,35 @@ async function compileFrame({
 		fonts,
 		bundledCss,
 	});
-	const inputs = [
-		...sourceFiles,
-		...stylesheets,
-		...fontFiles,
-		join(shared, "fonts.css"),
-		join(shared, "importmap.json"),
-	];
-	const hash = await hashInputs(version, stamp, inputs, designDir);
-	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: fontsRevision };
+	// Every input, present or not, by the digest of the very bytes the document
+	// was made of: the bundle's, the stylesheet's, the fonts' and the import map's.
+	const settled = reads.settled();
+	const digests = reads.digests();
+	const hash = inputsHash(version, stamp, digests);
+	// A document a file moved under while it compiled is of no one state of the
+	// folder: it is named by its own bytes, never cached, and the next request
+	// compiles again.
+	const etag = settled ? hash : createHash("sha256").update(document).digest("hex");
+	return {
+		inputs: [...digests.keys()],
+		hash,
+		etag: `"${etag.slice(0, 32)}"`,
+		document,
+		fonts: fontsRevision,
+		settled,
+	};
+}
+
+/**
+ * A bundle's source closure as Tailwind scans it: the bytes the bundle was made
+ * of, each file in a buffer of its own. A small read shares a pooled slab with
+ * others, and handing a worker the view would copy the whole slab.
+ */
+export function cssSources(reads: DesignReads, files: string[]): CssSource[] {
+	return files.flatMap((file) => {
+		const bytes = reads.bytes(file);
+		return bytes === undefined ? [] : [{ file, bytes: new Uint8Array(bytes) }];
+	});
 }
 
 /**
@@ -352,7 +417,11 @@ function sharedImportPlugin(designDir: string): Plugin {
  * the compile. For every other importer "spool" stays external and resolves
  * through the import map pin.
  */
-function spoolBoundaryPlugin(designDir: string): Plugin {
+function spoolBoundaryPlugin(
+	designDir: string,
+	loaders: Readonly<Record<string, Loader>>,
+	readsOf: (() => DesignReads | undefined) | undefined,
+): Plugin {
 	const uiDir = join(designDir, "shared", "ui") + sep;
 	return {
 		name: "spool-boundary",
@@ -368,8 +437,26 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 			// resolver or accidentally treating packages as project source.
 			build.onLoad({ filter: /.*/ }, (args) => {
 				try {
-					resolvePath(args.path);
-					return null;
+					const reads = readsOf?.();
+					// an asset is the asset plugin's to read
+					if (reads === undefined || ASSET_FILTER.test(args.path)) {
+						resolvePath(args.path);
+						return null;
+					}
+					// The compile's own bytes, the same ones its stylesheet scans and
+					// its cache key hashes. What esbuild must read for itself is read
+					// again when the compile is judged: a kind with no loader to name,
+					// an import with attributes (`with { type: "text" }`), whose meaning
+					// esbuild gives only to a file it reads, and a file that read as
+					// absent here.
+					const loader = loaderOf(args.path, loaders);
+					const contents =
+						loader === undefined || Object.keys(args.with).length > 0 ? undefined : reads.bytes(args.path);
+					if (loader === undefined || contents === undefined) {
+						reads.readTwice(args.path);
+						return null;
+					}
+					return { contents, loader };
 				} catch (error) {
 					// The cause rides along in detail, which esbuild hands back to the JS
 					// API and never prints. Reading outside design/ is not an authoring
@@ -411,7 +498,13 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
  * encoding keeps those predicates as tight as they are instead of teaching them
  * a looser shape.
  */
-function spoolAssetPlugin(designDir: string, label: string, budget: number | undefined, publication = false): Plugin {
+function spoolAssetPlugin(
+	designDir: string,
+	label: string,
+	budget: number | undefined,
+	publication: boolean,
+	readsOf: (() => DesignReads | undefined) | undefined,
+): Plugin {
 	let spent = 0;
 	return {
 		name: "spool-assets",
@@ -437,7 +530,9 @@ function spoolAssetPlugin(designDir: string, label: string, budget: number | und
 				if (type === undefined) return null;
 				let bytes: Buffer;
 				try {
-					bytes = readFileSync(resolveDesignPath(designDir, args.path));
+					// the compile's own bytes when it keeps them; a file gone since it
+					// resolved is read here to fail in esbuild's usual words
+					bytes = readsOf?.()?.bytes(args.path) ?? readFileSync(resolveDesignPath(designDir, args.path));
 				} catch (error) {
 					// Same shape as the boundary plugin's own complaint, so a caller
 					// that must refuse the whole player still recognizes an escape.
@@ -472,31 +567,27 @@ function spoolAssetPlugin(designDir: string, label: string, budget: number | und
  */
 const HASH_SLICE_MS = 2;
 
+/** A cached document's inputs as they are on disk now, hashed as the compile hashed what it read. */
 export async function hashInputs(version: string, frame: string, inputs: string[], designDir: string): Promise<string> {
-	const files: [string, string][] = [];
+	const digests = new Map<string, string>();
 	const resolvePath = designPathResolver(designDir);
 	let slice = performance.now();
-	for (const file of [...inputs].sort()) {
-		files.push([file, hashContent(file, resolvePath)]);
+	for (const file of inputs) {
+		digests.set(file, contentDigest(readDesignBytes(resolvePath, file)));
 		if (performance.now() - slice >= HASH_SLICE_MS) {
 			await yieldTurn();
 			slice = performance.now();
 		}
 	}
+	return inputsHash(version, frame, digests);
+}
+
+/** The cache key over a document's inputs, each by the digest of its bytes. */
+export function inputsHash(version: string, frame: string, digests: ReadonlyMap<string, string>): string {
+	const files = [...digests].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 	return createHash("sha256")
 		.update(JSON.stringify([version, shimHash, frame, files]))
 		.digest("hex");
-}
-
-function hashContent(file: string, resolvePath: (file: string) => string): string {
-	let content: Buffer;
-	try {
-		content = readFileSync(resolvePath(file));
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) throw error;
-		return "absent";
-	}
-	return createHash("sha256").update(content).digest("hex");
 }
 
 export function parseImportMap(raw: string | undefined): unknown {

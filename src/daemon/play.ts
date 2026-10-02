@@ -11,13 +11,14 @@ import {
 	designInputFile,
 	designOutputName,
 	hashInputs,
+	inputsHash,
 	isDesignBoundaryFailure,
 	parseImportMap,
 } from "./compile";
 import { realDesignDir } from "./design-path";
+import { createDesignReads, type DesignReads } from "./design-reads";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript, mergeImportMap } from "./document";
 import { buildFrameStyleClosure } from "./frame-styles";
-import { readIfExists } from "./project-files";
 import { frameFolder } from "./projection";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
@@ -95,6 +96,8 @@ interface PlayerCacheEntry {
 	fonts: number;
 	/** Frames serving a compile error in their own place rather than the player's. */
 	broken: string[];
+	/** Every input was one state through the compile (see DesignReads). */
+	settled: boolean;
 }
 
 /**
@@ -163,7 +166,7 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 			// player recovers the instant the frame does. A stubbed build's inputs
 			// cannot cover the broken frame's own closure, so revalidating against
 			// them would strand the stub after the fix lands.
-			if (entry.broken.length === 0) cache.set(root, entry);
+			if (entry.broken.length === 0 && entry.settled) cache.set(root, entry);
 			else cache.delete(root);
 			retain(root, entry.bundle);
 			return { kind: "ok", bundle: entry.bundle, cache: "miss" };
@@ -185,10 +188,14 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 			contexts.delete(root);
 			await held.context.dispose();
 		}
+		const reading: PlayerContext["reading"] = { reads: undefined };
 		const fresh: PlayerContext = {
 			stamp,
 			designDir,
-			context: await context(compositionOptions(designDir, playerEntry(frames, new Map()))),
+			reading,
+			context: await context(
+				compositionOptions(designDir, playerEntry(frames, new Map()), false, () => reading.reads),
+			),
 		};
 		contexts.set(root, fresh);
 		return fresh;
@@ -232,6 +239,7 @@ export async function buildPublicationPlayer(
 	const held: PlayerContext = {
 		stamp,
 		designDir,
+		reading: { reads: undefined },
 		context: await context(compositionOptions(designDir, playerEntry(frames, new Map()), true)),
 	};
 	try {
@@ -247,6 +255,8 @@ export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;
 interface PlayerContext {
 	stamp: string;
 	designDir: string;
+	/** The reads of the compile now rebuilding the context, which its bundle is made of. */
+	reading: { reads: DesignReads | undefined };
 	context: BuildContext;
 }
 
@@ -259,42 +269,46 @@ async function compilePlayer(
 	context: PlayerContext,
 	publication = false,
 ): Promise<PlayerCacheEntry> {
+	// One read of every input for the whole player, as for a frame document:
+	// the composition, every frame's stylesheet and the cache key are all made of
+	// the same bytes.
+	const reads = createDesignReads(designDir);
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
-	const composed = publication
-		? {
-				composition: readComposition(designDir, frames, await context.context.rebuild()),
-				broken: new Map<string, string>(),
-			}
-		: await composePlayer(designDir, frames, context);
-	const { sourceFiles } = composed.composition;
+	let composed: { composition: Composition; broken: Map<string, string> };
+	if (publication) {
+		composed = {
+			composition: readComposition(designDir, frames, await context.context.rebuild()),
+			broken: new Map<string, string>(),
+		};
+	} else {
+		context.reading.reads = reads;
+		try {
+			composed = await composePlayer(designDir, frames, context, reads);
+		} finally {
+			context.reading.reads = undefined;
+		}
+	}
+	// a file a publication's build read for itself is read once here
+	for (const file of composed.composition.sourceFiles) reads.bytes(file);
 
 	const shared = join(designDir, "shared");
 	const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
-		if (composed.broken.has(ref.name)) return { name: ref.name, css: "", sources: [], stylesheets: [] };
-		return { name: ref.name, ...(await buildFrameStyleClosure(designDir, ref, publication)) };
+		if (composed.broken.has(ref.name)) return { name: ref.name, css: "" };
+		return { name: ref.name, css: await buildFrameStyleClosure(designDir, ref, reads, publication) };
 	});
-	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
-	// read before the hash is awaited, as the frame compiler does (#80)
+	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
+	// read the moment the fonts resolve, as the frame compiler does (#80)
 	const fontsRevision = webfonts.revision();
-	const { css: fonts, files: fontFiles } = publication
-		? { css: resolvedFonts, files: [] }
-		: inlineLocalFonts(designDir, resolvedFonts);
-	const transitions = readIfExists(join(shared, "transitions.css"), designDir);
-	const importMap = mergeImportMap(
-		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
-		importMapPins(),
-	);
+	const { css: fonts } = publication
+		? { css: resolvedFonts }
+		: inlineLocalFonts(designDir, resolvedFonts, reads.bytes);
+	const transitions = reads.text(join(shared, "transitions.css"));
+	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
 
-	const inputs = [
-		...sourceFiles,
-		...frameStyles.flatMap((frame) => [...frame.sources, ...frame.stylesheets]),
-		...fontFiles,
-		join(shared, "fonts.css"),
-		join(shared, "transitions.css"),
-		join(shared, "importmap.json"),
-	];
-	const hash = await hashInputs(version, stamp, inputs, designDir);
+	const settled = reads.settled();
+	const digests = reads.digests();
+	const inputsKey = inputsHash(version, stamp, digests);
 	const names = frames.map((ref) => ref.name);
 	const { entry, chunks, screens } = composed.composition;
 	const styles = new Map<string, string>();
@@ -303,12 +317,21 @@ async function compilePlayer(
 		styles.set(frame.name, name);
 		chunks.set(name, frame.css);
 	}
+	// A bundle a file moved under while it compiled (a stylesheet two frames read
+	// differently) is named by its own contents, as a frame document is by its
+	// bytes, so no revalidation takes it for the sources now. It is never cached.
+	const hash = settled
+		? inputsKey
+		: createHash("sha256")
+				.update(JSON.stringify([entry, [...chunks], fonts, transitions, importMap]))
+				.digest("hex");
 	return {
 		stamp,
-		inputs,
-		hash,
+		inputs: [...digests.keys()],
+		hash: inputsKey,
 		fonts: fontsRevision,
 		broken: [...composed.broken.keys()],
+		settled,
 		bundle: {
 			entry,
 			chunks,
@@ -363,6 +386,7 @@ async function composePlayer(
 	designDir: string,
 	frames: PlayerFrameRef[],
 	context: PlayerContext,
+	reads: DesignReads,
 ): Promise<{ composition: Composition; broken: Map<string, string> }> {
 	// No image budget here, and none in blameFrames either (#101). The budget
 	// guards a frame document, because the canvas loads a page full of them; the
@@ -384,13 +408,18 @@ async function composePlayer(
 		if (broken.size === 0) throw error;
 		// A stubbed build is a one-off: it is never cached, and the context stays
 		// on the whole composition, ready for the fix.
-		const result = await build(compositionOptions(designDir, playerEntry(frames, broken)));
+		const result = await build(compositionOptions(designDir, playerEntry(frames, broken), false, () => reads));
 		return { composition: readComposition(designDir, frames, result), broken };
 	}
 }
 
 /** The composition's esbuild options: the design compile, split at every frame. */
-function compositionOptions(designDir: string, contents: string, publication = false) {
+function compositionOptions(
+	designDir: string,
+	contents: string,
+	publication = false,
+	reads?: () => DesignReads | undefined,
+) {
 	return {
 		...designBuildOptions({
 			designDir,
@@ -399,6 +428,7 @@ function compositionOptions(designDir: string, contents: string, publication = f
 			contents,
 			label: "the player",
 			...(publication ? { publication: true } : {}),
+			...(reads === undefined ? {} : { reads }),
 		}),
 		splitting: true as const,
 		entryNames: "play-[hash]",

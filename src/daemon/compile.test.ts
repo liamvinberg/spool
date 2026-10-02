@@ -1,9 +1,10 @@
-import { symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { buildDesignEntry, createFrameCompiler, hashInputs } from "./compile";
+import { buildDesignEntry, createFrameCompiler, cssSources, describeCompileError, hashInputs } from "./compile";
 import { realDesignDir } from "./design-path";
+import { createDesignReads } from "./design-reads";
 import type { Webfonts } from "./webfonts";
 
 describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
@@ -192,10 +193,9 @@ describe("hashing a document's inputs", () => {
 
 /**
  * A document keeps the webfont revision its fonts were resolved at (#80), so a
- * machine that comes back online retires it. Another compile's resolve can
- * land while this one is still hashing; that later revision is not this
- * document's, and recording it would keep yesterday's fonts. Nor may a hit
- * serve a document whose revision moved while the hit was rehashing it.
+ * machine that comes back online retires it. A hit checks that revision, and
+ * hashing the inputs hands the event loop back: a resolve can land meanwhile,
+ * and the document it retires must not be served.
  */
 describe("the webfont revision a document is built at", () => {
 	const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
@@ -215,12 +215,13 @@ describe("the webfont revision a document is built at", () => {
 	it("is the one its fonts were resolved at, not one a later resolve moved it to", async () => {
 		const root = manyInputs();
 		let revision = 0;
-		let landed = false;
+		let resolved = false;
 		const webfonts: Webfonts = {
+			// this compile's own resolve moves the revision, as one that reached a
+			// face it could not before does
 			resolve: async (css) => {
-				// another frame's resolve, finishing on the next turn of the loop
-				if (!landed) setImmediate(() => revision++);
-				landed = true;
+				if (!resolved) revision++;
+				resolved = true;
 				return css;
 			},
 			read: async () => undefined,
@@ -229,12 +230,14 @@ describe("the webfont revision a document is built at", () => {
 		const compiler = createFrameCompiler("0.0.0-test", webfonts);
 
 		const first = await compiler.getDocument(root, "fonts", authority);
-		expect(first.kind === "ok" && first.cache).toBe("miss");
-		// it landed while this compile was still at work
-		expect(revision).toBe(1);
-
 		const second = await compiler.getDocument(root, "fonts", authority);
-		expect(second.kind === "ok" && second.cache).toBe("miss");
+		// a later resolve, another frame's
+		revision++;
+		const third = await compiler.getDocument(root, "fonts", authority);
+
+		expect(first.kind === "ok" && first.cache).toBe("miss");
+		expect(second.kind === "ok" && second.cache).toBe("hit");
+		expect(third.kind === "ok" && third.cache).toBe("miss");
 	});
 
 	it("is checked again once a hit has rehashed the inputs", async () => {
@@ -255,5 +258,174 @@ describe("the webfont revision a document is built at", () => {
 
 		expect(revision).toBe(1);
 		expect(second.kind === "ok" && second.cache).toBe("miss");
+	});
+});
+
+/**
+ * A document is made of one read of its inputs and cached under the hash of
+ * exactly those bytes. The bundle reads the frame's sources first and the
+ * webfont resolve comes after, so a resolve that edits the frame stands in for
+ * an edit landing mid-compile.
+ */
+describe("an edit that lands while its frame compiles", () => {
+	const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
+	const saying = (words: string) => `export default function Frame() { return <p>${words}</p>; }\n`;
+	function editingOnce(root: string, words: string): Webfonts {
+		let edited = false;
+		return {
+			resolve: async (css) => {
+				if (!edited) writeFrame(root, "moving", saying(words));
+				edited = true;
+				return css;
+			},
+			read: async () => undefined,
+			revision: () => 0,
+		};
+	}
+
+	it("leaves the document of the sources as read, and the next request compiles the edit", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "moving", saying("before the edit"));
+		const compiler = createFrameCompiler("0.0.0-test", editingOnce(root, "after the edit"));
+
+		const first = await compiler.getDocument(root, "moving", authority);
+		const second = await compiler.getDocument(root, "moving", authority);
+		const third = await compiler.getDocument(root, "moving", authority);
+
+		// the first document is of the sources it read, whole
+		expect(first.kind === "ok" && first.document).toContain("before the edit");
+		expect(first.kind === "ok" && first.document).not.toContain("after the edit");
+		// and never stands in for the edit
+		expect(second.kind === "ok" && second.cache).toBe("miss");
+		expect(second.kind === "ok" && second.document).toContain("after the edit");
+		expect(third.kind === "ok" && third.cache).toBe("hit");
+	});
+});
+
+describe("a project folder where a file is expected", () => {
+	it("is no input at all, the way an absent file is", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		for (const name of ["fonts.css", "importmap.json", "transitions.css"]) {
+			rmSync(join(root, "design", "shared", name), { force: true });
+			mkdirSync(join(root, "design", "shared", name));
+		}
+		const compiler = createFrameCompiler("0.0.0-test");
+		const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
+
+		const first = await compiler.getDocument(root, "home", authority);
+		const second = await compiler.getDocument(root, "home", authority);
+
+		expect(first.kind === "error" ? first.message : first.kind).toBe("ok");
+		expect(second.kind === "ok" && second.cache).toBe("hit");
+	});
+});
+
+/**
+ * Two requests for one frame can miss together. Each answers for the entry it
+ * found: a miss that fails must not clear what another miss cached meanwhile.
+ */
+describe("misses that overlap", () => {
+	it("keep the document one cached when the other fails", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		let calls = 0;
+		let release = () => {};
+		const held = new Promise<void>((done) => {
+			release = done;
+		});
+		const webfonts: Webfonts = {
+			// the first compile is held at its fonts until the second has cached,
+			// and then fails
+			resolve: async (css) => {
+				calls++;
+				if (calls === 1) {
+					await held;
+					throw new Error("the network went away");
+				}
+				return css;
+			},
+			read: async () => undefined,
+			revision: () => 0,
+		};
+		const compiler = createFrameCompiler("0.0.0-test", webfonts);
+		const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
+
+		const failing = compiler.getDocument(root, "home", authority);
+		while (calls === 0) await new Promise((done) => setImmediate(done));
+		const cached = await compiler.getDocument(root, "home", authority);
+		release();
+
+		expect(cached.kind === "ok" && cached.cache).toBe("miss");
+		expect((await failing).kind).toBe("error");
+		const after = await compiler.getDocument(root, "home", authority);
+		expect(after.kind === "ok" && after.cache).toBe("hit");
+	});
+});
+
+/**
+ * A compile hands esbuild the bytes it read rather than letting esbuild read
+ * each file, and esbuild gives an import's attributes their meaning only for a
+ * file it reads itself. Whatever an import asks, the bundle must be the one
+ * esbuild makes on its own.
+ */
+describe("a bundle made of the compile's own reads", () => {
+	it.each([
+		'import text from "./note.js" with { type: "text" };\nexport default text;',
+		'import bytes from "./note.js" with { type: "bytes" };\nexport default bytes;',
+		'import { k } from "./data.json" with { type: "json" };\nexport default k;',
+		'import data from "./data.json" with { type: "json" };\nexport default data;',
+		'import sheet from "./look.css" with { type: "css" };\nexport default sheet;',
+		'export { a } from "./plain.ts";',
+	])("is the bundle esbuild makes reading for itself: %s", async (contents) => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, "note.js", "export const secret = 1;\n");
+		writeDesignFile(root, "data.json", '{"k": 1}\n');
+		writeDesignFile(root, "look.css", ".look { color: red }\n");
+		writeDesignFile(root, "plain.ts", "export const a: number = 1;\n");
+		const designDir = realDesignDir(root);
+		const entry = { designDir, resolveDir: designDir, sourcefile: "<spool-boot>", contents, label: "the entry" };
+		const outcome = (built: Promise<{ bootJs: string; bundledCss?: string | undefined }>) =>
+			built.then(
+				({ bootJs, bundledCss }) => ({ bootJs, bundledCss }),
+				(error: unknown) => describeCompileError(error),
+			);
+		const reads = createDesignReads(designDir);
+
+		const own = await outcome(buildDesignEntry(entry));
+		const handed = await outcome(buildDesignEntry({ ...entry, reads: () => reads }));
+
+		expect(handed).toEqual(own);
+		expect(reads.settled()).toBe(true);
+	});
+
+	it("hands the stylesheet worker each file in a buffer of its own, never a shared slab", () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const designDir = realDesignDir(root);
+		const files = ["a", "b", "c"].map((name) => {
+			writeDesignFile(root, `${name}.ts`, `export const ${name} = 1;\n`);
+			return join(designDir, `${name}.ts`);
+		});
+
+		const sources = cssSources(createDesignReads(designDir), files);
+
+		expect(sources.map(({ bytes }) => bytes.buffer.byteLength)).toEqual(sources.map(({ bytes }) => bytes.byteLength));
+		expect(sources.map(({ bytes }) => Buffer.from(bytes).toString("utf8"))).toEqual([
+			"export const a = 1;\n",
+			"export const b = 1;\n",
+			"export const c = 1;\n",
+		]);
+	});
+
+	it("checks a file that read as absent but that esbuild then read for itself", () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const designDir = realDesignDir(root);
+		const file = join(designDir, "late.ts");
+		const reads = createDesignReads(designDir);
+
+		reads.readTwice(file);
+		writeDesignFile(root, "late.ts", "export const late = 1;\n");
+
+		expect(reads.settled()).toBe(false);
 	});
 });

@@ -1,10 +1,17 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { DesignBoundaryError, realDesignDir } from "./design-path";
-import { compileFrameCssHere, compileFrameCssOnWorker, createCssWorkers, startCssWorker } from "./tailwind";
+import { contentDigest } from "./design-reads";
+import {
+	type CssSource,
+	compileFrameCssHere,
+	compileFrameCssOnWorker,
+	createCssWorkers,
+	startCssWorker,
+} from "./tailwind";
 
 function project(tokens: string) {
 	const { root } = makeProject(join(makeTempDir(), ".spool"));
@@ -12,9 +19,11 @@ function project(tokens: string) {
 	return { root, designDir: realDesignDir(root) };
 }
 
-function frame(root: string, designDir: string, name: string, className: string): string {
+/** A frame's source as its bundle would hand it to the stylesheet worker. */
+function frame(root: string, designDir: string, name: string, className: string): CssSource {
 	writeFrame(root, name, `export default () => <p className="${className}">${name}</p>;\n`);
-	return join(designDir, "frames", name, "frame.tsx");
+	const file = join(designDir, "frames", name, "frame.tsx");
+	return { file, bytes: readFileSync(file) };
 }
 
 /**
@@ -31,10 +40,13 @@ describe("a frame's stylesheet, compiled on a stylesheet worker", () => {
 		const onWorker = await compileFrameCssOnWorker(designDir, files);
 		expect(onWorker).toEqual(await compileFrameCssHere(designDir, files));
 		expect(onWorker.css).toContain("#123456");
-		expect(onWorker.stylesheets).toEqual([
-			join(designDir, "shared", "tokens.css"),
-			join(designDir, "shared", "palette.css"),
-		]);
+		// each by the digest of the very bytes compiled
+		expect(onWorker.stylesheets).toEqual(
+			["tokens.css", "palette.css"].map((name) => {
+				const file = join(designDir, "shared", name);
+				return { file, digest: contentDigest(readFileSync(file)) };
+			}),
+		);
 	});
 
 	it("keeps each frame's utilities its own while many compile at once", async () => {

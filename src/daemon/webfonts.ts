@@ -138,10 +138,13 @@ const URL_RULE = () => /url\(\s*["']?([^"')\s]+)["']?\s*\)/gi;
  *
  * Every file it resolves comes back as a cache input, present or not: a face
  * that appears later has to reissue the documents that were compiled without it.
+ * A compile hands its own reader, so a face is read once, with everything else
+ * the document is made of.
  */
 export function inlineLocalFonts(
 	designDir: string,
 	css: string | undefined,
+	read: (file: string) => Buffer | undefined = readFace,
 ): { css: string | undefined; files: string[] } {
 	if (css === undefined) return { css: undefined, files: [] };
 	const sharedDir = join(designDir, "shared");
@@ -157,13 +160,9 @@ export function inlineLocalFonts(
 		if (type === undefined) return whole;
 		const file = resolveDesignPath(designDir, resolve(sharedDir, path), url);
 		files.push(file);
-		let bytes: Buffer;
-		try {
-			bytes = readFileSync(file);
-		} catch {
-			// A face spool cannot read is left to the browser exactly as written.
-			return whole;
-		}
+		const bytes = read(file);
+		// A face spool cannot read is left to the browser exactly as written.
+		if (bytes === undefined) return whole;
 		const data = `data:${type};base64,${bytes.toString("base64")}`;
 		spent += data.length;
 		if (spent > LOCAL_FONT_BUDGET_BYTES) {
@@ -174,6 +173,14 @@ export function inlineLocalFonts(
 		return `url(${data})`;
 	});
 	return { css: rewritten, files };
+}
+
+function readFace(file: string): Buffer | undefined {
+	try {
+		return readFileSync(file);
+	} catch {
+		return undefined;
+	}
 }
 
 /** The media type a font URL's extension claims — woff2 when it claims nothing. */

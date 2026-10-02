@@ -5,6 +5,7 @@ import { Worker } from "node:worker_threads";
 import { Scanner } from "@tailwindcss/oxide";
 import { compile } from "tailwindcss";
 import { DesignBoundaryError, resolveDesignPath } from "./design-path";
+import { contentDigest } from "./design-reads";
 import { spoolEntry } from "./spool-entry";
 
 /**
@@ -45,8 +46,18 @@ export const ROOT_CSS = `@layer theme, base, ${PROJECT_LAYER}, components, utili
 
 export interface FrameCss {
 	css: string;
-	/** Project stylesheets the compile read (tokens.css plus its relative @imports) — they are cache inputs. */
-	stylesheets: string[];
+	/**
+	 * Project stylesheets the compile read (tokens.css plus its relative
+	 * @imports), each by the digest of the bytes it was compiled from: they are
+	 * cache inputs, keyed by exactly what the stylesheet was made of.
+	 */
+	stylesheets: { file: string; digest: string }[];
+}
+
+/** One file of a frame's source closure, as its bundle read it, for Tailwind to scan. */
+export interface CssSource {
+	file: string;
+	bytes: Uint8Array;
 }
 
 /** What a compile of this project's stylesheets needs, and what it read. */
@@ -54,8 +65,8 @@ export interface DesignStylesheets {
 	base: string;
 	loadStylesheet: (id: string, base: string) => Promise<{ path: string; base: string; content: string }>;
 	loadModule: () => Promise<never>;
-	/** Project stylesheets read so far; filled as the compile resolves imports. */
-	stylesheets: Set<string>;
+	/** Project stylesheets read so far, by the digest of what was read; filled as the compile resolves imports. */
+	stylesheets: Map<string, string>;
 }
 
 /**
@@ -66,7 +77,7 @@ export interface DesignStylesheets {
  * and anything else is not an import this daemon serves.
  */
 export function designStylesheets(designDir: string): DesignStylesheets {
-	const stylesheets = new Set<string>();
+	const stylesheets = new Map<string, string>();
 
 	async function loadStylesheet(id: string, base: string): Promise<{ path: string; base: string; content: string }> {
 		let file: string;
@@ -89,11 +100,12 @@ export function designStylesheets(designDir: string): DesignStylesheets {
 			if (!isWithin(tailwindDir, file)) {
 				throw new Error(`tailwindcss import "${id}" resolves outside Spool's pinned Tailwind install`);
 			}
-		} else {
-			file = resolveDesignPath(designDir, file, id);
-			stylesheets.add(file);
+			return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
 		}
-		return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
+		file = resolveDesignPath(designDir, file, id);
+		const bytes = readFileSync(file);
+		stylesheets.set(file, contentDigest(bytes));
+		return { path: file, base: dirname(file), content: bytes.toString("utf8") };
 	}
 
 	async function loadModule(): Promise<never> {
@@ -107,7 +119,7 @@ export function designStylesheets(designDir: string): DesignStylesheets {
  * Compile the finished stylesheet for one frame document here, wherever it is
  * called: theme + preflight + the utilities its source closure
  * actually uses. A fresh compiler per call keeps the output a pure function of
- * the read stylesheets and the given files — Tailwind's build() accumulates
+ * the read stylesheets and the given sources — Tailwind's build() accumulates
  * candidates across calls, which would bleed one frame's utilities into the
  * next document. The same accumulation is why one compiler cannot serve a
  * whole project either: build() also marks every theme variable a frame used,
@@ -116,7 +128,7 @@ export function designStylesheets(designDir: string): DesignStylesheets {
  * The daemon never calls this on its event loop: it calls
  * compileFrameCssOnWorker, and a stylesheet worker runs this.
  */
-export async function compileFrameCssHere(designDir: string, files: string[]): Promise<FrameCss> {
+export async function compileFrameCssHere(designDir: string, sources: CssSource[]): Promise<FrameCss> {
 	const sheets = designStylesheets(designDir);
 	const compiler = await compile(ROOT_CSS, {
 		base: sheets.base,
@@ -124,17 +136,13 @@ export async function compileFrameCssHere(designDir: string, files: string[]): P
 		loadModule: sheets.loadModule,
 	});
 	const scanner = new Scanner({ sources: [] });
-	const sources = files.flatMap((file) => {
-		let content: string;
-		try {
-			content = readFileSync(resolveDesignPath(designDir, file), "utf8");
-		} catch (error) {
-			if (error instanceof DesignBoundaryError) throw error;
-			return [];
-		}
-		return [{ content, extension: extname(file).slice(1) }];
-	});
-	return { css: compiler.build(scanner.scanFiles(sources)), stylesheets: [...sheets.stylesheets] };
+	// the bytes the bundle was made of, read as text the way the file would be
+	const scanned = sources.map(({ file, bytes }) => ({
+		content: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"),
+		extension: extname(file).slice(1),
+	}));
+	const stylesheets = [...sheets.stylesheets].map(([file, digest]) => ({ file, digest }));
+	return { css: compiler.build(scanner.scanFiles(scanned)), stylesheets };
 }
 
 /**
@@ -169,7 +177,7 @@ const CSS_JOB_MS = 30_000;
 export interface CssJob {
 	id: number;
 	designDir: string;
-	files: string[];
+	sources: CssSource[];
 }
 
 /**
@@ -204,7 +212,7 @@ export function createCssWorkers(
 	start: () => Worker = startCssWorker,
 	size = CSS_WORKERS,
 	timeout = CSS_JOB_MS,
-): (designDir: string, files: string[]) => Promise<FrameCss> {
+): (designDir: string, sources: CssSource[]) => Promise<FrameCss> {
 	const workers: CssWorker[] = [];
 	let lastJob = 0;
 
@@ -238,7 +246,7 @@ export function createCssWorkers(
 		return held;
 	}
 
-	return (designDir, files) => {
+	return (designDir, sources) => {
 		const idle = workers.find((candidate) => candidate.jobs.size === 0);
 		const chosen =
 			idle ??
@@ -258,7 +266,7 @@ export function createCssWorkers(
 			timer.unref();
 			chosen.jobs.set(id, { resolve, reject, timer });
 			chosen.worker.ref();
-			chosen.worker.postMessage({ id, designDir, files } satisfies CssJob);
+			chosen.worker.postMessage({ id, designDir, sources } satisfies CssJob);
 		});
 	};
 }
@@ -268,8 +276,9 @@ const daemonCssWorkers = createCssWorkers();
 /**
  * The finished stylesheet for one frame document (#15): compileFrameCssHere,
  * run on one of the daemon's stylesheet workers so its event loop stays free
- * while Tailwind works.
+ * while Tailwind works. The sources are the bytes the frame's bundle was made
+ * of, handed over rather than read again.
  */
-export function compileFrameCssOnWorker(designDir: string, files: string[]): Promise<FrameCss> {
-	return daemonCssWorkers(designDir, files);
+export function compileFrameCssOnWorker(designDir: string, sources: CssSource[]): Promise<FrameCss> {
+	return daemonCssWorkers(designDir, sources);
 }
