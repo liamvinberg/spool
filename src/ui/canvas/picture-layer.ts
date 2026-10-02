@@ -108,11 +108,12 @@ const UPLOAD_MS = { moving: 2, still: 6 };
 const UPLOAD_BYTES = { moving: 8 * 1024 * 1024, still: 32 * 1024 * 1024 };
 
 /**
- * The memory sharper copies may hold: two screens of device pixels, mips
- * included, and never less than 32 MB. Bounded by the screen, not the page —
- * a frame off screen holds only its resident square. A copy is a halving of
- * the cover at least as wide as its drawing, so one screen of them is at most
- * four of pixels and usually much less.
+ * The memory sharper copies may keep: two screens of device pixels, mips
+ * included, and never less than 32 MB. What is on screen is always drawn as
+ * sharp as it wants (a halving of the cover at least as wide as its drawing,
+ * so at most four screens of pixels and usually much less); past that, copies
+ * whose frames have left the screen go, least recently drawn first. Bounded by
+ * the screen, not the page: a frame long off screen holds only its square.
  */
 function sharpBudget(width: number, height: number): number {
 	return Math.max(32 * 1024 * 1024, 2 * textureBytes(width, height, true));
@@ -547,12 +548,8 @@ export class PictureLayer {
 		const textures: (WebGLTexture | null)[] = [];
 		const none: boolean[] = [];
 		const wants: { job: Job; area: number }[] = [];
-		let used = 0;
 		const note = (frame: PictureFrame & { url: string }, look: Look) => {
-			if (look.sharp !== null) {
-				if (look.sharp.used !== this.stamp) used += look.sharp.bytes;
-				look.sharp.used = this.stamp;
-			}
+			if (look.sharp !== null) look.sharp.used = this.stamp;
 			if (look.done === true) {
 				const stand = this.previous.get(frame.name);
 				this.previous.delete(frame.name);
@@ -601,7 +598,7 @@ export class PictureLayer {
 			// the moment it hands back its picture is already as sharp as it was
 			note,
 		);
-		this.request(wants, used);
+		this.request(wants);
 
 		if (count > 0) {
 			const { unit, draws } = bindUnits(textures, gpu.units);
@@ -700,11 +697,14 @@ export class PictureLayer {
 	}
 
 	/**
-	 * The sharper copies this draw asked for, largest on screen first, as far
-	 * as the budget allows once what is on screen now is counted. What does
-	 * not fit draws from the square until something on screen leaves.
+	 * The sharper copies this draw asked for, largest on screen first. Every
+	 * one is asked for: what the screen shows is bounded by the screen (a
+	 * halving at least as wide as its drawing holds at most four times its
+	 * pixels), and drawing a frame on screen softer than the image element did
+	 * to save memory would be a change anybody can see. The budget is for the
+	 * copies kept once their frames leave the screen (`evict`).
 	 */
-	private request(wants: { job: Job; area: number }[], used: number): void {
+	private request(wants: { job: Job; area: number }[]): void {
 		// copies asked for earlier and no longer wanted give their place back
 		const wanted = new Set(wants.map((want) => want.job.key));
 		for (const [key, job] of this.asked) {
@@ -713,17 +713,7 @@ export class PictureLayer {
 				if (this.sharps.get(key)?.texture === null) this.sharps.delete(key);
 			}
 		}
-		let spent = used;
-		for (const entry of this.sharps.values())
-			if (entry.texture === null && entry.state === "waiting") spent += entry.bytes;
-		const budget = sharpBudget(this.width, this.height);
-		for (const { job } of wants.sort((a, b) => b.area - a.area)) {
-			if (this.sharps.has(job.key)) continue;
-			const bytes = textureBytes(job.sharp?.width ?? 0, job.sharp?.height ?? 0, true);
-			if (spent + bytes > budget) continue;
-			spent += bytes;
-			this.want(job.url, job.sharp, 0);
-		}
+		for (const { job } of wants.sort((a, b) => b.area - a.area)) this.want(job.url, job.sharp, 0);
 	}
 
 	/**
