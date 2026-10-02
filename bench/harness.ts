@@ -104,6 +104,11 @@ export interface Daemon {
 	url: string;
 	/** The untrusted virtual host every frame document is served from. */
 	renderUrl: string;
+	/**
+	 * Whether this build's daemon makes every cover itself, in its photo booth,
+	 * for every page of the project rather than only the page a canvas shows.
+	 */
+	booth: boolean;
 	stop: () => void;
 }
 
@@ -357,7 +362,7 @@ export async function startDaemon(
 	while (Date.now() < deadline) {
 		try {
 			const response = await fetch(`${url}/p/${encodeURIComponent(basename(root))}`);
-			if (response.ok) return { url, renderUrl, stop: () => child.kill() };
+			if (response.ok) return { url, renderUrl, booth, stop: () => child.kill() };
 		} catch {
 			// not listening yet
 		}
@@ -389,10 +394,26 @@ export interface FrameBox extends Box {
 const COVER_SETUP_TIMEOUT_MS = 600_000;
 const COVER_SETUP_MS_PER_FRAME = 1500;
 const CURRENT_COVER = /^[0-9a-f]{32}\.(?:jpg|png)$/;
+const COVER_POLL_MS = 250;
 
-/** Remove only the copied project's cover store. The source project is never passed here. */
-export function clearCopiedCovers(root: string): void {
-	rmSync(join(root, "design", ".spool", "thumbs"), { recursive: true, force: true });
+/** How long cover setup may take for this many frames: a ceiling, not an estimate. */
+function coverSetupCeiling(frames: number): number {
+	// an idle M1 Pro makes 200 covers in about a minute, a loaded one several
+	// times slower, and n1000 is five times 200
+	return Math.max(COVER_SETUP_TIMEOUT_MS, frames * COVER_SETUP_MS_PER_FRAME);
+}
+
+/**
+ * Remove the measured frames' covers from the copied project, and only theirs.
+ * A booth covers every page of a project, so clearing the whole store would
+ * send it round the entire project again each round, on the same machine as
+ * the next measurement. The source project is never passed here.
+ */
+export function clearCopiedCovers(root: string, frames: readonly { name: string }[]): void {
+	const thumbs = join(root, "design", ".spool", "thumbs");
+	for (const frame of frames) {
+		rmSync(join(thumbs, encodeURIComponent(frame.name)), { recursive: true, force: true, maxRetries: 5 });
+	}
 }
 
 function frameDirectory(root: string, frame: { name: string }): string {
@@ -440,9 +461,14 @@ function missingCurrentCoverNames(root: string, frames: readonly { name: string 
  * booth photographs them, the ones on screen first, where the older canvas
  * borrowed them in turn. The caller sets that page's picture-zoom camera before
  * entry and resets its measurement camera after this returns.
+ *
+ * The time returned is the measured page's alone. A booth then goes on to the
+ * rest of the project, and that is waited out here, untimed, so it never runs
+ * beside a measurement (`letBoothFinish`).
  */
 export async function prepareCurrentCovers(
 	browser: Browser,
+	daemon: Pick<Daemon, "booth">,
 	url: string,
 	root: string,
 	frames: readonly { name: string; page: string }[],
@@ -456,12 +482,10 @@ export async function prepareCurrentCovers(
 		// from the canvas opening to its last cover: the whole job, boot included
 		const started = Date.now();
 		await page.goto(url, { waitUntil: "domcontentloaded" });
-		// a ceiling, not an estimate: an idle M1 Pro makes 200 covers in about a
-		// minute, a loaded one several times slower, and n1000 is five times 200
-		const timeoutMs = Math.max(COVER_SETUP_TIMEOUT_MS, frames.length * COVER_SETUP_MS_PER_FRAME);
+		const timeoutMs = coverSetupCeiling(frames.length);
 		let missing = missingCurrentCoverNames(root, frames);
 		while (missing.length > 0 && Date.now() < started + timeoutMs) {
-			await page.waitForTimeout(250);
+			await page.waitForTimeout(COVER_POLL_MS);
 			missing = missingCurrentCoverNames(root, frames);
 		}
 		if (missing.length > 0) {
@@ -476,6 +500,7 @@ export async function prepareCurrentCovers(
 		process.stderr.write(
 			`bench: prepared ${frames.length} current covers on page "${pageName}" in ${(tookMs / 1000).toFixed(1)} s\n`,
 		);
+		if (daemon.booth) await letBoothFinish(root);
 		return tookMs;
 	} finally {
 		await context.close();
@@ -483,6 +508,35 @@ export async function prepareCurrentCovers(
 		// before the caller writes the measurement camera.
 		await new Promise((wait) => setTimeout(wait, 1500));
 	}
+}
+
+/**
+ * Wait until the photo booth has been round the whole project. It covers every
+ * page, not only the one measured, and a booth still working through the rest
+ * would share the machine with the next measurement, its own build's or
+ * another's. A frame the booth gave up on (its `error.json`) counts as done:
+ * the booth leaves it alone for a while rather than retrying at once.
+ */
+async function letBoothFinish(root: string): Promise<void> {
+	const frames = readPages(root).flatMap((page) => page.frames);
+	const deadline = Date.now() + coverSetupCeiling(frames.length);
+	let owed = framesBoothOwes(root, frames);
+	if (owed > 0) process.stderr.write(`bench: letting the photo booth finish ${owed} frames on other pages\n`);
+	while (owed > 0) {
+		if (Date.now() > deadline) {
+			throw new Error(`the photo booth still owed ${owed} of ${frames.length} covers after its ceiling`);
+		}
+		await new Promise((wait) => setTimeout(wait, COVER_POLL_MS));
+		owed = framesBoothOwes(root, frames);
+	}
+}
+
+/** Frames with neither one current cover nor a failure the booth recorded. */
+function framesBoothOwes(root: string, frames: readonly { name: string }[]): number {
+	const thumbs = join(root, "design", ".spool", "thumbs");
+	return missingCurrentCoverNames(root, frames).filter(
+		(name) => !existsSync(join(thumbs, encodeURIComponent(name), "error.json")),
+	).length;
 }
 
 function readBox(file: string): Box | undefined {

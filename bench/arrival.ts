@@ -995,7 +995,7 @@ async function main(): Promise<void> {
 		});
 		const firstCamera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zooms[0] ?? ARRIVAL_ZOOM);
 		writeCamera(root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), canvasPage);
-		await prepareCurrentCovers(browser, url, root, boxes);
+		await prepareCurrentCovers(browser, daemon, url, root, boxes);
 		writeCamera(root, firstCamera, canvasPage);
 
 		// One discarded pass per payload shape. A fresh daemon compiles every frame

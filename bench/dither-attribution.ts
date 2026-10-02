@@ -527,6 +527,7 @@ interface ArmSetup {
 	spoolDir: string;
 	url: string;
 	renderUrl: string;
+	booth: boolean;
 	stop: () => void;
 }
 
@@ -536,7 +537,7 @@ async function setupArm(source: string, label: Arm): Promise<ArmSetup> {
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);
 	const url = `${daemon.url}/p/${encodeURIComponent(name)}`;
-	return { label, root, name, spoolDir, url, renderUrl: daemon.renderUrl, stop: daemon.stop };
+	return { label, root, name, spoolDir, url, renderUrl: daemon.renderUrl, booth: daemon.booth, stop: daemon.stop };
 }
 
 async function verifyPaintBehavior(
@@ -889,7 +890,7 @@ async function main(): Promise<void> {
 		for (const arm of setups) {
 			process.stderr.write(`bench: preparing covers for ${arm.label}\n`);
 			writeCamera(arm.root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), PAGE_NAME);
-			await prepareCurrentCovers(browser, arm.url, arm.root, boxes);
+			await prepareCurrentCovers(browser, arm, arm.url, arm.root, boxes);
 			writeCamera(arm.root, camera, PAGE_NAME);
 		}
 

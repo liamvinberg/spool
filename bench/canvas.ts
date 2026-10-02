@@ -513,7 +513,7 @@ async function main(): Promise<void> {
 			for (const subject of subjects) {
 				const pictures = planCamera(measured.frames, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM);
 				writeCamera(subject.root, pictures, measured.page);
-				await prepareCurrentCovers(browser, subject.url, subject.root, measured.frames);
+				await prepareCurrentCovers(browser, subject.daemon, subject.url, subject.root, measured.frames);
 
 				// One discarded pass first. A fresh daemon compiles every frame it is
 				// asked for, and a first-ever boot measures the toolchain rather than the

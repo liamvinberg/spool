@@ -875,7 +875,7 @@ async function main(): Promise<void> {
 			const pageFrames = frames.filter((frame) => frame.page === pageName);
 			if (pageFrames.length === 0) throw new Error(`walk plan names empty page "${pageName}"`);
 			writeCamera(root, planCamera(pageFrames, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), pageName);
-			await prepareCurrentCovers(browser, url, root, pageFrames);
+			await prepareCurrentCovers(browser, daemon, url, root, pageFrames);
 		}
 
 		// One discarded pass. A fresh daemon compiles every frame it is asked for,

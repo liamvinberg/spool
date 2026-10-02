@@ -757,15 +757,21 @@ async function main(): Promise<void> {
 			for (const subject of subjects) {
 				process.stderr.write(`bench: warming ${subject.build.label}\n`);
 				writeCamera(subject.root, pictures, measured.page);
-				await prepareCurrentCovers(browser, subject.url, subject.root, measured.frames);
+				await prepareCurrentCovers(browser, subject.daemon, subject.url, subject.root, measured.frames);
 			}
 
 			results = await interleave(subjects, rounds, async (subject): Promise<Round> => {
-				// the picture job from nothing: every cover gone, then the canvas opened
-				clearCopiedCovers(subject.root);
+				// the picture job from nothing: the measured page's covers gone, then the canvas opened
+				clearCopiedCovers(subject.root, measured.frames);
 				writeCamera(subject.root, pictures, measured.page);
 				const coverLoad = oneMinuteLoad();
-				const coverMs = await prepareCurrentCovers(browser, subject.url, subject.root, measured.frames);
+				const coverMs = await prepareCurrentCovers(
+					browser,
+					subject.daemon,
+					subject.url,
+					subject.root,
+					measured.frames,
+				);
 				writeCamera(subject.root, camera, measured.page);
 
 				const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
