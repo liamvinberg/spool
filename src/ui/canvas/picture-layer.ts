@@ -97,14 +97,16 @@ export interface PictureReport {
 }
 
 /**
- * How many covers are fetched at once, and how many are fetched or decoding.
- * A fetch is from the HTTP cache or the daemon, a decode is on Chrome's image
- * threads, never on this one, and the two overlap: enough at once that a
- * thousand-frame page fills inside its first two seconds, few enough that
- * frames on screen are never queued behind the rest of the page.
+ * How many covers are asked for at once, and how many are asked for or
+ * decoding. A fetch is from the HTTP cache or the daemon and a decode is on
+ * Chrome's image threads, never on this one, but each hands its result back
+ * through this thread. A page opening is the one moment this thread is busy
+ * for most of a second (React mounting every label), so the network has to
+ * be kept working through it: enough asked for that the browser's own six
+ * connections never idle, the frames on screen asked for first.
  */
-const FETCHES_IN_FLIGHT = 8;
-const LOADS_IN_FLIGHT = 24;
+const FETCHES_IN_FLIGHT = 64;
+const LOADS_IN_FLIGHT = 96;
 
 /**
  * Upload limits per drawn frame. A texture upload is a copy the GPU process
@@ -735,9 +737,11 @@ export class PictureLayer {
 		const generation = this.generation;
 		let decoding = false;
 		try {
-			const response = await fetch(job.url);
+			// what is on screen first, in the browser's own queue as in this one
+			const response = await fetch(job.url, { priority: job.priority < 2 ? "high" : "low" });
 			if (!response.ok) throw new Error(`cover ${response.status}`);
-			const blob = await response.blob();
+			const bytes = new Uint8Array(await response.arrayBuffer());
+			const blob = new Blob([bytes], { type: response.headers.get("content-type") ?? "" });
 			// the fetch's slot goes to the next cover now: decodes run on Chrome's
 			// image threads side by side, and a slot held through one idles a
 			// connection
@@ -749,7 +753,7 @@ export class PictureLayer {
 			}
 			this.fetched(job, generation);
 			const known = this.residents.get(job.url)?.natural ?? null;
-			const natural = known ?? (await sizeOf(blob));
+			const natural = known ?? coverSize(bytes) ?? (await decodedSize(blob));
 			const resize =
 				job.sharp === null
 					? { resizeWidth: RESIDENT_PX, resizeHeight: RESIDENT_PX }
@@ -1106,10 +1110,8 @@ const roundUp = (value: number, step: number): number => Math.max(step, Math.cei
 
 const levels = (width: number, height: number): number => Math.floor(Math.log2(Math.max(width, height))) + 1;
 
-/** A cover's size from its header, or from decoding it when the header says nothing. */
-async function sizeOf(blob: Blob): Promise<PixelSize> {
-	const read = coverSize(new Uint8Array(await blob.slice(0, 64 * 1024).arrayBuffer()));
-	if (read !== undefined) return read;
+/** A cover's size by decoding it, for the file whose header said nothing. */
+async function decodedSize(blob: Blob): Promise<PixelSize> {
 	const bitmap = await createImageBitmap(blob);
 	const size = { width: bitmap.width, height: bitmap.height };
 	bitmap.close();
