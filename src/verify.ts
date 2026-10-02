@@ -32,7 +32,16 @@ export interface BootDeps {
 	/** A fixed wait after the first commit, in place of the settle every cover gets. */
 	at?: number;
 	scenario?: string;
+	/** How long the daemon may say nothing at all before the CLI stops waiting; a seam for tests. */
+	quietMs?: number;
 }
+
+/**
+ * How long a boot's answer may go without a single line. The daemon beats
+ * every few seconds while it works, through a fetch of the browser included,
+ * so this much silence is a daemon that went away, never one still busy.
+ */
+const BOOT_QUIET_MS = 30_000;
 
 function controlHeaders(controlToken: string): HeadersInit {
 	return { "X-Spool-Control": controlToken };
@@ -128,30 +137,49 @@ async function bootFrame(deps: BootDeps): Promise<Boot> {
 		deps.narrate(`"${deps.frame}" is ${h}px tall — shooting ${plan.tiles.length} slices, top to bottom`);
 	}
 	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/boot/${encodeURIComponent(deps.frame)}`;
-	const res = await fetch(url, {
-		method: "POST",
-		headers: { ...controlHeaders(deps.controlToken), "content-type": "application/json" },
-		body: JSON.stringify({
-			width: w,
-			height: h,
-			...(deps.at === undefined ? {} : { at: deps.at }),
-			...(deps.scenario === undefined ? {} : { scenario: deps.scenario }),
-		}),
-	});
-	if (res.status === 401 || res.status === 403) throw await refusalOf(res, url);
-	if (!res.ok || res.body === null) {
-		const text = await res.text();
-		throw new SpoolError(text !== "" ? text : `the daemon could not boot "${deps.frame}"`);
-	}
-	for await (const line of bootLines(res.body)) {
-		if ("narrate" in line) {
-			deps.narrate(line.narrate);
-			continue;
+	const quietMs = deps.quietMs ?? BOOT_QUIET_MS;
+	const stopped = new AbortController();
+	const silence = () =>
+		new SpoolError(
+			`the daemon said nothing for ${Math.round(quietMs / 1000)} s while it booted "${deps.frame}" — \`spool status\` says whether it is still running`,
+		);
+	// the request itself is under the same bound as every line after it
+	let quiet = setTimeout(() => stopped.abort(), quietMs);
+	try {
+		const res = await fetch(url, {
+			method: "POST",
+			headers: { ...controlHeaders(deps.controlToken), "content-type": "application/json" },
+			body: JSON.stringify({
+				width: w,
+				height: h,
+				...(deps.at === undefined ? {} : { at: deps.at }),
+				...(deps.scenario === undefined ? {} : { scenario: deps.scenario }),
+			}),
+			signal: stopped.signal,
+		});
+		if (res.status === 401 || res.status === 403) throw await refusalOf(res, url);
+		if (!res.ok || res.body === null) {
+			const text = await res.text();
+			throw new SpoolError(text !== "" ? text : `the daemon could not boot "${deps.frame}"`);
 		}
-		if (line.outcome.kind === "failed") throw new SpoolError(line.outcome.message);
-		return line.outcome;
+		for await (const line of bootLines(res.body)) {
+			clearTimeout(quiet);
+			quiet = setTimeout(() => stopped.abort(), quietMs);
+			if ("beat" in line) continue;
+			if ("narrate" in line) {
+				deps.narrate(line.narrate);
+				continue;
+			}
+			if (line.outcome.kind === "failed") throw new SpoolError(line.outcome.message);
+			return line.outcome;
+		}
+		throw new SpoolError(`the daemon stopped answering while it booted "${deps.frame}"`);
+	} catch (error) {
+		if (stopped.signal.aborted) throw silence();
+		throw error;
+	} finally {
+		clearTimeout(quiet);
 	}
-	throw new SpoolError(`the daemon stopped answering while it booted "${deps.frame}"`);
 }
 
 /** The daemon's answer as the lines it is written in, each one JSON. */

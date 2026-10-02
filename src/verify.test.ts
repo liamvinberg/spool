@@ -162,6 +162,44 @@ describe("shot and logs, compile paths", () => {
 	});
 });
 
+describe("a boot the daemon goes quiet on", () => {
+	it("stops waiting and says so in plain words", async () => {
+		// a daemon that compiles the frame and then never says another word
+		const server = createServer((request, response) => {
+			if (request.url?.includes("/verify/") === true) {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ kind: "ok", etag: '"one"', scheme: "light" }));
+				return;
+			}
+			response.writeHead(200, { "content-type": "application/x-ndjson" });
+			response.flushHeaders();
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		onTestFinished(() => {
+			server.closeAllConnections();
+			return new Promise<void>((resolve) => server.close(() => resolve()));
+		});
+		const address = server.address();
+		if (address === null || typeof address === "string") throw new Error("the quiet daemon has no port");
+		const root = makeTempDir();
+		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
+		const deps: BootDeps = {
+			daemonUrl: `http://127.0.0.1:${address.port}`,
+			controlToken: "token",
+			root,
+			name: "quiet-project",
+			frame: "quiet",
+			narrate: () => {},
+			viewport: { width: 160, height: 120 },
+			quietMs: 1000,
+		};
+
+		await expect(shotFrame(deps)).rejects.toThrow(
+			'the daemon said nothing for 1 s while it booted "quiet" — `spool status` says whether it is still running',
+		);
+	});
+});
+
 describe("planShot", () => {
 	it("keeps a screen-sized frame one image at 2×", () => {
 		expect(planShot(390, 844)).toEqual({ scale: 2, tiles: [{ y: 0, height: 844 }] });

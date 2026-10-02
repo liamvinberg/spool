@@ -656,3 +656,36 @@ describe("the booth's watch on a project", () => {
 		expect(rejected).toEqual([]);
 	});
 });
+
+describe("a boot's answer", () => {
+	it("stops saying it is still working however the boot ends", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
+		const app = makeApp(spoolDir);
+		const started = vi.spyOn(globalThis, "setInterval");
+		const stopped = vi.spyOn(globalThis, "clearInterval");
+		onTestFinished(() => {
+			started.mockRestore();
+			stopped.mockRestore();
+		});
+		const boot = async (frame: string) => {
+			const res = await app.request(`/api/p/${name}/boot/${frame}`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ width: 160, height: 120 }),
+			});
+			return (await res.text()).trim();
+		};
+
+		expect(await boot("nowhere")).toContain('"kind":"missing"');
+		expect(await boot("broken")).toContain('"kind":"broken"');
+
+		const beats = started.mock.calls.flatMap((call, index) =>
+			call[1] === 5000 ? [started.mock.results[index]?.value as unknown] : [],
+		);
+		expect(beats).toHaveLength(2);
+		const cleared = stopped.mock.calls.map(([id]) => id as unknown);
+		for (const beat of beats) expect(cleared).toContain(beat);
+	});
+});

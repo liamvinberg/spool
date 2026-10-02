@@ -27,10 +27,11 @@ export type BootOutcome =
 	| { kind: "failed"; message: string };
 
 /**
- * One boot as the daemon answers it, line by line: narration while it waits on
- * something an agent should hear about, then the outcome.
+ * One boot as the daemon answers it, line by line: a beat every few seconds so
+ * the CLI can tell a daemon still working from one that went away, narration
+ * while it waits on something an agent should hear about, then the outcome.
  */
-export type BootLine = { narrate: string } | { outcome: BootOutcome };
+export type BootLine = { beat: true } | { narrate: string } | { outcome: BootOutcome };
 
 export function shotFile(root: string, frame: string): string {
 	return verifyFile(root, frame, "png");

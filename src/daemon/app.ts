@@ -250,6 +250,13 @@ const bootRequest = z.strictObject({
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 });
 
+/**
+ * How often a boot's answer says it is still working. The CLI stops waiting on
+ * a daemon that says nothing for much longer than this, so a frame that takes
+ * its time and a daemon that went away are never the same silence.
+ */
+const BOOT_BEAT_MS = 5000;
+
 const PLAYER_HANDOFF_TTL_MS = 30_000;
 /** Browser handoffs are deliberately short and bounded: issuing the control document is a public GET. */
 const MAX_PLAYER_HANDOFFS = 64;
@@ -2574,35 +2581,44 @@ export function createDaemonApp({
 				c.header("cache-control", "no-store");
 				return stream(c, async (out) => {
 					const write = (line: BootLine) => out.write(`${JSON.stringify(line)}\n`);
-					const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
-					if (doc.kind === "missing")
-						return void (await write({ outcome: { kind: "missing", message: doc.message } }));
-					if (doc.kind === "error")
-						return void (await write({ outcome: { kind: "broken", message: doc.message } }));
-					const plan = planShot(width, height);
-					try {
-						const boot = await booth.shoot(
-							{ project: name, frame, width, height, scale: plan.scale, tiles: plan.tiles, at, scenario },
-							(line) => void write({ narrate: line }).catch(() => {}),
-						);
-						if (boot.kind === "unserved") {
-							// the source broke between the compile and the load: its text, verbatim
-							const again = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
-							const message = again.kind === "error" ? again.message : `frame "${frame}" failed to serve`;
-							return void (await write({ outcome: { kind: "broken", message } }));
+					const boot = async (): Promise<BootLine> => {
+						const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+						if (doc.kind === "missing") return { outcome: { kind: "missing", message: doc.message } };
+						if (doc.kind === "error") return { outcome: { kind: "broken", message: doc.message } };
+						const plan = planShot(width, height);
+						try {
+							const shot = await booth.shoot(
+								{ project: name, frame, width, height, scale: plan.scale, tiles: plan.tiles, at, scenario },
+								(line) => void write({ narrate: line }).catch(() => {}),
+							);
+							if (shot.kind === "unserved") {
+								// the source broke between the compile and the load: its text, verbatim
+								const again = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
+								const message = again.kind === "error" ? again.message : `frame "${frame}" failed to serve`;
+								return { outcome: { kind: "broken", message } };
+							}
+							const files = recordBoot(project.root, frame, {
+								etag: doc.etag,
+								scenario: scenario ?? "default",
+								scheme: shot.scheme,
+								pngs: shot.pngs,
+								entries: shot.entries,
+							});
+							const { entries, errors, contentHeight } = shot;
+							return { outcome: { kind: "booted", files, entries, errors, contentHeight } };
+						} catch (error) {
+							return {
+								outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
+							};
 						}
-						const files = recordBoot(project.root, frame, {
-							etag: doc.etag,
-							scenario: scenario ?? "default",
-							scheme: boot.scheme,
-							pngs: boot.pngs,
-							entries: boot.entries,
-						});
-						const { entries, errors, contentHeight } = boot;
-						await write({ outcome: { kind: "booted", files, entries, errors, contentHeight } });
-					} catch (error) {
-						const message = error instanceof Error ? error.message : String(error);
-						await write({ outcome: { kind: "failed", message } });
+					};
+					// the beat lives exactly as long as this answer, whichever way it ends
+					const beat = setInterval(() => void write({ beat: true }).catch(() => {}), BOOT_BEAT_MS);
+					out.onAbort(() => clearInterval(beat));
+					try {
+						await write(await boot());
+					} finally {
+						clearInterval(beat);
 					}
 				});
 			},
