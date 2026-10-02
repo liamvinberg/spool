@@ -1,9 +1,9 @@
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, writeSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { SandboxManager, SandboxRuntimeConfigSchema } from "@anthropic-ai/sandbox-runtime";
 import type { CommandResult, CommandStart } from "./bundled-command-process";
+import { spoolEntry } from "./spool-entry";
 
 // One immutable host configuration. Every command supplies its own filesystem policy.
 let ready: Promise<void> | undefined;
@@ -90,19 +90,13 @@ export async function runCommand(
 		let outputError: unknown;
 		let child: ReturnType<typeof fork>;
 		try {
-			const source = import.meta.url.endsWith(".ts");
-			child = fork(
-				fileURLToPath(
-					new URL(source ? "./bundled-command-process.ts" : "./bundled-command-process.js", import.meta.url),
-				),
-				[],
-				{
-					cwd,
-					env: { PATH: process.env.PATH, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
-					execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
-					stdio: ["ignore", "pipe", "pipe", "ipc"],
-				},
-			);
+			const owner = spoolEntry("./bundled-command-process.ts", "./bundled-command-process.js");
+			child = fork(owner.path, [], {
+				cwd,
+				env: { PATH: process.env.PATH, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
+				execArgv: owner.execArgv,
+				stdio: ["ignore", "pipe", "pipe", "ipc"],
+			});
 		} catch (error) {
 			if (outputFd !== undefined) closeSync(outputFd);
 			throw error;

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AgentPermissions } from "../settings/registry";
@@ -11,6 +10,7 @@ import type { AgentEvent, AgentImage } from "./agent-events";
 import { SPOOL_COMMAND_GUIDANCE, trustedCommand } from "./bundled-command-route";
 import { type BundledFilePolicy, canonicalFile, inside } from "./bundled-files";
 import { runCommand, sandboxCommand } from "./bundled-sandbox";
+import { spoolEntry } from "./spool-entry";
 import { shotFile, shotTileFile } from "./verify-record";
 
 export class BundledCommandPolicy {
@@ -176,14 +176,8 @@ export class BundledCommandTurn {
 					let argv: string[] = ["/bin/bash", "--noprofile", "--norc", "-c", input.command];
 					let env = commandEnvironment(scratch);
 					if (trusted) {
-						const source = import.meta.url.endsWith(".ts");
-						const cli = fileURLToPath(new URL(source ? "../cli.ts" : "./cli.js", import.meta.url));
-						argv = [
-							process.execPath,
-							...(source ? ["--import", import.meta.resolve("tsx")] : []),
-							cli,
-							...trusted,
-						];
+						const cli = spoolEntry("../cli.ts", "./cli.js");
+						argv = [process.execPath, ...cli.execArgv, cli.path, ...trusted];
 						env.SPOOL_DIR = dirname(files.directory);
 						// Electron's executable needs Node mode; this is a constant, never inherited argv/env.
 						if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = "1";

@@ -11,6 +11,7 @@ import type { AgentLogin } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
 import { type BundledReply, type BundledRequest, bundledAnswerFits, type HostOutput } from "./bundled-protocol";
 import { privateDirectory } from "./bundled-store";
+import { spoolEntry } from "./spool-entry";
 
 /** Only OS necessities enter the host; provider variables and user config roots stay out. */
 export function bundledEnvironment(directory: string): NodeJS.ProcessEnv {
@@ -37,11 +38,11 @@ export function bundledEnvironment(directory: string): NodeJS.ProcessEnv {
 
 export type BundledLaunch = (directory: string) => ChildProcess;
 function launch(directory: string): ChildProcess {
-	const source = import.meta.url.endsWith(".ts");
-	return fork(fileURLToPath(new URL(source ? "./bundled-host.ts" : "./bundled-host.js", import.meta.url)), [], {
+	const host = spoolEntry("./bundled-host.ts", "./bundled-host.js");
+	return fork(host.path, [], {
 		cwd: directory,
 		env: bundledEnvironment(directory),
-		execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
+		execArgv: host.execArgv,
 		stdio: ["ignore", "ignore", "ignore", "ipc"],
 	});
 }
