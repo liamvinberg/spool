@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import type { PictureReport } from "../ui/canvas/picture-layer";
+import { writeCover } from "./thumbs";
 
 /**
  * The picture layer (#81) in a real browser: frames standing as their
@@ -23,6 +24,27 @@ function crc32(bytes: Uint8Array): number {
 	let crc = 0xffffffff;
 	for (const byte of bytes) crc = (crcTable[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
 	return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * The cover the daemon's photo booth makes of a frame: a read that finds the
+ * frame uncovered asks for it, and the next reads see it land.
+ */
+async function boothCover(
+	project: { url: string; name: string; controlToken: string },
+	frame: string,
+): Promise<{ hash: string }> {
+	const read = async () => {
+		const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, {
+			headers: { "X-Spool-Control": project.controlToken },
+		});
+		const { frames } = (await res.json()) as { frames: { name: string; cover?: { hash: string } }[] };
+		return frames.find((entry) => entry.name === frame)?.cover;
+	};
+	await expect.poll(read, { timeout: 60_000 }).toBeDefined();
+	const cover = await read();
+	if (cover === undefined) throw new Error(`no cover for "${frame}"`);
+	return cover;
 }
 
 /**
@@ -91,14 +113,7 @@ async function pictureCanvas() {
 			`frames/${frame.name}/frame.json`,
 			`${JSON.stringify({ x: frame.x, y: frame.y, w: W, h: H })}\n`,
 		);
-		const body = new FormData();
-		body.append("cover", new Blob([solidPng(800, 533, frame.color)], { type: "image/png" }));
-		const stored = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/thumbs/${frame.name}`, {
-			method: "PUT",
-			headers: { "X-Spool-Control": project.controlToken },
-			body,
-		});
-		expect(stored.status).toBe(200);
+		writeCover(project.root, frame.name, Buffer.from(solidPng(800, 533, frame.color)));
 	}
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: CAMERA })}\n`);
 	const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
@@ -270,30 +285,34 @@ it("draws the cover itself at 100% on a 2x screen, as sharp as the image element
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	// 360 CSS px on its long side at k = 1: still a picture, under the 400 px
-	// readable threshold, and drawn 720 device px wide from an 800 px cover
-	writeFrame(project.root, "card", "export default function Frame() { return <main>card</main>; }");
+	// readable threshold, and drawn 720 device px wide from the 800 px cover
+	// the photo booth takes of it. White on its left half and black on its
+	// right, an edge that falls on the cover's 400th column: a JPEG block
+	// boundary, so the cover holds it as hard as the document does.
+	writeFrame(
+		project.root,
+		"card",
+		'export default function Frame() { return <main style={{ position: "fixed", inset: 0, background: "linear-gradient(to right, #fff 50%, #000 50%)" }} />; }',
+	);
 	writeDesignFile(project.root, "frames/card/frame.json", '{ "x": 0, "y": 0, "w": 360, "h": 360 }\n');
-	const body = new FormData();
-	body.append("cover", new Blob([solidPng(800, 800, [255, 255, 255], [0, 0, 0])], { type: "image/png" }));
-	const stored = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/thumbs/card`, {
-		method: "PUT",
-		headers: { "X-Spool-Control": project.controlToken },
-		body,
-	});
-	expect(stored.status).toBe(200);
-	const cover = (await stored.json()) as { hash: string };
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 40, y: 40, k: 1 } })}\n`);
 	const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 2 });
 	const page = await context.newPage();
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 
 	// the full cover, never a smaller copy, at the frame's place and size
+	const cover = await boothCover(project, "card");
 	const card = async () => (await report(page))?.drawn.find((picture) => picture.name === "card") ?? null;
 	await expect
-		.poll(async () => (await card())?.texture, { timeout: 30_000 })
+		.poll(
+			async () => {
+				const drawn = await card();
+				return drawn?.url === `/covers/${project.name}/card/${cover.hash}` ? drawn.texture : null;
+			},
+			{ timeout: 60_000 },
+		)
 		.toEqual({ kind: "sharp", width: 800, height: 800 });
 	const picture = await card();
-	expect(picture?.url).toBe(`/covers/${project.name}/card/${cover.hash}`);
 	expect(picture?.natural).toEqual({ width: 800, height: 800 });
 	expect(picture?.box).toEqual({ x: 40, y: 40, w: 360, h: 360 });
 	expect(picture?.picture).toEqual({ w: 360, h: 360 });
