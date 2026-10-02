@@ -166,10 +166,10 @@ export async function compileFrameCssHere(designDir: string, sources: CssSource[
 const CSS_WORKERS = 2;
 
 /**
- * How long one stylesheet may take on a worker, from the moment it is handed
- * over. A frame's takes milliseconds, tens when a worker holds several. A worker
- * past this is stuck, in a stylesheet that loops or a scan that never returns,
- * and every job it holds would wait forever while new ones kept arriving.
+ * How long one stylesheet may take once its worker begins it. A frame's takes
+ * milliseconds, tens when a worker holds several. A worker past this is stuck,
+ * in a stylesheet that loops or a scan that never returns, and every job it
+ * holds would wait forever while new ones kept arriving.
  */
 const CSS_JOB_MS = 30_000;
 
@@ -181,11 +181,13 @@ export interface CssJob {
 }
 
 /**
- * A stylesheet worker's answer. An error crosses as its message alone, except a
- * design-boundary refusal, which carries its path so it arrives as the same
- * DesignBoundaryError it left as.
+ * A stylesheet worker's word on a job: that it has begun it, then its answer.
+ * An error crosses as its message alone, except a design-boundary refusal,
+ * which carries its path so it arrives as the same DesignBoundaryError it left
+ * as.
  */
 export type CssReply =
+	| { id: number; started: true }
 	| { id: number; css: FrameCss }
 	| { id: number; message: string }
 	| { id: number; boundary: string };
@@ -196,17 +198,27 @@ export function startCssWorker(): Worker {
 	return new Worker(entry.path, { execArgv: entry.execArgv });
 }
 
+interface PendingCss {
+	designDir: string;
+	sources: CssSource[];
+	resolve: (css: FrameCss) => void;
+	reject: (error: Error) => void;
+	/** The job's deadline, set once its worker begins it. */
+	timer: NodeJS.Timeout | undefined;
+}
+
 interface CssWorker {
 	worker: Worker;
-	jobs: Map<number, { resolve: (css: FrameCss) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>;
+	jobs: Map<number, PendingCss>;
 }
 
 /**
  * A pool of at most `size` stylesheet workers, started as jobs need them. An
  * idle worker takes a job, else a new one while the pool has room, else
  * whichever holds the fewest jobs. A worker that dies fails only the jobs it
- * held, and the next job starts another in its place. A job that outlasts
- * `timeout` fails, and its worker is stopped as stuck.
+ * held, and the next job starts another in its place. A job its worker has
+ * been at for longer than `timeout` fails; that worker is stopped as stuck,
+ * and the jobs it held besides move to one that answers.
  */
 export function createCssWorkers(
 	start: () => Worker = startCssWorker,
@@ -224,6 +236,13 @@ export function createCssWorkers(
 		worker.on("message", (reply: CssReply) => {
 			const job = held.jobs.get(reply.id);
 			if (job === undefined) return;
+			if ("started" in reply) {
+				// from here, not from the handoff: time spent queued behind the
+				// worker's other jobs is not this one's
+				job.timer = setTimeout(() => stuck(held, reply.id), timeout);
+				job.timer.unref();
+				return;
+			}
 			held.jobs.delete(reply.id);
 			clearTimeout(job.timer);
 			if (held.jobs.size === 0) worker.unref();
@@ -232,8 +251,7 @@ export function createCssWorkers(
 			else job.reject(new Error(reply.message));
 		});
 		const lost = (error: Error) => {
-			const at = workers.indexOf(held);
-			if (at !== -1) workers.splice(at, 1);
+			retire(held);
 			for (const job of held.jobs.values()) {
 				clearTimeout(job.timer);
 				job.reject(error);
@@ -246,7 +264,25 @@ export function createCssWorkers(
 		return held;
 	}
 
-	return (designDir, sources) => {
+	function retire(held: CssWorker): void {
+		const at = workers.indexOf(held);
+		if (at !== -1) workers.splice(at, 1);
+	}
+
+	/** A job past its deadline fails, its worker is stopped, and the rest it held go to another. */
+	function stuck(held: CssWorker, id: number): void {
+		const job = held.jobs.get(id);
+		if (job === undefined) return;
+		retire(held);
+		const others = [...held.jobs.values()].filter((other) => other !== job);
+		held.jobs.clear();
+		for (const pending of [job, ...others]) clearTimeout(pending.timer);
+		job.reject(new Error(`this frame's stylesheet took longer than ${timeout / 1000} s to compile`));
+		void held.worker.terminate();
+		for (const other of others) hand(other);
+	}
+
+	function hand(job: PendingCss): void {
 		const idle = workers.find((candidate) => candidate.jobs.size === 0);
 		const chosen =
 			idle ??
@@ -254,21 +290,14 @@ export function createCssWorkers(
 				? add()
 				: workers.reduce((least, next) => (next.jobs.size < least.jobs.size ? next : least)));
 		const id = ++lastJob;
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				if (!chosen.jobs.delete(id)) return;
-				reject(new Error(`a frame stylesheet took longer than ${timeout / 1000} s, so its worker was stopped`));
-				// its other jobs fail as the worker exits, and the next job starts a fresh one
-				const at = workers.indexOf(chosen);
-				if (at !== -1) workers.splice(at, 1);
-				void chosen.worker.terminate();
-			}, timeout);
-			timer.unref();
-			chosen.jobs.set(id, { resolve, reject, timer });
-			chosen.worker.ref();
-			chosen.worker.postMessage({ id, designDir, sources } satisfies CssJob);
-		});
-	};
+		job.timer = undefined;
+		chosen.jobs.set(id, job);
+		chosen.worker.ref();
+		chosen.worker.postMessage({ id, designDir: job.designDir, sources: job.sources } satisfies CssJob);
+	}
+
+	return (designDir, sources) =>
+		new Promise((resolve, reject) => hand({ designDir, sources, resolve, reject, timer: undefined }));
 }
 
 const daemonCssWorkers = createCssWorkers();

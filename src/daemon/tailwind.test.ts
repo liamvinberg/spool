@@ -109,18 +109,21 @@ describe("a frame's stylesheet, compiled on a stylesheet worker", () => {
 		expect(started).toBe(2);
 	});
 
-	it("fails a job a stuck worker never answers, and stops that worker for a fresh one", {
+	it("fails a job a stuck worker never finishes, and moves the rest it held to a fresh one", {
 		timeout: 20_000,
 	}, async () => {
 		const { root, designDir } = project("@theme {\n\t--color-ink: #123456;\n}\n");
 		const files = [frame(root, designDir, "a", "text-ink")];
 		const workers: Worker[] = [];
-		// the first worker takes every job and answers none of them
+		// the first worker begins every job it is handed and finishes none
 		const compile = createCssWorkers(
 			() => {
 				const worker =
 					workers.length === 0
-						? new Worker('require("node:worker_threads").parentPort.on("message", () => {});', { eval: true })
+						? new Worker(
+								'const { parentPort } = require("node:worker_threads"); parentPort.on("message", (job) => parentPort.postMessage({ id: job.id, started: true }));',
+								{ eval: true },
+							)
 						: startCssWorker();
 				workers.push(worker);
 				return worker;
@@ -129,14 +132,34 @@ describe("a frame's stylesheet, compiled on a stylesheet worker", () => {
 			// long enough for the fresh worker to start and answer on a loaded machine
 			3000,
 		);
+		const here = await compileFrameCssHere(designDir, files);
 
 		const stuck = compile(designDir, files);
 		const behind = compile(designDir, files);
-		await expect(stuck).rejects.toThrow("a frame stylesheet took longer than 3 s, so its worker was stopped");
-		await expect(behind).rejects.toThrow();
-		await expect(compile(designDir, files)).resolves.toEqual(await compileFrameCssHere(designDir, files));
+		await expect(stuck).rejects.toThrow("this frame's stylesheet took longer than 3 s to compile");
+		await expect(behind).resolves.toEqual(here);
+		await expect(compile(designDir, files)).resolves.toEqual(here);
 		expect(workers).toHaveLength(2);
 		// the stuck one is gone, not left running beside its replacement
 		expect(workers[0]?.threadId).toBe(-1);
+	});
+
+	it("gives a job its whole deadline from when its worker begins it, not from the handoff", async () => {
+		const { root, designDir } = project("@theme {\n\t--color-ink: #123456;\n}\n");
+		const files = [frame(root, designDir, "a", "text-ink")];
+		// each job holds the worker for 600ms, so the second waits that long to begin
+		const compile = createCssWorkers(
+			() =>
+				new Worker(
+					'const { parentPort } = require("node:worker_threads"); parentPort.on("message", (job) => { parentPort.postMessage({ id: job.id, started: true }); const until = Date.now() + 600; while (Date.now() < until); parentPort.postMessage({ id: job.id, css: { css: "done", stylesheets: [] } }); });',
+					{ eval: true },
+				),
+			1,
+			1000,
+		);
+
+		const answers = await Promise.all([compile(designDir, files), compile(designDir, files)]);
+
+		expect(answers.map(({ css }) => css)).toEqual(["done", "done"]);
 	});
 });
