@@ -51,12 +51,12 @@ import {
  * silently fell back to the shipped document would report the payload
  * comparison as a wash. Name the arms that exist to run today.
  *
- * Every run uses a private copy. Before compiler warmup, the shipped canvas at
- * picture zoom writes exactly one current cover per frame while the benchmark
- * daemon's headless healer is unavailable. Warm and measured passes keep those
- * covers and default to readable zoom, so documents arrive because the shipped
- * viewport bound makes them live, not because background cover work mounted
- * them.
+ * Every run uses a private copy. Before compiler warmup, the build's one cover
+ * writer makes exactly one current cover per frame (`prepareCurrentCovers`):
+ * the daemon's photo booth, or in a build from before it the shipped canvas at
+ * picture zoom. Warm and measured passes keep those covers and default to
+ * readable zoom, so documents arrive because the shipped viewport bound makes
+ * them live, not because background cover work mounted them.
  *
  *   pnpm build
  *   node bench/arrival.ts --project <spool-bench> --headed --arms stock,shipped
@@ -1030,7 +1030,7 @@ async function main(): Promise<void> {
 					// planned once per zoom would open where the last one finished.
 					writeCamera(root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, zoom), canvasPage);
 					// Covers remain current. At readable zoom, iframe insertion is the
-					// shipped live-document path; no picture job or daemon healer competes.
+					// shipped live-document path, and no cover is owed for anything to make.
 					const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
 					await context.addInitScript(hostCollector);
 					await context.addInitScript(frameCollector);

@@ -11,7 +11,6 @@ import {
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
-	quiet,
 	readPages,
 	startDaemon,
 	VIEWPORT,
@@ -485,15 +484,9 @@ async function runWalk(context: BrowserContext, url: string, plan: Plan): Promis
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 
 		// Find the source by its label so the benchmark works whether the readable
-		// frame currently draws its document or its still. Picture errands must be
-		// done before entry; a canvas pinned at their cap can keep a stable count
-		// while still competing with the walk for the daemon.
+		// frame currently draws its document or its still.
 		const sourceLabel = `[data-frame-label=${JSON.stringify(plan.from)}]`;
 		await page.waitForSelector(sourceLabel, { timeout: ENTER_TIMEOUT_MS });
-		const borrowedBeforeEntry = await quiet(page, 300_000);
-		if (borrowedBeforeEntry !== 0) {
-			throw new Error(`${borrowedBeforeEntry} picture errands remained before walk`);
-		}
 
 		// --- enter, because a walk from an unentered frame is rejected ----------
 		// `walkRejectionReason` (protocol.ts:211) turns a `go` from any frame that

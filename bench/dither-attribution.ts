@@ -18,7 +18,6 @@ import {
 	PAN_STEP_PX,
 	planCamera,
 	prepareCurrentCovers,
-	quiet,
 	read,
 	settle,
 	startDaemon,
@@ -640,8 +639,6 @@ async function runOnce(
 
 	await page.goto(arm.url, { waitUntil: "domcontentloaded" });
 	await settle(page, 1000, 30_000);
-	const borrowed = await quiet(page, 120_000);
-	if (borrowed !== 0) throw new Error(`[${arm.label}#${index}] ${borrowed} picture errands remained after settle`);
 	// let the still-frames' rAF loops reach steady state before anything is measured
 	await page.waitForTimeout(2000);
 	const liveMounted = await mountedCount(page);
@@ -651,10 +648,6 @@ async function runOnce(
 	await page.waitForTimeout(300);
 
 	// --- idle window ---
-	const idleBorrowed = await quiet(page, 30_000);
-	if (idleBorrowed !== 0) {
-		throw new Error(`[${arm.label}#${index}] ${idleBorrowed} picture errands remained before the idle window`);
-	}
 	await page.waitForTimeout(IDLE_SETTLE_MS);
 	const idleBefore = await snapshotProcesses(browserSession);
 	await page.waitForTimeout(IDLE_MS);
@@ -663,10 +656,6 @@ async function runOnce(
 	const idleRss = memorySnapshot(idleAfter, roles);
 
 	// --- gesture window ---
-	const gestureBorrowed = await quiet(page, 30_000);
-	if (gestureBorrowed !== 0) {
-		throw new Error(`[${arm.label}#${index}] ${gestureBorrowed} picture errands remained before the gesture window`);
-	}
 	const size = page.viewportSize() ?? VIEWPORT;
 	const cx = Math.round(size.width / 2);
 	const cy = Math.round(size.height / 2);

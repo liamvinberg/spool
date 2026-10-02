@@ -337,11 +337,14 @@ export async function startDaemon(
 	if (!existsSync(cli)) throw new Error(`${cli} is missing — run pnpm build first`);
 	const env = { SPOOL_DIR: spoolDir, SPOOL_PORT: String(port) };
 	await run(process.execPath, [cli, "open", root], env);
-	// Only the benchmark daemon sees this empty browser store. Its headless
-	// healer stays unavailable, so the canvas lifecycle is the sole cover
-	// writer and prepareCurrentCovers's exact-one check is the barrier.
-	const emptyBrowserStore = mkdtempSync(join(spoolDir, "no-headless-"));
-	const daemonEnv = { ...env, PLAYWRIGHT_BROWSERS_PATH: emptyBrowserStore };
+	// A checkout whose daemon makes every cover in its photo booth
+	// (src/daemon/booth.ts) keeps the machine's pinned headless shell: the booth
+	// is its one cover writer. An older checkout has its headless healer switched
+	// off with an empty browser store, so its canvas lifecycle is the one cover
+	// writer, the way those builds were always measured. Either way
+	// prepareCurrentCovers's exact-one check is the barrier.
+	const booth = existsSync(join(dirname(dirname(cli)), "src", "daemon", "booth.ts"));
+	const daemonEnv = booth ? env : { ...env, PLAYWRIGHT_BROWSERS_PATH: mkdtempSync(join(spoolDir, "no-headless-")) };
 	const child = spawn(process.execPath, [cli, "serve", "--foreground"], {
 		env: { ...process.env, ...daemonEnv },
 	});
@@ -421,16 +424,22 @@ function missingCurrentCoverNames(root: string, frames: readonly { name: string 
 			files = [];
 		}
 		const images = files.filter((file) => CURRENT_COVER.test(file));
-		if (files.length !== 1 || images.length !== 1) missing.push(frame.name);
+		// one image, beside nothing but the colour scheme a scheme-following frame was taken in
+		if (images.length !== 1 || files.some((file) => file !== images[0] && file !== "scheme")) {
+			missing.push(frame.name);
+		}
 	}
 	return missing;
 }
 
 /**
- * Let the shipped canvas build one current cover per frame in the private copy.
- * `startDaemon` disables its fallback healer, so exact-one completion proves the
- * canvas lifecycle wrote every cover. The caller sets that page's picture-zoom
- * camera before entry and resets its measurement camera after this returns.
+ * Let the build's one cover writer make one current cover per frame in the
+ * private copy: the daemon's photo booth, or in a build from before it the
+ * shipped canvas lifecycle (`startDaemon`). Opening the page is what asks
+ * either way: the canvas's projection read finds every frame uncovered, and the
+ * booth photographs them, the ones on screen first, where the older canvas
+ * borrowed them in turn. The caller sets that page's picture-zoom camera before
+ * entry and resets its measurement camera after this returns.
  */
 export async function prepareCurrentCovers(
 	browser: Browser,
@@ -646,38 +655,9 @@ export const ms = (value: number): string => (Number.isFinite(value) ? value.toF
 export const mountedCount = (page: BrowserPage): Promise<number> =>
 	page.evaluate(() => document.querySelectorAll("iframe").length);
 
-/** Documents hidden behind a still. With no selection intent, these are picture errands. */
-const hiddenDocumentCount = (page: BrowserPage): Promise<number> =>
-	page.evaluate(
-		() =>
-			[...document.querySelectorAll("iframe")].filter((frame) => getComputedStyle(frame).visibility === "hidden")
-				.length,
-	);
-
 /** One label per frame shell, independent of its live or picture substrate. */
 export const framesOnCanvas = (page: BrowserPage): Promise<number> =>
 	page.evaluate(() => document.querySelectorAll("[data-frame-label]").length);
-
-/**
- * Hold until no hidden document is being borrowed for a picture. Readable
- * documents stay visible at rest, so a zero-document check would never finish.
- * A canvas pinned at the errand cap can keep the same total count while the
- * borrowed frames change, so a stable-count check would finish too early.
- * Returns the borrowed count left at timeout.
- */
-export async function quiet(page: BrowserPage, timeoutMs: number): Promise<number> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const count = await hiddenDocumentCount(page);
-		if (count === 0) return 0;
-		await page.waitForTimeout(250);
-	}
-	const left = await hiddenDocumentCount(page);
-	process.stderr.write(
-		`bench:   canvas still borrowing ${left} frames — whatever runs next is not measured from rest\n`,
-	);
-	return left;
-}
 
 // --- the gesture collector (#82) -------------------------------------------
 //

@@ -21,7 +21,6 @@ import {
 	planCamera,
 	prepareCurrentCovers,
 	quantile,
-	quiet,
 	RARE_INTERVAL_MS,
 	read,
 	type Stamped,
@@ -250,8 +249,6 @@ async function measure(
 	await page.goto(url, { waitUntil: "domcontentloaded" });
 	const settled = await settle(page, 1000, 30_000);
 	const reloadMs = settled.stableAt - reloadStart;
-	const borrowedAfterReload = await quiet(page, 120_000);
-	if (borrowedAfterReload !== 0) throw new Error(`${borrowedAfterReload} picture errands remained after reload`);
 	const idleMounted = await mountedCount(page);
 	// A canvas showing nothing is fast at everything, and every bar below would
 	// report a pass over an empty screen. The camera is planned over real frames,
@@ -312,10 +309,8 @@ async function measure(
 	await settle(page, 800, 20_000);
 
 	// --- double-click into the frame nearest the middle ----------------------
-	// Nothing the canvas is doing on its own may still be in flight. Readable
-	// documents remain mounted; only hidden picture errands have to finish.
-	const borrowedBeforeEntry = await quiet(page, 120_000);
-	if (borrowedBeforeEntry !== 0) throw new Error(`${borrowedBeforeEntry} picture errands remained before entry`);
+	// Nothing the canvas is doing on its own may still be in flight: every
+	// readable document has loaded.
 	await waitForMountedFramesLoaded(page, 120_000);
 
 	// The frame showing the most of itself. A readable frame draws its document;
