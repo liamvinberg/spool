@@ -6,8 +6,8 @@ import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbui
 import { isFramePath } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
 import {
-	assertDesignFile,
 	DesignBoundaryError,
+	designPathResolver,
 	designRelativePath,
 	realDesignDir,
 	resolveDesignPath,
@@ -357,12 +357,18 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 	return {
 		name: "spool-boundary",
 		setup(build) {
+			// One resolver per build, never per plugin: the player holds its context
+			// across rebuilds, and every rebuild must see the folders as they are.
+			let resolvePath = designPathResolver(designDir);
+			build.onStart(() => {
+				resolvePath = designPathResolver(designDir);
+			});
 			// Esbuild resolves extensions and symlinks before loading. This makes the
 			// boundary cover every local module format without reimplementing its
 			// resolver or accidentally treating packages as project source.
 			build.onLoad({ filter: /.*/ }, (args) => {
 				try {
-					assertDesignFile(designDir, args.path);
+					resolvePath(args.path);
 					return null;
 				} catch (error) {
 					// The cause rides along in detail, which esbuild hands back to the JS
@@ -396,8 +402,8 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
  * Project assets, carried in the document rather than served (#101). There is
  * no asset route and no asset URL: an import becomes a `data:` URI right here,
  * which means an asset has no authority surface at all — the boundary plugin
- * has already run `assertDesignFile` on everything esbuild resolves, symlinks
- * and all — and it lands in `metafile.inputs`, so it is a cache input, an ETag
+ * has already held everything esbuild resolves to design/, symlinks and all —
+ * and it lands in `metafile.inputs`, so it is a cache input, an ETag
  * ingredient, and a file the watcher already narrows on.
  *
  * Every kind is forced to base64. Esbuild's own `dataurl` loader percent-encodes
@@ -468,9 +474,10 @@ const HASH_SLICE_MS = 2;
 
 export async function hashInputs(version: string, frame: string, inputs: string[], designDir: string): Promise<string> {
 	const files: [string, string][] = [];
+	const resolvePath = designPathResolver(designDir);
 	let slice = performance.now();
 	for (const file of [...inputs].sort()) {
-		files.push([file, hashContent(file, designDir)]);
+		files.push([file, hashContent(file, resolvePath)]);
 		if (performance.now() - slice >= HASH_SLICE_MS) {
 			await yieldTurn();
 			slice = performance.now();
@@ -481,10 +488,10 @@ export async function hashInputs(version: string, frame: string, inputs: string[
 		.digest("hex");
 }
 
-function hashContent(file: string, designDir: string): string {
+function hashContent(file: string, resolvePath: (file: string) => string): string {
 	let content: Buffer;
 	try {
-		content = readFileSync(resolveDesignPath(designDir, file));
+		content = readFileSync(resolvePath(file));
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return "absent";

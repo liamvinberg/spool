@@ -37,52 +37,75 @@ export function resolveDesignPath(
 	file: string,
 	authored = designRelativePath(designDir, file),
 ): string {
-	const authoredDesign = resolve(designDir);
-	const canonicalDesign = realpathSync(designDir);
-	const target = resolve(file);
-	if (!isWithin(authoredDesign, target) && !isWithin(canonicalDesign, target)) {
-		throw new DesignBoundaryError(authored);
-	}
-
-	const missing: string[] = [];
-	let ancestor = target;
-	while (true) {
-		try {
-			lstatSync(ancestor);
-			break;
-		} catch {
-			const parent = dirname(ancestor);
-			if (parent === ancestor) throw new DesignBoundaryError(authored);
-			missing.unshift(basename(ancestor));
-			ancestor = parent;
-		}
-	}
-
-	let canonicalAncestor: string;
-	try {
-		canonicalAncestor = realpathSync(ancestor);
-	} catch {
-		// lstat found a dangling symlink. Following it for a direct write could
-		// create a file outside design/, so it is never a lawful ancestor.
-		throw new DesignBoundaryError(authored);
-	}
-	rejectOutside(canonicalDesign, canonicalAncestor, authored);
-	const canonicalTarget = join(canonicalAncestor, ...missing);
-	rejectOutside(canonicalDesign, canonicalTarget, authored);
-	return canonicalTarget;
+	return designPathResolver(designDir)(file, authored);
 }
 
 /**
- * Reject an existing file unless its resolved target belongs to design/. Keep
- * the authored spelling in the error: absolute outside paths reveal nothing
- * useful and make diagnostics vary by machine.
+ * resolveDesignPath for every path one pass reads, such as a compile's inputs
+ * or one bundle's loads. The design root and each directory are canonicalized
+ * once per resolver rather than once per path. Canonicalizing walks the path
+ * from / with an lstat per component, and on a frame with a hundred inputs
+ * those walks were most of what its compile did on the daemon's event loop.
+ *
+ * A resolver lasts one pass and no longer. A directory swapped for a symlink
+ * after the resolver first canonicalized it is seen by the next pass, as an
+ * edit that lands after a pass read its file is: a check and the read it
+ * guards were never one atomic step.
  */
-export function assertDesignFile(
-	designDir: string,
-	file: string,
-	authored = designRelativePath(designDir, file),
-): void {
-	resolveDesignPath(designDir, file, authored);
+export function designPathResolver(designDir: string): (file: string, authored?: string) => string {
+	const authoredDesign = resolve(designDir);
+	// canonicalized on the first path, so a design folder that is gone fails
+	// that path the way resolveDesignPath always has, not the resolver's maker
+	let canonicalDesign: string | undefined;
+	const directories = new Map<string, string>();
+	function canonicalDirectory(directory: string): string {
+		let canonical = directories.get(directory);
+		if (canonical === undefined) {
+			canonical = realpathSync(directory);
+			directories.set(directory, canonical);
+		}
+		return canonical;
+	}
+
+	return (file, authored = designRelativePath(designDir, file)) => {
+		canonicalDesign ??= realpathSync(designDir);
+		const target = resolve(file);
+		if (!isWithin(authoredDesign, target) && !isWithin(canonicalDesign, target)) {
+			throw new DesignBoundaryError(authored);
+		}
+
+		const missing: string[] = [];
+		let ancestor = target;
+		let link: boolean;
+		while (true) {
+			try {
+				link = lstatSync(ancestor).isSymbolicLink();
+				break;
+			} catch {
+				const parent = dirname(ancestor);
+				if (parent === ancestor) throw new DesignBoundaryError(authored);
+				missing.unshift(basename(ancestor));
+				ancestor = parent;
+			}
+		}
+
+		let canonicalAncestor: string;
+		try {
+			// A path that is no link is its directory's canonical path and its own
+			// name; a link is followed whole.
+			const parent = dirname(ancestor);
+			canonicalAncestor =
+				link || parent === ancestor ? realpathSync(ancestor) : join(canonicalDirectory(parent), basename(ancestor));
+		} catch {
+			// lstat found a dangling symlink. Following it for a direct write could
+			// create a file outside design/, so it is never a lawful ancestor.
+			throw new DesignBoundaryError(authored);
+		}
+		rejectOutside(canonicalDesign, canonicalAncestor, authored);
+		const canonicalTarget = join(canonicalAncestor, ...missing);
+		rejectOutside(canonicalDesign, canonicalTarget, authored);
+		return canonicalTarget;
+	};
 }
 
 /** A stable design-relative spelling for diagnostics and cache inputs. */
