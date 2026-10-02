@@ -1,10 +1,39 @@
-import { type ReactNode, useRef } from "react";
+import { type ReactNode, useMemo, useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
+import type { Camera } from "../api";
 import type { Box, NearScreen } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import { UnseenMark } from "./unseen-mark";
+
+/**
+ * How many drawn frames a label's width may trail a zoom by while the camera
+ * moves (#81). A width is a layout: every label's truncation worked out again,
+ * a thousand of them a step on an overview, which alone overran the frame.
+ * So in motion each label takes its turn, one in this many per drawn frame,
+ * a few milliseconds behind its frame at most; where it stands is never
+ * behind, and at rest every width is exact.
+ */
+const WIDTH_TURNS = 4;
+
+/** A count of drawn cameras, the same for every label in one frame. */
+let drawnTick = 0;
+let drawnCamera: Camera | null = null;
+function tickOf(camera: Camera): number {
+	if (camera !== drawnCamera) {
+		drawnCamera = camera;
+		drawnTick += 1;
+	}
+	return drawnTick;
+}
+
+/** A label's turn, spread over the page by its name. */
+function turnOf(name: string): number {
+	let hash = 0;
+	for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+	return Math.abs(hash) % WIDTH_TURNS;
+}
 
 export function FrameLabel({
 	name,
@@ -43,22 +72,24 @@ export function FrameLabel({
 	const place = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
 	const changed = useChanged();
+	const turn = useMemo(() => turnOf(name), [name]);
 	// The label stands in screen pixels, in a field the camera only translates
 	// (`LabelField`): where its frame's top left falls at this zoom, as wide as
 	// the frame draws. Written here rather than rendered, and only when the
 	// zoom or the frame moved: a pan writes nothing, since the field carries
 	// every label at once, and a zoom step places again the labels on screen
-	// and nothing else, the rest once the camera rests.
+	// and nothing else, the rest once the camera rests. In motion a width waits
+	// for its label's turn (`WIDTH_TURNS`).
 	useCameraFollow(
 		camera,
 		(at, moving) => {
 			const at_ = place.current;
 			const el = label.current;
-			if (at_ === null || el === null || (moving && !near(at, frame)) || !changed(at.k, frame.x, frame.y, frame.w)) {
-				return;
-			}
-			at_.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
-			el.style.width = `${frame.w * at.k}px`;
+			if (at_ === null || el === null || (moving && !near(at, frame))) return;
+			if (changed(at.k, frame.x, frame.y))
+				at_.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
+			const width = `${frame.w * at.k}px`;
+			if (el.style.width !== width && (!moving || (tickOf(at) + turn) % WIDTH_TURNS === 0)) el.style.width = width;
 		},
 		[frame.x, frame.y, frame.w, frame.h, near],
 	);

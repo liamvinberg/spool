@@ -84,10 +84,31 @@ describe("FrameLabel", () => {
 		const { el } = label({ name: "landing", frameWidth: 1200, camera });
 
 		act(() => camera.set({ x: 40, y: 0, k: 0.5 }));
-
-		expect(el.style.width).toBe("600px");
+		// where it stands moves with the frame in the very frame the camera does
 		expect(el.parentElement?.style.transform).toBe("translate(50px, 25px)");
 		expect(el.style.transform).toBe("");
+
+		act(() => vi.advanceTimersByTime(REST_MS));
+		expect(el.style.width).toBe("600px");
+	});
+
+	it("lets its width trail a zoom by a few drawn frames at most, and lands it exactly at rest", () => {
+		const camera = cameraAt({ x: 0, y: 0, k: 0.2 });
+		act(() => vi.advanceTimersByTime(REST_MS));
+		const { el } = label({ name: "landing", frameWidth: 1000, camera });
+		expect(el.style.width).toBe("200px");
+
+		// four drawn frames of one gesture: the width catches up within them
+		const widths: string[] = [];
+		for (const k of [0.21, 0.22, 0.23, 0.24]) {
+			act(() => camera.set({ x: 0, y: 0, k }));
+			widths.push(el.style.width);
+		}
+		expect(widths.filter((width) => width !== "200px").length).toBe(1);
+		expect(widths.at(-1)).not.toBe("200px");
+
+		act(() => vi.advanceTimersByTime(REST_MS));
+		expect(el.style.width).toBe("240px");
 	});
 
 	it("writes nothing on a pan, which the field carries for every label at once", () => {
