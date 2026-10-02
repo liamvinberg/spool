@@ -1,23 +1,35 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { isFramePath } from "../page-path";
-import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
+import {
+	DesignBoundaryError,
+	designPathResolver,
+	designRelativePath,
+	realDesignDir,
+	resolveDesignPath,
+} from "./design-path";
 import {
 	createSourcePass,
 	type FrameSource,
 	frameSource,
 	frameSourceIn,
 	type ImportEdge,
-	type LinksDeclaration,
 	type NavSite,
 	resolveFrameDir,
 	type SourcePass,
 	type UnreadableSite,
 } from "./nav-sites";
 import { frameDirectories, frameNames } from "./projection";
-import { createRenderedReader, projectScenarios, type RenderedReader, type RenderedTarget } from "./resolved-targets";
+import {
+	createRenderedReader,
+	projectScenarios,
+	type RenderedReader,
+	type RenderedTarget,
+	readRenderedText,
+} from "./resolved-targets";
+import { createLooks, diskNow, type Looks, type SourceWitness, witnessHolds, witnessSource } from "./source-witness";
 
 /**
  * The link graph (#34, amending #5): the map is read, not walked. Every edge
@@ -104,13 +116,26 @@ function walkedFile(root: string): string {
 	return resolveDesignPath(designDir, join(designDir, ".spool", "walked.json"));
 }
 
-/** Machine-written cache: anything malformed reads as no marks at all. */
-function readVerifiedMarks(root: string): VerifiedMark[] {
-	let parsed: unknown;
+/** The marks file as written, or nothing when it cannot be read. */
+function readWalkedText(root: string): string | undefined {
 	try {
-		parsed = JSON.parse(readFileSync(walkedFile(root), "utf8"));
+		return readFileSync(walkedFile(root), "utf8");
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
+		return undefined;
+	}
+}
+
+function readVerifiedMarks(root: string): VerifiedMark[] {
+	return parseVerifiedMarks(readWalkedText(root));
+}
+
+/** Machine-written cache: anything malformed reads as no marks at all. */
+function parseVerifiedMarks(text: string | undefined): VerifiedMark[] {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text ?? "");
+	} catch {
 		return [];
 	}
 	if (typeof parsed !== "object" || parsed === null) return [];
@@ -136,9 +161,9 @@ function liveVerifiedMarks(root: string, frames: readonly string[], hashOf: (fra
  * ends are alive and the from-frame's source is the one that was walked. Asked
  * per edge so a derivation never needs every frame's hash before it starts.
  */
-function verifiedWitness(root: string, alive: ReadonlySet<string>): FlowContext["verified"] {
+function verifiedWitness(walked: string | undefined, alive: ReadonlySet<string>): FlowContext["verified"] {
 	const marks = new Map<string, string>();
-	for (const mark of readVerifiedMarks(root)) {
+	for (const mark of parseVerifiedMarks(walked)) {
 		if (alive.has(mark.from) && alive.has(mark.to)) marks.set(`${mark.from}\0${mark.to}`, mark.hash);
 	}
 	return (from, to, hash) => marks.get(`${from}\0${to}`) === hash;
@@ -306,11 +331,12 @@ interface FrameEntry {
 	fingerprint: string;
 	/** Names and bytes: what walked.json and resolved.json are keyed to. */
 	hash: string;
-	sites: NavSite[];
-	unreadable: UnreadableSite[];
-	links?: LinksDeclaration;
-	invalidLinks?: { path: string; line: number };
-	parseFailure?: { path: string; line: number };
+	/** What vouches for all of the above without a read, when a stat can. */
+	witness: SourceWitness | undefined;
+	/** The half as callers receive it, handed out again while it stands. */
+	graph: FrameGraph;
+	/** The frame's edges against one project context, while both stand. */
+	derived?: { context: ProjectContext; edges: FlowEdge[]; unreadable: FlowUnreadable[] };
 }
 
 /** Names and digests of a graph — same inputs as the source hash, small enough
@@ -343,10 +369,73 @@ function sameImports(pass: SourcePass, imports: readonly ImportEdge[]): boolean 
 	return imports.every((edge) => pass.resolve(edge.from, edge.specifier) === edge.to);
 }
 
+/**
+ * What the whole project supplies to every frame's edges, and the bytes it was
+ * read from. Read in full every time: the marks, the rendered reads and the
+ * scenarios are three small files and a folder. While those bytes and the
+ * frame set stand, it is the same context, and a frame whose source half
+ * stands too keeps the edges it derived against it.
+ */
+interface ProjectContext {
+	key: string;
+	flow: FlowContext;
+}
+
+/** The context as of now, the one kept when nothing it is read from moved. */
+function readContext(root: string, frames: readonly string[], previous: ProjectContext | undefined): ProjectContext {
+	const walked = readWalkedText(root);
+	const rendered = readRenderedText(root);
+	const scenarios = projectScenarios(root).hash;
+	// \u0001 cannot appear in a frame name or in JSON a writer produced unescaped
+	const key = [walked ?? "\u0001", rendered ?? "\u0001", scenarios, ...frames].join("\u0001\u0000");
+	if (previous?.key === key) return previous;
+	const alive = new Set(frames);
+	return {
+		key,
+		flow: {
+			exists: alive,
+			verified: verifiedWitness(walked, alive),
+			rendered: createRenderedReader(root, { text: rendered }),
+			scenarios,
+		},
+	};
+}
+
+/**
+ * What one read of the project asks the disk through: the bytes when a frame
+ * has to be proven by them, the stats when a witness can vouch, and the file
+ * system's time when the read began, which is what a witness taken during it
+ * is measured against. `full` is a read that proves every frame by its bytes.
+ */
+interface ReadPass {
+	pass: SourcePass;
+	looks: Looks;
+	/** The boundary, asked of a frame whose folder is about to be read. */
+	inside: (file: string) => string;
+	since: number | undefined;
+	full: boolean;
+}
+
+/**
+ * Frames proven by their witness between two turns. Such a frame costs a few
+ * stats, so a turn apiece spent more on the loop than on the frames; a frame
+ * proven by its bytes still gets a turn of its own.
+ */
+const WITNESSED_PER_TURN = 64;
+
+/**
+ * How often a project's frames are proven by their bytes whatever their
+ * witnesses say. A stat has never been the proof the bytes are, so whatever
+ * one misses heals within this; a full read is a few hundred milliseconds of
+ * yielding work, once a minute and only for a project somebody is reading.
+ */
+const FULL_PROOF_MS = 60_000;
+
 /** One read of the whole project: the wire shape and the source half behind it. */
 interface Built {
 	flows: Flows;
 	graphs: Map<string, FrameGraph>;
+	context: ProjectContext;
 }
 
 /** Back to the event loop, so a project-wide build is never one block. */
@@ -360,76 +449,103 @@ function handBack(): Promise<void> {
  * keeps each frame's source half and rebuilds only what moved.
  *
  * Freshness is still checked on read, never pushed: the fs watcher is a
- * courtesy (`events.ts`), and the standing law is that the pull side rehashes
+ * courtesy (`events.ts`), and the standing law is that the pull side checks
  * on request so a missed event costs a refresh and never a stale document.
- * Reading and digesting a whole project is milliseconds — the old cost was
- * doing it once per frame instead of once.
+ * The check is a stat per path wherever a witness can vouch for a frame
+ * (`source-witness.ts`), and the frame's bytes wherever it cannot, and for
+ * every frame at least once a minute.
+ *
+ * `clock` tells the file system's time as a read begins, a seam for tests
+ * that need files written a moment ago to count as settled.
  */
-export function createFlowGraph() {
+export function createFlowGraph(options: { clock?: (designDir: string) => number | undefined } = {}) {
+	const clock = options.clock ?? diskNow;
 	const kept = new Map<string, Map<string, FrameEntry>>();
 	/** design-relative shared/ path → the frames whose graph reaches it. */
 	const users = new Map<string, Map<string, string[]>>();
+	/**
+	 * Projects whose kept entries moved since the last build that finished. A
+	 * build that throws part way has already replaced some entries, and the
+	 * next one sees them stand; this is what still knows the shared index and
+	 * the last result predate them.
+	 */
+	const moved = new Set<string>();
+	const results = new Map<string, Built>();
+	/** When each project's frames were last all proven by their bytes. */
+	const provenFully = new Map<string, number>();
 	const running = new Map<string, Promise<Built>>();
 	const queued = new Map<string, Promise<Built>>();
 
-	function graphFor(
-		pass: SourcePass,
+	/**
+	 * One frame's source half, and whether proving it took a read from disk. A
+	 * witness that still holds is the whole proof; without one, or when it no
+	 * longer holds, the frame is proven by its bytes exactly as before
+	 * witnesses, and a fresh witness is taken for the next read.
+	 */
+	function entryFor(
+		root: string,
+		disk: ReadPass,
 		entries: Map<string, FrameEntry>,
 		frame: string,
-		frameDir: string | undefined,
-	): FrameGraph {
-		if (frameDir === undefined) {
-			entries.delete(frame);
-			return { frame, files: [], folder: [], imports: [], sites: [], unreadable: [], hash: EMPTY_SOURCE_HASH };
-		}
+		dir: string,
+	): { entry: FrameEntry | undefined; fromDisk: boolean } {
+		const { pass, looks, since } = disk;
 		const known = entries.get(frame);
-		const folder = pass.folder(frameDir);
+		// discovery spells a frame by its real folder, so a kept entry's own folder
+		// is the one discovered; the witness vouches it is still no link, and then
+		// nothing is read for the boundary to refuse
+		if (!disk.full && known?.witness !== undefined && known.dir === dir && witnessHolds(known.witness, looks)) {
+			return { entry: known, fromDisk: false };
+		}
+		const frameDir = insideDesign(disk.inside, dir);
+		if (frameDir === undefined) {
+			if (entries.delete(frame)) moved.add(root);
+			return { entry: undefined, fromDisk: false };
+		}
+		const listing = pass.listing(frameDir);
 		if (
 			known !== undefined &&
 			known.dir === frameDir &&
-			sameFiles(known.folder, folder) &&
+			sameFiles(known.folder, listing.files) &&
 			fingerprintOf(pass, known.files) === known.fingerprint &&
 			sameImports(pass, known.imports)
 		) {
-			const { files, imports, sites, unreadable, hash, links, invalidLinks, parseFailure } = known;
-			return {
-				frame,
-				files,
-				folder,
-				imports,
-				sites,
-				unreadable,
-				hash,
-				...(links === undefined ? {} : { links }),
-				...(invalidLinks === undefined ? {} : { invalidLinks }),
-				...(parseFailure === undefined ? {} : { parseFailure }),
-			};
+			known.witness = witnessSource(pass.designDir, frameDir, listing, known, since, looks);
+			return { entry: known, fromDisk: true };
 		}
 		const source = frameSourceIn(pass, frameDir);
+		const hash = sourceHash(pass, source.files);
 		const entry: FrameEntry = {
 			dir: frameDir,
 			folder: source.folder,
 			files: source.files,
 			imports: source.imports,
 			fingerprint: fingerprintOf(pass, source.files),
-			hash: sourceHash(pass, source.files),
-			sites: source.sites,
-			unreadable: source.unreadable,
-			...(source.links === undefined ? {} : { links: source.links }),
-			...(source.invalidLinks === undefined ? {} : { invalidLinks: source.invalidLinks }),
-			...(source.parseFailure === undefined ? {} : { parseFailure: source.parseFailure }),
+			hash,
+			witness: witnessSource(pass.designDir, frameDir, listing, source, since, looks),
+			graph: { frame, ...source, hash },
 		};
 		entries.set(frame, entry);
-		return { frame, ...source, hash: entry.hash };
+		moved.add(root);
+		return { entry, fromDisk: true };
 	}
 
 	/** Which frames a shared file reaches, so an edit there wakes only them. */
 	function reindex(root: string, designDir: string, entries: Map<string, FrameEntry>): void {
 		const index = new Map<string, string[]>();
+		const sharedDir = join(designDir, "shared") + sep;
+		// a shared file is in hundreds of graphs, and spelled once
+		const spelled = new Map<string, string>();
 		for (const [frame, entry] of entries) {
 			for (const file of entry.files) {
-				const path = designRelativePath(designDir, file);
-				if (!path.startsWith("shared/")) continue;
+				// graph files are real paths inside design/, so the folder alone says
+				// which are shared, and only those need spelling out
+				if (!file.startsWith(sharedDir)) continue;
+				let path = spelled.get(file);
+				if (path === undefined) {
+					path = designRelativePath(designDir, file);
+					spelled.set(file, path);
+				}
 				const reached = index.get(path);
 				if (reached === undefined) index.set(path, [frame]);
 				else reached.push(frame);
@@ -439,34 +555,62 @@ export function createFlowGraph() {
 	}
 
 	async function build(root: string): Promise<Built> {
+		const designDir = realDesignDir(root);
+		// before anything is read: a path that changed after this is never witnessed
+		const since = clock(designDir);
+		const startedAt = performance.now();
+		const full = startedAt - (provenFully.get(root) ?? Number.NEGATIVE_INFINITY) >= FULL_PROOF_MS;
 		const dirs = frameDirectories(root);
 		const frames = [...dirs.keys()];
-		const alive = new Set(frames);
-		const context: FlowContext = {
-			exists: alive,
-			verified: verifiedWitness(root, alive),
-			rendered: createRenderedReader(root),
-			scenarios: projectScenarios(root).hash,
-		};
-		const pass = createSourcePass(realDesignDir(root));
+		const last = results.get(root);
+		const context = readContext(root, frames, last?.context);
+		const pass = createSourcePass(designDir);
+		const disk: ReadPass = { pass, looks: createLooks(), inside: designPathResolver(designDir), since, full };
 		const entries = kept.get(root) ?? new Map<string, FrameEntry>();
 		kept.set(root, entries);
+		if (!users.has(root)) moved.add(root);
 
 		const graphs = new Map<string, FrameGraph>();
 		const edges: FlowEdge[] = [];
 		const unreadable: FlowUnreadable[] = [];
+		let witnessed = 0;
 		for (const [frame, dir] of dirs) {
-			const graph = graphFor(pass, entries, frame, insideDesign(pass.designDir, dir));
-			const derived = frameFlows(graph, context);
-			graphs.set(frame, graph);
-			edges.push(...derived.edges);
-			unreadable.push(...derived.unreadable);
-			// one frame, one turn: 5.5 ms of work is what makes the yield sound
-			await handBack();
+			const { entry, fromDisk } = entryFor(root, disk, entries, frame, dir);
+			if (entry === undefined) {
+				const graph = {
+					frame,
+					files: [],
+					folder: [],
+					imports: [],
+					sites: [],
+					unreadable: [],
+					hash: EMPTY_SOURCE_HASH,
+				};
+				graphs.set(frame, graph);
+				const derived = frameFlows(graph, context.flow);
+				edges.push(...derived.edges);
+				unreadable.push(...derived.unreadable);
+				continue;
+			}
+			graphs.set(frame, entry.graph);
+			if (entry.derived?.context !== context) {
+				entry.derived = { context, ...frameFlows(entry.graph, context.flow) };
+			}
+			edges.push(...entry.derived.edges);
+			unreadable.push(...entry.derived.unreadable);
+			// a frame read from disk is one turn: 5.5 ms of work is what makes the
+			// yield sound; a witnessed one is microseconds, and shares its turn
+			if (fromDisk || ++witnessed % WITNESSED_PER_TURN === 0) await handBack();
 		}
-		for (const frame of [...entries.keys()]) if (!alive.has(frame)) entries.delete(frame);
-		reindex(root, pass.designDir, entries);
-		return { flows: { frames, edges, unreadable }, graphs };
+		for (const frame of [...entries.keys()]) if (!dirs.has(frame) && entries.delete(frame)) moved.add(root);
+		if (full) provenFully.set(root, startedAt);
+		// nothing moved and the context stands: the last result is this one
+		if (!moved.has(root) && last !== undefined && last.context === context) return last;
+		reindex(root, designDir, entries);
+		moved.delete(root);
+		const built = { flows: { frames, edges, unreadable }, graphs, context };
+		results.set(root, built);
+		return built;
 	}
 
 	/**
@@ -524,9 +668,9 @@ export function createFlowGraph() {
 export type FlowGraph = ReturnType<typeof createFlowGraph>;
 
 /** A frame folder's real path, or nothing when it does not resolve. */
-function insideDesign(designDir: string, dir: string): string | undefined {
+function insideDesign(inside: (file: string) => string, dir: string): string | undefined {
 	try {
-		return resolveDesignPath(designDir, dir);
+		return inside(dir);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;

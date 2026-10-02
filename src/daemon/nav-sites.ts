@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { parse } from "@babel/parser";
 import type { Node, Program } from "@babel/types";
@@ -57,28 +57,72 @@ export interface LinksDeclaration {
 
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
-/** Files in the frame's own folder — the roots of its source graph. */
-function frameFolderFiles(designDir: string, frameDir: string): string[] {
+/**
+ * One listing of a frame's folder: its source files, the roots of its graph,
+ * and what a witness needs of the same listing (`source-witness.ts`), so the
+ * folder is read once whether or not a witness is taken.
+ */
+export interface FolderListing {
+	/** The source files, real paths, sorted. */
+	files: string[];
+	/** The folder and every folder under it; nothing when the listing failed. */
+	folders: string[] | undefined;
+	/** Whether any entry in the tree is a link. */
+	linked: boolean;
+}
+
+function listFrameFolder(designDir: string, frameDir: string): FolderListing {
+	let entries: Dirent[];
 	try {
-		return readdirSync(frameDir, { withFileTypes: true, recursive: true })
-			.filter(
-				(entry) =>
-					(entry.isFile() || entry.isSymbolicLink()) && SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext)),
-			)
-			.flatMap((entry) => {
-				const file = join(entry.parentPath, entry.name);
-				try {
-					const resolved = resolveDesignPath(designDir, file);
-					return statSync(resolved).isFile() ? [resolved] : [];
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) throw error;
-					return [];
-				}
-			});
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) throw error;
-		return [];
+		entries = readdirSync(frameDir, { withFileTypes: true, recursive: true });
+	} catch {
+		return { files: [], folders: undefined, linked: false };
 	}
+	const files: string[] = [];
+	const folders = [frameDir];
+	let linked = false;
+	for (const entry of entries) {
+		if (entry.isSymbolicLink()) linked = true;
+		if (entry.isDirectory()) folders.push(join(entry.parentPath, entry.name));
+		if (!(entry.isFile() || entry.isSymbolicLink())) continue;
+		if (!SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
+		try {
+			const resolved = resolveDesignPath(designDir, join(entry.parentPath, entry.name));
+			if (statSync(resolved).isFile()) files.push(resolved);
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+		}
+	}
+	return { files: files.sort(), folders, linked };
+}
+
+/** The one key an import's landing is memoized under: its folder and specifier. */
+export function importKey(fromFile: string, specifier: string): string {
+	return `${dirname(fromFile)}\0${specifier}`;
+}
+
+/**
+ * The paths one specifier could land on, in the order they are tried, and the
+ * two folders holding every one of them: the folder above the named path,
+ * holding each `name.ext`, and the named folder, holding each index. A landing
+ * depends on those two listings alone while no link is on the way. Nothing for
+ * a package.
+ */
+export function importCandidates(
+	designDir: string,
+	fromFile: string,
+	specifier: string,
+): { tried: string[]; folders: readonly [holding: string, named: string] } | undefined {
+	if (!specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("shared/")) {
+		return undefined;
+	}
+	const base = join(specifier.startsWith("shared/") ? designDir : dirname(fromFile), specifier);
+	const tried = [
+		base,
+		...SOURCE_EXTENSIONS.map((ext) => `${base}${ext}`),
+		...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`)),
+	].filter((candidate) => SOURCE_EXTENSIONS.some((ext) => candidate.endsWith(ext)));
+	return { tried, folders: [dirname(base), base] };
 }
 
 /**
@@ -88,16 +132,7 @@ function frameFolderFiles(designDir: string, frameDir: string): string[] {
  * imports in design/ are actually spelled.
  */
 export function resolveLocalImport(designDir: string, fromFile: string, specifier: string): string | undefined {
-	if (!specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("shared/"))
-		return undefined;
-	const base = join(specifier.startsWith("shared/") ? designDir : dirname(fromFile), specifier);
-	const candidates = [
-		base,
-		...SOURCE_EXTENSIONS.map((ext) => `${base}${ext}`),
-		...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`)),
-	];
-	for (const candidate of candidates) {
-		if (!SOURCE_EXTENSIONS.some((ext) => candidate.endsWith(ext))) continue;
+	for (const candidate of importCandidates(designDir, fromFile, specifier)?.tried ?? []) {
 		try {
 			const resolved = resolveDesignPath(designDir, candidate);
 			if (statSync(resolved).isFile()) return resolved;
@@ -139,7 +174,15 @@ interface FileRead {
 export function createSourcePass(designDir: string) {
 	const files = new Map<string, FileRead>();
 	const specifiers = new Map<string, string | undefined>();
-	const folders = new Map<string, string[]>();
+	const folders = new Map<string, FolderListing>();
+
+	function listing(frameDir: string): FolderListing {
+		const known = folders.get(frameDir);
+		if (known !== undefined) return known;
+		const found = listFrameFolder(designDir, frameDir);
+		folders.set(frameDir, found);
+		return found;
+	}
 
 	function read(file: string): FileRead {
 		const known = files.get(file);
@@ -187,7 +230,7 @@ export function createSourcePass(designDir: string) {
 
 		/** Where one import lands, resolved once per importing folder. */
 		resolve(fromFile: string, specifier: string): string | undefined {
-			const key = `${dirname(fromFile)}\0${specifier}`;
+			const key = importKey(fromFile, specifier);
 			const known = specifiers.get(key);
 			if (known !== undefined || specifiers.has(key)) return known;
 			const found = resolveLocalImport(designDir, fromFile, specifier);
@@ -197,12 +240,11 @@ export function createSourcePass(designDir: string) {
 
 		/** The frame folder's own source files, sorted — the roots of its graph. */
 		folder(frameDir: string): string[] {
-			const known = folders.get(frameDir);
-			if (known !== undefined) return known;
-			const found = frameFolderFiles(designDir, frameDir).sort();
-			folders.set(frameDir, found);
-			return found;
+			return listing(frameDir).files;
 		},
+
+		/** The frame folder's one listing: its files and its folders both. */
+		listing,
 	};
 }
 

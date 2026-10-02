@@ -1,8 +1,8 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
-import type { Flows } from "./flows";
+import { createFlowGraph, type Flows } from "./flows";
 
 /**
  * The flow layer over the Hono seam (#34): the map is read, not walked —
@@ -391,6 +391,182 @@ describe("the kept graph", () => {
 		expect(flows.frames).toEqual(["cart"]);
 		// the survivor still claims the walk; the target is simply gone now
 		expect(flows.edges).toMatchObject([{ from: "cart", to: "checkout", missing: true }]);
+	});
+});
+
+/**
+ * The same moves with every path settled, so a frame is proven by its witness
+ * rather than its bytes (`source-witness.ts`): a clock an hour ahead makes a
+ * file written a moment ago count as long untouched. Each case is one input the
+ * source half depends on, moving in a way only its stat can show.
+ */
+describe("the witnessed graph", () => {
+	const settledGraph = () => createFlowGraph({ clock: () => Date.now() + 3_600_000 });
+	const edgesOf = async (graph: ReturnType<typeof settledGraph>, root: string) =>
+		(await graph.flows(root)).edges.map((edge) => `${edge.from} -> ${edge.to}`);
+
+	it("drops a frame whose folder is swapped for a link, as discovery does", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "start", goTsx(["end"]));
+		writeFrame(root, "end", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual(["start -> end"]);
+
+		// the very folder, files and all, now reached through a link
+		const away = join(makeTempDir(), "start");
+		renameSync(join(root, "design", "frames", "start"), away);
+		symlinkSync(away, join(root, "design", "frames", "start"));
+
+		// a link is never a frame folder, however unmoved what it reaches
+		expect((await graph.flows(root)).frames).toEqual(["end"]);
+	});
+
+	it("reindexes shared readers after a read that refused part way", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const mounts = `import { Old } from "../../shared/old";\nexport default () => <Old />;\n`;
+		writeDesignFile(root, "shared/old.tsx", "export const Old = () => <div />;\n");
+		writeFrame(root, "m", mounts);
+		writeFrame(root, "a", plainTsx);
+		writeFrame(root, "z", plainTsx);
+		const graph = settledGraph();
+		await graph.flows(root);
+		expect(graph.framesUsing(root, "shared/old.tsx")).toEqual(["m"]);
+
+		// "a" is rebuilt, then "z" is refused: a link out of design/
+		writeFrame(root, "a", mounts);
+		const outside = join(makeTempDir(), "out.tsx");
+		writeFileSync(outside, plainTsx);
+		const link = join(root, "design", "frames", "z", "out.tsx");
+		symlinkSync(outside, link);
+		await expect(graph.flows(root)).rejects.toThrow(/design boundary/);
+		rmSync(link);
+
+		// "a" already stands on its new entry, so nothing looks moved this read
+		await graph.flows(root);
+		expect(graph.framesUsing(root, "shared/old.tsx")).toEqual(["a", "m"]);
+	});
+
+	it("sees a same-size rewrite of a frame's own file", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "cart", goTsx(["one"]));
+		writeFrame(root, "one", plainTsx);
+		writeFrame(root, "two", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual(["cart -> one"]);
+		expect(await edgesOf(graph, root)).toEqual(["cart -> one"]);
+
+		writeFrame(root, "cart", goTsx(["two"]));
+
+		expect(await edgesOf(graph, root)).toEqual(["cart -> two"]);
+	});
+
+	it("sees a file dropped into a frame's subfolder", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "cart", plainTsx);
+		writeDesignFile(root, "frames/cart/parts/a.tsx", "export const A = 1;\n");
+		writeFrame(root, "one", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual([]);
+
+		writeDesignFile(root, "frames/cart/parts/b.tsx", `export const B = () => <a data-go="one">go</a>;\n`);
+
+		expect(await edgesOf(graph, root)).toEqual(["cart -> one"]);
+	});
+
+	it("sees a shared file two hops out change", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="one">on</a>;\n`);
+		writeFrame(root, "start", `import { Go } from "../../shared/ui/go";\nexport default () => <Go />;\n`);
+		writeFrame(root, "one", plainTsx);
+		writeFrame(root, "two", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual(["start -> one"]);
+
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="two">on</a>;\n`);
+
+		expect(await edgesOf(graph, root)).toEqual(["start -> two"]);
+		expect(graph.framesUsing(root, "shared/ui/go.tsx")).toEqual(["start"]);
+	});
+
+	it("sees an import start landing once the file it names is written", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "start", `import { Row } from "./row";\nexport default () => <Row />;\n`);
+		writeFrame(root, "end", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual([]);
+
+		// outside the frame's folder, so only the folder the specifier sits in moves
+		writeFrame(root, "start", `import { Row } from "../../shared/row";\nexport default () => <Row />;\n`);
+		expect(await edgesOf(graph, root)).toEqual([]);
+		writeDesignFile(root, "shared/row.tsx", `export const Row = () => <a data-go="end">go</a>;\n`);
+
+		expect(await edgesOf(graph, root)).toEqual(["start -> end"]);
+	});
+
+	it("sees an index written into the folder an import names", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, "shared/kit/readme.md", "a folder with no index yet\n");
+		writeFrame(root, "start", `import { Kit } from "../../shared/kit";\nexport default () => <Kit />;\n`);
+		writeFrame(root, "end", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual([]);
+
+		writeDesignFile(root, "shared/kit/index.tsx", `export const Kit = () => <a data-go="end">go</a>;\n`);
+
+		expect(await edgesOf(graph, root)).toEqual(["start -> end"]);
+	});
+
+	it("sees a linked candidate start landing when the file it points at is written", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, "shared/deep/keep.md", "the folder the link points into\n");
+		writeFrame(root, "start", `import { Part } from "../../shared/part";\nexport default () => <Part />;\n`);
+		writeFrame(root, "end", plainTsx);
+		// dangling for now: neither the folder holding the link nor the one the
+		// import names will move when its target is written
+		symlinkSync(join(root, "design", "shared", "deep", "later.tsx"), join(root, "design", "shared", "part.tsx"));
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual([]);
+
+		writeDesignFile(root, "shared/deep/later.tsx", `export const Part = () => <a data-go="end">go</a>;\n`);
+
+		expect(await edgesOf(graph, root)).toEqual(["start -> end"]);
+	});
+
+	it("sees a linked file in a frame's folder pointed elsewhere", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, "shared/x/part.tsx", `export const Part = () => <a data-go="one">go</a>;\n`);
+		writeDesignFile(root, "shared/y/part.tsx", `export const Part = () => <a data-go="two">go</a>;\n`);
+		writeFrame(root, "start", plainTsx);
+		writeFrame(root, "one", plainTsx);
+		writeFrame(root, "two", plainTsx);
+		// the link in the folder never changes: the folder link it passes through does
+		const through = join(root, "design", "shared", "through");
+		symlinkSync(join(root, "design", "shared", "x"), through);
+		symlinkSync(join(through, "part.tsx"), join(root, "design", "frames", "start", "part.tsx"));
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual(["start -> one"]);
+
+		const next = join(root, "design", "shared", ".next");
+		symlinkSync(join(root, "design", "shared", "y"), next);
+		renameSync(next, through);
+
+		expect(await edgesOf(graph, root)).toEqual(["start -> two"]);
+	});
+
+	it("sees a frame renamed and a frame removed", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "cart", goTsx(["one"]));
+		writeFrame(root, "one", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual(["cart -> one"]);
+
+		renameSync(join(root, "design", "frames", "cart"), join(root, "design", "frames", "basket"));
+		expect(await edgesOf(graph, root)).toEqual(["basket -> one"]);
+		rmSync(join(root, "design", "frames", "one"), { recursive: true });
+
+		const flows = await graph.flows(root);
+		expect(flows.frames).toEqual(["basket"]);
+		expect(flows.edges).toMatchObject([{ from: "basket", to: "one", missing: true }]);
 	});
 });
 
