@@ -250,21 +250,31 @@ export type BoothQueue = ReturnType<typeof createBoothQueue>;
 
 /**
  * Whether a frame's picture depends on the colour scheme it is shown in, read
- * off its compiled document: a `prefers-color-scheme` query in its styles or its
- * own code (Tailwind's `dark:` compiles to one), or a `color-scheme` that lets
- * the browser choose between light and dark. A false positive costs one more
- * picture when the scheme changes; a frame that reads the scheme only through
- * a vendored package is the miss, and its next edit corrects it.
+ * off its compiled document: a `prefers-color-scheme` query in its stylesheets
+ * (Tailwind's `dark:` compiles to one), a `color-scheme` there or in a meta tag
+ * that lets the browser choose between light and dark, or code that asks
+ * `matchMedia` for the scheme. Only the stylesheets are searched for the query
+ * itself: a module that merely carries the words as data (Spool's own canvas
+ * has one, in a list of Tailwind variants bundled into four hundred frames) is
+ * not a frame that follows the scheme. A false positive costs one more picture
+ * when the scheme changes; a frame that reads the scheme only through a
+ * vendored package is the miss, and its next edit corrects it.
  */
 export function followsColorScheme(document: string): boolean {
+	const styles = [...document.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)]
+		.map((match) => match[1] ?? "")
+		.join("\n");
 	return (
-		document.includes("prefers-color-scheme") ||
-		/color-scheme\s*:[^;}"'<]*\blight\b[^;}"'<]*\bdark\b|color-scheme\s*:[^;}"'<]*\bdark\b[^;}"'<]*\blight\b/i.test(
-			document,
-		) ||
+		styles.includes("prefers-color-scheme") ||
+		BOTH_SCHEMES.test(styles) ||
+		/matchMedia\(\s*["'`][^"'`]*prefers-color-scheme/.test(document) ||
 		/<meta[^>]*color-scheme[^>]*content=["'][^"']*(?:light[^"']*dark|dark[^"']*light)/i.test(document)
 	);
 }
+
+/** A `color-scheme` naming both, in either order. */
+const BOTH_SCHEMES =
+	/color-scheme\s*:[^;}"'<]*\blight\b[^;}"'<]*\bdark\b|color-scheme\s*:[^;}"'<]*\bdark\b[^;}"'<]*\blight\b/i;
 
 export type BoothCompile = { kind: "ok"; document: string } | { kind: "error"; message: string } | { kind: "missing" };
 

@@ -189,6 +189,14 @@ describe("whether a picture follows the colour scheme", () => {
 		expect(followsColorScheme('<meta name="color-scheme" content="light dark">')).toBe(true);
 	});
 
+	it("does not count a module that only carries the words as data", () => {
+		// Spool's own canvas bundles a list of Tailwind variants into hundreds of frames
+		expect(
+			followsColorScheme('<script type="module">const when = "@media (prefers-color-scheme: dark)";</script>'),
+		).toBe(false);
+		expect(followsColorScheme('<script type="module">const css = "color-scheme: light dark";</script>')).toBe(false);
+	});
+
 	it("leaves a frame that settles on one scheme alone", () => {
 		expect(followsColorScheme("<style>:root{color-scheme:dark}</style><main>night</main>")).toBe(false);
 		expect(followsColorScheme("<style>:root{color-scheme: light}</style>")).toBe(false);
