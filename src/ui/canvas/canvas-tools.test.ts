@@ -315,14 +315,10 @@ it("clears borrowed Select previews across Command release and window blur", asy
 
 	expect(host.querySelector(".opacity-50")).toBeNull();
 
+	// pressing ⌘ again asks the frame under the resting pointer at once,
+	// and the frame answers well inside the canvas's wait for a reply
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: ACCEL_KEY, ...ACCEL, bubbles: true }));
-		await new Promise((resolve) => setTimeout(resolve, 90));
-	});
-	await act(async () => {
-		canvas?.dispatchEvent(
-			new PointerEvent("pointermove", { bubbles: true, clientX: 50, clientY: 50, pointerId: 2, ...ACCEL }),
-		);
 	});
 	const secondPick = postMessage.mock.calls
 		.map(([message]) => message)
