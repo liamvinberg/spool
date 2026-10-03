@@ -1680,6 +1680,9 @@ export function createDaemonApp({
 					...(await summarizeProject(project.root)),
 				})),
 			);
+			// the registry appends a project the first time it is opened, so of two
+			// opened in the same millisecond the later entry is the more recent
+			projects.reverse();
 			projects.sort((a, b) => b.openedAt.localeCompare(a.openedAt));
 			return c.json({ projects });
 		})

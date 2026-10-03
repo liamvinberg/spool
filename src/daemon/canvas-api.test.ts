@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Cover } from "../cover";
 import { FORMAT_VERSION } from "../templates";
 import {
@@ -248,6 +248,23 @@ describe("the project registry for home", () => {
 			covers: [{ frame: "cart", cover: cart }],
 		});
 		expect(projects[1]).toMatchObject({ frameCount: 1, covers: [] });
+	});
+
+	it("lists the later of two projects opened in the same millisecond first", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-03T12:00:00.000Z") });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const older = makeProject(spoolDir);
+		const newer = makeProject(spoolDir);
+		vi.useRealTimers();
+
+		const res = await makeApp(spoolDir).request("/api/projects");
+
+		const { projects } = (await res.json()) as { projects: { name: string; openedAt: string }[] };
+		expect(projects.map((p) => p.openedAt)).toEqual(["2026-10-03T12:00:00.000Z", "2026-10-03T12:00:00.000Z"]);
+		expect(projects.map((p) => p.name)).toEqual([newer.name, older.name]);
 	});
 
 	it("summarizes across pages: three freshest covers, one folder name on two pages counted twice", async () => {
