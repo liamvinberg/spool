@@ -98,6 +98,7 @@ import {
 	pngFileName,
 } from "./frame-export";
 import { FrameLabel, LabelField } from "./frame-label";
+import { createFrameReads } from "./frame-reads";
 import { FrameShell, FrameSlot, ShellClip } from "./frame-shell";
 import {
 	askText,
@@ -385,6 +386,8 @@ export function ProjectCanvas({
 	const sharing = useCanvasSharing(project, sharingAvailable, camera);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
+	// every read of the frame list, and the covers heard between them (frame-reads.ts)
+	const [frameReads] = useState(createFrameReads);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
 	// the arrows toggle (#34): per-project, default on — the map is spool's identity
 	const [arrowsOn, setArrowsOn] = useState(true);
@@ -818,17 +821,21 @@ export function ProjectCanvas({
 	 * the hash is the address, so a new one is a new URL and the swap needs no
 	 * nonce of its own.
 	 */
-	const noteCover = useCallback((frame: string, cover: Cover) => {
-		setFrames((current) => {
-			// The booth photographs a frame that did not change to the same bytes, so
-			// the same address. A picture the canvas already shows is not worth a
-			// render of the whole canvas.
-			if (!current.some((entry) => entry.name === frame && entry.cover?.hash !== cover.hash)) return current;
-			return current.map((entry) =>
-				entry.name === frame && entry.cover?.hash !== cover.hash ? { ...entry, cover } : entry,
-			);
-		});
-	}, []);
+	const noteCover = useCallback(
+		(frame: string, cover: Cover) => {
+			frameReads.note(frame, cover);
+			setFrames((current) => {
+				// The booth photographs a frame that did not change to the same bytes, so
+				// the same address. A picture the canvas already shows is not worth a
+				// render of the whole canvas.
+				if (!current.some((entry) => entry.name === frame && entry.cover?.hash !== cover.hash)) return current;
+				return current.map((entry) =>
+					entry.name === frame && entry.cover?.hash !== cover.hash ? { ...entry, cover } : entry,
+				);
+			});
+		},
+		[frameReads],
+	);
 
 	// A pointing tool owns every frame represented by its element picks. Without
 	// picks, the selected frame and entered-frame modifier keep their intent.
@@ -1087,16 +1094,20 @@ export function ProjectCanvas({
 	}, [notice]);
 
 	const refetchFrames = useCallback(async () => {
+		const ticket = frameReads.ask();
 		const projection = await fetchProjection(project);
 		if (projection === undefined) return;
-		setFrames(projection.frames);
+		const projected = frameReads.settle(ticket, projection.frames);
+		// a read asked later has landed already, and it knows more than this one
+		if (projected === undefined) return;
+		setFrames(projected);
 		setPages(projection.pages);
 		// lenient on the way in, like every other read of a durable: a projection
 		// with nothing to say about places leaves the field with no pages on it
 		// rather than with nothing on it
 		setPlaces(projection.places ?? {});
 		setLoaded(true);
-	}, [project]);
+	}, [frameReads, project]);
 
 	/**
 	 * What nobody has looked at (seen.ts), as the projection says minus what this
@@ -3717,6 +3728,7 @@ export function ProjectCanvas({
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
+		let opened = false;
 		return subscribeSse(
 			`/api/p/${encodeURIComponent(project)}/events`,
 			{
@@ -3724,6 +3736,11 @@ export function ProjectCanvas({
 					const view = (data as { view?: unknown }).view;
 					viewStream.current = typeof view === "string" ? view : null;
 					tellView();
+					// the stream tells every change from here on; one made before it
+					// opened, after the canvas's first read was answered, is in a read
+					// asked now (a stream that comes back resyncs the same way)
+					if (!opened) void refetchFrames();
+					opened = true;
 				},
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
