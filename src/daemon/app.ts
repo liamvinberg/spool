@@ -261,12 +261,18 @@ const PLAYER_HANDOFF_TTL_MS = 30_000;
 /** Browser handoffs are deliberately short and bounded: issuing the control document is a public GET. */
 const MAX_PLAYER_HANDOFFS = 64;
 /**
- * How long after the last design/ change a played project is recomposed in
+ * How long after the last design/ change a project is recomposed for play in
  * the background. The composition is whole-project, so an edit anywhere
  * retires it; recomposing once the editor goes quiet means the next play
  * finds it ready instead of paying the compile behind a blank screen.
  */
 const PLAYER_WARM_MS = 1_500;
+/**
+ * The longest a composition for play defers to a busy booth. The booth takes
+ * what a canvas shows first, so this is long enough for the screen in view and
+ * short of the minutes a whole unpictured project takes.
+ */
+const PLAYER_BOOTH_PATIENCE_MS = 30_000;
 
 /** A JSON body as fields to read, whatever arrived. */
 const bodyFields = (value: unknown): Record<string, unknown> =>
@@ -514,28 +520,53 @@ export function createDaemonApp({
 		return { start: frame ?? selected ?? first, projection };
 	}
 	/**
-	 * Projects this daemon has played, kept composed (#24): the first play
-	 * subscribes the root to its own change stream, and every edit that
-	 * retires the composition rebuilds it once the edits go quiet. Never before
-	 * a first play — a project nobody is playing is not worth a watcher.
+	 * Projects kept composed for play (#24): a project is composed while a canvas
+	 * has it open and once it has been played, so a press of play finds it ready
+	 * instead of building every frame behind a blank screen, and every edit that
+	 * retires the composition rebuilds it once the edits go quiet. Composing
+	 * waits until the booth has nothing waiting, because the stills are what an
+	 * open canvas is waiting on, but no longer than the booth's patience: a
+	 * project with hundreds of frames to picture keeps it busy for minutes. A
+	 * project only a canvas kept warm goes cold when its last canvas closes.
 	 */
 	const playerWarmers = new Map<string, () => void>();
+	const playedRoots = new Set<string>();
 	function keepPlayerWarm(root: string): void {
 		if (playerWarmers.has(root)) return;
 		let timer: NodeJS.Timeout | undefined;
-		const unsubscribe = hub.subscribe(root, (event) => {
-			if (event.kind !== "frame" && event.kind !== "shared") return;
+		/** When the wait for this composition began, so a booth that stays busy cannot defer it for good. */
+		let waitingSince: number | undefined;
+		const composeOnceBoothIdle = () => {
+			timer = undefined;
+			const boothBusy = sittings.waiting > 0 || sittings.busy > 0;
+			if (boothBusy && Date.now() - (waitingSince ?? 0) < PLAYER_BOOTH_PATIENCE_MS) {
+				arm();
+				return;
+			}
+			waitingSince = undefined;
+			void playerCompiler.getBundle(root, listProjectFrames(root).frames);
+		};
+		const arm = () => {
+			waitingSince ??= Date.now();
 			if (timer !== undefined) clearTimeout(timer);
-			timer = setTimeout(() => {
-				timer = undefined;
-				void playerCompiler.getBundle(root, listProjectFrames(root).frames);
-			}, PLAYER_WARM_MS);
+			timer = setTimeout(composeOnceBoothIdle, PLAYER_WARM_MS);
 			timer.unref?.();
+		};
+		const unsubscribe = hub.subscribe(root, (event) => {
+			if (event.kind === "frame" || event.kind === "shared") arm();
 		});
+		arm();
 		playerWarmers.set(root, () => {
 			if (timer !== undefined) clearTimeout(timer);
 			unsubscribe();
 		});
+	}
+	function letPlayerCool(root: string): void {
+		if (playedRoots.has(root)) return;
+		for (const view of views.values()) if (view.root === root) return;
+		playerWarmers.get(root)?.();
+		playerWarmers.delete(root);
+		void playerCompiler.forget(root);
 	}
 	const flowGraph = createFlowGraph();
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
@@ -3076,6 +3107,8 @@ export function createDaemonApp({
 						}),
 					);
 				}
+				// marked before composing, so a canvas closing meanwhile never lets it cool
+				playedRoots.add(project.root);
 				const compiled = await playerCompiler.getBundle(project.root, projection.frames);
 				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
 				keepPlayerWarm(project.root);
@@ -3130,9 +3163,11 @@ export function createDaemonApp({
 				// the name this canvas tells the booth what it shows under
 				const view = randomUUID();
 				views.set(view, { root: project.root, scheme: undefined });
+				keepPlayerWarm(project.root);
 				stream.onAbort(() => {
 					views.delete(view);
 					sittings.view(view, undefined);
+					letPlayerCool(project.root);
 				});
 				await stream.writeSSE({ event: "hello", data: JSON.stringify({ project: name, view }), id: String(id++) });
 				const unsubscribe = hub.subscribe(project.root, (event) => {

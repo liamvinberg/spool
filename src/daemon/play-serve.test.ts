@@ -1,6 +1,14 @@
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { compositionOf, makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { describe, expect, it, onTestFinished } from "vitest";
+import {
+	compositionOf,
+	makeApp,
+	makeProject,
+	makeTempDir,
+	sseReader,
+	writeDesignFile,
+	writeFrame,
+} from "../test-helpers";
 
 /**
  * The player page (#24), exercised at the serve seam: one light document under
@@ -256,6 +264,36 @@ describe("serving the player", () => {
 		const scanned = await stylesOf();
 		expect(scanned.landing).toContain(".m-3");
 		expect(scanned.names.guide).toBe(themed.names.guide);
+
+		// a file that now wins an import no input's bytes changed for, seen by the
+		// next build: the composition is cached by its inputs' bytes, as a frame
+		// document is, so it is another edit that retires it
+		writeDesignFile(root, "frames/landing/card.ts", 'export const card = "mt-5";\n');
+		writeFrame(
+			root,
+			"landing",
+			'import { card } from "./card"; export default () => <main className={card}>landing</main>;\n',
+		);
+		expect((await stylesOf()).landing).toContain(".mt-5");
+		writeDesignFile(root, "frames/landing/card.tsx", 'export const card = "mt-9";\n');
+		writeDesignFile(root, "frames/guide/guide.css", ".guide-only { color: teal; }\n");
+		const shadowed = await stylesOf();
+		expect(shadowed.landing).toContain(".mt-9");
+		expect(shadowed.landing).not.toContain(".mt-5");
+	});
+
+	it("composes a project for play once a canvas opens it", { timeout: 20_000 }, async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = scaffold(spoolDir);
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+
+		const events = sseReader(await app.request(`/api/p/${name}/events`, { signal: controller.signal }));
+		await events.next();
+		// past the warm delay and a three-frame compile, so the first play only reads it
+		await new Promise((wait) => setTimeout(wait, 5_000));
+		expect((await app.request(`/play/${name}`)).headers.get("x-spool-cache")).toBe("hit");
 	});
 
 	it("starts at ?frame= and 404s a frame that is not there, loudly", async () => {
