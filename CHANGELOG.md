@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.26.1
+
+### Patch Changes
+
+- edb9be5: Play opens much sooner. While a project's canvas is open, Spool prepares play in the background, so pressing play a moment after opening a project no longer waits for every frame to build. After an edit, only the frames that changed are built again. On a project of 859 frames, the first play takes about half a second instead of 12, and playing right after an edit takes under a second instead of about nine.
+- bc68a38: Panning and zooming stay smooth past heavy live frames. A frame that draws a big 3D scene could hold the whole canvas to a few frames a second while it played. Now, when a pan or zoom starts missing frames, the live frames you are not inside show their pictures until the camera stops, then carry on playing.
+- 48ef2ea: Frame names no longer flash over other frames while you zoom. A name whose frame had left the screen could be left standing where an earlier zoom put it, on top of a different frame.
+- f4fc1a1: Frame pictures made before this version are taken again once, in the background. Pictures from before 0.26 came out blank for frames that draw in 3D, animate or open a dialog, and stayed blank until the frame was edited. On a big project the retake takes a few minutes the first time Spool opens it.
+
 ## 0.26.0
 
 ### Minor Changes
