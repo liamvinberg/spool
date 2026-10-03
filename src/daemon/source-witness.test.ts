@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { makeTempDir } from "../test-helpers";
@@ -44,6 +44,11 @@ it("takes no witness of a folder holding a link", () => {
 
 it("stops holding once a file in it is rewritten at the same size", () => {
 	const { dir, file } = oneFile("export const a = 1;\n");
+	// written an hour ago, as the read an hour from now takes it to be: a rewrite
+	// inside the same timestamp tick as the first write (4 ms on Linux) is the one
+	// change a stat cannot see, which is why a witness waits for paths to settle
+	const settled = new Date(Date.now() - 3_600_000);
+	utimesSync(file, settled, settled);
 	const source = { files: [file], imports: [] };
 	const witness = witnessSource(dir, dir, listed(dir, file), source, Date.now() + 3_600_000, createLooks());
 	if (witness === undefined) throw new Error("expected a witness");
