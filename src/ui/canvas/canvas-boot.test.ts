@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 const frames = [{ name: "home", x: 0, y: 0, w: 100, h: 100 }];
 
@@ -156,6 +157,7 @@ function stubFetch(answer: (url: URL) => Promise<Response | undefined>): void {
 			const own = await answer(url);
 			if (own !== undefined) return own;
 			if (url.pathname === "/api/settings") return Response.json({ project: null, entries: [] });
+			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
 				return Response.json({ root: "/project", pages: [], frames });

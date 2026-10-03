@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
 import { ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 /**
  * The accel modifier as this environment binds it. Asserting against ⌘ would
@@ -590,6 +591,7 @@ function stubCanvasApis(): void {
 		vi.fn(async (input: RequestInfo | URL) => {
 			const raw = input instanceof Request ? input.url : String(input);
 			const url = new URL(raw, window.location.href);
+			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
 				return Response.json({ root: "/project", pages: [], frames });

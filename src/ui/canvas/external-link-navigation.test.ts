@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 const frames = [{ name: "origin", x: 0, y: 0, w: 1200, h: 760 }];
 
@@ -104,6 +105,7 @@ function stubCanvasApis(): void {
 		vi.fn(async (input: RequestInfo | URL) => {
 			const raw = input instanceof Request ? input.url : String(input);
 			const url = new URL(raw, window.location.href);
+			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) {
 				return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			}

@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 /**
  * A page standing on the field that holds it (#265), driven through the canvas.
@@ -238,6 +239,7 @@ async function mountCanvas(
 				written.push(JSON.parse(String(init?.body ?? "{}")));
 				return new Response(null, { status: 204 });
 			}
+			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) {
 				return Response.json({ camera: { x: 0, y: 0, k: 1 }, pageCameras: options.cameras ?? {} });
 			}

@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
 import { ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 /** The deep-select modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
@@ -204,6 +205,7 @@ function stubCanvasApis(projectedFrames = frames) {
 	const requests = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
 		const raw = input instanceof Request ? input.url : String(input);
 		const url = new URL(raw, window.location.href);
+		if (url.pathname.endsWith("/events")) return openEventStream();
 		if (url.pathname.endsWith("/state")) {
 			return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 		}

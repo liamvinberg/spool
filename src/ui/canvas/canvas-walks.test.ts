@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Flows } from "../api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 /**
  * The walk layer as the canvas drives it (#151, amended by #203): the walks
@@ -43,6 +44,7 @@ function mount(flows: Flows = FLOWS) {
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) return Response.json(PROJECTION);
 			if (url.pathname.endsWith("/flows/resolve")) return Response.json({ skipped: 0, read: 0, unavailable: 0 });

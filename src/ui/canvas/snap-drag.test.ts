@@ -6,6 +6,7 @@ import { beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
 import type { Geometry } from "../api";
 import { ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 /**
  * Where a move drag puts a frame down (#241). The math is covered beside the
@@ -129,6 +130,7 @@ function stubCanvasApis(): void {
 			const url = new URL(raw, window.location.href);
 			const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
 			asked.push({ url: url.pathname, body });
+			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
 				return Response.json({ root: "/project", pages: [], frames: ROW });

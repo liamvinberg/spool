@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
+import { openEventStream } from "./test-event-stream";
 
 /**
  * What a walk arrival costs (#110). The target's reboot is the whole of the
@@ -28,6 +29,7 @@ describe("walk arrival", () => {
 			vi.fn(async (input: RequestInfo | URL) => {
 				const raw = input instanceof Request ? input.url : String(input);
 				const url = new URL(raw, window.location.href);
+				if (url.pathname.endsWith("/events")) return openEventStream();
 				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				if (url.pathname.endsWith("/frames")) {
 					return Response.json({ root: "/project", pages: [], frames });
