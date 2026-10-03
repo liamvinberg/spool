@@ -103,6 +103,12 @@ export interface PictureReport {
 	lost: boolean;
 	/** How many times the layer has drawn, which a test can wait on. */
 	draws: number;
+	/**
+	 * Which movement of the camera it is drawing, counted from the layer's
+	 * start, or null at rest: two looks that see the same one were made across
+	 * nothing but frames of that movement.
+	 */
+	motion: number | null;
 	/** GPU bytes held by the square array and by halvings. */
 	bytes: { squares: number; halvings: number };
 	/** Loads still on their way (out with a loader, or decoded and waiting to upload), and every ask sent. */
@@ -206,6 +212,8 @@ export class PictureLayer {
 	private stamp = 0;
 	/** Whether the camera last drawn was moving, which decides how much uploads may spend. */
 	private moving = false;
+	/** How many times the camera has started moving. */
+	private motions = 0;
 	private draws = 0;
 	private instances = new Float32Array(0);
 	/** The one paint waiting for the next frame, for what landed while the camera rests (`wake`). */
@@ -306,6 +314,7 @@ export class PictureLayer {
 	 */
 	draw(camera: Camera | null, moving = false): void {
 		const stopped = this.moving && !moving;
+		if (moving && !this.moving) this.motions += 1;
 		this.moving = moving;
 		// the store says so once more when a camera comes to rest, and that
 		// camera is already on screen: drawn again only to ask for the halvings
@@ -372,6 +381,7 @@ export class PictureLayer {
 			complete: complete && !this.lost && this.gpu !== null,
 			lost: this.lost || this.gpu === null,
 			draws: this.draws,
+			motion: this.moving ? this.motions : null,
 			bytes: {
 				squares: this.gpu === null ? 0 : this.gpu.capacity * textureBytes(SQUARE_PX, SQUARE_PX, true),
 				halvings,

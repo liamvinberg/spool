@@ -460,7 +460,7 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 		const canvas = document.querySelector("[data-picture-layer]") as HTMLCanvasElement & {
 			spoolPictures: () => PictureReport;
 		};
-		const samples: { draws: number; out: number; camera: string; at: number }[] = [];
+		const samples: { draws: number; out: number; camera: string; motion: number | null; at: number }[] = [];
 		Reflect.set(window, "__samples", samples);
 		const tick = () => {
 			const now = canvas.spoolPictures();
@@ -468,6 +468,7 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 				draws: now.draws,
 				out: now.pending.out,
 				camera: JSON.stringify(now.camera),
+				motion: now.motion,
 				at: performance.now(),
 			});
 			if (Reflect.get(window, "__sampling") !== false) requestAnimationFrame(tick);
@@ -485,6 +486,7 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 		draws: number;
 		out: number;
 		camera: string;
+		motion: number | null;
 		at: number;
 	}[];
 	// the frames the camera moved in, from the first to the last
@@ -499,14 +501,18 @@ it("paints once a frame while the camera moves, with stills still landing", { ti
 	// spans several, and their paints are not one frame's
 	const gaps = during.slice(1).map((sample, i) => sample.at - (during[i]?.at ?? 0));
 	const frame = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)] ?? 16;
-	const most = Math.max(
-		...during
-			.slice(1)
-			.map((sample, i) =>
-				sample.at - (during[i]?.at ?? 0) <= frame * 1.5 ? sample.draws - (during[i]?.draws ?? 0) : 0,
-			),
-	);
-	expect(most, "paints in one animation frame of the pan").toBeLessThanOrEqual(1);
+	// and only inside one movement: a page too busy to keep up with the wheel
+	// lets the camera come to rest between ticks, and a frame that holds a rest
+	// holds the rest's own paints too, a picture that landed or a shell that
+	// mounted, before the next tick moves it again
+	const counted = during.slice(1).flatMap((sample, i) => {
+		const before = during[i];
+		if (before === undefined || sample.at - before.at > frame * 1.5) return [];
+		if (before.motion === null || sample.motion !== before.motion) return [];
+		return [sample.draws - before.draws];
+	});
+	expect(counted.length, "frames of motion to count").toBeGreaterThan(0);
+	expect(Math.max(...counted), "paints in one animation frame of the pan").toBeLessThanOrEqual(1);
 });
 
 it("keeps every paint's uploads within its share, past it only by the one texture it ends on", {
