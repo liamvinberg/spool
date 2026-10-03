@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.26.0
+
+### Minor Changes
+
+- 777979f: Spool makes frame pictures in the background, in a browser of its own, up to four times faster than before, and the canvas no longer stops to take them. Pages you have not opened get pictures too, a frame an agent edits gets its new picture within about a second whether or not a canvas is open, and pictures follow the light or dark mode your frames are shown in. A frame that stops responding keeps its last picture and says why, instead of holding up the others. `spool shot` boots in the same browser: it now waits for the frame to settle the way its picture does instead of a fixed 300 ms, and renders in the light or dark mode you see.
+
+### Patch Changes
+
+- 4b13da0: Spool installs faster and takes far less space. An npm install now fetches about 2,300 files instead of 32,000. The Mac app download and its updates are a third smaller.
+- bb71e1e: The link map and walk arrows appear sooner on big projects. On a project of 1,449 frames, reading the links again takes about 27 ms instead of 360 to 410 ms when nothing changed, and about 30 ms instead of 360 to 410 ms after an edit to one frame.
+- fb2027d: Frames that import from `shared/` compile about a third faster, and the player starts sooner on projects that use it.
+- 628a2f8: The canvas draws frame pictures on the GPU, so pages with hundreds of frames stay smooth while you pan and zoom.
+- 7a65be4: Spool stays responsive while it prepares many frames at once. A frame edited while Spool was preparing it no longer keeps showing the old version.
+- 1796c55: Sharing no longer refuses frames over ordinary code that has nothing to do with navigation. Tags like `<motion.div>` or `<Dialog.Root>` and spread props like `<button {...rest}>` used to stop a share with a navigation error. Now only a `data-go` or `ui.go` whose destination Spool can't work out stops it.
+- c31a95c: When a frame can't be shared yet, the Share panel now lists every problem, each with the file and line to fix and what to do about it. It used to show only the first one, without saying where. A missing import or a missing export no longer reads as a navigation problem.
+- e165a7f: Frames that import a shader with `?raw`, like `import fragment from "./effect.glsl?raw"`, can now be shared. They rendered on the canvas but sharing refused them, and the shader was missing from the export. Editing such a shader now also refreshes the frame on the canvas.
+- 3b28801: Mac app updates download about a third of what they did, starting with the update after this one.
+- c149666: Exported `.spool` project files are now compressed, so most come out at about half their old size or smaller. Spool keeps responding while a large project exports, and older versions of Spool can still import the new files.
+- 5ac78e3: Panning and zooming the canvas does much less work per frame, so it stays smooth on bigger pages and slower machines.
+- c92a94e: Frames and the player show their web fonts once Spool can reach them, instead of keeping the fonts they first loaded without them.
+
 ## 0.25.0
 
 ### Minor Changes
