@@ -140,6 +140,27 @@ describe("FrameLabel", () => {
 		expect(el.parentElement?.style.transform).toBe("translate(50px, 25px)");
 	});
 
+	it("hides a label it leaves behind in a zoom, so it never stands over another frame", () => {
+		const camera = cameraAt({ x: 0, y: 0, k: 0.2 });
+		act(() => vi.advanceTimersByTime(REST_MS));
+		let onScreen = true;
+		const { el } = label({ name: "landing", frameWidth: 1200, camera, near: () => onScreen });
+		const place = el.parentElement;
+		if (place === null) throw new Error("no place");
+
+		// its frame leaves the screen mid-zoom: where it last stood is now somewhere else's
+		onScreen = false;
+		act(() => camera.set({ x: 0, y: 0, k: 0.6 }));
+		expect(place.style.transform).toBe("translate(20px, 10px)");
+		expect(place.style.visibility).toBe("hidden");
+
+		// back on screen it is placed for this zoom and shown in the same frame
+		onScreen = true;
+		act(() => camera.set({ x: 0, y: 0, k: 0.7 }));
+		expect(place.style.transform).toBe("translate(70px, 35px)");
+		expect(place.style.visibility).toBe("");
+	});
+
 	it("names the frame by its own folder, since the page around it says the rest", () => {
 		const { el } = label({ name: "shop/checkout", frameWidth: 400, camera: cameraAt({ x: 0, y: 0, k: 1 }) });
 

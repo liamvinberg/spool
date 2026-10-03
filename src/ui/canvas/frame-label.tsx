@@ -58,6 +58,8 @@ export function FrameLabel({
 	const turn = useMemo(() => bucketOf(name, WIDTH_TURNS), [name]);
 	// the frames this label was drawn in while the camera moved, which its turn counts
 	const moves = useRef(0);
+	// hidden for skipping a zoom while off screen (below)
+	const offScreen = useRef(false);
 	// The label stands in screen pixels, in a field the camera only translates
 	// (`LabelField`): where its frame's top left falls at this zoom, as wide as
 	// the frame draws. Written here rather than rendered, and only when the
@@ -70,7 +72,17 @@ export function FrameLabel({
 		(at, moving) => {
 			const placed = place.current;
 			const el = label.current;
-			if (placed === null || el === null || (moving && !near(at, frame))) return;
+			if (placed === null || el === null) return;
+			if (moving && !near(at, frame)) {
+				// left where an earlier zoom put it, it would stand over some other
+				// frame once this zoom moved its own off screen, so it is hidden until
+				// it is placed again
+				if (!offScreen.current) placed.style.visibility = "hidden";
+				offScreen.current = true;
+				return;
+			}
+			if (offScreen.current) placed.style.visibility = "";
+			offScreen.current = false;
 			if (changed(at.k, frame.x, frame.y))
 				placed.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
 			const width = `${frame.w * at.k}px`;
