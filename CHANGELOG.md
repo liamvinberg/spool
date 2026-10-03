@@ -4,14 +4,14 @@
 
 ### Minor Changes
 
-- 777979f: Spool makes frame pictures in the background, in a browser of its own, up to four times faster than before, and the canvas no longer stops to take them. Pages you have not opened get pictures too, a frame an agent edits gets its new picture within about a second whether or not a canvas is open, and pictures follow the light or dark mode your frames are shown in. A frame that stops responding keeps its last picture and says why, instead of holding up the others. `spool shot` boots in the same browser: it now waits for the frame to settle the way its picture does instead of a fixed 300 ms, and renders in the light or dark mode you see.
+- 777979f: Spool makes frame pictures in the background, in a browser of its own, about three times faster than before, and the canvas no longer stops to take them. Pages you have not opened get pictures too, a frame an agent edits gets its new picture within about a second whether or not a canvas is open, and pictures follow the light or dark mode your frames are shown in. A frame that stops responding keeps its last picture and says why, instead of holding up the others. `spool shot` boots in the same browser: it now waits for the frame to settle the way its picture does instead of a fixed 300 ms, and renders in the light or dark mode you see.
 
 ### Patch Changes
 
 - 4b13da0: Spool installs faster and takes far less space. An npm install now fetches about 2,300 files instead of 32,000. The Mac app download and its updates are a third smaller.
 - bb71e1e: The link map and walk arrows appear sooner on big projects. On a project of 1,449 frames, reading the links again takes about 27 ms instead of 360 to 410 ms when nothing changed, and about 30 ms instead of 360 to 410 ms after an edit to one frame.
 - fb2027d: Frames that import from `shared/` compile about a third faster, and the player starts sooner on projects that use it.
-- 628a2f8: The canvas draws frame pictures on the GPU, so pages with hundreds of frames stay smooth while you pan and zoom.
+- 628a2f8: The canvas draws frame pictures on the GPU, so pages with hundreds of frames stay smooth while you pan and zoom, and a page of 1,000 frames reloads in under a second instead of almost two.
 - 7a65be4: Spool stays responsive while it prepares many frames at once. A frame edited while Spool was preparing it no longer keeps showing the old version.
 - 1796c55: Sharing no longer refuses frames over ordinary code that has nothing to do with navigation. Tags like `<motion.div>` or `<Dialog.Root>` and spread props like `<button {...rest}>` used to stop a share with a navigation error. Now only a `data-go` or `ui.go` whose destination Spool can't work out stops it.
 - c31a95c: When a frame can't be shared yet, the Share panel now lists every problem, each with the file and line to fix and what to do about it. It used to show only the first one, without saying where. A missing import or a missing export no longer reads as a navigation problem.
