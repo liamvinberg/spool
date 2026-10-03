@@ -191,10 +191,37 @@ export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: 
 		rmSync(join(coverStoreDir(root), `${frame}.${legacyFormat.ext}`), { force: true });
 	}
 	if (scheme !== undefined) writeAtomic(join(dir, SCHEME_NAME), `${scheme}\n`);
+	writeAtomic(join(dir, BOOTH_NAME), "");
 	return { hash };
 }
 
 const SCHEME_NAME = "scheme";
+/**
+ * Beside every cover the booth made (ADR 0010). A cover without it was taken
+ * by a canvas photographing its own frames, before the booth, and those
+ * photographs came out blank for frames that draw with WebGL, animation
+ * frames or dialogs, so they are owed again.
+ */
+const BOOTH_NAME = "booth";
+
+/** Every frame whose stored cover the booth did not make, and has not failed to make again. */
+export async function scanPreBoothCovers(root: string): Promise<string[]> {
+	const store = coverStoreDir(root);
+	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+	const scanned = await Promise.all(
+		folders.map(async (folder) => {
+			const frame = segmentFrame(folder);
+			if (frame === undefined) return undefined;
+			const names = (await listed(join(store, folder))).filter((entry) => entry.isFile()).map((entry) => entry.name);
+			// a frame the booth failed on keeps its old cover and says why, and asking
+			// again on every start would only fail again
+			const owed =
+				coverAmong(names) !== undefined && !names.includes(BOOTH_NAME) && !names.includes(CAPTURE_ERROR_NAME);
+			return owed ? frame : undefined;
+		}),
+	);
+	return scanned.filter((frame) => frame !== undefined);
+}
 
 /**
  * Every stored cover taken in a colour scheme its frame follows, with that

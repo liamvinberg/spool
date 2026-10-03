@@ -11,6 +11,7 @@ import {
 	scanCoverSchemes,
 	scanCovers,
 	scanDatedCovers,
+	scanPreBoothCovers,
 	writeCaptureError,
 	writeCover,
 } from "./thumbs";
@@ -26,7 +27,7 @@ describe("writing a cover", () => {
 		const root = project();
 		const cover = writeCover(root, "home", JPEG);
 		expect(cover.hash).toMatch(/^[0-9a-f]{32}$/);
-		expect(readdirSync(storeDir(root))).toEqual([`${cover.hash}.jpg`]);
+		expect(readdirSync(storeDir(root)).sort()).toEqual([`${cover.hash}.jpg`, "booth"]);
 		expect(readCover(root, "home")).toEqual(cover);
 		expect(readCoverImage(root, "home", cover.hash)).toMatchObject({ type: "image/jpeg", bytes: JPEG });
 	});
@@ -36,7 +37,7 @@ describe("writing a cover", () => {
 		const first = writeCover(root, "home", JPEG);
 		const next = writeCover(root, "home", OTHER_JPEG);
 		expect(next.hash).not.toBe(first.hash);
-		expect(readdirSync(storeDir(root))).toEqual([`${next.hash}.jpg`]);
+		expect(readdirSync(storeDir(root)).sort()).toEqual([`${next.hash}.jpg`, "booth"]);
 	});
 
 	it("keeps the address for identical content", () => {
@@ -167,6 +168,33 @@ describe("the colour scheme a cover was taken in", () => {
 		const cover = writeCover(root, "home", JPEG, "light");
 		expect(readCover(root, "home")).toEqual(cover);
 		expect(scanCovers(root)).toEqual(new Map([["home", cover]]));
+	});
+});
+
+describe("covers taken before the booth", () => {
+	it("are every stored cover the booth did not write", async () => {
+		const root = project();
+		writeCover(root, "booth-made", JPEG);
+		// a canvas photograph from before the booth: the image alone
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.jpg`), JPEG);
+		expect(await scanPreBoothCovers(root)).toEqual(["home"]);
+
+		// the booth's own picture of it ends that
+		writeCover(root, "home", OTHER_JPEG);
+		expect(await scanPreBoothCovers(root)).toEqual([]);
+		expect(scanCovers(root).size).toBe(2);
+	});
+
+	it("leave out a frame the booth already failed on, which would only fail again", async () => {
+		const root = project();
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.jpg`), JPEG);
+		writeFileSync(
+			join(storeDir(root), "error.json"),
+			JSON.stringify({ error: "too slow", at: "2026-10-03T00:00:00Z" }),
+		);
+		expect(await scanPreBoothCovers(root)).toEqual([]);
 	});
 });
 

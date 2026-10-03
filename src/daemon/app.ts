@@ -128,6 +128,7 @@ import {
 	readCover,
 	readCoverImage,
 	scanCoverSchemes,
+	scanPreBoothCovers,
 	writeCaptureError,
 	writeCover,
 } from "./thumbs";
@@ -934,7 +935,8 @@ export function createDaemonApp({
 			);
 		}
 		// a project's covers may be of the other scheme than the one the booth
-		// starts in, or than the one the canvas went to while it was not watched
+		// starts in, or than the one the canvas went to while it was not watched,
+		// or taken by a canvas before the booth
 		void booth.schemeKnown().then(() => restale(arrived));
 	}
 
@@ -942,7 +944,8 @@ export function createDaemonApp({
 	 * The booth's colour scheme changed: every cover taken in another, of a frame
 	 * that follows the scheme, is now a picture of a frame nobody is looking at.
 	 * Those are owed again, behind anything edited, and nothing else is: most
-	 * frames look the same in both.
+	 * frames look the same in both. A project arriving owes the same, and every
+	 * cover a canvas took of its own frames before the booth made them.
 	 */
 	async function restale(roots: Iterable<string>): Promise<void> {
 		for (const root of roots) {
@@ -952,6 +955,9 @@ export function createDaemonApp({
 					// the scheme may have changed again while the store was read
 					if (taken !== booth.scheme && frameExists(root, frame))
 						booth.enqueue({ root, project, frame, reason: "stale" });
+				}
+				for (const frame of await scanPreBoothCovers(root)) {
+					if (frameExists(root, frame)) booth.enqueue({ root, project, frame, reason: "stale" });
 				}
 			} catch {
 				// a project whose design folder went strange owes nothing it can be asked
