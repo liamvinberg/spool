@@ -661,3 +661,16 @@ body {
 		scrollbar-width: thin;
 	}
 }
+
+/* A move the live frames are dragging down: every one nobody is inside stands
+   behind its still until the camera rests (canvas/motion-strain.ts). Hidden,
+   a document stops drawing; its still is already decoded beside it. */
+[data-canvas-strained] [data-frame-passive] {
+	/* biome-ignore lint/complexity/noImportantStyles: it overrides the shell's own inline visibility, for the length of one move */
+	visibility: hidden !important;
+}
+
+[data-canvas-strained] [data-frame-passive] ~ [data-frame-standin] {
+	/* biome-ignore lint/complexity/noImportantStyles: the stand-in's own inline style hides it */
+	visibility: visible !important;
+}

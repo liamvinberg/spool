@@ -135,6 +135,7 @@ import {
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { useFrameLifecycle } from "./lifecycle";
+import { watchMotionStrain } from "./motion-strain";
 import {
 	type ElementPreview,
 	type FrameHover,
@@ -385,6 +386,8 @@ export function ProjectCanvas({
 	const sharingAvailable = useSharingAvailable();
 	const sharing = useCanvasSharing(project, sharingAvailable, camera);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
+	// on the document rather than the viewport, which a booting canvas has not drawn yet
+	useEffect(() => watchMotionStrain(camera, document.documentElement), [camera]);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
 	// every read of the frame list, and the covers heard between them (frame-reads.ts)
 	const [frameReads] = useState(createFrameReads);

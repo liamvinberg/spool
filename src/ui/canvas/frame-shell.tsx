@@ -305,6 +305,11 @@ export const FrameShell = memo(function FrameShell({
 			{state !== "picture" && (
 				<div
 					className="absolute inset-0"
+					// a live document nobody is inside sits out a move it slows, behind its
+					// still, so only one that has a still to stand behind (motion-strain.ts)
+					data-frame-passive={
+						state === "live" && !entered && !active && !interactive && cover !== undefined ? "" : undefined
+					}
 					style={{
 						// An export keeps its document behind the still.
 						visibility: state === "live" || entered ? "visible" : "hidden",
@@ -358,6 +363,7 @@ export const FrameShell = memo(function FrameShell({
 					cover={cover}
 					alt={name}
 					draggable={false}
+					data-frame-standin=""
 					// a fresh capture replaces this image while the canvas is in
 					// use; decoding it off the main thread keeps that invisible
 					decoding="async"
