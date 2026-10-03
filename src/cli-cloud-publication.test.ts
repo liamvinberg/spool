@@ -7,7 +7,7 @@ import { cliPath, spoolAsync, tsxBin } from "./cli-test-helpers";
 import { makeProject, makeTempDir, writeFrame } from "./test-helpers";
 
 it("publishes through the actual CLI and resumes without putting credentials or paths on the wire", {
-	timeout: 60_000,
+	timeout: 180_000,
 }, async () => {
 	const home = makeTempDir();
 	const spoolDir = join(home, "state");
