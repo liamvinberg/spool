@@ -16,13 +16,15 @@ export interface FrameStyleRef {
  * Build the exact stylesheet closure a frame receives in its standalone
  * document, from the compile's own reads: every file it reaches is read once
  * for the whole compile, and the stylesheets Tailwind read are noted in it.
+ * Its inputs are every file the stylesheet was made of, so a caller can tell
+ * when it would come out the same.
  */
 export async function buildFrameStyleClosure(
 	designDir: string,
 	ref: FrameStyleRef,
 	reads: DesignReads,
 	publication = false,
-): Promise<string> {
+): Promise<{ css: string; inputs: string[] }> {
 	const folder = frameFolder(ref.name);
 	const frame = await buildDesignEntry({
 		designDir,
@@ -35,5 +37,8 @@ export async function buildFrameStyleClosure(
 	const compiled = await compileFrameCssOnWorker(designDir, cssSources(reads, frame.sourceFiles));
 	for (const sheet of compiled.stylesheets) reads.noted(sheet.file, sheet.digest);
 	const project = frame.bundledCss === undefined ? "" : layeredProjectCss(frame.bundledCss);
-	return project === "" ? compiled.css : `${compiled.css}\n${project}`;
+	return {
+		css: project === "" ? compiled.css : `${compiled.css}\n${project}`,
+		inputs: [...frame.sourceFiles, ...compiled.stylesheets.map((sheet) => sheet.file)],
+	};
 }

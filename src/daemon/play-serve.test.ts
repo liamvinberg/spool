@@ -218,6 +218,46 @@ describe("serving the player", () => {
 		expect(landingCss).toContain("@layer project");
 	});
 
+	it("rebuilds only the stylesheets whose inputs changed, from every kind of input", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/tokens.css", "@theme { --color-ink: #123456; }\n");
+		writeDesignFile(root, "frames/guide/guide.css", ".guide-only { color: red; }\n");
+		writeFrame(
+			root,
+			"guide",
+			'import "./guide.css"; export default () => <main className="guide-only text-ink">guide</main>;\n',
+		);
+		writeFrame(root, "landing", 'export default () => <main className="p-7">landing</main>;\n');
+		const app = makeApp(spoolDir);
+		const stylesOf = async () => {
+			const doc = await (await app.request(`/play/${name}`)).text();
+			const { styles } = configOf(doc) as ReturnType<typeof configOf> & { styles: Record<string, string> };
+			const css = async (frame: string) => (await app.request(`/play/${name}/-/${styles[frame]}`)).text();
+			return { names: styles, guide: await css("guide"), landing: await css("landing") };
+		};
+		const first = await stylesOf();
+		expect(first.guide).toContain("#123456");
+
+		// a stylesheet the frame's own code imports
+		writeDesignFile(root, "frames/guide/guide.css", ".guide-only { color: green; }\n");
+		const imported = await stylesOf();
+		expect(imported.guide).toContain("green");
+		expect(imported.names.landing).toBe(first.names.landing);
+
+		// a stylesheet Tailwind reads
+		writeDesignFile(root, "shared/tokens.css", "@theme { --color-ink: #654321; }\n");
+		const themed = await stylesOf();
+		expect(themed.guide).toContain("#654321");
+		expect(themed.guide).not.toContain("#123456");
+
+		// a class the frame's source starts using
+		writeFrame(root, "landing", 'export default () => <main className="p-7 m-3">landing</main>;\n');
+		const scanned = await stylesOf();
+		expect(scanned.landing).toContain(".m-3");
+		expect(scanned.names.guide).toBe(themed.names.guide);
+	});
+
 	it("starts at ?frame= and 404s a frame that is not there, loudly", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = scaffold(spoolDir);

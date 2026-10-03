@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { type BuildContext, type BuildResult, build, context } from "esbuild";
 import {
 	buildDesignEntry,
@@ -16,7 +16,7 @@ import {
 	parseImportMap,
 } from "./compile";
 import { realDesignDir } from "./design-path";
-import { createDesignReads, type DesignReads } from "./design-reads";
+import { contentDigest, createDesignReads, type DesignReads } from "./design-reads";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript, mergeImportMap } from "./document";
 import { buildFrameStyleClosure } from "./frame-styles";
 import { frameFolder } from "./projection";
@@ -132,6 +132,7 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 	const contexts = new Map<string, PlayerContext>();
 	/** One compile in flight per root: the shell and its iframe ask within the same second. */
 	const inflight = new Map<string, Promise<PlayerCompile>>();
+	let closed = false;
 
 	function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
 		const running = inflight.get(root);
@@ -168,10 +169,14 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 			// them would strand the stub after the fix lands.
 			if (entry.broken.length === 0 && entry.settled) cache.set(root, entry);
 			else cache.delete(root);
+			// styles built while a file moved under them are of no one state of the folder
+			if (!entry.settled) context.styles.clear();
 			retain(root, entry.bundle);
 			return { kind: "ok", bundle: entry.bundle, cache: "miss" };
 		} catch (error) {
 			cache.delete(root);
+			// a build that threw may have kept styles a torn read made
+			contexts.get(root)?.styles.clear();
 			return { kind: "error", message: describeCompileError(error) };
 		}
 	}
@@ -184,6 +189,8 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 	): Promise<PlayerContext> {
 		const held = contexts.get(root);
 		if (held !== undefined && held.stamp === stamp && held.designDir === designDir) return held;
+		// a frame added or removed changes the composition, not the other frames' styles
+		const styles = held !== undefined && held.designDir === designDir ? held.styles : new Map<string, FrameStyle>();
 		if (held !== undefined) {
 			contexts.delete(root);
 			await held.context.dispose();
@@ -196,7 +203,12 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 			context: await context(
 				compositionOptions(designDir, playerEntry(frames, new Map()), false, () => reading.reads),
 			),
+			styles,
 		};
+		if (closed) {
+			await fresh.context.dispose();
+			throw new Error("the player compiler is closed");
+		}
 		contexts.set(root, fresh);
 		return fresh;
 	}
@@ -215,18 +227,27 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 		return undefined;
 	}
 
-	/** Whether this root has ever been played by this daemon, and so is worth warming. */
-	function warmed(root: string): boolean {
-		return served.has(root);
+	/**
+	 * Lets go of what keeps a root quick to compose again: its build context, its
+	 * frames' styles and its cached bundle. Modules it has served stay answerable
+	 * for any tab still playing them.
+	 */
+	async function forget(root: string): Promise<void> {
+		cache.delete(root);
+		const held = contexts.get(root);
+		if (held === undefined) return;
+		contexts.delete(root);
+		await held.context.dispose();
 	}
 
 	async function close(): Promise<void> {
+		closed = true;
 		const open = [...contexts.values()];
 		contexts.clear();
 		await Promise.all(open.map((held) => held.context.dispose()));
 	}
 
-	return { getBundle, getChunk, warmed, close };
+	return { getBundle, getChunk, forget, close };
 }
 
 /** Same split renderer, strict destination compilation and no source stamping. */
@@ -241,6 +262,7 @@ export async function buildPublicationPlayer(
 		designDir,
 		reading: { reads: undefined },
 		context: await context(compositionOptions(designDir, playerEntry(frames, new Map()), true)),
+		styles: new Map(),
 	};
 	try {
 		const result = await compilePlayer(version, designDir, frames, stamp, inertWebfonts(), held, true);
@@ -258,6 +280,51 @@ interface PlayerContext {
 	/** The reads of the compile now rebuilding the context, which its bundle is made of. */
 	reading: { reads: DesignReads | undefined };
 	context: BuildContext;
+	/**
+	 * Each frame's stylesheet as last built, by frame name. A frame's styles are
+	 * its own esbuild and Tailwind compile, the bulk of a player build, so a
+	 * frame whose inputs read the same is not built again.
+	 */
+	styles: Map<string, FrameStyle>;
+}
+
+interface FrameStyle {
+	inputs: string[];
+	key: string;
+	css: string;
+}
+
+/**
+ * What a frame's stylesheet was made of: each input by a digest, and the names
+ * beside each input and one folder up, since a file appearing there can win
+ * an import the input answered (`card.tsx` beside `card.ts`, or `card.tsx`
+ * beside a `card/` folder) without any input's bytes moving.
+ */
+function styleKey(
+	designDir: string,
+	inputs: readonly string[],
+	digest: (file: string) => string,
+	list: (folder: string) => string,
+): string {
+	const hash = createHash("sha256");
+	const folders = new Set<string>();
+	for (const file of inputs) {
+		hash.update(`${file}\0${digest(file)}\0`);
+		folders.add(dirname(file)).add(dirname(dirname(file)));
+	}
+	for (const folder of [...folders].sort()) {
+		if (relative(designDir, folder).startsWith("..")) continue;
+		hash.update(`${folder}\0${list(folder)}\0`);
+	}
+	return hash.digest("hex");
+}
+
+function listing(folder: string): string {
+	try {
+		return readdirSync(folder).sort().join("/");
+	} catch {
+		return "absent";
+	}
 }
 
 async function compilePlayer(
@@ -293,9 +360,30 @@ async function compilePlayer(
 	for (const file of composed.composition.sourceFiles) reads.bytes(file);
 
 	const shared = join(designDir, "shared");
+	const kept = context.styles;
+	const current = (file: string) => contentDigest(reads.bytes(file));
+	const listings = new Map<string, string>();
+	const list = (folder: string) => {
+		const known = listings.get(folder);
+		if (known !== undefined) return known;
+		const names = listing(folder);
+		listings.set(folder, names);
+		return names;
+	};
+	const playing = new Set(frames.map((ref) => ref.name));
+	for (const name of kept.keys()) if (!playing.has(name)) kept.delete(name);
 	const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
 		if (composed.broken.has(ref.name)) return { name: ref.name, css: "" };
-		return { name: ref.name, css: await buildFrameStyleClosure(designDir, ref, reads, publication) };
+		const last = kept.get(ref.name);
+		if (last !== undefined && styleKey(designDir, last.inputs, current, list) === last.key) {
+			return { name: ref.name, css: last.css };
+		}
+		const { css, inputs } = await buildFrameStyleClosure(designDir, ref, reads, publication);
+		// keyed by the bytes it was built from, which for a stylesheet Tailwind read
+		// is the digest its worker noted, never a later read of the file
+		const built = (file: string) => reads.digests().get(file) ?? current(file);
+		kept.set(ref.name, { inputs, key: styleKey(designDir, inputs, built, list), css });
+		return { name: ref.name, css };
 	});
 	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
 	// read the moment the fonts resolve, as the frame compiler does (#80)
