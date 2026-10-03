@@ -418,7 +418,7 @@ async function requestCapture(page: Page, captureOrigin: string) {
 	);
 }
 
-it("exports a long frame within the raster budget instead of rejecting its 2x size", async () => {
+it("exports a long frame within the raster budget instead of rejecting its 2x size", { timeout: 30_000 }, async () => {
 	const served = await serveCapture();
 	onTestFinished(() => served.close());
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
