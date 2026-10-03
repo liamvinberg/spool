@@ -566,8 +566,9 @@ describe("change events", () => {
 
 	it("keeps saying something on a stream nothing is happening on", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "hello", helloTsx);
+		// no frame written just before the stream opens: the file watcher can report
+		// a write from before it armed, and that change is not what this listens for
+		const { name } = makeProject(spoolDir);
 		const app = makeApp(spoolDir);
 		const controller = new AbortController();
 		onTestFinished(() => controller.abort());
