@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
+import { userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron, chromium, type ElectronApplication } from "playwright-core";
@@ -30,6 +31,15 @@ async function freePort(): Promise<number> {
 	if (!address || typeof address === "string") throw new Error("Missing port");
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 	return address.port;
+}
+/**
+ * Playwright's browser cache for this machine's account, as an agent's command
+ * sees it: commands run with the account's own home (`commandEnvironment`),
+ * whatever HOME the daemon was started with.
+ */
+function machineBrowserCache(): string {
+	const home = userInfo().homedir;
+	return join(home, process.platform === "darwin" ? "Library/Caches" : ".cache", "ms-playwright");
 }
 function childHost(pid: number): number | undefined {
 	const output = spawnSync("ps", ["-axo", "pid=,ppid=,args="], { encoding: "utf8" }).stdout;
@@ -152,6 +162,10 @@ it("completes a deterministic journey through the clean installed host and deliv
 		TMPDIR: process.env.TMPDIR ?? "/tmp",
 		SPOOL_DIR: state,
 		SPOOL_PORT: String(port),
+		// The daemon runs under a clean HOME, but the browser it fetches for its
+		// shots belongs in the machine's cache, where the agent's own Playwright
+		// finds it below: on a real machine both homes are the account's.
+		PLAYWRIGHT_BROWSERS_PATH: machineBrowserCache(),
 	};
 	const run = (command: string, args: string[], cwd = project, extra: NodeJS.ProcessEnv = {}) => {
 		const result = spawnSync(command, args, { cwd, env: { ...env, ...extra }, encoding: "utf8", timeout: 180_000 });
