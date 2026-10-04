@@ -92,9 +92,9 @@ const SETTLE_GRACE_MS = 600;
 /**
  * The pixel density a frame's redraws are timed at, after its cover. A cover
  * is laid out at a fraction of a pixel per pixel, and a frame that draws its
- * own pixels (a canvas, a shader) costs what its pixels cost: pixels--glass
- * kept up with the display at cover density and drew 8 frames a second at
- * this one, which is the density a Retina canvas runs it at.
+ * own pixels (a canvas, a shader) costs what its pixels cost: a 2D canvas
+ * redrawing a few hundred clipped gradients every frame kept up with the
+ * display at cover density and drew 8 frames a second at this one, which is the density a Retina canvas runs it at.
  */
 const PACE_SCALE = 2;
 /** The most pixels a frame is timed over, a 1920 x 1200 frame at `PACE_SCALE`. */
@@ -1038,7 +1038,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	 * not be. One tab times at a time, since a frame being timed shares the GPU
 	 * with whatever the other tabs are drawing, and a slow result is timed once
 	 * more and the faster kept: three frames edited together timed one ordinary
-	 * frame at 50 a second beside pixels--glass, against 120 on its own.
+	 * frame at 50 a second beside that canvas, against 120 on its own.
 	 */
 	function timedPace(slot: number, tab: Tab, shape: CoverShape): Promise<FramePace | undefined> {
 		const scale = Math.min(PACE_SCALE, Math.sqrt(PACE_PIXELS / (shape.width * shape.height)));

@@ -2,7 +2,7 @@
  * Live frames hold still when they hold back a canvas at rest.
  *
  * Every live frame draws on the one GPU the canvas draws on. One heavy enough
- * (pixels--glass, a few hundred clipped gradients redrawn every frame at
+ * (a 2D canvas of a few hundred clipped gradients, redrawn every frame at
  * Retina density) held a whole canvas at rest to 6 display frames a second on
  * an M1, nobody touching anything: every hover, every selection and the first
  * frame of every gesture waited on it. So while the canvas rests and live

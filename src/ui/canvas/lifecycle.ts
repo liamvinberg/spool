@@ -97,9 +97,9 @@ export const IDLE_FREEZE_MS = 60_000;
  * How long frames go on holding once the camera rests. The store rests 100 ms
  * after the last step, and a heavy frame being zoomed out of spaced the steps
  * further apart than that on its own: its next display frame is what each
- * wheel tick waited on, about 125 ms for pixels--glass on an M1, so every
- * step was a rest, a thaw and another of its frames, the whole zoom long. A
- * mouse wheel's notches can land as far apart.
+ * wheel tick waited on, about 125 ms for the canvas rest-strain.ts describes
+ * on an M1, so every step was a rest, a thaw and another of its frames, the
+ * whole zoom long. A mouse wheel's notches can land as far apart.
  */
 export const MOVE_HOLD_MS = 400;
 
