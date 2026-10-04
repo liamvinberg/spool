@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.27.0
+
+### Minor Changes
+
+- 23f5260: `spool check` now names frames that draw too slowly to play smoothly. Spool times a frame each time it is edited, at Retina sharpness, and the check lists any that manage fewer than 45 frames a second, so an agent sees a heavy frame before it slows your canvas down. It is a note, never a failure.
+
+### Patch Changes
+
+- 23f5260: A frame heavy enough to slow Spool down no longer drags the whole canvas with it. When the canvas keeps falling behind while you are not moving, the frames you are not pointing at pause where they are, and play again when you point at one or go inside it. If pausing them does not help, they play on.
+- 23f5260: Zooming out of a heavy frame you are inside is smooth now. The frame pauses for the zoom instead of slowing every step of it.
+
 ## 0.26.1
 
 ### Patch Changes
