@@ -131,6 +131,7 @@ import {
 	scanPreBoothCovers,
 	writeCaptureError,
 	writeCover,
+	writePace,
 } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { createUpdateChecker } from "./update-check";
@@ -868,6 +869,9 @@ export function createDaemonApp({
 		},
 		failed: (root, frame, reason) => {
 			if (frameExists(root, frame)) writeCaptureError(root, frame, reason);
+		},
+		paced: (root, frame, pace) => {
+			if (frameExists(root, frame)) writePace(root, frame, pace);
 		},
 		// The booth compiles every frame of every registered project, where the
 		// canvas only ever compiled the page it showed, and a compiled document

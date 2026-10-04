@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type Dirent, existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
@@ -184,8 +184,9 @@ export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: 
 	// Every other file in the dir retires with the image it lost to, `error.json`
 	// (#173) included: a landed cover is proof the reason it recorded no longer
 	// applies, and nothing here treats that name specially.
+	// A pace is of the source, not of the picture, and an edit times it again.
 	for (const old of filesIn(dir)) {
-		if (old !== name) rmSync(join(dir, old), { force: true });
+		if (old !== name && old !== PACE_NAME) rmSync(join(dir, old), { force: true });
 	}
 	for (const legacyFormat of COVER_FORMATS) {
 		rmSync(join(coverStoreDir(root), `${frame}.${legacyFormat.ext}`), { force: true });
@@ -247,6 +248,56 @@ export async function scanCoverSchemes(root: string): Promise<Map<string, ColorS
 }
 
 const CAPTURE_ERROR_NAME = "error.json";
+
+/** How fast a frame redrew when the booth last timed it (booth.ts), beside its cover. */
+export interface FramePace {
+	/** Display frames a second the frame let through while it ran. */
+	perSecond: number;
+	/** The longest gap between two of them, in milliseconds. */
+	slowestMs: number;
+	/** The pixel density it was timed at. */
+	scale: number;
+}
+
+/**
+ * Fewer display frames a second than this and a frame is slow: a 60 Hz display
+ * shows 60, and below this one that is playing is visibly not keeping up, at
+ * any refresh rate. While it plays it holds back the whole canvas it is on,
+ * since every frame on a canvas draws on the one GPU.
+ */
+export const SLOW_PER_SECOND = 45;
+
+/** A recorded pace, and when the booth recorded it. */
+export interface TimedPace extends FramePace {
+	timedAt: number;
+}
+
+const PACE_NAME = "pace.json";
+
+/** Record a frame's pace, or forget the last one when it could not be timed again. */
+export function writePace(root: string, frame: string, pace: FramePace | undefined): void {
+	const file = join(coverDir(root, frame), PACE_NAME);
+	if (pace === undefined) rmSync(file, { force: true });
+	else writeAtomic(file, `${JSON.stringify(pace)}\n`);
+}
+
+/** Every timed frame's pace, and when it was timed. Machine-written: anything malformed reads as untimed. */
+export function scanPaces(root: string): Map<string, TimedPace> {
+	const paces = new Map<string, TimedPace>();
+	const store = coverStoreDir(root);
+	for (const { frame, folder } of framesIn(store)) {
+		const file = join(store, folder, PACE_NAME);
+		try {
+			const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<FramePace>;
+			const { perSecond, slowestMs, scale } = parsed;
+			if (typeof perSecond !== "number" || typeof slowestMs !== "number" || typeof scale !== "number") continue;
+			paces.set(frame, { perSecond, slowestMs, scale, timedAt: statSync(file).mtimeMs });
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+		}
+	}
+	return paces;
+}
 
 function captureErrorFile(root: string, frame: string): string {
 	return join(coverDir(root, frame), CAPTURE_ERROR_NAME);

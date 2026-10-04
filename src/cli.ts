@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
+import { describeSlowFrame, slowFrames } from "./check-pace";
 import { CloudRequestFailure, cloudOrigin, login, logout } from "./cloud-auth";
 import {
 	CloudPublicationFailure,
@@ -264,6 +265,8 @@ program
 				`${diagnostic.path}:${diagnostic.line}:${diagnostic.column} TS${diagnostic.code}: ${diagnostic.message}\n`,
 			);
 		}
+		// a slow frame is said, never failed: some are heavy on purpose
+		for (const frame of slowFrames(root)) process.stderr.write(`${describeSlowFrame(frame)}\n`);
 		if (diagnostics.length > 0) process.exitCode = 1;
 	});
 

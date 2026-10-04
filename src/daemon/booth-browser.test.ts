@@ -8,7 +8,7 @@ import { initProject } from "../init";
 import { removeProject } from "../remove";
 import { makeTempDir, serveProject, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 import type { BoothSeams } from "./booth";
-import { imageSize } from "./thumbs";
+import { imageSize, SLOW_PER_SECOND } from "./thumbs";
 
 /**
  * The photo booth against a really-served daemon and the pinned headless shell
@@ -199,6 +199,46 @@ it("photographs an edit, a resize and a broken frame without a canvas, and leave
 	writeFrame(project.root, "edited", frameOf("#11aa11"));
 	await expect.poll(async () => (await project.coverOf("edited"))?.hash, { timeout: 30_000 }).not.toBe(resized);
 	expect(project.captureError("edited")).toBeUndefined();
+});
+
+it("times an edited frame's redraws after its picture, and only an edited one", { timeout: 120_000 }, async () => {
+	if (!(await shellAvailable())) return;
+	const project = await served();
+	const pace = (frame: string) => {
+		const file = join(project.root, "design", ".spool", "thumbs", encodeURIComponent(frame), "pace.json");
+		return existsSync(file)
+			? (JSON.parse(readFileSync(file, "utf8")) as { perSecond: number; scale: number })
+			: undefined;
+	};
+	writeFrame(project.root, "timed", frameOf("#f5391a"));
+	await project.projection();
+	await expect.poll(() => project.coverOf("timed"), { timeout: 45_000 }).toBeDefined();
+	// a picture only missing is a first pass through the project, timed for nobody
+	expect(pace("timed")).toBeUndefined();
+
+	// a frame whose every redraw holds its renderer 60 ms can not keep up
+	const heavy = `const end = performance.now() + 60; while (performance.now() < end) {}`;
+	writeFrame(
+		project.root,
+		"timed",
+		`import { useEffect } from "react";
+export default function Frame() {
+	useEffect(() => {
+		let id = 0;
+		const loop = () => { ${heavy} id = requestAnimationFrame(loop); };
+		id = requestAnimationFrame(loop);
+		return () => cancelAnimationFrame(id);
+	}, []);
+	return <main style={{ background: "#1a39f5", width: "100%", height: "100vh" }}>heavy</main>;
+}
+`,
+	);
+	await expect.poll(() => pace("timed")?.perSecond, { timeout: 45_000 }).toBeLessThan(SLOW_PER_SECOND);
+	expect(pace("timed")?.scale).toBe(2);
+
+	// and the edit that lightens it says so
+	writeFrame(project.root, "timed", frameOf("#11aa11"));
+	await expect.poll(() => pace("timed")?.perSecond ?? 0, { timeout: 45_000 }).toBeGreaterThanOrEqual(SLOW_PER_SECOND);
 });
 
 it("photographs in the scheme the canvas shows, and again only what follows it when that changes", {

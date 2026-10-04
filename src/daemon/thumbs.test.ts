@@ -11,9 +11,11 @@ import {
 	scanCoverSchemes,
 	scanCovers,
 	scanDatedCovers,
+	scanPaces,
 	scanPreBoothCovers,
 	writeCaptureError,
 	writeCover,
+	writePace,
 } from "./thumbs";
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]);
@@ -221,5 +223,37 @@ describe("a cover's own size", () => {
 		const root = project();
 		expect(await coverSize(root, "home")).toBeUndefined();
 		expect(imageSize(JPEG)).toBeUndefined();
+	});
+});
+
+describe("how fast a frame redrew when it was timed", () => {
+	it("round-trips beside the cover, and outlives a later picture of the same source", () => {
+		const root = project();
+		writeCover(root, "home", JPEG);
+		writePace(root, "home", { perSecond: 8, slowestMs: 139, scale: 2 });
+		expect(scanPaces(root)).toEqual(
+			new Map([["home", { perSecond: 8, slowestMs: 139, scale: 2, timedAt: expect.any(Number) }]]),
+		);
+
+		// a picture retaken for a scheme is of the same source the timing was
+		writeCover(root, "home", OTHER_JPEG, "dark");
+		expect(scanPaces(root).get("home")?.perSecond).toBe(8);
+		expect(readCover(root, "home")).toBeDefined();
+	});
+
+	it("is forgotten when a frame could not be timed again", () => {
+		const root = project();
+		writePace(root, "home", { perSecond: 8, slowestMs: 139, scale: 2 });
+		writePace(root, "home", undefined);
+		expect(scanPaces(root)).toEqual(new Map());
+	});
+
+	it("reads a malformed record as untimed", () => {
+		const root = project();
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), "pace.json"), "{ not json");
+		expect(scanPaces(root)).toEqual(new Map());
+		writeFileSync(join(storeDir(root), "pace.json"), JSON.stringify({ perSecond: "8" }));
+		expect(scanPaces(root)).toEqual(new Map());
 	});
 });

@@ -9,6 +9,7 @@ import {
 } from "../headless-shell";
 import { pageParent } from "../page-path";
 import { settleSource } from "./document";
+import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
 import type { LogEntry } from "./verify-record";
 
 /**
@@ -87,6 +88,28 @@ const SHOT_MS = 45_000;
  * settle's own cap (one took 15.5 s on a software GPU).
  */
 const SETTLE_GRACE_MS = 600;
+
+/**
+ * The pixel density a frame's redraws are timed at, after its cover. A cover
+ * is laid out at a fraction of a pixel per pixel, and a frame that draws its
+ * own pixels (a canvas, a shader) costs what its pixels cost: a 2D canvas
+ * redrawing a few hundred clipped gradients every frame kept up with the
+ * display at cover density and drew 8 frames a second at this one, which is the density a Retina canvas runs it at.
+ */
+const PACE_SCALE = 2;
+/** The most pixels a frame is timed over, a 1920 x 1200 frame at `PACE_SCALE`. */
+const PACE_PIXELS = 1920 * 1200 * PACE_SCALE ** 2;
+/** How long after the density changes the timing starts, for the frame's own resize. */
+const PACE_WARM_MS = 200;
+/** The longest a frame's redraws are timed for. */
+const PACE_WINDOW_MS = 600;
+/** Redraws enough to call a frame's pace, so one that keeps up is timed briefly. */
+const PACE_FRAMES = 20;
+/**
+ * The most a timing may take, its resize included, before the tab is given up
+ * on and the frame is taken to be as slow as a frame gets.
+ */
+const PACE_DEADLINE_MS = 3000;
 
 /** How long a cover's document has to draw something into its root. */
 const COVER_BOOT_MS = 5000;
@@ -389,6 +412,12 @@ export interface BoothDeps {
 	registered(root: string): boolean;
 	/** A cover landed: the bytes, and the scheme it depends on when it depends on one. */
 	store(root: string, frame: string, bytes: Buffer, scheme: ColorScheme | undefined): void;
+	/**
+	 * How fast an edited frame redraws, timed after its cover landed, or nothing
+	 * when it could not be timed: what `spool check` tells an agent of a frame
+	 * heavy enough to slow a canvas.
+	 */
+	paced?(root: string, frame: string, pace: FramePace | undefined): void;
 	/** A cover could not be made; the reason rides beside the old one, which stays (#173). */
 	failed(root: string, frame: string, reason: string): void;
 	/** A sitting for this frame is over, whatever came of it. */
@@ -507,6 +536,42 @@ function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
 
 const pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
+/** A pixel density as a pace records it. */
+const rounded = (scale: number) => Math.round(scale * 100) / 100;
+
+/**
+ * Counts the document's display frames, run in the booth's own world. A frame
+ * whose drawing keeps the renderer or the GPU busy holds every display frame
+ * back, its own and this counter's alike. The first few after the density
+ * changed are the frame redrawing for its new size, not its pace.
+ */
+const paceSource = `(warmMs, windowMs, enough) => new Promise((done) => {
+	const began = performance.now();
+	let ticks = 0;
+	let start = 0;
+	let last = 0;
+	let counted = 0;
+	let slowest = 0;
+	const tick = () => {
+		const now = performance.now();
+		ticks++;
+		if (ticks <= 3 || now - began < warmMs) {
+			start = last = now;
+			requestAnimationFrame(tick);
+			return;
+		}
+		slowest = Math.max(slowest, now - last);
+		last = now;
+		counted++;
+		if (counted < enough && now - start < windowMs) {
+			requestAnimationFrame(tick);
+			return;
+		}
+		done({ perSecond: Math.round((counted * 1000) / (now - start)), slowestMs: Math.round(slowest) });
+	};
+	requestAnimationFrame(tick);
+})`;
+
 /** A frame's document on the render origin, top level, as the canvas's iframe loads it. */
 function frameUrl(origin: string, project: string, frame: string, scenario?: string): string {
 	const query = scenario === undefined ? "" : `?scenario=${encodeURIComponent(scenario)}`;
@@ -549,6 +614,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	let retry: NodeJS.Timeout | undefined;
 	let linger: NodeJS.Timeout | undefined;
 	let closed = false;
+	/** The last timing asked for; the next waits on it (`timedPace`). */
+	let pacing: Promise<unknown> = Promise.resolve();
 	/** Workers in the middle of a sitting or a shot, as against ones about to look for the next. */
 	let occupied = 0;
 	/** Browsers that went away since the last cover landed. */
@@ -958,6 +1025,60 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		deps.store(root, frame, shot.bytes, follows ? shot.scheme : undefined);
 		// the canvas changed scheme while this frame was in the tab
 		if (follows && shot.scheme !== scheme) owedAgain("stale");
+		// timed only when an edit is what sat it: that is a frame an agent may be
+		// about to check, and timing every picture would slow the first pass
+		// through a project for frames nobody touched
+		if (sitting.reason === "edited" && deps.paced !== undefined) {
+			deps.paced(root, frame, await timedPace(slot, tab, shape));
+		}
+	}
+
+	/**
+	 * The frame still in the tab, timed at a Retina density; nothing when it could
+	 * not be. One tab times at a time, since a frame being timed shares the GPU
+	 * with whatever the other tabs are drawing, and a slow result is timed once
+	 * more and the faster kept: three frames edited together timed one ordinary
+	 * frame at 50 a second beside that canvas, against 120 on its own.
+	 */
+	function timedPace(slot: number, tab: Tab, shape: CoverShape): Promise<FramePace | undefined> {
+		const scale = Math.min(PACE_SCALE, Math.sqrt(PACE_PIXELS / (shape.width * shape.height)));
+		const attempt = async (): Promise<FramePace | undefined> => {
+			try {
+				return await underDeadline(slot, tab, PACE_DEADLINE_MS, "being timed", pace(tab, shape, scale));
+			} catch (error) {
+				if (closed) return undefined;
+				// too few display frames to count in the whole deadline: the slowest a
+				// frame can be, and the deadline has closed its tab already
+				if (error instanceof TimedOut) return { perSecond: 0, slowestMs: PACE_DEADLINE_MS, scale: rounded(scale) };
+				// whatever went wrong took the page with it, never the picture already stored
+				retire(slot, tab);
+				return undefined;
+			}
+		};
+		const turn = pacing.then(async () => {
+			const first = await attempt();
+			if (first === undefined || first.perSecond >= SLOW_PER_SECOND || first.perSecond === 0) return first;
+			const again = await attempt();
+			return again !== undefined && again.perSecond > first.perSecond ? again : first;
+		});
+		pacing = turn;
+		return turn;
+	}
+
+	async function pace(tab: Tab, shape: CoverShape, scale: number): Promise<FramePace> {
+		await tab.cdp.send("Emulation.setDeviceMetricsOverride", {
+			width: shape.width,
+			height: shape.height,
+			deviceScaleFactor: scale,
+			mobile: false,
+		});
+		const world = await isolatedWorld(tab);
+		const timed = (await evaluate(
+			tab,
+			world,
+			`(${paceSource})(${PACE_WARM_MS}, ${PACE_WINDOW_MS}, ${PACE_FRAMES})`,
+		)) as Omit<FramePace, "scale">;
+		return { ...timed, scale: rounded(scale) };
 	}
 
 	/** Load, settle and photograph one frame for its cover. */
