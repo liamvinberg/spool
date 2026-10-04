@@ -18,7 +18,7 @@ Four root pages, and the root itself stays empty.
 | `app` | spool as it ships. Every frame matches the code in `src/ui/` and `src/runtime/`; read the implementation before trusting a frame. A new proposal starts by copying the frame it changes, so it is legible as a diff. |
 | `system` | The design system, live: `voice`, `tokens`, `type`, `motion`, `primitives`. `primitives` renders `shared/ui/spool/` itself, so a component with no specimen shows as a gap. |
 | `site` | spool.page ([#31](https://github.com/liamvinberg/spool/issues/31)), unbuilt. One sub-page per family of takes. |
-| `explore` | One sub-page per open question. When the question's work ships, the winner moves onto `app` and the sub-page is deleted. Git is the archive: `git log --diff-filter=D --stat -- design/frames` finds what was argued. |
+| `explore` | One sub-page per open question. Once decided it keeps only its winner. Once that ships, the winner moves onto `app` and the sub-page is deleted. Git is the archive: `git log --diff-filter=D --stat -- design/frames` finds what was argued. |
 
 Inside a question, takes go down and states go across. A row is a thing you choose between; a column is the same thing in another state. A frame is named `<subject>-<take>`, and only a state carries `--`: `dock-stack` is a take, `dock-stack--cut` is that take with its motion removed. Rows run smallest diff to most radical, top to bottom. A page that holds several questions holds them as sub-pages, each with its own rows.
 
@@ -67,4 +67,4 @@ Under `explore/`. Each row is a pointer: the ticket, the one flag file if there 
 | `threads` | [#136](https://github.com/liamvinberg/spool/issues/136), [#205](https://github.com/liamvinberg/spool/issues/205) | Reopened 2026-09-02 off the shipped rail: where the other conversations live and what a thread is called. Five takes over `ThreadsStage` in `shared/ui/explore/threads/threads-stage.tsx`, `shared/lib/explore/threads/threads-fixture.ts` the deck. `threads-plate` is the direction as of 2026-09-03, named by the ask, no collapse caret on the plate; the others stand until it is built. |
 | `variants` | [spool-cloud#22](https://github.com/liamvinberg/spool-cloud/issues/22) | Variations as decisions. Twelve sub-questions, `shared/lib/explore/variants/variants-decision.ts` the model every take reads, `shared/ui/demo/tvarso-checkout.tsx` the document. Nothing decided. |
 
-Explorations live until the work they decided is built: while a question is open, the rejected takes are what the next session reads to see what was already argued.
+Commit takes as they are drawn, so history holds every one. The session that records a decision deletes the takes that lost. The winner stands until it is built, and then the `app` frame it changed is redrawn. `.agents/skills/design-audit/` sweeps what slipped through: drifted `app` frames, decided takes and orphaned `shared/` files.
