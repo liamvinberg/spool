@@ -392,34 +392,32 @@ describe("delivering the freeze", () => {
 	it("holds a frame that holds back the canvas at rest until it is pointed at, and again after", async () => {
 		const frames: FrameRequestCallback[] = [];
 		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
-		{
-			const { post, render } = await mountLive();
-			/** one sample of the canvas at rest, its display frames `gap` apart */
-			const sample = async (gap: number) => {
-				clock += CHECK_EVERY_MS;
-				await act(() => vi.advanceTimersByTime(CHECK_EVERY_MS));
-				await act(() => {
-					for (let frame = 0; frame < 20 && frames.length > 0; frame++) {
-						clock += gap;
-						for (const callback of frames.splice(0)) callback(clock);
-					}
-				});
-			};
+		const { post, render } = await mountLive();
+		/** one sample of the canvas at rest, its display frames `gap` apart */
+		const sample = async (gap: number) => {
+			clock += CHECK_EVERY_MS;
+			await act(() => vi.advanceTimersByTime(CHECK_EVERY_MS));
+			await act(() => {
+				for (let frame = 0; frame < 20 && frames.length > 0; frame++) {
+					clock += gap;
+					for (const callback of frames.splice(0)) callback(clock);
+				}
+			});
+		};
 
-			await sample(8);
-			await sample(8);
-			expect(freezes(post), "a canvas keeping up holds nothing").toEqual([]);
+		await sample(8);
+		await sample(8);
+		expect(freezes(post), "a canvas keeping up holds nothing").toEqual([]);
 
-			await sample(160);
-			await sample(160);
-			expect(freezes(post)).toEqual([held]);
+		await sample(160);
+		await sample(160);
+		expect(freezes(post)).toEqual([held]);
 
-			// pointing at it is watching it, slow or not
-			await render({ hovered: "landing" });
-			expect(freezes(post)).toEqual([held, handedBack]);
-			// and it holds again the moment the pointer leaves, with no wait to find out again
-			await render({ hovered: null });
-			expect(freezes(post)).toEqual([held, handedBack, held]);
-		}
+		// pointing at it is watching it, slow or not
+		await render({ hovered: "landing" });
+		expect(freezes(post)).toEqual([held, handedBack]);
+		// and it holds again the moment the pointer leaves, with no wait to find out again
+		await render({ hovered: null });
+		expect(freezes(post)).toEqual([held, handedBack, held]);
 	});
 });

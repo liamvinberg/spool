@@ -170,8 +170,8 @@ function isFrameLive(
  * what the gesture competes with for the renderer; or the frame has gone
  * `IDLE_FREEZE_MS` without anything attending it — see `isFrameAttended` for
  * what counts, and note that a camera at rest is not attention, only its motion.
- * The third is that one of them: a frame nobody is attending while it holds
- * back the canvas at rest (rest-strain.ts), which waits on no minute.
+ * The third is a sharper case of the second: a frame nobody is attending while
+ * it holds back the canvas at rest (rest-strain.ts), which waits out no minute.
  *
  * The fourth is the opposite: somebody is reading one frame very closely. While
  * the Edit tool is on (#339), every live frame holds still — the one being
@@ -355,6 +355,25 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	 */
 	const attendedAt = useRef(new Map<string, number>());
 
+	/** What is attending one frame right now: a person inside it, choosing it, or pointing at it. */
+	const attentionTo = useCallback(
+		(name: string) => ({
+			entered: enteredRef.current === name,
+			// picked-in or picked-through: the frames you chose, and the one
+			// Select is holding open for an element inside it
+			selected: selectedRef.current.includes(name) || selectionTargetsRef.current.has(name),
+			hovered: hoveredRef.current === name,
+		}),
+		[],
+	);
+	const attendedNow = useCallback(
+		(name: string) => {
+			const { entered, selected, hovered } = attentionTo(name);
+			return entered || selected || hovered;
+		},
+		[attentionTo],
+	);
+
 	/**
 	 * Freeze is a message to one document, never a render: the shells are memo'd
 	 * hard against exactly this (frame-shell.tsx), and a gesture that re-rendered
@@ -387,13 +406,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				const name = frame.name;
 				alive.add(name);
 				const state = states[name];
-				const attention = {
-					entered: entered === name,
-					// picked-in or picked-through: the frames you chose, and the one
-					// Select is holding open for an element inside it
-					selected: selectedRef.current.includes(name) || selectionTargetsRef.current.has(name),
-					hovered: hoveredRef.current === name,
-				};
+				const attention = attentionTo(name);
 				if (state !== "live") {
 					attendedAt.current.delete(name);
 					crowded.current.delete(name);
@@ -413,8 +426,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 							entered: entered === name,
 							capturing: captureWaiters.current.has(name),
 							editing: editingRef.current,
-							crowded:
-								crowded.current.has(name) && !attention.entered && !attention.selected && !attention.hovered,
+							crowded: crowded.current.has(name) && !attendedNow(name),
 						}),
 				);
 			}
@@ -422,52 +434,40 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			for (const name of [...attendedAt.current.keys()]) if (!alive.has(name)) attendedAt.current.delete(name);
 			for (const name of [...crowded.current]) if (!alive.has(name)) crowded.current.delete(name);
 		},
-		[framesRef, postFreeze],
-	);
-
-	/** Live frames running right now that nobody is attending: what holding back a canvas at rest is blamed on. */
-	const runningUnattended = useCallback(
-		(now: number): string[] => {
-			const running: string[] = [];
-			for (const frame of framesRef.current) {
-				const name = frame.name;
-				const loaded = readyRef.current.get(name);
-				if (
-					statesRef.current[name] === "live" &&
-					!frozen.current.has(name) &&
-					enteredRef.current !== name &&
-					hoveredRef.current !== name &&
-					!selectedRef.current.includes(name) &&
-					!selectionTargetsRef.current.has(name) &&
-					loaded !== undefined &&
-					now - loaded >= CROWD_SETTLE_MS
-				) {
-					running.push(name);
-				}
-			}
-			return running;
-		},
-		[framesRef],
+		[framesRef, postFreeze, attentionTo, attendedNow],
 	);
 
 	useEffect(
 		() =>
 			watchRestStrain({
-				worthChecking: () => {
+				resting: () =>
+					FREEZE_ENABLED && !cameraMoving.current && performance.now() - restingSince.current >= CROWD_SETTLE_MS,
+				// live, running, settled in, and nobody's
+				suspects: () => {
 					const now = performance.now();
-					return (
-						FREEZE_ENABLED &&
-						!cameraMoving.current &&
-						now - restingSince.current >= CROWD_SETTLE_MS &&
-						runningUnattended(now).length > 0
-					);
+					return framesRef.current
+						.map((frame) => frame.name)
+						.filter((name) => {
+							const loaded = readyRef.current.get(name);
+							return (
+								statesRef.current[name] === "live" &&
+								!frozen.current.has(name) &&
+								!attendedNow(name) &&
+								loaded !== undefined &&
+								now - loaded >= CROWD_SETTLE_MS
+							);
+						});
 				},
-				crowded: () => {
-					for (const name of runningUnattended(performance.now())) crowded.current.add(name);
+				hold: (frames) => {
+					for (const name of frames) crowded.current.add(name);
+					applyFreeze();
+				},
+				release: (frames) => {
+					for (const name of frames) crowded.current.delete(name);
 					applyFreeze();
 				},
 			}),
-		[runningUnattended, applyFreeze],
+		[framesRef, attendedNow, applyFreeze],
 	);
 
 	/** The camera started or stopped moving — the canvas already detects both. */
