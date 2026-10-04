@@ -4,6 +4,7 @@ import { cn } from "shared/lib/utils";
 import { ChevronIcon, FolderIcon } from "shared/ui/spool/icons";
 import { UnseenMark } from "shared/ui/spool/unseen-mark";
 import { Face, Faces, TeamMark } from "shared/ui/explore/cloud/home/parts";
+import { haptic } from "shared/ui/explore/cloud/phone-link/tonal";
 import { Field, useCamera } from "./camera";
 import { bounds, DEVICE, FrameBody, fit, GLIDE, type Page, PAGES, type Rect, SPRING, type Spec, walkOn } from "./fixture";
 import { Cursors } from "./rail";
@@ -51,7 +52,7 @@ const HOME = 34;
  * window, its area from the notch down, and `chin` the home bar's strip that
  * scrolling content keeps clear at its end.
  */
-interface Screen {
+export interface Screen {
 	device: boolean;
 	w: number;
 	h: number;
@@ -63,8 +64,8 @@ interface Screen {
 }
 
 const DRAWN: Screen = { device: false, w: DEVICE.w, h: DEVICE.h, top: STATUS, bottom: HOME, chin: 0 };
-const ScreenContext = createContext<Screen>(DRAWN);
-const useScreenSize = () => useContext(ScreenContext);
+export const ScreenContext = createContext<Screen>(DRAWN);
+export const useScreenSize = () => useContext(ScreenContext);
 
 function readDevice(): Screen {
 	const probe = document.createElement("div");
@@ -77,7 +78,7 @@ function readDevice(): Screen {
 	return { device: true, w: window.innerWidth, h: window.innerHeight, top, bottom, chin: bottom };
 }
 
-function useDevice(): Screen {
+export function useDevice(): Screen {
 	const [screen, setScreen] = useState<Screen>(() => readDevice());
 	useEffect(() => {
 		const read = () => setScreen(readDevice());
@@ -130,7 +131,7 @@ function Safari() {
 }
 
 /** the whole phone: status bar, the page between, Safari's bar, and whatever is played over all of it */
-function PhoneShell({ rootRef, children, over }: { rootRef: React.RefObject<HTMLDivElement | null>; children: ReactNode; over?: ReactNode }) {
+export function PhoneShell({ rootRef, children, over }: { rootRef: React.RefObject<HTMLDivElement | null>; children: ReactNode; over?: ReactNode }) {
 	const screen = useScreenSize();
 	if (screen.device)
 		return (
@@ -155,7 +156,16 @@ function PhoneShell({ rootRef, children, over }: { rootRef: React.RefObject<HTML
 
 /* ---------- shared state ---------- */
 
-function usePhone(state: PhoneState) {
+/**
+ * How a played frame is left. `down`: a swipe down anywhere, which only works
+ * because these fixture frames never scroll. `edge` (DEV-161): a pull from the
+ * right edge, the one strip a real frame rarely claims (iOS back is the left
+ * edge, a frame's own lists and sheets scroll vertically) and the edge a right
+ * thumb reaches without moving the hand.
+ */
+export type Exit = "down" | "edge";
+
+export function usePhone(state: PhoneState, opts: { exit?: Exit; onWalk?: (name: string) => void } = {}) {
 	const screen = useScreenSize();
 	const root = useRef<HTMLDivElement | null>(null);
 	const [changed, setChanged] = useState(false);
@@ -197,7 +207,11 @@ function usePhone(state: PhoneState) {
 				from={play.from}
 				closing={closing}
 				changed={changed}
-				onWalk={(name) => setPlay((p) => (p === null ? p : { ...p, name }))}
+				exit={opts.exit ?? "down"}
+				onWalk={(name) => {
+					opts.onWalk?.(name);
+					setPlay((p) => (p === null ? p : { ...p, name }));
+				}}
 				onClose={close}
 				onClosed={() => {
 					setPlay(null);
@@ -217,6 +231,7 @@ function PhonePlay({
 	from,
 	closing,
 	changed,
+	exit,
 	onWalk,
 	onClose,
 	onClosed,
@@ -226,6 +241,7 @@ function PhonePlay({
 	from: Rect | null;
 	closing: Rect | null;
 	changed: boolean;
+	exit: Exit;
 	onWalk: (name: string) => void;
 	onClose: () => void;
 	onClosed: () => void;
@@ -236,7 +252,13 @@ function PhonePlay({
 	const dragY = useMotionValue(0);
 	const shrink = useTransform(dragY, [0, 520], [1, 0.7]);
 	const corner = useTransform(dragY, [0, 70], [0, 46]);
-	const dim = useTransform(dragY, [0, 420], [1, 0.15]);
+	// edge: the pull from the right edge, in px; the frame steps back into the canvas under the thumb
+	const pull = useMotionValue(0);
+	const pullX = useTransform(pull, (v: number) => -v * 0.45);
+	const pullShrink = useTransform(pull, [0, 320], [1, 0.68]);
+	const pullCorner = useTransform(pull, [0, 60], [0, 40]);
+	const dim = useTransform(exit === "edge" ? pull : dragY, [0, 420], [1, 0.15]);
+	const pulling = useRef<{ x: number; t: number } | null>(null);
 	const leaving = closing !== null;
 	const [hint, setHint] = useState(false);
 	const [past, setPast] = useState<string[]>([]);
@@ -251,8 +273,10 @@ function PhonePlay({
 	}, []);
 
 	useEffect(() => {
-		if (leaving) animate(dragY, 0, GLIDE);
-	}, [leaving, dragY]);
+		if (!leaving) return;
+		animate(dragY, 0, GLIDE);
+		animate(pull, 0, GLIDE);
+	}, [leaving, dragY, pull]);
 
 	// a card is a 390 × 844 frame at scale s; the played frame starts under the status bar
 	const at = (r: Rect) => {
@@ -288,7 +312,7 @@ function PhonePlay({
 				}}
 			>
 				<motion.div
-					drag="y"
+					drag={exit === "down" ? "y" : false}
 					dragConstraints={{ top: 0, bottom: 0 }}
 					dragElastic={{ top: 0.04, bottom: 0.8 }}
 					dragMomentum={false}
@@ -296,7 +320,7 @@ function PhonePlay({
 						if (info.offset.y > 110 || info.velocity.y > 600) onClose();
 					}}
 					className={cn("absolute inset-0 overflow-hidden", site ? "bg-[#0A0A0B]" : "bg-[#FEFEFE]")}
-					style={{ y: dragY, scale: shrink, borderRadius: corner }}
+					style={exit === "down" ? { y: dragY, scale: shrink, borderRadius: corner } : { x: pullX, scale: pullShrink, borderRadius: pullCorner }}
 				>
 					{screen.device ? null : <StatusBar dark={!site} />}
 					<div className="absolute inset-x-0 overflow-hidden" style={{ top: screen.top, bottom: screen.bottom }}>
@@ -343,8 +367,52 @@ function PhonePlay({
 					)}
 				</motion.div>
 			</motion.div>
+			{exit === "edge" && !leaving ? (
+				<div
+					className="absolute top-0 right-0 bottom-0 z-20 w-5 touch-none"
+					onPointerDown={(event) => {
+						event.currentTarget.setPointerCapture(event.pointerId);
+						pull.stop();
+						pulling.current = { x: event.clientX, t: event.timeStamp };
+						setHint(false);
+					}}
+					onPointerMove={(event) => {
+						if (pulling.current === null) return;
+						pull.set(Math.max(0, pulling.current.x - event.clientX));
+					}}
+					onPointerUp={(event) => {
+						const start = pulling.current;
+						pulling.current = null;
+						if (start === null) return;
+						const speed = pull.get() / Math.max(1, event.timeStamp - start.t);
+						if (pull.get() > 90 || (pull.get() > 24 && speed > 0.6)) {
+							haptic();
+							onClose();
+						} else animate(pull, 0, GLIDE);
+					}}
+					onPointerCancel={() => {
+						pulling.current = null;
+						animate(pull, 0, GLIDE);
+					}}
+				/>
+			) : null}
 			<AnimatePresence>
-				{hint && !leaving ? (
+				{hint && !leaving && exit === "edge" ? (
+					<motion.div
+						className="pointer-events-none absolute right-2 z-10 flex items-center gap-1.5 rounded-sm border border-white/10 bg-black/80 py-1.5 pr-2.5 pl-2 text-white backdrop-blur type-detail"
+						style={{ top: "50%" }}
+						initial={{ opacity: 0, x: 12 }}
+						animate={{ opacity: 1, x: 0 }}
+						exit={{ opacity: 0, x: 8 }}
+						transition={SPRING}
+					>
+						<motion.span animate={{ x: [0, -4, 0] }} transition={{ duration: 1, repeat: 2, ease: "easeInOut" }}>
+							‹
+						</motion.span>
+						pull for the canvas
+					</motion.div>
+				) : null}
+				{hint && !leaving && exit === "down" ? (
 					<motion.div
 						className="pointer-events-none absolute left-1/2 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 font-sans text-[13px] text-white backdrop-blur"
 						style={{ x: "-50%", top: screen.top + 7 }}
