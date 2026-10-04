@@ -1,5 +1,5 @@
 import { AnimatePresence, animate, type MotionValue, motion, type PanInfo, useDragControls, useMotionValue, useTransform } from "motion/react";
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
 import { ChevronIcon, FolderIcon } from "shared/ui/spool/icons";
 import { UnseenMark } from "shared/ui/spool/unseen-mark";
@@ -30,6 +30,10 @@ import { Cursors } from "./rail";
  *
  * Prototype only. Drag with the mouse to stand in for a finger; ctrl scroll is
  * the pinch.
+ *
+ * `device` (DEV-161) is the same take for a real phone, exported with
+ * `spool build` and opened from the Home Screen: no drawn status bar or Safari,
+ * the real screen size, and the real safe areas padded by the frame itself.
  */
 
 export type PhoneTake = "canvas" | "shelf" | "deck" | "list";
@@ -40,6 +44,52 @@ const SAFARI = 82;
 const AREA_H = DEVICE.h - STATUS - SAFARI;
 /** the home indicator's strip: an app keeps its buttons above it */
 const HOME = 34;
+
+/**
+ * The screen a take lays itself out on. Drawn: the 390 × 844 phone on the
+ * canvas, its area between a fake status bar and Safari. Device: the real
+ * window, its area from the notch down, and `chin` the home bar's strip that
+ * scrolling content keeps clear at its end.
+ */
+interface Screen {
+	device: boolean;
+	w: number;
+	h: number;
+	/** where the area starts, and where a played frame's content starts */
+	top: number;
+	/** where a played frame's content stops above the bottom */
+	bottom: number;
+	chin: number;
+}
+
+const DRAWN: Screen = { device: false, w: DEVICE.w, h: DEVICE.h, top: STATUS, bottom: HOME, chin: 0 };
+const ScreenContext = createContext<Screen>(DRAWN);
+const useScreenSize = () => useContext(ScreenContext);
+
+function readDevice(): Screen {
+	const probe = document.createElement("div");
+	probe.style.cssText = "position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)";
+	document.body.appendChild(probe);
+	const style = getComputedStyle(probe);
+	const top = Number.parseFloat(style.paddingTop) || 0;
+	const bottom = Number.parseFloat(style.paddingBottom) || 0;
+	probe.remove();
+	return { device: true, w: window.innerWidth, h: window.innerHeight, top, bottom, chin: bottom };
+}
+
+function useDevice(): Screen {
+	const [screen, setScreen] = useState<Screen>(() => readDevice());
+	useEffect(() => {
+		const read = () => setScreen(readDevice());
+		window.addEventListener("resize", read);
+		window.visualViewport?.addEventListener("resize", read);
+		return () => {
+			window.removeEventListener("resize", read);
+			window.visualViewport?.removeEventListener("resize", read);
+		};
+	}, []);
+	return screen;
+}
 
 /* ---------- shell ---------- */
 
@@ -81,6 +131,16 @@ function Safari() {
 
 /** the whole phone: status bar, the page between, Safari's bar, and whatever is played over all of it */
 function PhoneShell({ rootRef, children, over }: { rootRef: React.RefObject<HTMLDivElement | null>; children: ReactNode; over?: ReactNode }) {
+	const screen = useScreenSize();
+	if (screen.device)
+		return (
+			<div ref={rootRef} className="fixed inset-0 select-none overflow-hidden bg-bg font-sans text-text antialiased [-webkit-touch-callout:none]">
+				<div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: screen.top }}>
+					{children}
+				</div>
+				{over}
+			</div>
+		);
 	return (
 		<div ref={rootRef} className="relative h-full w-full overflow-hidden bg-bg font-sans text-text antialiased">
 			<StatusBar />
@@ -96,6 +156,7 @@ function PhoneShell({ rootRef, children, over }: { rootRef: React.RefObject<HTML
 /* ---------- shared state ---------- */
 
 function usePhone(state: PhoneState) {
+	const screen = useScreenSize();
 	const root = useRef<HTMLDivElement | null>(null);
 	const [changed, setChanged] = useState(false);
 	const [play, setPlay] = useState<{ page: Page; name: string; from: Rect | null } | null>(
@@ -125,7 +186,7 @@ function usePhone(state: PhoneState) {
 		const el = root.current?.querySelector(`[data-frame="${play.name}"]`);
 		const rect = rectOf(el);
 		// a card scrolled out of sight: shrink toward the middle and fade
-		setClosing(rect ?? { x: DEVICE.w / 2 - 60, y: DEVICE.h / 2 - 130, w: 120, h: 260 });
+		setClosing(rect ?? { x: screen.w / 2 - 60, y: screen.h / 2 - 130, w: 120, h: 260 });
 	};
 
 	const over =
@@ -169,6 +230,7 @@ function PhonePlay({
 	onClose: () => void;
 	onClosed: () => void;
 }) {
+	const screen = useScreenSize();
 	const spec = page.frames.find((f) => f.name === name) ?? page.frames[0]!;
 	const site = "site" in spec.content;
 	const dragY = useMotionValue(0);
@@ -194,8 +256,8 @@ function PhonePlay({
 
 	// a card is a 390 × 844 frame at scale s; the played frame starts under the status bar
 	const at = (r: Rect) => {
-		const s = r.w / (site ? DEVICE.w : spec.w);
-		return { x: r.x, y: r.y - STATUS * s, scale: s, borderRadius: 22 };
+		const s = r.w / (site ? screen.w : spec.w);
+		return { x: r.x, y: r.y - screen.top * s, scale: s, borderRadius: 22 };
 	};
 	const full = { x: 0, y: 0, scale: 1, borderRadius: 0 };
 	const back = () => {
@@ -217,7 +279,7 @@ function PhonePlay({
 			</motion.div>
 			<motion.div
 				className="absolute top-0 left-0 overflow-hidden"
-				style={{ width: DEVICE.w, height: DEVICE.h, originX: 0, originY: 0 }}
+				style={{ width: screen.w, height: screen.h, originX: 0, originY: 0 }}
 				initial={from === null ? full : at(from)}
 				animate={leaving ? at(closing) : full}
 				transition={GLIDE}
@@ -236,13 +298,13 @@ function PhonePlay({
 					className={cn("absolute inset-0 overflow-hidden", site ? "bg-[#0A0A0B]" : "bg-[#FEFEFE]")}
 					style={{ y: dragY, scale: shrink, borderRadius: corner }}
 				>
-					<StatusBar dark={!site} />
-					<div className="absolute inset-x-0 overflow-hidden" style={{ top: STATUS, bottom: HOME }}>
+					{screen.device ? null : <StatusBar dark={!site} />}
+					<div className="absolute inset-x-0 overflow-hidden" style={{ top: screen.top, bottom: screen.bottom }}>
 						<AnimatePresence initial={false}>
 							<motion.div
 								key={spec.name}
 								className={cn("absolute inset-0 shadow-[-12px_0_30px_rgba(0,0,0,0.12)]", site ? "bg-[#0A0A0B]" : "bg-[#FEFEFE]")}
-								initial={{ x: DEVICE.w }}
+								initial={{ x: screen.w }}
 								animate={{ x: 0, opacity: 1 }}
 								exit={{ x: -110, opacity: 0.4 }}
 								transition={GLIDE}
@@ -254,11 +316,11 @@ function PhonePlay({
 								}
 							>
 								{site ? (
-									<div style={{ width: 1440, transform: `scale(${DEVICE.w / 1440})`, transformOrigin: "0 0" }}>
+									<div style={{ width: 1440, transform: `scale(${screen.w / 1440})`, transformOrigin: "0 0" }}>
 										<FrameBody spec={spec} />
 									</div>
 								) : (
-									<div className="h-full w-full">
+									<div className="h-full w-full [&>div]:w-full!">
 										<FrameBody spec={spec as Spec} changed={changed} fill />
 									</div>
 								)}
@@ -276,14 +338,16 @@ function PhonePlay({
 							/>
 						) : null}
 					</div>
-					<span className={cn("pointer-events-none absolute bottom-[8px] left-1/2 h-[5px] w-[134px] -translate-x-1/2 rounded-full", site ? "bg-white/90" : "bg-black/85")} />
+					{screen.device ? null : (
+						<span className={cn("pointer-events-none absolute bottom-[8px] left-1/2 h-[5px] w-[134px] -translate-x-1/2 rounded-full", site ? "bg-white/90" : "bg-black/85")} />
+					)}
 				</motion.div>
 			</motion.div>
 			<AnimatePresence>
 				{hint && !leaving ? (
 					<motion.div
-						className="pointer-events-none absolute top-[54px] left-1/2 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 font-sans text-[13px] text-white backdrop-blur"
-						style={{ x: "-50%" }}
+						className="pointer-events-none absolute left-1/2 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 font-sans text-[13px] text-white backdrop-blur"
+						style={{ x: "-50%", top: screen.top + 7 }}
 						initial={{ opacity: 0, y: -8, scale: 0.95 }}
 						animate={{ opacity: 1, y: 0, scale: 1 }}
 						exit={{ opacity: 0, y: -6 }}
@@ -357,6 +421,7 @@ function Saved({ show }: { show: boolean }) {
 
 /** A page's canvas pushed over whatever was there, the way a navigation stack pushes. A swipe from the left edge pops it. */
 function Pushed({ page, title, back, changed, onOpen, onBack, leaving }: { page: Page; title: string; back: string; changed: boolean; onOpen: (name: string, el: HTMLElement) => void; onBack: () => void; leaving: boolean }) {
+	const screen = useScreenSize();
 	const cam = useCamera();
 	const field = useRef<HTMLDivElement | null>(null);
 	const controls = useDragControls();
@@ -369,13 +434,13 @@ function Pushed({ page, title, back, changed, onOpen, onBack, leaving }: { page:
 	return (
 		<motion.div
 			className="absolute inset-0 z-10 bg-bg shadow-[-20px_0_40px_rgba(0,0,0,0.5)]"
-			initial={{ x: DEVICE.w }}
-			animate={{ x: leaving ? DEVICE.w : 0 }}
+			initial={{ x: screen.w }}
+			animate={{ x: leaving ? screen.w : 0 }}
 			transition={GLIDE}
 			drag="x"
 			dragControls={controls}
 			dragListener={false}
-			dragConstraints={{ left: 0, right: DEVICE.w }}
+			dragConstraints={{ left: 0, right: screen.w }}
 			dragElastic={0}
 			dragMomentum={false}
 			style={{ x }}
@@ -429,8 +494,9 @@ function useStack(initial: Page | null) {
 
 /** what sits under a pushed view slides a third over and dims, the way UIKit does it */
 function Under({ pushed, children }: { pushed: boolean; children: ReactNode }) {
+	const screen = useScreenSize();
 	return (
-		<motion.div className="absolute inset-0" animate={{ x: pushed ? -DEVICE.w * 0.3 : 0 }} transition={GLIDE}>
+		<motion.div className="absolute inset-0" animate={{ x: pushed ? -screen.w * 0.3 : 0 }} transition={GLIDE}>
 			{children}
 			<motion.div className="pointer-events-none absolute inset-0 bg-black" animate={{ opacity: pushed ? 0.35 : 0 }} transition={GLIDE} />
 		</motion.div>
@@ -440,6 +506,7 @@ function Under({ pushed, children }: { pushed: boolean; children: ReactNode }) {
 /* ---------- take: canvas ---------- */
 
 function CanvasTake({ state }: { state: PhoneState }) {
+	const screen = useScreenSize();
 	const p = usePhone(state);
 	const [pageName, setPageName] = useState("app");
 	const page = PAGES.find((x) => x.name === pageName) ?? PAGES[0]!;
@@ -500,8 +567,8 @@ function CanvasTake({ state }: { state: PhoneState }) {
 				{p.changed && p.play === null ? (
 					<motion.div
 						data-chrome=""
-						className="pointer-events-none absolute bottom-3 left-1/2 flex items-center gap-2 rounded-full border border-white/10 bg-raised/90 px-3 py-2 text-[13px] backdrop-blur-xl"
-						style={{ x: "-50%" }}
+						className="pointer-events-none absolute left-1/2 flex items-center gap-2 rounded-full border border-white/10 bg-raised/90 px-3 py-2 text-[13px] backdrop-blur-xl"
+						style={{ x: "-50%", bottom: 12 + screen.chin }}
 						initial={{ opacity: 0, y: 16, scale: 0.94 }}
 						animate={{ opacity: [0, 1, 1, 0], y: [16, 0, 0, 8], scale: [0.94, 1, 1, 1] }}
 						transition={{ duration: 3.4, times: [0, 0.1, 0.85, 1] }}
@@ -569,6 +636,7 @@ function CanvasTake({ state }: { state: PhoneState }) {
 }
 
 function Sheet({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+	const screen = useScreenSize();
 	return (
 		<AnimatePresence>
 			{open ? (
@@ -586,7 +654,8 @@ function Sheet({ open, onClose, children }: { open: boolean; onClose: () => void
 					<motion.div
 						key="sheet"
 						data-chrome=""
-						className="absolute inset-x-0 bottom-0 z-40 rounded-t-[22px] border-white/10 border-t bg-surface pb-4"
+						className="absolute inset-x-0 bottom-0 z-40 rounded-t-[22px] border-white/10 border-t bg-surface"
+						style={{ paddingBottom: 16 + screen.chin }}
 						initial={{ y: "100%" }}
 						animate={{ y: 0 }}
 						exit={{ y: "100%" }}
@@ -610,6 +679,7 @@ function Sheet({ open, onClose, children }: { open: boolean; onClose: () => void
 /* ---------- take: shelf ---------- */
 
 function ShelfTake({ state }: { state: PhoneState }) {
+	const screen = useScreenSize();
 	const p = usePhone(state);
 	const stack = useStack(state === "canvas" ? PAGES[0]! : null);
 	return (
@@ -671,7 +741,7 @@ function ShelfTake({ state }: { state: PhoneState }) {
 							</div>
 						</section>
 					))}
-					<div className="h-6" />
+					<div style={{ height: 24 + screen.chin }} />
 				</div>
 			</Under>
 			{stack.pushed === null ? null : (
@@ -691,20 +761,23 @@ function ShelfTake({ state }: { state: PhoneState }) {
 
 /* ---------- take: deck ---------- */
 
-const DECK_H = 500;
+const DECK_DRAWN = 500;
 const GAP = 26;
 
 function DeckTake({ state }: { state: PhoneState }) {
+	const screen = useScreenSize();
 	const p = usePhone(state);
 	const [pageName, setPageName] = useState("app");
 	const page = PAGES.find((x) => x.name === pageName) ?? PAGES[0]!;
 	const [index, setIndex] = useState(0);
+	// on a real phone the deck takes what the screen has under its header and above its dots
+	const DECK_H = screen.device ? Math.max(420, Math.min(620, screen.h - screen.top - screen.chin - 190)) : DECK_DRAWN;
 	const [overview, setOverview] = useState(state === "pages");
 	const site = "site" in page.frames[0]!.content;
-	const cardW = site ? 340 : (DEVICE.w * DECK_H) / DEVICE.h;
-	const cardH = site ? (340 * 900) / 1440 : DECK_H;
+	const cardW = site ? Math.min(340, screen.w - 50) : (DEVICE.w * DECK_H) / DEVICE.h;
+	const cardH = site ? (cardW * 900) / 1440 : DECK_H;
 	const step = cardW + GAP;
-	const center = (DEVICE.w - cardW) / 2;
+	const center = (screen.w - cardW) / 2;
 	const tx = useMotionValue(center);
 	const dragged = useRef(false);
 
@@ -877,7 +950,7 @@ function DeckTake({ state }: { state: PhoneState }) {
 								</div>
 							</motion.div>
 						))}
-						<div className="h-6" />
+						<div style={{ height: 24 + screen.chin }} />
 					</motion.div>
 				) : null}
 			</AnimatePresence>
@@ -950,6 +1023,7 @@ function DeckCard({
 /* ---------- take: list ---------- */
 
 function ListTake({ state }: { state: PhoneState }) {
+	const screen = useScreenSize();
 	const p = usePhone(state);
 	const stack = useStack(state === "canvas" ? PAGES[0]! : null);
 	const scroller = useRef<HTMLDivElement | null>(null);
@@ -1033,7 +1107,9 @@ function ListTake({ state }: { state: PhoneState }) {
 							</button>
 						))}
 					</Group>
-					<p className="px-8 pt-1 pb-8 text-[13px] text-muted">You can look and play. Changes are made in spool on a Mac.</p>
+					<p className="px-8 pt-1 text-[13px] text-muted" style={{ paddingBottom: 32 + screen.chin }}>
+						You can look and play. Changes are made in spool on a Mac.
+					</p>
 				</div>
 			</Under>
 			{stack.pushed === null ? null : (
@@ -1087,9 +1163,23 @@ function PlayGlyph() {
 
 /* ---------- entry ---------- */
 
-export function PhoneCanvas({ take, state }: { take: PhoneTake; state: PhoneState }) {
+function Take({ take, state }: { take: PhoneTake; state: PhoneState }) {
 	if (take === "canvas") return <CanvasTake state={state} />;
 	if (take === "shelf") return <ShelfTake state={state} />;
 	if (take === "deck") return <DeckTake state={state} />;
 	return <ListTake state={state} />;
+}
+
+function OnDevice({ take, state }: { take: PhoneTake; state: PhoneState }) {
+	const screen = useDevice();
+	return (
+		<ScreenContext.Provider value={screen}>
+			<Take take={take} state={state} />
+		</ScreenContext.Provider>
+	);
+}
+
+export function PhoneCanvas({ take, state, device = false }: { take: PhoneTake; state: PhoneState; device?: boolean }) {
+	if (device) return <OnDevice take={take} state={state} />;
+	return <Take take={take} state={state} />;
 }
