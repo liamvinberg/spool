@@ -42,6 +42,8 @@ export interface Track {
 	readonly selects?: readonly (readonly [number, number, string])[] | undefined;
 	/** another page entirely: listed among who is here, never drawn on this canvas */
 	readonly page?: string | undefined;
+	/** loop seconds this person is inside a frame live: [from, to, frame] */
+	readonly enters?: readonly (readonly [number, number, string])[] | undefined;
 }
 
 export interface FrameBox {
@@ -414,6 +416,13 @@ export function wasOver(track: Track, scene: Scene, t: number): FrameBox | null 
 	return frameUnder(scene, t, pathAt(track.keys, scene.length, t));
 }
 
+/** the frame this person is inside live at a past instant, if any */
+export function wasIn(track: Track, scene: Scene, t: number): string | null {
+	const tt = mod(t, scene.length);
+	for (const [a, b, frame] of track.enters ?? []) if (tt >= a && tt < b) return frame;
+	return null;
+}
+
 /** who has a frame selected right now */
 export function selectionsAt(scene: Scene, t: number): { frame: string; person: Person }[] {
 	const tt = mod(t, scene.length);
@@ -464,14 +473,12 @@ export const LOOP: Scene = {
 	frames: FRAMES,
 	marks: [
 		{ t: 3.0, label: "jonas drags" },
-		{ t: 5.0, label: "theo leaves" },
-		{ t: 5.6, label: "maja still" },
+		{ t: 6.2, label: "maja enters cart" },
 		{ t: 8.4, label: "ines joins" },
 		{ t: 10.6, label: "maja idle" },
 		{ t: 15.0, label: "jonas drags back" },
 		{ t: 17.6, label: "ines leaves" },
-		{ t: 20.6, label: "maja moves" },
-		{ t: 21.6, label: "theo joins" },
+		{ t: 20.4, label: "maja steps out" },
 	],
 	tracks: [
 		{
@@ -486,6 +493,7 @@ export const LOOP: Scene = {
 				{ t: 23.2, x: 70, y: 96, bow: 40 },
 				{ t: 24, x: 70, y: 96 },
 			],
+			enters: [[6.2, 20.4, "cart"]],
 		},
 		{
 			person: PEOPLE.jonas,
@@ -527,6 +535,7 @@ export const LOOP: Scene = {
 		{
 			person: PEOPLE.ines,
 			present: [[8.4, 17.6]],
+			enters: [[11.4, 13.8, "cart"]],
 			keys: [
 				{ t: 0, x: 300, y: 770 },
 				{ t: 8.8, x: 300, y: 770 },
@@ -619,6 +628,7 @@ export const CROWD: Scene = {
 				{ t: 0, x: 500, y: 520 },
 				{ t: 16, x: 500, y: 520 },
 			],
+			enters: [[0, 16, "cart"]],
 		},
 		{
 			person: PEOPLE.theo,
