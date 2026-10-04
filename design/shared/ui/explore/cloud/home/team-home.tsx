@@ -1,140 +1,78 @@
-import { ProjectArtwork } from "shared/ui/demo/home-artwork";
+import { cn } from "shared/lib/utils";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "shared/ui/spool/home-actions";
-import { CloseIcon, FrameIcon, PlusIcon } from "shared/ui/spool/icons";
-import { SpoolMark } from "shared/ui/spool/mark";
-import { Count, Faces, Grid, Host, InviteField, Layout, MEMBERS, NavItem, PeopleList, Search, TEAM, TeamMark, TeamSwitch } from "./parts";
-import { SpaceTake } from "./space";
-import { FacesTake } from "./faces";
-import { NowTake } from "./now";
+import { CheckIcon, CloseIcon, FrameIcon, PlusIcon } from "shared/ui/spool/icons";
+import { Count, Faces, Grid, Host, InviteField, Layout, MEMBERS, NavItem, OWN, PeopleList, Search, TEAM, TeamMark, TeamSwitch } from "./parts";
 
 /**
- * DEV-121: where a team lives, in the app and in the browser.
+ * DEV-121: the team's home in Spool Cloud, as three questions you pick between
+ * one at a time. Each question is its own page under explore/cloud/home/.
  *
- * Takes go down, smallest change to Home first:
- *   section  the team is a section of Home's sidebar; the browser is a list that hands you to the app
- *   same     a team switcher scopes Home, and spool.page shows the same Home
- *   faces    no team page: covers say who is inside, people live in the project, links open the app
- *   now      the team's Home is what is happening, people and agents, live
- *   space    Home is a canvas of projects, the team resting on the ones they are in
- *
- * States go across: the app, the browser, inviting someone.
+ *   sidebar  how a team shows in Home: a section beside your projects, or a switcher
+ *   page     what a team's Home shows: its projects as covers, or what is happening now
+ *   link     what a team project's link does in a browser: opens spool, or shows the team's page
  *
  * A team project is a folder on every member's Mac (DEV-112), so the app opens it
  * like any project and the browser can only look. Getting a team project onto a
  * new Mac is fog on the map, so "Get it" is drawn and goes nowhere.
  */
 
-export type TeamTake = "section" | "same" | "faces" | "now" | "space";
-export type TeamState = "app" | "web" | "invite";
-
 export interface TeamWalks {
 	onOpen?: (() => void) | undefined;
 	onInvite?: (() => void) | undefined;
-	onWeb?: (() => void) | undefined;
 }
 
-export function TeamHome({ take, state, ...walks }: { take: TeamTake; state: TeamState } & TeamWalks) {
-	if (take === "faces") return <FacesTake state={state} {...walks} />;
-	if (take === "now") return <NowTake state={state} {...walks} />;
-	if (take === "space") return <SpaceTake state={state} {...walks} />;
-	if (take === "section") return <Section state={state} {...walks} />;
-	return <Same state={state} {...walks} />;
-}
+/* ── sidebar: section ──────────────────────────────────────── */
 
-/* ── section ───────────────────────────────────────────────── */
-
-function Section({ state, onOpen, onInvite }: { state: TeamState } & TeamWalks) {
-	if (state === "web")
-		return (
-			<Host host="web">
-				<SectionDoor />
-			</Host>
-		);
+/**
+ * Every team you are in is its own block in the sidebar, under your own
+ * projects. Two teams are drawn so the cost shows: the sidebar grows with them.
+ */
+export function SidebarSection({ invite = false, onOpen, onInvite }: { invite?: boolean } & TeamWalks) {
 	return (
 		<Host host="app">
 			<Layout
 				nav={
 					<>
-						<NavItem icon={<FrameIcon />} label="Projects" />
-						<div className="mt-[26px] mb-[6px] flex items-center gap-[10px] px-[12px]">
-							<TeamMark />
-							<span className="type-control">Tidemark</span>
-						</div>
-						<NavItem label="Projects" indent current />
-						<NavItem label="People" indent count="4" />
+						<NavItem icon={<FrameIcon />} label="Your projects" count="2" />
+						<TeamBlock name="Tidemark" hue="#2E5D70" current />
+						<TeamBlock name="Northlight" hue="#6B4E2E" />
 					</>
 				}
 				foot="On this Mac"
 			>
-				<header className="mb-[31px] flex items-center justify-between gap-[25px]">
-					<div className="flex items-center gap-[16px]">
-						<h1 className="type-page">Tidemark</h1>
-						<Faces ids={MEMBERS.map((person) => person.id)} />
-					</div>
-					<div className="flex items-center gap-[13px]">
-						<Search placeholder="Search Tidemark" />
-						<button type="button" className={HOME_ACTION} onClick={onInvite}>
-							Invite
-						</button>
-						<button type="button" className={HOME_ACTION_PRIMARY}>
-							<PlusIcon className="h-[10px] w-[10px]" />
-							New team project…
-						</button>
-					</div>
-				</header>
+				<TeamHeader title="Tidemark" onInvite={onInvite} />
 				<Count n={TEAM.length} />
 				<Grid projects={TEAM} onOpen={onOpen} />
 			</Layout>
-			{state === "invite" && <InviteSheet />}
+			{invite && <InviteSheet />}
 		</Host>
 	);
 }
 
-function SectionDoor() {
+function TeamBlock({ name, hue, current = false }: { name: string; hue: string; current?: boolean }) {
 	return (
-		<div className="flex h-full justify-center overflow-hidden px-[48px] pt-[92px]">
-			<div className="w-[560px]">
-				<div className="mb-[44px] flex items-center gap-[10px] [font:var(--type-mark)] tracking-[-1px]">
-					<SpoolMark className="h-[25px] w-[19px] text-thread" />
-					<span>spool</span>
-				</div>
-				<div className="flex items-center gap-[12px]">
-					<TeamMark size={32} />
-					<h1 className="type-page">Tidemark</h1>
-				</div>
-				<p className="mt-[14px] text-muted [font:var(--type-body)]">Tidemark's projects open in spool on your Mac. Here you can look at one without opening it.</p>
-				<ul className="mt-[34px] border-border border-t">
-					{TEAM.map((project) => (
-						<li key={project.name} className="flex h-[64px] items-center gap-[16px] border-border border-b">
-							<div className="h-[40px] w-[72px] shrink-0 overflow-hidden rounded-[5px] bg-canvas">
-								<ProjectArtwork kind={project.art} className="h-full w-full object-cover object-top" />
-							</div>
-							<div className="min-w-0 flex-1">
-								<strong className="block truncate type-title font-[500]">{project.name}</strong>
-								<span className="text-muted type-detail">
-									{project.frames} frames · {project.edited}
-								</span>
-							</div>
-							<button type="button" className="px-[8px] text-muted type-control hover:text-text">
-								Look
-							</button>
-							<button type="button" className={HOME_ACTION}>
-								Open in spool
-							</button>
-						</li>
-					))}
-				</ul>
+		<>
+			<div className="mt-[24px] mb-[4px] flex items-center gap-[10px] px-[12px]">
+				<span className="grid h-[20px] w-[20px] place-items-center rounded-[5px] text-[11px] font-medium text-[#EDEDED]" style={{ background: hue }}>
+					{name[0]}
+				</span>
+				<span className="type-control">{name}</span>
 			</div>
-		</div>
+			<NavItem label="Projects" indent current={current} />
+			<NavItem label="People" indent count={current ? "4" : "2"} />
+		</>
 	);
 }
 
-/* ── same ──────────────────────────────────────────────────── */
+/* ── sidebar: switcher ─────────────────────────────────────── */
 
-function Same({ state, onOpen, onInvite }: { state: TeamState } & TeamWalks) {
-	const web = state === "web";
+/**
+ * One team at a time. The switcher at the top of the sidebar picks it, and your
+ * own projects are one more entry in it, so Home always shows one set of covers.
+ */
+export function SidebarSwitcher({ state = "home", onOpen, onInvite }: { state?: "home" | "menu" | "invite" } & TeamWalks) {
 	return (
-		<Host host={web ? "web" : "app"}>
+		<Host host="app">
 			<Layout
 				nav={
 					<>
@@ -144,32 +82,62 @@ function Same({ state, onOpen, onInvite }: { state: TeamState } & TeamWalks) {
 						<NavItem label="People" count="4" />
 					</>
 				}
-				foot={web ? "ada@tidemark.app" : "On this Mac"}
-				web={web}
+				foot="On this Mac"
 			>
-				<header className="mb-[31px] flex items-center justify-between gap-[25px]">
-					<div className="flex items-center gap-[16px]">
-						<h1 className="type-page">Projects</h1>
-						<Faces ids={MEMBERS.map((person) => person.id)} />
-					</div>
-					<div className="flex items-center gap-[13px]">
-						<Search placeholder="Search Tidemark" />
-						<button type="button" className={HOME_ACTION} onClick={onInvite}>
-							Invite
-						</button>
-						{!web && (
-							<button type="button" className={HOME_ACTION_PRIMARY}>
-								<PlusIcon className="h-[10px] w-[10px]" />
-								New project…
-							</button>
-						)}
-					</div>
-				</header>
+				<TeamHeader title="Projects" onInvite={onInvite} />
 				<Count n={TEAM.length} />
-				<Grid projects={TEAM} onOpen={onOpen} web={web} />
+				<Grid projects={TEAM} onOpen={onOpen} />
 			</Layout>
+			{state === "menu" && <SwitchMenu />}
 			{state === "invite" && <InviteSheet />}
 		</Host>
+	);
+}
+
+function SwitchMenu() {
+	return (
+		<div className="absolute top-[78px] left-[16px] z-30 w-[260px] animate-menu-in rounded-[9px] border border-border-raised bg-raised p-[5px]">
+			<MenuRow mark={<TeamMark />} label="Tidemark" detail="4 people" checked />
+			<MenuRow mark={<span className="grid h-[20px] w-[20px] place-items-center rounded-[5px] bg-[#6B4E2E] text-[11px] font-medium text-[#EDEDED]">N</span>} label="Northlight" detail="2 people" />
+			<div className="mx-[8px] my-[5px] h-px bg-border-raised" />
+			<MenuRow mark={<FrameIcon className="h-[16px] w-[16px] text-muted" />} label="Your projects" detail={`${OWN.length} on this Mac`} />
+			<div className="mx-[8px] my-[5px] h-px bg-border-raised" />
+			<MenuRow mark={<PlusIcon className="h-[10px] w-[10px] text-muted" />} label="New team…" />
+		</div>
+	);
+}
+
+function MenuRow({ mark, label, detail, checked = false }: { mark: React.ReactNode; label: string; detail?: string; checked?: boolean }) {
+	return (
+		<div className={cn("flex h-[36px] items-center gap-[10px] rounded-[6px] px-[9px] hover:bg-surface", checked && "bg-surface")}>
+			<span className="grid w-[20px] place-items-center">{mark}</span>
+			<span className="flex-1 type-control">{label}</span>
+			{detail && <span className="text-muted type-detail">{detail}</span>}
+			{checked && <CheckIcon className="h-[12px] w-[12px] text-text" />}
+		</div>
+	);
+}
+
+/* ── shared ────────────────────────────────────────────────── */
+
+function TeamHeader({ title, onInvite }: { title: string; onInvite?: (() => void) | undefined }) {
+	return (
+		<header className="mb-[31px] flex items-center justify-between gap-[25px]">
+			<div className="flex items-center gap-[16px]">
+				<h1 className="type-page">{title}</h1>
+				<Faces ids={MEMBERS.map((person) => person.id)} />
+			</div>
+			<div className="flex items-center gap-[13px]">
+				<Search placeholder="Search Tidemark" />
+				<button type="button" className={HOME_ACTION} onClick={onInvite}>
+					Invite
+				</button>
+				<button type="button" className={HOME_ACTION_PRIMARY}>
+					<PlusIcon className="h-[10px] w-[10px]" />
+					New project…
+				</button>
+			</div>
+		</header>
 	);
 }
 
@@ -184,9 +152,43 @@ function InviteSheet() {
 				<p className="mb-[22px] text-muted type-control">They can open and change every Tidemark project.</p>
 				<InviteField />
 				<div className="mt-[22px] border-border-raised border-t pt-[8px]">
-					<PeopleList />
+					<PeopleList where />
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/* ── link: the team's page in a browser ────────────────────── */
+
+/** spool.page/tidemark: the switcher's Home again, minus what only lives on your Mac. */
+export function LinkTeamPage({ onOpen }: TeamWalks) {
+	return (
+		<Host host="web" url="spool.page/tidemark">
+			<Layout
+				nav={
+					<>
+						<TeamSwitch />
+						<div className="h-[18px]" />
+						<NavItem icon={<FrameIcon />} label="Projects" current />
+						<NavItem label="People" count="4" />
+					</>
+				}
+				foot="ada@tidemark.app"
+				web
+			>
+				<header className="mb-[31px] flex items-center justify-between">
+					<div className="flex items-center gap-[16px]">
+						<h1 className="type-page">Projects</h1>
+						<Faces ids={MEMBERS.map((person) => person.id)} />
+					</div>
+					<button type="button" className={HOME_ACTION}>
+						Invite
+					</button>
+				</header>
+				<Count n={TEAM.length} />
+				<Grid projects={TEAM} onOpen={onOpen} web />
+			</Layout>
+		</Host>
 	);
 }

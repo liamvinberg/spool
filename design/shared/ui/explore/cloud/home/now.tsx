@@ -1,48 +1,38 @@
 import { cn } from "shared/lib/utils";
 import { ProjectArtwork } from "shared/ui/demo/home-artwork";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "shared/ui/spool/home-actions";
-import { AgentIcon, CloseIcon, FrameIcon } from "shared/ui/spool/icons";
-import { Faces, Host, InviteField, Layout, MEMBERS, NavItem, PeopleList, TEAM, TeamMark, member, type TeamProject } from "./parts";
-import type { TeamState, TeamWalks } from "./team-home";
+import { AgentIcon, FrameIcon } from "shared/ui/spool/icons";
+import { Faces, Host, Layout, NavItem, TEAM, TeamSwitch, member, type TeamProject } from "./parts";
+import type { TeamWalks } from "./team-home";
 
 /**
- * now: the team's Home is what is happening.
+ * page, now: the team's Home is what is happening.
  *
  * A team canvas is live, so its Home can be too. Projects with someone in them
  * come first and say who, on which frame, and what their agents are doing, in
  * the same mono status lines the canvas already speaks. Quiet projects fold into
- * a list under them. The browser shows the same page and its one verb changes
- * from Open to Look. People is a column that slides over the right edge.
+ * a list under them.
  */
-export function NowTake({ state, onOpen, onInvite }: { state: TeamState } & TeamWalks) {
-	const web = state === "web";
+export function PageNow({ onOpen, onInvite }: TeamWalks) {
+	const web = false;
 	const live = TEAM.filter((project) => project.here.length > 0);
 	const quiet = TEAM.filter((project) => project.here.length === 0);
 	return (
-		<Host host={web ? "web" : "app"}>
+		<Host host="app">
 			<Layout
 				nav={
 					<>
-						<div className="mb-[8px] flex items-center gap-[10px] px-[12px]">
-							<TeamMark />
-							<span className="type-control">Tidemark</span>
-						</div>
-						<NavItem label="Now" current indent />
-						<NavItem label="People" count="4" indent />
-						{!web && (
-							<>
-								<div className="h-[22px]" />
-								<NavItem icon={<FrameIcon />} label="Your projects" count="2" />
-							</>
-						)}
+						<TeamSwitch />
+						<div className="h-[18px]" />
+						<NavItem icon={<FrameIcon />} label="Projects" current />
+						<NavItem label="People" count="4" />
 					</>
 				}
-				foot={web ? "ada@tidemark.app" : "On this Mac"}
-				web={web}
+				foot="On this Mac"
 			>
 				<header className="mb-[30px] flex items-center justify-between">
 					<div className="flex items-center gap-[16px]">
-						<h1 className="type-page">Tidemark</h1>
+						<h1 className="type-page">Projects</h1>
 						<span className="flex items-center gap-[8px] text-muted type-detail">
 							<span className="h-[6px] w-[6px] animate-pulse rounded-full bg-thread" />3 people in now
 						</span>
@@ -75,7 +65,6 @@ export function NowTake({ state, onOpen, onInvite }: { state: TeamState } & Team
 					))}
 				</ul>
 			</Layout>
-			{state === "invite" && <PeopleColumn />}
 		</Host>
 	);
 }
@@ -122,24 +111,5 @@ function LiveRow({ project, web, onOpen }: { project: TeamProject; web: boolean;
 				</div>
 			</div>
 		</article>
-	);
-}
-
-function PeopleColumn() {
-	return (
-		<div className="absolute top-0 right-0 bottom-0 z-30 flex w-[400px] flex-col border-border-raised border-l bg-bg px-[28px] pt-[44px]">
-			<div className="mb-[6px] flex items-center justify-between">
-				<h2 className="type-heading">People</h2>
-				<CloseIcon className="h-[10px] w-[10px] text-muted" />
-			</div>
-			<p className="mb-[22px] text-muted type-control">Everyone here can open and change every Tidemark project.</p>
-			<InviteField />
-			<div className="mt-[20px]">
-				<PeopleList where />
-			</div>
-			<p className="mt-auto mb-[24px] text-muted type-detail">
-				{MEMBERS.length} people · 1 invited
-			</p>
-		</div>
 	);
 }

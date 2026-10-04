@@ -306,7 +306,7 @@ export function Tile({ project, onOpen, web = false, mark = false }: { project: 
 						</span>
 					)}
 					{web && (
-						<span className="absolute right-[10px] bottom-[10px] flex gap-[6px] opacity-0 group-hover/tile:opacity-100">
+						<span className="absolute right-[10px] bottom-[10px] flex gap-[6px]">
 							<span className="rounded-[6px] border border-border-raised bg-bg px-[10px] py-[5px] type-control">Look</span>
 							<span className="rounded-[6px] bg-text px-[10px] py-[5px] text-bg type-control">Open in spool</span>
 						</span>
