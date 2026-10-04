@@ -328,7 +328,15 @@ export { Cursors };
 
 /* ---------- the player ---------- */
 
-const BAR = 40;
+/**
+ * The shipped player (src/runtime/player-chrome.tsx, styled in src/daemon/play.ts):
+ * a permanent 30px bar, the frame switcher on the left, size, exit, eye and close
+ * on the right. The page is never scaled: it lays out at its own width, capped by
+ * the window, flush under the bar. In the cloud the close returns to the canvas
+ * rather than closing the tab, and nothing else changes.
+ */
+const BAR = 30;
+const BAR_CSS = "bg-[#282828] border-[#363636] border-b font-['Fragment_Mono'] text-[#f0efed] text-[12px] leading-[18px] antialiased";
 
 function Player({
 	page,
@@ -354,12 +362,8 @@ function Player({
 	const spec = page.frames.find((f) => f.name === name) ?? page.frames[0]!;
 	const [picking, setPicking] = useState(false);
 	const site = "site" in spec.content;
-	const room = area.h - BAR;
-	const s = site ? area.w / spec.w : Math.min(1, (room - 56) / spec.h);
-	const tx = site ? 0 : (area.w - spec.w * s) / 2;
-	const ty = site ? BAR : BAR + (room - spec.h * s) / 2;
-	const boxH = site ? room / s : spec.h;
-	const target = { x: tx, y: ty, scale: s, opacity: 1 };
+	const width = Math.min(area.w, spec.w);
+	const target = { x: (area.w - width) / 2, y: BAR, scale: 1 };
 	const leaving = closing !== null;
 
 	if (area.w === 0) return null;
@@ -372,10 +376,10 @@ function Player({
 				transition={{ duration: leaving ? 0.2 : 0.16, delay: leaving ? 0.04 : 0, ease: "easeOut" }}
 			/>
 			<motion.div
-				className="absolute top-0 left-0"
-				style={{ width: spec.w, height: boxH, originX: 0, originY: 0 }}
-				initial={from === null ? target : { x: from.x, y: from.y, scale: from.w / spec.w, opacity: 1 }}
-				animate={leaving ? { x: closing.x, y: closing.y, scale: closing.w / spec.w, opacity: 1 } : target}
+				className="absolute top-0 left-0 overflow-hidden"
+				style={{ width, height: site ? area.h - BAR : spec.h, originX: 0, originY: 0 }}
+				initial={from === null ? target : { x: from.x, y: from.y, scale: from.w / width }}
+				animate={leaving ? { x: closing.x, y: closing.y, scale: closing.w / width } : target}
 				transition={GLIDE}
 				onAnimationComplete={() => {
 					if (leaving) onClosed();
@@ -384,77 +388,88 @@ function Player({
 				<AnimatePresence initial={false} mode="popLayout">
 					<motion.div
 						key={spec.name}
-						className="absolute inset-0 overflow-hidden rounded-[22px] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]"
+						className="absolute inset-0"
 						initial={{ opacity: 0 }}
 						animate={{ opacity: 1 }}
 						exit={{ opacity: 0 }}
 						transition={CROSS}
 						onClick={(event: React.MouseEvent) => walkOn(event, spec, onWalk)}
 					>
-						<FrameBody spec={spec as Spec} changed={changed} fill={site} />
+						<FrameBody spec={spec as Spec} changed={changed} fill />
 					</motion.div>
 				</AnimatePresence>
 			</motion.div>
 			<motion.div
-				className="absolute inset-x-0 top-0 z-10 flex h-10 items-center gap-3 border-border-raised border-b bg-raised px-4"
+				className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-3 pr-3 pl-4", BAR_CSS)}
+				style={{ height: BAR }}
 				initial={{ y: from === null ? 0 : -BAR }}
 				animate={{ y: leaving ? -BAR : 0 }}
 				transition={SPRING}
 			>
-				<button
-					type="button"
-					onClick={onClose}
-					className="flex cursor-pointer items-center gap-1.5 rounded-xs py-1 pr-2 pl-1 font-mono text-muted text-2xs leading-none transition-colors hover:text-text"
-				>
-					<svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-						<path d="m10 3.5-4.5 4.5 4.5 4.5" />
-					</svg>
-					canvas
-				</button>
-				<span className="h-3.5 w-px bg-border-raised" />
-				<button
-					type="button"
-					onClick={() => setPicking((p) => !p)}
-					className="-mx-1.5 flex cursor-pointer items-center gap-2 rounded-xs px-1.5 py-1 font-mono text-sm text-text leading-none transition-colors hover:bg-surface"
-				>
-					<span className="text-muted">{page.name} /</span>
-					<AnimatePresence mode="popLayout" initial={false}>
-						<motion.span key={spec.name} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={CROSS}>
-							{spec.name}
-						</motion.span>
+				<span className="relative flex self-stretch">
+					<button
+						type="button"
+						onClick={() => setPicking((p) => !p)}
+						className="-mx-1.5 flex cursor-pointer items-center gap-2 self-center rounded-[4px] px-1.5 py-1 hover:bg-[#1c1c1c]"
+					>
+						<span className="text-[#94918d]">tidemark app /</span>
+						<span className="whitespace-nowrap">{spec.name}</span>
+						<ChevronIcon open className={cn("h-2.5 w-2.5 text-[#94918d] transition-[rotate] duration-150", picking && "rotate-180")} />
+					</button>
+					<AnimatePresence>
+						{picking ? (
+							<motion.div
+								className="absolute top-full -left-1.5 z-10 w-[280px] overflow-hidden rounded-b-[12px] border border-[#363636] border-t-0 bg-[#161616] p-1.5"
+								initial={{ opacity: 0, y: -4 }}
+								animate={{ opacity: 1, y: 0 }}
+								exit={{ opacity: 0, transition: CROSS }}
+								transition={SPRING}
+							>
+								{page.frames.map((f) => (
+									<button
+										key={f.name}
+										type="button"
+										onClick={() => {
+											onWalk(f.name);
+											setPicking(false);
+										}}
+										className={cn(
+											"flex w-full cursor-pointer items-center gap-2 rounded-[4px] px-2 py-1.5 text-left hover:bg-[#1c1c1c]",
+											f.name === spec.name ? "text-[#f0efed]" : "text-[#94918d]",
+										)}
+									>
+										<span className={cn("h-[2px] w-2", f.name === spec.name ? "bg-thread" : "bg-transparent")} />
+										{f.name}
+									</button>
+								))}
+							</motion.div>
+						) : null}
 					</AnimatePresence>
-					<ChevronIcon open={picking} className="h-2.5 w-2.5 text-muted" />
-				</button>
-				<span className="ml-auto font-mono text-2xs text-muted leading-none">esc · canvas</span>
-				<AnimatePresence>
-					{picking ? (
-						<motion.div
-							className="absolute top-10 left-[86px] w-[200px] origin-top rounded-b-lg border border-border-raised border-t-0 bg-canvas p-1.5"
-							initial={{ opacity: 0, y: -2 }}
-							animate={{ opacity: 1, y: 0 }}
-							exit={{ opacity: 0, transition: CROSS }}
-							transition={SPRING}
-						>
-							{page.frames.map((f) => (
-								<button
-									key={f.name}
-									type="button"
-									onClick={() => {
-										onWalk(f.name);
-										setPicking(false);
-									}}
-									className={cn(
-										"flex w-full cursor-pointer items-center gap-2 rounded-xs px-2 py-1.5 text-left font-mono text-sm leading-none hover:bg-surface",
-										f.name === spec.name ? "text-text" : "text-muted",
-									)}
-								>
-									<span className={cn("h-[2px] w-2", f.name === spec.name ? "bg-thread" : "bg-transparent")} />
-									{f.name}
-								</button>
-							))}
-						</motion.div>
-					) : null}
-				</AnimatePresence>
+				</span>
+				<span className="ml-auto flex items-center gap-3">
+					<span className="whitespace-nowrap text-[#94918d] text-[11px]">
+						{area.w} × {area.h - BAR}
+					</span>
+					<span className="whitespace-nowrap text-[#94918d] text-[11px]">esc exits</span>
+					<span className="h-3.5 w-px bg-[#363636]" />
+					<button type="button" aria-label="Hide the bar" className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-[4px] text-[#94918d] hover:bg-[#1c1c1c] hover:text-[#f0efed]">
+						<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+							<path d="M1.5 8c1.6-2.7 3.9-4 6.5-4s4.9 1.3 6.5 4c-1.6 2.7-3.9 4-6.5 4S3.1 10.7 1.5 8Z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+							<circle cx="8" cy="8" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
+						</svg>
+					</button>
+					<span className="h-3.5 w-px bg-[#363636]" />
+					<button
+						type="button"
+						onClick={onClose}
+						aria-label="Back to the canvas"
+						className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-[4px] text-[#94918d] hover:bg-[#1c1c1c] hover:text-[#f0efed]"
+					>
+						<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+							<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+						</svg>
+					</button>
+				</span>
 			</motion.div>
 		</div>
 	);
