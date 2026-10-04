@@ -61,7 +61,7 @@ pnpm dev <command>   # the checkout cli. own state dir (~/.spool-dev), own port 
 
 Real projects run the released version; a checkout daemon serves beside it on its own port and state dir (the `dev` script sets `SPOOL_DIR` and `SPOOL_PORT`). Shipping: changesets on main feed the release PR; merging it is the one human gate, and the publish workflow re-runs the gates, then npm trusted publishing releases `spool.page`.
 
-[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the gates, what gets merged, and how to find your way around the source. [`CONTEXT.md`](CONTEXT.md) is the canonical vocabulary and [`docs/adr/`](docs/adr/) records why the load-bearing decisions went the way they did.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the gates, what gets merged, and how to find your way around the source. [`GLOSSARY.md`](GLOSSARY.md) is the canonical vocabulary and [`docs/adr/`](docs/adr/) records why the load-bearing decisions went the way they did.
 
 ## License
 

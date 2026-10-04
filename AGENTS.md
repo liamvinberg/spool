@@ -24,4 +24,4 @@ The repo uses the five canonical triage-role labels unchanged. See `docs/agents/
 
 ### Domain docs
 
-The repo uses a single-context domain-doc layout, with the glossary in `CONTEXT.md` at the root. See `docs/agents/domain.md`.
+The repo uses a single-context domain-doc layout, with the glossary in `GLOSSARY.md` at the root. See `docs/agents/domain.md`.

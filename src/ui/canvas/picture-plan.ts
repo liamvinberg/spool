@@ -6,7 +6,7 @@
  * Pure, so each rule is tested on its own, and the layer is left with the
  * state and the GL calls.
  *
- * A still is one image at one address (`CONTEXT.md`). The GPU keeps it two
+ * A still is one image at one address (`GLOSSARY.md`). The GPU keeps it two
  * ways, both made from that one image: its square, which every frame on the
  * page has, and its halvings, the still halved as many times as the frame's
  * drawn size allows, which a frame drawn larger than the square streams while

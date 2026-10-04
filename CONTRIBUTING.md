@@ -15,7 +15,7 @@ Likely:
 Unlikely without discussion first:
 
 - New canvas interactions, tools, or UI changes. How spool feels is the product, and those decisions are made deliberately.
-- New frame kinds. There are two, `frame.tsx` and `term.tsx`, and `CONTEXT.md` calls the terminal frame "the second and final frame kind" on purpose.
+- New frame kinds. There are two, `frame.tsx` and `term.tsx`, and `GLOSSARY.md` calls the terminal frame "the second and final frame kind" on purpose.
 - New dependencies. `design/` is dependency-free by construction and the core package is deliberately small.
 - Anything that changes the shape of `design/` on disk. That layout is a compatibility surface.
 
@@ -96,7 +96,7 @@ If you develop in a disposable worktree, register the lane itself with `pnpm dev
 | `src/ui/` | The canvas |
 | `src/runtime/` | Code injected into frames and the player |
 | `src/term/` | Terminal frame rendering |
-| `CONTEXT.md` | Canonical vocabulary. Use these words in issues, tests, and code. |
+| `GLOSSARY.md` | Canonical vocabulary. Use these words in issues, tests, and code. |
 | `docs/adr/` | Why the load-bearing decisions went the way they did |
 | `AGENTS.md` | Repo conventions, written for coding agents but accurate for humans |
 
