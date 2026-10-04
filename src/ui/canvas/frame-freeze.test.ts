@@ -4,7 +4,8 @@ import { act, createElement, type RefObject } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
-import { IDLE_FREEZE_MS, isFrameAttended, isFrameFrozen, useFrameLifecycle } from "./lifecycle";
+import { IDLE_FREEZE_MS, isFrameAttended, isFrameFrozen, MOVE_HOLD_MS, useFrameLifecycle } from "./lifecycle";
+import { CHECK_EVERY_MS } from "./rest-strain";
 
 /**
  * The freeze (#171, #172, #319): a live HTML frame holds its animations while
@@ -25,6 +26,8 @@ let host: HTMLDivElement | undefined;
 let clock = 0;
 
 beforeEach(() => {
+	// the hold past a camera's rest, and the rest watcher's checks, run on these
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
 	clock = 1_000;
 	vi.spyOn(performance, "now").mockImplementation(() => clock);
 });
@@ -34,6 +37,8 @@ afterEach(async () => {
 	host?.remove();
 	root = undefined;
 	host = undefined;
+	vi.useRealTimers();
+	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 });
 
@@ -117,6 +122,12 @@ const posted = (post: { mock: { calls: unknown[][] } }): Posted[] =>
 const freezes = (post: { mock: { calls: unknown[][] } }): Posted[] =>
 	posted(post).filter((message) => message.spool === "freeze");
 
+/** The camera comes to rest, and the hold past its rest runs out. */
+async function rest(lifecycle: Lifecycle) {
+	await act(() => lifecycle.noteCameraMoving(false));
+	await act(() => vi.advanceTimersByTime(MOVE_HOLD_MS));
+}
+
 const held = { spool: "freeze", on: true };
 const handedBack = { spool: "freeze", on: false };
 
@@ -128,6 +139,7 @@ describe("which frames hold their animations", () => {
 		entered: false,
 		capturing: false,
 		editing: false,
+		crowded: false,
 	};
 
 	it("freezes a live frame while the camera is moving", () => {
@@ -155,9 +167,17 @@ describe("which frames hold their animations", () => {
 		expect(isFrameFrozen({ ...resting, editing: true, state: "picture" })).toBe(false);
 	});
 
-	it("never freezes the frame you went inside", () => {
-		expect(isFrameFrozen({ ...resting, cameraMoving: true, entered: true })).toBe(false);
+	it("freezes the frame you went inside only while the camera carries you", () => {
+		// a zoom out of a frame you are in is a move like any other
+		expect(isFrameFrozen({ ...resting, cameraMoving: true, entered: true })).toBe(true);
 		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, entered: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, crowded: true, entered: true })).toBe(false);
+	});
+
+	it("freezes a live frame holding back the canvas at rest, without waiting out the minute", () => {
+		expect(isFrameFrozen({ ...resting, crowded: true })).toBe(true);
+		expect(isFrameFrozen({ ...resting, crowded: true, state: "picture" })).toBe(false);
+		expect(isFrameFrozen({ ...resting, crowded: true, capturing: true })).toBe(false);
 	});
 
 	it("never freezes a frame being copied for an export", () => {
@@ -198,17 +218,34 @@ describe("delivering the freeze", () => {
 		await act(() => lifecycle.sweep());
 		expect(freezes(post)).toEqual([held]);
 
+		// held past the rest for as long as the next step of a heavy gesture may take
 		await act(() => lifecycle.noteCameraMoving(false));
+		await act(() => vi.advanceTimersByTime(MOVE_HOLD_MS - 1));
+		expect(freezes(post)).toEqual([held]);
+		await act(() => vi.advanceTimersByTime(1));
 		expect(freezes(post)).toEqual([held, handedBack]);
 	});
 
-	it("says nothing to the frame you went inside", async () => {
+	it("holds through a gesture whose steps come further apart than a rest", async () => {
+		const { lifecycle, post } = await mountLive();
+		for (let step = 0; step < 5; step++) {
+			await act(() => lifecycle.noteCameraMoving(true));
+			await act(() => lifecycle.noteCameraMoving(false));
+			await act(() => vi.advanceTimersByTime(150));
+		}
+		expect(freezes(post)).toEqual([held]);
+	});
+
+	it("holds the frame you went inside only for a move, never for the minute", async () => {
 		const { lifecycle, post, wait } = await mountLive({ entered: "landing" });
 
-		await act(() => lifecycle.noteCameraMoving(true));
 		await wait(IDLE_FREEZE_MS * 2);
-
 		expect(freezes(post)).toEqual([]);
+
+		await act(() => lifecycle.noteCameraMoving(true));
+		await rest(lifecycle);
+		await wait(IDLE_FREEZE_MS * 2);
+		expect(freezes(post)).toEqual([held, handedBack]);
 	});
 
 	it("thaws before it asks a frozen frame to copy itself for an export", async () => {
@@ -343,12 +380,46 @@ describe("delivering the freeze", () => {
 
 		await act(() => lifecycle.noteCameraMoving(true));
 		clock += 2_000;
-		await act(() => lifecycle.noteCameraMoving(false));
+		await rest(lifecycle);
 		expect(freezes(post), "a frame frozen by idleness thaws where the camera stopped").toEqual([held, handedBack]);
 
 		await wait(IDLE_FREEZE_MS - 1);
 		expect(freezes(post)).toEqual([held, handedBack]);
 		await wait(1);
 		expect(freezes(post)).toEqual([held, handedBack, held]);
+	});
+
+	it("holds a frame that holds back the canvas at rest until it is pointed at, and again after", async () => {
+		const frames: FrameRequestCallback[] = [];
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+		{
+			const { post, render } = await mountLive();
+			/** one sample of the canvas at rest, its display frames `gap` apart */
+			const sample = async (gap: number) => {
+				clock += CHECK_EVERY_MS;
+				await act(() => vi.advanceTimersByTime(CHECK_EVERY_MS));
+				await act(() => {
+					for (let frame = 0; frame < 20 && frames.length > 0; frame++) {
+						clock += gap;
+						for (const callback of frames.splice(0)) callback(clock);
+					}
+				});
+			};
+
+			await sample(8);
+			await sample(8);
+			expect(freezes(post), "a canvas keeping up holds nothing").toEqual([]);
+
+			await sample(160);
+			await sample(160);
+			expect(freezes(post)).toEqual([held]);
+
+			// pointing at it is watching it, slow or not
+			await render({ hovered: "landing" });
+			expect(freezes(post)).toEqual([held, handedBack]);
+			// and it holds again the moment the pointer leaves, with no wait to find out again
+			await render({ hovered: null });
+			expect(freezes(post)).toEqual([held, handedBack, held]);
+		}
 	});
 });

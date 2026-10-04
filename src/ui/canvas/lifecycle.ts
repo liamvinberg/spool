@@ -5,6 +5,7 @@ import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, captureRequestId, type ExportRaster, rasterCaptureSource } from "./capture-broker";
 import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage } from "./protocol";
+import { watchRestStrain } from "./rest-strain";
 
 /**
  * The engine lifecycle (#8, #13, #40, #54, #112): which frames hold a document,
@@ -29,9 +30,10 @@ import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage }
  * is live; a held frame remains behind its still.
  *
  * Live HTML frames hold their animations while the camera moves (#171), once
- * nothing has attended them for a long minute (#172), and for as long as the
- * Edit tool is on (#319, #339) — the mount is unchanged in every case, only
- * the frames it is running.
+ * nothing has attended them for a long minute (#172), for as long as the Edit
+ * tool is on (#319, #339), and once they hold back a canvas at rest
+ * (rest-strain.ts) — the mount is unchanged in every case, only the frames it
+ * is running.
  */
 
 export type FrameState = "picture" | "held" | "live";
@@ -92,6 +94,23 @@ export const FREEZE_ENABLED = benchHooks?.freeze !== false;
 export const IDLE_FREEZE_MS = 60_000;
 
 /**
+ * How long frames go on holding once the camera rests. The store rests 100 ms
+ * after the last step, and a heavy frame being zoomed out of spaced the steps
+ * further apart than that on its own: its next display frame is what each
+ * wheel tick waited on, about 125 ms for pixels--glass on an M1, so every
+ * step was a rest, a thaw and another of its frames, the whole zoom long. A
+ * mouse wheel's notches can land as far apart.
+ */
+export const MOVE_HOLD_MS = 400;
+
+/**
+ * How long a canvas rests, and a frame's document has been loaded, before the
+ * canvas is sampled for frames holding it back: arriving documents and the
+ * camera's own settle are work of the canvas's, not a frame's pace.
+ */
+const CROWD_SETTLE_MS = 1000;
+
+/**
  * How far past the viewport a frame is still admitted, as a fraction of it. The
  * ring is what hides the boot: a
  * frame that only mounts once it is on screen is a frame you watch arrive.
@@ -145,14 +164,16 @@ function isFrameLive(
 }
 
 /**
- * Whether a frame holds its animations right now (#171, #172, #319). Three
+ * Whether a frame holds its animations right now (#171, #172, #319). Four
  * causes. Two of them are "nobody is reading this frame": the camera is moving,
  * so nothing out there is being read at all and the frames' own rAF loops are
  * what the gesture competes with for the renderer; or the frame has gone
  * `IDLE_FREEZE_MS` without anything attending it — see `isFrameAttended` for
  * what counts, and note that a camera at rest is not attention, only its motion.
+ * The third is that one of them: a frame nobody is attending while it holds
+ * back the canvas at rest (rest-strain.ts), which waits on no minute.
  *
- * The third is the opposite: somebody is reading one frame very closely. While
+ * The fourth is the opposite: somebody is reading one frame very closely. While
  * the Edit tool is on (#339), every live frame holds still — the one being
  * edited most of all, because a heading you are about to retype should not be
  * sliding under the caret, and a shader beside it should not be spending the
@@ -161,9 +182,11 @@ function isFrameLive(
  * so a frame still reflows under the hold. Timers and React state run on,
  * which is the known limit of a hold the frame is never asked about.
  *
- * Two frames never freeze. The one you went inside is the one being used —
- * its own hands are inside it, and a pick elsewhere on the canvas does not
- * reach in. And a frame being copied for an export settles on its own rAF and
+ * The frame you went inside is the one being used — its own hands are inside
+ * it, and a pick elsewhere on the canvas does not reach in — so it holds only
+ * while the camera carries you somewhere, a zoom out of it included, where
+ * one heavy enough to keep drawing held every step of the zoom back. A frame
+ * being copied for an export never holds: it settles on its own rAF and
  * animations, so a frozen one would be copied held.
  */
 export function isFrameFrozen(input: {
@@ -175,10 +198,13 @@ export function isFrameFrozen(input: {
 	capturing: boolean;
 	/** Whether the Edit tool is on, anywhere on the canvas (#319, #339). */
 	editing: boolean;
+	/** Held for holding back a canvas at rest, and not attended now (rest-strain.ts). */
+	crowded: boolean;
 }): boolean {
-	const { cameraMoving, idleMs, state, entered, capturing, editing } = input;
-	if (state !== "live" || entered || capturing) return false;
-	return editing || cameraMoving || idleMs >= IDLE_FREEZE_MS;
+	const { cameraMoving, idleMs, state, entered, capturing, editing, crowded } = input;
+	if (state !== "live" || capturing) return false;
+	if (entered) return cameraMoving;
+	return editing || cameraMoving || crowded || idleMs >= IDLE_FREEZE_MS;
 }
 
 /**
@@ -309,6 +335,18 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	/** The frames currently told to hold their animations. */
 	const frozen = useRef(new Set<string>());
 	const cameraMoving = useRef(false);
+	/** The camera is moving, or rested less than MOVE_HOLD_MS ago: what the freeze reads. */
+	const moveHeld = useRef(false);
+	const moveRelease = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	/** When the camera last came to rest, for CROWD_SETTLE_MS. */
+	const restingSince = useRef(performance.now());
+	/**
+	 * Frames held for holding back the canvas at rest (rest-strain.ts). Pointing
+	 * at one, selecting it or going inside lets it run for as long as that
+	 * lasts; it stays one until it stops being live, because the canvas it held
+	 * back is no faster for having been looked at.
+	 */
+	const crowded = useRef(new Set<string>());
 	/**
 	 * When each live frame was last attended, for the idle freeze (#172). A frame
 	 * that is not live keeps no clock: it is either showing a picture or running
@@ -349,17 +387,19 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				const name = frame.name;
 				alive.add(name);
 				const state = states[name];
-				if (state !== "live") attendedAt.current.delete(name);
-				else if (
+				const attention = {
+					entered: entered === name,
+					// picked-in or picked-through: the frames you chose, and the one
+					// Select is holding open for an element inside it
+					selected: selectedRef.current.includes(name) || selectionTargetsRef.current.has(name),
+					hovered: hoveredRef.current === name,
+				};
+				if (state !== "live") {
+					attendedAt.current.delete(name);
+					crowded.current.delete(name);
+				} else if (
 					!attendedAt.current.has(name) ||
-					isFrameAttended({
-						cameraMoving: cameraMoving.current,
-						entered: entered === name,
-						// picked-in or picked-through: the frames you chose, and the one
-						// Select is holding open for an element inside it
-						selected: selectedRef.current.includes(name) || selectionTargetsRef.current.has(name),
-						hovered: hoveredRef.current === name,
-					})
+					isFrameAttended({ cameraMoving: cameraMoving.current, ...attention })
 				) {
 					attendedAt.current.set(name, now);
 				}
@@ -367,19 +407,67 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					name,
 					FREEZE_ENABLED &&
 						isFrameFrozen({
-							cameraMoving: cameraMoving.current,
+							cameraMoving: moveHeld.current,
 							idleMs: now - (attendedAt.current.get(name) ?? now),
 							state,
 							entered: entered === name,
 							capturing: captureWaiters.current.has(name),
 							editing: editingRef.current,
+							crowded:
+								crowded.current.has(name) && !attention.entered && !attention.selected && !attention.hovered,
 						}),
 				);
 			}
 			// frames that left the projection take their clock with them
 			for (const name of [...attendedAt.current.keys()]) if (!alive.has(name)) attendedAt.current.delete(name);
+			for (const name of [...crowded.current]) if (!alive.has(name)) crowded.current.delete(name);
 		},
 		[framesRef, postFreeze],
+	);
+
+	/** Live frames running right now that nobody is attending: what holding back a canvas at rest is blamed on. */
+	const runningUnattended = useCallback(
+		(now: number): string[] => {
+			const running: string[] = [];
+			for (const frame of framesRef.current) {
+				const name = frame.name;
+				const loaded = readyRef.current.get(name);
+				if (
+					statesRef.current[name] === "live" &&
+					!frozen.current.has(name) &&
+					enteredRef.current !== name &&
+					hoveredRef.current !== name &&
+					!selectedRef.current.includes(name) &&
+					!selectionTargetsRef.current.has(name) &&
+					loaded !== undefined &&
+					now - loaded >= CROWD_SETTLE_MS
+				) {
+					running.push(name);
+				}
+			}
+			return running;
+		},
+		[framesRef],
+	);
+
+	useEffect(
+		() =>
+			watchRestStrain({
+				worthChecking: () => {
+					const now = performance.now();
+					return (
+						FREEZE_ENABLED &&
+						!cameraMoving.current &&
+						now - restingSince.current >= CROWD_SETTLE_MS &&
+						runningUnattended(now).length > 0
+					);
+				},
+				crowded: () => {
+					for (const name of runningUnattended(performance.now())) crowded.current.add(name);
+					applyFreeze();
+				},
+			}),
+		[runningUnattended, applyFreeze],
 	);
 
 	/** The camera started or stopped moving — the canvas already detects both. */
@@ -387,6 +475,15 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		(moving: boolean) => {
 			if (cameraMoving.current === moving) return;
 			cameraMoving.current = moving;
+			clearTimeout(moveRelease.current);
+			if (moving) moveHeld.current = true;
+			else {
+				restingSince.current = performance.now();
+				moveRelease.current = setTimeout(() => {
+					moveHeld.current = false;
+					applyFreeze();
+				}, MOVE_HOLD_MS);
+			}
 			// Coming to rest is the last thing anybody did, so every frame's minute
 			// runs from the settle. The motion itself is attention too, but only
 			// this says so at the instant it ends: the sweep that would otherwise
@@ -693,6 +790,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		const sweep = setInterval(compute, SWEEP_MS);
 		return () => clearInterval(sweep);
 	}, [compute]);
+
+	useEffect(() => () => clearTimeout(moveRelease.current), []);
 
 	/**
 	 * The tab is being looked at again. Nothing had attended anything for however
