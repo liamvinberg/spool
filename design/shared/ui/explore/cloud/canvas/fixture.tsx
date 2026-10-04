@@ -11,7 +11,8 @@ import { TidemarkLanding } from "shared/ui/demo/tidemark-landing";
  * Prototype only.
  */
 
-export type Content = { coffee: CoffeeScreenName; action?: string } | { site: number };
+/** `thumb`: a real project's frame as its cover (DEV-161), `play` the full-size one */
+export type Content = { coffee: CoffeeScreenName; action?: string } | { site: number } | { thumb: string; play: string };
 
 export interface Spec {
 	name: string;
@@ -75,6 +76,18 @@ export const OUTSIDER = { email: "erik@kaffebar.se", by: "jonas" };
 /** The live part. Rendered at its authored size; whoever holds it scales it. */
 export function FrameBody({ spec, changed = false, fill = false }: { spec: Spec; changed?: boolean; fill?: boolean }) {
 	const content = spec.content;
+	if ("thumb" in content) {
+		return (
+			<img
+				src={content.thumb}
+				alt=""
+				draggable={false}
+				decoding="async"
+				className="block bg-surface object-cover object-top"
+				style={{ width: spec.w, height: fill ? "100%" : spec.h, borderRadius: spec.w > 500 ? 6 : 22 }}
+			/>
+		);
+	}
 	if ("site" in content) {
 		return (
 			<div className="overflow-hidden rounded-[10px] bg-[#0A0A0B]" style={{ width: spec.w, height: fill ? "100%" : spec.h }}>

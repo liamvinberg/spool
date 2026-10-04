@@ -248,7 +248,9 @@ function PhonePlay({
 }) {
 	const screen = useScreenSize();
 	const spec = page.frames.find((f) => f.name === name) ?? page.frames[0]!;
-	const site = "site" in spec.content;
+	const thumb = "thumb" in spec.content ? spec.content : null;
+	// a frame wider than a phone plays whole, contained: the site fixture, or a real desktop frame
+	const site = "site" in spec.content || (thumb !== null && spec.w > 500);
 	const dragY = useMotionValue(0);
 	const shrink = useTransform(dragY, [0, 520], [1, 0.7]);
 	const corner = useTransform(dragY, [0, 70], [0, 46]);
@@ -281,7 +283,10 @@ function PhonePlay({
 	// a card is a 390 × 844 frame at scale s; the played frame starts under the status bar
 	const at = (r: Rect) => {
 		const s = r.w / (site ? screen.w : spec.w);
-		return { x: r.x, y: r.y - screen.top * s, scale: s, borderRadius: 22 };
+		// a real desktop frame sits contained in the middle of the content area
+		const inner = screen.h - screen.top - screen.bottom;
+		const drop = thumb !== null && site ? Math.max(0, (inner - (screen.w * spec.h) / spec.w) / 2) : 0;
+		return { x: r.x, y: r.y - (screen.top + drop) * s, scale: s, borderRadius: 22 };
 	};
 	const full = { x: 0, y: 0, scale: 1, borderRadius: 0 };
 	const back = () => {
@@ -339,7 +344,15 @@ function PhonePlay({
 									})
 								}
 							>
-								{site ? (
+								{thumb !== null ? (
+									<img
+										src={thumb.play}
+										alt=""
+										draggable={false}
+										className={cn("block h-full w-full", site ? "object-contain" : "object-cover object-top")}
+										style={{ backgroundImage: `url(${thumb.thumb})`, backgroundSize: site ? "contain" : "cover", backgroundPosition: site ? "center" : "top", backgroundRepeat: "no-repeat" }}
+									/>
+								) : site ? (
 									<div style={{ width: 1440, transform: `scale(${screen.w / 1440})`, transformOrigin: "0 0" }}>
 										<FrameBody spec={spec} />
 									</div>
@@ -397,6 +410,19 @@ function PhonePlay({
 				/>
 			) : null}
 			<AnimatePresence>
+				{hint && !leaving && thumb !== null && site && screen.h > screen.w ? (
+					<motion.div
+						key="turn"
+						className="pointer-events-none absolute left-1/2 z-10 rounded-sm border border-white/10 bg-black/80 px-2.5 py-1.5 text-white/80 backdrop-blur type-detail"
+						style={{ x: "-50%", bottom: screen.bottom + 16 }}
+						initial={{ opacity: 0, y: 8 }}
+						animate={{ opacity: 1, y: 0 }}
+						exit={{ opacity: 0 }}
+						transition={SPRING}
+					>
+						{`${spec.w} × ${spec.h} · turn the phone`}
+					</motion.div>
+				) : null}
 				{hint && !leaving && exit === "edge" ? (
 					<motion.div
 						className="pointer-events-none absolute right-2 z-10 flex items-center gap-1.5 rounded-sm border border-white/10 bg-black/80 py-1.5 pr-2.5 pl-2 text-white backdrop-blur type-detail"
