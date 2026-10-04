@@ -11,7 +11,7 @@ import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import { cn } from "shared/lib/utils";
 import { UnseenMark } from "shared/ui/spool/unseen-mark";
 import { Faces, member as personOf } from "shared/ui/explore/cloud/home/parts";
-import { type Cam, clamp, FrameBody, GLIDE, type Page, type Spec } from "./fixture";
+import { CAMERA, type Cam, CROSS, clamp, FrameBody, type Page, type Spec } from "./fixture";
 
 /**
  * The field every take of the read-only canvas pans: one camera made of three
@@ -63,7 +63,7 @@ export function useCamera(): Camera {
 				const from = get();
 				running.current = [
 					animate(0, 1, {
-						...GLIDE,
+						...CAMERA,
 						onUpdate: (p: number) => {
 							x.set(from.x + (to.x - from.x) * p);
 							y.set(from.y + (to.y - from.y) * p);
@@ -107,7 +107,6 @@ export function Field({ cam, page, member, changed, away, onTap, labels = true, 
 	const ref = fieldRef ?? own;
 	const pointers = useRef(new Map<number, { x: number; y: number }>());
 	const gesture = useRef<{ moved: number; frame: string | null; el: HTMLElement | null }>({ moved: 0, frame: null, el: null });
-	const coast = useRef<AnimationPlaybackControls[]>([]);
 
 	useEffect(() => {
 		const el = ref.current;
@@ -138,7 +137,6 @@ export function Field({ cam, page, member, changed, away, onTap, labels = true, 
 			className={cn("absolute inset-0 touch-none overflow-hidden bg-canvas select-none", className)}
 			onPointerDown={(event) => {
 				if ((event.target as HTMLElement).closest("button,[data-chrome]") !== null) return;
-				for (const c of coast.current) c.stop();
 				cam.stop();
 				event.currentTarget.setPointerCapture(event.pointerId);
 				pointers.current.set(event.pointerId, local(event));
@@ -170,21 +168,17 @@ export function Field({ cam, page, member, changed, away, onTap, labels = true, 
 				const single = pointers.current.size === 1;
 				pointers.current.delete(event.pointerId);
 				if (!single) return;
+				// the shipped canvas stops where the hand lets go: no coasting
 				const g = gesture.current;
-				if (g.moved < 6) {
-					if (g.frame !== null && g.el !== null) onTap?.(g.frame, g.el);
-					return;
-				}
-				// a flick keeps going and settles, the way a scroll view does
-				coast.current = [
-					animate(cam.x, cam.x.get(), { type: "inertia", velocity: cam.x.getVelocity(), power: 0.25, timeConstant: 260 }),
-					animate(cam.y, cam.y.get(), { type: "inertia", velocity: cam.y.getVelocity(), power: 0.25, timeConstant: 260 }),
-				];
+				if (g.moved < 6 && g.frame !== null && g.el !== null) onTap?.(g.frame, g.el);
 			}}
 			onPointerCancel={(event) => pointers.current.delete(event.pointerId)}
 		>
 			<AnimatePresence mode="wait" onExitComplete={onSwap}>
-				<motion.div key={page.name} className="absolute inset-0" exit={{ opacity: 0, transition: { duration: 0.12 } }}>
+				<motion.div key={page.name} className="absolute inset-0" initial={{ opacity: 0 }}
+					animate={{ opacity: 1 }}
+					exit={{ opacity: 0 }}
+					transition={CROSS}>
 					<World cam={cam} page={page} changed={changed} away={away} tappable={onTap !== undefined} />
 					{labels
 						? page.frames.map((spec, i) => (
@@ -212,7 +206,7 @@ function World({ cam, page, changed, away, tappable }: { cam: Camera; page: Page
 	return (
 		<motion.div className="absolute top-0 left-0" style={{ x: cam.x, y: cam.y, scale: cam.z, originX: 0, originY: 0 }}>
 			<svg className="pointer-events-none absolute top-0 left-0 overflow-visible" width="1" height="1" aria-hidden="true">
-				{page.threads.map((thread, i) => {
+				{page.threads.map((thread) => {
 					const a = byName.get(thread.from);
 					const b = byName.get(thread.to);
 					if (a === undefined || b === undefined) return null;
@@ -222,42 +216,29 @@ function World({ cam, page, changed, away, tappable }: { cam: Camera; page: Page
 					const y2 = b.y + b.h / 2;
 					const mid = (x1 + x2) / 2;
 					return (
-						<motion.g key={`${thread.from}-${thread.to}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 + i * 0.08, duration: 0.3 }}>
-							{/* a might is dashed, and pathLength owns the dash array, so only a will draws itself in */}
-							{thread.might === true ? (
-								<path
-									d={`M${x1} ${y1}C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`}
-									stroke="var(--color-thread)"
-									strokeWidth="1.5"
-									fill="none"
-									vectorEffect="non-scaling-stroke"
-									strokeDasharray="5 5"
-								/>
-							) : (
-								<motion.path
-									d={`M${x1} ${y1}C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`}
-									stroke="var(--color-thread)"
-									strokeWidth="1.5"
-									fill="none"
-									initial={{ pathLength: 0 }}
-									animate={{ pathLength: 1 }}
-									transition={{ delay: 0.25 + i * 0.08, duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
-								/>
-							)}
+						<g key={`${thread.from}-${thread.to}`}>
+							<path
+								d={`M${x1} ${y1}C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`}
+								stroke="var(--color-thread)"
+								strokeWidth="1.5"
+								fill="none"
+								vectorEffect="non-scaling-stroke"
+								strokeDasharray={thread.might === true ? "5 5" : undefined}
+							/>
 							<path d={`M${x2 + 14} ${y2}l-14 -8v16Z`} fill="var(--color-thread)" />
-						</motion.g>
+						</g>
 					);
 				})}
 			</svg>
-			{page.frames.map((spec, i) => (
+			{page.frames.map((spec) => (
 				<motion.div
 					key={spec.name}
 					data-frame={spec.name}
 					className={cn("group absolute", tappable && "cursor-pointer")}
 					style={{ left: spec.x, top: spec.y, width: spec.w, height: spec.h }}
-					initial={{ opacity: 0, scale: 0.97, y: 16 }}
-					animate={{ opacity: away === spec.name ? 0 : 1, scale: 1, y: 0 }}
-					transition={away === spec.name ? { duration: 0 } : { ...GLIDE, delay: i * 0.05 }}
+					initial={false}
+					animate={{ opacity: away === spec.name ? 0 : 1 }}
+					transition={away === spec.name ? { duration: 0 } : CROSS}
 				>
 					<div className="pointer-events-none h-full w-full">
 						<FrameBody spec={spec} changed={changed} />
@@ -268,9 +249,9 @@ function World({ cam, page, changed, away, tappable }: { cam: Camera; page: Page
 					{changed && spec.name === "cart" ? (
 						<motion.span
 							className="pointer-events-none absolute -inset-[8px] rounded-[30px] border-[3px] border-thread"
-							initial={{ opacity: 0, scale: 1 }}
-							animate={{ opacity: [0, 1, 1, 0], scale: [1, 1, 1.015, 1.03] }}
-							transition={{ duration: 1.6, times: [0, 0.1, 0.5, 1] }}
+							initial={{ opacity: 0 }}
+							animate={{ opacity: [0, 1, 1, 0] }}
+							transition={{ duration: 0.9, times: [0, 0.08, 0.55, 1] }}
 						/>
 					) : null}
 				</motion.div>
@@ -305,14 +286,14 @@ function Label({
 		<motion.div
 			className="pointer-events-none absolute top-0 left-0 flex items-center gap-1.5"
 			style={{ x, y, width }}
-			initial={{ opacity: 0 }}
+			initial={false}
 			animate={{ opacity: away === spec.name ? 0 : 1 }}
-			transition={{ delay: away === undefined ? 0.1 + index * 0.05 : 0, duration: 0.2 }}
+			transition={away === spec.name ? { duration: 0 } : CROSS}
 		>
 			<span className={cn("min-w-0 truncate", small ? "type-detail" : "type-value", lit ? "text-text" : "text-muted")}>{spec.name}</span>
 			<AnimatePresence>
 				{lit ? (
-					<motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", visualDuration: 0.3, bounce: 0.4 }}>
+					<motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={CROSS}>
 						<UnseenMark mark="changed" />
 					</motion.span>
 				) : null}
@@ -337,8 +318,8 @@ export function LiveCursor({ cam, id, path, small = false }: { cam: Camera; id: 
 	useEffect(() => {
 		const timers = path.slice(1).map((p) =>
 			window.setTimeout(() => {
-				animate(wx, p.x, { type: "spring", visualDuration: 0.9, bounce: 0 });
-				animate(wy, p.y, { type: "spring", visualDuration: 0.9, bounce: 0 });
+				animate(wx, p.x, { duration: 0.5, ease: [0.23, 1, 0.32, 1] });
+				animate(wy, p.y, { duration: 0.5, ease: [0.23, 1, 0.32, 1] });
 			}, p.at),
 		);
 		return () => {
@@ -352,7 +333,7 @@ export function LiveCursor({ cam, id, path, small = false }: { cam: Camera; id: 
 			style={{ x: sx, y: sy }}
 			initial={{ opacity: 0 }}
 			animate={{ opacity: 1 }}
-			transition={{ delay: 0.6, duration: 0.3 }}
+			transition={CROSS}
 		>
 			<svg width={small ? 12 : 14} height={small ? 14 : 16} viewBox="0 0 14 16" aria-hidden="true">
 				<path d="M1 1 13 8.2 7.4 9.3 4.6 14.6Z" fill={person.hue} stroke="#111" strokeWidth="1" strokeLinejoin="round" />

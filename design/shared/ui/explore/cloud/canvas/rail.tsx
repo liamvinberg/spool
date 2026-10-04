@@ -6,7 +6,7 @@ import { ChevronIcon, FolderIcon, FrameIcon } from "shared/ui/spool/icons";
 import { UnseenMark } from "shared/ui/spool/unseen-mark";
 import { Face, Faces, TeamMark } from "shared/ui/explore/cloud/home/parts";
 import { type Camera, Field, LiveCursor, useCamera } from "./camera";
-import { bounds, FrameBody, fit, GLIDE, OUTSIDER, type Page, PAGES, type Rect, SPRING, type Spec, url, useSize, walkOn } from "./fixture";
+import { bounds, CROSS, FrameBody, fit, GLIDE, OUTSIDER, type Page, PAGES, type Rect, SPRING, type Spec, url, useSize, walkOn } from "./fixture";
 
 /**
  * The read-only canvas in a desktop browser, the take Liam picked (DEV-114,
@@ -155,9 +155,9 @@ export function RailCanvas({ view }: { view: RailView }) {
 								data-chrome=""
 								className="pointer-events-none absolute bottom-4 left-1/2 flex items-center gap-2 rounded-sm border border-border-raised bg-raised px-3 py-2 text-text type-detail"
 								style={{ x: "-50%" }}
-								initial={{ opacity: 0, y: 14, scale: 0.96 }}
-								animate={{ opacity: 1, y: 0, scale: 1 }}
-								exit={{ opacity: 0, y: 8, transition: { duration: 0.18 } }}
+								initial={{ opacity: 0, y: 6 }}
+								animate={{ opacity: 1, y: 0 }}
+								exit={{ opacity: 0, transition: CROSS }}
 								transition={SPRING}
 							>
 								<Face id="jonas" size={16} />
@@ -225,7 +225,7 @@ function PagesRail({
 								className={cn("relative flex h-8 w-full cursor-pointer items-center pr-3 text-left transition-colors hover:bg-surface/60")}
 							>
 								{open ? (
-									<motion.span layoutId="rail-row" className="absolute inset-0 bg-surface" transition={SPRING}>
+									<motion.span layoutId="rail-row" className="absolute inset-0 bg-surface" transition={{ duration: 0 }}>
 										<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
 									</motion.span>
 								) : null}
@@ -240,10 +240,10 @@ function PagesRail({
 								{open ? (
 									<motion.div
 										className="relative overflow-hidden"
-										initial={{ height: 0, opacity: 0 }}
-										animate={{ height: "auto", opacity: 1 }}
-										exit={{ height: 0, opacity: 0 }}
-										transition={GLIDE}
+										initial={{ height: 0 }}
+										animate={{ height: "auto" }}
+										exit={{ height: 0 }}
+										transition={SPRING}
 									>
 										<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
 										{p.frames.map((f) => {
@@ -369,7 +369,7 @@ function Player({
 				className="absolute inset-0 bg-canvas"
 				initial={{ opacity: from === null ? 1 : 0 }}
 				animate={{ opacity: leaving ? 0 : 1 }}
-				transition={{ duration: leaving ? 0.32 : 0.28, delay: leaving ? 0.08 : 0 }}
+				transition={{ duration: leaving ? 0.2 : 0.16, delay: leaving ? 0.04 : 0, ease: "easeOut" }}
 			/>
 			<motion.div
 				className="absolute top-0 left-0"
@@ -385,10 +385,10 @@ function Player({
 					<motion.div
 						key={spec.name}
 						className="absolute inset-0 overflow-hidden rounded-[22px] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7)]"
-						initial={{ opacity: 0, x: 40 }}
-						animate={{ opacity: 1, x: 0 }}
-						exit={{ opacity: 0, x: -40 }}
-						transition={GLIDE}
+						initial={{ opacity: 0 }}
+						animate={{ opacity: 1 }}
+						exit={{ opacity: 0 }}
+						transition={CROSS}
 						onClick={(event: React.MouseEvent) => walkOn(event, spec, onWalk)}
 					>
 						<FrameBody spec={spec as Spec} changed={changed} fill={site} />
@@ -397,9 +397,9 @@ function Player({
 			</motion.div>
 			<motion.div
 				className="absolute inset-x-0 top-0 z-10 flex h-10 items-center gap-3 border-border-raised border-b bg-raised px-4"
-				initial={{ y: from === null ? 0 : -BAR, opacity: from === null ? 1 : 0 }}
-				animate={{ y: leaving ? -BAR : 0, opacity: leaving ? 0 : 1 }}
-				transition={{ ...GLIDE, delay: leaving ? 0 : 0.1 }}
+				initial={{ y: from === null ? 0 : -BAR }}
+				animate={{ y: leaving ? -BAR : 0 }}
+				transition={SPRING}
 			>
 				<button
 					type="button"
@@ -419,7 +419,7 @@ function Player({
 				>
 					<span className="text-muted">{page.name} /</span>
 					<AnimatePresence mode="popLayout" initial={false}>
-						<motion.span key={spec.name} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
+						<motion.span key={spec.name} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={CROSS}>
 							{spec.name}
 						</motion.span>
 					</AnimatePresence>
@@ -430,9 +430,9 @@ function Player({
 					{picking ? (
 						<motion.div
 							className="absolute top-10 left-[86px] w-[200px] origin-top rounded-b-lg border border-border-raised border-t-0 bg-canvas p-1.5"
-							initial={{ opacity: 0, y: -4, scaleY: 0.96 }}
-							animate={{ opacity: 1, y: 0, scaleY: 1 }}
-							exit={{ opacity: 0, y: -4, transition: { duration: 0.12 } }}
+							initial={{ opacity: 0, y: -2 }}
+							animate={{ opacity: 1, y: 0 }}
+							exit={{ opacity: 0, transition: CROSS }}
 							transition={SPRING}
 						>
 							{page.frames.map((f) => (

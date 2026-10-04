@@ -156,7 +156,16 @@ export function useSize(ref: React.RefObject<HTMLElement | null>) {
 
 export const url = (page: string, frame?: string) => `spool.page/tidemark/tidemark-app/${page}${frame === undefined ? "" : `/${frame}`}`;
 
-/** The house curve as a spring: settles without overshoot, the way a camera should. */
-export const GLIDE = { type: "spring", visualDuration: 0.55, bounce: 0 } as const;
-/** Something you let go of: a little give. */
-export const SPRING = { type: "spring", visualDuration: 0.42, bounce: 0.12 } as const;
+/**
+ * spool's own numbers, not new ones: the canvas camera flies 220ms on a cubic
+ * ease-out (`FLIGHT_MS` in camera-store.ts), and everything else rides the house
+ * curve between 120 and 300ms (system/motion).
+ */
+const HOUSE_CURVE = [0.23, 1, 0.32, 1] as const;
+export const CAMERA = { duration: 0.22, ease: [0.33, 1, 0.68, 1] } as const;
+/** a surface moving: the player growing out of a frame, a column folding */
+export const GLIDE = { duration: 0.24, ease: HOUSE_CURVE } as const;
+/** a small thing arriving: a toast, a menu, a row lighting */
+export const SPRING = { duration: 0.18, ease: HOUSE_CURVE } as const;
+/** surfaces crossing */
+export const CROSS = { duration: 0.12, ease: "easeOut" } as const;
