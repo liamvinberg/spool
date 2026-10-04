@@ -267,6 +267,11 @@ export interface FramePace {
  */
 export const SLOW_PER_SECOND = 45;
 
+/** A recorded pace, and when the booth recorded it. */
+export interface TimedPace extends FramePace {
+	timedAt: number;
+}
+
 const PACE_NAME = "pace.json";
 
 /** Record a frame's pace, or forget the last one when it could not be timed again. */
@@ -277,8 +282,8 @@ export function writePace(root: string, frame: string, pace: FramePace | undefin
 }
 
 /** Every timed frame's pace, and when it was timed. Machine-written: anything malformed reads as untimed. */
-export function scanPaces(root: string): Map<string, FramePace & { timedAt: number }> {
-	const paces = new Map<string, FramePace & { timedAt: number }>();
+export function scanPaces(root: string): Map<string, TimedPace> {
+	const paces = new Map<string, TimedPace>();
 	const store = coverStoreDir(root);
 	for (const { frame, folder } of framesIn(store)) {
 		const file = join(store, folder, PACE_NAME);

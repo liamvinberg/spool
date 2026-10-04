@@ -29,6 +29,8 @@ it("names every frame the booth timed slow, and none it timed keeping up", () =>
 		`${join("design", "frames", "glass", "frame.tsx")}: slow: drew 8 frames a second at Retina density when last timed (smooth is 60; its longest took 139 ms). While it plays it holds back the whole canvas.`,
 	);
 	expect(describeSlowFrame(slow[0]!)).toContain("at 1.4x density");
+	// one too slow to time at all is as slow as a frame gets
+	expect(describeSlowFrame({ ...slow[1]!, perSecond: 0, slowestMs: 3000 })).toContain("drew under 1 frame a second");
 });
 
 it("says a timing is older than the frame's latest edit, and not that a move made it so", () => {

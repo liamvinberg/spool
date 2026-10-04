@@ -52,6 +52,7 @@ function lastChange(folder: string): number | undefined {
 /** The line `spool check` prints for one slow frame. */
 export function describeSlowFrame(frame: SlowFrame): string {
 	const density = frame.scale === 2 ? "at Retina density" : `at ${frame.scale}x density`;
+	const rate = frame.perSecond < 1 ? "under 1 frame" : `${frame.perSecond} frames`;
 	const stale = frame.editedSince ? " Timed before its latest edit." : "";
-	return `${frame.path}: slow: drew ${frame.perSecond} frames a second ${density} when last timed (smooth is 60; its longest took ${frame.slowestMs} ms). While it plays it holds back the whole canvas.${stale}`;
+	return `${frame.path}: slow: drew ${rate} a second ${density} when last timed (smooth is 60; its longest took ${frame.slowestMs} ms). While it plays it holds back the whole canvas.${stale}`;
 }

@@ -105,8 +105,11 @@ const PACE_WARM_MS = 200;
 const PACE_WINDOW_MS = 600;
 /** Redraws enough to call a frame's pace, so one that keeps up is timed briefly. */
 const PACE_FRAMES = 20;
-/** The most a timing may take, its resize included, before the tab is given up on. */
-const PACE_MS = 3000;
+/**
+ * The most a timing may take, its resize included, before the tab is given up
+ * on and the frame is taken to be as slow as a frame gets.
+ */
+const PACE_DEADLINE_MS = 3000;
 
 /** How long a cover's document has to draw something into its root. */
 const COVER_BOOT_MS = 5000;
@@ -532,6 +535,9 @@ function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
 }
 
 const pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+/** A pixel density as a pace records it. */
+const rounded = (scale: number) => Math.round(scale * 100) / 100;
 
 /**
  * Counts the document's display frames, run in the booth's own world. A frame
@@ -1036,18 +1042,24 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	 */
 	function timedPace(slot: number, tab: Tab, shape: CoverShape): Promise<FramePace | undefined> {
 		const scale = Math.min(PACE_SCALE, Math.sqrt(PACE_PIXELS / (shape.width * shape.height)));
-		const turn = pacing.then(async () => {
+		const attempt = async (): Promise<FramePace | undefined> => {
 			try {
-				const first = await underDeadline(slot, tab, PACE_MS, "being timed", pace(tab, shape, scale));
-				if (first.perSecond >= SLOW_PER_SECOND) return first;
-				const again = await underDeadline(slot, tab, PACE_MS, "being timed", pace(tab, shape, scale));
-				return again.perSecond > first.perSecond ? again : first;
+				return await underDeadline(slot, tab, PACE_DEADLINE_MS, "being timed", pace(tab, shape, scale));
 			} catch (error) {
-				if (closed || error instanceof TimedOut) return undefined;
+				if (closed) return undefined;
+				// too few display frames to count in the whole deadline: the slowest a
+				// frame can be, and the deadline has closed its tab already
+				if (error instanceof TimedOut) return { perSecond: 0, slowestMs: PACE_DEADLINE_MS, scale: rounded(scale) };
 				// whatever went wrong took the page with it, never the picture already stored
 				retire(slot, tab);
 				return undefined;
 			}
+		};
+		const turn = pacing.then(async () => {
+			const first = await attempt();
+			if (first === undefined || first.perSecond >= SLOW_PER_SECOND || first.perSecond === 0) return first;
+			const again = await attempt();
+			return again !== undefined && again.perSecond > first.perSecond ? again : first;
 		});
 		pacing = turn;
 		return turn;
@@ -1066,7 +1078,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			world,
 			`(${paceSource})(${PACE_WARM_MS}, ${PACE_WINDOW_MS}, ${PACE_FRAMES})`,
 		)) as Omit<FramePace, "scale">;
-		return { ...timed, scale: Math.round(scale * 100) / 100 };
+		return { ...timed, scale: rounded(scale) };
 	}
 
 	/** Load, settle and photograph one frame for its cover. */
