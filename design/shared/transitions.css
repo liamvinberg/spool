@@ -40,3 +40,67 @@
 		animation-duration: 0s;
 	}
 }
+
+/*
+ * explore/cloud/phone-link: the kaffe walk pushes and pops like an iOS
+ * navigation stack (DEV-115). Scoped to documents holding [data-kaffe].
+ */
+html:has([data-kaffe]):active-view-transition-type(forward)::view-transition-old(root) {
+	animation: kaffe-push-old 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+html:has([data-kaffe]):active-view-transition-type(forward)::view-transition-new(root) {
+	animation: kaffe-push-new 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
+	box-shadow: -10px 0 30px rgba(0, 0, 0, 0.18);
+}
+html:has([data-kaffe]):active-view-transition-type(back)::view-transition-old(root) {
+	animation: kaffe-pop-old 0.45s cubic-bezier(0.32, 0.72, 0, 1) both;
+	z-index: 1;
+	box-shadow: -10px 0 30px rgba(0, 0, 0, 0.18);
+}
+html:has([data-kaffe]):active-view-transition-type(back)::view-transition-new(root) {
+	animation: kaffe-pop-new 0.45s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+html:has([data-kaffe]):active-view-transition-type(kaffe-done)::view-transition-old(root) {
+	animation: kaffe-done-old 0.35s cubic-bezier(0.32, 0.72, 0, 1) both;
+	z-index: 1;
+}
+html:has([data-kaffe]):active-view-transition-type(kaffe-done)::view-transition-new(root) {
+	animation: none;
+}
+html:has([data-kaffe])::view-transition-group(kaffe-bar) {
+	animation-duration: 0.5s;
+	animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+/* an edge swipe already moved the pages by hand */
+html[data-kaffe-swipe]::view-transition-old(root),
+html[data-kaffe-swipe]::view-transition-new(root),
+html[data-kaffe-swipe]::view-transition-group(kaffe-bar) {
+	animation: none;
+}
+@keyframes kaffe-push-old {
+	to {
+		transform: translateX(-30%);
+		filter: brightness(0.88);
+	}
+}
+@keyframes kaffe-push-new {
+	from {
+		transform: translateX(100%);
+	}
+}
+@keyframes kaffe-pop-old {
+	to {
+		transform: translateX(100%);
+	}
+}
+@keyframes kaffe-pop-new {
+	from {
+		transform: translateX(-30%);
+		filter: brightness(0.88);
+	}
+}
+@keyframes kaffe-done-old {
+	to {
+		transform: translateY(100%);
+	}
+}
