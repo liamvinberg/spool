@@ -70,7 +70,7 @@ const TIDEMARK: Project = {
 interface Raw {
 	id: string;
 	name: string;
-	frames: { path: string; page: string; name: string; x: number; y: number; w: number; h: number; at: number; thumb?: string }[];
+	frames: { path: string; page: string; name: string; x: number; y: number; w: number; h: number; at: number; thumb?: string; live?: string }[];
 	edges: { from: string; to: string; might: boolean }[];
 }
 
@@ -82,7 +82,10 @@ function shape(raw: Raw): Project {
 	for (const f of raw.frames) {
 		const page = pages.get(f.page) ?? { name: f.page, frames: [], threads: [] };
 		pages.set(f.page, page);
-		const content = f.thumb === undefined ? { site: 0 } : { thumb: `${BASE}/${raw.id}/t/${f.thumb}`, play: `${BASE}/${raw.id}/p/${f.thumb}` };
+		const content =
+			f.thumb === undefined
+				? { site: 0 }
+				: { thumb: `${BASE}/${raw.id}/t/${f.thumb}`, play: `${BASE}/${raw.id}/p/${f.thumb}`, ...(f.live === undefined ? {} : { live: `${BASE}/${raw.id}/${f.live}` }) };
 		page.frames.push({ name: f.name, x: f.x, y: f.y, w: f.w, h: f.h, content });
 	}
 	for (const e of raw.edges) {
@@ -291,6 +294,19 @@ function Reach({ state, project }: { state: ReachState; project: Project }) {
 			window.clearTimeout(b);
 		};
 	}, [state]);
+
+	// turning the phone on a desktop frame plays it: sideways is where a desktop frame is used, upright is where it is browsed
+	const wasLand = useRef(land);
+	useEffect(() => {
+		if (wasLand.current === land) return;
+		wasLand.current = land;
+		const f = page.frames[idx];
+		if (land && p.play === null && mode === "frame" && f !== undefined && f.w > 500) {
+			window.setTimeout(() => play(idx), 260);
+		} else if (!land && p.play !== null && (page.frames.find((x) => x.name === p.play?.name)?.w ?? 0) > 500) {
+			p.close();
+		}
+	});
 
 	useEffect(() => {
 		if (!p.changed) return;

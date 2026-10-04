@@ -220,7 +220,7 @@ export function usePhone(state: PhoneState, opts: { exit?: Exit; onWalk?: (name:
 			/>
 		);
 
-	return { root, changed, play, open, over };
+	return { root, changed, play, open, close, over };
 }
 
 /* ---------- play: the part that should feel native ---------- */
@@ -280,13 +280,19 @@ function PhonePlay({
 		animate(pull, 0, GLIDE);
 	}, [leaving, dragY, pull]);
 
-	// a card is a 390 × 844 frame at scale s; the played frame starts under the status bar
+	// where the frame shows inside the played screen, so a card grows into exactly that spot and shrinks back from it
+	const shown = (): { left: number; top: number; w: number } => {
+		if (thumb?.live !== undefined && !site) return { left: 0, top: 0, w: screen.w };
+		if (thumb !== null && site) {
+			const box = contained(screen, spec);
+			return { left: box.left, top: box.top, w: box.w };
+		}
+		return { left: 0, top: screen.top, w: screen.w };
+	};
 	const at = (r: Rect) => {
-		const s = r.w / (site ? screen.w : spec.w);
-		// a real desktop frame sits contained in the middle of the content area
-		const inner = screen.h - screen.top - screen.bottom;
-		const drop = thumb !== null && site ? Math.max(0, (inner - (screen.w * spec.h) / spec.w) / 2) : 0;
-		return { x: r.x, y: r.y - (screen.top + drop) * s, scale: s, borderRadius: 22 };
+		const box = shown();
+		const s = r.w / (thumb === null && !site ? spec.w : box.w);
+		return { x: r.x - box.left * s, y: r.y - box.top * s, scale: s, borderRadius: 22 };
 	};
 	const full = { x: 0, y: 0, scale: 1, borderRadius: 0 };
 	const back = () => {
@@ -328,7 +334,8 @@ function PhonePlay({
 					style={exit === "down" ? { y: dragY, scale: shrink, borderRadius: corner } : { x: pullX, scale: pullShrink, borderRadius: pullCorner }}
 				>
 					{screen.device ? null : <StatusBar dark={!site} />}
-					<div className="absolute inset-x-0 overflow-hidden" style={{ top: screen.top, bottom: screen.bottom }}>
+					{thumb?.live !== undefined ? <LiveFrame key={thumb.live} spec={spec} live={thumb.live} cover={thumb.play} wide={site} /> : null}
+					<div className={cn("absolute inset-x-0 overflow-hidden", thumb?.live !== undefined && "hidden")} style={{ top: screen.top, bottom: screen.bottom }}>
 						<AnimatePresence initial={false}>
 							<motion.div
 								key={spec.name}
@@ -413,14 +420,14 @@ function PhonePlay({
 				{hint && !leaving && thumb !== null && site && screen.h > screen.w ? (
 					<motion.div
 						key="turn"
-						className="pointer-events-none absolute left-1/2 z-10 rounded-sm border border-white/10 bg-black/80 px-2.5 py-1.5 text-white/80 backdrop-blur type-detail"
+						className="pointer-events-none absolute left-1/2 z-10 whitespace-nowrap rounded-sm border border-white/10 bg-black/80 px-2.5 py-1.5 text-white/80 backdrop-blur type-detail"
 						style={{ x: "-50%", bottom: screen.bottom + 16 }}
 						initial={{ opacity: 0, y: 8 }}
 						animate={{ opacity: 1, y: 0 }}
 						exit={{ opacity: 0 }}
 						transition={SPRING}
 					>
-						{`${spec.w} × ${spec.h} · turn the phone`}
+						{`${spec.w} × ${spec.h} · turn the phone${thumb.live === undefined ? " · cover only" : ""}`}
 					</motion.div>
 				) : null}
 				{hint && !leaving && exit === "edge" ? (
@@ -454,6 +461,46 @@ function PhonePlay({
 					</motion.div>
 				) : null}
 			</AnimatePresence>
+		</div>
+	);
+}
+
+/** a frame wider than the phone, whole and centred: between the notch and the home bar upright, the whole screen sideways */
+function contained(screen: Screen, spec: { w: number; h: number }) {
+	const side = screen.w > screen.h;
+	const top = side ? 0 : screen.top;
+	const room = screen.h - top - (side ? 0 : screen.bottom);
+	const s = Math.min(screen.w / spec.w, room / spec.h);
+	const w = spec.w * s;
+	const h = spec.h * s;
+	return { s, w, h, left: (screen.w - w) / 2, top: top + (room - h) / 2 };
+}
+
+/**
+ * The real frame, exported with `spool build` and running: touch, scroll and
+ * walk inside it are the frame's. A phone frame gets the whole screen and pads
+ * its own safe areas; a desktop frame runs at its authored size, scaled to fit.
+ * Its cover stands in until it has painted.
+ */
+function LiveFrame({ spec, live, cover, wide }: { spec: Spec; live: string; cover: string; wide: boolean }) {
+	const screen = useScreenSize();
+	const [ready, setReady] = useState(false);
+	const box = wide ? contained(screen, spec) : null;
+	const place = box === null ? { left: 0, top: 0, width: screen.w, height: screen.h } : { left: box.left, top: box.top, width: box.w, height: box.h };
+	return (
+		<div className={cn("absolute inset-0", wide ? "bg-[#0A0A0B]" : "bg-black")}>
+			<img src={cover} alt="" draggable={false} className="absolute object-cover object-top" style={place} />
+			<iframe
+				title={spec.name}
+				src={live}
+				onLoad={() => window.setTimeout(() => setReady(true), 350)}
+				className="absolute border-0 transition-opacity duration-200"
+				style={
+					box === null
+						? { ...place, opacity: ready ? 1 : 0 }
+						: { left: box.left, top: box.top, width: spec.w, height: spec.h, transform: `scale(${box.s})`, transformOrigin: "0 0", opacity: ready ? 1 : 0 }
+				}
+			/>
 		</div>
 	);
 }

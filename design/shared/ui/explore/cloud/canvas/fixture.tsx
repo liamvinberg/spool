@@ -11,8 +11,8 @@ import { TidemarkLanding } from "shared/ui/demo/tidemark-landing";
  * Prototype only.
  */
 
-/** `thumb`: a real project's frame as its cover (DEV-161), `play` the full-size one */
-export type Content = { coffee: CoffeeScreenName; action?: string } | { site: number } | { thumb: string; play: string };
+/** `thumb`: a real project's frame as its cover (DEV-161), `play` the full-size one, `live` its export when it has one */
+export type Content = { coffee: CoffeeScreenName; action?: string } | { site: number } | { thumb: string; play: string; live?: string };
 
 export interface Spec {
 	name: string;
