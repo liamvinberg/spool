@@ -30,7 +30,7 @@ Lifecycle (offline, take a path):
   spool init [path]     scaffold design/, register the project, and open its tab
   spool open [path]     register an existing project by walk-up and open its tab
   spool remove [path]   forget one exact registered root without deleting its files
-  spool check [path]    strictly type-check frames without starting spool
+  spool check [path]    strictly type-check frames without starting spool; also names frames timed too slow to play smoothly
   spool build <frame> --out <directory> [--scenario <name>]    export a connected website offline
 
 For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source.
