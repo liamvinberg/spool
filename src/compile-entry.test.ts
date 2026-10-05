@@ -90,6 +90,34 @@ describe("the compile entry, with the files in memory and esbuild-wasm", () => {
 		},
 	);
 
+	it("names one version of a frame the same for every machine and the cloud", { timeout: 60_000 }, async () => {
+		const { root } = onDisk();
+		const { host, designDir } = inMemory();
+		const elsewhere = { projectCapability: "another-machine", controlOrigin: "https://spool.page" };
+
+		const daemon = await createFrameCompiler(VERSION).getDocument(root, "home", authority);
+		const cloud = await compileFrameDocument(host, {
+			designDir,
+			frame: "home",
+			project: basename(root),
+			authority: elsewhere,
+			version: VERSION,
+		});
+
+		if (daemon.kind !== "ok") throw new Error(daemon.message);
+		// compiled for someone else, so another document: but the same version of home
+		expect(cloud.etag).not.toBe(daemon.etag);
+		expect(cloud.source).toBe(daemon.source);
+		const cart = await compileFrameDocument(host, {
+			designDir,
+			frame: "shop/cart",
+			project: basename(root),
+			authority: elsewhere,
+			version: VERSION,
+		});
+		expect(cart.source).not.toBe(cloud.source);
+	});
+
 	it("compiles the publication byte for byte as the daemon does", { timeout: 60_000 }, async () => {
 		const disk = onDisk();
 		const memory = inMemory();

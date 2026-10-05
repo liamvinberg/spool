@@ -261,6 +261,12 @@ export interface CompiledFrameDocument {
 	 * the same wherever they are compiled.
 	 */
 	hash: string;
+	/**
+	 * The same inputs hashed for the frame alone, whoever it is compiled for: one
+	 * version of the frame, as every machine and the cloud name it. A cover of the
+	 * document is filed under it.
+	 */
+	source: string;
 	/** An HTTP ETag for the document: its inputs and webfont revision when settled, its bytes when not. */
 	etag: string;
 	/** Every file the document was made of, present or not, absolute. */
@@ -339,6 +345,7 @@ export async function compileFrameDocument(
 	return {
 		document,
 		hash,
+		source: inputsHash(version, frame, designDir, digests),
 		etag: `"${etag.slice(0, 32)}"`,
 		inputs: [...digests.keys()],
 		fonts: fontsRevision,

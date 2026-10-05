@@ -22,7 +22,7 @@ import { inertWebfonts, type Webfonts } from "./webfonts";
 export type { FrameAuthority } from "./design-compile";
 
 export type FrameDocument =
-	| { kind: "ok"; document: string; etag: string; cache: "hit" | "miss" }
+	| { kind: "ok"; document: string; etag: string; source: string; cache: "hit" | "miss" }
 	| { kind: "error"; document: string; message: string }
 	| { kind: "missing"; message: string };
 
@@ -77,7 +77,7 @@ export function createFrameCompiler(
 				// meanwhile retires this document as surely as one before it
 				cached.fonts === webfonts.revision()
 			) {
-				return { kind: "ok", document: cached.document, etag: cached.etag, cache: "hit" };
+				return { kind: "ok", document: cached.document, etag: cached.etag, source: cached.source, cache: "hit" };
 			}
 			const entry = await compileFrameDocument(host, {
 				designDir,
@@ -91,7 +91,7 @@ export function createFrameCompiler(
 				if (entry.settled) cache.set(key, entry);
 				else cache.delete(key);
 			}
-			return { kind: "ok", document: entry.document, etag: entry.etag, cache: "miss" };
+			return { kind: "ok", document: entry.document, etag: entry.etag, source: entry.source, cache: "miss" };
 		} catch (error) {
 			if (cache.get(key) === cached) cache.delete(key);
 			const message = await describeCompileError(host.esbuild, error);
