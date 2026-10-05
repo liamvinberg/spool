@@ -92,6 +92,11 @@ export interface LocalCopyOptions {
 	standing?: () => Promise<Standing>;
 	/** The project ended for this machine. The copy has stopped; ending it is its owner's. */
 	ended?: () => void;
+	/**
+	 * A solo project moving into this team project (DEV-190): it has no `spool.json` until the team has every file,
+	 * and everything on disk is the person's own work, git-tracked or not, so git's index is never consulted.
+	 */
+	moving?: ProjectLink;
 }
 
 export interface LocalCopy {
@@ -153,7 +158,7 @@ export function syncUrl(link: ProjectLink): string {
 function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const notice = options.notice ?? ((message: string) => console.error(`spool: ${message}`));
 	const openSocket = options.openSocket ?? openWebSocket;
-	const link = readProjectLink(options.root);
+	const link = options.moving ?? readProjectLink(options.root);
 	if (link.origin !== options.origin)
 		throw new SpoolError(
 			`${options.root}/spool.json names ${link.origin}, but this machine signs in to ${options.origin}; it is not synced`,
@@ -408,14 +413,16 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		gitWait.unref?.();
 	};
 
-	const guard = guardAgainstGit(
-		designDir,
-		(paths) => {
-			for (const path of paths) changed.add(path);
-			settle ??= setTimeout(checkChanged, SETTLE_MS);
-		},
-		state.watched,
-	);
+	const guard = options.moving
+		? { busy: () => false, wrote: () => false, watching: () => {}, close: () => {} }
+		: guardAgainstGit(
+				designDir,
+				(paths) => {
+					for (const path of paths) changed.add(path);
+					settle ??= setTimeout(checkChanged, SETTLE_MS);
+				},
+				state.watched,
+			);
 
 	/** Every travelling file on disk, and every path the team has that may have gone from it. */
 	const checkEverything = () => {

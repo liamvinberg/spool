@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
-import { isTeamProject } from "../team-project";
+import { isTeamProject, PROJECT_LINK } from "../team-project";
 import { readCanvasFields } from "./canvas-file";
 import { realDesignDir } from "./design-path";
 
@@ -543,4 +543,106 @@ async function stageDesign(repo: string, design: string, indexFile?: string): Pr
 		indexFile,
 	);
 	return dropped.ok;
+}
+
+/** The one commit moving a project into its team makes (DEV-190). */
+export const MOVE_MESSAGE = "design: moved to Spool Cloud";
+
+/** What the move commit came to. */
+export type MoveCommit =
+	/** made on the checked-out branch */
+	| { kind: "committed"; commit: string }
+	/** the project is in no git work tree: there is nothing to commit */
+	| { kind: "no-git" }
+	/** HEAD names no branch: the move is left for the person to commit */
+	| { kind: "detached" }
+	/** git refused it; the move is left for the person to commit */
+	| { kind: "failed" };
+
+/**
+ * The move commit, made the way a history save is: on the checked-out branch, from a temporary index, with no hook
+ * and no push, and only once git is done with any merge or rebase. `design/` leaves the index with every file kept
+ * on disk, and `spool.json` comes in; nothing else anyone staged is touched. The real index is then brought level
+ * for those paths alone, so `git status` reads clean. `wait` is how long to sleep between looks at a busy repo.
+ */
+export async function commitMoveIn(
+	root: string,
+	options: { wait?: (ms: number) => Promise<void>; signal?: AbortSignal } = {},
+): Promise<MoveCommit> {
+	const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	const designDir = realDesignDir(root);
+	const top = await git(root, ["rev-parse", "--show-toplevel"]);
+	if (!top.ok) return { kind: "no-git" };
+	const repo = top.stdout.trim();
+	const dir = await git(repo, ["rev-parse", "--absolute-git-dir"]);
+	if (!dir.ok) return { kind: "no-git" };
+	const scope = designPath(repo, designDir);
+	const link = designPath(repo, join(designDir, "..", PROJECT_LINK));
+	for (;;) {
+		if (options.signal?.aborted) return { kind: "failed" };
+		if (blocked(dir.stdout.trim())) {
+			await wait(1_000);
+			continue;
+		}
+		const branch = await git(repo, ["symbolic-ref", "--quiet", "HEAD"]);
+		if (!branch.ok) return { kind: "detached" };
+		const head = await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+		const parent = head.ok ? head.stdout.trim() : undefined;
+		const made = await moveTree(repo, parent, scope, link);
+		if (made === undefined) return { kind: "failed" };
+		const commit = await git(repo, [
+			"-c",
+			"commit.gpgsign=false",
+			"commit-tree",
+			made,
+			...(parent === undefined ? [] : ["-p", parent]),
+			"-m",
+			MOVE_MESSAGE,
+		]);
+		if (!commit.ok) return { kind: "failed" };
+		const id = commit.stdout.trim();
+		// compare-and-swap, as a save does: a commit that landed meanwhile is built on, never overwritten. Moving the
+		// ref runs no hook either, not even git's reference-transaction one
+		const moved = await git(repo, [
+			"-c",
+			`core.hooksPath=${devNull}`,
+			"update-ref",
+			"-m",
+			MOVE_MESSAGE,
+			"HEAD",
+			id,
+			parent ?? "",
+		]);
+		if (!moved.ok) {
+			await wait(100);
+			continue;
+		}
+		await git(repo, ["rm", "-r", "--cached", "--force", "--quiet", "--ignore-unmatch", "--", scope]);
+		await git(repo, ["add", "-f", "--", link]);
+		return { kind: "committed", commit: id };
+	}
+}
+
+/** HEAD's tree with `design/` taken out and `spool.json` put in, written from a scratch index. */
+async function moveTree(
+	repo: string,
+	parent: string | undefined,
+	scope: string,
+	link: string,
+): Promise<string | undefined> {
+	const scratch = mkdtempSync(join(tmpdir(), "spool-move-"));
+	try {
+		const index = join(scratch, "index");
+		if (parent !== undefined && !(await git(repo, ["read-tree", parent], index)).ok) return undefined;
+		const out = await git(
+			repo,
+			["rm", "-r", "--cached", "--force", "--quiet", "--ignore-unmatch", "--", scope],
+			index,
+		);
+		if (!out.ok || !(await git(repo, ["add", "-f", "--", link], index)).ok) return undefined;
+		const tree = await git(repo, ["write-tree"], index);
+		return tree.ok ? tree.stdout.trim() : undefined;
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
 }
