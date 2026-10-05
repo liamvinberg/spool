@@ -11,7 +11,7 @@ import { FLIGHT_MS } from "../canvas/camera-store";
 import { parseFrameMessage, type SessionRecord, sessionReply } from "../canvas/protocol";
 
 /** The glide a played frame grows out of its spot on, and shrinks back into it on. */
-const GROW = { duration: FLIGHT_MS + 60, easing: "cubic-bezier(0.32, 0.72, 0, 1)" } as const;
+export const GROW = { duration: FLIGHT_MS + 60, easing: "cubic-bezier(0.32, 0.72, 0, 1)" } as const;
 
 interface Played {
 	frame: string;
@@ -141,41 +141,16 @@ export function ViewerPlayer({
 	}, [controller]);
 
 	// the played document's side of the frame protocol: its session, its walks and its links out
-	useEffect(() => {
-		const onMessage = (event: MessageEvent) => {
-			const source = iframe.current?.contentWindow;
-			if (source === undefined || source === null || event.source !== source) return;
-			const message = parseFrameMessage(event.data);
-			if (message === undefined || message.frame !== played.current.frame) return;
-			switch (message.spool) {
-				case "session?":
-					source.postMessage(sessionReply(session.current), "*");
-					return;
-				case "copy":
-					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
-					return;
-				case "external":
-					played.current = { ...played.current, externalHref: message.href };
-					version.current += 1;
-					for (const listener of listeners.current) listener();
-					return;
-				case "go":
-				case "back": {
-					if (!walkable(latest.current.frames, reaches.current, message.target)) {
-						if (message.id !== undefined)
-							source.postMessage(walkRejected(message.frame, message.id, "missing"), "*");
-						return;
-					}
-					if (message.id !== undefined) source.postMessage(walkAccepted(message.frame, message.id), "*");
-					controller.walk(message.target);
-					session.current = message.session ?? null;
-					return;
-				}
-			}
-		};
-		window.addEventListener("message", onMessage);
-		return () => window.removeEventListener("message", onMessage);
-	}, [controller]);
+	usePlayedDocument(iframe, session, {
+		frame: () => played.current.frame,
+		walkable: (frame) => walkable(latest.current.frames, reaches.current, frame),
+		walk: (frame) => controller.walk(frame),
+		external(href) {
+			played.current = { ...played.current, externalHref: href };
+			version.current += 1;
+			for (const listener of listeners.current) listener();
+		},
+	});
 
 	// esc leaves, as close does, whenever the page rather than the frame has the keyboard
 	useEffect(() => {
@@ -229,8 +204,66 @@ function PlayedDocument({
 	);
 }
 
+/** What a played document may ask of whoever plays it, answered as the canvas answers it. */
+export interface PlayedAnswers {
+	/** The frame on show: a message from any other is stale. */
+	frame: () => string;
+	walkable: (frame: string) => boolean;
+	/** A walk the document asked for and was told goes ahead. */
+	walk: (frame: string) => void;
+	/** A link out of the prototype, to an address on the web. */
+	external: (href: string) => void;
+}
+
+/**
+ * The played document's side of the frame protocol, for whoever plays it: the session the last screen left, its
+ * walks, its copies to the clipboard and its links out. A walk's session is kept for the next screen to ask for.
+ */
+export function usePlayedDocument(
+	iframe: { current: HTMLIFrameElement | null },
+	session: { current: SessionRecord | null },
+	answers: PlayedAnswers,
+): void {
+	const latest = useRef(answers);
+	latest.current = answers;
+	useEffect(() => {
+		const onMessage = (event: MessageEvent) => {
+			const source = iframe.current?.contentWindow;
+			if (source === undefined || source === null || event.source !== source) return;
+			const message = parseFrameMessage(event.data);
+			const answer = latest.current;
+			if (message === undefined || message.frame !== answer.frame()) return;
+			switch (message.spool) {
+				case "session?":
+					source.postMessage(sessionReply(session.current), "*");
+					return;
+				case "copy":
+					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
+					return;
+				case "external":
+					answer.external(message.href);
+					return;
+				case "go":
+				case "back": {
+					if (!answer.walkable(message.target)) {
+						if (message.id !== undefined)
+							source.postMessage(walkRejected(message.frame, message.id, "missing"), "*");
+						return;
+					}
+					if (message.id !== undefined) source.postMessage(walkAccepted(message.frame, message.id), "*");
+					answer.walk(message.target);
+					session.current = message.session ?? null;
+					return;
+				}
+			}
+		};
+		window.addEventListener("message", onMessage);
+		return () => window.removeEventListener("message", onMessage);
+	}, [iframe, session]);
+}
+
 /** Whether a walk to a frame goes anywhere: one on the canvas, or any frame at all where walks reach anywhere. */
-function walkable(frames: readonly DesignFrame[], anywhere: boolean, frame: string): boolean {
+export function walkable(frames: readonly DesignFrame[], anywhere: boolean, frame: string): boolean {
 	return frames.some((each) => each.name === frame) || (anywhere && isFramePath(frame));
 }
 
@@ -242,6 +275,6 @@ function grownFrom(spot: Box, authored: number): string {
 	return `translate(${spot.x - left * scale}px, ${spot.y - DESK_BAR_PX * scale}px) scale(${scale})`;
 }
 
-function reducedMotion(): boolean {
+export function reducedMotion(): boolean {
 	return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
