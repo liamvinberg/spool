@@ -52,7 +52,7 @@ export function AccountFoot({
 					</div>
 				</div>
 				<button type="button" className={cn(HOME_ACTION, "w-full justify-start bg-raised")} onClick={onReopen}>
-					<span className="h-[8px] w-[8px] animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
+					<span className="h-[8px] w-[8px] shrink-0 rounded-full bg-muted motion-safe:animate-pulse" />
 					Waiting for the browser
 				</button>
 			</div>

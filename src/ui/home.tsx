@@ -75,7 +75,7 @@ export function Home({
 	return (
 		<div className="pj-body h-full overflow-auto bg-bg text-text [scrollbar-width:thin] [scrollbar-color:var(--color-border-raised)_transparent]">
 			<div className="pj-layout grid min-h-full grid-cols-[208px_minmax(0,1fr)] [@media(max-width:720px)]:grid-cols-[64px_minmax(0,1fr)]">
-				<aside className="pj-navigation sticky top-0 flex h-[calc(100vh-44px)] flex-col border-r border-border bg-bg px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]">
+				<aside className="pj-navigation sticky top-0 z-10 flex h-[calc(100vh-44px)] flex-col border-r border-border bg-bg px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]">
 					<div className="pj-wordmark mb-[30px] flex h-[32px] items-center gap-[10px] px-[13px] [font:var(--type-mark)] tracking-[-1px] [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:[&>span]:hidden">
 						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-thread" />
 						<span>spool</span>
