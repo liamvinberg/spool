@@ -1,10 +1,27 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { type CloudRequestOptions, keychainVault } from "./cloud-auth";
+import {
+	type CloudTeam,
+	type CloudTeamProject,
+	CloudTeamRefused,
+	type CloudTeamsClient,
+	cloudTeams,
+} from "./cloud-teams";
 import { registerAndOpenProject } from "./daemon/session";
+import { type OpenSyncSocket, syncLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { isSafeName } from "./page-path";
 import { expandHome, realDir } from "./paths";
 import { readRegistry } from "./registry";
+import {
+	isTeamProject,
+	PROJECT_LINK,
+	type ProjectLink,
+	parseProjectLink,
+	TEAM_GITIGNORE,
+	writeProjectLink,
+} from "./team-project";
 import { scaffoldDirs, scaffoldFiles } from "./templates";
 
 export interface InitOptions {
@@ -22,7 +39,98 @@ export interface InitOptions {
  */
 export function initProject(targetDir: string, spoolDir: string, options: InitOptions = {}): { root: string } {
 	const root = realDir(targetDir);
+	refuseExisting(root);
+	scaffold(root, scaffoldFiles(options.history ?? false));
+	registerAndOpenProject(spoolDir, root);
+	return { root };
+}
 
+export interface TeamInitOptions {
+	/** The team, by its address or its name. */
+	team: string;
+	/** The spool.page this machine signs in to. */
+	origin: string;
+	/** A fake spool.page and Keychain, for tests. */
+	request?: CloudRequestOptions;
+	openSocket?: OpenSyncSocket;
+}
+
+/**
+ * `spool init --team`: start the project in the team at spool.page first, then
+ * scaffold design/ with its own `.gitignore` of everything, write the `spool.json` link beside it, and upload
+ * the scaffold as the team's first saves. Nothing is staged or committed: design/ never enters git, and
+ * spool.json is the repo's to commit. A project spool.page refuses leaves nothing on disk.
+ */
+export async function initTeamProject(
+	targetDir: string,
+	spoolDir: string,
+	options: TeamInitOptions,
+): Promise<{ root: string; link: ProjectLink; uploaded: boolean }> {
+	const root = realDir(targetDir);
+	refuseExisting(root);
+	if (isTeamProject(root)) {
+		throw new SpoolError(`${root} already has a ${PROJECT_LINK}; run \`spool open\` there to fetch its design/`);
+	}
+	const request = { ...options.request, origin: options.origin };
+	const teams = cloudTeams(spoolDir, request);
+	const team = await chosenTeam(teams, options.team);
+	let created: CloudTeamProject;
+	try {
+		created = await teams.createProject(team.address, basename(root));
+	} catch (error) {
+		throw teamProjectRefusal(error, team.name, basename(root));
+	}
+	const link = parseProjectLink(created.url);
+	if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
+	scaffold(root, { ...scaffoldFiles(false), ".gitignore": TEAM_GITIGNORE });
+	writeProjectLink(root, link);
+	registerAndOpenProject(spoolDir, root);
+	let uploaded = true;
+	try {
+		await syncLocalCopy({
+			root,
+			origin: options.origin,
+			vault: request.vault ?? keychainVault(spoolDir, options.origin),
+			...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
+			notice: () => {},
+		});
+	} catch {
+		// the files are here and the daemon sends them the next time it can reach spool.page
+		uploaded = false;
+	}
+	return { root, link, uploaded };
+}
+
+async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promise<CloudTeam> {
+	const named = wanted.trim().toLowerCase();
+	const { teams: mine } = await teams.list();
+	const team = mine.find((each) => each.address === named || each.name.toLowerCase() === named);
+	if (team === undefined) {
+		const yours = mine.map((each) => each.name).join(" and ");
+		throw new SpoolError(`you're not in a team called "${wanted}"${yours === "" ? "" : `; you're in ${yours}`}`);
+	}
+	if (team.role === "viewer") {
+		throw new SpoolError(`you're a viewer of ${team.name}; only its editors and admins start team projects`);
+	}
+	return team;
+}
+
+function teamProjectRefusal(error: unknown, team: string, folder: string): unknown {
+	if (!(error instanceof CloudTeamRefused)) return error;
+	if (error.code === "project_taken")
+		return new SpoolError(
+			`${team} already has a project called "${folder}"; start this one in a folder with another name`,
+		);
+	if (error.code === "invalid_project_name" || error.code === "project_name_reserved")
+		return new SpoolError(
+			`"${folder}" can't name a team project; use a folder named with 2 to 40 letters, digits and hyphens`,
+		);
+	if (error.code === "editor_required")
+		return new SpoolError(`you're a viewer of ${team}; only its editors and admins start team projects`);
+	return new SpoolError(`spool.page refused the team project: ${error.code}`);
+}
+
+function refuseExisting(root: string): void {
 	const design = join(root, "design");
 	if (existsSync(join(design, "canvas.json"))) {
 		throw new SpoolError(`already a spool project: ${root} (run \`spool open\` instead)`);
@@ -30,18 +138,19 @@ export function initProject(targetDir: string, spoolDir: string, options: InitOp
 	if (existsSync(design)) {
 		throw new SpoolError(`design/ already exists at ${root} and is not a spool project, move it aside first`);
 	}
+}
 
+/** Write the design/ contract. Never touches an existing design/, whoever owns it. */
+function scaffold(root: string, files: Record<string, string>): void {
+	const design = join(root, "design");
 	for (const dir of scaffoldDirs) {
 		mkdirSync(join(design, dir), { recursive: true });
 	}
-	for (const [rel, content] of Object.entries(scaffoldFiles(options.history ?? false))) {
+	for (const [rel, content] of Object.entries(files)) {
 		const file = join(design, rel);
 		mkdirSync(dirname(file), { recursive: true });
 		writeFileSync(file, content);
 	}
-
-	registerAndOpenProject(spoolDir, root);
-	return { root };
 }
 
 /**

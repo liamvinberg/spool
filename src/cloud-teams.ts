@@ -47,6 +47,14 @@ export interface TeamPeople {
 	}[];
 }
 
+/** A team project: `<origin>/<team>/<name>` is its `url`, what a local copy's spool.json holds. */
+export interface CloudTeamProject {
+	id: string;
+	name: string;
+	team: string;
+	url: string;
+}
+
 /** spool.page said no. `code` is its reason, such as `last_admin` or `team_creation_closed`. */
 export class CloudTeamRefused extends SpoolError {
 	constructor(
@@ -114,6 +122,12 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 				`invites/${encodeURIComponent(invite)}/accept`,
 			),
 		declineInvite: (invite: string) => call<null>("POST", `invites/${encodeURIComponent(invite)}/decline`),
+		/** Starts a team project, named from what its folder is called. Editors and admins only. */
+		createProject: (address: string, name: string) =>
+			call<CloudTeamProject>("POST", `${team(address)}/projects`, { name }),
+		/** One team project, and this account's role in its team. */
+		project: (address: string, name: string) =>
+			call<CloudTeamProject & { role: TeamRole }>("GET", `${team(address)}/projects/${encodeURIComponent(name)}`),
 	};
 }
 

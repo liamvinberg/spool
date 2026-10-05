@@ -28,6 +28,7 @@ A frame is born by writing design/frames/<name>/frame.tsx default-exporting one 
 
 Lifecycle (offline, take a path):
   spool init [path]     scaffold design/, register the project, and open its tab
+  spool init [path] --team <team>    start it as a team project instead (needs \`spool login\` and the network)
   spool open [path]     register an existing project by walk-up and open its tab
   spool remove [path]   forget one exact registered root without deleting its files
   spool check [path]    strictly type-check frames without starting spool; also names frames timed too slow to play smoothly
@@ -46,6 +47,8 @@ Read verbs (work from any cwd inside a registered project, auto-start the daemon
 The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots frames in spool's own headless Chrome; it never reads the human's canvas.
 
 History: where a project's design/canvas.json says \`"history": true\`, the daemon commits design/ for you — everything that changed lands as one \`design: <counts>\` commit on the checked-out branch once the folder has been quiet for 45 seconds. So never commit design/ yourself and never stage it: the save is built from its own index, your staging area is left exactly as you found it, and spool never pushes. \`spool init\` leaves history off and says so (\`spool init --history\` starts a project with it on); a project with no key reads as off; \`"history": false\` in ~/.spool/config.json turns it off on that machine whatever a project asks for. A repository mid-merge, mid-rebase, on a detached HEAD, or with its index held waits for the next window.
+
+Team projects: a spool.json beside design/ ({ "project": "https://spool.page/<team>/<project>" }) makes design/ a local copy of a team project. Every save in it reaches the team's other editors through spool.page within about a second, and theirs arrive here as real files, so write frames exactly as anywhere else; a file a teammate changed since you read it is theirs now, so read it again before editing. Only canvas.json, AGENTS.md, CLAUDE.md, frames/** and shared/** travel; .spool/ and design/.gitignore stay on this machine. design/ is out of git there (its own .gitignore is \`*\`) and history never commits it: commit spool.json, never design/. A spool.json with no design/ beside it means run \`spool open\` there, which fetches it.
 
 Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
@@ -215,7 +218,7 @@ Size from the section's container with ResizeObserver, including its drawing buf
 
 Verify with spool url, shot and logs: wait for async initialization, inspect rendered pixels, resize, and test reduced motion. A headless browser can choose a different backend from the visible browser. Check the canvas's still as well as the live frame and player. An export substitutes an image for each canvas: use a wrapper, classes or inline styles for layout, since a canvas tag selector will no longer match there. Spool preserves WebGL drawing buffers for export. A shader that renders once is enough for a still; animation need not run forever.`,
 
-	verbs: () => `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
+	verbs: () => `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json or a team project's spool.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline, except that a team project needs spool.page; skill needs nothing.
 
 shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, the same browser that makes the canvas's pictures of frames, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900), in the colour scheme the canvas shows (this machine's light or dark setting until a canvas has said). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it.
 

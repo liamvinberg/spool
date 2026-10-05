@@ -1,0 +1,237 @@
+import { createHash } from "node:crypto";
+import type { CloudRequestOptions } from "./cloud-auth";
+import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
+import { decodeFrame, encodeFrame, PROTOCOL_VERSION, travels } from "./team-sync-protocol";
+
+/**
+ * A fake spool.page for team projects: the team API a CLI calls and a sync object a daemon connects to, in
+ * process. It keeps the rules the real object keeps (order, set-aside, relay to everyone else) and records
+ * every save it is sent, so a test can say what reached the team and what never did.
+ */
+export const TEAM_ORIGIN = "https://cloud.test";
+
+interface Person {
+	accountId: string;
+	device: string;
+	role: "admin" | "editor" | "viewer" | null;
+}
+
+interface Project {
+	team: string;
+	name: string;
+	files: Map<string, { version: number; bytes: Uint8Array | null }>;
+	saves: { path: string; base: number | null; deleted: boolean; by: string; outcome: string }[];
+	sockets: Set<Connected>;
+	version: number;
+}
+
+interface Connected {
+	person: Person;
+	live: boolean;
+	deliver(frame: string | Uint8Array): void;
+	close(): void;
+}
+
+export function fakeTeam(team = "devosurf") {
+	const people = new Map<string, Person>();
+	const projects = new Map<string, Project>();
+	const project = (name: string) => projects.get(name);
+
+	function answer(request: Request, person: Person | undefined): Response | Promise<Response> {
+		const path = new URL(request.url).pathname;
+		if (person === undefined) return Response.json({ error: "account_session_required" }, { status: 401 });
+		if (path === "/api/teams")
+			return Response.json({
+				teams:
+					person.role === null
+						? []
+						: [{ id: "t1", address: team, name: "Devosurf", role: person.role, logo: null, people: people.size }],
+				invites: [],
+				mayCreateTeam: false,
+			});
+		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?$/u.exec(path);
+		if (match === null || match[1] !== team || person.role === null)
+			return Response.json({ error: "team_not_found" }, { status: 404 });
+		const described = (name: string) => ({ id: name, name, team, url: `${TEAM_ORIGIN}/${team}/${name}` });
+		if (request.method === "POST" && match[2] === undefined)
+			return request.json().then((body: { name: string }) => {
+				if (person.role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				const name = body.name.toLowerCase();
+				if (projects.has(name)) return Response.json({ error: "project_taken" }, { status: 409 });
+				projects.set(name, { team, name, files: new Map(), saves: [], sockets: new Set(), version: 0 });
+				return Response.json(described(name), { status: 201 });
+			});
+		const found = match[2] === undefined ? undefined : project(match[2]);
+		if (found === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
+		return Response.json({ ...described(found.name), role: person.role });
+	}
+
+	function receive(at: Project, from: Connected, data: string | Uint8Array): void {
+		const framed = decodeFrame(data);
+		if (framed === null) return;
+		const { message, bytes } = framed;
+		if (message.type === "hello") {
+			if (message.protocol !== PROTOCOL_VERSION) {
+				from.close();
+				return;
+			}
+			from.deliver(encodeFrame({ type: "welcome", protocol: PROTOCOL_VERSION, format: 2, head: at.version }));
+			const since = Number(message.since);
+			for (const [path, file] of [...at.files].sort((a, b) => a[1].version - b[1].version))
+				if (file.version > since) from.deliver(fileFrame(path, file));
+			from.deliver(encodeFrame({ type: "caught-up", head: at.version }));
+			from.live = true;
+			return;
+		}
+		if (message.type !== "save") return;
+		const { ref, path, base, deleted } = message as {
+			ref: string;
+			path: string;
+			base: number | null;
+			deleted: boolean;
+		};
+		const current = at.files.get(path);
+		if (!travels(path)) from.deliver(encodeFrame({ type: "refused", ref, path, reason: "outside_layout" }));
+		else if (current !== undefined && hash(current.bytes) === hash(bytes ?? null))
+			from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version }));
+		else apply(at, from, { ref, path, base, deleted }, current, bytes);
+	}
+
+	/** A save that changes something: applied on the team's current version, set aside on any other. */
+	function apply(
+		at: Project,
+		from: Connected,
+		{ ref, path, base, deleted }: { ref: string; path: string; base: number | null; deleted: boolean },
+		current: { version: number; bytes: Uint8Array | null } | undefined,
+		bytes: Uint8Array | undefined,
+	): void {
+		const applies = current === undefined || current.version === base;
+		at.version += 1;
+		at.saves.push({ path, base, deleted, by: from.person.accountId, outcome: applies ? "applied" : "set_aside" });
+		if (!applies) {
+			from.deliver(encodeFrame({ type: "set-aside", ref, path, version: current.version }));
+			from.deliver(fileFrame(path, current));
+			return;
+		}
+		const file = { version: at.version, bytes: bytes ?? null };
+		at.files.set(path, file);
+		from.deliver(encodeFrame({ type: "saved", ref, path, version: file.version }));
+		for (const other of at.sockets)
+			if (other !== from && other.live)
+				other.deliver(
+					encodeFrame(
+						{
+							type: "file",
+							path,
+							version: file.version,
+							deleted,
+							by: { accountId: from.person.accountId, device: from.person.device },
+						},
+						bytes,
+					),
+				);
+	}
+
+	const openSocket =
+		(token: string): OpenSyncSocket =>
+		(url, presented, events: SyncSocketEvents) => {
+			const person = presented === token ? people.get(token) : undefined;
+			const [, , name] = /\/api\/teams\/([^/]+)\/projects\/([^/]+)\/sync$/u.exec(new URL(url).pathname) ?? [];
+			const at = name === undefined ? undefined : project(name);
+			let open = true;
+			// every frame arrives later and in order, as it would over a network
+			let queue = Promise.resolve();
+			const later = (work: () => void) => {
+				queue = queue.then(
+					() =>
+						new Promise<void>((done) =>
+							setImmediate(() => {
+								work();
+								done();
+							}),
+						),
+				);
+			};
+			const connected: Connected = {
+				person: person ?? { accountId: "", device: "", role: null },
+				live: false,
+				deliver: (frame) =>
+					later(() => {
+						if (open) events.message(typeof frame === "string" ? frame : arrayBuffer(frame));
+					}),
+				close: () =>
+					later(() => {
+						if (!open) return;
+						open = false;
+						at?.sockets.delete(connected);
+						events.close();
+					}),
+			};
+			if (person === undefined || at === undefined || person.role === null || person.role === "viewer")
+				connected.close();
+			else {
+				at.sockets.add(connected);
+				later(() => events.open());
+			}
+			return {
+				send: (frame) => {
+					if (open && at !== undefined && frame !== "ping") later(() => receive(at, connected, frame));
+				},
+				close: connected.close,
+			};
+		};
+
+	return {
+		origin: TEAM_ORIGIN,
+		/** One person signed in on one machine: what a CLI and a daemon there are handed. */
+		machine(name: string, role: Person["role"] = "editor") {
+			const token = `${name}-token`.padEnd(43, "x");
+			people.set(token, { accountId: name, device: `${name}'s Mac`, role });
+			const request: CloudRequestOptions = {
+				origin: TEAM_ORIGIN,
+				vault: { read: async () => token },
+				fetch: async (input, init) => {
+					const request = new Request(input, init);
+					const presented = request.headers.get("authorization")?.replace(/^Bearer /u, "");
+					return answer(request, presented === token ? people.get(token) : undefined);
+				},
+			};
+			return {
+				request,
+				openSocket: openSocket(token),
+				services: { origin: TEAM_ORIGIN, vault: { read: async () => token }, openSocket: openSocket(token) },
+			};
+		},
+		/** What the team holds at a path now, as text. */
+		file(name: string, path: string): string | null | undefined {
+			const file = project(name)?.files.get(path);
+			return file === undefined ? undefined : file.bytes === null ? null : Buffer.from(file.bytes).toString("utf8");
+		},
+		bytes: (name: string, path: string) => project(name)?.files.get(path)?.bytes,
+		paths: (name: string) => [...(project(name)?.files.keys() ?? [])].sort(),
+		saves: (name: string) => project(name)?.saves ?? [],
+		/** A message the team never sends: what a compromised cloud might. */
+		forge(name: string, message: object, bytes?: Uint8Array) {
+			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));
+		},
+		/** Every connection to a project dropped at once, as a network going away. */
+		disconnect(name: string) {
+			for (const socket of project(name)?.sockets ?? []) socket.close();
+		},
+	};
+}
+
+function fileFrame(path: string, file: { version: number; bytes: Uint8Array | null }): string | Uint8Array {
+	return encodeFrame(
+		{ type: "file", path, version: file.version, deleted: file.bytes === null },
+		file.bytes ?? undefined,
+	);
+}
+
+function hash(bytes: Uint8Array | null): string | null {
+	return bytes === null ? null : createHash("sha256").update(bytes).digest("hex");
+}
+
+function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
+	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}

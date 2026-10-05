@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import type { CloudRequestOptions } from "../cloud-auth";
+import { type CloudRequestOptions, type CloudVault, cloudOrigin, keychainVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
@@ -126,6 +126,7 @@ import {
 	watchMachineState,
 } from "./session";
 import { createSettingsStore } from "./settings";
+import { createTeamSync, type OpenSyncSocket } from "./team-sync";
 import {
 	coverSize,
 	isCoverHash,
@@ -212,6 +213,16 @@ export interface DaemonOptions {
 	cloudTeamsRequest?: CloudRequestOptions;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
+	/** Controlled Cloud boundary for team projects' sync: a fake origin, Keychain and socket. */
+	teamSyncServices?: TeamSyncServices;
+}
+
+/** The parts of team sync a test replaces: where spool.page is, the Keychain, and the socket to it. */
+export interface TeamSyncServices {
+	origin?: string;
+	vault?: Pick<CloudVault, "read">;
+	openSocket?: OpenSyncSocket;
+	notice?: (message: string) => void;
 }
 
 /** The player page's params (#24): Zod-validated, path-safe names only. */
@@ -444,6 +455,7 @@ export function createDaemonApp({
 	cloudAccountServices,
 	cloudTeamsRequest,
 	booth: boothSeams,
+	teamSyncServices,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -833,6 +845,7 @@ export function createDaemonApp({
 		if (event.kind === "registry" || event.kind === "project-renamed") {
 			history.keeping(registeredRoots());
 			boothKeeping(registeredRoots());
+			teamSync.keeping(registeredRoots());
 		}
 		for (const listener of appListeners) listener(event);
 	};
@@ -843,6 +856,14 @@ export function createDaemonApp({
 	});
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
 	history.keeping(registeredRoots());
+	// every team project's local copies, kept in step with their teams while the daemon runs
+	const teamSync = createTeamSync({
+		origin: () => teamSyncServices?.origin ?? cloudOrigin(process.env),
+		vault: (origin) => teamSyncServices?.vault ?? keychainVault(spoolDir, origin),
+		...(teamSyncServices?.openSocket === undefined ? {} : { openSocket: teamSyncServices.openSocket }),
+		...(teamSyncServices?.notice === undefined ? {} : { notice: teamSyncServices.notice }),
+	});
+	teamSync.keeping(registeredRoots());
 	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
 		...(machineStateWatchAdapter === undefined ? {} : { adapter: machineStateWatchAdapter }),
 		onError:
@@ -3679,6 +3700,7 @@ export function createDaemonApp({
 			const compiled = playerCompiler.close();
 			machineStateWatch.stop();
 			history.close();
+			teamSync.close();
 			liveTurns.close();
 			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			for (const stop of boothWatches.values()) stop();

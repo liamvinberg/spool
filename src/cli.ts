@@ -39,8 +39,8 @@ import { SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
-import { initProject } from "./init";
-import { openProject } from "./open";
+import { initProject, initTeamProject } from "./init";
+import { fetchLocalCopy, openProject } from "./open";
 import { isFramePath, isSafeName } from "./page-path";
 import { buildWebsite, writeWebsite } from "./publication/build";
 import { removeProject } from "./remove";
@@ -188,7 +188,22 @@ program
 	.description("scaffold design/, register the project, and open its tab")
 	.argument("[path]", "product root", ".")
 	.option("--history", "start the project with history — spool commits its design/ once the canvas goes quiet", false)
-	.action((path: string, options: { history: boolean }) => {
+	.option("--team <team>", "start it as a team project of that team, synced live through spool.page instead of git")
+	.action(async (path: string, options: { history: boolean; team?: string }) => {
+		if (options.team !== undefined) {
+			if (options.history) throw new SpoolError("a team project keeps no git history; drop --history");
+			const { root, link, uploaded } = await initTeamProject(path, spoolDir, {
+				team: options.team,
+				origin: cloudOrigin(process.env),
+			});
+			process.stdout.write(`initialized team project ${link.url} at ${root}\n`);
+			process.stdout.write(
+				`design/ stays out of git: spool keeps it in step with ${link.team} — commit spool.json, never design/\n`,
+			);
+			if (!uploaded) narrate("spool.page could not be reached; the daemon uploads design/ once it can");
+			process.stdout.write(`\n${rootConfigPointer}`);
+			return;
+		}
 		const { root } = initProject(path, spoolDir, { history: options.history });
 		process.stdout.write(`initialized spool project at ${root}\n`);
 		// #78: history is never silent. One line, no prompt — init stays something
@@ -207,6 +222,7 @@ program
 	.description("resolve the project by walk-up, register it, and open its tab")
 	.argument("[path]", "where the walk-up starts", ".")
 	.action(async (path: string) => {
+		await fetchLocalCopy(path, spoolDir, { origin: cloudOrigin(process.env) });
 		const { root } = openProject(path, spoolDir);
 		process.stdout.write(`registered ${basename(root)} (${root})\n`);
 		// daemon-less by design (#12); when one runs, the tab is already opening — say where
@@ -230,6 +246,7 @@ program
  * project here means the same pointer at `spool init`.
  */
 async function openCanvas(options: { noOpen: boolean }): Promise<void> {
+	await fetchLocalCopy(process.cwd(), spoolDir, { origin: cloudOrigin(process.env) });
 	const { root } = openProject(process.cwd(), spoolDir);
 	const { url } = await ensureDaemon(spoolDir);
 	const canvas = `${url}/p/${encodeURIComponent(basename(root))}`;
