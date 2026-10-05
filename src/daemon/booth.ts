@@ -388,7 +388,7 @@ export function systemColorScheme(platform: NodeJS.Platform = process.platform):
 
 /** The frame's document as the daemon compiles it now. */
 type BoothCompile =
-	| { kind: "ok"; etag: string; document: string }
+	| { kind: "ok"; etag: string; document: string; source?: string }
 	| { kind: "error"; message: string }
 	| { kind: "missing" };
 
@@ -410,8 +410,11 @@ export interface BoothDeps {
 	 * is no longer its own, and owed again, forever.
 	 */
 	registered(root: string): boolean;
-	/** A cover landed: the bytes, and the scheme it depends on when it depends on one. */
-	store(root: string, frame: string, bytes: Buffer, scheme: ColorScheme | undefined): void;
+	/**
+	 * A cover landed: the bytes, the scheme it depends on when it depends on one,
+	 * and the version of the frame it is of (`CompiledFrameDocument.source`).
+	 */
+	store(root: string, frame: string, bytes: Buffer, scheme: ColorScheme | undefined, source?: string): void;
 	/**
 	 * How fast an edited frame redraws, timed after its cover landed, or nothing
 	 * when it could not be timed: what `spool check` tells an agent of a frame
@@ -1022,7 +1025,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		failedAt.delete(key);
 		lostInARow = 0;
 		const follows = followsColorScheme(now.document);
-		deps.store(root, frame, shot.bytes, follows ? shot.scheme : undefined);
+		deps.store(root, frame, shot.bytes, follows ? shot.scheme : undefined, now.source);
 		// the canvas changed scheme while this frame was in the tab
 		if (follows && shot.scheme !== scheme) owedAgain("stale");
 		// timed only when an edit is what sat it: that is a frame an agent may be

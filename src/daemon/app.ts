@@ -130,6 +130,7 @@ import {
 } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
+import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
 import { createTeamSync, type OpenSyncSocket } from "./team-sync";
 import {
@@ -891,6 +892,16 @@ export function createDaemonApp({
 		...(teamSyncServices?.notice === undefined ? {} : { notice: teamSyncServices.notice }),
 	});
 	movedIn.keeping(registeredRoots());
+	// a team project's covers go up to spool.page, the first of each version from whichever Mac shot it
+	const teamCovers = createTeamCovers({
+		spoolDir,
+		request: () => ({
+			origin: teamSyncServices?.origin ?? cloudOrigin(process.env),
+			...(teamSyncServices?.vault === undefined ? {} : { vault: teamSyncServices.vault }),
+			...(teamSyncServices?.fetch === undefined ? {} : { fetch: teamSyncServices.fetch }),
+		}),
+		log: (line) => console.error(`spool: ${line}`),
+	});
 	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
 		...(machineStateWatchAdapter === undefined ? {} : { adapter: machineStateWatchAdapter }),
 		onError:
@@ -918,17 +929,18 @@ export function createDaemonApp({
 		origin: () => selfOrigin,
 		compile: async (root, frame) => {
 			const doc = await compiler.getDocument(root, frame, frameAuthority(root));
-			if (doc.kind === "ok") return { kind: "ok", etag: doc.etag, document: doc.document };
+			if (doc.kind === "ok") return { kind: "ok", etag: doc.etag, document: doc.document, source: doc.source };
 			return doc.kind === "missing" ? { kind: "missing" } : { kind: "error", message: doc.message };
 		},
 		geometry: (root, frame) => frameGeometry(root, frame),
 		covered: (root, frame) => readCover(root, frame) !== undefined,
 		registered: (root) => boothWatches.has(root),
-		store: (root, frame, bytes, scheme) => {
+		store: (root, frame, bytes, scheme, source) => {
 			// a frame deleted while it sat has no folder a picture belongs in
 			if (!frameExists(root, frame)) return;
 			const cover = writeCover(root, frame, bytes, scheme);
 			hub.publish(root, { kind: "thumb", frame, cover });
+			if (source !== undefined) teamCovers.stored(root, frame, source, bytes);
 		},
 		failed: (root, frame, reason) => {
 			if (frameExists(root, frame)) writeCaptureError(root, frame, reason);
