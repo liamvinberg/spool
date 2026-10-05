@@ -824,8 +824,15 @@ export function useTeamHome(account: CloudAccountState, open: (url: string) => v
 	const signedIn = account.state === "signed-in" ? account.email : null;
 	const refresh = useCallback(async () => setTeams(await fetchCloudTeams()), []);
 	useEffect(() => {
-		if (signedIn) void refresh();
-		else setTeams({ state: "signed-out" });
+		if (!signedIn) {
+			setTeams({ state: "signed-out" });
+			return;
+		}
+		void refresh();
+		// An invite accepted in the browser, or a change made at spool.page/<team>, shows on coming back.
+		const back = () => void refresh();
+		window.addEventListener("focus", back);
+		return () => window.removeEventListener("focus", back);
 	}, [signedIn, refresh]);
 	const ready = teams.state === "ready" ? teams : null;
 	const current = ready?.teams.find((team) => team.address === scope && team.role !== "viewer") ?? null;
