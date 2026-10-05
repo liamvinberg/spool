@@ -78,6 +78,8 @@ export function fakeTeam(team = "devosurf") {
 	const projects = new Map<string, Project>();
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
+	/** Solo projects whose shares moved into a team project, as spool.page was asked. */
+	const soloMoves: { solo: string; team: string; project: string; by: string }[] = [];
 	const project = (name: string) => projects.get(name);
 	let limited: { reason: Limited; retryAfter: number } | undefined;
 	const edits = (person: Person) => person.role === "admin" || person.role === "editor";
@@ -115,6 +117,14 @@ export function fakeTeam(team = "devosurf") {
 							.filter((one) => one !== person && standing(at, one) !== undefined)
 							.map((one) => ({ name: one.accountId, color: one.color })),
 					})),
+			});
+		const solo = /^\/api\/solo\/projects\/([0-9a-f]{32})\/move$/u.exec(path);
+		if (solo !== null && request.method === "POST")
+			return request.json().then((body: { team: string; project: string }) => {
+				if (body.team !== team || person.role === null)
+					return Response.json({ error: "team_not_found" }, { status: 404 });
+				soloMoves.push({ solo: solo[1] ?? "", ...body, by: person.accountId });
+				return Response.json({ shares: 1 });
 			});
 		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo)?$/u.exec(path);
 		if (match === null || match[1] !== team || person.role === null)
@@ -415,6 +425,7 @@ export function fakeTeam(team = "devosurf") {
 				for (const socket of project.sockets) if (socket.person.accountId === accountId) socket.cut();
 			return () => away.delete(accountId);
 		},
+		soloMoves,
 		/** The repo spool.page has recorded for a project. */
 		repo: (name: string) => project(name)?.repo,
 		/** An admin changes someone's role, or removes them with null; their connections are cut off at once. */

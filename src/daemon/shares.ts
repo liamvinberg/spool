@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type Dirent, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { type Dirent, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 import { type Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -17,6 +17,28 @@ import { realDesignDir } from "./design-path";
 import { projectDesign } from "./design-projection";
 import { diskDesignFiles } from "./disk-files";
 import { hasEnded } from "./team-sync";
+
+/**
+ * A project moving into a team (DEV-190) takes its shares with it: a solo project's shares become the team project's,
+ * so every link already sent keeps showing its pages, and its link to spool.page as a solo project goes.
+ */
+export async function carrySharesOver(
+	root: string,
+	spoolDir: string,
+	request: CloudRequestOptions & { origin: string },
+	to: { team: string; project: string },
+): Promise<void> {
+	const file = join(root, "design", SHARE_STATE);
+	let solo: Partial<SoloShareState>;
+	try {
+		solo = JSON.parse(readFileSync(file, "utf8")) as Partial<SoloShareState>;
+	} catch {
+		return;
+	}
+	if (solo.origin === request.origin && typeof solo.project === "string")
+		await cloudShares(spoolDir, request).moveSolo(solo.project, to.team, to.project);
+	rmSync(file, { force: true });
+}
 
 /** A solo project's link to spool.page, beside its other machine state: which cloud, and the id it was given. */
 const SHARE_STATE = ".spool/share.json";

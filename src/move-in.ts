@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { writeAtomic } from "./atomic-write";
 import { type CloudTeamProject, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
+import { carrySharesOver } from "./daemon/shares";
 import { staysOnThisMac, syncLocalCopy, unconfirmedFiles } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
@@ -83,6 +84,13 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 			`${team.name} doesn't have ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""} yet. Nothing changed here; try again.`,
 		);
 
+	try {
+		await carrySharesOver(root, spoolDir, request, link);
+	} catch {
+		throw new SpoolError(
+			`spool.page couldn't take ${basename(root)}'s shares just now. Nothing changed here; try again.`,
+		);
+	}
 	writeProjectLink(root, link);
 	writeFileSync(join(design, ".gitignore"), TEAM_GITIGNORE);
 	// from here the move is made, and its commit is owed until git takes it, across restarts

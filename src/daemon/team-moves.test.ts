@@ -329,6 +329,29 @@ describe("Move to team", () => {
 		expect(status(project.root)).toEqual([]);
 	});
 
+	it("carries a solo project's shares over to the team project, so links already sent keep working", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		const solo = "a".repeat(32);
+		mkdirSync(join(project.root, "design", ".spool"), { recursive: true });
+		writeFileSync(
+			join(project.root, "design", ".spool", "share.json"),
+			`${JSON.stringify({ origin: TEAM_ORIGIN, project: solo })}\n`,
+		);
+		const daemon = makeApp(project.state, { cloud: ana.cloud, teamNotice: () => {} });
+		const moved = await daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		expect(moved.status, await moved.clone().text()).toBe(200);
+		expect(cloud.soloMoves).toEqual([{ solo, team: "devosurf", project: "site", by: "ana" }]);
+		expect(existsSync(join(project.root, "design", ".spool", "share.json"))).toBe(false);
+	});
+
 	it("refuses a detached HEAD before it uploads anything", { timeout: 30_000 }, async () => {
 		const cloud = fakeTeam();
 		const ana = cloud.machine("ana");

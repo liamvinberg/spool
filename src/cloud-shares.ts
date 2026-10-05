@@ -63,6 +63,9 @@ export function cloudShares(spoolDir: string, options: CloudRequestOptions = {})
 		/** The files the shared pages are made of, path by hash: spool.page's copy becomes exactly these. */
 		putSource: (id: string, files: Record<string, string>) =>
 			call<{ head: number }>("PUT", `${solo(id)}/source`, { files }),
+		/** A solo project moved into a team project: its shares are the team project's from now on. */
+		moveSolo: (id: string, team: string, project: string) =>
+			call<{ shares: number }>("POST", `${solo(id)}/move`, { team, project }),
 		/** Whether spool.page holds this version's cover already, a team project's or a solo one's. */
 		hasCover: async (at: SharePlace, source: string) => {
 			try {
