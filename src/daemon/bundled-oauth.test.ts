@@ -164,6 +164,7 @@ it("ships the branded native callback in a clean installed host", { timeout: 180
 		"THIRD_PARTY_NOTICES.md",
 		"tsup.config.ts",
 		"vite.config.ts",
+		"vite.viewer.config.ts",
 		"tsconfig.json",
 		"tsconfig.compile.json",
 		"tsconfig.runtime.json",
