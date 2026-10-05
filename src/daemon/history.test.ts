@@ -404,6 +404,20 @@ describe("the switches", () => {
 		expect(status(root)).toEqual([" M design/frames/home/frame.tsx"]);
 	});
 
+	it("never commits a team project, whatever its canvas.json says", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		// a teammate's canvas.json asking for history arrives like any other file
+		writeFileSync(join(root, "spool.json"), '{ "project": "https://spool.page/devosurf/checkout" }\n');
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		await stayedQuiet(clock, () => writeFrame(root, "home", "export default () => <main>the team's</main>;\n"));
+		await clock.fire();
+
+		expect(log(root)).toEqual(["init"]);
+	});
+
 	it("leaves a project that predates the flag alone", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const root = gitProject(spoolDir);

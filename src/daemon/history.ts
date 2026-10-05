@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
+import { isTeamProject } from "../team-project";
 import { readCanvasFields } from "./canvas-file";
 import { realDesignDir } from "./design-path";
 
@@ -66,9 +67,12 @@ const GIT_TIMEOUT_MS = 15_000;
  * file, a broken one, a string, a project whose design/ is gone this instant —
  * reads the same way, because every one of them is spool being unable to say
  * yes.
+ *
+ * A team project never keeps history, whatever its canvas.json says: its
+ * `design/` is out of git, and the team's history is Spool Cloud's.
  */
 export function historyEnabled(root: string): boolean {
-	return readCanvasFields(root).history === true;
+	return !isTeamProject(root) && readCanvasFields(root).history === true;
 }
 
 /** What git's name-status said happened to one path in a batch. */
