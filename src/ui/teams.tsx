@@ -414,7 +414,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 			<ul className="flex flex-col border-border border-b">
 				{people?.members.map((person) => (
 					<li key={person.accountId} className="flex h-[58px] items-center gap-[14px] border-border border-t">
-						<Face email={person.email} />
+						<Initial email={person.email} />
 						<span className="min-w-0 flex-1 truncate type-control">
 							{person.email}
 							{person.you && <span className="text-muted"> (you)</span>}
@@ -563,7 +563,8 @@ function daysLeft(expiresAt: number): string {
 	return days === 1 ? "1 day left" : `${days} days left`;
 }
 
-function Face({ email }: { email: string }) {
+/** A member's face: the first letter of their address, as there are no display names. */
+function Initial({ email }: { email: string }) {
 	return (
 		<span
 			className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-control text-text uppercase type-detail"
