@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { chooseInitTarget, describeChoice, initDestination, initTeamProject } from "../init";
 import { fetchLocalCopy, openProject } from "../open";
-import { readRegistry, teamProjects } from "../registry";
+import { readRegistry, registerProject, teamProjects } from "../registry";
 import { removeProject } from "../remove";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
@@ -751,6 +751,47 @@ describe("the git guard", () => {
 		writeFrame(ben.root, "home", "ben's home\n");
 		await until(() => read(ana.root, "frames/home/frame.tsx").toString() === "ben's home\n");
 	});
+
+	it("sends nothing git did while a pre-team branch kept the copy from syncing, and puts the team's version back", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "team's home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		git(ben.root, "add", "spool.json");
+		git(ben.root, "commit", "--quiet", "-m", "spool.json");
+		// a branch from before the move: it tracks some of design/ and has no spool.json
+		git(ben.root, "branch", "old", commitFiles(ben.root, { "design/frames/home/frame.tsx": "old home\n" }));
+		/** Anything that changes the registry has the daemon look again at which copies it follows. */
+		const registryChanges = () => registerProject(ben.state, makeTempDir());
+		const saves = cloud.saves("checkout").length;
+
+		git(ben.root, "checkout", "--quiet", "old");
+		await until(() => read(ben.root, "frames/home/frame.tsx").toString() === "team's home\n");
+		// with no spool.json, the next registry change drops the copy: nothing syncs while the branch is out
+		registryChanges();
+		await new Promise((wake) => setTimeout(wake, 1_000));
+		writeFrame(ana.root, "while", "while ben was on old\n");
+		await until(() => cloud.file("checkout", "frames/while/frame.tsx") !== undefined);
+		await new Promise((wake) => setTimeout(wake, 500));
+		expect(existsSync(join(ben.root, "design/frames/while"))).toBe(false);
+
+		// back on main, git takes away what the old branch tracked, and the copy is followed again
+		git(ben.root, "checkout", "--quiet", "--force", "main");
+		expect(existsSync(join(ben.root, "design/frames/home/frame.tsx"))).toBe(false);
+		registryChanges();
+
+		await until(() => same(ana.root, ben.root, "frames/while/frame.tsx"), 10_000);
+		await until(() => existsSync(join(ben.root, "design/frames/home/frame.tsx")), 10_000);
+		expect(read(ben.root, "frames/home/frame.tsx").toString()).toBe("team's home\n");
+		await new Promise((wake) => setTimeout(wake, 500));
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("team's home\n");
+		expect(read(ana.root, "frames/home/frame.tsx").toString()).toBe("team's home\n");
+		expect(
+			cloud
+				.saves("checkout")
+				.slice(saves)
+				.filter((save) => save.by === "ben"),
+		).toEqual([]);
+	}, 30_000);
 
 	it("refills design/ when a pull takes it out of git, instead of deleting it for the team", async () => {
 		const { cloud, ana, ben } = await twoEditors();

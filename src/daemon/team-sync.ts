@@ -52,6 +52,8 @@ interface CopyState {
 	files: Record<string, { version: number; hash: string | null }>;
 	/** The team project ended for this machine, and the folder is an ordinary project here now. */
 	ended?: true;
+	/** When this copy last watched design/ for git (ms): whatever git did after it is checked as git's. */
+	watched?: number;
 }
 
 export interface SyncSocket {
@@ -191,7 +193,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	// a local copy whose folder went (a worktree removed) is neither read from nor written to: what it lacks is no
 	// delete, and nothing comes down into it. Its spool.json going is not that: an old branch checked out has none
 	const present = () => existsSync(options.root);
+	/** The copy has looked at everything git may have done while it wasn't watching, and watches now. */
+	let watching = false;
 	const persist = () => {
+		if (watching) state.watched = Date.now();
 		if (present()) writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 	};
 	const isIdle = () =>
@@ -403,10 +408,14 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		gitWait.unref?.();
 	};
 
-	const guard = guardAgainstGit(designDir, (paths) => {
-		for (const path of paths) changed.add(path);
-		settle ??= setTimeout(checkChanged, SETTLE_MS);
-	});
+	const guard = guardAgainstGit(
+		designDir,
+		(paths) => {
+			for (const path of paths) changed.add(path);
+			settle ??= setTimeout(checkChanged, SETTLE_MS);
+		},
+		state.watched,
+	);
 
 	/** Every travelling file on disk, and every path the team has that may have gone from it. */
 	const checkEverything = () => {
@@ -500,6 +509,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			toldSignedOut = false;
 			retryMs = RECONNECT_MIN_MS;
 			checkEverything();
+			// what git did while nobody watched has been put back; from here the guard sees git as it goes
+			if (live && !watching) {
+				watching = true;
+				guard.watching();
+				persist();
+			}
 			burst = undefined;
 			presence.joined(socket);
 			// what git wrote over before the connection dropped is still waiting on the team's version
@@ -638,6 +653,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (ping !== undefined) clearInterval(ping);
 			if (gitWait !== undefined) clearTimeout(gitWait);
 			if (asking !== undefined) clearImmediate(asking);
+			// when this copy stopped watching: whatever git does from now is checked when it is followed again
+			if (watching) persist();
 			guard.close();
 			if (resume !== undefined) clearTimeout(resume);
 			watch?.close();
