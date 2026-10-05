@@ -11,6 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
+import type { CloudRequestOptions } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
@@ -46,6 +47,7 @@ import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
+import { cloudTeamRoutes } from "./cloud-teams";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -206,6 +208,8 @@ export interface DaemonOptions {
 	publicationServices?: PublicationJobServices;
 	/** Controlled Cloud boundary for the account at the foot of Home. */
 	cloudAccountServices?: CloudAccountServices;
+	/** Controlled Cloud boundary for Home's teams: a fake origin, fetch and Keychain. */
+	cloudTeamsRequest?: CloudRequestOptions;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
 }
@@ -438,6 +442,7 @@ export function createDaemonApp({
 	home,
 	publicationServices,
 	cloudAccountServices,
+	cloudTeamsRequest,
 	booth: boothSeams,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
@@ -3388,6 +3393,8 @@ export function createDaemonApp({
 		})
 		.get("/", (c) => serveUiIndex(c))
 		.get("/p/:project", (c) => serveUiIndex(c));
+	// Outside the typed chain, which is as deep as the compiler follows; Home reads these by their exported types.
+	app.route("/api/cloud", cloudTeamRoutes({ spoolDir, request: cloudTeamsRequest }));
 
 	app.onError((error, c) => {
 		if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
