@@ -23,6 +23,9 @@ export function Home({
 	starting = false,
 	notice,
 	account = <AccountFoot account={{ state: "signed-out" }} />,
+	switcher,
+	invites,
+	team,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -37,6 +40,12 @@ export function Home({
 	notice?: string | null;
 	/** This Mac's account, at the foot of the sidebar. */
 	account?: ReactNode;
+	/** The team switcher, at the top of the sidebar once this Mac is signed in. */
+	switcher?: ReactNode;
+	/** One line per invite waiting for this account, above the covers (`notice` in src/ui/home.tsx). */
+	invites?: ReactNode;
+	/** While a team is chosen in the switcher: its nav and its page, in place of your own projects. */
+	team?: { nav: ReactNode; main: ReactNode } | undefined;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
@@ -68,17 +77,26 @@ export function Home({
 						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-thread" />
 						<span>spool</span>
 					</div>
-					<nav aria-label="Home sections">
-						<button type="button" className="flex h-[38px] w-full items-center gap-[12px] rounded-[7px] bg-surface px-[12px] text-left text-text type-control [&>svg]:h-[16px] [&>svg]:w-[16px] [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:[&>span]:hidden" aria-current="page" onClick={() => setQuery("")}>
-							<FrameIcon />
-							<span>Projects</span>
-						</button>
+					{switcher}
+					<nav className="flex flex-col gap-[4px]" aria-label="Home sections">
+						{team ? (
+							team.nav
+						) : (
+							<button type="button" className="flex h-[38px] w-full items-center gap-[12px] rounded-[7px] bg-surface px-[12px] text-left text-text type-control [&>svg]:h-[16px] [&>svg]:w-[16px] [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:[&>span]:hidden" aria-current="page" onClick={() => setQuery("")}>
+								<FrameIcon />
+								<span>Projects</span>
+							</button>
+						)}
 					</nav>
 					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-muted [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
 						{account}
 					</div>
 				</aside>
-				{loading ? (
+				{team ? (
+					<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
+						{team.main}
+					</main>
+				) : loading ? (
 					<main aria-busy="true" />
 				) : registered.length === 0 && needle === "" ? (
 					<main className="pj-welcome-main flex items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
@@ -158,6 +176,7 @@ export function Home({
 								</button>
 							</div>
 						</header>
+						{invites}
 						{notice && (
 							<p role="alert" className="mb-4 text-thread type-label">
 								{notice}{" "}

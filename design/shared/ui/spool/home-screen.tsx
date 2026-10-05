@@ -15,6 +15,9 @@ export function SpoolHomeScreen({
 	initialName = "",
 	initialLocation = "~/spool",
 	account,
+	switcher,
+	invites,
+	team,
 	onGo,
 }: {
 	canvasTarget?: string | undefined;
@@ -26,6 +29,10 @@ export function SpoolHomeScreen({
 	initialLocation?: string;
 	/** The foot of the sidebar; signed out unless a frame draws another state. */
 	account?: React.ReactNode | undefined;
+	/** Home's teams, drawn by the frame: the switcher, the invite lines and a chosen team. */
+	switcher?: React.ReactNode | undefined;
+	invites?: React.ReactNode | undefined;
+	team?: { nav: React.ReactNode; main: React.ReactNode } | undefined;
 	onGo?: ((target: string) => void) | undefined;
 }) {
 	const [projects, setProjects] = useState(firstLaunch ? [] : homeProjects);
@@ -48,6 +55,9 @@ export function SpoolHomeScreen({
 			<div className="relative h-full">
 				<Home
 					{...(account === undefined ? {} : { account })}
+					switcher={switcher}
+					invites={invites}
+					team={team}
 					projects={projects}
 					location={location}
 					onStart={start}

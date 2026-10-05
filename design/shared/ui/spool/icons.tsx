@@ -399,3 +399,27 @@ export function ArrowRightIcon({ className }: { className?: string }) {
 		</svg>
 	);
 }
+
+export function CogIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M13.23 6.66 14.93 7.01v1.98l-1.7.35-.58 1.41.95 1.45-1.4 1.4-1.45-.95-1.41.58-.35 1.7H7.01l-.35-1.7-1.41-.58-1.45.95-1.4-1.4.95-1.45-.58-1.41-1.7-.35V7.01l1.7-.35.58-1.41-.95-1.45 1.4-1.4 1.45.95 1.41-.58.35-1.7h1.98l.35 1.7 1.41.58 1.45-.95 1.4 1.4-.95 1.45.58 1.41Z"
+				stroke="currentColor"
+				strokeWidth="1.4"
+				strokeLinejoin="round"
+			/>
+			<circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.4" />
+		</svg>
+	);
+}
+
+export function PeopleIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<circle cx="5.25" cy="4.5" r="2.1" stroke="currentColor" strokeWidth="1.15" />
+			<path d="M1.75 12c.3-2.1 1.7-3.4 3.5-3.4s3.2 1.3 3.5 3.4" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
+			<path d="M9.4 2.6a2 2 0 0 1 0 3.8M10.6 8.8c1 .5 1.5 1.6 1.65 3.2" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
+		</svg>
+	);
+}
