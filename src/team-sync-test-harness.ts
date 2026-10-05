@@ -144,8 +144,8 @@ export function fakeTeam(team = "devosurf") {
 			from.deliver(fileFrame(path, current));
 			return;
 		}
-		const beatsDelete = current !== undefined && current.bytes === null && bytes !== undefined;
-		const applies = current === undefined || !stale || merged !== null || beatsDelete;
+		const beatsDelete = stale && current.bytes === null && bytes !== undefined;
+		const applies = !stale || merged !== null || beatsDelete;
 		at.version += 1;
 		at.saves.push({ path, base, deleted, by: from.person.accountId, outcome: applies ? "applied" : "set_aside" });
 		if (!applies) {
@@ -174,7 +174,7 @@ export function fakeTeam(team = "devosurf") {
 				other.deliver(
 					encodeFrame({ type: "file", path, version: file.version, deleted, by }, content ?? undefined),
 				);
-				if (beatsDelete && other.person === current.by)
+				if (beatsDelete && other.person === current.by && current.by !== from.person)
 					other.deliver(encodeFrame({ type: "restored", path, version: file.version, by }));
 			}
 	}
