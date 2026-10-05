@@ -3,7 +3,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSyn
 import { dirname, join, relative, sep } from "node:path";
 import { WebSocket } from "undici";
 import { writeAtomic } from "../atomic-write";
-import { CloudSignedOut, type CloudVault } from "../cloud-auth";
+import { type CloudRequestOptions, CloudSignedOut, type CloudVault, keychainVault } from "../cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
@@ -148,12 +148,31 @@ export function followLocalCopy(options: LocalCopyOptions): LocalCopy {
 	return localCopy(options, true);
 }
 
+/** How a verb reaches the team once: this machine's Keychain session unless `request` hands in another vault. */
+export interface SyncOnceOptions {
+	origin: string;
+	request?: CloudRequestOptions;
+	openSocket?: OpenSyncSocket;
+	moving?: ProjectLink;
+}
+
 /**
  * Bring a local copy level with the team once, then disconnect: everything the team has comes down, and
- * everything new here goes up. What `spool init --team` uploads with and what a fetch fills `design/` with.
+ * everything new here goes up. What `spool init --team` uploads with, what a fetch fills `design/` with, and what a
+ * move uploads the whole folder with. Nothing it would say is said: the verb says how it went.
  */
-export async function syncLocalCopy(options: LocalCopyOptions): Promise<void> {
-	const copy = localCopy(options, false);
+export async function syncLocalCopy(root: string, spoolDir: string, options: SyncOnceOptions): Promise<void> {
+	const copy = localCopy(
+		{
+			root,
+			origin: options.origin,
+			vault: options.request?.vault ?? keychainVault(spoolDir, options.origin),
+			...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
+			...(options.moving === undefined ? {} : { moving: options.moving }),
+			notice: () => {},
+		},
+		false,
+	);
 	try {
 		await copy.idle();
 	} finally {

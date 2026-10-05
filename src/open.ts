@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type CloudRequestOptions, CloudSignedOut, keychainVault } from "./cloud-auth";
+import { type CloudRequestOptions, CloudSignedOut } from "./cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "./cloud-teams";
 import { registerAndOpenProject } from "./daemon/session";
 import { type OpenSyncSocket, syncLocalCopy } from "./daemon/team-sync";
@@ -81,13 +81,7 @@ export async function fetchLocalCopy(
 	const design = join(root, "design");
 	for (const dir of scaffoldDirs) mkdirSync(join(design, dir), { recursive: true });
 	if (!existsSync(join(design, ".gitignore"))) writeFileSync(join(design, ".gitignore"), TEAM_GITIGNORE);
-	await syncLocalCopy({
-		root,
-		origin: options.origin,
-		vault: request.vault ?? keychainVault(spoolDir, options.origin),
-		...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
-		notice: () => {},
-	});
+	await syncLocalCopy(root, spoolDir, options);
 	if (!existsSync(join(design, "canvas.json"))) throw new SpoolError(`${link.url} has no files yet`);
 	registerProject(spoolDir, root);
 	return { root, fetched: true };

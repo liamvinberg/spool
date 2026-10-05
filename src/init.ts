@@ -89,13 +89,7 @@ export async function initTeamProject(
 	registerAndOpenProject(spoolDir, root);
 	let uploaded = true;
 	try {
-		await syncLocalCopy({
-			root,
-			origin: options.origin,
-			vault: request.vault ?? keychainVault(spoolDir, options.origin),
-			...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
-			notice: () => {},
-		});
+		await syncLocalCopy(root, spoolDir, options);
 	} catch {
 		// the files are here and the daemon sends them the next time it can reach spool.page
 		uploaded = false;

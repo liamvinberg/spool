@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { writeAtomic } from "./atomic-write";
-import { keychainVault } from "./cloud-auth";
 import { type CloudTeamProject, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
 import { staysOnThisMac, syncLocalCopy, unconfirmedFiles } from "./daemon/team-sync";
@@ -74,14 +73,7 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 	}
 
 	try {
-		await syncLocalCopy({
-			root,
-			origin: options.origin,
-			vault: request.vault ?? keychainVault(spoolDir, options.origin),
-			...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
-			notice: () => {},
-			moving: link,
-		});
+		await syncLocalCopy(root, spoolDir, { ...options, moving: link });
 	} catch {
 		throw new SpoolError(`spool.page couldn't take ${basename(root)} just now. Nothing changed here; try again.`);
 	}
