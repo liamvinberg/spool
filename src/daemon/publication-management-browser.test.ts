@@ -204,7 +204,12 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	const modelResponse = deferred<void>();
 	const modelCaptured = deferred<void>();
 	const modelDelivered = deferred<void>();
+	// Only the first model is held. The refresh that trails it passes through a
+	// route left in place: one removed while that request is paused can strand it.
+	let held = false;
 	await page.route("**/publication?*", async (route) => {
+		if (held) return route.continue();
+		held = true;
 		const response = await route.fetch();
 		modelCaptured.resolve();
 		await modelResponse.promise;
@@ -236,8 +241,8 @@ it("keeps update, grants, stop, and restore in the accepted player surface", { t
 	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
 	modelResponse.resolve();
 	await modelDelivered.promise;
-	await page.unroute("**/publication?*");
 	await expect.poll(() => updateRefreshes).toBe(2);
+	await page.unroute("**/publication?*");
 	await page.getByRole("button", { name: "Update link", exact: true }).waitFor();
 	services.status = vi.fn(async () => ({
 		publication: current,
