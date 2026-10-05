@@ -17,6 +17,7 @@ import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
+import { finishMoves } from "../move-in";
 import { fetchLocalCopy, openProject } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
@@ -893,6 +894,16 @@ export function createDaemonApp({
 		...(teamSyncServices?.notice === undefined ? {} : { notice: teamSyncServices.notice }),
 	});
 	movedIn.keeping(registeredRoots());
+	// DEV-190: a move whose commit git didn't take is owed it; it is made now, or at the next start
+	const moving = new AbortController();
+	void finishMoves(registeredRoots(), { signal: moving.signal }).then((finished) => {
+		for (const { root, commit } of finished)
+			if (commit.kind === "committed")
+				(teamSyncServices?.notice ?? ((said: string) => console.error(`spool: ${said}`)))(
+					`made the move commit for ${root}: ${commit.commit.slice(0, 7)}`,
+					root,
+				);
+	});
 	// a team project's covers go up to spool.page, the first of each version from whichever Mac shot it
 	const teamCovers = createTeamCovers({
 		spoolDir,
@@ -3513,6 +3524,7 @@ export function createDaemonApp({
 			location: () =>
 				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
 			notice: teamSyncServices?.notice ?? ((message) => console.error(`spool: ${message}`)),
+			signal: moving.signal,
 		}),
 	);
 	app.route("/api/p", projectShares.routes);
@@ -3842,6 +3854,7 @@ export function createDaemonApp({
 			teamSync.close();
 			projectShares.close();
 			movedIn.close();
+			moving.abort();
 			liveTurns.close();
 			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			for (const stop of boothWatches.values()) stop();

@@ -7,10 +7,10 @@ import { SpoolError } from "../errors";
 import { getTeamProject } from "../get-it";
 import { checkoutOf, cloneCommand } from "../git-remote";
 import { moveIntoTeam } from "../move-in";
-import { expandHome } from "../paths";
+import { expandHome, realDir } from "../paths";
 import { readRegistry, teamProjects } from "../registry";
 import type { MoveCommit } from "./history";
-import type { OpenSyncSocket } from "./team-sync";
+import { type OpenSyncSocket, staysOnThisMac } from "./team-sync";
 
 /** A team project as Home's team page shows it: on this Mac already, or dimmed with "Get it". */
 export interface TeamProjectOnMac {
@@ -44,6 +44,8 @@ export function teamProjectRoutes(options: {
 	/** The machine's projects location, where "Just on this Mac" goes. */
 	location: () => string;
 	notice?: (message: string) => void;
+	/** The daemon is closing: a move commit still waiting on git stops, and is made at the next start. */
+	signal?: AbortSignal;
 }) {
 	const origin = () => options.request?.origin ?? cloudOrigin(process.env);
 	const asked = () => ({
@@ -57,89 +59,105 @@ export function teamProjectRoutes(options: {
 		if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
 		return c.json({ error: "spool.page could not be reached. Try again." }, 503);
 	};
-	return new Hono()
-		.get("/teams/:team/projects", async (c) => {
-			const team = c.req.param("team");
-			try {
-				const { projects } = await cloudTeams(options.spoolDir, { ...options.request, origin: origin() }).projects(
-					team,
-				);
-				const held = new Map(teamProjects(options.spoolDir).map(({ link, copies }) => [link.url, copies]));
-				const checkouts = await knownCheckouts(options.spoolDir);
-				const listed: TeamProjectOnMac[] = projects.map((project) => ({
-					name: project.name,
-					url: project.url,
-					repo: project.repo ?? null,
-					clone: project.repo ? cloneCommand(project.repo) : null,
-					copies: held.get(project.url) ?? [],
-					checkouts: project.repo
-						? [...checkouts].filter(([, repo]) => repo === project.repo).map(([top]) => top)
-						: [],
-					home: join(expandHome(options.location()), team, project.name),
-				}));
-				return c.json({ projects: listed });
-			} catch (error) {
-				return refused(c, error);
-			}
-		})
-		.post(
-			"/teams/:team/projects/:project/get",
-			validator("json", (value, c) => {
-				const { where, path } = value as { where?: unknown; path?: unknown };
-				if (where === "mac") return { where } as const;
-				if (where === "checkout" && typeof path === "string" && path !== "") return { where, path } as const;
-				return c.json({ error: 'expected { "where": "checkout", "path" } or { "where": "mac" }' }, 400);
-			}),
-			async (c) => {
-				const body = c.req.valid("json");
+	return (
+		new Hono()
+			/** What in a project's design/ would stay on this Mac if it moved: the Move sheet names it first. */
+			.get("/move/stays", (c) => {
+				const path = c.req.query("path");
+				if (path === undefined || path === "") return c.json({ error: "expected ?path=/abs/project" }, 400);
 				try {
-					const { root } = await getTeamProject(
-						c.req.param("team"),
-						c.req.param("project"),
-						body.where === "mac"
-							? { kind: "mac", location: options.location() }
-							: { kind: "checkout", path: body.path },
-						options.spoolDir,
-						asked(),
-					);
-					return c.json({ root, name: basename(root) });
+					return c.json({ stays: staysOnThisMac(realDir(path)) });
 				} catch (error) {
 					return refused(c, error);
 				}
-			},
-		)
-		.post(
-			"/teams/:team/move",
-			validator("json", (value, c) => {
-				const path = (value as { path?: unknown }).path;
-				return typeof path === "string" && path !== ""
-					? { path }
-					: c.json({ error: 'expected { "path": "/abs/project" }' }, 400);
-			}),
-			async (c) => {
+			})
+			.get("/teams/:team/projects", async (c) => {
+				const team = c.req.param("team");
 				try {
-					const moved = await moveIntoTeam(c.req.valid("json").path, options.spoolDir, {
-						team: c.req.param("team"),
-						...asked(),
-					});
-					void moved.commit.then((commit) =>
-						options.notice?.(
-							commit.kind === "committed"
-								? `moved ${moved.root} to ${moved.link.url} in commit ${commit.commit.slice(0, 7)}`
-								: `moved ${moved.root} to ${moved.link.url}; the move commit wasn't made (${commit.kind})`,
-						),
-					);
-					const commit = await Promise.race([
-						moved.commit.then((made) => made.kind),
-						new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), COMMIT_ANSWER_MS).unref()),
-					]);
-					const outcome: MoveOutcome = { root: moved.root, name: basename(moved.root), commit };
-					return c.json(outcome);
+					const { projects } = await cloudTeams(options.spoolDir, {
+						...options.request,
+						origin: origin(),
+					}).projects(team);
+					const held = new Map(teamProjects(options.spoolDir).map(({ link, copies }) => [link.url, copies]));
+					const checkouts = await knownCheckouts(options.spoolDir);
+					const listed: TeamProjectOnMac[] = projects.map((project) => ({
+						name: project.name,
+						url: project.url,
+						repo: project.repo ?? null,
+						clone: project.repo ? cloneCommand(project.repo) : null,
+						copies: held.get(project.url) ?? [],
+						checkouts: project.repo
+							? [...checkouts].filter(([, repo]) => repo === project.repo).map(([top]) => top)
+							: [],
+						home: join(expandHome(options.location()), team, project.name),
+					}));
+					return c.json({ projects: listed });
 				} catch (error) {
 					return refused(c, error);
 				}
-			},
-		);
+			})
+			.post(
+				"/teams/:team/projects/:project/get",
+				validator("json", (value, c) => {
+					const { where, path } = value as { where?: unknown; path?: unknown };
+					if (where === "mac") return { where } as const;
+					if (where === "checkout" && typeof path === "string" && path !== "") return { where, path } as const;
+					return c.json({ error: 'expected { "where": "checkout", "path" } or { "where": "mac" }' }, 400);
+				}),
+				async (c) => {
+					const body = c.req.valid("json");
+					try {
+						const { root } = await getTeamProject(
+							c.req.param("team"),
+							c.req.param("project"),
+							body.where === "mac"
+								? { kind: "mac", location: options.location() }
+								: { kind: "checkout", path: body.path },
+							options.spoolDir,
+							asked(),
+						);
+						return c.json({ root, name: basename(root) });
+					} catch (error) {
+						return refused(c, error);
+					}
+				},
+			)
+			.post(
+				"/teams/:team/move",
+				validator("json", (value, c) => {
+					const path = (value as { path?: unknown }).path;
+					return typeof path === "string" && path !== ""
+						? { path }
+						: c.json({ error: 'expected { "path": "/abs/project" }' }, 400);
+				}),
+				async (c) => {
+					try {
+						const moved = await moveIntoTeam(c.req.valid("json").path, options.spoolDir, {
+							team: c.req.param("team"),
+							...asked(),
+							...(options.signal === undefined ? {} : { signal: options.signal }),
+						});
+						void moved.commit.then((commit) =>
+							options.notice?.(
+								commit.kind === "committed"
+									? `moved ${moved.root} to ${moved.link.url} in commit ${commit.commit.slice(0, 7)}`
+									: `moved ${moved.root} to ${moved.link.url}; the move commit wasn't made (${commit.kind})`,
+							),
+						);
+						const commit = await Promise.race([
+							moved.commit.then((made) => made.kind),
+							new Promise<"waiting">((resolve) =>
+								setTimeout(() => resolve("waiting"), COMMIT_ANSWER_MS).unref(),
+							),
+						]);
+						const outcome: MoveOutcome = { root: moved.root, name: basename(moved.root), commit };
+						return c.json(outcome);
+					} catch (error) {
+						return refused(c, error);
+					}
+				},
+			)
+	);
 }
 
 /** Every checkout this Mac's registered projects sit in, with the repo its `origin` names. */

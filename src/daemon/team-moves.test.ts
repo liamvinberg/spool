@@ -1,8 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject, initTeamProject } from "../init";
+import { moveIntoTeam } from "../move-in";
 import { openProject } from "../open";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, until, writeFrame } from "../test-helpers";
@@ -279,6 +289,94 @@ describe("Move to team", () => {
 		writeFrame(project.root, "news", "export default () => <h1>News</h1>;\n");
 		await until(() => cloud.file("site", "frames/news/frame.tsx")?.includes("News") === true, 10_000);
 		expect(git(project.root, "rev-list", "--count", `${before}..HEAD`)).toBe("1");
+	});
+
+	it("names what won't travel before it moves, and leaves those files in git for teammates", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		writeFileSync(join(project.root, "design", "README.md"), "# how we design\n");
+		symlinkSync("../home", join(project.root, "design", "frames", "alias"));
+		git(project.root, "add", "-A");
+		git(project.root, "commit", "--quiet", "-m", "notes");
+		const daemon = makeApp(project.state, {
+			teamSyncServices: { ...ana.services, notice: () => {} },
+			cloudTeamsRequest: ana.request,
+		});
+
+		const asked = await daemon.controlRequest(`/api/cloud/move/stays?${new URLSearchParams({ path: project.root })}`);
+		expect(await asked.json()).toEqual({
+			stays: [
+				{ path: "README.md", why: "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync" },
+				{ path: "frames/alias", why: "symlinks stay on this Mac" },
+			],
+		});
+
+		const moved = await daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		expect(await moved.json()).toMatchObject({ commit: "committed" });
+		// what doesn't travel stays tracked, so a teammate who pulls keeps it
+		expect(git(project.root, "ls-tree", "-r", "--name-only", "HEAD", "design").split("\n")).toEqual([
+			"design/README.md",
+			"design/frames/alias",
+		]);
+		expect(cloud.file("site", "README.md")).toBeUndefined();
+		expect(status(project.root)).toEqual([]);
+	});
+
+	it("refuses a detached HEAD before it uploads anything", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		git(project.root, "checkout", "--quiet", "--detach");
+		const daemon = makeApp(project.state, {
+			teamSyncServices: { ...ana.services, notice: () => {} },
+			cloudTeamsRequest: ana.request,
+		});
+		const refused = await daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		expect(refused.status).toBe(409);
+		expect(((await refused.json()) as { error: string }).error).toContain("Check out a branch");
+		expect(cloud.paths("site")).toEqual([]);
+		expect(existsSync(join(project.root, "spool.json"))).toBe(false);
+	});
+
+	it("gives up on a commit git never lets it make, and makes it when spool next starts", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		// a git that crashed left its lock behind
+		const lock = join(project.root, ".git", "index.lock");
+		writeFileSync(lock, "");
+		const moved = await moveIntoTeam(project.root, project.state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+			wait: async () => {},
+		});
+		expect(await moved.commit).toEqual({ kind: "failed" });
+		expect(git(project.root, "rev-parse", "HEAD")).toBe(before);
+
+		rmSync(lock);
+		makeApp(project.state, {
+			teamSyncServices: { ...ana.services, notice: () => {} },
+			cloudTeamsRequest: ana.request,
+		});
+		await until(() => git(project.root, "log", "-1", "--format=%s") === MOVE_MESSAGE, 10_000);
+		expect(git(project.root, "rev-parse", "HEAD~1")).toBe(before);
+		await until(() => status(project.root).length === 0, 10_000);
 	});
 
 	it("waits out a merge before it commits", { timeout: 30_000 }, async () => {

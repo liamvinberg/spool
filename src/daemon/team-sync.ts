@@ -259,23 +259,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const readLocal = (path: string): Buffer | undefined =>
 		statOf(path)?.isFile() === true ? readFileSync(join(designDir, ...path.split("/"))) : undefined;
 
-	/**
-	 * Why a file on disk stays on this machine though its path is in the layout: it is a symlink or reached through
-	 * one, or it is too big. Nothing when it may travel, or isn't there.
-	 */
-	const stays = (path: string): string | undefined => {
-		const segments = path.split("/");
-		let at = designDir;
-		for (const [index, segment] of segments.entries()) {
-			at = join(at, segment);
-			const stat = lstatSync(at, { throwIfNoEntry: false });
-			if (stat?.isSymbolicLink() === true) return "symlinks stay on this Mac";
-			if (stat === undefined || (index < segments.length - 1 && !stat.isDirectory())) return undefined;
-			if (index === segments.length - 1 && stat.isFile() && stat.size > FILE_LIMIT_BYTES)
-				return `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`;
-		}
-		return undefined;
-	};
+	const stays = (path: string) => whyStays(designDir, path);
 
 	/**
 	 * Whether a file was written too recently to be read whole: one may still be being written, and its first part
@@ -958,6 +942,70 @@ function readState(file: string, project: string): CopyState {
 		// a copy with no record yet starts from nothing: the catch-up brings the whole team copy
 	}
 	return { project, head: 0, files: {} };
+}
+
+/**
+ * Why a file on disk stays on this machine though its path is in the layout: it is a symlink or reached through
+ * one, or it is too big. Nothing when it may travel, or isn't there.
+ */
+function whyStays(designDir: string, path: string): string | undefined {
+	const segments = path.split("/");
+	let at = designDir;
+	for (const [index, segment] of segments.entries()) {
+		at = join(at, segment);
+		const stat = lstatSync(at, { throwIfNoEntry: false });
+		if (stat?.isSymbolicLink() === true) return "symlinks stay on this Mac";
+		if (stat === undefined || (index < segments.length - 1 && !stat.isDirectory())) return undefined;
+		if (index === segments.length - 1 && stat.isFile() && stat.size > FILE_LIMIT_BYTES)
+			return `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`;
+	}
+	return undefined;
+}
+
+/**
+ * Every file in a project's `design/` that would stay on this Mac as a local copy, and why: outside Spool's layout,
+ * a symlink, or over 25 MB. Spool's own files (`.spool/`, `.gitignore`) and the system's aren't named.
+ */
+export function staysOnThisMac(root: string): { path: string; why: string }[] {
+	const designDir = realDesignDir(root);
+	const found: { path: string; why: string }[] = [];
+	const walk = (dir: string) => {
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const full = join(dir, entry.name);
+			const path = relative(designDir, full).split(sep).join("/");
+			if (path === ".spool" || path === ".gitignore" || entry.name === ".DS_Store") continue;
+			if (entry.isDirectory()) walk(full);
+			else if (!travels(path)) found.push({ path, why: OUTSIDE_LAYOUT });
+			else {
+				const why = whyStays(designDir, path);
+				if (why !== undefined) found.push({ path, why });
+			}
+		}
+	};
+	walk(designDir);
+	return found.sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
+/**
+ * What a move must wait for (DEV-190): every file on disk that travels whose bytes the team hasn't confirmed to this
+ * copy yet, design-relative. What stays on this Mac never travels, so it is never waited for.
+ */
+export function unconfirmedFiles(root: string, link: ProjectLink): string[] {
+	const designDir = realDesignDir(root);
+	const { files } = readState(join(designDir, ".spool", "sync.json"), link.url);
+	return filesUnder(designDir, "")
+		.filter(
+			(path) =>
+				whyStays(designDir, path) === undefined &&
+				files[path]?.hash !== digest(readFileSync(join(designDir, ...path.split("/")))),
+		)
+		.sort();
 }
 
 function digest(bytes: Uint8Array): string {

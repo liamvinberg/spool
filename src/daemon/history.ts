@@ -559,20 +559,37 @@ export type MoveCommit =
 	| { kind: "no-git" }
 	/** HEAD names no branch: the move is left for the person to commit */
 	| { kind: "detached" }
-	/** git refused it; the move is left for the person to commit */
+	/** git refused it, or never let it be made in time; the move is left for the person to commit */
 	| { kind: "failed" };
+
+/** How many times a busy repo is looked at, a second apart, before the move commit gives up for now. */
+const MOVE_TRIES = 300;
+
+export interface MoveCommitOptions {
+	/** Which design-relative paths stay in git: what never travels to the team stays for teammates who pull. */
+	keep?: (path: string) => boolean;
+	/** Sleep between looks at a repo git is busy in. */
+	wait?: (ms: number) => Promise<void>;
+	/** The daemon is closing: stop waiting. */
+	signal?: AbortSignal;
+}
+
+/** Whether a move may commit here: the project is in no git work tree, or HEAD names a branch. */
+export async function onBranch(root: string): Promise<boolean> {
+	if (!(await git(root, ["rev-parse", "--show-toplevel"])).ok) return true;
+	return (await git(root, ["symbolic-ref", "--quiet", "HEAD"])).ok;
+}
 
 /**
  * The move commit, made the way a history save is: on the checked-out branch, from a temporary index, with no hook
  * and no push, and only once git is done with any merge or rebase. `design/` leaves the index with every file kept
- * on disk, and `spool.json` comes in; nothing else anyone staged is touched. The real index is then brought level
- * for those paths alone, so `git status` reads clean. `wait` is how long to sleep between looks at a busy repo.
+ * on disk, all but what `keep` names, and `spool.json` comes in; nothing else anyone staged is touched. The real
+ * index is then brought level for those paths alone, so `git status` reads clean. A repo still busy after
+ * `MOVE_TRIES` looks, or a branch that keeps moving under it, is given up on as `failed`.
  */
-export async function commitMoveIn(
-	root: string,
-	options: { wait?: (ms: number) => Promise<void>; signal?: AbortSignal } = {},
-): Promise<MoveCommit> {
+export async function commitMoveIn(root: string, options: MoveCommitOptions = {}): Promise<MoveCommit> {
 	const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	const keep = options.keep ?? (() => false);
 	const designDir = realDesignDir(root);
 	const top = await git(root, ["rev-parse", "--show-toplevel"]);
 	if (!top.ok) return { kind: "no-git" };
@@ -581,7 +598,7 @@ export async function commitMoveIn(
 	if (!dir.ok) return { kind: "no-git" };
 	const scope = designPath(repo, designDir);
 	const link = designPath(repo, join(designDir, "..", PROJECT_LINK));
-	for (;;) {
+	for (let tries = 0; tries < MOVE_TRIES; tries += 1) {
 		if (options.signal?.aborted) return { kind: "failed" };
 		if (blocked(dir.stdout.trim())) {
 			await wait(1_000);
@@ -591,7 +608,9 @@ export async function commitMoveIn(
 		if (!branch.ok) return { kind: "detached" };
 		const head = await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD"]);
 		const parent = head.ok ? head.stdout.trim() : undefined;
-		const made = await moveTree(repo, parent, scope, link);
+		const kept = parent === undefined ? [] : await keptIn(repo, parent, scope, keep);
+		if (kept === undefined) return { kind: "failed" };
+		const made = await moveTree(repo, parent, scope, link, kept);
 		if (made === undefined) return { kind: "failed" };
 		const commit = await git(repo, [
 			"-c",
@@ -621,17 +640,33 @@ export async function commitMoveIn(
 			continue;
 		}
 		await git(repo, ["rm", "-r", "--cached", "--force", "--quiet", "--ignore-unmatch", "--", scope]);
+		if (kept.length > 0) await git(repo, ["--literal-pathspecs", "reset", "--quiet", id, "--", ...kept]);
 		await git(repo, ["add", "-f", "--", link]);
 		return { kind: "committed", commit: id };
 	}
+	return { kind: "failed" };
 }
 
-/** HEAD's tree with `design/` taken out and `spool.json` put in, written from a scratch index. */
+/** The paths under `design/` the commit HEAD stands on tracks that `keep` keeps in git, as git spells them. */
+async function keptIn(
+	repo: string,
+	parent: string,
+	scope: string,
+	keep: (path: string) => boolean,
+): Promise<string[] | undefined> {
+	const listed = await git(repo, ["ls-tree", "-r", "-z", "--name-only", parent, "--", scope]);
+	if (!listed.ok) return undefined;
+	const prefix = scope === "." ? "" : `${scope}/`;
+	return listed.stdout.split("\0").filter((path) => path !== "" && keep(path.slice(prefix.length)));
+}
+
+/** HEAD's tree with `design/` taken out, all but what is kept, and `spool.json` put in, written from a scratch index. */
 async function moveTree(
 	repo: string,
 	parent: string | undefined,
 	scope: string,
 	link: string,
+	kept: readonly string[],
 ): Promise<string | undefined> {
 	const scratch = mkdtempSync(join(tmpdir(), "spool-move-"));
 	try {
@@ -643,6 +678,12 @@ async function moveTree(
 			index,
 		);
 		if (!out.ok || !(await git(repo, ["add", "-f", "--", link], index)).ok) return undefined;
+		if (
+			parent !== undefined &&
+			kept.length > 0 &&
+			!(await git(repo, ["--literal-pathspecs", "reset", "--quiet", parent, "--", ...kept], index)).ok
+		)
+			return undefined;
 		const tree = await git(repo, ["write-tree"], index);
 		return tree.ok ? tree.stdout.trim() : undefined;
 	} finally {
