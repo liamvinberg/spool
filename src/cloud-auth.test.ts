@@ -2,7 +2,16 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { authorizedCloudRequest, cloudOrigin, keychainVault, login, logout, session } from "./cloud-auth";
+import {
+	account,
+	authorizedCloudRequest,
+	CloudSignedOut,
+	cloudOrigin,
+	keychainVault,
+	login,
+	logout,
+	session,
+} from "./cloud-auth";
 import { makeTempDir } from "./test-helpers";
 
 const originalPath = process.env.PATH;
@@ -26,11 +35,13 @@ function memoryVault() {
 	};
 }
 
+const ACCOUNT = { accountId: "account", email: "ada@tidemark.app", sessionId: "device", expiresAt: 2_000_000_000 };
+
 async function authServer() {
 	let exchange: Record<string, unknown> | undefined;
 	let revoked = false;
 	const server = createServer(async (request, response) => {
-		if (request.url === "/auth/publisher/exchange") {
+		if (request.url === "/auth/account/exchange") {
 			let raw = "";
 			for await (const chunk of request) raw += chunk;
 			exchange = JSON.parse(raw) as Record<string, unknown>;
@@ -38,12 +49,12 @@ async function authServer() {
 			response.end(JSON.stringify({ token: "t".repeat(43), expiresAt: 2_000_000_000 }));
 			return;
 		}
-		if (request.url === "/auth/publisher/session") {
+		if (request.url === "/auth/account/session") {
 			response.setHeader("content-type", "application/json");
-			response.end(JSON.stringify({ authenticated: true, publisherId: "publisher", sessionId: "device" }));
+			response.end(JSON.stringify({ ...ACCOUNT, kind: "device" }));
 			return;
 		}
-		if (request.url === "/auth/publisher/logout") {
+		if (request.url === "/auth/account/logout") {
 			revoked = true;
 			response.statusCode = 204;
 			response.end();
@@ -63,27 +74,34 @@ async function authServer() {
 	};
 }
 
-describe("Cloud publisher authentication", () => {
-	it("binds a one-use loopback to state and verifier, stores the token, and returns a live session", async () => {
+describe("Cloud account sign-in", () => {
+	it("binds a one-use loopback to state and verifier, stores the device session, and returns the account", async () => {
 		const cloud = await authServer();
 		const vault = memoryVault();
 		let opened = "";
+		let landed: Response | undefined;
 		try {
 			const authenticated = await login("/tmp/spool-one", {
 				origin: cloud.origin,
 				vault,
+				device: "Ada’s MacBook Pro",
 				open: (url) => {
 					opened = url;
 					const start = new URL(url);
 					const callback = new URL(start.searchParams.get("return_url") ?? "");
 					callback.searchParams.set("code", "c".repeat(43));
-					void fetch(callback);
+					void fetch(callback, { redirect: "manual" }).then((response) => {
+						landed = response;
+					});
 				},
 			});
-			expect(authenticated).toEqual({ publisherId: "publisher", sessionId: "device" });
+			expect(authenticated).toEqual(ACCOUNT);
 			const start = new URL(opened);
-			expect(start.pathname).toBe("/auth/google/start");
+			expect(start.pathname).toBe("/sign-in");
+			expect(start.searchParams.get("device")).toBe("Ada’s MacBook Pro");
 			expect(start.searchParams.get("handoff_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+			expect(landed?.status).toBe(303);
+			expect(landed?.headers.get("location")).toBe(`${cloud.origin}/sign-in/done?device=Ada%E2%80%99s+MacBook+Pro`);
 			const body = cloud.exchange();
 			expect(body?.returnUrl).toBe(start.searchParams.get("return_url"));
 			expect(body?.verifier).toMatch(/^[A-Za-z0-9_-]{43}$/u);
@@ -93,42 +111,81 @@ describe("Cloud publisher authentication", () => {
 		}
 	});
 
-	it("uses the invite-only beta for login and its session probe by default", async () => {
+	it("uses the beta for login and its account probe by default", async () => {
 		delete process.env.SPOOL_CLOUD_ORIGIN;
 		const vault = memoryVault();
 		const requested: string[] = [];
 		let opened = "";
 		const authenticated = await login("/tmp/spool-one", {
 			vault,
+			device: "Mac",
 			open: (url) => {
 				opened = url;
 				const callback = new URL(new URL(url).searchParams.get("return_url") ?? "");
 				callback.searchParams.set("code", "c".repeat(43));
-				void fetch(callback);
+				void fetch(callback, { redirect: "manual" });
 			},
 			fetch: async (input) => {
 				const url = String(input);
 				requested.push(url);
-				if (url.endsWith("/auth/publisher/exchange"))
+				if (url.endsWith("/auth/account/exchange"))
 					return Response.json({ token: "t".repeat(43), expiresAt: 2_000_000_000 });
-				return Response.json({ authenticated: true, publisherId: "publisher", sessionId: "device" });
+				return Response.json(ACCOUNT);
 			},
 		});
 
-		expect(authenticated).toEqual({ publisherId: "publisher", sessionId: "device" });
+		expect(authenticated).toEqual(ACCOUNT);
 		expect(new URL(opened).origin).toBe("https://beta.spool.page");
 		expect(requested).toEqual([
-			"https://beta.spool.page/auth/publisher/exchange",
-			"https://beta.spool.page/auth/publisher/session",
+			"https://beta.spool.page/auth/account/exchange",
+			"https://beta.spool.page/auth/account/session",
 		]);
 	});
 
 	it("times out without exchanging or storing authority", async () => {
 		const vault = memoryVault();
 		await expect(
-			login("/tmp/spool-one", { origin: "http://127.0.0.1:9", vault, open: () => {}, timeoutMs: 5 }),
+			login("/tmp/spool-one", { origin: "http://127.0.0.1:9", vault, device: "Mac", open: () => {}, timeoutMs: 5 }),
 		).rejects.toThrow(/expired/u);
 		expect(await vault.read()).toBeUndefined();
+	});
+
+	it("stops waiting on the browser when the sign-in is cancelled", async () => {
+		const vault = memoryVault();
+		const cancel = new AbortController();
+		const waiting = login("/tmp/spool-one", {
+			origin: "http://127.0.0.1:9",
+			vault,
+			device: "Mac",
+			open: () => cancel.abort(),
+			signal: cancel.signal,
+		});
+		await expect(waiting).rejects.toThrow("sign-in was cancelled");
+		expect(await vault.read()).toBeUndefined();
+	});
+
+	it("asks spool.page who this machine is signed in as, and says when it is signed out", async () => {
+		const vault = memoryVault();
+		await expect(account("/tmp/spool-one", { vault, fetch: async () => Response.json(ACCOUNT) })).rejects.toThrow(
+			CloudSignedOut,
+		);
+		await vault.write("t".repeat(43));
+		await expect(
+			account("/tmp/spool-one", {
+				vault,
+				fetch: async (input) => {
+					expect(String(input)).toBe("https://cloud.test/auth/account/session");
+					return Response.json({ ...ACCOUNT, kind: "device" });
+				},
+				origin: "https://cloud.test",
+			}),
+		).resolves.toEqual(ACCOUNT);
+		await expect(
+			account("/tmp/spool-one", {
+				vault,
+				fetch: async () => new Response('{"error":"account_session_required"}', { status: 401 }),
+			}),
+		).rejects.toThrow(CloudSignedOut);
 	});
 
 	it("closes the handoff and redacts a browser-launch failure", async () => {
@@ -136,6 +193,7 @@ describe("Cloud publisher authentication", () => {
 			login("/tmp/spool-one", {
 				origin: "http://127.0.0.1:9",
 				vault: memoryVault(),
+				device: "Mac",
 				open: () => {
 					throw new Error("secret launcher detail");
 				},
@@ -149,6 +207,21 @@ describe("Cloud publisher authentication", () => {
 		expect(cloudOrigin({ SPOOL_CLOUD_ORIGIN: "https://spool.page" })).toBe("https://spool.page");
 		for (const origin of ["http://spool.page", "https://spool.page/path", "https://user@spool.page"])
 			expect(() => cloudOrigin({ SPOOL_CLOUD_ORIGIN: origin })).toThrow(/HTTPS origin/u);
+	});
+
+	it("revokes the device session when signing out of this machine", async () => {
+		const cloud = await authServer();
+		const vault = memoryVault();
+		await vault.write("t".repeat(43));
+		try {
+			await expect(logout("/tmp/spool-one", { origin: cloud.origin, vault })).resolves.toEqual({
+				remote: "revoked",
+			});
+			expect(cloud.revoked()).toBe(true);
+			expect(await vault.read()).toBeUndefined();
+		} finally {
+			await cloud.close();
+		}
 	});
 
 	it("clears the local credential even when remote logout is unavailable", async () => {

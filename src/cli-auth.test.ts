@@ -64,7 +64,7 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 		const cloud = createServer(
 			{ key: readFileSync(key), cert: readFileSync(certificate) },
 			async (request, response) => {
-				if (request.url === "/auth/publisher/exchange") {
+				if (request.url === "/auth/account/exchange") {
 					let raw = "";
 					for await (const chunk of request) raw += chunk;
 					exchange = JSON.parse(raw) as Record<string, unknown>;
@@ -73,10 +73,15 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 					response.setHeader("content-type", "application/json");
 					return response.end(JSON.stringify({ token: "t".repeat(43), expiresAt: 2_000_000_000 }));
 				}
-				if (request.url === "/auth/publisher/session") {
+				if (request.url === "/auth/account/session") {
 					response.setHeader("content-type", "application/json");
 					return response.end(
-						JSON.stringify({ authenticated: true, publisherId: "publisher", sessionId: "session" }),
+						JSON.stringify({
+							accountId: "account",
+							email: "ada@tidemark.app",
+							sessionId: "session",
+							expiresAt: 2_000_000_000,
+						}),
 					);
 				}
 				response.statusCode = 404;
@@ -93,7 +98,7 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 				NODE_TLS_REJECT_UNAUTHORIZED: "0",
 			});
 			expect(result.status).toBe(0);
-			expect(result.stdout).toBe("signed in to spool Cloud\n");
+			expect(result.stdout).toBe("signed in as ada@tidemark.app\n");
 			expect(result.stderr).toContain("opening your browser to sign in");
 			expect(result.stdout + result.stderr).not.toContain("t".repeat(43));
 			const start = new URL(readFileSync(opened, "utf8"));
@@ -101,6 +106,8 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 				process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open",
 			);
 			expect(start.origin).toBe(`https://127.0.0.1:${address.port}`);
+			expect(start.pathname).toBe("/sign-in");
+			expect(start.searchParams.get("device")).toBeTruthy();
 			expect(exchange?.returnUrl).toBe(start.searchParams.get("return_url"));
 			expect(exchange?.verifier).toMatch(/^[A-Za-z0-9_-]{43}$/u);
 		} finally {
@@ -123,11 +130,12 @@ case "$1" in find-generic-password|delete-generic-password) exit 44;; esac
 		chmodSync(join(bin, "security"), 0o755);
 		const result = spool(["logout"], home, home, { PATH: `${bin}:${process.env.PATH ?? ""}` });
 		expect(result.status).toBe(0);
-		expect(result.stdout).toBe("signed out of spool Cloud\n");
+		expect(result.stdout).toBe("signed out of this machine\n");
 		expect(result.stderr).toBe("");
 		const invoked = readFileSync(calls, "utf8");
 		expect(invoked).toContain("find-generic-password");
 		expect(invoked).toContain("delete-generic-password");
+		expect(invoked).toContain("spool.device-session.");
 		expect(invoked).toContain("spool.publisher-session.");
 		expect(invoked).not.toMatch(/token|verifier|code=/u);
 	});

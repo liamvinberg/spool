@@ -71,19 +71,19 @@ const program = new Command("spool")
 
 program
 	.command("login")
-	.description("sign in to Cloud sharing in the system browser")
+	.description("sign this machine in to spool.page in the system browser")
 	.action(async () => {
 		process.stderr.write("spool: opening your browser to sign in…\n");
-		await login(spoolDir, { origin: cloudOrigin(process.env) });
-		process.stdout.write("signed in to spool Cloud\n");
+		const signedIn = await login(spoolDir, { origin: cloudOrigin(process.env) });
+		process.stdout.write(`signed in as ${signedIn.email}\n`);
 	});
 
 program
 	.command("logout")
-	.description("revoke this Cloud session and remove it from Keychain")
+	.description("sign this machine out: revoke its session and remove it from Keychain")
 	.action(async () => {
 		const result = await logout(spoolDir, { origin: cloudOrigin(process.env) });
-		process.stdout.write("signed out of spool Cloud\n");
+		process.stdout.write("signed out of this machine\n");
 		if (result.remote === "unavailable") {
 			process.stderr.write(
 				"spool: the local credential was removed, but remote revocation could not be confirmed\n",
