@@ -53,6 +53,8 @@ export interface CloudTeamProject {
 	name: string;
 	team: string;
 	url: string;
+	/** The repo its code lives in, as `host/path` from an editor's `origin`; null when nobody has said. Information only. */
+	repo: string | null;
 }
 
 /** spool.page said no. `code` is its reason, such as `last_admin` or `team_creation_closed`. */
@@ -123,8 +125,13 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 			),
 		declineInvite: (invite: string) => call<null>("POST", `invites/${encodeURIComponent(invite)}/decline`),
 		/** Starts a team project, named from what its folder is called. Editors and admins only. */
-		createProject: (address: string, name: string) =>
-			call<CloudTeamProject>("POST", `${team(address)}/projects`, { name }),
+		createProject: (address: string, name: string, repo?: string) =>
+			call<CloudTeamProject>("POST", `${team(address)}/projects`, { name, ...(repo === undefined ? {} : { repo }) }),
+		/** Every project in the team, whether or not this Mac holds it. */
+		projects: (address: string) => call<{ projects: CloudTeamProject[] }>("GET", `${team(address)}/projects`),
+		/** Record the repo a project's code lives in, from a checkout's `origin`. Editors and admins only. */
+		setRepo: (address: string, name: string, repo: string) =>
+			call<CloudTeamProject>("PUT", `${team(address)}/projects/${encodeURIComponent(name)}/repo`, { repo }),
 		/** One team project, and this account's role in its team. */
 		project: (address: string, name: string) =>
 			call<CloudTeamProject & { role: TeamRole }>("GET", `${team(address)}/projects/${encodeURIComponent(name)}`),

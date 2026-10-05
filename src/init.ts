@@ -11,6 +11,7 @@ import {
 import { registerAndOpenProject } from "./daemon/session";
 import { type OpenSyncSocket, syncLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
+import { checkoutOf } from "./git-remote";
 import { isSafeName } from "./page-path";
 import { expandHome, realDir } from "./paths";
 import { readRegistry } from "./registry";
@@ -71,9 +72,11 @@ export async function initTeamProject(
 	const request = { ...options.request, origin: options.origin };
 	const teams = cloudTeams(spoolDir, request);
 	const team = await chosenTeam(teams, options.team);
+	// where the code lives, as the team will see it: information, never a permission
+	const repo = (await checkoutOf(root))?.repo;
 	let created: CloudTeamProject;
 	try {
-		created = await teams.createProject(team.address, basename(root));
+		created = await teams.createProject(team.address, basename(root), repo);
 	} catch (error) {
 		throw teamProjectRefusal(error, team.name, basename(root));
 	}
@@ -166,7 +169,8 @@ export function describeChoice(teams: readonly string[]): string {
 	return `You're in ${named}. Run again with \`--team <name>\`, or \`--local\`.`;
 }
 
-async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promise<CloudTeam> {
+/** The team `wanted` names, by address or name, among the account's, refused unless this account edits in it. */
+export async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promise<CloudTeam> {
 	const named = wanted.trim().toLowerCase();
 	const { teams: mine } = await teams.list();
 	const team = mine.find((each) => each.address === named || each.name.toLowerCase() === named);
@@ -183,7 +187,7 @@ async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promise<Clou
 /** The team already has a project by the folder's name. */
 class ProjectNameTaken extends SpoolError {}
 
-function teamProjectRefusal(error: unknown, team: string, folder: string): unknown {
+export function teamProjectRefusal(error: unknown, team: string, folder: string): unknown {
 	if (!(error instanceof CloudTeamRefused)) return error;
 	if (error.code === "project_taken")
 		return new ProjectNameTaken(
