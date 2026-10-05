@@ -27,6 +27,8 @@ export type SettingKind =
 	| { readonly kind: "boolean" }
 	| { readonly kind: "directory" }
 	| { readonly kind: "choice"; readonly choices: readonly string[] }
+	/** where a new project goes: `ask`, `local`, or a team's address */
+	| { readonly kind: "destination" }
 	/** a six-digit hex colour, lowercase, `#` first */
 	| { readonly kind: "colour" };
 
@@ -172,6 +174,14 @@ export const SETTINGS = {
 		label: "Default project location",
 		says: "Used for new projects. Existing projects stay where they are.",
 	},
+	"projects.destination": {
+		scope: "machine",
+		group: "general",
+		shape: { kind: "destination" },
+		fallback: "ask",
+		label: "New projects go to",
+		says: "Where `spool init` starts a project while you edit in a team: ask each time, only this Mac, or one team.",
+	},
 	history: {
 		scope: "project",
 		group: "general",
@@ -223,6 +233,7 @@ export function isSettingKey(key: string): key is SettingKey {
 }
 
 const COLOUR = /^#[0-9a-f]{6}$/;
+const TEAM_ADDRESS = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
 
 /** One value against its entry's shape: what a store may hold and the API may accept. */
 export function parseSetting<Key extends SettingKey>(
@@ -246,6 +257,10 @@ export function parseSetting<Key extends SettingKey>(
 			if (typeof raw === "string" && shape.choices.includes(raw))
 				return { ok: true, value: raw as SettingValue<Key> };
 			return { ok: false, reason: `"${key}" must be one of ${shape.choices.join(", ")}` };
+		case "destination":
+			if (typeof raw === "string" && (raw === "ask" || raw === "local" || TEAM_ADDRESS.test(raw)))
+				return { ok: true, value: raw as SettingValue<Key> };
+			return { ok: false, reason: `"${key}" must be ask, local, or a team's address` };
 		case "colour": {
 			const colour = typeof raw === "string" ? raw.trim().toLowerCase() : undefined;
 			if (colour !== undefined && COLOUR.test(colour)) return { ok: true, value: colour as SettingValue<Key> };

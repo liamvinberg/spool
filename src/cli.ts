@@ -34,18 +34,20 @@ import {
 import { describeMigration, migrateFrameNames } from "./daemon/migrate-frame-names";
 import { publicationReadiness } from "./daemon/publication-readiness";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
+import { createSettingsStore } from "./daemon/settings";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
-import { initProject, initTeamProject } from "./init";
+import { checkInitTarget, chooseInitTarget, initDestination, initProject, initTeamProject } from "./init";
 import { fetchLocalCopy, openProject } from "./open";
 import { isFramePath, isSafeName } from "./page-path";
 import { buildWebsite, writeWebsite } from "./publication/build";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
+import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
 import { logsFrame, shotFrame } from "./verify";
@@ -132,7 +134,7 @@ cloud
 	.option("--publication <id>", "owned publication to update")
 	.action(async (entry: string, options: { invite?: string[]; scenario?: string; publication?: string }) => {
 		await cloudJson(async () => {
-			const root = offlineProject(process.cwd());
+			const root = await offlineProject(process.cwd());
 			return publishWebsite({
 				spoolDir,
 				root,
@@ -189,13 +191,21 @@ program
 	.argument("[path]", "product root", ".")
 	.option("--history", "start the project with history — spool commits its design/ once the canvas goes quiet", false)
 	.option("--team <team>", "start it as a team project of that team, synced live through spool.page instead of git")
-	.action(async (path: string, options: { history: boolean; team?: string }) => {
-		if (options.team !== undefined) {
+	.option("--local", "keep it on this Mac only, offline, even while you edit in a team", false)
+	.action(async (path: string, options: { history: boolean; team?: string; local: boolean }) => {
+		checkInitTarget(path);
+		const origin = cloudOrigin(process.env);
+		const setting = createSettingsStore(spoolDir)
+			.read()
+			.entries.find((entry) => entry.key === "projects.destination");
+		const target = await chooseInitTarget(
+			options,
+			() => initDestination(spoolDir, { origin, setting: String(setting?.value ?? "ask") }),
+			process.stdin.isTTY === true && process.stderr.isTTY === true ? pickDestinationOnTty : undefined,
+		);
+		if (target.kind === "team") {
 			if (options.history) throw new SpoolError("a team project keeps no git history; drop --history");
-			const { root, link, uploaded } = await initTeamProject(path, spoolDir, {
-				team: options.team,
-				origin: cloudOrigin(process.env),
-			});
+			const { root, link, uploaded } = await initTeamProject(path, spoolDir, { team: target.team, origin });
 			process.stdout.write(`initialized team project ${link.url} at ${root}\n`);
 			process.stdout.write(
 				`design/ stays out of git: spool keeps it in step with ${link.team} — commit spool.json, never design/\n`,
@@ -222,7 +232,7 @@ program
 	.description("resolve the project by walk-up, register it, and open its tab")
 	.argument("[path]", "where the walk-up starts", ".")
 	.action(async (path: string) => {
-		await fetchLocalCopy(path, spoolDir, { origin: cloudOrigin(process.env) });
+		await fetchFirst(path);
 		const { root } = openProject(path, spoolDir);
 		process.stdout.write(`registered ${basename(root)} (${root})\n`);
 		// daemon-less by design (#12); when one runs, the tab is already opening — say where
@@ -246,7 +256,7 @@ program
  * project here means the same pointer at `spool init`.
  */
 async function openCanvas(options: { noOpen: boolean }): Promise<void> {
-	await fetchLocalCopy(process.cwd(), spoolDir, { origin: cloudOrigin(process.env) });
+	await fetchFirst(process.cwd());
 	const { root } = openProject(process.cwd(), spoolDir);
 	const { url } = await ensureDaemon(spoolDir);
 	const canvas = `${url}/p/${encodeURIComponent(basename(root))}`;
@@ -260,7 +270,14 @@ program
 	.argument("[path]", "registered project root", ".")
 	.action((path: string) => {
 		const result = removeProject(path, spoolDir);
-		process.stdout.write(result.removed ? `removed ${result.root}\n` : `${result.root} was not registered\n`);
+		const team = localCopyOf(result.root);
+		process.stdout.write(
+			!result.removed
+				? `${result.root} was not registered\n`
+				: team === undefined
+					? `removed ${result.root}\n`
+					: `removed ${result.root}, a local copy of ${team.url}; the team's design/ is untouched\n`,
+		);
 	});
 
 program
@@ -269,7 +286,7 @@ program
 	.argument("[path]", "where the walk-up starts", ".")
 	.option("--entry <frame>", "check navigation only, without typechecking", parseFrame)
 	.action(async (path: string, options: { entry?: string }) => {
-		const root = offlineProject(path);
+		const root = await offlineProject(path);
 		if (options.entry !== undefined) {
 			const readiness = await publicationReadiness(createFlowGraph(), root, options.entry);
 			process.stdout.write(`${JSON.stringify(readiness)}\n`);
@@ -294,7 +311,7 @@ program
 	.requiredOption("--out <directory>", "output directory, empty or a previous Spool build")
 	.option("--scenario <name>", "scenario seed", parseScenario)
 	.action(async (entry: string, options: { out: string; scenario?: string }) => {
-		const root = offlineProject(process.cwd());
+		const root = await offlineProject(process.cwd());
 		try {
 			const artifact = await buildWebsite({
 				root,
@@ -314,6 +331,23 @@ program
 // --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------
 
 const narrate = (line: string) => process.stderr.write(`spool: ${line}\n`);
+
+/** `spool init`'s choice for a person at a terminal: a team by its number, or this Mac. Anything else is no answer. */
+const pickDestinationOnTty = async (teams: readonly string[]): Promise<"local" | { team: string } | undefined> => {
+	const rl = createInterface({ input: process.stdin, output: process.stderr });
+	try {
+		narrate("where does this project go?");
+		for (const [at, team] of teams.entries())
+			process.stderr.write(`  ${at + 1}  ${team}: synced live with the team through spool.page\n`);
+		process.stderr.write(`  ${teams.length + 1}  only this Mac\n`);
+		const picked = Number((await rl.question(`spool: 1-${teams.length + 1}? `)).trim());
+		if (!Number.isInteger(picked) || picked < 1 || picked > teams.length + 1) return undefined;
+		const team = teams[picked - 1];
+		return team === undefined ? "local" : { team };
+	} finally {
+		rl.close();
+	}
+};
 
 /** Anything but an explicit yes is a no — the destructive half needs the word. */
 const confirmOnTty = async (question: string): Promise<boolean> => {
@@ -352,11 +386,22 @@ function parseMilliseconds(value: string): number {
 }
 
 /**
+ * Any verb that walks up to a team project's `spool.json` with no `design/`
+ * beside it fetches the folder first and then carries on, so a fresh clone or a
+ * new worktree just works.
+ */
+async function fetchFirst(start: string): Promise<void> {
+	await fetchLocalCopy(start, spoolDir, { origin: cloudOrigin(process.env), progress: narrate });
+}
+
+/**
  * The project a command that needs no daemon works on, read the way the daemon
  * reads one first: a project still naming frames by folder has its walks
- * renamed before anything reads them (#336).
+ * renamed before anything reads them (#336). A team project's missing design/
+ * is fetched first.
  */
-function offlineProject(start: string): string {
+async function offlineProject(start: string): Promise<string> {
+	await fetchFirst(start);
 	const root = resolveProjectRoot(start);
 	if (root === undefined) {
 		throw new SpoolError("not inside a spool project — no design/canvas.json here or above; `spool init` starts one");
@@ -384,6 +429,7 @@ function parseScenario(value: string): string {
 
 /** Every verb's preamble: the project this cwd is inside, and a live daemon. */
 async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
+	await fetchFirst(process.cwd());
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
 	const { url, controlToken } = await ensureDaemon(spoolDir);
 	return { root, name, daemonUrl: url, controlToken };

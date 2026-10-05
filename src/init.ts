@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type CloudRequestOptions, keychainVault } from "./cloud-auth";
+import { type CloudRequestOptions, CloudSignedOut, keychainVault } from "./cloud-auth";
 import {
 	type CloudTeam,
 	type CloudTeamProject,
@@ -68,9 +68,6 @@ export async function initTeamProject(
 ): Promise<{ root: string; link: ProjectLink; uploaded: boolean }> {
 	const root = realDir(targetDir);
 	refuseExisting(root);
-	if (isTeamProject(root)) {
-		throw new SpoolError(`${root} already has a ${PROJECT_LINK}; run \`spool open\` there to fetch its design/`);
-	}
 	const request = { ...options.request, origin: options.origin };
 	const teams = cloudTeams(spoolDir, request);
 	const team = await chosenTeam(teams, options.team);
@@ -99,6 +96,74 @@ export async function initTeamProject(
 		uploaded = false;
 	}
 	return { root, link, uploaded };
+}
+
+/**
+ * Where `spool init` with neither `--team` nor `--local` puts a project. Signed out, or editing in no team, it is
+ * this Mac only, as it always was, and nothing goes over the network: a session on this Mac is the first thing
+ * read. An editor or admin in teams chooses, unless the machine setting "New projects go to" already has.
+ */
+export type InitDestination =
+	| { kind: "local" }
+	| { kind: "team"; team: string }
+	/** The teams this account edits in, by name: the person picks one, or this Mac. */
+	| { kind: "choose"; teams: string[] }
+	/** Signed in, but spool.page can't say which teams just now. */
+	| { kind: "unknown" };
+
+export async function initDestination(
+	spoolDir: string,
+	options: { origin: string; setting: string; request?: CloudRequestOptions },
+): Promise<InitDestination> {
+	if (options.setting === "local") return { kind: "local" };
+	if (options.setting !== "ask") return { kind: "team", team: options.setting };
+	const request = { ...options.request, origin: options.origin };
+	let token: string | undefined;
+	try {
+		token = await (request.vault ?? keychainVault(spoolDir, options.origin)).read();
+	} catch {
+		// no Keychain is no session
+		token = undefined;
+	}
+	if (token === undefined) return { kind: "local" };
+	let teams: CloudTeam[];
+	try {
+		teams = (await cloudTeams(spoolDir, request).list()).teams;
+	} catch (error) {
+		return error instanceof CloudSignedOut ? { kind: "local" } : { kind: "unknown" };
+	}
+	const editing = teams.filter((team) => team.role !== "viewer").map((team) => team.name);
+	return editing.length === 0 ? { kind: "local" } : { kind: "choose", teams: editing };
+}
+
+/**
+ * Where this `spool init` goes, from its flags first and the destination after: a person at a terminal is asked
+ * (`pick`), and anyone else is told the choice and nothing is written, so an agent can relay it.
+ */
+export async function chooseInitTarget(
+	flags: { team?: string | undefined; local: boolean },
+	destination: () => Promise<InitDestination>,
+	pick?: (teams: readonly string[]) => Promise<"local" | { team: string } | undefined>,
+): Promise<{ kind: "local" } | { kind: "team"; team: string }> {
+	if (flags.team !== undefined && flags.local) throw new SpoolError("choose one of `--team <name>` and `--local`");
+	if (flags.local) return { kind: "local" };
+	if (flags.team !== undefined) return { kind: "team", team: flags.team };
+	const decided = await destination();
+	if (decided.kind === "local" || decided.kind === "team") return decided;
+	if (decided.kind === "unknown")
+		throw new SpoolError(
+			"spool.page can't be reached to see which teams you're in. Run again with `--local`, or with `--team <name>` once it can.",
+		);
+	if (pick === undefined) throw new SpoolError(describeChoice(decided.teams));
+	const picked = await pick(decided.teams);
+	if (picked === undefined) throw new SpoolError(`nothing was started. ${describeChoice(decided.teams)}`);
+	return picked === "local" ? { kind: "local" } : { kind: "team", team: picked.team };
+}
+
+/** "You're in Tidemark and Devosurf. Run again with `--team <name>`, or `--local`." */
+export function describeChoice(teams: readonly string[]): string {
+	const named = teams.length < 2 ? teams.join("") : `${teams.slice(0, -1).join(", ")} and ${teams.at(-1)}`;
+	return `You're in ${named}. Run again with \`--team <name>\`, or \`--local\`.`;
 }
 
 async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promise<CloudTeam> {
@@ -131,6 +196,9 @@ function teamProjectRefusal(error: unknown, team: string, folder: string): unkno
 }
 
 function refuseExisting(root: string): void {
+	if (isTeamProject(root) && !existsSync(join(root, "design", "canvas.json"))) {
+		throw new SpoolError(`${root} already has a ${PROJECT_LINK}; run \`spool open\` there to fetch its design/`);
+	}
 	const design = join(root, "design");
 	if (existsSync(join(design, "canvas.json"))) {
 		throw new SpoolError(`already a spool project: ${root} (run \`spool open\` instead)`);
@@ -138,6 +206,11 @@ function refuseExisting(root: string): void {
 	if (existsSync(design)) {
 		throw new SpoolError(`design/ already exists at ${root} and is not a spool project, move it aside first`);
 	}
+}
+
+/** Refuse a folder `spool init` can't start a project in, before anything else is asked. */
+export function checkInitTarget(targetDir: string): void {
+	refuseExisting(realDir(targetDir));
 }
 
 /** Write the design/ contract. Never touches an existing design/, whoever owns it. */

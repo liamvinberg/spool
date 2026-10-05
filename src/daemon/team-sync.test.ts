@@ -12,11 +12,13 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { initTeamProject } from "../init";
+import { chooseInitTarget, describeChoice, initDestination, initTeamProject } from "../init";
 import { fetchLocalCopy, openProject } from "../open";
-import { readRegistry } from "../registry";
+import { readRegistry, teamProjects } from "../registry";
+import { removeProject } from "../remove";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, until, writeDesignFile, writeFrame } from "../test-helpers";
+import { resolveRegisteredProject } from "../verbs";
 
 /**
  * Team sync as an editor sees it: two machines, each its own state folder and repo, each a daemon, against
@@ -72,7 +74,12 @@ async function twoEditors() {
 		teamSyncServices: { ...ben.services, notice: () => {} },
 		cloudTeamsRequest: ben.request,
 	});
-	return { cloud, link, ana: { root: anaRoot, daemon: anaDaemon }, ben: { root: benRoot, daemon: benDaemon } };
+	return {
+		cloud,
+		link,
+		ana: { root: anaRoot, daemon: anaDaemon, state: anaState, machine: ana },
+		ben: { root: benRoot, daemon: benDaemon, state: benState, machine: ben },
+	};
 }
 
 describe("spool init --team", () => {
@@ -171,6 +178,215 @@ describe("fetching a local copy", () => {
 			).rejects.toThrow(says);
 			expect(existsSync(join(clone, "design"))).toBe(false);
 		}
+	});
+});
+
+describe("a fetch that can't", () => {
+	it("tells someone signed out to sign in, and a cloud agent that it can't yet", async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const anaRoot = repo();
+		await initTeamProject(anaRoot, join(makeTempDir(), ".spool"), {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+		});
+		const clone = repo();
+		copyFileSync(join(anaRoot, "spool.json"), join(clone, "spool.json"));
+		const fetching = (options: Partial<Parameters<typeof fetchLocalCopy>[2]>) =>
+			fetchLocalCopy(clone, join(makeTempDir(), ".spool"), {
+				origin: TEAM_ORIGIN,
+				request: ana.request,
+				openSocket: ana.openSocket,
+				env: {},
+				platform: "darwin",
+				...options,
+			});
+		await expect(
+			fetching({ request: { origin: TEAM_ORIGIN, vault: { read: async () => undefined } } }),
+		).rejects.toThrow(
+			"https://cloud.test/devosurf/checkout is a team project; run `spool login` to fetch its design/",
+		);
+		const noWayIn = { origin: TEAM_ORIGIN, vault: { read: async () => undefined } };
+		await expect(fetching({ request: noWayIn, env: { CLAUDE_CODE_REMOTE: "true" } })).rejects.toThrow(
+			"Claude Code on the web can't fetch a team project's design/ yet",
+		);
+		const noKeychain = {
+			origin: TEAM_ORIGIN,
+			vault: {
+				read: async () => {
+					throw new Error("macOS Keychain is unavailable");
+				},
+			},
+		};
+		await expect(fetching({ request: noKeychain, env: { CODEX_THREAD_ID: "1" }, platform: "linux" })).rejects.toThrow(
+			"a cloud agent can't fetch a team project's design/ yet",
+		);
+		expect(existsSync(join(clone, "design"))).toBe(false);
+	});
+});
+
+describe("local copies", () => {
+	it("are filled by any verb in a new worktree, and one team project holds them all", async () => {
+		const { cloud, link, ana, ben } = await twoEditors();
+		git(ana.root, "add", "spool.json");
+		git(ana.root, "commit", "--quiet", "-m", "spool.json");
+		const lane = join(dirname(ana.root), "lane");
+		git(ana.root, "worktree", "add", "--quiet", "-b", "lane", lane);
+		expect(existsSync(join(lane, "design"))).toBe(false);
+
+		// what every verb runs first, from anywhere in the lane
+		mkdirSync(join(lane, "src"));
+		const fetched = await fetchLocalCopy(join(lane, "src"), ana.state, {
+			origin: TEAM_ORIGIN,
+			request: ana.machine.request,
+			openSocket: ana.machine.openSocket,
+		});
+		expect(fetched).toEqual({ root: realpathSync(lane), fetched: true });
+		expect(resolveRegisteredProject(ana.state, join(lane, "src")).root).toBe(realpathSync(lane));
+		expect(cloud.paths("checkout").every((path) => same(ana.root, lane, path))).toBe(true);
+		expect(status(lane)).toEqual([]);
+		expect(teamProjects(ana.state)).toEqual([{ link, copies: [realpathSync(lane), ana.root] }]);
+		const cards = (await (await ana.daemon.request("/api/projects")).json()) as {
+			projects: { root: string; team?: { url: string } }[];
+		};
+		expect(cards.projects.map((card) => [card.root, card.team?.url])).toEqual([
+			[realpathSync(lane), link.url],
+			[ana.root, link.url],
+		]);
+
+		// both copies on this Mac are in step with the team, and with each other
+		writeFrame(lane, "lane", "from the lane\n");
+		await until(() => same(lane, ben.root, "frames/lane/frame.tsx"));
+		await until(() => same(lane, ana.root, "frames/lane/frame.tsx"));
+		writeFrame(ben.root, "home", "from ben\n");
+		await until(
+			() => same(ben.root, lane, "frames/home/frame.tsx") && same(ben.root, ana.root, "frames/home/frame.tsx"),
+		);
+	});
+
+	it("is forgotten by spool remove without touching the team, and a lane erased after it deletes nothing", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		git(ana.root, "add", "spool.json");
+		git(ana.root, "commit", "--quiet", "-m", "spool.json");
+		const lane = join(dirname(ana.root), "lane");
+		git(ana.root, "worktree", "add", "--quiet", "-b", "lane", lane);
+		await fetchLocalCopy(lane, ana.state, {
+			origin: TEAM_ORIGIN,
+			request: ana.machine.request,
+			openSocket: ana.machine.openSocket,
+		});
+		writeFrame(lane, "lane", "from the lane\n");
+		await until(() => same(lane, ben.root, "frames/lane/frame.tsx"));
+		const team = cloud.paths("checkout").map((path) => [path, cloud.file("checkout", path)]);
+		const saves = cloud.saves("checkout").length;
+
+		expect(removeProject(lane, ana.state)).toEqual({ root: realpathSync(lane), removed: true });
+		expect(teamProjects(ana.state).map((project) => project.copies)).toEqual([[ana.root]]);
+		expect(existsSync(join(lane, "design/frames/lane/frame.tsx"))).toBe(true);
+		git(ana.root, "worktree", "remove", "--force", lane);
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(cloud.saves("checkout").length).toBe(saves);
+		expect(cloud.paths("checkout").map((path) => [path, cloud.file("checkout", path)])).toEqual(team);
+
+		// the copy that stays is still the team's
+		writeFrame(ben.root, "home", "from ben\n");
+		await until(() => same(ben.root, ana.root, "frames/home/frame.tsx"));
+	});
+
+	it("is never deleted for the team when its folder is erased while still registered", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		git(ana.root, "add", "spool.json");
+		git(ana.root, "commit", "--quiet", "-m", "spool.json");
+		const lane = join(dirname(ana.root), "lane");
+		git(ana.root, "worktree", "add", "--quiet", "-b", "lane", lane);
+		await fetchLocalCopy(lane, ana.state, {
+			origin: TEAM_ORIGIN,
+			request: ana.machine.request,
+			openSocket: ana.machine.openSocket,
+		});
+		writeFrame(lane, "lane", "from the lane\n");
+		await until(() => same(lane, ben.root, "frames/lane/frame.tsx"));
+		const saves = cloud.saves("checkout").length;
+
+		git(ana.root, "worktree", "remove", "--force", lane);
+		await new Promise((wake) => setTimeout(wake, 300));
+		writeFrame(ben.root, "home", "from ben\n");
+		await until(() => same(ben.root, ana.root, "frames/home/frame.tsx"));
+		expect(cloud.saves("checkout").length).toBe(saves + 1);
+		expect(cloud.file("checkout", "frames/lane/frame.tsx")).toBe("from the lane\n");
+		expect(existsSync(lane)).toBe(false);
+	});
+});
+
+describe("spool init with no flag", () => {
+	it("stays on this Mac, asking nothing, for someone signed out or editing in no team", async () => {
+		const cloud = fakeTeam();
+		const requests: string[] = [];
+		const signedOut = { origin: TEAM_ORIGIN, vault: { read: async () => undefined } };
+		const viewer = cloud.machine("vera", "viewer").request;
+		const watched = {
+			...viewer,
+			fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+				requests.push(String(input));
+				return (viewer.fetch ?? fetch)(input, init);
+			},
+		};
+		for (const request of [signedOut, watched, cloud.machine("olaf", null).request])
+			expect(await initDestination(makeTempDir(), { origin: TEAM_ORIGIN, setting: "ask", request })).toEqual({
+				kind: "local",
+			});
+		expect(requests).toEqual([`${TEAM_ORIGIN}/api/teams`]);
+	});
+
+	it("names the choice for an editor, and a terminal picks it", async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const destination = () =>
+			initDestination(makeTempDir(), { origin: TEAM_ORIGIN, setting: "ask", request: ana.request });
+		expect(await destination()).toEqual({ kind: "choose", teams: ["Devosurf"] });
+		await expect(chooseInitTarget({ local: false }, destination)).rejects.toThrow(
+			"You're in Devosurf. Run again with `--team <name>`, or `--local`.",
+		);
+		expect(describeChoice(["Tidemark", "Devosurf"])).toBe(
+			"You're in Tidemark and Devosurf. Run again with `--team <name>`, or `--local`.",
+		);
+		expect(await chooseInitTarget({ local: false }, destination, async () => ({ team: "Devosurf" }))).toEqual({
+			kind: "team",
+			team: "Devosurf",
+		});
+		expect(await chooseInitTarget({ local: false }, destination, async () => "local")).toEqual({ kind: "local" });
+		await expect(chooseInitTarget({ local: false }, destination, async () => undefined)).rejects.toThrow(
+			/nothing was started/u,
+		);
+	});
+
+	it("takes --local and --team without asking, and the machine setting's answer", async () => {
+		const asked = async () => {
+			throw new Error("asked spool.page");
+		};
+		expect(await chooseInitTarget({ local: true }, asked)).toEqual({ kind: "local" });
+		expect(await chooseInitTarget({ team: "devosurf", local: false }, asked)).toEqual({
+			kind: "team",
+			team: "devosurf",
+		});
+		await expect(chooseInitTarget({ team: "devosurf", local: true }, asked)).rejects.toThrow(/choose one/u);
+		const unreachable = {
+			origin: TEAM_ORIGIN,
+			vault: { read: async () => "token" },
+			fetch: async () => {
+				throw new TypeError("fetch failed");
+			},
+		};
+		for (const [setting, expected] of [
+			["local", { kind: "local" }],
+			["devosurf", { kind: "team", team: "devosurf" }],
+			["ask", { kind: "unknown" }],
+		] as const)
+			expect(await initDestination(makeTempDir(), { origin: TEAM_ORIGIN, setting, request: unreachable })).toEqual(
+				expected,
+			);
 	});
 });
 
