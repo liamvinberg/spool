@@ -356,4 +356,41 @@ describe("Move to team", () => {
 		writeFrame(ben, "from-ben", "export default () => <h1>Ben</h1>;\n");
 		await until(() => text(project.root, "frames/from-ben/frame.tsx") !== undefined, 10_000);
 	});
+
+	it("refills a teammate whose spool was off when they pulled the move, at its next start, sending no delete", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		const benRoot = realpathSync(join(makeTempDir()));
+		git(benRoot, "clone", "--quiet", project.remote, "site");
+		const ben = join(benRoot, "site");
+		const benState = join(makeTempDir(), ".spool");
+		openProject(ben, benState);
+		const anaDaemon = makeApp(project.state, {
+			teamSyncServices: { ...ana.services, notice: () => {} },
+			cloudTeamsRequest: ana.request,
+		});
+		await anaDaemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		git(project.root, "push", "--quiet", "pushed", "main");
+		// the pull lands while Ben's spool is off: git takes design/ away and nothing watches
+		git(ben, "pull", "--quiet", "--ff-only", "origin", "main");
+		expect(existsSync(join(ben, "design", "canvas.json"))).toBe(false);
+
+		const benMachine = cloud.machine("ben");
+		makeApp(benState, {
+			teamSyncServices: { ...benMachine.services, notice: () => {} },
+			cloudTeamsRequest: benMachine.request,
+		});
+		await until(() => text(ben, "frames/home/frame.tsx")?.includes("Home") === true, 10_000);
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+		expect(cloud.saves("site").filter((save) => save.by === "ben")).toEqual([]);
+		expect(cloud.file("site", "frames/home/frame.tsx")).toContain("Home");
+		expect(status(ben)).toEqual([]);
+	});
 });
