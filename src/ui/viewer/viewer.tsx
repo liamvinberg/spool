@@ -27,7 +27,16 @@ import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
 import { ChevronIcon, FolderIcon, FrameIcon, RibbonMark } from "../icons";
 import { TeamMark } from "../teams";
-import { address, edits, listen, locate, readProject, type ViewerConfig, type ViewerProject } from "./source";
+import {
+	address,
+	edits,
+	listen,
+	locate,
+	readProject,
+	type ViewerConfig,
+	type ViewerLive,
+	type ViewerProject,
+} from "./source";
 import { ViewerPlayer } from "./viewer-player";
 
 /**
@@ -143,6 +152,11 @@ function Knock({ project, onLook }: { project: ViewerProject; onLook: () => void
 const REREAD_MS = 150;
 /** How long the toast that names a teammate's save stays. */
 const TOAST_MS = 3500;
+/**
+ * How often a quiet canvas reads the project again anyway: each read hands it a fresh grant to its frames, so
+ * a tab left open long after the last save still opens the frames it comes to.
+ */
+const RENEW_MS = 60 * 60 * 1000;
 
 /**
  * The read-only canvas kept live: a teammate's save shows up in place. The frames it touched are made again
@@ -159,7 +173,6 @@ function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProj
 	known.current = new Set(project.canvas.frames.map((frame) => frame.name));
 
 	useEffect(() => {
-		if (first.live === undefined) return;
 		let head: number | undefined;
 		let reread: ReturnType<typeof setTimeout> | undefined;
 		let stopped = false;
@@ -178,7 +191,8 @@ function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProj
 				for (const frame of frames) next.set(frame, (next.get(frame) ?? 0) + 1);
 				return next;
 			});
-		const stop = listen(first.live, (message) => {
+		const renew = setInterval(read, RENEW_MS);
+		const heard = (message: ViewerLive) => {
 			if (message.type === "head") {
 				// back after being away: whatever was saved meanwhile, every frame is made again from the newest
 				if (head !== undefined && message.head !== head) {
@@ -199,10 +213,12 @@ function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProj
 				return next;
 			});
 			setToast({ id: Date.now(), message: `${message.by} saved ${saidFrames(message.changed)}` });
-		});
+		};
+		const stop = first.live === undefined ? () => {} : listen(first.live, heard);
 		return () => {
 			stopped = true;
 			clearTimeout(reread);
+			clearInterval(renew);
 			stop();
 		};
 	}, [config, first.live]);
