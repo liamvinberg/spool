@@ -9,7 +9,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
-import type { Presence } from "../../team-sync-protocol";
+import type { Presence, PresenceState } from "../../team-sync-protocol";
 import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
@@ -42,6 +42,7 @@ import {
 	putCanvasView,
 	putGeometry,
 	putPlaces,
+	putPresence,
 	putSelection,
 	putSetting,
 	readRungs,
@@ -5413,8 +5414,9 @@ export function ProjectCanvas({
 
 	// --- presence (DEV-196) ---------------------------------------------------------
 
+	const sendPresence = useCallback((state: PresenceState) => putPresence(project, state), [project]);
 	usePresenceSender({
-		project,
+		send: sendPresence,
 		team,
 		camera,
 		viewportRef,

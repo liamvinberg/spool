@@ -20,23 +20,12 @@ export function pageLabel(page: string): string {
 	return page === ROOT_PAGE ? "frames" : page;
 }
 
-export function PresenceFaces({
-	room,
-	page,
-	following,
-	onFollow,
-}: {
-	room: PresenceRoom;
-	/** The page this canvas is on: someone elsewhere is drawn hollow. */
-	page: string;
-	following: string | null;
-	onFollow: (accountId: string | null) => void;
-}) {
+/**
+ * Draw again whenever anyone in the room changes, and whenever the clock alone changes what is said of them: a
+ * name going quiet, someone going idle, and each minute an idle someone has been so.
+ */
+export function useRoomDrawn(room: PresenceRoom): void {
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
-	/** Where the open list hangs: under the faces, over the canvas and its rails, so not inside the header. */
-	const [open, setOpen] = useState<{ top: number; right: number } | null>(null);
-	const faces = useRef<HTMLDivElement | null>(null);
-	const list = useRef<HTMLDivElement | null>(null);
 	useEffect(() => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const schedule = () => {
@@ -56,6 +45,25 @@ export function PresenceFaces({
 			if (timer !== undefined) clearTimeout(timer);
 		};
 	}, [room]);
+}
+
+export function PresenceFaces({
+	room,
+	page,
+	following,
+	onFollow,
+}: {
+	room: PresenceRoom;
+	/** The page this canvas is on: someone elsewhere is drawn hollow. */
+	page: string;
+	following: string | null;
+	onFollow: (accountId: string | null) => void;
+}) {
+	useRoomDrawn(room);
+	/** Where the open list hangs: under the faces, over the canvas and its rails, so not inside the header. */
+	const [open, setOpen] = useState<{ top: number; right: number } | null>(null);
+	const faces = useRef<HTMLDivElement | null>(null);
+	const list = useRef<HTMLDivElement | null>(null);
 	useEffect(() => {
 		if (open === null) return;
 		const close = (event: PointerEvent) => {
@@ -182,7 +190,8 @@ export function PresenceFaces({
 	);
 }
 
-function Face({
+/** One person's face: filled in their colour where this canvas is, hollow elsewhere, faded while idle. */
+export function Face({
 	mate,
 	away,
 	resting,

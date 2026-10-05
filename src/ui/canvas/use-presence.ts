@@ -1,11 +1,10 @@
 import { type RefObject, useEffect, useRef } from "react";
 import { PRESENCE_DRAGGING, type PresenceState } from "../../team-sync-protocol";
-import { putPresence } from "../api";
 import { toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { followCamera, type PresenceRoom } from "./presence";
 
-/** At most one presence in this many milliseconds goes to the daemon; the receiving canvas smooths between them. */
+/** At most one presence in this many milliseconds is sent; the receiving canvas smooths between them. */
 export const PRESENCE_SEND_MS = 50;
 /** How quickly a follower's camera eases onto the view it follows, per second. */
 const FOLLOW_RATE = 8;
@@ -13,10 +12,12 @@ const FOLLOW_RATE = 8;
 /**
  * Say where this canvas's person is on a team canvas, as it changes (DEV-196): the page, the pointer in world
  * coordinates, a press, the frames a drag is moving, the frame they're inside live and the rectangle the
- * camera shows. Sent to the daemon no more often than `PRESENCE_SEND_MS`, and only when something changed.
+ * camera shows. Sent no more often than `PRESENCE_SEND_MS`, and only when something changed: to the daemon from
+ * the Mac's canvas, to spool.page from the read-only one.
  */
 export function usePresenceSender(options: {
-	project: string;
+	/** Where a change goes; one function for as long as the canvas is open. */
+	send: (state: PresenceState) => void;
 	team: boolean;
 	camera: CameraStore;
 	viewportRef: RefObject<HTMLDivElement | null>;
@@ -28,7 +29,7 @@ export function usePresenceSender(options: {
 	const latest = useRef(options);
 	latest.current = options;
 	const soon = useRef<() => void>(() => {});
-	const { project, team, camera, viewportRef } = options;
+	const { send: say, team, camera, viewportRef } = options;
 
 	useEffect(() => {
 		if (!team) return;
@@ -66,7 +67,7 @@ export function usePresenceSender(options: {
 			if (json === told) return;
 			told = json;
 			sentAt = performance.now();
-			putPresence(project, next);
+			say(next);
 		};
 		// never in the event itself: a gesture the canvas starts or ends on this event is read once it has
 		const later = () => {
@@ -119,7 +120,7 @@ export function usePresenceSender(options: {
 			window.removeEventListener("pointercancel", release, true);
 			unwatch();
 		};
-	}, [project, team, camera, viewportRef]);
+	}, [say, team, camera, viewportRef]);
 
 	// a page switch or a frame gone inside is news even with the pointer still
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the page and the frame inside are the triggers; the send reads them through the ref
