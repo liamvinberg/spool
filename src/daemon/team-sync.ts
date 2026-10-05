@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync, type Stats } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { WebSocket } from "undici";
 import { writeAtomic } from "../atomic-write";
@@ -115,6 +115,9 @@ const LIMITS: Record<Limited, string> = {
 const RETRY_LIMIT_SECONDS = 60;
 /** How long the watcher's burst for one save is let settle before the files are read. */
 const SETTLE_MS = 50;
+/** A file this big must have been still for longer before it is read: it may be being written in many pieces. */
+const BIG_FILE_BYTES = 1_000_000;
+const BIG_FILE_STILL_MS = 500;
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
 /** A keepalive the sync object answers without waking. */
@@ -207,12 +210,19 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		for (const waiter of waiters.splice(0)) waiter.reject(error);
 	};
 
-	/** The bytes of a regular file at a design-relative path, or nothing for a missing file, a folder or a link. */
-	const readLocal = (path: string): Buffer | undefined => {
-		const file = join(designDir, ...path.split("/"));
-		const stat = lstatSync(file, { throwIfNoEntry: false });
-		return stat?.isFile() === true ? readFileSync(file) : undefined;
+	/** What is at a design-relative path, without following a link; nothing when nothing can be there. */
+	const statOf = (path: string): Stats | undefined => {
+		try {
+			return lstatSync(join(designDir, ...path.split("/")), { throwIfNoEntry: false });
+		} catch {
+			// a file where the path needs a folder
+			return undefined;
+		}
 	};
+
+	/** The bytes of a regular file at a design-relative path, or nothing for a missing file, a folder or a link. */
+	const readLocal = (path: string): Buffer | undefined =>
+		statOf(path)?.isFile() === true ? readFileSync(join(designDir, ...path.split("/"))) : undefined;
 
 	/**
 	 * Why a file on disk stays on this machine though its path is in the layout: it is a symlink or reached through
@@ -232,6 +242,23 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		return undefined;
 	};
 
+	/**
+	 * Whether a file was written too recently to be read whole: one may still be being written, and its first part
+	 * must not travel as if it were all of it. A big one is let lie longer, since it is written in more pieces.
+	 * It is checked again once it has been still that long.
+	 */
+	const writing = (path: string): boolean => {
+		const stat = statOf(path);
+		if (stat === undefined) return false;
+		const still = stat.size > BIG_FILE_BYTES ? BIG_FILE_STILL_MS : SETTLE_MS;
+		const age = Date.now() - stat.mtimeMs;
+		if (age < 0 || age >= still) return false;
+		changed.add(path);
+		if (settle !== undefined) clearTimeout(settle);
+		settle = setTimeout(checkChanged, Math.max(still - age, SETTLE_MS));
+		return true;
+	};
+
 	/** Say once that a file didn't travel and why; it stays here as it is. */
 	const hold = (path: string, why: string) => {
 		if (held.get(path) === why) return;
@@ -242,7 +269,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** A file the watcher saw outside the layout, said unless it is Spool's own or the system's. */
 	const outside = (path: string) => {
 		if (path === ".gitignore" || path.startsWith(".spool/") || path.split("/").at(-1) === ".DS_Store") return;
-		const stat = lstatSync(join(designDir, ...path.split("/")), { throwIfNoEntry: false });
+		const stat = statOf(path);
 		if (stat?.isFile() === true || stat?.isSymbolicLink() === true) hold(path, OUTSIDE_LAYOUT);
 	};
 
@@ -294,6 +321,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			dirty.add(path);
 			return;
 		}
+		if (writing(path)) return;
 		const why = stays(path);
 		if (why !== undefined) return hold(path, why);
 		held.delete(path);

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+	appendFileSync,
 	copyFileSync,
 	existsSync,
 	mkdirSync,
@@ -850,6 +851,20 @@ describe("what travels", () => {
 		// a file that shrinks under the limit travels after all
 		writeFileSync(join(ana.root, "design/shared/assets/film.mov"), Buffer.alloc(1_000, 1));
 		await until(() => same(ana.root, ben.root, "shared/assets/film.mov"));
+	});
+
+	it("lets a big file finish being written before it travels, so no first part of it does", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => null;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		mkdirSync(join(ana.root, "design/shared/assets"), { recursive: true });
+		const film = join(ana.root, "design/shared/assets/film.mov");
+		writeFileSync(film, Buffer.alloc(10_000_000, 1));
+		await new Promise((wake) => setTimeout(wake, 200));
+		appendFileSync(film, Buffer.alloc(16_000_000, 1));
+		await until(() => said.ana.includes("shared/assets/film.mov didn't travel: it's over 25 MB"));
+		expect(cloud.file("checkout", "shared/assets/film.mov")).toBeUndefined();
+		expect(existsSync(join(ben.root, "design/shared/assets/film.mov"))).toBe(false);
 	});
 
 	it("writes no team file through a symlink or over 25 MB", async () => {
