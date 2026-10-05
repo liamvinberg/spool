@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
+import type { Unseen } from "../../daemon/seen";
 import { pageChain, pageName, pageUnder, ROOT_PAGE } from "../../page-path";
 import type { Camera } from "../api";
 import {
@@ -21,10 +22,12 @@ import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { ShellClip } from "../canvas/frame-shell";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
 import { contentX, guideX, railRows } from "../canvas/rail-rows";
+import { UnseenMark } from "../canvas/unseen-mark";
 import { cn } from "../cn";
-import { ChevronIcon, FolderIcon, FrameIcon } from "../icons";
+import { handoverAddress, knock } from "../handover";
+import { ChevronIcon, FolderIcon, FrameIcon, RibbonMark } from "../icons";
 import { TeamMark } from "../teams";
-import { address, locate, readProject, type ViewerConfig, type ViewerProject } from "./source";
+import { address, edits, listen, locate, readProject, type ViewerConfig, type ViewerProject } from "./source";
 import { ViewerPlayer } from "./viewer-player";
 
 /**
@@ -39,6 +42,7 @@ import { ViewerPlayer } from "./viewer-player";
 export function Viewer({ config }: { config: ViewerConfig }) {
 	// undefined while it is being read, null when there is no project to read
 	const [project, setProject] = useState<ViewerProject | null | undefined>(undefined);
+	const [looking, setLooking] = useState(false);
 	useEffect(() => {
 		let live = true;
 		readProject(config).then(
@@ -51,7 +55,193 @@ export function Viewer({ config }: { config: ViewerConfig }) {
 	}, [config]);
 	if (project === undefined) return <Quiet>opening</Quiet>;
 	if (project === null) return <Quiet>This project isn’t here</Quiet>;
-	return <ViewerCanvas config={config} project={project} />;
+	if (!looking && knocks(config, project))
+		return (
+			<Knock
+				project={project}
+				onLook={() => {
+					window.sessionStorage.setItem(lookKey(config), "1");
+					setLooking(true);
+				}}
+			/>
+		);
+	return <LiveCanvas config={config} first={project} />;
+}
+
+/**
+ * Whether the link knocks on spool on this Mac first: for an editor or admin on a computer, once per tab. A
+ * viewer has no spool to hand over to, a phone has no Mac, and whoever chose to look in the browser stays.
+ */
+function knocks(config: ViewerConfig, project: ViewerProject): boolean {
+	if (!edits(project.role)) return false;
+	if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return false;
+	return window.sessionStorage.getItem(lookKey(config)) !== "1";
+}
+
+const lookKey = (config: ViewerConfig) => `spool-viewer:look:${config.path}`;
+
+/** How often the knock is made again while nobody answers, the beat local.spool.page listens on. */
+const KNOCK_BEAT_MS = 2000;
+
+/**
+ * The link knocking on spool on this Mac, as local.spool.page does, and handing over the moment it answers.
+ * Looking in the browser is there from the first moment, for whoever would rather, has no spool, or has it shut.
+ */
+function Knock({ project, onLook }: { project: ViewerProject; onLook: () => void }) {
+	const [answered, setAnswered] = useState<boolean | undefined>(undefined);
+	useEffect(() => {
+		let stopped = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const cycle = async () => {
+			const there = await knock();
+			if (stopped) return;
+			setAnswered(there);
+			if (there) window.location.replace(handoverAddress({ team: project.team.address, project: project.project }));
+			else timer = setTimeout(() => void cycle(), KNOCK_BEAT_MS);
+		};
+		void cycle();
+		return () => {
+			stopped = true;
+			clearTimeout(timer);
+		};
+	}, [project]);
+	return (
+		<div className="relative flex h-dvh flex-col items-center justify-center bg-bg pb-[60px] text-text">
+			<span className="relative grid h-[72px] w-[72px] place-items-center">
+				<span className="absolute inset-0 animate-ping rounded-full border border-thread opacity-30 [animation-duration:2.4s]" />
+				<RibbonMark className="h-[36px] w-[27px]" />
+			</span>
+			<h1 className="mt-[34px] type-heading">
+				{answered === false ? "spool isn’t open on this Mac" : `Opening ${project.project} in spool`}
+			</h1>
+			<p className="mt-[10px] text-muted type-control">
+				{answered === false
+					? "Open spool and this page hands over by itself."
+					: `${project.team.name}’s project, on this Mac.`}
+			</p>
+			<div className="mt-[44px] flex items-center gap-[18px] text-muted type-control">
+				<button type="button" className="hover:text-text" onClick={onLook}>
+					{answered === false ? "Look in the browser" : "Look in the browser instead"}
+				</button>
+				{project.download !== undefined && (
+					<>
+						<span className="h-[14px] w-px bg-border-raised" />
+						<a className="hover:text-text" href={project.download}>
+							Get spool
+						</a>
+					</>
+				)}
+			</div>
+			<p className="absolute bottom-[28px] text-muted type-detail">
+				{project.account} · {project.team.address}
+			</p>
+		</div>
+	);
+}
+
+/** How long a burst of saves is let land before the canvas reads the project again. */
+const REREAD_MS = 150;
+/** How long the toast that names a teammate's save stays. */
+const TOAST_MS = 3500;
+
+/**
+ * The read-only canvas kept live: a teammate's save shows up in place. The frames it touched are made again
+ * where they stand, those whose own files it changed wear the changed mark until they are played, and a short
+ * toast says who saved what. The canvas reads the project again for anything else the save moved.
+ */
+function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProject }) {
+	const [project, setProject] = useState(first);
+	/** How many times each frame's document has been made again since this tab opened. */
+	const [revisions, setRevisions] = useState<ReadonlyMap<string, number>>(new Map());
+	const [marks, setMarks] = useState<ReadonlyMap<string, Unseen>>(new Map());
+	const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+	const known = useRef(new Set(first.canvas.frames.map((frame) => frame.name)));
+	known.current = new Set(project.canvas.frames.map((frame) => frame.name));
+
+	useEffect(() => {
+		if (first.live === undefined) return;
+		let head: number | undefined;
+		let reread: ReturnType<typeof setTimeout> | undefined;
+		let stopped = false;
+		const read = () => {
+			clearTimeout(reread);
+			reread = setTimeout(() => {
+				readProject(config).then(
+					(next) => !stopped && next !== undefined && setProject(next),
+					() => {},
+				);
+			}, REREAD_MS);
+		};
+		const remake = (frames: Iterable<string>) =>
+			setRevisions((current) => {
+				const next = new Map(current);
+				for (const frame of frames) next.set(frame, (next.get(frame) ?? 0) + 1);
+				return next;
+			});
+		const stop = listen(first.live, (message) => {
+			if (message.type === "head") {
+				// back after being away: whatever was saved meanwhile, every frame is made again from the newest
+				if (head !== undefined && message.head !== head) {
+					read();
+					remake(known.current);
+				}
+				head = message.head;
+				return;
+			}
+			head = message.head;
+			read();
+			remake(message.touched);
+			if (message.changed.length === 0) return;
+			setMarks((current) => {
+				const next = new Map(current);
+				for (const frame of message.changed)
+					next.set(frame, known.current.has(frame) && next.get(frame) !== "new" ? "changed" : "new");
+				return next;
+			});
+			setToast({ id: Date.now(), message: `${message.by} saved ${saidFrames(message.changed)}` });
+		});
+		return () => {
+			stopped = true;
+			clearTimeout(reread);
+			stop();
+		};
+	}, [config, first.live]);
+
+	useEffect(() => {
+		if (toast === null) return;
+		const timer = setTimeout(() => setToast(null), TOAST_MS);
+		return () => clearTimeout(timer);
+	}, [toast]);
+
+	const seen = useCallback(
+		(frame: string) =>
+			setMarks((current) => {
+				if (!current.has(frame)) return current;
+				const next = new Map(current);
+				next.delete(frame);
+				return next;
+			}),
+		[],
+	);
+
+	return (
+		<ViewerCanvas
+			config={config}
+			project={project}
+			revisions={revisions}
+			marks={marks}
+			onSeen={seen}
+			onNotice={(message) => setToast({ id: Date.now(), message })}
+			toast={toast?.message ?? null}
+		/>
+	);
+}
+
+/** The frames a save changed, as its toast names them: one or two by name, more by how many. */
+function saidFrames(frames: readonly string[]): string {
+	const names = frames.map(pageName);
+	if (names.length <= 2) return names.join(" and ");
+	return `${names[0]} and ${names.length - 1} more`;
 }
 
 function Quiet({ children }: { children: ReactNode }) {
@@ -65,14 +255,37 @@ const LIVE_LIMIT = 24;
 /** Where a page with nothing on it stands. */
 const EMPTY_CAMERA: Camera = { x: 0, y: 0, k: 1 };
 
-function ViewerCanvas({ config, project }: { config: ViewerConfig; project: ViewerProject }) {
+function ViewerCanvas({
+	config,
+	project,
+	revisions,
+	marks,
+	onSeen,
+	onNotice,
+	toast,
+}: {
+	config: ViewerConfig;
+	project: ViewerProject;
+	revisions: ReadonlyMap<string, number>;
+	marks: ReadonlyMap<string, Unseen>;
+	/** A frame was played: its mark has been seen. */
+	onSeen: (frame: string) => void;
+	onNotice: (message: string) => void;
+	toast: string | null;
+}) {
 	const { canvas } = project;
 	const known = useMemo(() => new Set(canvas.pages), [canvas.pages]);
 	const [where, setWhere] = useState(() => locate(config, new URL(window.location.href)));
 	const page = known.has(where.page) ? where.page : ROOT_PAGE;
 	const frames = useMemo(() => canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page), [canvas, page]);
+	/** The frame the player has open: a save that renames or removes it never closes the player under anyone. */
+	const playing = useRef<string | null>(null);
 	const played =
-		where.frame !== null && canvas.frames.some((frame) => frame.name === where.frame) ? where.frame : null;
+		where.frame !== null &&
+		(where.frame === playing.current || canvas.frames.some((frame) => frame.name === where.frame))
+			? where.frame
+			: null;
+	playing.current = played;
 
 	const [camera] = useState(createCameraStore);
 	const viewport = useRef<HTMLDivElement | null>(null);
@@ -190,6 +403,7 @@ function ViewerCanvas({ config, project }: { config: ViewerConfig; project: View
 			at === null || spot === undefined || box === undefined
 				? null
 				: (({ x, y, w, h }) => ({ x: x + box.left, y: y + box.top, w, h }))(toScreen(spot, at));
+		onSeen(frame);
 		go({ page: spot?.page ?? page, frame });
 	};
 	const closePlayer = () => go({ page, frame: null });
@@ -211,6 +425,7 @@ function ViewerCanvas({ config, project }: { config: ViewerConfig; project: View
 			<PagesRail
 				project={project}
 				page={page}
+				marks={marks}
 				onPage={(next) => next !== page && go({ page: next, frame: null })}
 				onFrame={(name) => {
 					const frame = frames.find((each) => each.name === name);
@@ -240,6 +455,8 @@ function ViewerCanvas({ config, project }: { config: ViewerConfig; project: View
 									camera={camera}
 									near={near}
 									src={live.has(frame.name) ? `${project.frames}${encodeURIComponent(frame.name)}` : null}
+									revision={revisions.get(frame.name) ?? 0}
+									cover={project.covers?.[frame.name]}
 									onPlay={() => play(frame.name)}
 								/>
 							))}
@@ -255,6 +472,7 @@ function ViewerCanvas({ config, project }: { config: ViewerConfig; project: View
 									entered={false}
 									selected={false}
 									hovered={false}
+									unseen={marks.get(frame.name)}
 								/>
 							))}
 						</LabelField>
@@ -265,6 +483,19 @@ function ViewerCanvas({ config, project }: { config: ViewerConfig; project: View
 						</div>
 					)}
 				</div>
+				{edits(project.role) && (
+					<div className="absolute top-3 right-3">
+						<OpenInSpool project={project} onNotice={onNotice} />
+					</div>
+				)}
+				{toast !== null && (
+					<div
+						role="status"
+						className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[viewer-page-in_160ms_ease-out] rounded-sm border border-border-raised bg-raised px-3 py-2 text-text type-detail"
+					>
+						{toast}
+					</div>
+				)}
 				<div className="absolute right-3 bottom-3 flex h-8 items-center gap-1 rounded-sm border border-border bg-bg px-1">
 					<button
 						type="button"
@@ -297,10 +528,11 @@ function ViewerCanvas({ config, project }: { config: ViewerConfig; project: View
 				<ViewerPlayer
 					project={project.project}
 					frames={canvas.frames}
-					documentOf={(name) => `${project.frames}${encodeURIComponent(name)}`}
+					documentOf={(name) => `${project.frames}${encodeURIComponent(name)}?play`}
 					start={played}
 					from={from.current}
 					onWalked={(frame) => {
+						onSeen(frame);
 						const spot = canvas.frames.find((each) => each.name === frame);
 						setWhere({ page: spot?.page ?? ROOT_PAGE, frame });
 					}}
@@ -334,22 +566,33 @@ function CameraField({ camera, children }: { camera: CameraStore; children: Reac
 /**
  * One frame on the field: its document, live, at its authored size, with a
  * pane over it that takes the pointer. The frame is for looking at here; a
- * click on it plays it, which is where it is used.
+ * click on it plays it, which is where it is used. Until its document has
+ * drawn, its cover stands in, when a member's daemon has sent one.
+ *
+ * A teammate's save makes the document again in place: the new one loads
+ * behind the one on screen and takes its place once it has, so the frame
+ * never blinks to nothing between them.
  */
 function FieldFrame({
 	frame,
 	camera,
 	near,
 	src,
+	revision,
+	cover,
 	onPlay,
 }: {
 	frame: DesignFrame;
 	camera: CameraStore;
 	near: NearScreen;
 	src: string | null;
+	/** How many times the frame has been made again since the canvas opened. */
+	revision: number;
+	cover: string | undefined;
 	/** From the keyboard: a pointer's click is the field's to tell from a drag. */
 	onPlay: () => void;
 }) {
+	const documents = useDocuments(src, revision);
 	return (
 		<div
 			className="absolute"
@@ -358,15 +601,31 @@ function FieldFrame({
 		>
 			<ShellClip camera={camera} near={near} frame={frame}>
 				<div className="absolute inset-0 bg-surface" />
-				{src !== null && (
-					<iframe
-						src={src}
-						title={frame.name}
-						sandbox="allow-scripts"
-						className="absolute inset-0 h-full w-full border-0 bg-white"
-						tabIndex={-1}
+				{cover !== undefined && (
+					<img
+						src={cover}
+						alt=""
+						draggable={false}
+						data-viewer-cover=""
+						className="absolute inset-0 h-full w-full object-cover object-top"
 					/>
 				)}
+				{documents.list.map((document, index) => {
+					const newest = index === documents.list.length - 1;
+					return (
+						<iframe
+							key={document.revision}
+							src={document.src}
+							title={newest ? frame.name : `${frame.name}, before`}
+							data-viewer-revision={document.revision}
+							sandbox="allow-scripts"
+							className="absolute inset-0 h-full w-full border-0 bg-white"
+							style={{ opacity: document.drawn ? 1 : 0 }}
+							tabIndex={-1}
+							onLoad={() => documents.drawn(document.revision)}
+						/>
+					);
+				})}
 				<button
 					type="button"
 					aria-label={`Play ${pageName(frame.name)}`}
@@ -379,16 +638,84 @@ function FieldFrame({
 	);
 }
 
+interface FieldDocument {
+	revision: number;
+	src: string;
+	drawn: boolean;
+}
+
+/**
+ * A frame's documents while it is live: the one drawn, and the one made again in its place until that one has
+ * drawn. The address is the one the frame was first or last made from: a grant that renews leaves a document on
+ * screen where it is.
+ */
+function useDocuments(src: string | null, revision: number) {
+	const [list, setList] = useState<FieldDocument[]>([]);
+	const address = useRef(src);
+	if (src !== null) address.current = src;
+	const live = src !== null;
+	useEffect(() => {
+		const at = address.current;
+		if (!live || at === null) {
+			setList([]);
+			return;
+		}
+		setList((current) => {
+			if (current.at(-1)?.revision === revision) return current;
+			const drawn = current.filter((document) => document.drawn).slice(-1);
+			return [...drawn, { revision, src: at, drawn: false }];
+		});
+	}, [live, revision]);
+	const drawn = useCallback(
+		(revision: number) =>
+			setList((current) => {
+				const at = current.findIndex((document) => document.revision === revision);
+				if (at === -1) return current;
+				// the newest drawn takes the place of every one before it
+				return current.slice(at).map((document, index) => (index === 0 ? { ...document, drawn: true } : document));
+			}),
+		[],
+	);
+	return { list, drawn };
+}
+
+/**
+ * Open in spool, for an editor or admin: the same knock the link makes, then over to spool on this Mac. With
+ * spool shut it says so, and the canvas stays.
+ */
+function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: (message: string) => void }) {
+	const [knocking, setKnocking] = useState(false);
+	return (
+		<button
+			type="button"
+			disabled={knocking}
+			className="flex h-8 cursor-pointer items-center rounded-sm border border-border-raised bg-bg px-3 text-text transition-colors hover:bg-surface active:scale-[0.97] type-control"
+			onClick={async () => {
+				setKnocking(true);
+				const there = await knock();
+				setKnocking(false);
+				if (there)
+					window.location.assign(handoverAddress({ team: project.team.address, project: project.project }));
+				else onNotice("spool isn’t open on this Mac");
+			}}
+		>
+			Open in spool
+		</button>
+	);
+}
+
 /** The pages rail, as it ships, with nothing on it that changes anything. */
 function PagesRail({
 	project,
 	page,
+	marks,
 	onPage,
 	onFrame,
 	onPlay,
 }: {
 	project: ViewerProject;
 	page: string;
+	marks: ReadonlyMap<string, Unseen>;
 	onPage: (page: string) => void;
 	onFrame: (frame: string) => void;
 	onPlay: (frame: string) => void;
@@ -419,7 +746,7 @@ function PagesRail({
 			<div className="flex h-11 shrink-0 items-center gap-2 border-border border-b pr-2 pl-3.5">
 				<TeamMark team={project.team} size={18} />
 				<span className="truncate type-control">{project.project}</span>
-				<span className="ml-auto shrink-0 text-muted type-detail">view only</span>
+				{!edits(project.role) && <span className="ml-auto shrink-0 text-muted type-detail">view only</span>}
 			</div>
 			<nav aria-label="Pages" className="min-h-0 flex-1 overflow-y-auto py-2">
 				{rows.map((row) =>
@@ -490,7 +817,15 @@ function PagesRail({
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
 								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
-								<span className="min-w-0 flex-1 truncate text-muted type-value">{pageName(row.name)}</span>
+								<span
+									className={cn(
+										"min-w-0 flex-1 truncate type-value",
+										marks.has(row.name) ? "text-text" : "text-muted",
+									)}
+								>
+									{pageName(row.name)}
+								</span>
+								{marks.has(row.name) && <UnseenMark mark={marks.get(row.name) ?? "changed"} />}
 							</button>
 							<button
 								type="button"

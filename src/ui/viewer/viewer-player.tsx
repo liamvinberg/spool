@@ -15,6 +15,8 @@ const GROW = { duration: FLIGHT_MS + 60, easing: "cubic-bezier(0.32, 0.72, 0, 1)
 interface Played {
 	frame: string;
 	arrival: number;
+	/** The document this arrival plays, fixed when it arrives: nothing but a walk loads another. */
+	src: string;
 	externalHref: string | null;
 }
 
@@ -25,6 +27,9 @@ interface Played {
  * frame's own document from the frames' origin, so a walk inside it is that
  * document asking to go, answered here the way the canvas answers it: the next
  * screen's document, handed the session the last one left.
+ *
+ * A teammate's save never moves anyone mid-flow: the screen on show stays the
+ * document it arrived as, and the next screen walked to is the newest version.
  */
 export function ViewerPlayer({
 	project,
@@ -47,14 +52,14 @@ export function ViewerPlayer({
 }) {
 	const shell = useRef<HTMLDivElement | null>(null);
 	const iframe = useRef<HTMLIFrameElement | null>(null);
-	const played = useRef<Played>({ frame: start, arrival: 0, externalHref: null });
+	const played = useRef<Played>({ frame: start, arrival: 0, src: documentOf(start), externalHref: null });
 	/** What the screen walked from left behind, for the next one to start from. */
 	const session = useRef<SessionRecord | null>(null);
 	const listeners = useRef(new Set<() => void>());
 	const version = useRef(0);
 	const closing = useRef(false);
-	const latest = useRef({ frames, onWalked, onClosed });
-	latest.current = { frames, onWalked, onClosed };
+	const latest = useRef({ frames, documentOf, onWalked, onClosed });
+	latest.current = { frames, documentOf, onWalked, onClosed };
 	/** Where it opened: what the glide grows out of, and shrinks back into while the same frame plays. */
 	const opening = useRef({ start, from });
 
@@ -80,7 +85,12 @@ export function ViewerPlayer({
 			walk(frame) {
 				if (!latest.current.frames.some((each) => each.name === frame)) return;
 				session.current = null;
-				set({ frame, arrival: played.current.arrival + 1, externalHref: null });
+				set({
+					frame,
+					arrival: played.current.arrival + 1,
+					src: latest.current.documentOf(frame),
+					externalHref: null,
+				});
 				latest.current.onWalked(frame);
 			},
 			dismissExternal: () => set({ externalHref: null }),
@@ -176,7 +186,7 @@ export function ViewerPlayer({
 					frames={{}}
 					controller={controller}
 					closeLabel="Back to the canvas"
-					host={<PlayedDocument iframe={iframe} controller={controller} documentOf={documentOf} />}
+					host={<PlayedDocument iframe={iframe} controller={controller} played={played} />}
 				/>
 			</div>
 		</div>
@@ -187,21 +197,21 @@ export function ViewerPlayer({
 function PlayedDocument({
 	iframe,
 	controller,
-	documentOf,
+	played,
 }: {
 	iframe: { current: HTMLIFrameElement | null };
 	controller: PlayerController;
-	documentOf: (frame: string) => string;
+	played: { current: Played };
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
-	const { frame, arrival } = controller.read();
+	const { frame, arrival, src } = played.current;
 	return (
 		<iframe
 			key={arrival}
 			ref={(element) => {
 				iframe.current = element;
 			}}
-			src={documentOf(frame)}
+			src={src}
 			title={frame}
 			sandbox="allow-scripts"
 			className="block w-full border-0 bg-white"

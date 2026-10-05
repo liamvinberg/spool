@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Page } from "playwright-core";
+import type { Page, WebSocketRoute } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { testBrowser } from "../../test-browser";
 import type { ViewerProject } from "./source";
@@ -33,13 +33,23 @@ const project: ViewerProject = {
 		],
 	},
 	frames: FRAMES,
+	live: "/api/live",
+	role: "viewer",
 };
+/** The same project as an editor sees it, with a cover a member's daemon sent for home. */
+const editor: ViewerProject = {
+	...project,
+	role: "editor",
+	covers: { home: "/covers/home" },
+	download: "https://spool.test/Spool.dmg",
+};
+const SHOW_CANVAS = { "spool-viewer:look:/devosurf/checkout": "1" };
 
 /** A frame document as the frame's own origin serves it: its name, and a link that walks. */
-function frameDocument(frame: string): string {
+function frameDocument(frame: string, version = ""): string {
 	const target = frame === "home" ? "menu" : "home";
 	return `<!doctype html><html><body style="margin:0;font:16px sans-serif">
-<h1>${frame}</h1><button id="walk">Go to ${target}</button>
+<h1>${frame}${version}</h1><button id="walk">Go to ${target}</button>
 <script>
 const FRAME = ${JSON.stringify(frame)};
 parent.postMessage({ spool: "loaded", frame: FRAME }, "*");
@@ -71,11 +81,39 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(built, { recursive: true, force: true }));
 
-async function open(path = PATH): Promise<{ page: Page; requests: { method: string; url: string }[] }> {
+interface Opened {
+	page: Page;
+	requests: { method: string; url: string }[];
+	/** The project's live address, once the canvas has connected to it. */
+	live: () => Promise<WebSocketRoute>;
+	/** Change what the canvas reads next, and what the frames' origin serves. */
+	serve: (next: { project?: ViewerProject; version?: string }) => void;
+}
+
+async function open(
+	path = PATH,
+	{
+		as = project,
+		spool = false,
+		session,
+		ready = true,
+	}: { as?: ViewerProject; spool?: boolean; session?: Record<string, string>; ready?: boolean } = {},
+): Promise<Opened> {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const requests: { method: string; url: string }[] = [];
 	page.on("request", (request) => requests.push({ method: request.method(), url: request.url() }));
+	let reading = as;
+	let version = "";
+	let socket: WebSocketRoute | undefined;
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live`, (route) => {
+		socket = route;
+		route.send(JSON.stringify({ type: "head", head: 1 }));
+	});
+	if (session !== undefined)
+		await page.addInitScript((values) => {
+			for (const [key, value] of Object.entries(values)) window.sessionStorage.setItem(key, value);
+		}, session);
 	await page.route("**/*", async (route) => {
 		const url = new URL(route.request().url());
 		if (url.origin === APP && url.pathname.startsWith("/_viewer/")) {
@@ -83,7 +121,12 @@ async function open(path = PATH): Promise<{ page: Page; requests: { method: stri
 			const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "font/woff2";
 			return route.fulfill({ body: readFileSync(file), contentType: type });
 		}
-		if (url.origin === APP && url.pathname === "/api/canvas") return route.fulfill({ json: project });
+		if (url.origin === APP && url.pathname === "/api/canvas") return route.fulfill({ json: reading });
+		if (url.origin === APP && url.pathname.startsWith("/covers/"))
+			return route.fulfill({
+				body: readFileSync(join(process.cwd(), "src/ui/agent-app-assets/claude.png")),
+				contentType: "image/png",
+			});
 		if (url.origin === APP && (url.pathname === PATH || url.pathname.startsWith(`${PATH}/`)))
 			return route.fulfill({
 				contentType: "text/html",
@@ -95,13 +138,32 @@ async function open(path = PATH): Promise<{ page: Page; requests: { method: stri
 		if (url.href.startsWith(FRAMES))
 			return route.fulfill({
 				contentType: "text/html",
-				body: frameDocument(decodeURIComponent(url.pathname.slice(new URL(FRAMES).pathname.length))),
+				body: frameDocument(decodeURIComponent(url.pathname.slice(new URL(FRAMES).pathname.length)), version),
 			});
+		// spool on this Mac, which only answers when the test says it is open
+		if (url.href === "http://127.0.0.1:7766/api/health" && spool)
+			return route.fulfill({
+				json: { name: "spool", version: "0.0.0-test" },
+				headers: { "access-control-allow-origin": APP },
+			});
+		if (url.origin === "http://127.0.0.1:7766" && spool)
+			return route.fulfill({ contentType: "text/html", body: "<h1>spool on this Mac</h1>" });
 		return route.abort();
 	});
 	await page.goto(`${APP}${path}`);
-	await page.getByRole("navigation", { name: "Pages" }).waitFor();
-	return { page, requests };
+	if (ready) await page.getByRole("navigation", { name: "Pages" }).waitFor();
+	return {
+		page,
+		requests,
+		live: async () => {
+			await expect.poll(() => socket !== undefined).toBe(true);
+			return socket as WebSocketRoute;
+		},
+		serve: (next) => {
+			if (next.project !== undefined) reading = next.project;
+			if (next.version !== undefined) version = next.version;
+		},
+	};
 }
 
 const cameraOf = (page: Page) =>
@@ -186,5 +248,114 @@ describe("the read-only canvas", () => {
 		await played.page.keyboard.press("Escape");
 		await played.page.locator("[data-viewer-player]").waitFor({ state: "detached" });
 		expect(new URL(played.page.url()).pathname).toBe(`${PATH}/shop`);
+	});
+
+	it("shows a teammate's save in place, with the changed mark and a short toast", { timeout: 60_000 }, async () => {
+		const { page, live, serve, requests } = await open();
+		const menu = page.frameLocator('iframe[title="menu"]');
+		await expect.poll(() => menu.locator("h1").textContent()).toBe("menu");
+		const socket = await live();
+
+		// ana saves menu, and a new frame beside it; home renders something menu's save changed too
+		serve({
+			version: " v2",
+			project: {
+				...project,
+				canvas: {
+					...project.canvas,
+					frames: [...project.canvas.frames, { name: "about", x: 0, y: 700, w: 800, h: 600 }],
+				},
+			},
+		});
+		socket.send(
+			JSON.stringify({
+				type: "saved",
+				head: 2,
+				by: "ana",
+				changed: ["menu", "about"],
+				touched: ["menu", "home", "about"],
+			}),
+		);
+		await expect.poll(() => menu.locator("h1").textContent()).toBe("menu v2");
+		await expect.poll(() => page.frameLocator('iframe[title="home"]').locator("h1").textContent()).toBe("home v2");
+		await page.getByRole("status").getByText("ana saved menu and about").waitFor();
+		// the mark on the frame's label and on its row in the rail: changed for menu, new for about
+		await page.locator('[data-viewer-frame="about"]').waitFor();
+		const rail = page.getByRole("navigation", { name: "Pages" });
+		expect(await rail.getByRole("button", { name: "menu frame" }).locator(".animate-unseen-in").count()).toBe(1);
+		expect(await rail.getByRole("button", { name: "about frame" }).locator(".animate-unseen-in").count()).toBe(1);
+		expect(await rail.getByRole("button", { name: "home frame" }).locator(".animate-unseen-in").count()).toBe(0);
+		// the document was made again where it stands: one of it, never a blank one in between
+		expect(await page.locator('iframe[title="menu"]').count()).toBe(1);
+		await page.getByRole("status").waitFor({ state: "detached", timeout: 10_000 });
+
+		// played, it has been seen
+		await page.locator('[data-viewer-frame="menu"]').click();
+		await page.locator("[data-viewer-player]").waitFor();
+		await page.keyboard.press("Escape");
+		await page.locator("[data-viewer-player]").waitFor({ state: "detached" });
+		expect(await rail.getByRole("button", { name: "menu frame" }).locator(".animate-unseen-in").count()).toBe(0);
+		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+	});
+
+	it("never moves anyone mid-flow: the screen on show stays, and the next one is the new version", {
+		timeout: 60_000,
+	}, async () => {
+		const { page, live, serve } = await open(`${PATH}?frame=home`);
+		const player = page.locator("[data-viewer-player]");
+		await player.waitFor();
+		const home = player.frameLocator('iframe[title="home"]');
+		await expect.poll(() => home.locator("h1").textContent()).toBe("home");
+		const socket = await live();
+
+		// ana saves home and menu, and moves home off the canvas altogether
+		serve({
+			version: " v2",
+			project: { ...project, canvas: { ...project.canvas, frames: project.canvas.frames.slice(1) } },
+		});
+		socket.send(
+			JSON.stringify({ type: "saved", head: 2, by: "ana", changed: ["home", "menu"], touched: ["home", "menu"] }),
+		);
+		await page.getByRole("status").getByText("ana saved home and menu").waitFor();
+		await page.waitForTimeout(500);
+		expect(await home.locator("h1").textContent()).toBe("home");
+		expect(new URL(page.url()).searchParams.get("frame")).toBe("home");
+
+		await home.getByRole("button", { name: "Go to menu" }).click();
+		await expect.poll(() => player.frameLocator('iframe[title="menu"]').locator("h1").textContent()).toBe("menu v2");
+	});
+
+	it("offers Open in spool to editors only, and shows covers until a frame draws", { timeout: 60_000 }, async () => {
+		const viewer = await open();
+		expect(await viewer.page.getByRole("button", { name: "Open in spool" }).count()).toBe(0);
+
+		const { page, requests } = await open(PATH, { as: editor, session: SHOW_CANVAS });
+		await expect
+			.poll(() => page.locator('[data-viewer-frame="home"] [data-viewer-cover]').getAttribute("src"))
+			.toBe("/covers/home");
+		expect(await page.getByText("view only").count()).toBe(0);
+		// spool is shut on this Mac: it says so, and the canvas stays
+		await page.getByRole("button", { name: "Open in spool" }).click();
+		await page.getByRole("status").getByText("spool isn’t open on this Mac").waitFor();
+		expect(new URL(page.url()).origin).toBe(APP);
+		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+	});
+
+	it("knocks on spool on this Mac for an editor, hands over when it answers, and offers the browser otherwise", {
+		timeout: 60_000,
+	}, async () => {
+		const running = await open(`${PATH}/shop`, { as: editor, spool: true, ready: false });
+		await running.page.waitForURL("http://127.0.0.1:7766/?open=devosurf%2Fcheckout");
+		await running.page.getByText("spool on this Mac").waitFor();
+
+		const { page, requests } = await open(PATH, { as: editor, ready: false });
+		await page.getByRole("heading", { name: "spool isn’t open on this Mac" }).waitFor();
+		expect(await page.getByRole("link", { name: "Get spool" }).getAttribute("href")).toBe(editor.download);
+		await page.getByRole("button", { name: "Look in the browser" }).click();
+		await page.getByRole("navigation", { name: "Pages" }).waitFor();
+		// this tab looks in the browser from now on
+		await page.reload();
+		await page.getByRole("navigation", { name: "Pages" }).waitFor();
+		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
 	});
 });
