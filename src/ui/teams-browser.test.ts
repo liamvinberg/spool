@@ -100,7 +100,7 @@ it("switches Home between your projects and a team, and sends a team you only wa
 		"People5",
 		"Settings",
 	]);
-	expect(await page.getByText("Tidemark has no projects yet").isVisible()).toBe(true);
+	expect(await page.getByText("Tidemark has no projects on this Mac yet").isVisible()).toBe(true);
 	expect(await page.getByRole("button", { name: "Open kaffe" }).count()).toBe(0);
 
 	await page.getByRole("button", { name: "Tidemark" }).click();
