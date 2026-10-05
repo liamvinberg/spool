@@ -347,7 +347,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** Send one path if it differs from the team's version this copy last had, unless git made it differ. */
 	const check = (path: string) => {
 		if (!travels(path) || restoring.has(path) || !present() || isPaused()) return;
-		if (guard.busy() && !gitStale) {
+		if (!ownWork && guard.busy() && !gitStale) {
 			deferred.add(path);
 			waitForGit();
 			return;

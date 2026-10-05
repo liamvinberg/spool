@@ -1,7 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, type FSWatcher, realpathSync, type Stats, statSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { watchFolder } from "./watch-tree";
 
 /**
@@ -30,9 +31,10 @@ export interface GitGuard {
 const UNTRACKED_GRACE_MS = 30_000;
 /** How long the index is let settle after it changes before it is read. */
 const SETTLE_MS = 50;
+/** The most reflog entries looked through for what git did while nobody watched: the newest are what matter. */
+const REFLOG_ENTRIES = 100;
 
-/** No repository around the local copy: nothing there is ever git's. */
-const NO_GIT: GitGuard = { busy: () => false, wrote: () => false, watching: () => {}, close: () => {} };
+const run = promisify(execFile);
 
 /**
  * Guard a local copy's `design/` against git. `onIndex` is handed the design-relative paths whose entries in the
@@ -42,74 +44,103 @@ const NO_GIT: GitGuard = { busy: () => false, wrote: () => false, watching: () =
  * `since` is when the copy last watched `design/` (ms), if it ever did. Git may have written there in between,
  * with no guard running: an old branch checked out and left while the daemon was down, or while the copy wasn't
  * followed. Until `watching()`, what any commit HEAD stood on since then held under `design/` counts as git's too.
+ *
+ * Git runs off the daemon's event loop. Until the guard has read the repository, and whenever the index changed
+ * since it last read it, it is `busy()`: what changed meanwhile waits to be looked at against the index as it is.
  */
 export function guardAgainstGit(designDir: string, onIndex: (paths: string[]) => void, since?: number): GitGuard {
-	const repo = locate(designDir);
-	if (repo === undefined) return NO_GIT;
-	const { top, index, scope, format } = repo;
-	let away = since === undefined ? new Map<string, Set<string>>() : visitedSince(top, scope, since);
-
+	/** The repository, once looked for: none means nothing here is ever git's. */
+	let repo: Repository | undefined;
+	let ready = false;
+	let away = new Map<string, Set<string>>();
 	let seen: string | undefined;
 	let tracked = new Map<string, string>();
 	/** Paths git stopped tracking, with the blob it had and when it let go of them. */
 	const untracked = new Map<string, { blob: string; at: number }>();
+	let reading: Promise<void> | undefined;
 	let settle: NodeJS.Timeout | undefined;
 	let closed = false;
+	let watcher: FSWatcher | undefined;
 
-	const busy = () => existsSync(`${index}.lock`);
+	const indexStamp = () => (repo === undefined ? "" : stamp(statSync(repo.index, { throwIfNoEntry: false })));
+	const locked = () => repo !== undefined && existsSync(`${repo.index}.lock`);
 
-	/** Read the index again if it changed since the last read, and say which design paths moved in it. */
-	const refresh = (): string[] => {
-		if (busy()) return [];
-		const signature = stamp(statSync(index, { throwIfNoEntry: false }));
-		if (signature === seen) return [];
-		const now = trackedUnder(top, scope);
-		if (now === undefined) return [];
-		seen = signature;
-		const moved: string[] = [];
-		const at = Date.now();
-		for (const [path, blob] of tracked) {
-			if (now.get(path) === blob) continue;
-			moved.push(path);
-			if (!now.has(path)) untracked.set(path, { blob, at });
-		}
-		for (const path of now.keys()) if (!tracked.has(path)) moved.push(path);
-		for (const path of now.keys()) untracked.delete(path);
-		tracked = now;
-		return moved;
-	};
-	refresh();
+	/** Read the index again, for as long as it keeps changing under the read, and say which design paths moved. */
+	const refresh = (): Promise<void> =>
+		(reading ??= (async () => {
+			while (repo !== undefined && !closed && !locked()) {
+				const signature = indexStamp();
+				if (signature === seen) return;
+				const now = await trackedUnder(repo.top, repo.scope);
+				if (now === undefined || closed) return;
+				if (indexStamp() !== signature) continue;
+				const first = seen === undefined;
+				seen = signature;
+				const moved: string[] = [];
+				const at = Date.now();
+				for (const [path, blob] of tracked) {
+					if (now.get(path) === blob) continue;
+					moved.push(path);
+					if (!now.has(path)) untracked.set(path, { blob, at });
+				}
+				for (const path of now.keys()) if (!tracked.has(path)) moved.push(path);
+				for (const path of now.keys()) untracked.delete(path);
+				tracked = now;
+				if (!first && moved.length > 0) onIndex(moved);
+			}
+		})().finally(() => {
+			reading = undefined;
+		}));
 
 	const changed = () => {
 		settle = undefined;
 		if (closed) return;
-		if (busy()) {
+		if (locked()) {
 			settle = setTimeout(changed, SETTLE_MS);
 			return;
 		}
-		const moved = refresh();
-		if (moved.length > 0) onIndex(moved);
+		void refresh();
 	};
-	let watcher: FSWatcher | undefined;
-	try {
-		watcher = watchFolder(dirname(index), {}, (_type, name) => {
-			if (name !== null && !name.startsWith(basename(index))) return;
-			settle ??= setTimeout(changed, SETTLE_MS);
-		});
-		watcher.on("error", () => watcher?.close());
-	} catch {
-		// an index folder that can't be watched is still read at every check
-	}
+
+	void (async () => {
+		repo = await locate(designDir);
+		if (repo === undefined || closed) {
+			ready = true;
+			return;
+		}
+		if (since !== undefined) away = await visitedSince(repo.top, repo.scope, since);
+		await refresh();
+		ready = true;
+		if (closed) return;
+		try {
+			const { index } = repo;
+			watcher = watchFolder(dirname(index), {}, (_type, name) => {
+				if (name !== null && !name.startsWith(basename(index))) return;
+				settle ??= setTimeout(changed, SETTLE_MS);
+			});
+			watcher.on("error", () => watcher?.close());
+		} catch {
+			// an index folder that can't be watched is still read at every check
+		}
+	})();
 
 	return {
-		busy,
+		busy() {
+			if (!ready) return true;
+			if (repo === undefined) return false;
+			if (locked()) return true;
+			// the index moved since it was read: it is read now, and what changed waits for it
+			if (indexStamp() === seen) return false;
+			void refresh();
+			return true;
+		},
 		wrote(path, bytes) {
-			refresh();
+			if (repo === undefined) return false;
 			const gone = untracked.get(path);
 			const recent = gone !== undefined && Date.now() - gone.at < UNTRACKED_GRACE_MS ? gone.blob : undefined;
 			const visited = away.get(path);
 			if (bytes === undefined) return tracked.has(path) || recent !== undefined || visited !== undefined;
-			const blob = blobId(bytes, format);
+			const blob = blobId(bytes, repo.format);
 			return tracked.get(path) === blob || recent === blob || visited?.has(blob) === true;
 		},
 		watching() {
@@ -133,8 +164,8 @@ interface Repository {
 	format: "sha1" | "sha256";
 }
 
-function locate(designDir: string): Repository | undefined {
-	const said = git(designDir, ["rev-parse", "--show-toplevel", "--git-path", "index", "--show-object-format"]);
+async function locate(designDir: string): Promise<Repository | undefined> {
+	const said = await git(designDir, ["rev-parse", "--show-toplevel", "--git-path", "index", "--show-object-format"]);
 	if (said === undefined) return undefined;
 	const [top, index, format] = said.split("\n");
 	if (top === undefined || index === undefined) return undefined;
@@ -145,8 +176,8 @@ function locate(designDir: string): Repository | undefined {
 }
 
 /** What the index tracks under `design/`: each design-relative path and its blob. */
-function trackedUnder(top: string, scope: string): Map<string, string> | undefined {
-	const listed = git(top, ["ls-files", "--stage", "-z", "--", scope]);
+async function trackedUnder(top: string, scope: string): Promise<Map<string, string> | undefined> {
+	const listed = await git(top, ["ls-files", "--stage", "-z", "--", scope]);
 	if (listed === undefined) return undefined;
 	const tracked = new Map<string, string>();
 	for (const entry of listed.split("\0")) {
@@ -161,9 +192,16 @@ function trackedUnder(top: string, scope: string): Map<string, string> | undefin
  * Every path under `design/`, with its blobs, in the commits HEAD stood on since `since` (ms): each one the reflog
  * moved it to from then on, and the one it was already on. Leaving that last one is what takes its files away.
  */
-function visitedSince(top: string, scope: string, since: number): Map<string, Set<string>> {
+async function visitedSince(top: string, scope: string, since: number): Promise<Map<string, Set<string>>> {
 	const visited = new Map<string, Set<string>>();
-	const reflog = git(top, ["log", "--walk-reflogs", "--date=unix", "--format=%H %gd", "HEAD"]);
+	const reflog = await git(top, [
+		"log",
+		"--walk-reflogs",
+		`--max-count=${REFLOG_ENTRIES}`,
+		"--date=unix",
+		"--format=%H %gd",
+		"HEAD",
+	]);
 	if (reflog === undefined) return visited;
 	const commits = new Set<string>();
 	for (const line of reflog.split("\n")) {
@@ -174,7 +212,7 @@ function visitedSince(top: string, scope: string, since: number): Map<string, Se
 		if ((Number(match[2]) + 1) * 1_000 <= since) break;
 	}
 	for (const commit of commits) {
-		const listed = git(top, ["ls-tree", "-r", "-z", commit, "--", scope]);
+		const listed = await git(top, ["ls-tree", "-r", "-z", commit, "--", scope]);
 		for (const entry of listed?.split("\0") ?? []) {
 			const match = /^\d+ blob ([0-9a-f]+)\t(.+)$/su.exec(entry);
 			if (match?.[1] === undefined || match[2] === undefined) continue;
@@ -194,17 +232,18 @@ function stamp(stats: Stats | undefined): string {
 	return stats === undefined ? "" : `${stats.ino}:${stats.size}:${stats.mtimeMs}`;
 }
 
-/** One git read, with the daemon's own git environment taken off it, as history does. */
-function git(cwd: string, args: readonly string[]): string | undefined {
+/** One git read, off the event loop, with the daemon's own git environment taken off it, as history does. */
+async function git(cwd: string, args: readonly string[]): Promise<string | undefined> {
 	try {
-		return execFileSync("git", [...args], {
+		const { stdout } = await run("git", [...args], {
 			cwd,
 			encoding: "utf8",
 			env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined },
-			stdio: ["ignore", "pipe", "ignore"],
+			maxBuffer: 256 * 1024 * 1024,
 			timeout: 15_000,
 			windowsHide: true,
-		}).trimEnd();
+		});
+		return stdout.trimEnd();
 	} catch {
 		return undefined;
 	}
