@@ -74,12 +74,12 @@ async function twoEditors() {
 	// what each daemon says, as its owner would read it
 	const said = { ana: [] as string[], ben: [] as string[] };
 	const anaDaemon = makeApp(anaState, {
-		teamSyncServices: { ...ana.services, notice: (message) => said.ana.push(message) },
-		cloudTeamsRequest: ana.request,
+		cloud: ana.cloud,
+		teamNotice: (message) => said.ana.push(message),
 	});
 	const benDaemon = makeApp(benState, {
-		teamSyncServices: { ...ben.services, notice: (message) => said.ben.push(message) },
-		cloudTeamsRequest: ben.request,
+		cloud: ben.cloud,
+		teamNotice: (message) => said.ben.push(message),
 	});
 	return {
 		cloud,
@@ -329,7 +329,7 @@ describe("local copies", () => {
 		});
 		// as a teammate's design/ that survived pulling the move commit keeps the solo one
 		writeFileSync(join(root, "design/.gitignore"), SOLO_GITIGNORE);
-		makeApp(state, { teamSyncServices: { ...ana.services, notice: () => {} }, cloudTeamsRequest: ana.request });
+		makeApp(state, { cloud: ana.cloud, teamNotice: () => {} });
 		await until(() => readFileSync(join(root, "design/.gitignore"), "utf8") === "*\n");
 		expect(status(root)).toEqual(["?? spool.json"]);
 	});
@@ -365,8 +365,8 @@ describe("New project in the app, while a team is chosen", () => {
 		const ana = cloud.machine("ana");
 		const state = join(makeTempDir(), ".spool");
 		const daemon = makeApp(state, {
-			cloudTeamsRequest: ana.request,
-			teamSyncServices: { ...ana.services, notice: () => {} },
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 		const parent = join(makeTempDir(), "devosurf");
 		const start = (name: string, path = parent) =>

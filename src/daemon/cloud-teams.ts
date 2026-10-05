@@ -2,11 +2,11 @@ import { basename } from "node:path";
 import { type Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { validator } from "hono/validator";
-import { type CloudRequestOptions, CloudSignedOut, cloudOrigin } from "../cloud-auth";
+import { CloudSignedOut, originOf } from "../cloud-auth";
 import { type CloudTeam, type CloudTeamInvite, CloudTeamRefused, cloudTeams, type TeamRole } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { createTeamProject } from "../init";
-import type { OpenSyncSocket } from "./team-sync";
+import type { DaemonCloud } from "./app";
 
 /** What Home's switcher and invite line show. */
 export type CloudTeamsState =
@@ -35,13 +35,9 @@ const roleBody = validator("json", (value, c) => {
  * The daemon's side of Home's teams: it holds this Mac's device session, so Home asks it and it asks
  * spool.page. A refusal comes back as spool.page's own reason, for Home to say in its words.
  */
-export function cloudTeamRoutes(options: {
-	spoolDir: string;
-	request?: CloudRequestOptions | undefined;
-	openSocket?: OpenSyncSocket | undefined;
-}) {
-	const origin = () => options.request?.origin ?? cloudOrigin(process.env);
-	const client = () => cloudTeams(options.spoolDir, { ...options.request, origin: origin() });
+export function cloudTeamRoutes(options: { spoolDir: string; cloud?: DaemonCloud | undefined }) {
+	const origin = () => originOf(options.cloud);
+	const client = () => cloudTeams(options.spoolDir, { ...options.cloud, origin: origin() });
 	const act = async (c: Context, action: () => Promise<unknown>) => {
 		try {
 			return c.json((await action()) ?? {});
@@ -141,8 +137,8 @@ export function cloudTeamRoutes(options: {
 						const { root } = await createTeamProject(path, name, options.spoolDir, {
 							team: c.req.param("team"),
 							origin: origin(),
-							...(options.request === undefined ? {} : { request: options.request }),
-							...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
+							...(options.cloud === undefined ? {} : { request: options.cloud }),
+							...(options.cloud?.openSocket === undefined ? {} : { openSocket: options.cloud.openSocket }),
 						});
 						return c.json({ root, name: basename(root) });
 					} catch (error) {

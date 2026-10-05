@@ -61,13 +61,14 @@ async function teamCanvas() {
 		host: "127.0.0.1",
 		port: 0,
 		uiDir: await builtUi(),
-		teamSyncServices: { ...ana.services, notice: () => {} },
+		cloud: ana.cloud,
+		teamNotice: () => {},
 	});
 	closeAfterTest(daemon);
 
 	// Ben's own connection, which hears where Ana is
 	const heard: PresenceState[] = [];
-	const token = await ben.services.vault.read();
+	const token = await ben.cloud.vault.read();
 	const socket = ben.openSocket(syncUrl(link), token, {
 		open: () => socket.send(encodeFrame({ type: "hello", protocol: PROTOCOL_VERSION, format: 2, since: 0 })),
 		message: (data) => {

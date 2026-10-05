@@ -384,7 +384,8 @@ export function fakeTeam(team = "devosurf") {
 			return {
 				request,
 				openSocket: openSocket(token),
-				services: {
+				/** The daemon's whole boundary to this fake spool.page. */
+				cloud: {
 					origin: TEAM_ORIGIN,
 					vault: { read: async () => token },
 					fetch,

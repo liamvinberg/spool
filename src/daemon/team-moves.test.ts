@@ -64,8 +64,8 @@ function daemonFor(machine: ReturnType<ReturnType<typeof fakeTeam>["machine"]>, 
 	mkdirSync(state, { recursive: true });
 	createSettingsStore(state).write("projects.location", location);
 	const daemon = makeApp(state, {
-		teamSyncServices: { ...machine.services, notice: () => {} },
-		cloudTeamsRequest: machine.request,
+		cloud: machine.cloud,
+		teamNotice: () => {},
 	});
 	const post = (path: string, body: unknown) =>
 		daemon.controlRequest(`/api/cloud${path}`, { method: "POST", headers: json, body: JSON.stringify(body) });
@@ -86,8 +86,8 @@ async function anaStarts(cloud: ReturnType<typeof fakeTeam>) {
 	git(root, "commit", "--quiet", "-m", "spool: a team project");
 	writeFrame(root, "home", "export default () => <h1>Home</h1>;\n");
 	const daemon = makeApp(state, {
-		teamSyncServices: { ...ana.services, notice: () => {} },
-		cloudTeamsRequest: ana.request,
+		cloud: ana.cloud,
+		teamNotice: () => {},
 	});
 	await until(() => cloud.file("app", "frames/home/frame.tsx")?.includes("Home") === true, 10_000);
 	return { root, state, daemon };
@@ -246,8 +246,8 @@ describe("Move to team", () => {
 		const tracked = git(project.root, "ls-files", "design").split("\n");
 		const before = git(project.root, "rev-parse", "HEAD");
 		const daemon = makeApp(project.state, {
-			teamSyncServices: { ...ana.services, notice: () => {} },
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 
 		const moved = await daemon.controlRequest("/api/cloud/teams/devosurf/move", {
@@ -302,8 +302,8 @@ describe("Move to team", () => {
 		git(project.root, "add", "-A");
 		git(project.root, "commit", "--quiet", "-m", "notes");
 		const daemon = makeApp(project.state, {
-			teamSyncServices: { ...ana.services, notice: () => {} },
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 
 		const asked = await daemon.controlRequest(`/api/cloud/move/stays?${new URLSearchParams({ path: project.root })}`);
@@ -335,8 +335,8 @@ describe("Move to team", () => {
 		const project = existingProject();
 		git(project.root, "checkout", "--quiet", "--detach");
 		const daemon = makeApp(project.state, {
-			teamSyncServices: { ...ana.services, notice: () => {} },
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 		const refused = await daemon.controlRequest("/api/cloud/teams/devosurf/move", {
 			method: "POST",
@@ -371,8 +371,8 @@ describe("Move to team", () => {
 
 		rmSync(lock);
 		makeApp(project.state, {
-			teamSyncServices: { ...ana.services, notice: () => {} },
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 		await until(() => git(project.root, "log", "-1", "--format=%s") === MOVE_MESSAGE, 10_000);
 		expect(git(project.root, "rev-parse", "HEAD~1")).toBe(before);
@@ -403,8 +403,8 @@ describe("Move to team", () => {
 		const before = git(project.root, "rev-parse", "HEAD");
 		const viewer = cloud.machine("vera", "viewer");
 		const vera = makeApp(project.state, {
-			teamSyncServices: { ...viewer.services, notice: () => {} },
-			cloudTeamsRequest: viewer.request,
+			cloud: viewer.cloud,
+			teamNotice: () => {},
 		});
 		const refused = await vera.controlRequest("/api/cloud/teams/devosurf/move", {
 			method: "POST",
@@ -432,12 +432,12 @@ describe("Move to team", () => {
 		openProject(ben, benState);
 		const benMachine = cloud.machine("ben");
 		makeApp(benState, {
-			teamSyncServices: { ...benMachine.services, notice: () => {} },
-			cloudTeamsRequest: benMachine.request,
+			cloud: benMachine.cloud,
+			teamNotice: () => {},
 		});
 		const anaDaemon = makeApp(project.state, {
-			teamSyncServices: { ...ana.services, notice: () => {} },
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 		await anaDaemon.controlRequest("/api/cloud/teams/devosurf/move", {
 			method: "POST",
@@ -473,16 +473,16 @@ describe("Move to team", () => {
 		openProject(ben, benState);
 		const benMachine = cloud.machine("ben");
 		makeApp(benState, {
-			teamSyncServices: { ...benMachine.services, notice: () => {} },
-			cloudTeamsRequest: benMachine.request,
+			cloud: benMachine.cloud,
+			teamNotice: () => {},
 		});
 		// Ben's own work, committed on his branch as his history does, before he hears of the move
 		writeFrame(ben, "bens", "export default () => <h1>Ben's</h1>;\n");
 		git(ben, "add", "design");
 		git(ben, "commit", "--quiet", "-m", "design: 1 new");
 		const anaDaemon = makeApp(project.state, {
-			teamSyncServices: { ...ana.services, notice: () => {} },
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 		await anaDaemon.controlRequest("/api/cloud/teams/devosurf/move", {
 			method: "POST",
@@ -513,8 +513,8 @@ describe("Move to team", () => {
 		const benState = join(makeTempDir(), ".spool");
 		openProject(ben, benState);
 		const anaDaemon = makeApp(project.state, {
-			teamSyncServices: { ...ana.services, notice: () => {} },
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
+			teamNotice: () => {},
 		});
 		await anaDaemon.controlRequest("/api/cloud/teams/devosurf/move", {
 			method: "POST",
@@ -528,8 +528,8 @@ describe("Move to team", () => {
 
 		const benMachine = cloud.machine("ben");
 		makeApp(benState, {
-			teamSyncServices: { ...benMachine.services, notice: () => {} },
-			cloudTeamsRequest: benMachine.request,
+			cloud: benMachine.cloud,
+			teamNotice: () => {},
 		});
 		await until(() => text(ben, "frames/home/frame.tsx")?.includes("Home") === true, 10_000);
 		await new Promise((resolve) => setTimeout(resolve, 1_000));

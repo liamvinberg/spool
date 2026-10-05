@@ -14,6 +14,11 @@ const SERVICE = "spool.device-session";
 /** Before accounts, the beta kept a publisher session here; signing out clears it too. */
 const LEGACY_SERVICE = "spool.publisher-session";
 
+/** The spool.page a request goes to: the one it names, or this machine's. */
+export function originOf(options: Pick<CloudRequestOptions, "origin"> = {}): string {
+	return options.origin ?? cloudOrigin(process.env);
+}
+
 export function cloudOrigin(env: Record<string, string | undefined>): string {
 	const raw = env.SPOOL_CLOUD_ORIGIN || CLOUD_ORIGIN;
 	let url: URL;
@@ -192,7 +197,7 @@ export async function deviceName(): Promise<string> {
  * to a loopback listener, and the code and its PKCE verifier buy a device session kept in the Keychain.
  */
 export async function login(spoolDir: string, options: AuthOptions = {}): Promise<CloudAccount> {
-	const origin = options.origin ?? cloudOrigin(process.env);
+	const origin = originOf(options);
 	const request = options.fetch ?? fetch;
 	const vault = options.vault ?? keychainVault(spoolDir, origin);
 	const device = options.device ?? (await deviceName());
@@ -312,7 +317,7 @@ export async function authorizedCloudRequest(
 ): Promise<Response> {
 	if ((!path.startsWith("/api/") && !SESSION_PATHS.includes(path)) || path.startsWith("//"))
 		throw new SpoolError("invalid Cloud API path");
-	const origin = options.origin ?? cloudOrigin(process.env);
+	const origin = originOf(options);
 	const vault = options.vault ?? keychainVault(spoolDir, origin);
 	const token = await vault.read();
 	if (!token) throw new CloudSignedOut("not signed in; run `spool login`");

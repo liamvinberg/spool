@@ -57,20 +57,20 @@ async function team() {
 		ana: {
 			root: anaRoot,
 			state: anaState,
-			services: ana.services,
+			cloud: ana.cloud,
 			request: ana.request,
 			clone: () => clone(anaState, ana, "second"),
 		},
-		ben: { root: benRoot, state: benState, services: ben.services, request: ben.request },
+		ben: { root: benRoot, state: benState, cloud: ben.cloud, request: ben.request },
 	};
 }
 
 type Machine = ReturnType<ReturnType<typeof fakeTeam>["machine"]>;
 
-const daemon = (machine: { state: string; services: Machine["services"]; request: Machine["request"] }) =>
+const daemon = (machine: { state: string; cloud: Machine["cloud"]; request: Machine["request"] }) =>
 	makeApp(machine.state, {
-		teamSyncServices: { ...machine.services, notice: () => {} },
-		cloudTeamsRequest: machine.request,
+		cloud: machine.cloud,
+		teamNotice: () => {},
 	});
 
 /** A canvas on a project: what its event stream says of presence, and its own person's moves. */

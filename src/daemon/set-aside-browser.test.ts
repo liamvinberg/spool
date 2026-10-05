@@ -50,7 +50,7 @@ async function team() {
 	const settings = createSettingsStore(benState);
 	settings.write("agent.engine", "claude", benRoot);
 	settings.write("agent.introductionSeen", true);
-	makeApp(anaState, { teamSyncServices: { ...ana.services, notice: () => {} }, cloudTeamsRequest: ana.request });
+	makeApp(anaState, { cloud: ana.cloud, teamNotice: () => {} });
 	const agent = fixtureAgentExecutor();
 	const daemon = await serveDaemon({
 		spoolDir: benState,
@@ -59,8 +59,8 @@ async function team() {
 		port: 0,
 		uiDir: await builtUi(),
 		agentExecutor: agent.executor,
-		teamSyncServices: { ...ben.services, notice: () => {} },
-		cloudTeamsRequest: ben.request,
+		cloud: ben.cloud,
+		teamNotice: () => {},
 	});
 	closeAfterTest(daemon);
 	const text = (root: string, path: string) =>

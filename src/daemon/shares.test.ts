@@ -183,7 +183,7 @@ describe("a solo project's share", () => {
 		writeDesignFile(root, "shared/scenarios/default.json", '{ "state": { "guests": 2 } }\n');
 		let done = false;
 		const daemon = makeApp(spoolDir, {
-			cloudTeamsRequest: cloud.request,
+			cloud: cloud.request,
 			agentEngines: [
 				endingEngine(() => {
 					writePageFrame(root, "checkout", "pay", frame("<Price /> to pay now", PRICED));
@@ -247,7 +247,7 @@ describe("a solo project's share", () => {
 		cloud.signOut();
 		const spoolDir = makeTempDir();
 		const { root, name } = makeProject(spoolDir);
-		const daemon = makeApp(spoolDir, { cloudTeamsRequest: cloud.request });
+		const daemon = makeApp(spoolDir, { cloud: cloud.request });
 		expect(await (await daemon.request(`/api/p/${name}/shares`)).json()).toEqual({ state: "signed-out" });
 		const refused = await daemon.request(`/api/p/${name}/shares`, {
 			method: "POST",
@@ -305,8 +305,7 @@ describe("a team project's agent finishing its turn", () => {
 		});
 		const project = "booking";
 		const daemon = makeApp(state, {
-			teamSyncServices: ana.services,
-			cloudTeamsRequest: ana.request,
+			cloud: ana.cloud,
 			agentEngines: [endingEngine(() => writePageFrame(root, "checkout", "pay", frame("Pay 640 kr")))],
 		});
 		await until(() => cloud.paths(project).includes("canvas.json"));

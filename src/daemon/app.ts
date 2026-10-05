@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import { type CloudRequestOptions, type CloudVault, cloudOrigin, keychainVault } from "../cloud-auth";
+import { type CloudRequestOptions, keychainVault, originOf } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
@@ -216,21 +216,17 @@ export interface DaemonOptions {
 	publicationServices?: PublicationJobServices;
 	/** Controlled Cloud boundary for the account at the foot of Home. */
 	cloudAccountServices?: CloudAccountServices;
-	/** Controlled Cloud boundary for Home's teams: a fake origin, fetch and Keychain. */
-	cloudTeamsRequest?: CloudRequestOptions;
+	/** The daemon's one boundary to spool.page, for teams, sync, covers and shares: a test's fake, or the Mac's own. */
+	cloud?: DaemonCloud;
+	/** Where what team sync says about a project goes, besides its open canvases: the log, unless a test listens. */
+	teamNotice?: (message: string, root?: string) => void;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
-	/** Controlled Cloud boundary for team projects' sync: a fake origin, Keychain and socket. */
-	teamSyncServices?: TeamSyncServices;
 }
 
-/** The parts of team sync a test replaces: where spool.page is, the Keychain, and the socket to it. */
-export interface TeamSyncServices {
-	origin?: string;
-	vault?: Pick<CloudVault, "read">;
-	fetch?: typeof fetch;
+/** spool.page as the daemon reaches it: where it is, the Keychain, the fetch, and the sync socket. */
+export interface DaemonCloud extends CloudRequestOptions {
 	openSocket?: OpenSyncSocket;
-	notice?: (message: string, root?: string) => void;
 }
 
 /** The player page's params (#24): Zod-validated, path-safe names only. */
@@ -461,9 +457,9 @@ export function createDaemonApp({
 	home,
 	publicationServices,
 	cloudAccountServices,
-	cloudTeamsRequest,
+	cloud,
+	teamNotice = (message) => console.error(`spool: ${message}`),
 	booth: boothSeams,
-	teamSyncServices,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -869,13 +865,13 @@ export function createDaemonApp({
 	// every team project's local copies, kept in step with their teams while the daemon runs
 	const teamSync = createTeamSync({
 		spoolDir,
-		origin: () => teamSyncServices?.origin ?? cloudOrigin(process.env),
-		vault: (origin) => teamSyncServices?.vault ?? keychainVault(spoolDir, origin),
-		...(teamSyncServices?.fetch === undefined ? {} : { fetch: teamSyncServices.fetch }),
-		...(teamSyncServices?.openSocket === undefined ? {} : { openSocket: teamSyncServices.openSocket }),
+		origin: () => originOf(cloud),
+		vault: (origin) => cloud?.vault ?? keychainVault(spoolDir, origin),
+		...(cloud?.fetch === undefined ? {} : { fetch: cloud.fetch }),
+		...(cloud?.openSocket === undefined ? {} : { openSocket: cloud.openSocket }),
 		// what didn't travel, a pause and an ending go to the log and to the project's open canvases
 		notice: (message, root) => {
-			(teamSyncServices?.notice ?? ((said: string) => console.error(`spool: ${said}`)))(message, root);
+			teamNotice(message, root);
 			if (root !== undefined) hub.publish(root, { kind: "sync", message });
 		},
 		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
@@ -885,13 +881,13 @@ export function createDaemonApp({
 	const movedIn = watchForMoves({
 		refill: async (root) => {
 			await fetchLocalCopy(root, spoolDir, {
-				origin: teamSyncServices?.origin ?? cloudOrigin(process.env),
-				...(cloudTeamsRequest === undefined ? {} : { request: cloudTeamsRequest }),
-				...(teamSyncServices?.openSocket === undefined ? {} : { openSocket: teamSyncServices.openSocket }),
+				origin: originOf(cloud),
+				...(cloud === undefined ? {} : { request: cloud }),
+				...(cloud?.openSocket === undefined ? {} : { openSocket: cloud.openSocket }),
 			});
 		},
 		arrived: () => teamSync.keeping(registeredRoots()),
-		...(teamSyncServices?.notice === undefined ? {} : { notice: teamSyncServices.notice }),
+		notice: teamNotice,
 	});
 	movedIn.keeping(registeredRoots());
 	// DEV-190: a move whose commit git didn't take is owed it; it is made now, or at the next start
@@ -899,25 +895,18 @@ export function createDaemonApp({
 	void finishMoves(registeredRoots(), { signal: moving.signal }).then((finished) => {
 		for (const { root, commit } of finished)
 			if (commit.kind === "committed")
-				(teamSyncServices?.notice ?? ((said: string) => console.error(`spool: ${said}`)))(
-					`made the move commit for ${root}: ${commit.commit.slice(0, 7)}`,
-					root,
-				);
+				teamNotice(`made the move commit for ${root}: ${commit.commit.slice(0, 7)}`, root);
 	});
 	// a team project's covers go up to spool.page, the first of each version from whichever Mac shot it
 	const teamCovers = createTeamCovers({
 		spoolDir,
-		request: () => ({
-			origin: teamSyncServices?.origin ?? cloudOrigin(process.env),
-			...(teamSyncServices?.vault === undefined ? {} : { vault: teamSyncServices.vault }),
-			...(teamSyncServices?.fetch === undefined ? {} : { fetch: teamSyncServices.fetch }),
-		}),
+		request: () => ({ ...cloud, origin: originOf(cloud) }),
 		log: (line) => console.error(`spool: ${line}`),
 	});
 	// a project's shared pages: a team's through spool.page, and a solo project's uploaded by this daemon
 	const projectShares = createProjectShares({
 		spoolDir,
-		request: cloudTeamsRequest,
+		request: cloud,
 		version,
 		resolve: resolveProject,
 		watch: (root, saved) =>
@@ -1249,7 +1238,7 @@ export function createDaemonApp({
 	/** The cloud this daemon's team projects live in, whose links knock on it. */
 	function linkOrigin(): string | undefined {
 		try {
-			return teamSyncServices?.origin ?? cloudOrigin(process.env);
+			return originOf(cloud);
 		} catch {
 			return undefined;
 		}
@@ -3511,19 +3500,15 @@ export function createDaemonApp({
 		.get("/", (c) => serveUiIndex(c))
 		.get("/p/:project", (c) => serveUiIndex(c));
 	// Outside the typed chain, which is as deep as the compiler follows; Home reads these by their exported types.
-	app.route(
-		"/api/cloud",
-		cloudTeamRoutes({ spoolDir, request: cloudTeamsRequest, openSocket: teamSyncServices?.openSocket }),
-	);
+	app.route("/api/cloud", cloudTeamRoutes({ spoolDir, cloud }));
 	app.route(
 		"/api/cloud",
 		teamProjectRoutes({
 			spoolDir,
-			request: cloudTeamsRequest,
-			openSocket: teamSyncServices?.openSocket,
+			cloud,
 			location: () =>
 				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
-			notice: teamSyncServices?.notice ?? ((message) => console.error(`spool: ${message}`)),
+			notice: teamNotice,
 			signal: moving.signal,
 		}),
 	);
@@ -3532,7 +3517,7 @@ export function createDaemonApp({
 		"/api/p",
 		setAsideRoutes({
 			spoolDir,
-			request: cloudTeamsRequest,
+			request: cloud,
 			resolve: resolveProject,
 			framesUsing: (root, path) => framesUsingIn(root).framesUsing(path),
 			changed: (root) => hub.publish(root, { kind: "set-aside" }),

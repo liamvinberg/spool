@@ -1,7 +1,7 @@
 import { basename, join } from "node:path";
 import { type Context, Hono } from "hono";
 import { validator } from "hono/validator";
-import { type CloudRequestOptions, CloudSignedOut, cloudOrigin } from "../cloud-auth";
+import { CloudSignedOut, originOf } from "../cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { getTeamProject } from "../get-it";
@@ -9,8 +9,9 @@ import { checkoutOf, cloneCommand } from "../git-remote";
 import { moveIntoTeam } from "../move-in";
 import { expandHome, realDir } from "../paths";
 import { readRegistry, teamProjects } from "../registry";
+import type { DaemonCloud } from "./app";
 import type { MoveCommit } from "./history";
-import { type OpenSyncSocket, staysOnThisMac } from "./team-sync";
+import { staysOnThisMac } from "./team-sync";
 
 /** A team project as Home's team page shows it: on this Mac already, or dimmed with "Get it". */
 export interface TeamProjectOnMac {
@@ -39,19 +40,18 @@ const COMMIT_ANSWER_MS = 5_000;
  */
 export function teamProjectRoutes(options: {
 	spoolDir: string;
-	request?: CloudRequestOptions | undefined;
-	openSocket?: OpenSyncSocket | undefined;
+	cloud?: DaemonCloud | undefined;
 	/** The machine's projects location, where "Just on this Mac" goes. */
 	location: () => string;
 	notice?: (message: string) => void;
 	/** The daemon is closing: a move commit still waiting on git stops, and is made at the next start. */
 	signal?: AbortSignal;
 }) {
-	const origin = () => options.request?.origin ?? cloudOrigin(process.env);
+	const origin = () => originOf(options.cloud);
 	const asked = () => ({
 		origin: origin(),
-		...(options.request === undefined ? {} : { request: options.request }),
-		...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
+		...(options.cloud === undefined ? {} : { request: options.cloud }),
+		...(options.cloud?.openSocket === undefined ? {} : { openSocket: options.cloud.openSocket }),
 	});
 	const refused = (c: Context, error: unknown) => {
 		if (error instanceof CloudSignedOut) return c.json({ error: "Sign in to spool.page again." }, 401);
@@ -75,7 +75,7 @@ export function teamProjectRoutes(options: {
 				const team = c.req.param("team");
 				try {
 					const { projects } = await cloudTeams(options.spoolDir, {
-						...options.request,
+						...options.cloud,
 						origin: origin(),
 					}).projects(team);
 					const held = new Map(teamProjects(options.spoolDir).map(({ link, copies }) => [link.url, copies]));

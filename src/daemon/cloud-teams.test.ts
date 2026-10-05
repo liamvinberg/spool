@@ -13,7 +13,7 @@ function harness(options: { token?: string; answer?: (request: Request) => Respo
 		version: "test",
 		controlHost: "localhost",
 		controlToken: "control-secret",
-		cloudTeamsRequest: {
+		cloud: {
 			origin: "https://cloud.test",
 			vault: {
 				read: async () => token,

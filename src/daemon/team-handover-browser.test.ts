@@ -32,8 +32,8 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 		host: "127.0.0.1",
 		port: 0,
 		uiDir: await builtUi(),
-		teamSyncServices: { ...ana.services, notice: () => {} },
-		cloudTeamsRequest: ana.request,
+		cloud: ana.cloud,
+		teamNotice: () => {},
 	});
 	closeAfterTest(daemon);
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1280, height: 800 } });

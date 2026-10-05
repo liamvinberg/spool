@@ -4,7 +4,7 @@ import { basename, join, relative, sep } from "node:path";
 import { type Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { writeAtomic } from "../atomic-write";
-import { account, type CloudRequestOptions, CloudSignedOut, cloudOrigin } from "../cloud-auth";
+import { account, type CloudRequestOptions, CloudSignedOut, originOf } from "../cloud-auth";
 import { CloudShareRefused, cloudShares, type SharePlace } from "../cloud-shares";
 import { CloudTeamRefused } from "../cloud-teams";
 import { ROOT_PAGE } from "../page-path";
@@ -50,7 +50,7 @@ export interface ProjectSharesOptions {
  */
 export function createProjectShares(options: ProjectSharesOptions) {
 	const log = options.log ?? (() => {});
-	const origin = () => options.request?.origin ?? cloudOrigin(process.env);
+	const origin = () => originOf(options.request);
 	const client = () => cloudShares(options.spoolDir, { ...options.request, origin: origin() });
 	/** One upload at a time, in the order asked. */
 	let queue: Promise<unknown> = Promise.resolve();
