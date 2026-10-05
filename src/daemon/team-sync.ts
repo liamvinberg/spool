@@ -127,6 +127,8 @@ const LIMITS: Record<Limited, string> = {
 };
 /** How long a pause lasts when spool.page can't say when its limit lifts. */
 const RETRY_LIMIT_SECONDS = 60;
+/** How long the copy's record waits for more changes before it is written: a catch-up of many files is one write. */
+const RECORD_MS = 250;
 /** How long the watcher's burst for one save is let settle before the files are read. */
 const SETTLE_MS = 50;
 /** A file this big must have been still for longer before it is read: it may be being written in many pieces. */
@@ -215,9 +217,17 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const present = () => existsSync(options.root);
 	/** The copy has looked at everything git may have done while it wasn't watching, and watches now. */
 	let watching = false;
+	/** A change to the record not written yet: a burst of files lands as one write, not one per file. */
+	let recording: NodeJS.Timeout | undefined;
 	const persist = () => {
+		if (recording !== undefined) clearTimeout(recording);
+		recording = undefined;
 		if (watching) state.watched = Date.now();
 		if (present()) writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
+	};
+	const persistSoon = () => {
+		recording ??= setTimeout(persist, RECORD_MS);
+		recording.unref?.();
 	};
 	const isIdle = () =>
 		caughtUp &&
@@ -504,14 +514,14 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			!restoring.has(path)
 		) {
 			// changed here and not sent yet: it goes up built on the version it was, and the team settles it
-			persist();
+			persistSoon();
 			return;
 		}
 		yielding.delete(path);
 		restoring.delete(path);
 		// the team's version first, so the watcher reads this write as the team's and never sends it back
 		state.files[path] = { version, hash: incoming };
-		persist();
+		persistSoon();
 		if (here === incoming) return;
 		if (bytes === undefined) {
 			rmSync(target, { force: true });
@@ -564,7 +574,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			inflight.delete(message.ref);
 			if (message.type === "saved" && typeof message.version === "number") {
 				state.files[sent.path] = { version: message.version, hash: sent.hash };
-				persist();
+				persistSoon();
 				// this copy's own save of a marked file reached the team, and is the answer to the mark
 				if (forgetMarks(designDir, { path: sent.path })) options.onMarks?.();
 				if (paused !== undefined && !isPaused()) {
@@ -710,7 +720,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (asking !== undefined) clearImmediate(asking);
 			gaps?.close();
 			// when this copy stopped watching: whatever git does from now is checked when it is followed again
-			if (watching) persist();
+			if (watching || recording !== undefined) persist();
 			guard.close();
 			if (resume !== undefined) clearTimeout(resume);
 			watch?.close();
