@@ -72,6 +72,7 @@ import {
 	renamePage,
 } from "./explorer";
 import { createFlowGraph, recordWalk } from "./flows";
+import { servedFrameCsp } from "./frame-csp";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
@@ -1251,8 +1252,9 @@ export function createDaemonApp({
 				if (!allowed) return c.text("not found", 404);
 				// A direct render URL must retain the opaque-origin law that its
 				// canvas and Play wrappers impose. This also keeps capabilities
-				// in one document unreadable to another project on the shared host.
-				if (isExecutableRenderPath(path)) c.header("content-security-policy", "sandbox allow-scripts");
+				// in one document unreadable to another project on the shared host,
+				// and every frame https-only wherever it plays (DEV-175).
+				if (isExecutableRenderPath(path)) c.header("content-security-policy", servedFrameCsp(renderOrigin));
 				await next();
 				return;
 			}

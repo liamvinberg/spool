@@ -10,6 +10,13 @@ import { writeCover } from "./thumbs";
 
 const CONTROL_HOST = "localhost";
 const CONTROL_TOKEN = "control-token-for-tests";
+/** Opaque, and https-only but for the render host itself (DEV-175). */
+const FRAME_CSP = [
+	`sandbox allow-scripts`,
+	`script-src https: data: blob: http://${RENDER_HOST} 'unsafe-inline' 'unsafe-eval'`,
+	`connect-src https: data: blob: http://${RENDER_HOST}`,
+	`img-src https: data: blob: http://${RENDER_HOST}`,
+].join("; ");
 
 function makeSecurityHarness() {
 	const spoolDir = makeTempDir();
@@ -338,7 +345,7 @@ describe("daemon authority matrix", () => {
 
 		const frame = await render(framePath);
 		expect(frame.status).toBe(200);
-		expect(frame.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
+		expect(frame.headers.get("content-security-policy")).toBe(FRAME_CSP);
 
 		const shell = await request(CONTROL_HOST, playPath);
 		const shellHtml = await shell.text();
@@ -369,7 +376,7 @@ describe("daemon authority matrix", () => {
 		const inner = await render(`${shellInner.pathname}${shellInner.search}`);
 		const innerHtml = await inner.text();
 		expect(inner.status).toBe(200);
-		expect(inner.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
+		expect(inner.headers.get("content-security-policy")).toBe(FRAME_CSP);
 		expect(innerHtml).toContain("window.__SPOOL_PLAY__");
 		expect(innerHtml).not.toContain(CONTROL_TOKEN);
 		expect(innerHtml).not.toContain(shellConfig.publicationPath);

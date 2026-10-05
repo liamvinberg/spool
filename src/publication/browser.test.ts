@@ -316,3 +316,60 @@ it("matches standalone and local-player pixels at equal viewports with fonts, im
 		await player.close();
 	}
 }, 60000);
+
+it("carries the frame policy into the exported document: https, data: and its own libraries, never plain http", async () => {
+	const arrived: string[] = [];
+	const local = createServer((req, res) => {
+		arrived.push(req.url ?? "");
+		res.setHeader("access-control-allow-origin", "*");
+		res.end("reached");
+	});
+	await new Promise<void>((resolve) => local.listen(0, "127.0.0.1", resolve));
+	onTestFinished(() => {
+		local.closeAllConnections();
+		return new Promise<void>((resolve) => local.close(() => resolve()));
+	});
+	const localAddress = local.address();
+	if (localAddress === null || typeof localAddress === "string") throw new Error("no server");
+	const localOrigin = `http://127.0.0.1:${localAddress.port}`;
+	const { root } = makeProject(join(makeTempDir(), ".spool"));
+	writeFrame(
+		root,
+		"start",
+		`import {useEffect,useState} from 'react'; import {ui} from 'spool';
+const image=(src:string)=>new Promise<string>(resolve=>{const img=new Image();img.onload=()=>resolve("loaded");img.onerror=()=>resolve("refused");img.src=src});
+export default function Start(){const [reach,setReach]=useState("pending");useEffect(()=>{void (async()=>{const local=${JSON.stringify(localOrigin)};setReach(JSON.stringify({vendored:typeof ui.copy,localFetch:await fetch(local+"/fetch").then(()=>"reached",()=>"refused"),localImage:await image(local+"/image.png"),https:await fetch("https://api.spool.test/hello").then(r=>r.text(),()=>"failed"),data:await image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")}))})()},[]);return <pre id="reach">{reach}</pre>}`,
+	);
+	const artifact = await buildWebsite({ root, entry: "start", version: "test" });
+	const site = createServer((req, res) => {
+		const path = new URL(req.url ?? "/", "http://test").pathname.slice(1) || "index.html";
+		const object = artifact.objects.get(path);
+		res.writeHead(object === undefined ? 404 : 200, { "Content-Type": object?.mediaType ?? "text/plain" });
+		res.end(object?.bytes ?? "missing");
+	});
+	await new Promise<void>((resolve) => site.listen(0, "127.0.0.1", resolve));
+	onTestFinished(() => {
+		site.closeAllConnections();
+		return new Promise<void>((resolve) => site.close(() => resolve()));
+	});
+	const siteAddress = site.address();
+	if (siteAddress === null || typeof siteAddress === "string") throw new Error("no server");
+	const browser = await testBrowser();
+	const context = await browser.newContext();
+	onTestFinished(() => context.close());
+	await context.route("https://api.spool.test/hello", (route) =>
+		route.fulfill({ body: "hello over https", headers: { "access-control-allow-origin": "*" } }),
+	);
+	const page = await context.newPage();
+	await page.goto(`http://127.0.0.1:${siteAddress.port}`);
+	const reach = page.frameLocator("#website").locator("#reach");
+	await expect.poll(() => reach.textContent(), { timeout: 15_000 }).not.toBe("pending");
+	expect(JSON.parse((await reach.textContent()) ?? "null")).toEqual({
+		vendored: "function",
+		localFetch: "refused",
+		localImage: "refused",
+		https: "hello over https",
+		data: "loaded",
+	});
+	expect(arrived).toEqual([]);
+});

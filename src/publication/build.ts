@@ -14,6 +14,7 @@ import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { parse } from "@babel/parser";
 import { realDesignDir } from "../daemon/design-path";
 import { escapeHtml } from "../daemon/document";
+import { PUBLISHED_FRAME_CSP_META } from "../daemon/frame-csp";
 import { walkNodes } from "../daemon/jsx-walk";
 import { REACT_SPECIFIERS, vendorPublicationJs, vendorReactJs } from "../daemon/vendor";
 import { type CaptureOptions, withCapturedWebsite } from "./capture";
@@ -115,7 +116,7 @@ export async function buildWebsite(options: WebsiteBuildOptions): Promise<Websit
 		const preloads = closure([entry.module, "vendor/spool.js"], resources.objects, false).filter(
 			(path) => resources.objects.get(path)?.mediaType === "application/javascript",
 		);
-		const document = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(options.entry)}</title><style>html,body,#root{height:100%}body{margin:0}</style><link rel="stylesheet" href="./${fonts}"><link rel="stylesheet" href="./${transitions}"><link rel="stylesheet" data-spool-frame-style="${escapeHtml(options.entry)}" data-spool-style-resource="${entry.stylesheet}" href="./${entry.stylesheet}">${preloads.map((path) => `<link rel="modulepreload" href="./${path}">`).join("")}</head><body><div id="root">Loading…</div><script>addEventListener("error",function(event){if(event.target && ["LINK","SCRIPT"].includes(event.target.tagName)) document.getElementById("root").textContent="A website stylesheet could not be loaded. Reload to try again."},true);addEventListener("unhandledrejection",function(){document.getElementById("root").textContent="The website could not be loaded. Reload to try again."});</script><script type="module" src="./${playerBootstrap}"></script></body></html>\n`;
+		const document = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8">${PUBLISHED_FRAME_CSP_META}<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(options.entry)}</title><style>html,body,#root{height:100%}body{margin:0}</style><link rel="stylesheet" href="./${fonts}"><link rel="stylesheet" href="./${transitions}"><link rel="stylesheet" data-spool-frame-style="${escapeHtml(options.entry)}" data-spool-style-resource="${entry.stylesheet}" href="./${entry.stylesheet}">${preloads.map((path) => `<link rel="modulepreload" href="./${path}">`).join("")}</head><body><div id="root">Loading…</div><script>addEventListener("error",function(event){if(event.target && ["LINK","SCRIPT"].includes(event.target.tagName)) document.getElementById("root").textContent="A website stylesheet could not be loaded. Reload to try again."},true);addEventListener("unhandledrejection",function(){document.getElementById("root").textContent="The website could not be loaded. Reload to try again."});</script><script type="module" src="./${playerBootstrap}"></script></body></html>\n`;
 		resources.add("player.html", document, "text/html");
 		resources.add(
 			bootstrap,

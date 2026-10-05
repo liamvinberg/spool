@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { createServer as createTlsServer } from "node:tls";
 import { type Browser, type BrowserContext, chromium, type Frame, type Page } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { builtUi, makeProject, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { logsFrame, shotFrame } from "../verify";
 
 interface HostileResult {
 	surface: "canvas" | "player" | "direct";
@@ -154,7 +156,7 @@ export default function Hostile() {
 					: window.parent === window
 						? "direct"
 						: "canvas";
-			const remote = await fetch(remoteOrigin + "/probe").then((response) => response.json());
+			const remote = await requestOutcome(remoteOrigin + "/probe");
 			setResult({
 				surface,
 				js: "executed",
@@ -233,7 +235,8 @@ async function readHostileResult(frame: Frame): Promise<HostileResult> {
 function expectAuthorityDenied(result: HostileResult, controlToken: string): void {
 	expect(result.js).toBe("executed");
 	expect(result.scenarioSeed).toBe("own");
-	expect(result.remote).toEqual({ network: "open" });
+	// a frame is https-only (DEV-175): plain http on loopback is never reached
+	expect(result.remote).toBe("blocked");
 	expect(denied(result.controlRead)).toBe(true);
 	expect(denied(result.controlWrite)).toBe(true);
 	expect(denied(result.crossProject)).toBe(true);
@@ -431,5 +434,193 @@ export default function Two() {
 		await expect.poll(() => page.locator("#count").innerText()).toBe("1");
 		await page.reload();
 		await expect.poll(() => page.locator("#count").innerText()).toBe("0");
+	});
+});
+
+/** What a frame could reach, as it reports it: each probe either got through or was refused. */
+interface Reach {
+	vendored: "loaded";
+	localFetch: string;
+	localImage: string;
+	localScript: string;
+	httpsFetch: string;
+	dataImage: string;
+}
+
+const ONE_PIXEL_PNG =
+	"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+/**
+ * A frame that reaches for plain http on loopback three ways, and for https
+ * and a `data:` image the ordinary way. It draws nothing until it knows, so a
+ * shot and a cover wait for the whole answer.
+ */
+function reachFrameSource(localOrigin: string, httpsUrl: string): string {
+	return `import { useEffect, useState } from "react";
+import { ui } from "spool";
+
+const localOrigin = ${JSON.stringify(localOrigin)};
+const httpsUrl = ${JSON.stringify(httpsUrl)};
+
+function image(src: string): Promise<string> {
+	return new Promise((resolve) => {
+		const img = new Image();
+		img.onload = () => resolve("loaded");
+		img.onerror = () => resolve("refused");
+		img.src = src;
+	});
+}
+
+async function reach() {
+	const result = {
+		vendored: typeof ui.go === "function" ? "loaded" : "missing",
+		localFetch: await fetch(localOrigin + "/fetch").then(() => "reached", () => "refused"),
+		localImage: await image(localOrigin + "/image.png"),
+		localScript: await import(/* @vite-ignore */ localOrigin + "/module.js").then(() => "reached", () => "refused"),
+		httpsFetch: await fetch(httpsUrl).then((response) => response.text(), (error) => "failed: " + String(error)),
+		dataImage: await image(${JSON.stringify(ONE_PIXEL_PNG)}),
+	};
+	console.log("reach " + JSON.stringify(result));
+	return result;
+}
+
+export default function Reach() {
+	const [result, setResult] = useState<object | null>(null);
+	useEffect(() => {
+		void reach().then(setResult);
+	}, []);
+	return result === null ? null : <pre id="reach">{JSON.stringify(result)}</pre>;
+}
+`;
+}
+
+/** A plain-http server on loopback that counts every request that ever arrives. */
+async function serveLocalHttp(): Promise<{ origin: string; arrived: string[]; close(): Promise<void> }> {
+	const arrived: string[] = [];
+	const server = createServer((request, response) => {
+		arrived.push(request.url ?? "");
+		response.setHeader("access-control-allow-origin", "*");
+		response.end("reached");
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const { port } = server.address() as { port: number };
+	return {
+		origin: `http://127.0.0.1:${port}`,
+		arrived,
+		close: () =>
+			new Promise<void>((resolve) => {
+				server.close(() => resolve());
+				server.closeAllConnections();
+			}),
+	};
+}
+
+/**
+ * An https endpoint on loopback the booth's own browser can only knock on:
+ * its certificate is nobody's, so the knock is the proof the policy let it go.
+ */
+async function serveTlsKnock(): Promise<{ url: string; knocks(): number; close(): void }> {
+	let knocks = 0;
+	const server = createTlsServer(() => {});
+	server.on("connection", () => knocks++);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const { port } = server.address() as { port: number };
+	return { url: `https://127.0.0.1:${port}/knock`, knocks: () => knocks, close: () => server.close() };
+}
+
+describe("frames are https-only", () => {
+	it("keeps the canvas, the player, spool shot and the booth off plain http, and https, data: and vendored libraries on", {
+		timeout: 180_000,
+	}, async () => {
+		const browser = await launchBrowser();
+		if (browser === undefined) return;
+		onTestFinished(() => browser.close());
+		const local = await serveLocalHttp();
+		onTestFinished(() => local.close());
+		const knock = await serveTlsKnock();
+		onTestFinished(() => knock.close());
+
+		const project = await serveProject({ uiDir: await builtUi(), booth: { systemScheme: async () => "light" } });
+		const control = { "X-Spool-Control": project.controlToken };
+		const session = await fetch(`${project.url}/api/session`, {
+			method: "PUT",
+			headers: { "content-type": "application/json", ...control },
+			body: JSON.stringify({ root: project.root, open: true }),
+		});
+		expect(session.status).toBe(204);
+
+		// the canvas and the player answer a real https request through the browser's own network
+		const httpsUrl = "https://api.spool.test/hello";
+		const expected: Reach = {
+			vendored: "loaded",
+			localFetch: "refused",
+			localImage: "refused",
+			localScript: "refused",
+			httpsFetch: "hello over https",
+			dataImage: "loaded",
+		};
+		writeFrame(project.root, "reach", reachFrameSource(local.origin, httpsUrl));
+		const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+		onTestFinished(() => context.close());
+		const answered: string[] = [];
+		await context.route(httpsUrl, (route) => {
+			answered.push(route.request().url());
+			return route.fulfill({ body: "hello over https", headers: { "access-control-allow-origin": "*" } });
+		});
+		const reachOf = async (frame: Frame) => {
+			await frame.locator("#reach").waitFor({ timeout: 30_000 });
+			return JSON.parse(await frame.locator("#reach").innerText()) as Reach;
+		};
+
+		const canvas = await context.newPage();
+		const consoleLines: string[] = [];
+		canvas.on("console", (message) => {
+			consoleLines.push(message.text());
+		});
+		await canvas.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+		expect(await reachOf(await childFrame(canvas, 'iframe[title="reach"]'))).toEqual(expected);
+		// the frame's console says what was refused, address and all
+		const refusal = `Connecting to '${local.origin}/fetch' violates the following Content Security Policy directive`;
+		expect(consoleLines.some((line) => line.startsWith(refusal))).toBe(true);
+
+		const player = await context.newPage();
+		await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=reach`);
+		expect(await reachOf(await childFrame(player, "#spool-player"))).toEqual(expected);
+		expect(answered.length).toBe(2);
+
+		// spool shot runs in the booth's browser, where https can only be knocked on
+		writeFrame(project.root, "knock", reachFrameSource(local.origin, knock.url));
+		const deps = {
+			daemonUrl: project.url,
+			controlToken: project.controlToken,
+			root: project.root,
+			name: project.name,
+		};
+		const shot = await shotFrame({ ...deps, frame: "knock", narrate: () => {} });
+		expect(shot.kind).toBe("shot");
+		const logs = await logsFrame({ ...deps, frame: "knock", narrate: () => {} });
+		if (logs.kind !== "logs") throw new Error(`logs failed: ${JSON.stringify(logs)}`);
+		const reported = logs.entries.find((entry) => entry.text.startsWith("reach "));
+		expect(JSON.parse(reported?.text.slice("reach ".length) ?? "null")).toMatchObject({
+			...expected,
+			httpsFetch: expect.stringMatching(/^failed: /),
+		});
+		expect(knock.knocks()).toBeGreaterThan(0);
+		expect(logs.entries.some((entry) => entry.text.startsWith(refusal))).toBe(true);
+
+		// and the booth photographs both under the same policy
+		await expect
+			.poll(
+				async () => {
+					const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/frames`, {
+						headers: control,
+					});
+					const { frames } = (await res.json()) as { frames: { name: string; cover?: unknown }[] };
+					return frames.filter((frame) => frame.cover !== undefined).length;
+				},
+				{ timeout: 60_000 },
+			)
+			.toBe(2);
+		expect(local.arrived).toEqual([]);
 	});
 });

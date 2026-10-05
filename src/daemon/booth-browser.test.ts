@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { createServer } from "node:http";
 import { join } from "node:path";
+import { createServer as createTlsServer } from "node:tls";
 import { chromium } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { type HeadlessShell, headlessShellArgs, launchHeadlessShell } from "../headless-shell";
@@ -86,24 +86,25 @@ async function served(booth: BoothSeams = {}) {
  * A server a frame calls as it loads, synchronously, so whatever the test does
  * on that call happens while the frame is in a tab: before it draws, before
  * the booth photographs it. The line it hands back goes at the top of a frame.
+ *
+ * Frames are https-only, and the booth's browser trusts no certificate of a
+ * test's, so the call is an https one held at its handshake: the frame names
+ * itself in the host it dials, the server holds that handshake open for as
+ * long as the test works, then refuses it, and the frame carries on.
  */
 async function midSitting(onCall: (frame: string) => void | Promise<void>) {
-	const server = createServer((request, response) => {
-		const frame = new URL(request.url ?? "/", "http://hook").searchParams.get("frame") ?? "";
-		void Promise.resolve(onCall(frame)).finally(() => {
-			response.writeHead(204, { "access-control-allow-origin": "*" });
-			response.end();
-		});
+	const server = createTlsServer({
+		SNICallback: (servername, refuse) => {
+			const frame = servername.slice(0, -".hook.localhost".length);
+			void Promise.resolve(onCall(frame)).finally(() => refuse(new Error("held, never served")));
+		},
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	onTestFinished(() => {
-		server.closeAllConnections();
-		return new Promise<void>((resolve) => server.close(() => resolve()));
-	});
+	onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
 	const address = server.address();
 	if (address === null || typeof address === "string") throw new Error("the hook has no port");
 	return (frame: string) =>
-		`const call = new XMLHttpRequest(); call.open("GET", "http://127.0.0.1:${address.port}/?frame=${frame}", false); call.send();`;
+		`const call = new XMLHttpRequest(); call.open("GET", "https://${frame}.hook.localhost:${address.port}/", false); try { call.send(); } catch {}`;
 }
 
 /** The colour at the middle of a cover, read by a browser of the test's own. */
