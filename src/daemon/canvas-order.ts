@@ -1,15 +1,8 @@
-import {
-	carriedKeys,
-	carriedPage,
-	isPageSlot,
-	isSafeName,
-	pageName,
-	pageParent,
-	pageUnder,
-	pageWithin,
-	ROOT_PAGE,
-} from "../page-path";
+import { carriedKeys, carriedPage, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../page-path";
+import { type CanvasOrder, parseOrder } from "./canvas-fields";
 import { canvasFile, readCanvasFile, writeCanvasField } from "./canvas-file";
+
+export { type CanvasOrder, parseOrder } from "./canvas-fields";
 
 /**
  * Manual order, in design/canvas.json (#228).
@@ -32,17 +25,6 @@ import { canvasFile, readCanvasFile, writeCanvasField } from "./canvas-file";
  * every flat project — so a project with no depth in it keeps the file it had,
  * byte for byte, and gains the keyed form the first time somebody nests a page.
  */
-
-export interface CanvasOrder {
-	/**
-	 * Each parent page's own pages in rail order, keyed by the parent's path,
-	 * `""` for the root parent. The root page is permanent and first (#39), so it
-	 * never appears in a list — unlike `frames`, whose root slot is a real one.
-	 */
-	pages?: Record<string, string[]>;
-	/** Each page's frames in rail order, keyed by the page's path, `""` for the root page. */
-	frames?: Record<string, string[]>;
-}
 
 /** The stored order, or nothing stored — a malformed one reads as absent. */
 export function readOrder(root: string): CanvasOrder {
@@ -72,37 +54,6 @@ export function storedOrder(order: CanvasOrder): Record<string, unknown> {
 		...(parents.length === 0 ? {} : { pages: flat ? (pages[ROOT_PAGE] ?? []) : pages }),
 		...(order.frames === undefined ? {} : { frames: order.frames }),
 	};
-}
-
-/** Strict on the way in (PUT bodies), lenient on the way out — the state file's rule. */
-export function parseOrder(value: unknown): CanvasOrder | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const record = value as Record<string, unknown>;
-	const order: CanvasOrder = {};
-	if (record.pages !== undefined) {
-		// a flat project's file says the root parent's list and nothing else, which
-		// is what it has always said: reading it is what keeps that file unchanged
-		const pages = isNameList(record.pages) ? { [ROOT_PAGE]: record.pages } : parseLists(record.pages);
-		if (pages === undefined) return undefined;
-		order.pages = pages;
-	}
-	if (record.frames !== undefined) {
-		const frames = parseLists(record.frames);
-		if (frames === undefined) return undefined;
-		order.frames = frames;
-	}
-	return order;
-}
-
-/** Lists of names keyed by the page they belong to; `""` is the root page's slot. */
-function parseLists(value: unknown): Record<string, string[]> | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const lists: Record<string, string[]> = {};
-	for (const [page, names] of Object.entries(value as Record<string, unknown>)) {
-		if (!isPageSlot(page) || !isNameList(names)) return undefined;
-		lists[page] = names;
-	}
-	return lists;
 }
 
 /**
@@ -164,8 +115,4 @@ export function withPagesDropped(order: CanvasOrder, pages: readonly string[]): 
 function isEmpty(order: CanvasOrder): boolean {
 	const listed = Object.values(order.pages ?? {}).some((names) => names.length > 0);
 	return !listed && Object.keys(order.frames ?? {}).length === 0;
-}
-
-function isNameList(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every((name) => typeof name === "string" && isSafeName(name));
 }

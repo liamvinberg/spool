@@ -24,10 +24,15 @@
  * that does not compile throws, and `describeCompileError` says why with file
  * and line; `errorDocument` is the page the canvas shows in its place.
  *
+ * What the canvas draws of the same files, its pages, frames and where each
+ * stands, is `projectDesign`: the read-only canvas in a browser draws a team
+ * project from it.
+ *
  * Importing this module runs nothing: no file is read and no dependency is
  * called until a compile is.
  */
 
+export type { CanvasOrder, CanvasPlaces, Place } from "./daemon/canvas-fields";
 export { type ClassScanner, type ScannedFile, scanCandidates } from "./daemon/class-scanner";
 export {
 	type CompiledFrameDocument,
@@ -40,6 +45,7 @@ export {
 	type FrameDocumentRequest,
 } from "./daemon/design-compile";
 export { type DesignEntry, type DesignFileKind, type DesignFiles, memoryDesignFiles } from "./daemon/design-files";
+export { type DesignFrame, type DesignProjection, projectDesign } from "./daemon/design-projection";
 export { errorDocument } from "./daemon/document";
 export { inertWebfonts, type WebfontFile, type Webfonts } from "./daemon/font-faces";
 export {

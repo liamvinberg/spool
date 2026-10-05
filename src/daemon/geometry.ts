@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DesignBoundaryError, resolveDesignPath } from "./design-path";
+import { type Geometry, parseSidecar, type Sidecar } from "./sidecar";
 
 /**
  * The frame.json sidecar (#3): geometry only, the one file hands own. Reads
@@ -13,29 +14,7 @@ import { DesignBoundaryError, resolveDesignPath } from "./design-path";
  * it means to move something and never lands a frame on top of another.
  */
 
-export interface Geometry {
-	x: number;
-	y: number;
-	w: number;
-	h: number;
-}
-
-/** A size awaiting a position: what an agent states, spool completes. */
-export interface Footprint {
-	w: number;
-	h: number;
-}
-
-/**
- * What a sidecar's bytes state. `sized` is deliberate authoring and `none` is
- * everything spool may conclude nothing from, which includes a write caught in
- * flight — the two must never collapse, because one is completed and the other
- * is left strictly alone.
- */
-export type Sidecar =
-	| { kind: "placed"; geometry: Geometry }
-	| { kind: "sized"; footprint: Footprint }
-	| { kind: "none" };
+export { type Footprint, type Geometry, isFiniteNumber, parseGeometry, parseSidecar, type Sidecar } from "./sidecar";
 
 /** The sidecar rides in the frame's folder — it moves when the folder moves (#39). */
 export function sidecarFileIn(frameDir: string): string {
@@ -52,34 +31,6 @@ export function readSidecar(file: string, designDir: string): Sidecar {
 		return { kind: "none" };
 	}
 	return parseSidecar(parsed);
-}
-
-export function parseSidecar(value: unknown): Sidecar {
-	const geometry = parseGeometry(value);
-	if (geometry !== undefined) return { kind: "placed", geometry };
-	const footprint = parseFootprint(value);
-	if (footprint !== undefined) return { kind: "sized", footprint };
-	return { kind: "none" };
-}
-
-export function parseGeometry(value: unknown): Geometry | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const { x, y, w, h } = value as Record<string, unknown>;
-	if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(w) || !isFiniteNumber(h)) return undefined;
-	return { x, y, w, h };
-}
-
-/**
- * A size and no position: two positive numbers, with neither coordinate present.
- * A stated coordinate spool cannot use is not half an instruction to improve on
- * — the sidecar reads as `none` and spool leaves the bytes where they are.
- */
-function parseFootprint(value: unknown): Footprint | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const { x, y, w, h } = value as Record<string, unknown>;
-	if (x !== undefined || y !== undefined) return undefined;
-	if (!isPositiveNumber(w) || !isPositiveNumber(h)) return undefined;
-	return { w, h };
 }
 
 /** The canonical sidecar bytes; geometry lands as integers. */
@@ -121,13 +72,4 @@ function roundedGeometry({ x, y, w, h }: Geometry): Geometry {
 
 function isAlreadyExists(error: unknown): error is NodeJS.ErrnoException {
 	return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "EEXIST";
-}
-
-export function isFiniteNumber(value: unknown): value is number {
-	return typeof value === "number" && Number.isFinite(value);
-}
-
-/** A size spool can place: zero and below are not footprints, they are mistakes. */
-function isPositiveNumber(value: unknown): value is number {
-	return isFiniteNumber(value) && value > 0;
 }

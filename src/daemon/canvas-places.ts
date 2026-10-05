@@ -1,5 +1,8 @@
-import { carriedKeys, carriedPage, isPagePath, pageParent, pageWithin } from "../page-path";
+import { carriedKeys, carriedPage, pageParent, pageWithin } from "../page-path";
+import { type CanvasPlaces, parsePlaces } from "./canvas-fields";
 import { canvasFile, readCanvasFile, writeCanvasField } from "./canvas-file";
+
+export { type CanvasPlaces, type Place, parsePlaces } from "./canvas-fields";
 
 /**
  * Where each page stands on the field holding it, in design/canvas.json (#265).
@@ -21,14 +24,6 @@ import { canvasFile, readCanvasFile, writeCanvasField } from "./canvas-file";
  * that is what a frame's sidecar stores and a page stands among frames.
  */
 
-export interface Place {
-	x: number;
-	y: number;
-}
-
-/** Every page that has a place, keyed by page path; a page path is never `""`. */
-export type CanvasPlaces = Record<string, Place>;
-
 /** The stored places, or nothing stored — a malformed key set reads as absent. */
 export function readPlaces(root: string): CanvasPlaces {
 	const file = readCanvasFile(canvasFile(root));
@@ -42,20 +37,6 @@ export function readPlaces(root: string): CanvasPlaces {
  */
 export function writePlaces(root: string, places: CanvasPlaces): void {
 	writeCanvasField(canvasFile(root), "places", Object.keys(places).length === 0 ? undefined : places);
-}
-
-/** Strict on the way in (PUT bodies), lenient on the way out — the state file's rule. */
-export function parsePlaces(value: unknown): CanvasPlaces | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const places: CanvasPlaces = {};
-	for (const [page, place] of Object.entries(value as Record<string, unknown>)) {
-		// the root page is the field itself and stands nowhere, so it is never keyed
-		if (!isPagePath(page)) return undefined;
-		const point = asPlace(place);
-		if (point === undefined) return undefined;
-		places[page] = point;
-	}
-	return places;
 }
 
 /**
@@ -83,11 +64,4 @@ export function withPagesDropped(places: CanvasPlaces, pages: readonly string[])
 	const gone = (page: string): boolean => pages.some((each) => page === each || pageWithin(each, page));
 	if (!Object.keys(places).some(gone)) return undefined;
 	return Object.fromEntries(Object.entries(places).filter(([page]) => !gone(page)));
-}
-
-function asPlace(value: unknown): Place | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const { x, y } = value as { x?: unknown; y?: unknown };
-	if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return undefined;
-	return { x: Math.round(x), y: Math.round(y) };
 }

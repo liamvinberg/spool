@@ -2,15 +2,17 @@ import { type Dirent, lstatSync, readdirSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
-import { composePage, medianFrameArea, pageBox, type Rect, type Size, shelfPages } from "../page-box";
-import { isFramePath, isSafeName, pageHolds, pageParent, pageSlot, pageUnder, ROOT_PAGE } from "../page-path";
+import type { Rect } from "../page-box";
+import { isFramePath, isSafeName, pageParent, pageUnder, ROOT_PAGE } from "../page-path";
 import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, readSidecar, writePlacement } from "./geometry";
+import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
 import { type Unseen, unseenNow } from "./seen";
 import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
 
 export { frameFolder } from "../page-path";
+export { pageObjectBox, placePages } from "./placement";
 
 /**
  * The canvas projection of design/frames (#22), grouped to any depth (#39,
@@ -138,20 +140,6 @@ interface Discovery {
 	frames: DiscoveredFrame[];
 	pages: string[];
 }
-
-/**
- * What a frame is when nobody said. A size left out is a size nobody thought
- * about, and the frame it belongs to is far more often a page than a phone: a
- * phone is a deliberate shape and states itself, while a desktop frame is what
- * you get when the thought was about the design rather than the viewport.
- * Everything here still holds the sizes it asked for; this is only the floor
- * under a frame that asked for nothing.
- */
-const DEFAULT_W = 1440;
-const DEFAULT_H = 900;
-const GUTTER = 80;
-
-const DEFAULT_FOOTPRINT: Footprint = { w: DEFAULT_W, h: DEFAULT_H };
 
 /** Where a project's frames live, or nothing when design/ cannot be read. */
 function framesDirOf(root: string): { designDir: string; framesDir: string } | undefined {
@@ -295,95 +283,6 @@ export const FRAME_BIRTH =
 /** The miss told straight: the canvas holds no such frame, anywhere. */
 export function describeMissingFrame(name: string): string {
 	return `no frame "${name}" on the canvas — ${FRAME_BIRTH}`;
-}
-
-/** One frame as the placement reads it: where it sits, and which page's field it is on. */
-type FieldFrame = Rect & { page?: string };
-
-/**
- * Where the next thing on a field goes: beside what is already there, on that
- * field's top line, never on top of anything.
- *
- * One rule, two callers. A frame born without a sidecar and a page with no
- * place are the same problem — something has arrived on a field that never said
- * where it stands — so they are answered the same way, and the field each of
- * them is measured against holds both kinds of thing.
- */
-function besideField(field: readonly Rect[]): { x: number; y: number } {
-	if (field.length === 0) return { x: GUTTER, y: GUTTER };
-	return {
-		x: Math.max(...field.map((each) => each.x + each.w)) + GUTTER,
-		y: Math.min(...field.map((each) => each.y)),
-	};
-}
-
-/** The box a page's object occupies on the field holding it (#265, `page-box.ts`). */
-export function pageObjectBox(page: string, frames: readonly FieldFrame[]): Size {
-	const under = frames.filter((frame) => pageHolds(page, pageSlot(frame)));
-	const beside = frames.filter((frame) => pageSlot(frame) === pageParent(page));
-	return pageBox(composePage(under), medianFrameArea(beside), under.length);
-}
-
-/** Every page standing on one page's field, as rects, in page order. */
-function pageObjectsOn(parent: string, pages: readonly string[], frames: readonly FieldFrame[], places: CanvasPlaces) {
-	return pages
-		.filter((page) => pageParent(page) === parent && places[page] !== undefined)
-		.map((page) => ({ page, at: places[page] as Place, box: pageObjectBox(page, frames) }));
-}
-
-/**
- * Every page's place: the stored ones kept, the missing ones completed.
- *
- * A page with no place is given one exactly the way a frame with no sidecar is,
- * because a page is a thing on that field and the two of them are arranged among
- * each other. So the field a page is placed against holds both: the frames on
- * the parent page, and the pages already standing there.
- *
- * A field with no frames of its own is the exception (`shelfPages`): its pages
- * have nothing to be arranged against, so they stand on a shelf the daemon
- * owns, and a stored place there is overwritten rather than kept. The first
- * frame written onto that field makes the shelf the arrangement, and from then
- * on it is a hand's.
- *
- * Otherwise a stored place is left alone whatever it says, including one naming
- * a page that has since gone. Order is deterministic so two daemons reading the
- * same disk fill in the same coordinates.
- */
-export function placePages(
-	pages: readonly string[],
-	frames: readonly FieldFrame[],
-	stored: CanvasPlaces,
-): { places: CanvasPlaces; filled: boolean } {
-	const places: CanvasPlaces = { ...stored };
-	const sorted = [...pages].sort((a, b) => a.localeCompare(b));
-	const parents = [...new Set(sorted.map(pageParent))].sort((a, b) => a.localeCompare(b));
-	let filled = false;
-	for (const parent of parents) {
-		const field: Rect[] = frames
-			.filter((frame) => pageSlot(frame) === parent)
-			.map(({ x, y, w, h }) => ({ x, y, w, h }));
-		const held = sorted.filter((each) => pageParent(each) === parent);
-		if (field.length === 0) {
-			const shelf = shelfPages(held.map((page) => pageObjectBox(page, frames)));
-			held.forEach((page, at) => {
-				const place = shelf[at];
-				if (place === undefined) return;
-				const was = places[page];
-				if (was?.x !== place.x || was.y !== place.y) filled = true;
-				places[page] = place;
-			});
-			continue;
-		}
-		for (const { at, box } of pageObjectsOn(parent, sorted, frames, places)) field.push({ ...at, ...box });
-		for (const page of held.filter((each) => places[each] === undefined)) {
-			const box = pageObjectBox(page, frames);
-			const at = besideField(field);
-			places[page] = at;
-			field.push({ ...at, ...box });
-			filled = true;
-		}
-	}
-	return { places, filled };
 }
 
 /**
