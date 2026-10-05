@@ -24,12 +24,20 @@ Spool runs a local daemon on your own machine. The daemon binds loopback only, a
 - **Your repository's contents are trusted.** Spool compiles and runs code from `design/`. That code is authored by you or by an agent you invited. Spool transforms it without sandboxing it, so treat `design/` the way you treat any other code in your repo.
 - **The browser is the execution boundary.** Frames run as real documents in your browser and are subject to normal browser isolation.
 
+### Team projects
+
+In a team project, "your repository's contents are trusted" extends to your team's `design/`. Teammates' saves reach your machine through Spool Cloud and are written as real files in your `design/`, where Spool compiles them and your agents read them. Trust a teammate the way you trust a collaborator who can push to your repo: joining the team is the only approval.
+
+What a sync may write is limited, and your own daemon enforces it whatever Spool Cloud sends: only Spool's own layout (`canvas.json`, `AGENTS.md`, `CLAUDE.md`, `frames/**`, `shared/**`), regular files only, never through a symlink, with no file modes, no dot-folders and nothing over 25 MB. So a sync can never write `.git/config`, `.claude/settings.json`, `.vscode/tasks.json`, `.envrc`, `.mcp.json` or anything outside `design/`. The daemon sends nothing outside that layout either: a symlink or a dot-folder in your `design/` stays on your machine. Spool Cloud refuses saves from viewers, removed members and revoked machines as they arrive, and a machine that stops being an editor stops syncing, keeping its files as an ordinary local project. Spool Cloud can read your team's source, and saves are not signed, so Spool Cloud itself is trusted not to change files within the layout.
+
 Spool does not install or execute your project's dependencies. `design/` is dependency-free by construction, so there is no `npm install` of frame code, ever.
 
 ### In scope
 
 - Anything that lets a remote or non-local party reach the daemon or read project files
 - Escaping the `design/` boundary to read or write files elsewhere in the repo or filesystem
+- A team sync writing anything outside Spool's layout, through a symlink, or a file the layout check should have refused
+- A viewer, removed member or revoked machine whose saves still reach a team project
 - Code execution triggered by opening a project, beyond the frame code the project already contains
 - Leaking file contents into responses that should not carry them
 - Anything in the published `spool.page` package that behaves differently from what the docs describe in a security-relevant way
@@ -37,7 +45,7 @@ Spool does not install or execute your project's dependencies. `design/` is depe
 ### Out of scope
 
 - Attacks that require an attacker to already have local code execution as your user
-- Frame code doing something harmful when that code is in your own repository
+- Frame code doing something harmful when that code is in your own repository, or in your team's `design/`
 - Reaching the daemon through a tunnel, VPN, or proxy that you set up yourself in front of the loopback listener
 - Denial of service against your own local daemon
 
