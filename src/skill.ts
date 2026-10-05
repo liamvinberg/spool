@@ -87,6 +87,8 @@ The rail keeps a manual order for the pages a page holds and for the frames on i
 
 The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts.css, the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Nested flex-fill chains need a definite h-full at each link; min-h-full does not give flex-1 a definite height. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
 
+Frames are https-only, on the canvas, in the player, in shot and logs and in an export alike. A frame's fetch, script and image may reach https:, data: and blob: URLs and spool's own libraries, and nothing over plain http: a call to http://localhost:3000 or to any plain-http address on your network is refused before it leaves, and the frame's console names the address it refused (\`spool logs\` shows it). Never point a frame at a local dev server. Fake the backend instead: seed what it would answer with a scenario (topic: scenarios), and write what it would do as a mock module beside the frame that reads and writes ui.state. A phone frame fills the whole screen, under the notch and the home bar, and pads itself with env(safe-area-inset-*).
+
 shared/ui components take props, never knowledge — importing "spool" there fails the compile. Flow and app state live in frames; a shared component receives values and callbacks. That boundary is what keeps shared/ui able to move into a product unchanged.
 
 Libraries: design/ never gets a package.json and nothing is npm-installed there. Imports resolve through shared/importmap.json to URLs (esm.sh works well); init pins clsx, tailwind-merge, class-variance-authority, and motion. A React-based library must not bundle its own React (esm.sh: ?external=react,react-dom) — spool pins react, react-dom, react-dom/client, react/jsx-runtime, and "spool" itself, and its pins always win, so exactly one React runs. A specifier starting with shared/ never reaches the import map — it is the project's own shared/ folder (topic: frames). Plain .css imports from any source file land in the document as-is.
@@ -160,7 +162,7 @@ default.json is what loads when nothing else is named or resumed: canvas plays, 
 
 Frames never branch on which scenario is loaded — no scenario name in ui.state, no "if demo". A scenario is felt through what it seeds: empty is an empty list in state, an error is a flag in state that the frame renders. If a frame needs a flag, that flag is state.
 
-There is no fake backend: a frame's fetch reaches the real network. What the app knows lives in ui.state, seeded by the scenario and written by the frame; a request the prototype only pretends to make is an optimistic ui.state update and nothing else.
+Spool runs no backend for a frame: its fetch reaches the real network, and only over https (topic: frames). What the app knows lives in ui.state, seeded by the scenario and written by the frame; a request the prototype only pretends to make is an optimistic ui.state update and nothing else.
 
 A scenario file that is missing or broken never blanks the frame: it plays with an empty seed and the error lands in the frame's console — \`spool logs\` shows it.`,
 

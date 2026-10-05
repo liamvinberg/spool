@@ -210,6 +210,13 @@ describe("skill", () => {
 		}
 	});
 
+	it("tells an agent frames are https-only, how to fake a backend, and that a phone frame owns its safe areas", () => {
+		const frames = skillText("frames");
+		expect(frames).toContain("Frames are https-only");
+		expect(frames).toContain("Fake the backend instead: seed what it would answer with a scenario");
+		expect(frames).toContain("pads itself with env(safe-area-inset-*)");
+	});
+
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
 		expect(() => skillText("vibes")).toThrowError(/frames, flows, sharing, scenarios, styling, shaders, verbs/);
