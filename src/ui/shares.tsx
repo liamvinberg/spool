@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { type ProjectShares, personName, type SharesSource, type ShareView, saidAgo, shareWho } from "../share-view";
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
@@ -41,11 +42,15 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 	const [open, setOpen] = useState(false);
 	const [opened, setOpened] = useState<string | null>(null);
 	const [said, setSaid] = useState<string | null>(null);
+	/** Where the popover hangs, under the button: on the page's top layer, over whatever the window holds. */
+	const [at, setAt] = useState<{ top: number; right: number } | null>(null);
 	const box = useRef<HTMLDivElement | null>(null);
+	const popover = useRef<HTMLElement | null>(null);
 	useEffect(() => {
 		if (!open) return;
 		const away = (event: PointerEvent) => {
-			if (!box.current?.contains(event.target as Node)) setOpen(false);
+			const target = event.target as Node;
+			if (!box.current?.contains(target) && !popover.current?.contains(target)) setOpen(false);
 		};
 		const key = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
 		window.addEventListener("pointerdown", away);
@@ -65,42 +70,51 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 			<button
 				type="button"
 				aria-expanded={open}
-				onClick={() => setOpen((was) => !was)}
+				onClick={(event) => {
+					const button = event.currentTarget.getBoundingClientRect();
+					setAt({ top: button.bottom + 6, right: window.innerWidth - button.right });
+					setOpen((was) => !was);
+				}}
 				className="flex h-7 items-center gap-2 rounded-sm border border-border-raised bg-bg px-2.5 text-text transition-colors hover:bg-surface type-control"
 			>
 				Shared
 				<span className="text-muted type-detail">{shares.shares.length}</span>
 			</button>
-			{open && (
-				<section
-					role="dialog"
-					aria-label="Shared"
-					className="absolute top-[36px] right-0 z-50 w-[344px] animate-menu-in overflow-hidden rounded-md border border-border-raised bg-raised py-1"
-				>
-					{shares.shares.map((share) =>
-						shares.manage && opened === share.id ? (
-							<OpenedShare
-								key={share.id}
-								share={share}
-								source={source}
-								onClose={() => setOpened(null)}
-								onChanged={changed}
-							/>
-						) : (
-							<ShareRow
-								key={share.id}
-								share={share}
-								manage={shares.manage}
-								onOpen={() => {
-									setSaid(null);
-									setOpened(share.id);
-								}}
-							/>
-						),
-					)}
-					{said !== null && <p className="px-3.5 pt-1 pb-2 text-thread type-caption">{said}</p>}
-				</section>
-			)}
+			{open &&
+				at !== null &&
+				createPortal(
+					<section
+						ref={popover}
+						role="dialog"
+						aria-label="Shared"
+						className="fixed z-50 w-[344px] animate-menu-in overflow-hidden rounded-md border border-border-raised bg-raised py-1"
+						style={at}
+					>
+						{shares.shares.map((share) =>
+							shares.manage && opened === share.id ? (
+								<OpenedShare
+									key={share.id}
+									share={share}
+									source={source}
+									onClose={() => setOpened(null)}
+									onChanged={changed}
+								/>
+							) : (
+								<ShareRow
+									key={share.id}
+									share={share}
+									manage={shares.manage}
+									onOpen={() => {
+										setSaid(null);
+										setOpened(share.id);
+									}}
+								/>
+							),
+						)}
+						{said !== null && <p className="px-3.5 pt-1 pb-2 text-thread type-caption">{said}</p>}
+					</section>,
+					document.body,
+				)}
 		</div>
 	);
 }
