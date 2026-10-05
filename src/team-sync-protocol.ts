@@ -192,10 +192,20 @@ export const SAVES_PER_MINUTE = 120;
 /** Saves one editor makes to a team project in a calendar month (UTC). */
 export const SAVES_PER_MONTH = 30_000;
 
-/** The object closed the connection: its device session was revoked or has expired. */
+/*
+ * Why the object closed a connection, every code it closes with. A daemon answers each as it says.
+ */
+
+/** A message the object can't take: outside the layout, malformed, or before `hello`. A broken peer; no retry helps. */
+export const CLOSE_INVALID = 4400;
+/** Its device session was revoked or has expired. */
 export const CLOSE_SIGNED_OUT = 4401;
-/** The object closed the connection: the account no longer edits this team project, or it is gone. */
+/** The account no longer edits this team project, or it is gone. A browser watching a canvas: no longer a member. */
 export const CLOSE_NOT_EDITOR = 4403;
+/** The daemon speaks another `PROTOCOL_VERSION`. */
+export const CLOSE_PROTOCOL = 4406;
+/** The object couldn't check who may sync just now: the daemon reconnects, as after any dropped line. */
+export const CLOSE_UNAVAILABLE = 1011;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
