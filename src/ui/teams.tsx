@@ -278,19 +278,45 @@ export function TeamNav({ team, page, onPage }: { team: CloudTeam; page: TeamPag
 	);
 }
 
-/** A team's projects. Team projects arrive with sync; until then the page says there are none. */
-export function TeamProjects({ team, notice }: { team: CloudTeam; notice?: ReactNode }) {
+/**
+ * A team's projects on this Mac: one cover per team project, however many local copies of it there are, and New
+ * project to start another in the team.
+ */
+export function TeamProjects({
+	team,
+	notice,
+	covers,
+	onNewProject,
+}: {
+	team: CloudTeam;
+	notice?: ReactNode;
+	/** The covers of the team's projects on this Mac, if there are any. */
+	covers?: ReactNode;
+	onNewProject?: (() => void) | undefined;
+}) {
 	return (
 		<>
-			<header className="pj-heading mb-[31px] flex h-[35px] items-center">
+			<header className="pj-heading mb-[31px] flex h-[35px] items-center justify-between gap-[25px]">
 				<h1 className="type-page font-medium">Projects</h1>
+				{onNewProject && (
+					<button
+						type="button"
+						className={cn("home-action home-action-primary h-[35px]", HOME_ACTION_PRIMARY)}
+						onClick={onNewProject}
+					>
+						<PlusIcon />
+						New project…
+					</button>
+				)}
 			</header>
 			{notice}
-			<EmptyState
-				className="min-h-[420px] p-[35px] [&>p]:mt-0"
-				icon={<EmptyFramesIcon />}
-				title={`${team.name} has no projects yet`}
-			/>
+			{covers ?? (
+				<EmptyState
+					className="min-h-[420px] p-[35px] [&>p]:mt-0"
+					icon={<EmptyFramesIcon />}
+					title={`${team.name} has no projects on this Mac yet`}
+				/>
+			)}
 		</>
 	);
 }
@@ -816,7 +842,16 @@ export function NewTeamDialog({
  * Home's teams, wired: reads this Mac's teams once it is signed in, keeps which one Home shows, and hands
  * Home its switcher, its invite lines and, while a team is chosen, that team's nav and page.
  */
-export function useTeamHome(account: CloudAccountState, open: (url: string) => void) {
+export function useTeamHome(
+	account: CloudAccountState,
+	open: (url: string) => void,
+	projects?: {
+		/** The covers of a team's projects on this Mac, by its address; nothing for none. */
+		covers: (address: string) => ReactNode;
+		/** New project, started in this team. */
+		onNewProject: (team: CloudTeam) => void;
+	},
+) {
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
 	const [scope, setScope] = useState<string | null>(null);
 	const [page, setPage] = useState<TeamPage>("projects");
@@ -840,7 +875,7 @@ export function useTeamHome(account: CloudAccountState, open: (url: string) => v
 		setScope(address);
 		setPage("projects");
 	};
-	if (!ready) return { switcher: undefined, notice: undefined, team: undefined };
+	if (!ready) return { switcher: undefined, notice: undefined, team: undefined, teams: new Set<string>() };
 	const switcher = (
 		<>
 			<TeamSwitcher teams={ready} current={current} onSelect={select} onNewTeam={() => setCreating(true)} />
@@ -897,9 +932,16 @@ export function useTeamHome(account: CloudAccountState, open: (url: string) => v
 							}}
 						/>
 					) : (
-						<TeamProjects team={current} notice={notice} />
+						<TeamProjects
+							team={current}
+							notice={notice}
+							covers={projects?.covers(current.address)}
+							onNewProject={projects && (() => projects.onNewProject(current))}
+						/>
 					),
 			}
 		: undefined;
-	return { switcher, notice, team };
+	/** The teams the switcher offers: their projects are on their own pages, not among this Mac's own. */
+	const editing = new Set(ready.teams.filter((team) => team.role !== "viewer").map((team) => team.address));
+	return { switcher, notice, team, teams: editing };
 }

@@ -24,7 +24,7 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { PresenceFaces } from "./canvas/presence-faces";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
-import { Home } from "./home";
+import { coversOf, Home, ProjectGrid } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
@@ -72,7 +72,9 @@ export function App() {
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
 	const [account, setAccount] = useState<CloudAccountState>({ state: "unreachable" });
 	const readAccount = useCallback(async () => setAccount(await fetchCloudAccount()), []);
-	const teamHome = useTeamHome(account, openExternally);
+	/** The team New project starts in, while the picker is open for one. */
+	const [pickingTeam, setPickingTeam] = useState<string | undefined>();
+	const [teamMenu, setTeamMenu] = useState<string | null>(null);
 	useEffect(() => {
 		void readAccount();
 	}, [readAccount]);
@@ -438,6 +440,29 @@ export function App() {
 		await refetch();
 		openTab(project);
 	});
+	const teamHome = useTeamHome(account, openExternally, {
+		covers: (address) => {
+			const covers = coversOf(
+				projects.filter((project) => !forgetting.has(project.root) && project.team?.team === address),
+			);
+			return covers.length === 0 ? undefined : (
+				<ProjectGrid
+					projects={covers}
+					menu={teamMenu}
+					onMenu={setTeamMenu}
+					onOpenProject={(project) => openTab(project)}
+					onForgetProject={(project) => void forgetProject(project)}
+					onTrashProject={setTrashRequest}
+					onRenameProject={(project) => void requestRename(project)}
+					onExportProject={transfer.exportProject}
+				/>
+			);
+		},
+		onNewProject: (team) => {
+			setPickingTeam(team.address);
+			setPicking("new");
+		},
+	});
 	const canvasActive =
 		focusedTab !== undefined &&
 		chrome !== null &&
@@ -522,9 +547,16 @@ export function App() {
 			<main className="min-h-0 flex-1">
 				{focusedTab === undefined ? (
 					<Home
-						projects={projects.filter((project) => !forgetting.has(project.root))}
+						projects={projects.filter(
+							(project) =>
+								!forgetting.has(project.root) &&
+								(project.team === undefined || !teamHome.teams.has(project.team.team)),
+						)}
 						loading={!projectsLoaded}
-						onStart={() => setPicking("new")}
+						onStart={() => {
+							setPickingTeam(undefined);
+							setPicking("new");
+						}}
 						onFolder={() => setPicking("folder")}
 						onSettings={openSettings}
 						onImport={transfer.importProject}
@@ -575,12 +607,17 @@ export function App() {
 			{picking === "new" && (
 				<ProjectPicker
 					initial="start"
-					location={location}
+					location={pickingTeam === undefined || location === undefined ? location : `${location}/${pickingTeam}`}
+					team={pickingTeam}
 					onOpened={(project) => {
 						setPicking(false);
+						setPickingTeam(undefined);
 						openTab(project);
 					}}
-					onClose={() => setPicking(false)}
+					onClose={() => {
+						setPicking(false);
+						setPickingTeam(undefined);
+					}}
 				/>
 			)}
 			{picking === "folder" && (

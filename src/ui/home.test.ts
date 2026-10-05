@@ -92,6 +92,21 @@ it("offers rename for a project that already has frames", () => {
 	expect(host.textContent).not.toContain("Rename…");
 });
 
+it("shows a team project once however many local copies this Mac holds, opening the latest", () => {
+	const callbacks = actions();
+	const team = { url: "https://spool.page/devosurf/checkout", team: "devosurf", project: "checkout" };
+	const checkout = { ...project("checkout", "2026-09-01T00:00:00Z"), team };
+	const lane = { ...project("lane", "2026-09-03T00:00:00Z"), team };
+	const solo = project("solo", "2026-09-02T00:00:00Z");
+	const host = mount(createElement(Home, { projects: [checkout, lane, solo], ...callbacks }));
+	const cards = () => Array.from(host.querySelectorAll(".pj-cover-caption strong")).map((node) => node.textContent);
+	expect(cards()).toEqual(["lane", "solo"]);
+	expect(host.querySelector(".pj-cover-button")?.textContent).toContain("2 copies on this Mac");
+	expect(host.textContent).toContain("2 projects");
+	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open lane"]')?.click());
+	expect(callbacks.onOpenProject).toHaveBeenCalledWith(lane);
+});
+
 describe("the account at the foot of Home's sidebar", () => {
 	const foot = (account: CloudAccountState) => {
 		const calls = { onSignIn: vi.fn(), onReopen: vi.fn(), onCancel: vi.fn(), onSignOut: vi.fn() };

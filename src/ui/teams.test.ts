@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { CloudTeam, TeamPeople } from "./api";
-import { NewTeamDialog, TeamPeoplePage } from "./teams";
+import { NewTeamDialog, TeamPeoplePage, TeamProjects } from "./teams";
 
 function mount(element: React.ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -134,4 +134,29 @@ it("tells someone not yet approved that creating a team isn't open", () => {
 	mount(createElement(NewTeamDialog, { allowed: false, onCreate: vi.fn(), onClose: vi.fn() }));
 	expect(document.body.textContent).toContain("Creating a team isn’t open yet.");
 	expect(document.body.querySelector("input")).toBeNull();
+});
+
+it("lists the team's projects on this Mac and starts a new one in the team", () => {
+	const devosurf: CloudTeam = {
+		id: "t",
+		address: "devosurf",
+		name: "Devosurf",
+		role: "editor",
+		logo: null,
+		people: 3,
+	};
+	const onNewProject = vi.fn();
+	const empty = mount(createElement(TeamProjects, { team: devosurf, onNewProject }));
+	expect(empty.textContent).toContain("Devosurf has no projects on this Mac yet");
+	act(() =>
+		Array.from(empty.querySelectorAll("button"))
+			.find((button) => button.textContent === "New project…")
+			?.click(),
+	);
+	expect(onNewProject).toHaveBeenCalledOnce();
+	const covers = mount(
+		createElement(TeamProjects, { team: devosurf, covers: createElement("p", null, "the covers"), onNewProject }),
+	);
+	expect(covers.textContent).toContain("the covers");
+	expect(covers.textContent).not.toContain("no projects");
 });

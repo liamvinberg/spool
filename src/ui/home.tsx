@@ -62,7 +62,7 @@ export function Home({
 	const [menuRoot, setMenuRoot] = useState<string | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const needle = query.trim().toLowerCase();
-	const visible = projects
+	const visible = coversOf(projects)
 		.filter((project) => project.name.toLowerCase().includes(needle) || project.root.toLowerCase().includes(needle))
 		.sort((a, b) =>
 			sort === "Name" ? a.name.localeCompare(b.name) : Date.parse(b.openedAt) - Date.parse(a.openedAt),
@@ -251,40 +251,101 @@ export function Home({
 								}
 							/>
 						) : (
-							<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
-								{visible.map((project) => (
-									<ProjectTile
-										key={project.root}
-										project={project}
-										menuOpen={menuRoot === project.root}
-										onToggleMenu={() => setMenuRoot(menuRoot === project.root ? null : project.root)}
-										onCloseMenu={() => setMenuRoot(null)}
-										onOpen={() => onOpenProject(project)}
-										onForget={() => onForgetProject(project)}
-										onTrash={() => onTrashProject(project)}
-										onRename={() => onRenameProject(project)}
-										onExport={() => onExportProject?.(project)}
-									/>
-								))}
-							</div>
+							<ProjectGrid
+								projects={visible}
+								menu={menuRoot}
+								onMenu={setMenuRoot}
+								onOpenProject={onOpenProject}
+								onForgetProject={onForgetProject}
+								onTrashProject={onTrashProject}
+								onRenameProject={onRenameProject}
+								{...(onExportProject === undefined ? {} : { onExportProject })}
+							/>
 						)}
 					</main>
 				)}
 			</div>
-			{menuRoot !== null && (
+		</div>
+	);
+}
+
+/** A cover on Home: a project, or a team project shown once however many local copies of it this Mac holds. */
+export interface ProjectCover extends ProjectCard {
+	/** How many local copies of the team project the cover stands for; the cover is the latest opened. */
+	copies: number;
+}
+
+/** One cover per solo project and per team project: a team project's local copies share one. */
+export function coversOf(projects: readonly ProjectCard[]): ProjectCover[] {
+	const covers: ProjectCover[] = [];
+	const teamCovers = new Map<string, ProjectCover>();
+	for (const project of [...projects].sort((a, b) => Date.parse(b.openedAt) - Date.parse(a.openedAt))) {
+		const shared = project.team === undefined ? undefined : teamCovers.get(project.team.url);
+		if (shared !== undefined) {
+			shared.copies += 1;
+			continue;
+		}
+		const cover = { ...project, copies: 1 };
+		if (project.team !== undefined) teamCovers.set(project.team.url, cover);
+		covers.push(cover);
+	}
+	return covers;
+}
+
+/** The covers, three across, each with its menu: `menu` is the root whose menu is open. */
+export function ProjectGrid({
+	projects,
+	menu,
+	onMenu,
+	onOpenProject,
+	onForgetProject,
+	onTrashProject,
+	onRenameProject,
+	onExportProject,
+}: {
+	projects: readonly ProjectCover[];
+	menu: string | null;
+	onMenu: (root: string | null) => void;
+	onOpenProject: (project: { root: string; name: string }) => void;
+	onForgetProject: (project: { root: string; name: string }) => void;
+	onTrashProject: (project: { root: string; name: string }) => void;
+	onRenameProject: (project: { root: string; name: string }) => void;
+	onExportProject?: (project: ProjectCard) => void;
+}) {
+	return (
+		<>
+			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
+				{projects.map(({ copies, ...project }) => (
+					<ProjectTile
+						key={project.root}
+						project={project}
+						copies={copies}
+						menuOpen={menu === project.root}
+						onToggleMenu={() => onMenu(menu === project.root ? null : project.root)}
+						onCloseMenu={() => onMenu(null)}
+						onOpen={() => onOpenProject(project)}
+						onForget={() => onForgetProject(project)}
+						onTrash={() => onTrashProject(project)}
+						onRename={() => onRenameProject(project)}
+						onExport={() => onExportProject?.(project)}
+					/>
+				))}
+			</div>
+			{menu !== null && (
 				<button
 					type="button"
 					className="fixed inset-0 z-10 cursor-default"
 					aria-label="Close menu"
-					onClick={() => setMenuRoot(null)}
+					onClick={() => onMenu(null)}
 				/>
 			)}
-		</div>
+		</>
 	);
 }
 
 function ProjectTile({
 	project,
+	copies,
 	menuOpen,
 	onToggleMenu,
 	onCloseMenu,
@@ -295,6 +356,7 @@ function ProjectTile({
 	onExport,
 }: {
 	project: ProjectCard;
+	copies: number;
 	menuOpen: boolean;
 	onToggleMenu: () => void;
 	onCloseMenu: () => void;
@@ -342,6 +404,7 @@ function ProjectTile({
 				</div>
 				<span className="pj-opened-time mt-[7px] block text-muted type-detail">
 					{relativeTime(project.openedAt)}
+					{copies > 1 && ` · ${copies} copies on this Mac`}
 				</span>
 			</button>
 			<button
