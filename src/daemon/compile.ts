@@ -184,6 +184,17 @@ const DEFAULT_LOADERS: Record<string, Loader> = {
 	".txt": "text",
 };
 
+/**
+ * Core's own TypeScript settings for every frame: esbuild's defaults, which is
+ * what a frame compiled to with no tsconfig.json anywhere above it. Esbuild
+ * otherwise obeys the nearest tsconfig.json above each file, inside design/ or
+ * out of it, and a repo's own settings (`verbatimModuleSyntax`, decorators,
+ * `paths`) changed what its frames compiled to. The cloud is handed design/
+ * alone, so a frame compiles to the same bytes there only if nothing outside
+ * design/ has a say.
+ */
+const PINNED_TSCONFIG = { compilerOptions: {} };
+
 /** The loader esbuild would choose for a path: its longest known extension. */
 function loaderOf(path: string, loaders: Readonly<Record<string, Loader>>): Loader | undefined {
 	const name = basename(path);
@@ -219,6 +230,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		jsxImportSource: options.publication === true ? "react" : "spool",
 		...(options.publication === true ? { minify: true, legalComments: "none" as const } : {}),
 		loader,
+		tsconfigRaw: PINNED_TSCONFIG,
 		// the order the shared/ plugin answers in too: one list, so the two never drift
 		resolveExtensions: [...RESOLVE_EXTENSIONS],
 		packages: "external",

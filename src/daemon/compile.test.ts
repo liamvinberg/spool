@@ -1,10 +1,12 @@
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { initProject } from "../init";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { buildDesignEntry, createFrameCompiler, cssSources, describeCompileError, hashInputs } from "./compile";
 import { realDesignDir } from "./design-path";
 import { createDesignReads } from "./design-reads";
+import { buildPublicationPlayer } from "./play";
 import type { Webfonts } from "./webfonts";
 
 describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
@@ -172,6 +174,64 @@ describe("design-relative shared/ imports", () => {
 		expect(shared.bootJs).toBe(relative.bootJs);
 		expect(shared.bundledCss).toBe(relative.bundledCss);
 		expect([...shared.sourceFiles].sort()).toEqual([...relative.sourceFiles].sort());
+	});
+});
+
+/**
+ * Frames compile with core's own TypeScript settings. A project's own
+ * tsconfig.json above design/, which esbuild would otherwise find and obey,
+ * changes nothing a frame compiles to: the cloud is handed design/ alone and
+ * must compile the same bytes the canvas does.
+ */
+describe("a tsconfig.json above design/", () => {
+	const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
+	const hostile = JSON.stringify({
+		compilerOptions: {
+			verbatimModuleSyntax: true,
+			experimentalDecorators: true,
+			useDefineForClassFields: false,
+			jsx: "react",
+			jsxFactory: "h",
+			baseUrl: ".",
+			paths: { "./shape": ["./elsewhere"] },
+		},
+	});
+
+	async function compiled(root: string): Promise<{ document: string; publication: string }> {
+		const doc = await createFrameCompiler("0.0.0-test").getDocument(root, "tsconfig", authority);
+		if (doc.kind !== "ok") throw new Error(doc.kind === "error" ? doc.message : doc.message);
+		const { bundle } = await buildPublicationPlayer(realDesignDir(root), [{ name: "tsconfig" }], "0.0.0-test");
+		return { document: doc.document, publication: [...bundle.chunks.values()].join("\n") };
+	}
+
+	it("leaves the frame document and the publication compile unchanged", async () => {
+		// the project one folder down, so the folder above it is the test's own
+		const outer = makeTempDir();
+		mkdirSync(join(outer, "repo"));
+		const { root } = initProject(join(outer, "repo"), join(outer, ".spool"));
+		writeDesignFile(
+			root,
+			"frames/tsconfig/shape.ts",
+			"export type Shape = { side: number };\nexport const side = 2;\n",
+		);
+		writeFrame(
+			root,
+			"tsconfig",
+			[
+				'import { Shape, side } from "./shape";',
+				"function logged(_value: unknown, _context?: unknown) {}",
+				"class Square { area = side * side; @logged grow(by: number) { this.area *= by; } }",
+				"const shape: Shape = { side };",
+				"export default function Frame() { return <p>{new Square().area + shape.side}</p>; }",
+				"",
+			].join("\n"),
+		);
+		const before = await compiled(root);
+
+		writeFileSync(join(root, "tsconfig.json"), hostile);
+		writeFileSync(join(outer, "tsconfig.json"), hostile);
+
+		expect(await compiled(root)).toEqual(before);
 	});
 });
 
