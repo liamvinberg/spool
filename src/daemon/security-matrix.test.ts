@@ -176,6 +176,17 @@ describe("daemon authority matrix", () => {
 			expect(await response.json()).toEqual({ name: "spool", version: "0.0.0-test" });
 		});
 
+		// a team project's link at spool.page knocks the same way before it hands over to this Mac
+		it.each(["https://spool.page", "https://beta.spool.page"])(
+			"lets the cloud (%s) read a trimmed health",
+			async (origin) => {
+				const response = await health(origin);
+
+				expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+				expect(await response.json()).toEqual({ name: "spool", version: "0.0.0-test" });
+			},
+		);
+
 		// so a locally served copy of the door can read health while it is being
 		// worked on. Safe by construction: anything already on loopback could ask
 		// directly, and no public site can ever carry a loopback origin.
@@ -195,6 +206,9 @@ describe("daemon authority matrix", () => {
 				"http://local.spool.page",
 				"https://local.spool.page.evil.example",
 				"https://notlocal.spool.page",
+				"http://spool.page",
+				"https://evil.spool.page",
+				"https://spool.page.evil.example",
 				"http://localhost.evil.example",
 				"null",
 			]) {

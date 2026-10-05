@@ -19,6 +19,15 @@ export const DOOR_HOST = "local.spool.page";
 export const DOOR_ORIGIN = `https://${DOOR_HOST}`;
 
 /**
+ * spool.page, whose team project links knock the same way before handing over:
+ * `spool.page/<team>/<project>` opens the project in spool on this Mac when it
+ * answers, and in the browser otherwise. The daemon also lets the cloud it
+ * signs in to read health, which is spool.page itself unless a test or the beta
+ * says another.
+ */
+export const SPOOL_PAGE_ORIGIN = "https://spool.page";
+
+/**
  * How to say "this daemon" to the door, or nothing if it cannot be said.
  *
  * The page has no port field, on purpose — a page that lets you type a port is a

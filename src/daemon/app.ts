@@ -13,7 +13,7 @@ import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../atta
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
 import { type CloudRequestOptions, type CloudVault, cloudOrigin, keychainVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
-import { DOOR_ORIGIN } from "../door";
+import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
@@ -1208,9 +1208,20 @@ export function createDaemonApp({
 	 * echoing that back would hand the header to every sandboxed frame on the
 	 * machine — the exact opaque-origin law the rest of this file exists to keep.
 	 */
+	/** The cloud this daemon's team projects live in, whose links knock on it. */
+	function linkOrigin(): string | undefined {
+		try {
+			return teamSyncServices?.origin ?? cloudOrigin(process.env);
+		} catch {
+			return undefined;
+		}
+	}
+
 	function healthReaderOrigin(origin: string | undefined): string | undefined {
 		if (origin === undefined) return undefined;
 		if (origin === DOOR_ORIGIN) return DOOR_ORIGIN;
+		// a team project's link at spool.page knocks before it hands over to this Mac
+		if (origin === SPOOL_PAGE_ORIGIN || origin === linkOrigin()) return origin;
 		let url: URL;
 		try {
 			url = new URL(origin);
