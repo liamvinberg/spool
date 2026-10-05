@@ -3,9 +3,10 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
-import { isTeamProject, PROJECT_LINK } from "../team-project";
+import { PROJECT_LINK } from "../team-project";
 import { readCanvasFields } from "./canvas-file";
 import { realDesignDir } from "./design-path";
+import { followedLink } from "./team-sync";
 
 /**
  * History (#78, #157): the git record of `design/` the daemon keeps by
@@ -68,11 +69,13 @@ const GIT_TIMEOUT_MS = 15_000;
  * reads the same way, because every one of them is spool being unable to say
  * yes.
  *
- * A team project never keeps history, whatever its canvas.json says: its
- * `design/` is out of git, and the team's history is Spool Cloud's.
+ * A team project's local copy never keeps history, whatever its canvas.json
+ * says, on any branch: its `design/` is out of git, and the team's history is
+ * Spool Cloud's. A branch from before the move has no `spool.json` and still
+ * tracks `design/`, and it is a local copy there all the same.
  */
 export function historyEnabled(root: string): boolean {
-	return !isTeamProject(root) && readCanvasFields(root).history === true;
+	return followedLink(root) === undefined && readCanvasFields(root).history === true;
 }
 
 /** What git's name-status said happened to one path in a batch. */

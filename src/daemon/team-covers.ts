@@ -1,6 +1,5 @@
 import { authorizedCloudRequest, type CloudRequestOptions, CloudSignedOut } from "../cloud-auth";
-import { localCopyOf } from "../team-project";
-import { hasEnded } from "./team-sync";
+import { followedLink } from "./team-sync";
 
 /**
  * A team project's covers in Spool Cloud, which never photographs a frame itself: each member's daemon sends
@@ -32,10 +31,10 @@ export function createTeamCovers({ spoolDir, request, log = () => {} }: TeamCove
 	let queue: Promise<void> = Promise.resolve();
 
 	async function send(root: string, frame: string, source: string, bytes: Uint8Array): Promise<void> {
-		const link = localCopyOf(root);
+		const link = followedLink(root);
 		const options = request();
 		// a solo project's covers stay here, and so do an ended copy's and those of a team on another cloud
-		if (link === undefined || hasEnded(root) || link.origin !== options.origin) return;
+		if (link === undefined || link.origin !== options.origin) return;
 		const path = coverPath(link.team, link.project, source);
 		try {
 			const asked = await authorizedCloudRequest(spoolDir, path, { method: "HEAD" }, options);

@@ -1,8 +1,9 @@
 import { realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { followedLink } from "./daemon/team-sync";
 import { type MachineProjectRemoval, mutateMachineState } from "./machine-state";
 import { type Registry, type RegistryProject, readMachineRegistry } from "./machine-state-files";
-import { localCopyOf, type ProjectLink } from "./team-project";
+import type { ProjectLink } from "./team-project";
 
 export type { Registry, RegistryProject };
 
@@ -76,10 +77,10 @@ export interface TeamProjectCopies {
 }
 
 /**
- * The machine's team projects, keyed by team and name (the link a local copy's `spool.json` holds). A checkout and
+ * The machine's team projects, keyed by team and name (the link a local copy is followed by). A checkout and
  * each of its worktrees is a local copy of one team project; each is registered by its own root, and forgetting one
- * forgets that path only. Read from each root's `spool.json` rather than remembered, so a pull that brings one in
- * or a branch without one is seen as it is.
+ * forgets that path only. Read from each root rather than remembered, so a pull that brings a `spool.json` in is seen
+ * as it is. A copy whose project ended here is none: its team project is one to get again.
  */
 export function teamProjects(spoolDir: string): TeamProjectCopies[] {
 	const projects = new Map<string, TeamProjectCopies>();
@@ -87,7 +88,7 @@ export function teamProjects(spoolDir: string): TeamProjectCopies[] {
 		(a, b) => Date.parse(b.openedAt) - Date.parse(a.openedAt),
 	);
 	for (const { root } of registered) {
-		const link = localCopyOf(root);
+		const link = followedLink(root);
 		if (link === undefined) continue;
 		const known = projects.get(link.url);
 		if (known === undefined) projects.set(link.url, { link, copies: [root] });

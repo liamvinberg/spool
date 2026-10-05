@@ -6,7 +6,7 @@ import { writeAtomic } from "../atomic-write";
 import { CloudSignedOut, type CloudVault } from "../cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
-import { isTeamProject, type ProjectLink, readProjectLink, TEAM_GITIGNORE } from "../team-project";
+import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
 import {
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
@@ -171,7 +171,8 @@ export function syncUrl(link: ProjectLink): string {
 function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const notice = options.notice ?? ((message: string) => console.error(`spool: ${message}`));
 	const openSocket = options.openSocket ?? openWebSocket;
-	const link = options.moving ?? readProjectLink(options.root);
+	const link = options.moving ?? followedLink(options.root);
+	if (link === undefined) throw new SpoolError(`${options.root} is not a local copy of a team project`);
 	if (link.origin !== options.origin)
 		throw new SpoolError(
 			`${options.root}/spool.json names ${link.origin}, but this machine signs in to ${options.origin}; it is not synced`,
@@ -822,7 +823,7 @@ export function createTeamSync(deps: {
 		keeping(roots: readonly string[]): void {
 			if (closed) return;
 			const wanted = roots.filter(
-				(root) => isTeamProject(root) && existsSync(join(root, "design", "canvas.json")) && !hasEnded(root),
+				(root) => followedLink(root) !== undefined && existsSync(join(root, "design", "canvas.json")),
 			);
 			for (const [root, copy] of copies) {
 				if (wanted.includes(root)) continue;
@@ -834,7 +835,8 @@ export function createTeamSync(deps: {
 				try {
 					const origin = deps.origin();
 					const vault = deps.vault(origin);
-					const link = readProjectLink(root);
+					const link = followedLink(root);
+					if (link === undefined) continue;
 					copies.set(
 						root,
 						followLocalCopy({
@@ -893,12 +895,26 @@ export function endLocalCopy(root: string, link: ProjectLink): void {
 
 /** Whether a local copy's team project ended for this machine. */
 export function hasEnded(root: string): boolean {
+	return copyRecord(root)?.ended === true;
+}
+
+/**
+ * The team project a root is a local copy of, for as long as it is one: the link its `spool.json` holds, or, while a
+ * branch with no `spool.json` is checked out, the link its copy was followed by. A copy stays one whatever branch is
+ * out: it keeps syncing, and git keeps no history of it. Nothing for a solo project, or a copy whose project ended.
+ */
+export function followedLink(root: string): ProjectLink | undefined {
+	const record = copyRecord(root);
+	if (record?.ended === true) return undefined;
+	return localCopyOf(root) ?? parseProjectLink(record?.project);
+}
+
+/** What a local copy's record in `design/.spool` says, unchecked, if it has one. */
+function copyRecord(root: string): Partial<CopyState> | undefined {
 	try {
-		return (
-			(JSON.parse(readFileSync(join(root, "design", ".spool", "sync.json"), "utf8")) as CopyState).ended === true
-		);
+		return JSON.parse(readFileSync(join(root, "design", ".spool", "sync.json"), "utf8")) as Partial<CopyState>;
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 

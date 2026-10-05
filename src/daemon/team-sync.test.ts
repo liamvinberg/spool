@@ -20,6 +20,7 @@ import { removeProject } from "../remove";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
+import { historyEnabled } from "./history";
 import { watchFolder } from "./watch-tree";
 
 /**
@@ -767,10 +768,12 @@ describe("the git guard", () => {
 		await until(() => read(ana.root, "frames/home/frame.tsx").toString() === "ben's home\n");
 	});
 
-	it("sends nothing git did while a pre-team branch kept the copy from syncing, and puts the team's version back", async () => {
+	it("keeps syncing while a pre-team branch is out, keeps no history there, and sends nothing git did", async () => {
 		const { cloud, ana, ben } = await twoEditors();
 		writeFrame(ana.root, "home", "team's home\n");
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		writeDesignFile(ana.root, "canvas.json", '{ "history": true }\n');
+		await until(() => read(ben.root, "canvas.json").toString().includes("history"));
 		git(ben.root, "add", "spool.json");
 		git(ben.root, "commit", "--quiet", "-m", "spool.json");
 		// a branch from before the move: it tracks some of design/ and has no spool.json
@@ -781,20 +784,20 @@ describe("the git guard", () => {
 
 		git(ben.root, "checkout", "--quiet", "old");
 		await until(() => read(ben.root, "frames/home/frame.tsx").toString() === "team's home\n");
-		// with no spool.json, the next registry change drops the copy: nothing syncs while the branch is out
+		// with no spool.json, the copy is still followed: a teammate's save arrives, and git is no place for it
 		registryChanges();
-		await new Promise((wake) => setTimeout(wake, 1_000));
-		writeFrame(ana.root, "while", "while ben was on old\n");
-		await until(() => cloud.file("checkout", "frames/while/frame.tsx") !== undefined);
+		expect(historyEnabled(ben.root)).toBe(false);
 		await new Promise((wake) => setTimeout(wake, 500));
-		expect(existsSync(join(ben.root, "design/frames/while"))).toBe(false);
-
-		// back on main, git takes away what the old branch tracked, and the copy is followed again
-		git(ben.root, "checkout", "--quiet", "--force", "main");
-		expect(existsSync(join(ben.root, "design/frames/home/frame.tsx"))).toBe(false);
-		registryChanges();
-
+		writeFrame(ana.root, "while", "while ben was on old\n");
 		await until(() => same(ana.root, ben.root, "frames/while/frame.tsx"), 10_000);
+		const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
+			projects: { root: string; team?: unknown }[];
+		};
+		expect(listed.projects.find((project) => project.root === ben.root)?.team).toBeDefined();
+
+		// back on main, git takes away what the old branch tracked, and the team's version comes back
+		git(ben.root, "checkout", "--quiet", "--force", "main");
+		registryChanges();
 		await until(() => existsSync(join(ben.root, "design/frames/home/frame.tsx")), 10_000);
 		expect(read(ben.root, "frames/home/frame.tsx").toString()).toBe("team's home\n");
 		await new Promise((wake) => setTimeout(wake, 500));

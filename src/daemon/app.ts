@@ -21,7 +21,6 @@ import { fetchLocalCopy, openProject } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
-import { isTeamProject, localCopyOf } from "../team-project";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
@@ -133,7 +132,7 @@ import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
-import { createTeamSync, type OpenSyncSocket } from "./team-sync";
+import { createTeamSync, followedLink, type OpenSyncSocket } from "./team-sync";
 import {
 	coverSize,
 	isCoverHash,
@@ -1840,7 +1839,7 @@ export function createDaemonApp({
 			// walk of a project's design folder — so they run together (#13)
 			const projects: ProjectCard[] = await Promise.all(
 				readRegistry(spoolDir).projects.map(async (project) => {
-					const link = localCopyOf(project.root);
+					const link = followedLink(project.root);
 					return {
 						name: basename(project.root),
 						root: project.root,
@@ -3314,7 +3313,7 @@ export function createDaemonApp({
 					sittings.view(view, undefined);
 					letPlayerCool(project.root);
 				});
-				const team = isTeamProject(project.root);
+				const team = followedLink(project.root) !== undefined;
 				await stream.writeSSE({
 					event: "hello",
 					data: JSON.stringify({ project: name, view, ...(team ? { team } : {}) }),
