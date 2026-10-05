@@ -2,8 +2,8 @@ import { readFileSync, realpathSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { Scanner } from "@tailwindcss/oxide";
 import { compile } from "tailwindcss";
+import { type ClassScanner, scanCandidates } from "./class-scanner";
 import { DesignBoundaryError, resolveDesignPath } from "./design-path";
 import { contentDigest } from "./design-reads";
 import { spoolEntry } from "./spool-entry";
@@ -128,21 +128,24 @@ export function designStylesheets(designDir: string): DesignStylesheets {
  * The daemon never calls this on its event loop: it calls
  * compileFrameCssOnWorker, and a stylesheet worker runs this.
  */
-export async function compileFrameCssHere(designDir: string, sources: CssSource[]): Promise<FrameCss> {
+export async function compileFrameCssHere(
+	designDir: string,
+	sources: CssSource[],
+	scan: ClassScanner = scanCandidates,
+): Promise<FrameCss> {
 	const sheets = designStylesheets(designDir);
 	const compiler = await compile(ROOT_CSS, {
 		base: sheets.base,
 		loadStylesheet: sheets.loadStylesheet,
 		loadModule: sheets.loadModule,
 	});
-	const scanner = new Scanner({ sources: [] });
 	// the bytes the bundle was made of, read as text the way the file would be
 	const scanned = sources.map(({ file, bytes }) => ({
 		content: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"),
 		extension: extname(file).slice(1),
 	}));
 	const stylesheets = [...sheets.stylesheets].map(([file, digest]) => ({ file, digest }));
-	return { css: compiler.build(scanner.scanFiles(scanned)), stylesheets };
+	return { css: compiler.build(scan(scanned)), stylesheets };
 }
 
 /**

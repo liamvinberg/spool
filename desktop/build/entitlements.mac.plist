@@ -16,7 +16,7 @@
 	     modified environment needs this to keep it.
 
 	     disable-library-validation: spool's dependency tree carries native addons
-	     (esbuild, tailwind's oxide, and whatever else npm resolves), and those
+	     (esbuild, and whatever else npm resolves), and those
 	     .node and .dylib files are signed with this app's certificate at package
 	     time but were never built by it.
 

@@ -310,7 +310,7 @@ export class DaemonStartError extends Error {}
  * adoption calls `status` first and knows whether it owns what it got.
  *
  * ELECTRON_RUN_AS_NODE is what makes this safe. The child is Electron's own
- * executable behaving as plain Node, so esbuild and @tailwindcss/oxide load into
+ * executable behaving as plain Node, so esbuild and any native module load into
  * a Node process rather than into the one drawing the window: no native-module
  * ABI risk in the renderer, and a daemon that crashes cannot take the window
  * with it. It is detached, so a signal sent to the app's process group is not
