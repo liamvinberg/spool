@@ -106,6 +106,11 @@ export interface LocalCopy {
 	presence(state: PresenceState | null): void;
 	/** Everyone else on the canvas now, `still` counted to this moment. */
 	people(): Presence[];
+	/**
+	 * The agent this daemon runs on the project finished its turn: said to the team once the turn's saves have gone
+	 * up, so the pages they touched settle for outsiders. Offline, nothing is said, and a quiet spell does it.
+	 */
+	turnEnded(): void;
 	close(): void;
 }
 
@@ -129,6 +134,8 @@ const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
 /** A keepalive the sync object answers without waking. */
 const PING_MS = 30_000;
+/** How long a turn's last writes are given to reach the watcher before its end is said after them. */
+const TURN_SETTLE_MS = 500;
 /** The longest git may hold its index lock before what it left is looked at anyway: a crashed git leaves one. */
 const GIT_WAIT_MS = 10_000;
 
@@ -653,6 +660,20 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 					: new Promise<void>((resolve, reject) => waiters.push({ resolve, reject })),
 		presence: (state) => presence.say(caughtUp ? socket : undefined, state),
 		people: () => presence.people(),
+		turnEnded: () => {
+			const said = setTimeout(() => {
+				const waited = isIdle()
+					? Promise.resolve()
+					: new Promise<void>((resolve, reject) => waiters.push({ resolve, reject }));
+				waited.then(
+					() => {
+						if (!closed && caughtUp) socket?.send(encodeFrame({ type: "turn-ended" }));
+					},
+					() => {},
+				);
+			}, TURN_SETTLE_MS);
+			said.unref?.();
+		},
 		close: () => {
 			closed = true;
 			if (retry !== undefined) clearTimeout(retry);

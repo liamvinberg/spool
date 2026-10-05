@@ -130,6 +130,7 @@ import {
 } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
+import { createProjectShares } from "./shares";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
 import { createTeamSync, type OpenSyncSocket } from "./team-sync";
@@ -854,6 +855,7 @@ export function createDaemonApp({
 			boothKeeping(registeredRoots());
 			teamSync.keeping(registeredRoots());
 			movedIn.keeping(registeredRoots());
+			projectShares.keeping(registeredRoots());
 		}
 		for (const listener of appListeners) listener(event);
 	};
@@ -902,6 +904,19 @@ export function createDaemonApp({
 		}),
 		log: (line) => console.error(`spool: ${line}`),
 	});
+	// a project's shared pages: a team's through spool.page, and a solo project's uploaded by this daemon
+	const projectShares = createProjectShares({
+		spoolDir,
+		request: cloudTeamsRequest,
+		version,
+		resolve: resolveProject,
+		watch: (root, saved) =>
+			hub.subscribe(root, (event) => {
+				if (event.kind === "frame" || event.kind === "shared" || event.kind === "geometry") saved();
+			}),
+		log: (line) => console.error(`spool: ${line}`),
+	});
+	projectShares.keeping(registeredRoots());
 	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
 		...(machineStateWatchAdapter === undefined ? {} : { adapter: machineStateWatchAdapter }),
 		onError:
@@ -2343,8 +2358,14 @@ export function createDaemonApp({
 					ask,
 				});
 				const picture = readThread(spoolDir, project.root, thread);
+				const pictured = picture ? agentPictureEnding(spoolDir, project.root, picture) : undefined;
 				const held = liveTurns.hold({
-					...(picture ? { onEnded: agentPictureEnding(spoolDir, project.root, picture) } : {}),
+					onEnded: (events) => {
+						pictured?.(events);
+						// the turn's saves are done: the pages they touched settle for whoever they are shared with
+						teamSync.copy(project.root)?.turnEnded();
+						projectShares.turnEnded(project.root);
+					},
 					root: project.root,
 					thread,
 					turn,
@@ -3490,6 +3511,7 @@ export function createDaemonApp({
 			notice: teamSyncServices?.notice ?? ((message) => console.error(`spool: ${message}`)),
 		}),
 	);
+	app.route("/api/p", projectShares.routes);
 	app.route(
 		"/api/p",
 		setAsideRoutes({
@@ -3814,6 +3836,7 @@ export function createDaemonApp({
 			machineStateWatch.stop();
 			history.close();
 			teamSync.close();
+			projectShares.close();
 			movedIn.close();
 			liveTurns.close();
 			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());

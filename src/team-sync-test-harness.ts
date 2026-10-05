@@ -49,6 +49,8 @@ interface Project {
 	version: number;
 	/** Every path a local copy asked to have resent. */
 	resent: string[];
+	/** Whose agents said their turn ended, and how many saves the project had then. */
+	turns: { by: string; saves: number }[];
 	/** Where its code lives, as `host/path`. */
 	repo: string | null;
 }
@@ -135,6 +137,7 @@ export function fakeTeam(team = "devosurf") {
 					sockets: new Set(),
 					version: 0,
 					resent: [],
+					turns: [],
 					repo: body.repo ?? null,
 				});
 				return Response.json(described(name), { status: 201 });
@@ -176,6 +179,10 @@ export function fakeTeam(team = "devosurf") {
 				if (file !== undefined) from.deliver(fileFrame(path, file));
 			}
 			at.resent.push(...(message.paths as string[]));
+			return;
+		}
+		if (message.type === "turn-ended") {
+			if (from.live) at.turns.push({ by: from.person.accountId, saves: at.saves.length });
 			return;
 		}
 		if (message.type !== "save") return;
@@ -381,6 +388,7 @@ export function fakeTeam(team = "devosurf") {
 		paths: (name: string) => [...(project(name)?.files.keys() ?? [])].sort(),
 		saves: (name: string) => project(name)?.saves ?? [],
 		resent: (name: string) => project(name)?.resent ?? [],
+		turns: (name: string) => project(name)?.turns ?? [],
 		/** A message the team never sends: what a compromised cloud might. */
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));

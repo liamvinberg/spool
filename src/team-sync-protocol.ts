@@ -108,7 +108,16 @@ export interface Resend {
 /** The most paths one `resend` may name; a local copy asks for more in several. */
 export const RESEND_PATHS = 500;
 
-export type DaemonMessage = Hello | Save | Resend;
+/**
+ * Daemon → object: the agent this daemon runs on the project finished its turn. The pages its person saved to
+ * settle for outsiders (unless someone else is saving to them too); an agent the daemon did not start never says
+ * this, and its pages settle after a quiet spell instead.
+ */
+export interface TurnEnded {
+	type: "turn-ended";
+}
+
+export type DaemonMessage = Hello | Save | Resend | TurnEnded;
 export type ObjectMessage = Welcome | TeamFile | CaughtUp | Saved | SetAside | Refused;
 
 /** A message and the bytes riding with it, if any. */
