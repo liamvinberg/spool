@@ -16,7 +16,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Team project**: A project whose `design/` a team shares live through Spool Cloud instead of tracking it in git. A `spool.json` beside `design/`, the one file the repo tracks for it, names it as `https://spool.page/<team>/<project>` and grants nothing. Every save reaches the team's other editors whole, as real files, and history never commits it. A project without one is simply a project. _Avoid_: shared project, cloud project, mounted project
 
-**Local copy**: One real `design/` of a team project on one machine, kept out of git by its own `.gitignore` of `*`. A team project is known by its team and name, never by where a local copy sits. _Avoid_: mount, checkout, clone
+**Local copy**: One real `design/` of a team project on one machine, kept out of git by its own `.gitignore` of `*`: in a repo checkout, in a worktree, or on its own. A machine may hold several, all kept in step, and Home shows the team project as one cover; `spool remove` forgets one copy and never touches the team. Git never writes to one: what a checkout, pull, reset or merge puts in `design/` is never sent, and the team's version comes back over it. A team project is known by its team and name, never by where a local copy sits. _Avoid_: mount, checkout, clone
 
 **Collision**: A save to a team project built on a version of the file its machine had not yet seen. The save that reached Spool Cloud first stands and the later one is set aside, except that an edit always beats a delete. `canvas.json` never collides; its keys are taken one at a time. _Avoid_: conflict, overwrite
 
