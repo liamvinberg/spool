@@ -98,7 +98,16 @@ async function checkProjectOpening(directory: string): Promise<void> {
 	writeFileSync(warm, "warm archive");
 	const imports: string[] = [];
 	const sessions: unknown[] = [];
+	// The cold file's import answers once the canvas is on screen but still loading, as
+	// a real canvas can be: sending the window to the project then cuts that load off.
+	let canvasShown = () => {};
+	const shown = new Promise<void>((resolve) => (canvasShown = resolve));
 	const server = createServer(async (request, response) => {
+		if (request.url === "/shown") {
+			canvasShown();
+			response.end();
+			return;
+		}
 		if (request.url === "/api/health") {
 			response.end(
 				JSON.stringify({
@@ -119,6 +128,7 @@ async function checkProjectOpening(directory: string): Promise<void> {
 				sessions.push(JSON.parse(body));
 				response.writeHead(204).end();
 			} else {
+				await shown;
 				imports.push(body);
 				const name = imports.length === 1 ? "cold" : "warm";
 				response.end(JSON.stringify({ root: `/projects/${name}`, name }));
@@ -126,7 +136,12 @@ async function checkProjectOpening(directory: string): Promise<void> {
 			return;
 		}
 		response.writeHead(200, { "Content-Type": "text/html" });
-		response.end("<!doctype html><title>Native project open check</title>");
+		if (request.url !== "/") {
+			response.end("<!doctype html><title>Native project open check</title>");
+			return;
+		}
+		response.write("<!doctype html><title>Native project open check</title><script>fetch('/shown')</script>");
+		void shown.then(() => setTimeout(() => response.end(), 500));
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
@@ -149,9 +164,19 @@ async function checkProjectOpening(directory: string): Promise<void> {
 		const { app } = require("electron");
 		const { boot } = require(${JSON.stringify(join(__dirname, "main.js"))});
 		app.on("browser-window-created", (_event, window) => {
+			// the canvas is sent to the daemon once: a second load aborts the first, and the
+			// aborted load's failure can land on the project's load after it
+			let canvasLoads = 0;
+			window.webContents.on("did-start-navigation", (details) => {
+				if (details.isMainFrame && !details.isSameDocument && new URL(details.url).pathname === "/") canvasLoads++;
+			});
 			window.webContents.on("did-finish-load", () => {
 				const url = window.webContents.getURL();
 				if (url.endsWith("/p/cold")) {
+					if (canvasLoads !== 1) {
+						process.stderr.write("the canvas was loaded " + canvasLoads + " times before the project\\n");
+						return app.exit(1);
+					}
 					setTimeout(() => {
 						window.close();
 						app.emit("open-file", { preventDefault() {} }, ${JSON.stringify(warm)});

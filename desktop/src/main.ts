@@ -418,6 +418,13 @@ async function showCanvas(): Promise<void> {
 	point(showing, started.url, started.pid, "started", started.version, started.controlToken);
 }
 
+/**
+ * The canvas load `point` started, until it settles. A load cut off by another
+ * reports its failure late, and Electron hands that failure to whichever load is
+ * waiting then, so the canvas is not sent anywhere else while this one is on its way.
+ */
+let pointing: { window: BrowserWindow; url: string; settled: Promise<void> } | undefined;
+
 function point(
 	showing: BrowserWindow,
 	url: string,
@@ -434,12 +441,14 @@ function point(
 	follow(new URL(url).origin, controlToken);
 	log("daemon", verdict, `pid=${pid}`, `v${daemonVersion}`, url);
 	// Reopening from the Dock should give back the canvas as it was left, not
-	// reload it out from under whatever was on screen.
+	// reload it out from under whatever was on screen, nor while it is still on
+	// its way there, as when a file opened from Finder at launch asks again.
 	if (isDaemonUrl(showing.webContents.getURL())) return;
+	if (pointing?.window === showing && isDaemonUrl(pointing.url)) return;
 	const loadingAt = performance.now();
 	const destination = resumeWorkspace.path === undefined ? url : new URL(resumeWorkspace.path, url).href;
 	resumeWorkspace = {};
-	void showing.loadURL(destination).then(
+	const settled = showing.loadURL(destination).then(
 		() => {
 			log(
 				"canvas",
@@ -450,6 +459,11 @@ function point(
 		},
 		(error: unknown) => log("canvas", "FAIL load", String(error)),
 	);
+	const load = { window: showing, url: destination, settled };
+	pointing = load;
+	void settled.then(() => {
+		if (pointing === load) pointing = undefined;
+	});
 }
 
 /** The login shell's answer, asked at most once: the daemon and the command offer both want it. */
@@ -1572,6 +1586,7 @@ export function boot(): void {
 			const url = await importProjectFile(path, current.url, current.controlToken);
 			if (shuttingDown) return;
 			if (window === undefined || window.isDestroyed()) await openCanvas();
+			await pointing?.settled;
 			await window?.loadURL(url);
 			window?.show();
 			window?.focus();
