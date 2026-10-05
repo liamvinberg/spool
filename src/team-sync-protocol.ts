@@ -93,7 +93,20 @@ export interface Refused {
 	reason: "outside_layout" | "invalid_save";
 }
 
-export type DaemonMessage = Hello | Save;
+/**
+ * Daemon → object: send the team's version of these paths again. A local copy asks when git wrote over them (a
+ * checkout, pull, reset or merge), so it can put the team's version back instead of sending git's. Answered with a
+ * `file` for each path the team has; a path it never had is left out.
+ */
+export interface Resend {
+	type: "resend";
+	paths: string[];
+}
+
+/** The most paths one `resend` may name; a local copy asks for more in several. */
+export const RESEND_PATHS = 500;
+
+export type DaemonMessage = Hello | Save | Resend;
 export type ObjectMessage = Welcome | TeamFile | CaughtUp | Saved | SetAside | Refused;
 
 /** A message and the bytes riding with it, if any. */

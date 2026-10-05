@@ -5,18 +5,20 @@ import { WebSocket } from "undici";
 import { writeAtomic } from "../atomic-write";
 import type { CloudVault } from "../cloud-auth";
 import { SpoolError } from "../errors";
-import { isTeamProject, type ProjectLink, readProjectLink } from "../team-project";
+import { isTeamProject, type ProjectLink, readProjectLink, TEAM_GITIGNORE } from "../team-project";
 import {
 	decodeFrame,
 	encodeFrame,
 	PROTOCOL_VERSION,
 	type Presence,
 	type PresenceState,
+	RESEND_PATHS,
 	readPresenceState,
 	travels,
 } from "../team-sync-protocol";
 import { FORMAT_VERSION } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
+import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
 import { type TreeWatch, watchTree } from "./watch-tree";
 
@@ -84,6 +86,8 @@ const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
 /** A keepalive the sync object answers without waking. */
 const PING_MS = 30_000;
+/** The longest git may hold its index lock before what it left is looked at anyway: a crashed git leaves one. */
+const GIT_WAIT_MS = 10_000;
 
 /** A local copy kept in step with its team for as long as the daemon runs: it reconnects, and follows the folder. */
 export function followLocalCopy(options: LocalCopyOptions): LocalCopy {
@@ -142,8 +146,19 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let waiters: { resolve(): void; reject(error: Error): void }[] = [];
 	const presence = copyPresence(options.onPresence);
 
-	const persist = () => writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
-	const isIdle = () => caughtUp && inflight.size === 0 && yielding.size === 0 && changed.size === 0;
+	// a local copy whose folder went (a worktree removed) is neither read from nor written to: what it lacks is no
+	// delete, and nothing comes down into it. Its spool.json going is not that: an old branch checked out has none
+	const present = () => existsSync(options.root);
+	const persist = () => {
+		if (present()) writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
+	};
+	const isIdle = () =>
+		caughtUp &&
+		inflight.size === 0 &&
+		yielding.size === 0 &&
+		changed.size === 0 &&
+		restoring.size === 0 &&
+		deferred.size === 0;
 	const wake = () => {
 		if (!isIdle()) return;
 		for (const waiter of waiters.splice(0)) waiter.resolve();
@@ -173,9 +188,14 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		);
 	};
 
-	/** Send one path if it differs from the team's version this copy last had. */
+	/** Send one path if it differs from the team's version this copy last had, unless git made it differ. */
 	const check = (path: string) => {
-		if (!travels(path)) return;
+		if (!travels(path) || restoring.has(path) || !present()) return;
+		if (guard.busy() && !gitStale) {
+			deferred.add(path);
+			waitForGit();
+			return;
+		}
 		if ([...inflight.values()].some((sent) => sent.path === path)) {
 			dirty.add(path);
 			return;
@@ -184,8 +204,84 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const hash = bytes === undefined ? null : digest(bytes);
 		const known = state.files[path];
 		if (hash === (known?.hash ?? null)) return;
+		if (gitWrote(path, bytes)) return restore(path, bytes);
 		send(path, bytes);
 	};
+
+	// --- the git guard: what git writes into design/ never goes up; the team's version comes back over it ---
+
+	/** Paths git wrote over, whose team version has been asked for and not yet put back. */
+	const restoring = new Set<string>();
+	/** Paths changed while git held its index lock, looked at once it lets go. */
+	const deferred = new Set<string>();
+	let gitWait: NodeJS.Timeout | undefined;
+	let gitWaitSince = 0;
+	let gitStale = false;
+	let asking: NodeJS.Immediate | undefined;
+
+	/** design/ went whole, as a pull that untracks it or a `git clean` takes it: refilled, never sent as deletes. */
+	const vanished = () => !existsSync(join(designDir, "canvas.json"));
+
+	/** Git's doing, or a folder that vanished: neither is a save. */
+	const gitWrote = (path: string, bytes: Buffer | undefined) =>
+		(bytes === undefined && vanished()) || guard.wrote(path, bytes);
+
+	/** Put the team's version back: ask for its bytes, or take away a file the team doesn't have. */
+	const restore = (path: string, bytes: Buffer | undefined) => {
+		if (vanished())
+			// everything the folder held comes back, not only what the watcher has named so far
+			for (const [held, file] of Object.entries(state.files))
+				if (file.hash !== null && readLocal(held) === undefined) restoring.add(held);
+		const known = state.files[path];
+		if (known === undefined || known.hash === null) {
+			if (bytes === undefined) return;
+			const target = join(designDir, ...path.split("/"));
+			rmSync(target, { force: true });
+			pruneEmpty(designDir, dirname(target));
+			return;
+		}
+		// a folder taken away whole takes its .gitignore with it, and the refill must stay out of git too
+		if (!existsSync(join(designDir, ".gitignore"))) {
+			const refilling = !existsSync(designDir);
+			writeAtomic(join(designDir, ".gitignore"), TEAM_GITIGNORE);
+			if (refilling && live) follow();
+		}
+		restoring.add(path);
+		askSoon();
+	};
+
+	/** One `resend` for everything restoring, once this pass has found it all. */
+	const askSoon = () => {
+		asking ??= setImmediate(() => {
+			asking = undefined;
+			if (socket === undefined || !caughtUp) return;
+			const paths = [...restoring];
+			for (let at = 0; at < paths.length; at += RESEND_PATHS)
+				socket.send(encodeFrame({ type: "resend", paths: paths.slice(at, at + RESEND_PATHS) }));
+		});
+	};
+
+	const waitForGit = () => {
+		if (gitWait !== undefined) return;
+		if (deferred.size === 1) gitWaitSince = Date.now();
+		gitWait = setTimeout(() => {
+			gitWait = undefined;
+			if (closed) return;
+			if (guard.busy() && Date.now() - gitWaitSince < GIT_WAIT_MS) return waitForGit();
+			gitStale = guard.busy();
+			const paths = [...deferred];
+			deferred.clear();
+			for (const path of paths) check(path);
+			gitStale = false;
+			wake();
+		}, SETTLE_MS);
+		gitWait.unref?.();
+	};
+
+	const guard = guardAgainstGit(designDir, (paths) => {
+		for (const path of paths) changed.add(path);
+		settle ??= setTimeout(checkChanged, SETTLE_MS);
+	});
 
 	/** Every travelling file on disk, and every path the team has that may have gone from it. */
 	const checkEverything = () => {
@@ -205,6 +301,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			for (const under of filesUnder(designDir, path)) check(under);
 			for (const known of Object.keys(state.files)) if (known.startsWith(`${path}/`)) check(known);
 		}
+		// a design/ removed whole may be named as nothing more than itself
+		if (vanished()) checkEverything();
 		wake();
 	};
 
@@ -212,6 +310,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const receive = (message: Record<string, unknown>, bytes: Uint8Array | undefined) => {
 		const { path, version, deleted } = message;
 		if (typeof path !== "string" || typeof version !== "number" || deleted !== (bytes === undefined)) return;
+		if (!present()) return;
 		if (version > state.head) state.head = version;
 		// a hostile or broken cloud could name anything: only Spool's own layout is ever written
 		let target: string;
@@ -225,12 +324,18 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const incoming = bytes === undefined ? null : digest(bytes);
 		const local = readLocal(path);
 		const here = local === undefined ? null : digest(local);
-		if (here !== incoming && here !== (state.files[path]?.hash ?? null) && !yielding.has(path)) {
+		if (
+			here !== incoming &&
+			here !== (state.files[path]?.hash ?? null) &&
+			!yielding.has(path) &&
+			!restoring.has(path)
+		) {
 			// changed here and not sent yet: it goes up built on the version it was, and the team settles it
 			persist();
 			return;
 		}
 		yielding.delete(path);
+		restoring.delete(path);
 		// the team's version first, so the watcher reads this write as the team's and never sends it back
 		state.files[path] = { version, hash: incoming };
 		persist();
@@ -266,6 +371,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			checkEverything();
 			burst = undefined;
 			presence.joined(socket);
+			// what git wrote over before the connection dropped is still waiting on the team's version
+			if (restoring.size > 0) askSoon();
 		} else if (message.type === "restored") {
 			const { path, version } = message;
 			if (typeof path === "string" && travels(path) && typeof version === "number")
@@ -337,7 +444,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		retryMs = Math.min(retryMs * 2, RECONNECT_MAX_MS);
 	};
 
-	if (live) {
+	/** Watch design/ for saves, again after a refill: a design/ removed whole can take its watch with it. */
+	const follow = () => {
+		watch?.close();
 		watch = watchTree(
 			designDir,
 			(filename) => {
@@ -347,6 +456,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			},
 			() => notice(`stopped watching ${designDir}; restart spool to sync it again`),
 		);
+	};
+
+	if (live) {
+		follow();
 		ping = setInterval(() => socket?.send("ping"), PING_MS);
 		ping.unref?.();
 	}
@@ -366,6 +479,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (retry !== undefined) clearTimeout(retry);
 			if (settle !== undefined) clearTimeout(settle);
 			if (ping !== undefined) clearInterval(ping);
+			if (gitWait !== undefined) clearTimeout(gitWait);
+			if (asking !== undefined) clearImmediate(asking);
+			guard.close();
 			watch?.close();
 			socket?.close();
 			socket = undefined;

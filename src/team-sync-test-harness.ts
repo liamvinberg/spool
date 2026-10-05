@@ -40,6 +40,8 @@ interface Project {
 	versions: Map<number, TeamVersion>;
 	sockets: Set<Connected>;
 	version: number;
+	/** Every path a local copy asked to have resent. */
+	resent: string[];
 }
 
 interface TeamVersion {
@@ -103,6 +105,7 @@ export function fakeTeam(team = "devosurf") {
 					versions: new Map(),
 					sockets: new Set(),
 					version: 0,
+					resent: [],
 				});
 				return Response.json(described(name), { status: 201 });
 			});
@@ -135,6 +138,14 @@ export function fakeTeam(team = "devosurf") {
 			if (state === null) delete from.presence;
 			else from.presence = { state, at: Date.now() };
 			relayPresence(at, from.person);
+			return;
+		}
+		if (message.type === "resend") {
+			for (const path of new Set(message.paths as string[])) {
+				const file = at.files.get(path);
+				if (file !== undefined) from.deliver(fileFrame(path, file));
+			}
+			at.resent.push(...(message.paths as string[]));
 			return;
 		}
 		if (message.type !== "save") return;
@@ -333,6 +344,7 @@ export function fakeTeam(team = "devosurf") {
 		bytes: (name: string, path: string) => project(name)?.files.get(path)?.bytes,
 		paths: (name: string) => [...(project(name)?.files.keys() ?? [])].sort(),
 		saves: (name: string) => project(name)?.saves ?? [],
+		resent: (name: string) => project(name)?.resent ?? [],
 		/** A message the team never sends: what a compromised cloud might. */
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));

@@ -435,3 +435,111 @@ describe("a collision", () => {
 		expect(set.map((mark) => mark.together)).toEqual([4, 4, 4, 4]);
 	});
 });
+
+/** Run git with extra environment and input, as plumbing that never touches the work tree needs. */
+function plumb(cwd: string, env: Record<string, string>, input: string | undefined, ...args: string[]): string {
+	return execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env }, input }).trim();
+}
+
+/** A commit of exactly these files, made beside the work tree and index so nothing on disk moves. */
+function commitFiles(root: string, files: Record<string, string>, parent?: string): string {
+	const index = { GIT_INDEX_FILE: join(makeTempDir(), "index") };
+	for (const [path, content] of Object.entries(files)) {
+		const blob = plumb(root, {}, content, "hash-object", "-w", "--stdin");
+		plumb(root, index, undefined, "update-index", "--add", "--cacheinfo", `100644,${blob},${path}`);
+	}
+	const tree = plumb(root, index, undefined, "write-tree");
+	return plumb(root, {}, undefined, "commit-tree", tree, ...(parent === undefined ? [] : ["-p", parent]), "-m", "old");
+}
+
+describe("the git guard", () => {
+	it("puts the team's version back over an old branch's design/, and sends teammates nothing", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "team's home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		git(ben.root, "add", "spool.json");
+		git(ben.root, "commit", "--quiet", "-m", "spool.json");
+		// a branch from before the project moved to the team: it tracks design/ and has no spool.json
+		const old = commitFiles(ben.root, {
+			"design/canvas.json": "{}\n",
+			"design/frames/home/frame.tsx": "old home\n",
+			"design/frames/legacy/frame.tsx": "legacy\n",
+		});
+		git(ben.root, "branch", "old", old);
+		const saves = cloud.saves("checkout").length;
+		const canvas = read(ana.root, "canvas.json").toString();
+
+		git(ben.root, "checkout", "--quiet", "old");
+
+		await until(() => read(ben.root, "frames/home/frame.tsx").toString() === "team's home\n");
+		await until(() => read(ben.root, "canvas.json").toString() === canvas);
+		await until(() => !existsSync(join(ben.root, "design/frames/legacy")));
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(cloud.saves("checkout").length).toBe(saves);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("team's home\n");
+		expect(read(ana.root, "frames/home/frame.tsx").toString()).toBe("team's home\n");
+		expect(read(ana.root, "canvas.json").toString()).toBe(canvas);
+		expect(existsSync(join(ana.root, "design/frames/legacy"))).toBe(false);
+		// git's files never reached the team, so nothing collided: no set-aside mark on either machine
+		expect(await marks(ben.daemon)).toEqual([]);
+		expect(await marks(ana.daemon)).toEqual([]);
+
+		// and a save after it, made by a person, still travels
+		writeFrame(ben.root, "home", "ben's home\n");
+		await until(() => read(ana.root, "frames/home/frame.tsx").toString() === "ben's home\n");
+	});
+
+	it("refills design/ when a pull takes it out of git, instead of deleting it for the team", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "team's home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		// Ben's branch still tracks design/ as it was before the move, and the move commit takes it out
+		git(ben.root, "add", "spool.json");
+		git(ben.root, "add", "--force", "design/canvas.json", "design/frames", "design/shared");
+		git(ben.root, "commit", "--quiet", "-m", "before the move");
+		await new Promise((wake) => setTimeout(wake, 200));
+		const index = { GIT_INDEX_FILE: join(makeTempDir(), "index") };
+		plumb(ben.root, index, undefined, "read-tree", "HEAD");
+		plumb(ben.root, index, undefined, "rm", "-r", "--quiet", "--cached", "design");
+		const tree = plumb(ben.root, index, undefined, "write-tree");
+		const moved = plumb(
+			ben.root,
+			{},
+			undefined,
+			"commit-tree",
+			tree,
+			"-p",
+			"HEAD",
+			"-m",
+			"design: moved to Spool Cloud",
+		);
+		const saves = cloud.saves("checkout").length;
+
+		git(ben.root, "merge", "--quiet", "--ff-only", moved);
+
+		await until(() => existsSync(join(ben.root, "design/canvas.json")));
+		await until(() => cloud.paths("checkout").every((path) => same(ana.root, ben.root, path)));
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(cloud.saves("checkout").length).toBe(saves);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("team's home\n");
+		expect(existsSync(join(ana.root, "design/frames/home/frame.tsx"))).toBe(true);
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
+		expect(status(ben.root)).toEqual([]);
+	});
+
+	it("refills a design/ that vanished whole, and keeps following it", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "team's home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const saves = cloud.saves("checkout").length;
+
+		rmSync(join(ben.root, "design"), { recursive: true });
+
+		await until(() => cloud.paths("checkout").every((path) => same(ana.root, ben.root, path)));
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(cloud.saves("checkout").length).toBe(saves);
+		writeFrame(ben.root, "home", "ben's home\n");
+		await until(() => read(ana.root, "frames/home/frame.tsx").toString() === "ben's home\n");
+	});
+});
